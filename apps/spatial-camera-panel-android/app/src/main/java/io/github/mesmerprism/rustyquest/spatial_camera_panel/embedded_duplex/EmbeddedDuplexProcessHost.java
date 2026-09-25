@@ -26,7 +26,7 @@ final class EmbeddedDuplexProcessHost {
     private final EmbeddedDuplexDisplaySlot display = new EmbeddedDuplexDisplaySlot();
     private final Object attachmentGate = new Object();
     private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.NEW);
-    private long attachmentGeneration;
+    private volatile long attachmentGeneration;
     private boolean displayDetaching;
     private boolean closeInFlight;
     private final ExecutorService commands = Executors.newSingleThreadExecutor(runnable -> {
@@ -39,6 +39,7 @@ final class EmbeddedDuplexProcessHost {
     private EmbeddedDuplexPlatform platform;
     private EmbeddedDuplexResources resources;
     private String runtimeConfigSha256;
+    private String enrollmentRecordSha256;
     private volatile boolean localFixture;
     private String diagnosticChallenge;
     // A single process-local review is held by object identity and consumed once.
@@ -164,6 +165,67 @@ final class EmbeddedDuplexProcessHost {
             }
             return EmbeddedDuplexNative.runtimeCommand(operation, exactInputJson);
         });
+    }
+
+    /** Real-peer bootstrap stops before admission or any media owner effect. */
+    CompletableFuture<EmbeddedDuplexRuntimeStatus> bootstrapRealPeer(long expectedGeneration) {
+        synchronized (attachmentGate) {
+            if (expectedGeneration == 0L || attachmentGeneration != expectedGeneration
+                    || displayDetaching || display.cleanupPending()
+                    || !phase.compareAndSet(Phase.NEW, Phase.BOOTSTRAPPING)) {
+                return failed(new IllegalStateException("real-peer display unavailable"));
+            }
+            pendingReview = null;
+        }
+        return submit(() -> {
+            try {
+                EmbeddedDuplexEnrollment enrollment =
+                        EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
+                EmbeddedDuplexSessionInputs inputs =
+                        EmbeddedDuplexSessionInputs.createRealPeer(enrollment);
+                enrollmentRecordSha256 = enrollment.recordSha256;
+                initializeOnCommandLane(inputs.role, inputs.runtimeBindings.toString(),
+                        inputs.startup.toString(), false, null);
+                return runtimeStatusOnCommandLane();
+            } catch (Exception failure) {
+                if (phase.get() == Phase.BOOTSTRAPPING) {
+                    phase.set(runtimeConfigSha256 == null ? Phase.NEW : Phase.FAILED);
+                }
+                throw failure;
+            }
+        });
+    }
+
+    CompletableFuture<EmbeddedDuplexRuntimeStatus> runtimeStatus() {
+        return submit(this::runtimeStatusOnCommandLane);
+    }
+
+    private EmbeddedDuplexRuntimeStatus runtimeStatusOnCommandLane() {
+        Phase current = phase.get();
+        String state = current == Phase.READY && !localFixture
+                ? "bootstrapped_route_unverified"
+                : current == Phase.NEW ? "uninitialized"
+                : current == Phase.READY ? "local_fixture"
+                : current == Phase.BOOTSTRAPPING ? "bootstrapping" : "cleanup_pending";
+        return new EmbeddedDuplexRuntimeStatus(state, attachmentGeneration != 0L,
+                runtimeConfigSha256, enrollmentRecordSha256);
+    }
+
+    CompletableFuture<String> closeRealPeerNoMedia(long expectedGeneration) {
+        synchronized (attachmentGate) {
+            if (localFixture || expectedGeneration == 0L
+                    || attachmentGeneration != expectedGeneration) {
+                return failed(new IllegalStateException("real-peer no-media close unavailable"));
+            }
+            if (phase.get() == Phase.NEW && runtimeConfigSha256 == null) {
+                return submit(() -> {
+                    detachUninitializedDisplay(expectedGeneration);
+                    enrollmentRecordSha256 = null;
+                    return "uninitialized-display-detached";
+                });
+            }
+        }
+        return closeNoMediaAndDetach(expectedGeneration);
     }
 
     CompletableFuture<EmbeddedDuplexEnrollment> replaceEnrollment(
@@ -301,8 +363,8 @@ final class EmbeddedDuplexProcessHost {
                         EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
                 enrollmentSha.set(enrollment.recordSha256);
                 trace.mark(EmbeddedDuplexBootstrap.Failure.FIXTURE_INPUTS);
-                EmbeddedDuplexLocalDiagnosticInputs fresh =
-                        EmbeddedDuplexLocalDiagnosticInputs.create(enrollment);
+                EmbeddedDuplexSessionInputs fresh =
+                        EmbeddedDuplexSessionInputs.createLocalDiagnostic(enrollment);
                 return initializeOnCommandLane(fresh.role, fresh.runtimeBindings.toString(),
                         fresh.startup.toString(), true, trace);
             } catch (Exception failure) {
@@ -410,6 +472,7 @@ final class EmbeddedDuplexProcessHost {
                 platform = null;
                 resources = null;
                 runtimeConfigSha256 = null;
+                enrollmentRecordSha256 = null;
                 localFixture = false;
                 synchronized (attachmentGate) {
                     attachmentGeneration = 0L;

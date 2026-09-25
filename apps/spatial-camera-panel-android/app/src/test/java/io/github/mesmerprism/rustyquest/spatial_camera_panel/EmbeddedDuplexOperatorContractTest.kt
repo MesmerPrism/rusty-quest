@@ -34,10 +34,21 @@ class EmbeddedDuplexOperatorContractTest {
         mapOf("review_sha256" to "f".repeat(64)))
     assertEquals(EmbeddedDuplexOperatorContract.Route.CONFIRM, confirm.route)
     assertEquals("f".repeat(64), confirm.reviewSha256)
+    listOf("runtime_status", "bootstrap_real_peer", "close_no_media").forEach { method ->
+      val typed = EmbeddedDuplexOperatorContract.parseFields(method, nonce, emptyMap())
+      assertEquals(null, typed.draft)
+      assertEquals(null, typed.roleId)
+      assertEquals(null, typed.reviewSha256)
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce,
+            mapOf("operation" to "media_command"))
+      }
+    }
   }
 
   @Test fun callerCannotSmuggleFixtureJsonGenericCommandsOrInvalidIdentity() {
-    listOf("run", "native-command", "intent", "component", "query", "delete", "openFile").forEach {
+    listOf("run", "start", "stop", "revoke", "native-command", "intent", "component",
+        "query", "delete", "openFile").forEach {
       assertThrows(IllegalArgumentException::class.java) {
         EmbeddedDuplexOperatorContract.parseFields(it, nonce, fields)
       }

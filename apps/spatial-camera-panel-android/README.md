@@ -1928,3 +1928,17 @@ tick performs no Hub refresh. The private locked-playlist owner signals only
 availability or revision changes; advancing unpaused progress is coalesced at
 one update per second on the Hub worker, while paused or unavailable surfaces
 retain no publication timer.
+## Embedded duplex debug operator route
+
+When the debug qualification APK includes embedded duplex inputs, its
+`${applicationId}.embedded-duplex-operator` provider accepts shell UID and
+`android.permission.DUMP` callers. The typed `status`, `review`, and `confirm`
+methods inspect or replace a verified local enrollment. The fixed
+`runtime_status`, `bootstrap_real_peer`, and `close_no_media` methods accept a
+fresh 32-character lowercase hex challenge and no extras. Mutations require a
+resumed Activity and use the same process-owned handlers as the private panel.
+The app selects its authenticated role and peer key and generates session
+inputs. Bootstrap returns `bootstrapped_route_unverified`; it does not prove
+peer possession, admitted media, rendered frames, Stop, or Revoke. A no-media
+close is terminal only after the native no-effect proof, Java resources, and
+display barrier all succeed. A rejected close keeps that exact host for retry.

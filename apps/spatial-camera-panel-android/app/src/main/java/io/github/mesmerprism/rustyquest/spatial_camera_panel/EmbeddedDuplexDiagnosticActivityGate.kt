@@ -4,8 +4,9 @@ import android.os.Handler
 import android.os.Looper
 import java.lang.ref.WeakReference
 import java.util.concurrent.CompletableFuture
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus
 
-/** Debug transport reaches only the current resumed Activity's existing diagnostic action. */
+/** Debug transport reaches only fixed actions on the current resumed Activity. */
 object EmbeddedDuplexDiagnosticActivityGate {
   @Volatile private var resumed: WeakReference<SpatialCameraPanelActivity>? = null
   private val main = Handler(Looper.getMainLooper())
@@ -35,6 +36,43 @@ object EmbeddedDuplexDiagnosticActivityGate {
       }
     }
     if (!accepted) result.complete(false)
+    return result
+  }
+
+  /** The shell can request only the same fixed real-peer action exposed by the panel. */
+  @JvmStatic
+  fun requestRealPeerBootstrap(): CompletableFuture<EmbeddedDuplexRuntimeStatus> {
+    val result = CompletableFuture<EmbeddedDuplexRuntimeStatus>()
+    if (!BuildConfig.DEBUG || !main.post {
+          val activity = resumed?.get()
+          if (activity == null) {
+            result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
+          } else {
+            activity.runEmbeddedDuplexRealPeerBootstrap().whenComplete { status, failure ->
+              if (failure == null) result.complete(status) else result.completeExceptionally(failure)
+            }
+          }
+        }) {
+      result.completeExceptionally(IllegalStateException("Activity dispatch unavailable"))
+    }
+    return result
+  }
+
+  @JvmStatic
+  fun requestNoMediaClose(): CompletableFuture<String> {
+    val result = CompletableFuture<String>()
+    if (!BuildConfig.DEBUG || !main.post {
+          val activity = resumed?.get()
+          if (activity == null) {
+            result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
+          } else {
+            activity.closeEmbeddedDuplexNoMedia().whenComplete { closed, failure ->
+              if (failure == null) result.complete(closed) else result.completeExceptionally(failure)
+            }
+          }
+        }) {
+      result.completeExceptionally(IllegalStateException("Activity dispatch unavailable"))
+    }
     return result
   }
 }

@@ -1614,6 +1614,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @Volatile private var embeddedDuplexActivityDestroying = false
   @Volatile private var embeddedDuplexDiagnosticFinished = false
   @Volatile private var embeddedDuplexDiagnosticFuture: CompletableFuture<String>? = null
+  @Volatile private var embeddedDuplexRuntimeFuture: CompletableFuture<io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus>? = null
   private var embeddedDuplexAttachmentFailureReported = false
 
   private fun attachEmbeddedDuplexDisplayWhenReady() {
@@ -1669,6 +1670,50 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             else
                 "channel=embedded-duplex status=local-diagnostic-cleanup-pending " +
                     "generation=$generation reason=${activityMarkerToken(failure.javaClass.simpleName)}")
+      }
+    }
+    return result
+  }
+
+  /** Shared human/typed transport entry; enrollment and session values come from the app. */
+  fun runEmbeddedDuplexRealPeerBootstrap(): CompletableFuture<
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation == 0L || embeddedDuplexActivityDestroying ||
+        embeddedDuplexDiagnosticFuture != null || embeddedDuplexRuntimeFuture != null) {
+      return CompletableFuture<io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus>().apply {
+        completeExceptionally(IllegalStateException("real-peer display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.bootstrapRealPeer(this, generation)
+    embeddedDuplexRuntimeFuture = result
+    result.whenComplete { _, failure ->
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "real-peer-bootstrap-route-unverified" else "real-peer-bootstrap-pending-cleanup")
+      }
+    }
+    return result
+  }
+
+  fun closeEmbeddedDuplexNoMedia(): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation == 0L || embeddedDuplexActivityDestroying) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(IllegalStateException("embedded display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.closeNoMedia(this, generation)
+    result.whenComplete { _, failure ->
+      if (failure == null) {
+        embeddedDuplexAttachmentGeneration = 0L
+        embeddedDuplexRuntimeFuture = null
+      }
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "no-media-closed" else "no-media-close-pending")
       }
     }
     return result
@@ -3426,7 +3471,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     // a callback that needs that executor.
     val diagnostic = embeddedDuplexDiagnosticFuture
     if (diagnostic == null) {
-      scheduleOrderedActivityDestroyCleanup()
+      val generation = embeddedDuplexAttachmentGeneration
+      if (generation == 0L) {
+        scheduleOrderedActivityDestroyCleanup()
+      } else {
+        val pending = embeddedDuplexRuntimeFuture
+        val close = {
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+              .EmbeddedDuplexRuntimeService.closeNoMedia(this, generation)
+              .whenComplete { _, failure ->
+                if (failure == null) {
+                  embeddedDuplexAttachmentGeneration = 0L
+                  embeddedDuplexRuntimeFuture = null
+                  scheduleOrderedActivityDestroyCleanup()
+                } else {
+                  runOnUiThread { marker("channel=embedded-duplex status=no-media-close-pending") }
+                }
+              }
+        }
+        if (pending == null) close() else pending.whenComplete { _, _ -> close() }
+      }
     } else {
       val generation = embeddedDuplexAttachmentGeneration
       diagnostic.whenComplete { _, failure ->

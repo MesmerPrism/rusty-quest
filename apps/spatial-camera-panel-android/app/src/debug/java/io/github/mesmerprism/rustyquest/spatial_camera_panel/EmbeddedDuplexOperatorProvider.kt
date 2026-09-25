@@ -10,6 +10,9 @@ import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEnrollmentReview
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEnrollmentService
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus
+import java.util.concurrent.TimeUnit
 
 /** Explicit shell operator calls share the panel's app-owned status/review/confirm service. */
 class EmbeddedDuplexOperatorProvider : ContentProvider() {
@@ -76,6 +79,19 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
             putBoolean("local_fixture", saved.localFixture)
           }
         }
+        EmbeddedDuplexOperatorContract.Route.RUNTIME_STATUS ->
+          runtimeBundle(request.challenge, EmbeddedDuplexRuntimeService.status(app).get(10, TimeUnit.SECONDS))
+        EmbeddedDuplexOperatorContract.Route.BOOTSTRAP_REAL_PEER ->
+          runtimeBundle(request.challenge,
+              EmbeddedDuplexDiagnosticActivityGate.requestRealPeerBootstrap().get(120, TimeUnit.SECONDS))
+        EmbeddedDuplexOperatorContract.Route.CLOSE_NO_MEDIA -> {
+          val closed = EmbeddedDuplexDiagnosticActivityGate.requestNoMediaClose().get(120, TimeUnit.SECONDS)
+          require(closed == "no-media-closed" || closed == "uninitialized-display-detached")
+          runtimeBundle(request.challenge,
+              EmbeddedDuplexRuntimeService.status(app).get(10, TimeUnit.SECONDS)).apply {
+            putString("close_disposition", closed)
+          }
+        }
       }
     } catch (_: Exception) { closed() }
   }
@@ -84,6 +100,18 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     putString("schema", EmbeddedDuplexOperatorContract.SCHEMA)
     putString("status", status)
   }
+
+  private fun runtimeBundle(challenge: String, state: EmbeddedDuplexRuntimeStatus): Bundle =
+      Bundle().apply {
+        header("observed")
+        putString("challenge", challenge)
+        putString("runtime_state", state.state)
+        putBoolean("display_attached", state.displayAttached)
+        state.runtimeConfigSha256?.let { putString("runtime_config_sha256", it) }
+        state.enrollmentRecordSha256?.let { putString("enrollment_record_sha256", it) }
+        putBoolean("peer_route_proven", false)
+        putBoolean("media_effect_proven", false)
+      }
 
   override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
       selectionArgs: Array<out String>?, sortOrder: String?): Cursor = closed()

@@ -4,24 +4,37 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.security.SecureRandom;
 
-/** Fresh, effect-free local fixture inputs. These values do not grant peer authority. */
-final class EmbeddedDuplexLocalDiagnosticInputs {
+/** Fresh process-owned bootstrap inputs. Neither variant grants a media route. */
+final class EmbeddedDuplexSessionInputs {
     final EmbeddedDuplexPackagedInputs.InstalledRole role;
     final JSONObject runtimeBindings;
     final JSONObject startup;
 
-    private EmbeddedDuplexLocalDiagnosticInputs(EmbeddedDuplexPackagedInputs.InstalledRole role,
+    private EmbeddedDuplexSessionInputs(EmbeddedDuplexPackagedInputs.InstalledRole role,
             JSONObject runtimeBindings, JSONObject startup) {
         this.role = role;
         this.runtimeBindings = runtimeBindings;
         this.startup = startup;
     }
 
-    static EmbeddedDuplexLocalDiagnosticInputs create(EmbeddedDuplexEnrollment enrollment)
+    static EmbeddedDuplexSessionInputs createLocalDiagnostic(EmbeddedDuplexEnrollment enrollment)
             throws Exception {
         if (enrollment == null || !enrollment.localFixture) {
             throw new IllegalStateException("local diagnostic requires labeled fixture enrollment");
         }
+        return create(enrollment, true);
+    }
+
+    static EmbeddedDuplexSessionInputs createRealPeer(EmbeddedDuplexEnrollment enrollment)
+            throws Exception {
+        if (enrollment == null || enrollment.localFixture) {
+            throw new IllegalStateException("real-peer bootstrap requires verified enrollment");
+        }
+        return create(enrollment, false);
+    }
+
+    private static EmbeddedDuplexSessionInputs create(EmbeddedDuplexEnrollment enrollment,
+            boolean fixture) throws Exception {
         SecureRandom random = new SecureRandom();
         byte[] entropy = new byte[32], nonce = new byte[12];
         random.nextBytes(entropy);
@@ -31,9 +44,9 @@ final class EmbeddedDuplexLocalDiagnosticInputs {
         long wallMs = System.currentTimeMillis();
         long monotonicNs = System.nanoTime();
         if (wallMs <= 0L || monotonicNs <= 0L || wallMs > Long.MAX_VALUE - 300_000L) {
-            throw new IllegalStateException("fresh diagnostic clock unavailable");
+            throw new IllegalStateException("fresh bootstrap clock unavailable");
         }
-        String grantId = "grant.localdiagnostic." + hex(nonce);
+        String grantId = (fixture ? "grant.localdiagnostic." : "grant.session.") + hex(nonce);
         JSONObject embedded = new JSONObject()
                 .put("$schema", "rusty.quest.embedded_duplex.authority_config.v1")
                 .put("runtime_host_id", enrollment.runtimeHostId)
@@ -52,7 +65,7 @@ final class EmbeddedDuplexLocalDiagnosticInputs {
                 .put("validation_epoch_entropy_hex", hex(entropy))
                 .put("validation_wall_unix_ms", wallMs)
                 .put("validation_monotonic_elapsed_ns", monotonicNs);
-        return new EmbeddedDuplexLocalDiagnosticInputs(
+        return new EmbeddedDuplexSessionInputs(
                 EmbeddedDuplexPackagedInputs.InstalledRole.parse(enrollment.installed.roleId),
                 runtime, enrollment.startupJson(generation, grantId));
     }

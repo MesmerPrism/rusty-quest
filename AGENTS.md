@@ -34,14 +34,23 @@ the private application's reviewed enrollment surface. The local fixture
 proves no peer possession, Sink arm, stereo frames, or reciprocal duplex.
 
 The separate embedded duplex operator provider is debug-source-set only,
-requires DUMP plus the runtime shell UID, and accepts only typed status,
-review, and confirm calls. Status returns verified installed facts and sealed
+requires DUMP plus the runtime shell UID, and accepts only the named typed
+operator calls. Enrollment status returns verified installed facts and sealed
 record state. Review accepts bounded role, peer public key, policy IDs, and TTL
 fields, then uses the same app-owned review handler as the panel. Confirm
 consumes that exact process-held review object once under an expiry and record
 revision fence. It accepts no caller JSON, native command, fixture selection,
 URI, Intent, component, or private key. This transport does not itself prove
 peer possession, media start, stereo frames, or reciprocal duplex.
+
+Its fixed `runtime_status`, `bootstrap_real_peer`, and `close_no_media` calls
+use the same process-owned handler as the panel and require a resumed Activity
+for mutations. They accept no role, key, policy, JSON, or native operation.
+Bootstrap constructs fresh inputs from the authenticated enrollment and exact
+APK, but leaves peer route and media effects unverified. `close_no_media` proves
+terminal only when the native and Java no-effect barrier succeeds; a rejected
+close retains the host for later typed cleanup. These calls are not Start,
+Stop, Revoke, rendered-frame evidence, or reciprocal acceptance.
 
 The P70 `lsl-rust-float32-lan-outlet-android` package is an opt-in,
 same-LAN, one-channel Float32 Quest-outlet to host-inlet qualification only.
