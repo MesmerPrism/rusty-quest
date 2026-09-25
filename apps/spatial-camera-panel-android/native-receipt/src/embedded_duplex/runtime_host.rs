@@ -15,7 +15,7 @@ use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jstring, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use rusty_manifold_peer::{
-    ManifoldCommonLanReciprocalEd25519Context, RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
+    ManifoldCommonLanReciprocalEd25519Context, COMMON_LAN_RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
 };
 use rusty_quest_broker_authority::{
     QuestBrokerAuthorityBridgeKind, QuestBrokerProductActivationMaterial, QuestBrokerRuntimeConfig,
@@ -960,7 +960,7 @@ fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String>
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     Ok(json!({
-        "$schema": RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
+        "$schema": COMMON_LAN_RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
         "signer_peer_id": validated.signer_peer_id,
         "signer_key_id": validated.signer_key_id,
         "context_sha256": validated.context_sha256,
