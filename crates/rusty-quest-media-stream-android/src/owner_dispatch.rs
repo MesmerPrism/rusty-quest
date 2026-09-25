@@ -1388,7 +1388,7 @@ fn validate_request_shape(
     Ok(())
 }
 
-fn validate_effect(
+pub(crate) fn validate_effect(
     ticket: &AndroidMediaExecutionTicket,
     mode: AndroidMediaExecutionMode,
     effect: &AuthenticatedOwnerEffect,

@@ -3,9 +3,11 @@
 
 mod owner_dispatch;
 mod retained_cleanup;
+mod retained_cleanup_server;
 
 pub use owner_dispatch::*;
 pub use retained_cleanup::*;
+pub use retained_cleanup_server::*;
 
 use rusty_quest_media_stream::{
     MediaStreamOwnerAction, MediaStreamOwnerActionKind, MediaStreamOwnerKind,
