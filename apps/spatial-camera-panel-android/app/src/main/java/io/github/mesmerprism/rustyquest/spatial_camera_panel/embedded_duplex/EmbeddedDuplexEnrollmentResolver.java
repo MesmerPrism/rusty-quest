@@ -67,6 +67,24 @@ final class EmbeddedDuplexEnrollmentResolver {
         return resolved;
     }
 
+    /** Private app authors the fixed debug fixture; shell contributes no enrollment fields. */
+    static EmbeddedDuplexEnrollmentDraft localDiagnosticDraft(Context context) throws Exception {
+        if (context == null || context.getApplicationContext() == null) {
+            throw new IllegalArgumentException("application context required");
+        }
+        Class<?> registry = Class.forName(REGISTRY);
+        Method create = registry.getMethod("createEmbeddedDuplexLocalDiagnosticDraft", Context.class);
+        Object candidate = invoke(create, context.getApplicationContext());
+        if (!(candidate instanceof EmbeddedDuplexEnrollmentDraft)) {
+            throw new IllegalStateException("private local fixture unavailable");
+        }
+        EmbeddedDuplexEnrollmentDraft draft = (EmbeddedDuplexEnrollmentDraft) candidate;
+        if (!"peer_a".equals(draft.roleId) || !draft.localFixture) {
+            throw new IllegalStateException("private local fixture scope invalid");
+        }
+        return draft;
+    }
+
     private static Object invoke(Method method, Object... arguments) throws Exception {
         try { return method.invoke(null, arguments); }
         catch (InvocationTargetException failed) {

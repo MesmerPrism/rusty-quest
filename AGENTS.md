@@ -25,6 +25,14 @@ because distinct diagnostic application ids must remain co-installable. It is
 a receipt prerequisite only and does not authorize app launch, media dispatch,
 or device-performance inference.
 
+The embedded duplex local diagnostic provider is also debug-source-set only,
+requires DUMP plus the runtime shell UID, and accepts only a challenge-bound
+arm, fixed local-fixture provision, Activity-owned Run request, and receipt
+read. The caller supplies no role, peer key, authority ID, TTL, JSON, Intent,
+component, path, or generic command. Production peer enrollment remains with
+the private application's reviewed enrollment surface. The local fixture
+proves no peer possession, Sink arm, stereo frames, or reciprocal duplex.
+
 The P70 `lsl-rust-float32-lan-outlet-android` package is an opt-in,
 same-LAN, one-channel Float32 Quest-outlet to host-inlet qualification only.
 It does not establish the reverse direction or a default runtime feature.

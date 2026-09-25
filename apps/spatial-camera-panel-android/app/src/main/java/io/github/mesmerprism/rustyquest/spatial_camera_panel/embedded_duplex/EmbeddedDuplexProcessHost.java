@@ -179,14 +179,36 @@ final class EmbeddedDuplexProcessHost {
         });
     }
 
+    CompletableFuture<EmbeddedDuplexEnrollment> provisionLocalDiagnosticFixture(String challenge) {
+        synchronized (attachmentGate) {
+            if (challenge == null || !challenge.equals(diagnosticChallenge)) {
+                return failed(new IllegalStateException("local diagnostic challenge unavailable"));
+            }
+        }
+        try {
+            return replaceEnrollment(EmbeddedDuplexEnrollmentResolver.localDiagnosticDraft(
+                    applicationContext));
+        } catch (Exception failure) {
+            return failed(failure);
+        }
+    }
+
     void armDiagnosticChallenge(String challenge) {
         synchronized (attachmentGate) {
             if (challenge == null || !challenge.matches("[0-9a-f]{32}")
                     || phase.get() != Phase.NEW || displayDetaching || closeInFlight
-                    || platform != null || resources != null || runtimeConfigSha256 != null) {
+                    || platform != null || resources != null || runtimeConfigSha256 != null
+                    || diagnosticChallenge != null) {
                 throw new IllegalStateException("local diagnostic challenge unavailable");
             }
             diagnosticChallenge = challenge;
+        }
+    }
+
+    boolean hasDiagnosticChallenge(String challenge) {
+        synchronized (attachmentGate) {
+            return challenge != null && challenge.equals(diagnosticChallenge)
+                    && phase.get() == Phase.NEW && !displayDetaching && !closeInFlight;
         }
     }
 

@@ -31,6 +31,14 @@ class EmbeddedDuplexDiagnosticProvider : ContentProvider() {
         EmbeddedDuplexDiagnosticService.arm(appContext, request.nonce)
         response("armed")
       }
+      EmbeddedDuplexDiagnosticContract.Route.PROVISION_LOCAL_FIXTURE ->
+          response("provisioned").apply {
+            putString("enrollment_record_sha256",
+                EmbeddedDuplexDiagnosticService.provisionLocalFixture(appContext, request.nonce))
+          }
+      EmbeddedDuplexDiagnosticContract.Route.RUN ->
+          response(if (EmbeddedDuplexDiagnosticService.requestRun(appContext, request.nonce))
+              "run-requested" else "display-not-ready")
       EmbeddedDuplexDiagnosticContract.Route.READ ->
           response("terminal").apply {
             putString(

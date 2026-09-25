@@ -11,10 +11,18 @@ class EmbeddedDuplexDiagnosticContractTest {
   private val nonce = "0123456789abcdef0123456789abcdef"
 
   @Test
-  fun onlyExactChallengeArmAndReadShapesAreAccepted() {
+  fun onlyExactClosedDiagnosticShapesAreAccepted() {
     assertEquals(
         EmbeddedDuplexDiagnosticContract.Route.ARM,
         EmbeddedDuplexDiagnosticContract.parseCall("arm", nonce, null).route,
+    )
+    assertEquals(
+        EmbeddedDuplexDiagnosticContract.Route.PROVISION_LOCAL_FIXTURE,
+        EmbeddedDuplexDiagnosticContract.parseCall("provision-local-fixture", nonce, null).route,
+    )
+    assertEquals(
+        EmbeddedDuplexDiagnosticContract.Route.RUN,
+        EmbeddedDuplexDiagnosticContract.parseCall("run", nonce, null).route,
     )
     assertEquals(
         EmbeddedDuplexDiagnosticContract.Route.READ,
@@ -23,6 +31,14 @@ class EmbeddedDuplexDiagnosticContractTest {
     assertEquals(
         EmbeddedDuplexDiagnosticContract.Route.ARM,
         EmbeddedDuplexDiagnosticContract.parseCallKeys("arm", nonce, emptySet()).route,
+    )
+    assertEquals(
+        EmbeddedDuplexDiagnosticContract.Route.PROVISION_LOCAL_FIXTURE,
+        EmbeddedDuplexDiagnosticContract.parseCallKeys("provision-local-fixture", nonce, emptySet()).route,
+    )
+    assertEquals(
+        EmbeddedDuplexDiagnosticContract.Route.RUN,
+        EmbeddedDuplexDiagnosticContract.parseCallKeys("run", nonce, emptySet()).route,
     )
     assertEquals(
         EmbeddedDuplexDiagnosticContract.Route.READ,
@@ -54,8 +70,10 @@ class EmbeddedDuplexDiagnosticContractTest {
           assertThrows(IllegalArgumentException::class.java) {
             EmbeddedDuplexDiagnosticContract.parseCall("arm", candidate, null)
           }
-          assertThrows(IllegalArgumentException::class.java) {
-            EmbeddedDuplexDiagnosticContract.parseCall("read", candidate, null)
+          listOf("provision-local-fixture", "run", "read").forEach { method ->
+            assertThrows(IllegalArgumentException::class.java) {
+              EmbeddedDuplexDiagnosticContract.parseCall(method, candidate, null)
+            }
           }
         }
   }

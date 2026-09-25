@@ -1642,10 +1642,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   /** Invoked only by the private panel after a reviewed local fixture was installed. */
+  fun embeddedDuplexLocalDiagnosticReady(): Boolean =
+      embeddedDuplexAttachmentGeneration != 0L && !embeddedDuplexActivityDestroying &&
+          !embeddedDuplexDiagnosticFinished && embeddedDuplexDiagnosticFuture == null
+
   fun runEmbeddedDuplexLocalDiagnostic(): CompletableFuture<String> {
     val generation = embeddedDuplexAttachmentGeneration
-    if (generation == 0L || embeddedDuplexActivityDestroying || embeddedDuplexDiagnosticFinished ||
-        embeddedDuplexDiagnosticFuture != null) {
+    if (!embeddedDuplexLocalDiagnosticReady()) {
       return CompletableFuture<String>().apply {
         completeExceptionally(IllegalStateException("embedded display is not ready for local diagnostic"))
       }
@@ -3384,6 +3387,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onResume() {
     super.onResume()
+    EmbeddedDuplexDiagnosticActivityGate.resumed(this)
     PrivateLayerZoneCompositorPanelBridge.reapply("activity-resume")
     immersiveVideoPanelCoordinator.resume("activity-resume")
     backgroundImmersiveVideoPanelCoordinator.resume("activity-resume")
@@ -3399,6 +3403,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     connectionHubWearerControlClient.refresh()
   }
   override fun onPause() {
+    EmbeddedDuplexDiagnosticActivityGate.paused(this)
     immersiveVideoPanelCoordinator.pause("activity-pause")
     backgroundImmersiveVideoPanelCoordinator.pause("activity-pause")
     super.onPause()
@@ -3414,6 +3419,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    EmbeddedDuplexDiagnosticActivityGate.paused(this)
     embeddedDuplexActivityDestroying = true
     // Keep the lifecycle executor available until the fixture has completed its
     // display barrier. Fencing it while waiting on the diagnostic can deadlock

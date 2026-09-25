@@ -8,13 +8,15 @@ internal object EmbeddedDuplexDiagnosticContract {
   const val SCHEMA = "rusty.quest.embedded_duplex.local_diagnostic_transport.v1"
   const val AUTHORITY_SUFFIX = ".embedded-duplex-diagnostic"
   const val METHOD_ARM = "arm"
+  const val METHOD_PROVISION_LOCAL_FIXTURE = "provision-local-fixture"
+  const val METHOD_RUN = "run"
   const val METHOD_READ = "read"
   const val KEY_STATUS = "status"
   const val KEY_RECEIPT_BASE64 = "receipt_base64"
 
   private val noncePattern = Regex("^[0-9a-f]{32}$")
 
-  enum class Route { ARM, READ }
+  enum class Route { ARM, PROVISION_LOCAL_FIXTURE, RUN, READ }
 
   data class Request(val route: Route, val nonce: String)
 
@@ -34,6 +36,8 @@ internal object EmbeddedDuplexDiagnosticContract {
     val route =
         when (method) {
           METHOD_ARM -> Route.ARM
+          METHOD_PROVISION_LOCAL_FIXTURE -> Route.PROVISION_LOCAL_FIXTURE
+          METHOD_RUN -> Route.RUN
           METHOD_READ -> Route.READ
           else -> throw IllegalArgumentException("embedded_duplex_diagnostic_method_rejected")
         }

@@ -3,9 +3,11 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 import android.content.Context;
 import android.util.AtomicFile;
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig;
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
 
 /** Debug-provider bridge. Only the process host may finalize a diagnostic receipt. */
@@ -21,6 +23,34 @@ public final class EmbeddedDuplexDiagnosticService {
             throw new IllegalArgumentException("diagnostic challenge");
         }
         EmbeddedDuplexProcessHost.forApplication(context).armDiagnosticChallenge(challenge);
+    }
+
+    public static String provisionLocalFixture(Context context, String challenge) throws Exception {
+        if (!BuildConfig.DEBUG || context == null || challenge == null
+                || !challenge.matches("[0-9a-f]{32}")) {
+            throw new IllegalArgumentException("diagnostic fixture challenge");
+        }
+        EmbeddedDuplexEnrollment installed = EmbeddedDuplexProcessHost.forApplication(context)
+                .provisionLocalDiagnosticFixture(challenge).get(30, TimeUnit.SECONDS);
+        if (!installed.localFixture || !"peer_a".equals(installed.installed.roleId)) {
+            throw new IllegalStateException("diagnostic fixture enrollment invalid");
+        }
+        return installed.recordSha256;
+    }
+
+    public static boolean requestRun(Context context, String challenge) throws Exception {
+        if (!BuildConfig.DEBUG || context == null || challenge == null
+                || !challenge.matches("[0-9a-f]{32}")) {
+            throw new IllegalArgumentException("diagnostic run challenge");
+        }
+        if (!EmbeddedDuplexProcessHost.forApplication(context).hasDiagnosticChallenge(challenge)) {
+            throw new IllegalStateException("diagnostic run was not armed");
+        }
+        EmbeddedDuplexEnrollment installed = EmbeddedDuplexEnrollmentResolver.resolve(context);
+        if (!installed.localFixture || !"peer_a".equals(installed.installed.roleId)) {
+            throw new IllegalStateException("diagnostic fixture is not installed");
+        }
+        return EmbeddedDuplexDiagnosticActivityGate.requestRun().get(5, TimeUnit.SECONDS);
     }
 
     public static String read(Context context, String challenge) throws Exception {
