@@ -22,4 +22,13 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context)
                 .closeRealPeerNoMedia(displayGeneration);
     }
+
+    public static CompletableFuture<EmbeddedDuplexPairStatus> pairStatus(Context context) {
+        return EmbeddedDuplexProcessHost.forApplication(context).pairStatus();
+    }
+
+    /** The lower packaged peer ID initiates; the other Quest answers on its process endpoint. */
+    public static CompletableFuture<EmbeddedDuplexPairStatus> pairSession(Context context) {
+        return EmbeddedDuplexProcessHost.forApplication(context).pairSession();
+    }
 }

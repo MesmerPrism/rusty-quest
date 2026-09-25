@@ -39,6 +39,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+#[path = "pair_ceremony.rs"]
+mod pair_ceremony;
+
 type DispatchServer = OwnerDispatchServer<
     QuestOwnerDispatchAuthorityVerifier,
     JavaOwnerCallbacks,
@@ -121,6 +124,8 @@ struct Host {
     packaged_route: PackagedDuplexRoute,
     remote_key_id: String,
     remote_public_key: [u8; 32],
+    local_public_key: [u8; 32],
+    pair_state: Arc<Mutex<pair_ceremony::PairState>>,
     config_sha256: String,
     owner_effect_attempted: Arc<AtomicBool>,
     restored_owner_replay: bool,
@@ -563,6 +568,7 @@ fn build_host(
         bootstrap.remote_peer_id.clone(),
     )?;
     let remote_public_key = decode_key(&bootstrap.remote_public_key_hex)?;
+    let local_public_key = callbacks.local_public_key()?;
     let remote = RemoteOwnerDispatchExecutor::new(
         callbacks.clone(),
         callbacks.clone(),
@@ -633,6 +639,8 @@ fn build_host(
             packaged_route: route,
             remote_key_id: bootstrap.remote_key_id,
             remote_public_key,
+            local_public_key,
+            pair_state: Arc::new(Mutex::new(pair_ceremony::PairState::default())),
             config_sha256: expected_sha,
             owner_effect_attempted: Arc::new(AtomicBool::new(false)),
             restored_owner_replay,
@@ -761,6 +769,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             .convert_byte_array(&frame)
             .map_err(|_| "owner frame bytes")?;
         let host = host()?;
+        if bytes.starts_with(pair_ceremony::FRAME_MAGIC) {
+            return pair_ceremony::handle_frame(&host, &bytes);
+        }
         host.owner_effect_attempted.store(true, Ordering::SeqCst);
         if decode_product_activation_request(&bytes).is_ok() {
             Checkout::take(host.activation_server.clone())?
@@ -1028,6 +1039,14 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
             .map_err(safe_decode)
         }
         "peer_snapshot" => host.authority.snapshot_json(),
+        "pair_ceremony" => {
+            pair_ceremony::require_empty_input(input)?;
+            pair_ceremony::run(&host)
+        }
+        "pair_status" => {
+            pair_ceremony::require_empty_input(input)?;
+            pair_ceremony::status(&host)
+        }
         "peer_status" => {
             let proposal = serde_json::from_str(input).map_err(safe_decode)?;
             serde_json::to_string(&host.authority.review_peer_status(proposal, now)?)

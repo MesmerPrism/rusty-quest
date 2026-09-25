@@ -17,9 +17,9 @@ use rusty_manifold_peer::{
     ManifoldPairMediaRouteReceiptV2, ManifoldPairMediaRouteRequestV2,
     ManifoldPairMediaRouteTerminationRequestV2, ManifoldPeerApplicationReceipt,
     ManifoldPeerDecision, ManifoldPeerEnrollmentReceipt, ManifoldPeerEnrollmentRequest,
-    ManifoldPeerStatusProposal, ManifoldReciprocalEd25519ReceiptV3,
-    ManifoldReciprocalEd25519ReviewRequestV3, ManifoldReciprocalEd25519Revisions,
-    COMMON_LAN_RECIPROCAL_ED25519_CONTEXT_SCHEMA,
+    ManifoldPeerSessionCurrentReceiptV2, ManifoldPeerStatusProposal,
+    ManifoldReciprocalEd25519ReceiptV3, ManifoldReciprocalEd25519ReviewRequestV3,
+    ManifoldReciprocalEd25519Revisions, COMMON_LAN_RECIPROCAL_ED25519_CONTEXT_SCHEMA,
 };
 use rusty_manifold_peer_runtime_host::{
     ManifoldPeerRuntimeHost, ManifoldPeerRuntimeHostError,
@@ -263,6 +263,16 @@ impl QuestEmbeddedDuplexAuthority {
         write_peer(&self.peer)?
             .review_common_lan_peer_session(proposal, reciprocal, now_ms)
             .map_err(host_error)
+    }
+
+    /// Revalidates an accepted pair session against live peer authority and time.
+    #[must_use]
+    pub fn current_common_lan_session(
+        &self,
+        session_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<ManifoldPeerSessionCurrentReceiptV2, String> {
+        Ok(read_peer(&self.peer)?.validate_peer_session_v2(session_id, now_ms))
     }
 
     /// Issues a route only after the exact command and media leases join the live Broker.

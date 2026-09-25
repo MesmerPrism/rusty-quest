@@ -12,6 +12,7 @@ import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.Emb
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEnrollmentService
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPairStatus
 import java.util.concurrent.TimeUnit
 
 /** Explicit shell operator calls share the panel's app-owned status/review/confirm service. */
@@ -92,6 +93,11 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
             putString("close_disposition", closed)
           }
         }
+        EmbeddedDuplexOperatorContract.Route.PAIR_STATUS ->
+          pairBundle(request.challenge, EmbeddedDuplexRuntimeService.pairStatus(app).get(10, TimeUnit.SECONDS))
+        EmbeddedDuplexOperatorContract.Route.PAIR_SESSION ->
+          pairBundle(request.challenge,
+              EmbeddedDuplexDiagnosticActivityGate.requestPairSession().get(120, TimeUnit.SECONDS))
       }
     } catch (_: Exception) { closed() }
   }
@@ -111,6 +117,19 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         state.enrollmentRecordSha256?.let { putString("enrollment_record_sha256", it) }
         putBoolean("peer_route_proven", false)
         putBoolean("media_effect_proven", false)
+      }
+
+  private fun pairBundle(challenge: String, state: EmbeddedDuplexPairStatus): Bundle =
+      Bundle().apply {
+        header("observed")
+        putString("challenge", challenge)
+        putString("pair_state", state.state)
+        state.sessionId?.let { putString("session_id", it) }
+        putBoolean("local_session_current", state.localSessionCurrent)
+        putBoolean("remote_session_current", state.remoteSessionCurrent)
+        putLong("local_session_expires_at_ms", state.localSessionExpiresAtMs)
+        putBoolean("peer_route_proven", state.routeCurrent)
+        putBoolean("media_effect_proven", state.mediaEffectProven)
       }
 
   override fun query(uri: Uri, projection: Array<out String>?, selection: String?,

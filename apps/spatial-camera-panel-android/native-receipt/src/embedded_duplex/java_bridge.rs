@@ -26,6 +26,26 @@ pub(crate) struct JavaOwnerCallbacks {
 }
 
 impl JavaOwnerCallbacks {
+    pub(crate) fn sign_pair_ceremony(&self, bytes: &[u8]) -> Result<[u8; 64], String> {
+        self.sign_callback(bytes, "signPairCeremonyBytes")
+    }
+
+    pub(crate) fn local_public_key(&self) -> Result<[u8; 32], String> {
+        let mut env = self.attached()?;
+        let call = env.call_method(self.callback.as_obj(), "localPublicKeyBytes", "()[B", &[]);
+        let result = checked_call(&mut env, call, "java_bridge.local_public_key")?
+            .l()
+            .map_err(|_| "java_bridge.local_public_key_type".to_owned())?;
+        if result.is_null() {
+            return Err("java_bridge.local_public_key_null".into());
+        }
+        let array = JByteArray::from(result);
+        let bytes_result = env.convert_byte_array(&array);
+        checked_call(&mut env, bytes_result, "java_bridge.local_public_key_bytes")?
+            .try_into()
+            .map_err(|_| "java_bridge.local_public_key_length".into())
+    }
+
     pub(crate) fn sign_validated_common_lan(
         &self,
         validated: &ValidatedCommonLanSigning,

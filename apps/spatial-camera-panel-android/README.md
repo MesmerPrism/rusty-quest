@@ -1945,3 +1945,17 @@ display barrier all succeed. A rejected close keeps that exact host for retry.
 While the Activity remains started, its lifecycle poll installs a fresh display
 generation after a successful close. Operators can wait for `display_attached`
 in `runtime_status` before another bootstrap.
+
+After both Quests bootstrap, the lower packaged peer ID can invoke the fixed
+`pair_session` operator action or the panel's **Pair peer session** button.
+The other Quest answers over the existing control endpoint with signed,
+challenge-bound frames. Each Runtime Host independently enrolls the two
+verified public keys, accepts current peer status, applies two signatures
+over its own host-bound Common-LAN context, and revalidates its Manifold peer
+session. `pair_status` reports the local native current-session receipt;
+`pair_session` also reports the other Quest's signed current-session receipt.
+Both actions reject caller JSON, role, peer, key, endpoint, or native operation
+selection. The ceremony does not call `media_command`, issue a media route, or
+start an owner. `close_no_media` is the terminal retry path after a rejected or
+expired ceremony. These peer-session receipts are not a current media route
+or reciprocal rendered-frame acceptance.

@@ -52,6 +52,16 @@ terminal only when the native and Java no-effect barrier succeeds; a rejected
 close retains the host for later typed cleanup. These calls are not Start,
 Stop, Revoke, rendered-frame evidence, or reciprocal acceptance.
 
+The fixed `pair_session` and `pair_status` calls have no caller fields beyond
+the shell challenge. The lower packaged peer ID initiates; both bootstrapped
+Quests use the same app-owned signed control ceremony and private enrollment.
+Manifold independently accepts each host's reciprocal signatures and peer
+session. A current peer-session receipt proves neither a Broker/media lease
+nor a current route, Start, stereo frames, Stop, or Revoke. A failed ceremony
+requires typed no-media close before retry from fresh process authority. Keep
+the two-Quest media runner guarded until the full Start, route, terminal
+cleanup, and exact frame receipt adapter is reviewed.
+
 The P70 `lsl-rust-float32-lan-outlet-android` package is an opt-in,
 same-LAN, one-channel Float32 Quest-outlet to host-inlet qualification only.
 It does not establish the reverse direction or a default runtime feature.

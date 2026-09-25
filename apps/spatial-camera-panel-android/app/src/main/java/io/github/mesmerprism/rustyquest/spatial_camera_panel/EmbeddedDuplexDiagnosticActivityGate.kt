@@ -5,6 +5,7 @@ import android.os.Looper
 import java.lang.ref.WeakReference
 import java.util.concurrent.CompletableFuture
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPairStatus
 
 /** Debug transport reaches only fixed actions on the current resumed Activity. */
 object EmbeddedDuplexDiagnosticActivityGate {
@@ -68,6 +69,24 @@ object EmbeddedDuplexDiagnosticActivityGate {
           } else {
             activity.closeEmbeddedDuplexNoMedia().whenComplete { closed, failure ->
               if (failure == null) result.complete(closed) else result.completeExceptionally(failure)
+            }
+          }
+        }) {
+      result.completeExceptionally(IllegalStateException("Activity dispatch unavailable"))
+    }
+    return result
+  }
+
+  @JvmStatic
+  fun requestPairSession(): CompletableFuture<EmbeddedDuplexPairStatus> {
+    val result = CompletableFuture<EmbeddedDuplexPairStatus>()
+    if (!BuildConfig.DEBUG || !main.post {
+          val activity = resumed?.get()
+          if (activity == null) {
+            result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
+          } else {
+            activity.runEmbeddedDuplexPairSession().whenComplete { status, failure ->
+              if (failure == null) result.complete(status) else result.completeExceptionally(failure)
             }
           }
         }) {

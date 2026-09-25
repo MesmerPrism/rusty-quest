@@ -3,12 +3,13 @@
 use ed25519_dalek::{Signer, SigningKey};
 
 const MAX_AUTHORITY_BYTES: usize = 131_142;
-const SIGNING_DOMAINS: [&[u8]; 5] = [
+const SIGNING_DOMAINS: [&[u8]; 6] = [
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0request\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0terminal_response\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0product_activation\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0product_activation_ack\0",
     b"rusty.manifold.peer.common_lan_reciprocal_ed25519_context.v1\0",
+    b"rusty.quest.embedded_duplex.pair_ceremony.v1\0",
 ];
 
 fn public_from_seed(seed: &[u8; 32]) -> [u8; 32] {
@@ -112,5 +113,11 @@ mod tests {
             b"rusty.manifold.peer.common_lan_reciprocal_ed25519_context.v1\0"
         )
         .is_none());
+        assert!(sign_checked(
+            &seed,
+            b"rusty.quest.embedded_duplex.pair_ceremony.v1\0frame"
+        )
+        .is_some());
+        assert!(sign_checked(&seed, b"rusty.quest.embedded_duplex.pair_ceremony.v1\0").is_none());
     }
 }

@@ -48,6 +48,9 @@ final class EmbeddedDuplexIdentity {
     private static final byte[] COMMON_LAN_CONTEXT_DOMAIN =
             "rusty.manifold.peer.common_lan_reciprocal_ed25519_context.v1\u0000"
                     .getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] PAIR_CEREMONY_DOMAIN =
+            "rusty.quest.embedded_duplex.pair_ceremony.v1\u0000"
+                    .getBytes(StandardCharsets.US_ASCII);
     private static final byte[] OWNER_DISPATCH_REQUEST_DOMAIN =
             "rusty.quest.android.media.owner_dispatch_envelope.v1\u0000request\u0000"
                     .getBytes(StandardCharsets.US_ASCII);
@@ -185,6 +188,16 @@ final class EmbeddedDuplexIdentity {
                 || signingBytes.length > MAX_AUTHORITY_BYTES
                 || !startsWith(signingBytes, COMMON_LAN_CONTEXT_DOMAIN)) {
             throw new IllegalArgumentException("unvalidated Common-LAN signing bytes");
+        }
+        return sign(identity, signingBytes);
+    }
+
+    /** Only the app-owned native pair coordinator supplies this closed domain. */
+    static byte[] signPairCeremonyBytes(Identity identity, byte[] signingBytes) throws Exception {
+        if (identity == null || signingBytes == null || signingBytes.length == 0
+                || signingBytes.length > MAX_AUTHORITY_BYTES
+                || !startsWith(signingBytes, PAIR_CEREMONY_DOMAIN)) {
+            throw new IllegalArgumentException("invalid pair ceremony signing bytes");
         }
         return sign(identity, signingBytes);
     }

@@ -170,6 +170,14 @@ final class EmbeddedDuplexPlatform {
         return EmbeddedDuplexIdentity.signValidatedCommonLanBytes(identity, validatedNativeBytes);
     }
 
+    public byte[] signPairCeremonyBytes(byte[] exactNativeBytes) throws Exception {
+        return EmbeddedDuplexIdentity.signPairCeremonyBytes(identity, exactNativeBytes);
+    }
+
+    public byte[] localPublicKeyBytes() {
+        return identity.rawPublicKey();
+    }
+
     public byte[] exchangeOwnerFrame(String targetPeerId, byte[] exactFrame) throws Exception {
         if (!remotePeerId.equals(targetPeerId) || !controlReady()) {
             throw new IllegalStateException("owner control target unavailable");

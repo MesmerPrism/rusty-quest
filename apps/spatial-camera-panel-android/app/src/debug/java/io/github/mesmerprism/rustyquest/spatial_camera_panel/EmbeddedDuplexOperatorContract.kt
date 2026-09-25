@@ -14,6 +14,8 @@ internal object EmbeddedDuplexOperatorContract {
   const val METHOD_RUNTIME_STATUS = "runtime_status"
   const val METHOD_BOOTSTRAP_REAL_PEER = "bootstrap_real_peer"
   const val METHOD_CLOSE_NO_MEDIA = "close_no_media"
+  const val METHOD_PAIR_STATUS = "pair_status"
+  const val METHOD_PAIR_SESSION = "pair_session"
   const val KEY_ROLE = "role_id"
   const val KEY_REMOTE_KEY = "remote_public_key_hex"
   const val KEY_RUNTIME_HOST = "runtime_host_id"
@@ -31,7 +33,8 @@ internal object EmbeddedDuplexOperatorContract {
   private val reviewKeys = setOf(KEY_ROLE, KEY_REMOTE_KEY, KEY_RUNTIME_HOST,
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
-  enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER, CLOSE_NO_MEDIA }
+  enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
+    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION }
   data class Request(
       val route: Route,
       val challenge: String,
@@ -56,17 +59,21 @@ internal object EmbeddedDuplexOperatorContract {
       METHOD_RUNTIME_STATUS -> Route.RUNTIME_STATUS
       METHOD_BOOTSTRAP_REAL_PEER -> Route.BOOTSTRAP_REAL_PEER
       METHOD_CLOSE_NO_MEDIA -> Route.CLOSE_NO_MEDIA
+      METHOD_PAIR_STATUS -> Route.PAIR_STATUS
+      METHOD_PAIR_SESSION -> Route.PAIR_SESSION
       else -> throw IllegalArgumentException("operator-method-invalid")
     }
     val expected = when (route) {
       Route.STATUS -> setOf(KEY_ROLE)
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
-      Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.CLOSE_NO_MEDIA -> emptySet()
+      Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.CLOSE_NO_MEDIA,
+      Route.PAIR_STATUS, Route.PAIR_SESSION -> emptySet()
     }
     require(fields.keys == expected) { "operator-fields-invalid" }
     if (route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER ||
-        route == Route.CLOSE_NO_MEDIA) return Request(route, argument)
+        route == Route.CLOSE_NO_MEDIA || route == Route.PAIR_STATUS ||
+        route == Route.PAIR_SESSION) return Request(route, argument)
     if (route == Route.CONFIRM) {
       val digest = fields[KEY_REVIEW_SHA] as? String
       require(digest != null && sha.matches(digest)) { "operator-review-digest-invalid" }

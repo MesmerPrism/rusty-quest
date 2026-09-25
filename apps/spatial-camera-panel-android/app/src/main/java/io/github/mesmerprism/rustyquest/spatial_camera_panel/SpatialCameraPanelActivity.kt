@@ -1719,6 +1719,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return result
   }
 
+  /** The panel and typed shell adapter invoke this same pre-Start handler. */
+  fun runEmbeddedDuplexPairSession(): CompletableFuture<
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPairStatus> {
+    if (embeddedDuplexAttachmentGeneration == 0L || embeddedDuplexActivityDestroying) {
+      return CompletableFuture<io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPairStatus>().apply {
+        completeExceptionally(IllegalStateException("embedded display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.pairSession(this)
+    result.whenComplete { _, failure ->
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "peer-session-current-route-unverified" else "pair-ceremony-cleanup-pending")
+      }
+    }
+    return result
+  }
+
   private fun detachUninitializedEmbeddedDuplexDisplay() {
     val generation = embeddedDuplexAttachmentGeneration
     if (generation == 0L) return

@@ -200,6 +200,27 @@ final class EmbeddedDuplexProcessHost {
         return submit(this::runtimeStatusOnCommandLane);
     }
 
+    CompletableFuture<EmbeddedDuplexPairStatus> pairStatus() {
+        return submit(() -> {
+            if (phase.get() != Phase.READY || localFixture) {
+                throw new IllegalStateException("real-peer authority unavailable");
+            }
+            return EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand(
+                    "pair_status", "{}"));
+        });
+    }
+
+    CompletableFuture<EmbeddedDuplexPairStatus> pairSession() {
+        synchronized (attachmentGate) {
+            if (phase.get() != Phase.READY || localFixture || attachmentGeneration == 0L
+                    || displayDetaching || closeInFlight) {
+                return failed(new IllegalStateException("real-peer pair ceremony unavailable"));
+            }
+        }
+        return submit(() -> EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand(
+                "pair_ceremony", "{}")));
+    }
+
     private EmbeddedDuplexRuntimeStatus runtimeStatusOnCommandLane() {
         Phase current = phase.get();
         String state = current == Phase.READY && !localFixture

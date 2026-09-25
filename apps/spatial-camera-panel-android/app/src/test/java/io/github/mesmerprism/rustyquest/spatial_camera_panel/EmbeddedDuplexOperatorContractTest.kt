@@ -34,7 +34,8 @@ class EmbeddedDuplexOperatorContractTest {
         mapOf("review_sha256" to "f".repeat(64)))
     assertEquals(EmbeddedDuplexOperatorContract.Route.CONFIRM, confirm.route)
     assertEquals("f".repeat(64), confirm.reviewSha256)
-    listOf("runtime_status", "bootstrap_real_peer", "close_no_media").forEach { method ->
+    listOf("runtime_status", "bootstrap_real_peer", "close_no_media",
+        "pair_status", "pair_session").forEach { method ->
       val typed = EmbeddedDuplexOperatorContract.parseFields(method, nonce, emptyMap())
       assertEquals(null, typed.draft)
       assertEquals(null, typed.roleId)
