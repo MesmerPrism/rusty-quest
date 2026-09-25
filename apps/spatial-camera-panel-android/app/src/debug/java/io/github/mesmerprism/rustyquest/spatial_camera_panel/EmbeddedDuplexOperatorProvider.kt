@@ -128,6 +128,8 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         putBoolean("local_session_current", state.localSessionCurrent)
         putBoolean("remote_session_current", state.remoteSessionCurrent)
         putLong("local_session_expires_at_ms", state.localSessionExpiresAtMs)
+        state.lastStep?.let { putString("last_step", it) }
+        state.lastFailureCode?.let { putString("last_failure_code", it) }
         putBoolean("peer_route_proven", state.routeCurrent)
         putBoolean("media_effect_proven", state.mediaEffectProven)
       }

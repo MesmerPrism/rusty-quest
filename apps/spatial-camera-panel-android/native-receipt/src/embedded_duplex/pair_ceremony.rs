@@ -39,6 +39,8 @@ enum Stage {
 
 pub(super) struct PairState {
     stage: Stage,
+    last_step: Option<String>,
+    last_failure_code: Option<&'static str>,
     ceremony_id: Option<String>,
     session_id: Option<String>,
     nonce_a: Option<String>,
@@ -54,6 +56,8 @@ impl Default for PairState {
     fn default() -> Self {
         Self {
             stage: Stage::Idle,
+            last_step: None,
+            last_failure_code: None,
             ceremony_id: None,
             session_id: None,
             nonce_a: None,
@@ -221,6 +225,9 @@ fn exchange(
     ceremony_id: &str,
     payload: Value,
 ) -> Result<Value, String> {
+    if let Ok(mut current) = state(host) {
+        current.last_step = Some(kind.to_owned());
+    }
     let frame = encode(host, kind, ceremony_id, payload)?;
     let reply = host.callbacks.clone().exchange(&frame, 128 * 1024)?;
     Ok(decode(host, &reply, Some(response_kind), Some(ceremony_id))?.payload)
@@ -481,9 +488,41 @@ fn advance(host: &Host, ceremony_id: &str, expected: Stage, next: Stage) -> Resu
     Ok(())
 }
 
-fn fail(host: &Host) {
+fn failure_code(error: &str) -> &'static str {
+    match error {
+        "java_bridge.exchange_call" => "transport_java_call",
+        "java_bridge.exchange_target"
+        | "java_bridge.exchange_frame"
+        | "java_bridge.exchange_type"
+        | "java_bridge.exchange_null"
+        | "java_bridge.exchange_bytes"
+        | "java_bridge.exchange_output_bounds"
+        | "java_bridge.exchange_input_bounds" => "transport_jni",
+        "pair frame signature invalid" => "frame_signature_invalid",
+        "pair frame binding or time mismatch" => "frame_binding_or_time_mismatch",
+        "pair frame bounds" => "frame_bounds",
+        "pair frame payload fields invalid" | "pair frame payload invalid" => {
+            "frame_payload_invalid"
+        }
+        "pair ceremony initiator is the lower packaged peer id" => "initiator_role_invalid",
+        "pair responder role differs" => "responder_role_invalid",
+        "pair challenge nonces differ" => "challenge_nonce_mismatch",
+        "pair Runtime Host differs from the packaged peer" => "runtime_host_mismatch",
+        "pair authority already initialized; close before retry" => "authority_not_fresh",
+        _ => "pair_step_failed",
+    }
+}
+
+fn remember_failure(host: &Host, error: &str) {
+    if let Ok(mut current) = state(host) {
+        current.last_failure_code = Some(failure_code(error));
+    }
+}
+
+fn fail(host: &Host, error: &str) {
     if let Ok(mut current) = state(host) {
         current.stage = Stage::Failed;
+        current.last_failure_code = Some(failure_code(error));
     }
 }
 
@@ -508,7 +547,7 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
             .checked_add(CEREMONY_TTL_MS)
             .ok_or("pair time overflow")?;
     }
-    let result = (|| {
+    let result: Result<String, String> = (|| -> Result<String, String> {
         prime(host, now, &ceremony_id)?;
         let hello = exchange(
             host,
@@ -595,13 +634,21 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
             Ok(value)
         }
         Err(error) => {
-            fail(host);
+            fail(host, &error);
             Err(error)
         }
     }
 }
 
 pub(super) fn handle_frame(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let result = handle_frame_inner(host, bytes);
+    if let Err(error) = &result {
+        remember_failure(host, error);
+    }
+    result
+}
+
+fn handle_frame_inner(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String> {
     let frame = decode(host, bytes, None, None)?;
     let id = frame.ceremony_id.as_str();
     let result = match frame.kind.as_str() {
@@ -645,7 +692,7 @@ pub(super) fn handle_frame(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String>
         }
         "sign_a" => {
             advance(host, id, Stage::AwaitSignA, Stage::AwaitPrepareB)?;
-            let result = (|| {
+            let result: Result<Vec<u8>, String> = (|| -> Result<Vec<u8>, String> {
                 let context =
                     parse_context(frame.payload.get("context").ok_or("pair context absent")?)?;
                 if context.correlation_id.as_str() != format!("correlation.{id}") {
@@ -663,14 +710,14 @@ pub(super) fn handle_frame(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String>
                 let signature = sign(host, &context)?;
                 encode(host, "signed_a", id, json!({"signature": signature}))
             })();
-            if result.is_err() {
-                fail(host);
+            if let Err(error) = &result {
+                fail(host, error);
             }
             result
         }
         "prepare_b" => {
             advance(host, id, Stage::AwaitPrepareB, Stage::AwaitFinishB)?;
-            let result = (|| {
+            let result: Result<Vec<u8>, String> = (|| -> Result<Vec<u8>, String> {
                 if frame
                     .payload
                     .as_object()
@@ -691,14 +738,14 @@ pub(super) fn handle_frame(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String>
                     json!({"context":context,"signature":signature}),
                 )
             })();
-            if result.is_err() {
-                fail(host);
+            if let Err(error) = &result {
+                fail(host, error);
             }
             result
         }
         "finish_b" => {
             advance(host, id, Stage::AwaitFinishB, Stage::Failed)?;
-            let result = (|| {
+            let result: Result<Vec<u8>, String> = (|| -> Result<Vec<u8>, String> {
                 let signature_a = parse_signature(
                     frame
                         .payload
@@ -715,8 +762,8 @@ pub(super) fn handle_frame(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String>
                 state(host)?.stage = Stage::Completed;
                 encode(host, "finished_b", id, json!({"current_session":proof}))
             })();
-            if result.is_err() {
-                fail(host);
+            if let Err(error) = &result {
+                fail(host, error);
             }
             result
         }
@@ -744,6 +791,8 @@ pub(super) fn status(host: &Host) -> Result<String, String> {
     let current = state(host)?;
     let stage = current.stage;
     let session_id = current.session_id.clone();
+    let last_step = current.last_step.clone();
+    let last_failure_code = current.last_failure_code;
     let expired = current.deadline_ms != 0 && current.deadline_ms <= host.clock.now_ms()?;
     drop(current);
     let native_current = if stage == Stage::Completed {
@@ -765,6 +814,7 @@ pub(super) fn status(host: &Host) -> Result<String, String> {
             else if stage == Stage::Failed || stage == Stage::Completed || expired { "cleanup_pending" }
             else if stage == Stage::Idle { "not_started" } else { "in_progress" },
         "session_id":session_id, "native_current_session":native_current,
+        "last_step":last_step,"last_failure_code":last_failure_code,
         "route_current":false,"media_effect_proven":false})
         .to_string(),
     )

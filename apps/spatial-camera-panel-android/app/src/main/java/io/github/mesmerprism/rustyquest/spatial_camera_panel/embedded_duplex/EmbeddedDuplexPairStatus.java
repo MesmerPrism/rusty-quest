@@ -9,16 +9,21 @@ public final class EmbeddedDuplexPairStatus {
     public final boolean localSessionCurrent;
     public final boolean remoteSessionCurrent;
     public final long localSessionExpiresAtMs;
+    public final String lastStep;
+    public final String lastFailureCode;
     public final boolean routeCurrent;
     public final boolean mediaEffectProven;
 
     private EmbeddedDuplexPairStatus(String state, String sessionId, boolean localCurrent,
-            boolean remoteCurrent, long expiresAtMs) {
+            boolean remoteCurrent, long expiresAtMs, String lastStep, String lastFailureCode) {
         if (!("not_started".equals(state) || "in_progress".equals(state)
                 || "cleanup_pending".equals(state)
                 || "peer_session_current_route_unverified".equals(state))
                 || sessionId != null && !sessionId.matches("session\\.duplex\\.[0-9a-f]{64}")
-                || expiresAtMs < 0L) {
+                || expiresAtMs < 0L
+                || lastStep != null && !(lastStep.equals("hello") || lastStep.equals("sign_a")
+                    || lastStep.equals("prepare_b") || lastStep.equals("finish_b"))
+                || lastFailureCode != null && !lastFailureCode.matches("[a-z][a-z0-9_]{0,63}")) {
             throw new IllegalArgumentException("pair status invalid");
         }
         this.state = state;
@@ -26,6 +31,8 @@ public final class EmbeddedDuplexPairStatus {
         this.localSessionCurrent = localCurrent;
         this.remoteSessionCurrent = remoteCurrent;
         this.localSessionExpiresAtMs = expiresAtMs;
+        this.lastStep = lastStep;
+        this.lastFailureCode = lastFailureCode;
         this.routeCurrent = false;
         this.mediaEffectProven = false;
     }
@@ -50,7 +57,11 @@ public final class EmbeddedDuplexPairStatus {
         }
         long expires = current && !local.isNull("expires_at_ms")
                 ? local.getLong("expires_at_ms") : 0L;
+        String lastStep = value.has("last_step") && !value.isNull("last_step")
+                ? value.getString("last_step") : null;
+        String lastFailureCode = value.has("last_failure_code") && !value.isNull("last_failure_code")
+                ? value.getString("last_failure_code") : null;
         return new EmbeddedDuplexPairStatus(value.getString("state"), session,
-                current, remoteCurrent, expires);
+                current, remoteCurrent, expires, lastStep, lastFailureCode);
     }
 }
