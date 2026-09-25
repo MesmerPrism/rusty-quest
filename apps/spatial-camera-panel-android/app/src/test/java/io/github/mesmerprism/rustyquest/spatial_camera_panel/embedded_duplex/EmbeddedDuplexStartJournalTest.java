@@ -26,6 +26,8 @@ public final class EmbeddedDuplexStartJournalTest {
         assertThrows(Exception.class, () -> EmbeddedDuplexStartJournal.phase(
                 checkpoint("terminal", "0", "null")));
         assertThrows(Exception.class, () -> EmbeddedDuplexStartJournal.phase(
+                checkpoint("terminal", "3", "null")));
+        assertThrows(Exception.class, () -> EmbeddedDuplexStartJournal.phase(
                 checkpoint("unknown", "3", "null")));
         assertThrows(Exception.class, () -> EmbeddedDuplexStartJournal.phase(
                 checkpoint("terminal", "3", "\"not-a-hash\"")));

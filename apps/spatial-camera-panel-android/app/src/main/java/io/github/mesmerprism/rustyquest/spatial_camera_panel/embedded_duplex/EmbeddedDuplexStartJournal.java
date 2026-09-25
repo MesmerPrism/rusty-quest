@@ -109,6 +109,9 @@ final class EmbeddedDuplexStartJournal {
                 || !sha256((String) receipt))) {
             throw new IllegalStateException("duplex journal receipt invalid");
         }
+        if ("terminal".equals(object.getString("phase")) && receipt == JSONObject.NULL) {
+            throw new IllegalStateException("duplex terminal receipt absent");
+        }
         return object.getString("phase");
     }
 

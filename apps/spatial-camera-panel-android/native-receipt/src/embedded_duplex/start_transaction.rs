@@ -99,6 +99,39 @@ impl StartCheckpoint {
                 .or_else(|| self.last_verified_receipt_sha256.clone()),
         })
     }
+
+    /// A restarted process must join this checkpoint to the exact restored
+    /// authority lineage. A fresh provider epoch cannot inherit its actions.
+    pub(crate) fn recovery_for_lineage(
+        &self,
+        expected_lineage_sha256: &str,
+    ) -> Result<RecoveryAction, &'static str> {
+        if !sha256(expected_lineage_sha256)
+            || self.lineage_sha256 != expected_lineage_sha256
+            || self.revision == 0
+            || self
+                .last_verified_receipt_sha256
+                .as_deref()
+                .is_some_and(|value| !sha256(value))
+            || (matches!(
+                self.phase,
+                StartPhase::Admitted
+                    | StartPhase::DecisionAttempted
+                    | StartPhase::PendingStart
+                    | StartPhase::RouteAttempted
+                    | StartPhase::RouteCurrent
+                    | StartPhase::OwnerAttempted
+                    | StartPhase::Active
+                    | StartPhase::AbortAttempted
+                    | StartPhase::StopAttempted
+                    | StartPhase::CleanupPending
+                    | StartPhase::Terminal
+            ) && self.last_verified_receipt_sha256.is_none())
+        {
+            return Err("Start recovery lineage invalid");
+        }
+        Ok(self.phase.recovery())
+    }
 }
 
 fn sha256(value: &str) -> bool {
@@ -242,5 +275,32 @@ mod tests {
         assert!(admitted
             .advance(StartPhase::Terminal, Some("b".repeat(64)))
             .is_err());
+    }
+
+    #[test]
+    fn stale_epoch_lineage_never_recovers_an_old_action() {
+        let old = "a".repeat(64);
+        let fresh = "b".repeat(64);
+        let pending = StartCheckpoint::prepared(old.clone())
+            .unwrap()
+            .advance(StartPhase::AdmissionAttempted, None)
+            .unwrap()
+            .advance(StartPhase::Admitted, Some("c".repeat(64)))
+            .unwrap()
+            .advance(StartPhase::DecisionAttempted, None)
+            .unwrap()
+            .advance(StartPhase::PendingStart, Some("d".repeat(64)))
+            .unwrap();
+        assert_eq!(
+            pending.recovery_for_lineage(&old),
+            Ok(RecoveryAction::AbortPendingStart)
+        );
+        assert_eq!(
+            pending.recovery_for_lineage(&fresh),
+            Err("Start recovery lineage invalid")
+        );
+        let mut damaged = pending;
+        damaged.last_verified_receipt_sha256 = None;
+        assert!(damaged.recovery_for_lineage(&old).is_err());
     }
 }
