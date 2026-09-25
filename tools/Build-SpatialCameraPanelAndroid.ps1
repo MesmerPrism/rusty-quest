@@ -427,7 +427,7 @@ function Test-EmbeddedDuplexProductInputRoot {
     $closure = [string]$manifest.closure_sha256
     if (-not (Test-ExactJsonProperties -Object $manifest -Names @("schema", "closure_sha256", "source_authorities", "package", "directional_bindings", "artifacts", "runtime_identity_packaged", "device_private_key_packaged")) -or
         -not (Test-ExactJsonProperties -Object $manifest.package -Names @("application_id", "signing_certificate_sha256")) -or
-        -not (Test-ExactJsonProperties -Object $manifest.source_authorities -Names @("manifold_commit", "manifold_tree", "planning_feature_lock_sha256", "planning_project_revision", "planning_lock_revision")) -or
+        -not (Test-ExactJsonProperties -Object $manifest.source_authorities -Names @("manifold_commit", "manifold_tree", "planning_feature_lock_sha256", "planning_project_revision", "planning_lock_revision", "planning_feature_id", "planning_feature_module_id", "planning_feature_activation_receipt_schema", "planning_feature_resolver_fingerprint")) -or
         [string]$manifest.schema -cne "rusty.quest.embedded_duplex.product_input_manifest.v1" -or
         $closure -cnotmatch '^[0-9a-f]{64}$' -or
         (Split-Path -Leaf $root) -cne $closure) {
@@ -488,9 +488,27 @@ function Test-EmbeddedDuplexProductInputRoot {
         [string]$manifest.source_authorities.manifold_tree -cnotmatch '^[0-9a-f]{40}$' -or
         $featureLockRow.Count -ne 1 -or
         [string]$manifest.source_authorities.planning_feature_lock_sha256 -cne [string]$featureLockRow[0].sha256 -or
+        [string]$manifest.source_authorities.planning_feature_id -cnotmatch '^[a-z][a-z0-9-]*$' -or
+        [string]$manifest.source_authorities.planning_feature_module_id -cnotmatch '^[a-z][a-z0-9-]*$' -or
+        [string]$manifest.source_authorities.planning_feature_activation_receipt_schema -cnotmatch '^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$' -or
+        [string]$manifest.source_authorities.planning_feature_resolver_fingerprint -cnotmatch '^[0-9a-f]{64}$' -or
         [int]$manifest.source_authorities.planning_project_revision -lt 1 -or
         [int]$manifest.source_authorities.planning_lock_revision -lt 1) {
         throw "Embedded duplex product input source authority projection is invalid."
+    }
+    try {
+        $featureLock = Get-Content -LiteralPath (Join-Path $root "planning-feature-lock.json") -Raw | ConvertFrom-Json -Depth 64
+    } catch { throw "Embedded duplex planning feature lock is not valid JSON." }
+    $featureRows = @($featureLock.features | Where-Object {
+        [string]$_.feature_id -ceq [string]$manifest.source_authorities.planning_feature_id
+    })
+    if ($featureRows.Count -ne 1 -or
+        [string]$featureRows[0].module_id -cne [string]$manifest.source_authorities.planning_feature_module_id -or
+        [string]$featureRows[0].activation.receipt_schema -cne [string]$manifest.source_authorities.planning_feature_activation_receipt_schema -or
+        [string]$featureLock.lock_fingerprint -cne [string]$manifest.source_authorities.planning_feature_resolver_fingerprint -or
+        [int]$featureLock.project_revision -ne [int]$manifest.source_authorities.planning_project_revision -or
+        [int]$featureLock.revision -ne [int]$manifest.source_authorities.planning_lock_revision) {
+        throw "Embedded duplex product input source authority differs from the packaged feature lock."
     }
     $directions = @($manifest.directional_bindings)
     $expectedDirections = @(
@@ -533,6 +551,14 @@ function Test-EmbeddedDuplexProductInputRoot {
         $sourcePeer = @($routePeers | Where-Object { [string]$_.installed_role_id -ceq [string]$direction.installed_role_id })
         $sinkPeer = @($routePeers | Where-Object { [string]$_.installed_role_id -cne [string]$direction.installed_role_id })
         if ([string]$lifecycle.'$schema' -cne "rusty.quest.broker_media_lifecycle_lock.v2" -or
+            [string]$lifecycle.app_feature_id -cne [string]$manifest.source_authorities.planning_feature_id -or
+            [string]$lifecycle.app_feature_module_id -cne [string]$manifest.source_authorities.planning_feature_module_id -or
+            [string]$lifecycle.app_feature_activation_receipt_schema -cne [string]$manifest.source_authorities.planning_feature_activation_receipt_schema -or
+            [int]$lifecycle.app_feature_project_revision -ne [int]$manifest.source_authorities.planning_project_revision -or
+            [int]$lifecycle.app_feature_lock_revision -ne [int]$manifest.source_authorities.planning_lock_revision -or
+            [string]$lifecycle.app_feature_lock_sha256 -cne "sha256:$($manifest.source_authorities.planning_feature_lock_sha256)" -or
+            [string]$lifecycle.app_feature_lock_fingerprint -cne "sha256:$($manifest.source_authorities.planning_feature_lock_sha256)" -or
+            [string]$lifecycle.app_feature_resolver_fingerprint -cne "sha256:$($manifest.source_authorities.planning_feature_resolver_fingerprint)" -or
             [string]$lifecycle.client_id -cne [string]$clientLock.client_id -or
             [string]$lifecycle.package_name -cne $ApplicationId -or
             [string]$lifecycle.broker_client_lock_id -cne [string]$clientLock.feature_lock_id -or
