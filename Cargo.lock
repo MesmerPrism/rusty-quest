@@ -1119,6 +1119,7 @@ name = "spatial-camera-panel-native-receipt"
 version = "0.1.0"
 dependencies = [
  "ash",
+ "ed25519-dalek",
  "jni 0.21.1",
  "libc",
  "ndk-sys",
@@ -1131,6 +1132,7 @@ dependencies = [
  "rusty-quest-particle-adapter",
  "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]

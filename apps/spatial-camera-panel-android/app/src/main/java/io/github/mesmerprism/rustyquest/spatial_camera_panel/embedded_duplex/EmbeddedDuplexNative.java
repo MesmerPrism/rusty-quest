@@ -25,4 +25,6 @@ public final class EmbeddedDuplexNative {
     static native String closeNoMediaRuntime(String expectedConfigSha256);
     static native boolean processIdleForEnrollment();
     static native byte[] handleOwnerFrame(byte[] exactFrame);
+    static native byte[] ed25519PublicFromSeed(byte[] seed);
+    static native byte[] ed25519SignAuthorityBytes(byte[] seed, byte[] exactSigningBytes);
 }

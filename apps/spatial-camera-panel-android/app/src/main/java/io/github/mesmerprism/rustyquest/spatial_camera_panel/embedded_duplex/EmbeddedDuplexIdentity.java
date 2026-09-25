@@ -7,21 +7,19 @@ import android.system.OsConstants;
 import android.util.Base64;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.security.KeyFactory;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
+import java.security.SecureRandom;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.X509EncodedKeySpec;
 import java.util.Arrays;
@@ -29,12 +27,18 @@ import java.util.Arrays;
 /** Durable app-private identity for the embedded-duplex authority. */
 final class EmbeddedDuplexIdentity {
     private static final int RECORD_MAGIC = 0x45444931; // EDI1
-    private static final int RECORD_VERSION = 1;
+    private static final int LEGACY_RECORD_VERSION = 1;
+    private static final int RECORD_VERSION = 2;
+    private static final int SEED_BYTES = 32;
     private static final int MAX_RECORD_BYTES = 1024;
     private static final int MAX_PRIVATE_KEY_BYTES = 256;
     private static final byte[] X509_ED25519_PREFIX = new byte[] {
             0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65,
             0x70, 0x03, 0x21, 0x00
+    };
+    private static final byte[] PKCS8_ED25519_SEED_PREFIX = new byte[] {
+            0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06,
+            0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20
     };
     private static final byte[] PAIRING_DOMAIN =
             "rusty.quest.embedded_duplex.authority.v1\u0000".getBytes(StandardCharsets.US_ASCII);
@@ -78,10 +82,18 @@ final class EmbeddedDuplexIdentity {
             return load(record);
         }
 
-        KeyPairGenerator generator = KeyPairGenerator.getInstance(
-                availableEd25519Name("KeyPairGenerator"));
-        KeyPair pair = generator.generateKeyPair();
-        byte[] encoded = encodeRecord(pair);
+        byte[] seed = new byte[SEED_BYTES];
+        byte[] encoded;
+        try {
+            new SecureRandom().nextBytes(seed);
+            byte[] rawPublicKey = EmbeddedDuplexNative.ed25519PublicFromSeed(seed);
+            if (rawPublicKey == null || rawPublicKey.length != 32) {
+                throw new IllegalStateException("native Ed25519 public derivation failed");
+            }
+            encoded = encodeSeedRecord(seed, rawPublicKey);
+        } finally {
+            Arrays.fill(seed, (byte) 0);
+        }
         File temporary = new File(directory, RECORD_NAME + ".pending-" + randomSuffix());
         rejectSymbolicLink(temporary);
         try {
@@ -126,6 +138,13 @@ final class EmbeddedDuplexIdentity {
     }
 
     private static byte[] sign(Identity identity, byte[] signingBytes) throws Exception {
+        if (identity.seed != null) {
+            byte[] result = EmbeddedDuplexNative.ed25519SignAuthorityBytes(identity.seed, signingBytes);
+            if (result == null || result.length != 64) {
+                throw new IllegalStateException("native Ed25519 authority signing failed");
+            }
+            return result;
+        }
         Signature signer = Signature.getInstance(availableEd25519Name("Signature"));
         signer.initSign(identity.privateKey);
         signer.update(signingBytes);
@@ -138,12 +157,17 @@ final class EmbeddedDuplexIdentity {
 
     static final class Identity {
         private final PrivateKey privateKey;
+        private final byte[] seed;
         private final byte[] rawPublicKey;
         private final String publicKeySha256;
         private final String keyId;
 
-        private Identity(PrivateKey privateKey, byte[] rawPublicKey) throws Exception {
+        private Identity(PrivateKey privateKey, byte[] seed, byte[] rawPublicKey) throws Exception {
+            if ((privateKey == null) == (seed == null)) {
+                throw new IllegalArgumentException("exactly one Ed25519 private-key representation is required");
+            }
             this.privateKey = privateKey;
+            this.seed = seed == null ? null : seed.clone();
             this.rawPublicKey = rawPublicKey.clone();
             this.publicKeySha256 = hex(sha256(rawPublicKey));
             this.keyId = "ed25519." + publicKeySha256;
@@ -187,7 +211,10 @@ final class EmbeddedDuplexIdentity {
         byte[] privateEncoded = null;
         try {
             DataInputStream input = new DataInputStream(new ByteArrayInputStream(encoded));
-            if (input.readInt() != RECORD_MAGIC || input.readInt() != RECORD_VERSION) {
+            int magic = input.readInt();
+            int version = input.readInt();
+            if (magic != RECORD_MAGIC ||
+                    (version != LEGACY_RECORD_VERSION && version != RECORD_VERSION)) {
                 throw new IllegalStateException("identity record header is invalid");
             }
             int privateLength = input.readInt();
@@ -204,12 +231,30 @@ final class EmbeddedDuplexIdentity {
             if (input.read() != -1) {
                 throw new IllegalStateException("identity record has trailing bytes");
             }
+            byte[] rawPublicKey = strictRawEd25519PublicKey(publicEncoded);
+            if (version == RECORD_VERSION) {
+                if (privateLength != SEED_BYTES ||
+                        !Arrays.equals(rawPublicKey, EmbeddedDuplexNative.ed25519PublicFromSeed(privateEncoded))) {
+                    throw new IllegalStateException("durable Ed25519 seed/public pairing is invalid");
+                }
+                return new Identity(null, privateEncoded, rawPublicKey);
+            }
+            byte[] legacySeed = strictLegacySeed(privateEncoded);
+            if (legacySeed != null) {
+                try {
+                    if (!Arrays.equals(rawPublicKey, EmbeddedDuplexNative.ed25519PublicFromSeed(legacySeed))) {
+                        throw new IllegalStateException("legacy Ed25519 seed/public pairing is invalid");
+                    }
+                    return new Identity(null, legacySeed, rawPublicKey);
+                } finally {
+                    Arrays.fill(legacySeed, (byte) 0);
+                }
+            }
             KeyFactory factory = KeyFactory.getInstance(availableEd25519Name("KeyFactory"));
             PrivateKey privateKey = factory.generatePrivate(new PKCS8EncodedKeySpec(privateEncoded));
             PublicKey publicKey = factory.generatePublic(new X509EncodedKeySpec(publicEncoded));
-            byte[] rawPublicKey = strictRawEd25519PublicKey(publicKey.getEncoded());
             verifyPair(privateKey, publicKey);
-            return new Identity(privateKey, rawPublicKey);
+            return new Identity(privateKey, null, rawPublicKey);
         } finally {
             Arrays.fill(encoded, (byte) 0);
             if (privateEncoded != null) {
@@ -218,25 +263,17 @@ final class EmbeddedDuplexIdentity {
         }
     }
 
-    private static byte[] encodeRecord(KeyPair pair) throws Exception {
-        byte[] privateEncoded = pair.getPrivate().getEncoded();
-        byte[] publicEncoded = pair.getPublic().getEncoded();
-        strictRawEd25519PublicKey(publicEncoded);
-        if (privateEncoded == null || privateEncoded.length == 0
-                || privateEncoded.length > MAX_PRIVATE_KEY_BYTES) {
-            throw new IllegalStateException("Ed25519 provider returned an invalid private key encoding");
+    static byte[] encodeSeedRecord(byte[] seed, byte[] rawPublicKey) throws Exception {
+        if (seed == null || seed.length != SEED_BYTES || rawPublicKey == null || rawPublicKey.length != 32) {
+            throw new IllegalArgumentException("native Ed25519 identity encoding is invalid");
         }
-        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        DataOutputStream output = new DataOutputStream(bytes);
-        output.writeInt(RECORD_MAGIC);
-        output.writeInt(RECORD_VERSION);
-        output.writeInt(privateEncoded.length);
-        output.writeInt(publicEncoded.length);
-        output.write(privateEncoded);
-        output.write(publicEncoded);
-        output.flush();
-        byte[] record = bytes.toByteArray();
-        Arrays.fill(privateEncoded, (byte) 0);
+        byte[] publicEncoded = new byte[X509_ED25519_PREFIX.length + rawPublicKey.length];
+        System.arraycopy(X509_ED25519_PREFIX, 0, publicEncoded, 0, X509_ED25519_PREFIX.length);
+        System.arraycopy(rawPublicKey, 0, publicEncoded, X509_ED25519_PREFIX.length, rawPublicKey.length);
+        byte[] record = ByteBuffer.allocate(16 + seed.length + publicEncoded.length)
+                .putInt(RECORD_MAGIC).putInt(RECORD_VERSION)
+                .putInt(seed.length).putInt(publicEncoded.length)
+                .put(seed).put(publicEncoded).array();
         if (record.length > MAX_RECORD_BYTES) {
             throw new IllegalStateException("identity record exceeds its bound");
         }
@@ -270,6 +307,18 @@ final class EmbeddedDuplexIdentity {
         return Arrays.copyOfRange(encoded, X509_ED25519_PREFIX.length, encoded.length);
     }
 
+    static byte[] strictLegacySeed(byte[] encoded) {
+        if (encoded == null || encoded.length != PKCS8_ED25519_SEED_PREFIX.length + SEED_BYTES) {
+            return null;
+        }
+        for (int i = 0; i < PKCS8_ED25519_SEED_PREFIX.length; i++) {
+            if (encoded[i] != PKCS8_ED25519_SEED_PREFIX[i]) {
+                return null;
+            }
+        }
+        return Arrays.copyOfRange(encoded, PKCS8_ED25519_SEED_PREFIX.length, encoded.length);
+    }
+
     static boolean hasSupportedAuthorityDomain(byte[] value) {
         return startsWith(value, OWNER_DISPATCH_REQUEST_DOMAIN)
                 || startsWith(value, OWNER_DISPATCH_RESPONSE_DOMAIN)
@@ -294,9 +343,7 @@ final class EmbeddedDuplexIdentity {
         Exception last = null;
         for (String name : names) {
             try {
-                if ("KeyPairGenerator".equals(service)) {
-                    KeyPairGenerator.getInstance(name);
-                } else if ("KeyFactory".equals(service)) {
+                if ("KeyFactory".equals(service)) {
                     KeyFactory.getInstance(name);
                 } else if ("Signature".equals(service)) {
                     Signature.getInstance(name);
