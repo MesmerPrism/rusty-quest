@@ -1743,7 +1743,7 @@ fn encode_hex(bytes: &[u8]) -> String {
     out
 }
 
-fn encode_signature_base64(signature: &[u8; 64]) -> String {
+pub(crate) fn encode_signature_base64(signature: &[u8; 64]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut encoded = String::with_capacity(88);
     for chunk in signature.chunks(3) {
@@ -1766,7 +1766,7 @@ fn encode_signature_base64(signature: &[u8; 64]) -> String {
     encoded
 }
 
-fn decode_signature_base64(text: &str) -> Result<[u8; 64], String> {
+pub(crate) fn decode_signature_base64(text: &str) -> Result<[u8; 64], String> {
     if text.len() != 88 || !text.ends_with("==") {
         return Err("invalid Ed25519 signature base64 length".to_owned());
     }
