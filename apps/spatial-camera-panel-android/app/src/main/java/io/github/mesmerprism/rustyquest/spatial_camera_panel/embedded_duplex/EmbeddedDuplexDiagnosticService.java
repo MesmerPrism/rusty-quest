@@ -68,31 +68,40 @@ public final class EmbeddedDuplexDiagnosticService {
                 || !challenge.equals(receipt.getString("challenge"))) {
             throw new IllegalStateException("diagnostic receipt challenge differs");
         }
+        validateFailureProjection(receipt);
         return value;
     }
 
-    static String finalizeReceipt(Context context, String challenge, String status,
-            String enrollmentRecordSha256, String runtimeConfigSha256) throws Exception {
-        if (context == null || challenge == null || !challenge.matches("[0-9a-f]{32}")
-                || status == null || !(status.equals("bootstrap_closed")
-                    || status.equals("bootstrap_failed_closed")
-                    || status.equals("bootstrap_unavailable_closed"))) {
-            throw new IllegalArgumentException("diagnostic finalization");
+    static void validateFailureProjection(JSONObject receipt) throws Exception {
+        if (!receipt.has("failure_stage") || !receipt.has("failure_code")) {
+            throw new IllegalStateException("diagnostic failure projection absent");
         }
-        JSONObject receipt = new JSONObject()
-                .put("$schema", SCHEMA)
-                .put("challenge", challenge)
-                .put("status", status)
-                .put("package_id", BuildConfig.APPLICATION_ID)
-                .put("product_manifest_sha256", BuildConfig.EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256)
-                .put("enrollment_record_sha256", enrollmentRecordSha256 == null
-                        ? JSONObject.NULL : enrollmentRecordSha256)
-                .put("runtime_config_sha256", runtimeConfigSha256 == null
-                        ? JSONObject.NULL : runtimeConfigSha256)
-                .put("local_fixture", true)
-                .put("owner_effects_attempted", false)
-                .put("display_detached", true)
-                .put("finalized_wall_unix_ms", System.currentTimeMillis());
+        String status = receipt.getString("status");
+        if (status.equals("bootstrap_closed")) {
+            if (!receipt.isNull("failure_stage") || !receipt.isNull("failure_code")) {
+                throw new IllegalStateException("successful diagnostic carries a failure assertion");
+            }
+            return;
+        }
+        if (!status.equals("bootstrap_failed_closed")
+                && !status.equals("bootstrap_unavailable_closed")) {
+            throw new IllegalStateException("diagnostic status is invalid");
+        }
+        for (EmbeddedDuplexBootstrap.Failure allowed : EmbeddedDuplexBootstrap.Failure.values()) {
+            if (allowed.stage.equals(receipt.optString("failure_stage"))
+                    && allowed.code.equals(receipt.optString("failure_code"))) {
+                return;
+            }
+        }
+        throw new IllegalStateException("diagnostic failure projection is invalid");
+    }
+
+    static String finalizeReceipt(Context context, String challenge, String status,
+            String enrollmentRecordSha256, String runtimeConfigSha256,
+            EmbeddedDuplexBootstrap.Failure failure) throws Exception {
+        if (context == null) throw new IllegalArgumentException("diagnostic finalization context");
+        JSONObject receipt = receiptDocument(challenge, status, enrollmentRecordSha256,
+                runtimeConfigSha256, failure);
         String value = receipt.toString();
         byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
         if (bytes.length > 4096) throw new IllegalStateException("diagnostic receipt bounds");
@@ -106,11 +115,41 @@ public final class EmbeddedDuplexDiagnosticService {
         try {
             stream.write(bytes);
             atomic.finishWrite(stream);
-        } catch (Exception failure) {
+        } catch (Exception writeFailure) {
             atomic.failWrite(stream);
-            throw failure;
+            throw writeFailure;
         }
         return value;
+    }
+
+    static JSONObject receiptDocument(String challenge, String status,
+            String enrollmentRecordSha256, String runtimeConfigSha256,
+            EmbeddedDuplexBootstrap.Failure failure) throws Exception {
+        if (challenge == null || !challenge.matches("[0-9a-f]{32}")
+                || status == null || !(status.equals("bootstrap_closed")
+                    || status.equals("bootstrap_failed_closed")
+                    || status.equals("bootstrap_unavailable_closed"))
+                || (status.equals("bootstrap_closed") ? failure != null : failure == null)) {
+            throw new IllegalArgumentException("diagnostic finalization");
+        }
+        JSONObject receipt = new JSONObject()
+                .put("$schema", SCHEMA)
+                .put("challenge", challenge)
+                .put("status", status)
+                .put("failure_stage", failure == null ? JSONObject.NULL : failure.stage)
+                .put("failure_code", failure == null ? JSONObject.NULL : failure.code)
+                .put("package_id", BuildConfig.APPLICATION_ID)
+                .put("product_manifest_sha256", BuildConfig.EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256)
+                .put("enrollment_record_sha256", enrollmentRecordSha256 == null
+                        ? JSONObject.NULL : enrollmentRecordSha256)
+                .put("runtime_config_sha256", runtimeConfigSha256 == null
+                        ? JSONObject.NULL : runtimeConfigSha256)
+                .put("local_fixture", true)
+                .put("owner_effects_attempted", false)
+                .put("display_detached", true)
+                .put("finalized_wall_unix_ms", System.currentTimeMillis());
+        validateFailureProjection(receipt);
+        return receipt;
     }
 
     private static File receiptFile(Context context) {

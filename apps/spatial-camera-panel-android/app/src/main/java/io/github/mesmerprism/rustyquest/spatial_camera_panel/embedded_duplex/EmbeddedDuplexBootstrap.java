@@ -15,6 +15,41 @@ import java.security.MessageDigest;
 final class EmbeddedDuplexBootstrap {
     interface ConfigAssembler { String assemble(String exactRequestJson) throws Exception; }
 
+    /** Fixed diagnostic facts only; never carries an exception message or input value. */
+    enum Failure {
+        ENROLLMENT_RESOLVE("enrollment_resolve", "rejected"),
+        FIXTURE_INPUTS("fixture_inputs", "rejected"),
+        PRODUCT_GATE("product_gate", "disabled"),
+        APP_CONTEXT("app_context", "unavailable"),
+        PACKAGED_INPUT_LOAD("packaged_input_load", "rejected"),
+        PACKAGED_REQUEST("packaged_request", "rejected"),
+        NATIVE_ASSEMBLE("native_assemble", "rejected_or_unavailable"),
+        NATIVE_RESULT_SHAPE("native_result_shape", "invalid"),
+        INPUT_CLOSURE("input_closure", "mismatch"),
+        ROUTE_PROJECTION("route_projection", "mismatch"),
+        DIRECTION_PROJECTION("direction_projection", "mismatch"),
+        IDENTITY_LOAD("identity_load", "unavailable"),
+        BOOTSTRAP_BINDINGS("bootstrap_bindings", "rejected"),
+        NATIVE_INITIALIZE("native_initialize", "rejected_or_unavailable"),
+        RESOURCE_INSTALL("resource_install", "failed"),
+        CONTROL_ENDPOINT("control_endpoint", "failed"),
+        UNKNOWN("unknown", "unexpected");
+
+        final String stage;
+        final String code;
+        Failure(String stage, String code) { this.stage = stage; this.code = code; }
+    }
+
+    static final class Trace {
+        private volatile Failure failure = Failure.UNKNOWN;
+        void mark(Failure next) { failure = next; }
+        Failure failure() { return failure; }
+    }
+
+    static void mark(Trace trace, Failure failure) {
+        if (trace != null) trace.mark(failure);
+    }
+
     static final class Prepared {
         final String runtimeConfigJson;
         final String runtimeConfigSha256;
@@ -54,26 +89,42 @@ final class EmbeddedDuplexBootstrap {
 
     static Prepared prepare(Context context, EmbeddedDuplexPackagedInputs.InstalledRole role,
             JSONObject runtimeBindings) throws Exception {
+        return prepare(context, role, runtimeBindings, null);
+    }
+
+    static Prepared prepare(Context context, EmbeddedDuplexPackagedInputs.InstalledRole role,
+            JSONObject runtimeBindings, Trace trace) throws Exception {
+        mark(trace, Failure.PRODUCT_GATE);
         if (!BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED) {
             throw new IllegalStateException("embedded product inputs are disabled");
         }
+        mark(trace, Failure.APP_CONTEXT);
         Context app = context.getApplicationContext();
         if (app == null) throw new IllegalStateException("application context unavailable");
+        mark(trace, Failure.PACKAGED_INPUT_LOAD);
         EmbeddedDuplexPackagedInputs inputs = EmbeddedDuplexPackagedInputs.load(app,
                 BuildConfig.EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256, role);
-        return prepare(inputs, runtimeBindings, EmbeddedDuplexNative::assemblePackagedConfig);
+        return prepare(inputs, runtimeBindings, EmbeddedDuplexNative::assemblePackagedConfig, trace);
     }
 
     static Prepared prepare(EmbeddedDuplexPackagedInputs inputs, JSONObject runtimeBindings,
             ConfigAssembler assembler) throws Exception {
+        return prepare(inputs, runtimeBindings, assembler, null);
+    }
+
+    static Prepared prepare(EmbeddedDuplexPackagedInputs inputs, JSONObject runtimeBindings,
+            ConfigAssembler assembler, Trace trace) throws Exception {
+        mark(trace, Failure.PACKAGED_REQUEST);
         if (inputs == null || runtimeBindings == null || assembler == null) {
             throw new IllegalArgumentException("embedded bootstrap inputs");
         }
         JSONObject request = inputs.packagedConfigRequest(runtimeBindings);
+        mark(trace, Failure.NATIVE_ASSEMBLE);
         String response = assembler.assemble(request.toString());
         if (response == null || response.length() == 0 || response.length() > 2 * 1024 * 1024) {
             throw new IllegalStateException("native packaged configuration unavailable");
         }
+        mark(trace, Failure.NATIVE_RESULT_SHAPE);
         JSONObject result = new JSONObject(response);
         fields(result, "$schema", "runtime_config_json", "runtime_config_sha256",
                 "exact_input_sha256", "packaged_route");
@@ -84,6 +135,7 @@ final class EmbeddedDuplexBootstrap {
             throw new IllegalStateException("native packaged configuration shape");
         }
         JSONObject exact = result.getJSONObject("exact_input_sha256");
+        mark(trace, Failure.INPUT_CLOSURE);
         fields(exact, "product_spec", "product_lock", "client_lock", "media_lifecycle_lock",
                 "app_feature_lock", "media_bindings");
         JSONArray bindings = exact.getJSONArray("media_bindings");
@@ -98,6 +150,7 @@ final class EmbeddedDuplexBootstrap {
             throw new IllegalStateException("native packaged input closure differs");
         }
         JSONObject route = result.getJSONObject("packaged_route");
+        mark(trace, Failure.ROUTE_PROJECTION);
         fields(route, "route_configuration_sha256", "local_peer_id", "remote_peer_id",
                 "outgoing_runtime_spec_id", "incoming_runtime_spec_id", "max_pair_delta_ns",
                 "local_control", "remote_control");
@@ -125,6 +178,7 @@ final class EmbeddedDuplexBootstrap {
                         .getLong("max_pair_delta_ns")) {
             throw new IllegalStateException("native route projection differs from installed role");
         }
+        mark(trace, Failure.DIRECTION_PROJECTION);
         String outgoing = new JSONObject(inputs.json(inputs.role().bindingPath))
                 .getJSONObject("quest").getJSONObject("spec").getString("runtime_spec_id");
         EmbeddedDuplexPackagedInputs.InstalledRole opposite =

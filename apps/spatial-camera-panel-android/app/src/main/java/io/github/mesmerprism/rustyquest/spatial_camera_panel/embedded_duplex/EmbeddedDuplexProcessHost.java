@@ -93,22 +93,25 @@ final class EmbeddedDuplexProcessHost {
         // exact private copy and never retains an Activity, Intent or Bundle.
         String runtimeCopy = runtimeBindings.toString();
         String startupCopy = startup.toString();
-        return submit(() -> initializeOnCommandLane(role, runtimeCopy, startupCopy, false));
+        return submit(() -> initializeOnCommandLane(role, runtimeCopy, startupCopy, false, null));
     }
 
     private String initializeOnCommandLane(EmbeddedDuplexPackagedInputs.InstalledRole role,
-            String runtimeCopy, String startupCopy, boolean fixture) throws Exception {
+            String runtimeCopy, String startupCopy, boolean fixture,
+            EmbeddedDuplexBootstrap.Trace trace) throws Exception {
             localFixture = fixture;
             try {
                 JSONObject runtime = new JSONObject(runtimeCopy);
                 JSONObject enrollment = new JSONObject(startupCopy);
                 EmbeddedDuplexBootstrap.Prepared prepared = EmbeddedDuplexBootstrap.prepare(
-                        applicationContext, role, runtime);
+                        applicationContext, role, runtime, trace);
                 // Preparation stages this exact route in native process state.
                 // Retain its digest even if a later callback or JNI step fails.
                 runtimeConfigSha256 = prepared.runtimeConfigSha256;
+                EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.IDENTITY_LOAD);
                 EmbeddedDuplexIdentity.Identity identity = EmbeddedDuplexIdentity.loadOrCreate(
                         applicationContext);
+                EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.BOOTSTRAP_BINDINGS);
                 EmbeddedDuplexPlatform callbacks = new EmbeddedDuplexPlatform(applicationContext,
                         display, identity, prepared.localPeerId, prepared.remotePeerId,
                         prepared.routeConfigurationSha256, prepared.remoteControlHost,
@@ -118,6 +121,7 @@ final class EmbeddedDuplexProcessHost {
                         new JSONObject(callbacks.loadDispatchReplay()),
                         new JSONObject(callbacks.loadActivationReplay()));
                 platform = callbacks;
+                EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.NATIVE_INITIALIZE);
                 String initialized = EmbeddedDuplexNative.initializeRuntime(prepared.runtimeConfigJson,
                         prepared.runtimeConfigSha256,
                         runtime.getString("validation_epoch_entropy_hex"),
@@ -126,10 +130,12 @@ final class EmbeddedDuplexProcessHost {
                         || initialized.length() > 2 * 1024 * 1024) {
                     throw new IllegalStateException("embedded native initialization unavailable");
                 }
+                EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_INSTALL);
                 EmbeddedDuplexResources installed = new EmbeddedDuplexResources(applicationContext,
                         display, new JSONObject(initialized), prepared.maxPairDeltaNs);
                 resources = installed;
                 callbacks.installResources(installed);
+                EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.CONTROL_ENDPOINT);
                 callbacks.startControl(prepared.localControlHost, prepared.localControlPort);
                 if (!callbacks.controlReady()) {
                     throw new IllegalStateException("authenticated control endpoint unavailable");
@@ -227,15 +233,18 @@ final class EmbeddedDuplexProcessHost {
             diagnosticChallenge = null;
         }
         AtomicReference<String> enrollmentSha = new AtomicReference<>();
+        EmbeddedDuplexBootstrap.Trace trace = new EmbeddedDuplexBootstrap.Trace();
         CompletableFuture<String> bootstrap = submit(() -> {
             try {
+                trace.mark(EmbeddedDuplexBootstrap.Failure.ENROLLMENT_RESOLVE);
                 EmbeddedDuplexEnrollment enrollment =
                         EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
                 enrollmentSha.set(enrollment.recordSha256);
+                trace.mark(EmbeddedDuplexBootstrap.Failure.FIXTURE_INPUTS);
                 EmbeddedDuplexLocalDiagnosticInputs fresh =
                         EmbeddedDuplexLocalDiagnosticInputs.create(enrollment);
                 return initializeOnCommandLane(fresh.role, fresh.runtimeBindings.toString(),
-                        fresh.startup.toString(), true);
+                        fresh.startup.toString(), true, trace);
             } catch (Exception failure) {
                 if (phase.get() == Phase.BOOTSTRAPPING) {
                     phase.set(runtimeConfigSha256 == null ? Phase.NEW : Phase.FAILED);
@@ -251,7 +260,7 @@ final class EmbeddedDuplexProcessHost {
                     detachUninitializedDisplay(expectedGeneration);
                     return CompletableFuture.completedFuture(
                             terminalDiagnosticResult(challenge, "bootstrap_unavailable_closed",
-                                    enrollmentSha.get(), configSha));
+                                    enrollmentSha.get(), configSha, trace.failure()));
                 } catch (Exception cleanup) { return EmbeddedDuplexProcessHost.<String>failed(cleanup); }
             }
             if (current != Phase.READY && current != Phase.FAILED) {
@@ -261,15 +270,16 @@ final class EmbeddedDuplexProcessHost {
             return closeNoMediaAndDetach(expectedGeneration).thenApply(closed ->
                     terminalDiagnosticResult(challenge,
                             failure == null ? "bootstrap_closed" : "bootstrap_failed_closed",
-                            enrollmentSha.get(), configSha));
+                            enrollmentSha.get(), configSha,
+                            failure == null ? null : trace.failure()));
         }).thenCompose(next -> next);
     }
 
     private String terminalDiagnosticResult(String challenge, String status,
-            String enrollmentSha, String configSha) {
+            String enrollmentSha, String configSha, EmbeddedDuplexBootstrap.Failure failure) {
         try {
             return EmbeddedDuplexDiagnosticService.finalizeReceipt(applicationContext,
-                    challenge, status, enrollmentSha, configSha);
+                    challenge, status, enrollmentSha, configSha, failure);
         } catch (Exception receiptFailure) {
             // Cleanup is already terminal. Do not strand the old Activity
             // attachment merely because the optional diagnostic file failed.

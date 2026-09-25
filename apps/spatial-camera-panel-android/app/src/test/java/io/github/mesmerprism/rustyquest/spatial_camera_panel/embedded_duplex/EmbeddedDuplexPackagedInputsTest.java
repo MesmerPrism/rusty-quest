@@ -136,6 +136,20 @@ public final class EmbeddedDuplexPackagedInputsTest {
             assertThrows(IllegalStateException.class, () -> EmbeddedDuplexBootstrap.prepare(inputs,
                     runtime, request -> fakeAssembly(new JSONObject(request), changed).toString()));
         }
+        EmbeddedDuplexBootstrap.Trace nativeTrace = new EmbeddedDuplexBootstrap.Trace();
+        assertThrows(IllegalStateException.class,
+                () -> EmbeddedDuplexBootstrap.prepare(inputs, runtime, request -> null, nativeTrace));
+        assertEquals(EmbeddedDuplexBootstrap.Failure.NATIVE_ASSEMBLE, nativeTrace.failure());
+        EmbeddedDuplexBootstrap.Trace closureTrace = new EmbeddedDuplexBootstrap.Trace();
+        assertThrows(IllegalStateException.class, () -> EmbeddedDuplexBootstrap.prepare(inputs,
+                runtime, request -> fakeAssembly(new JSONObject(request), "exact_input_sha256").toString(),
+                closureTrace));
+        assertEquals(EmbeddedDuplexBootstrap.Failure.INPUT_CLOSURE, closureTrace.failure());
+        EmbeddedDuplexBootstrap.Trace routeTrace = new EmbeddedDuplexBootstrap.Trace();
+        assertThrows(IllegalStateException.class, () -> EmbeddedDuplexBootstrap.prepare(inputs,
+                runtime, request -> fakeAssembly(new JSONObject(request), "local_peer_id").toString(),
+                routeTrace));
+        assertEquals(EmbeddedDuplexBootstrap.Failure.ROUTE_PROJECTION, routeTrace.failure());
     }
 
     private static JSONObject fakeAssembly(JSONObject request, String changed) throws Exception {
