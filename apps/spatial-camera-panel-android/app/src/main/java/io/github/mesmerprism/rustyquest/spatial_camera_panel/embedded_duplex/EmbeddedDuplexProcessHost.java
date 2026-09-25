@@ -182,9 +182,7 @@ final class EmbeddedDuplexProcessHost {
         }
         return submit(() -> {
             try {
-                if (new EmbeddedDuplexStartJournal(applicationContext).unresolved()) {
-                    throw new IllegalStateException("retained duplex Start requires recovery");
-                }
+                new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 EmbeddedDuplexEnrollment enrollment =
                         EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
                 EmbeddedDuplexSessionInputs inputs =
@@ -268,7 +266,15 @@ final class EmbeddedDuplexProcessHost {
 
     private EmbeddedDuplexRuntimeStatus runtimeStatusOnCommandLane() {
         Phase current = phase.get();
-        String state = current == Phase.READY && !localFixture
+        boolean recoveryClear;
+        try {
+            recoveryClear = new EmbeddedDuplexRecoveryCoordinator(applicationContext)
+                    .freshBootstrapAllowed();
+        } catch (Exception unavailable) {
+            recoveryClear = false;
+        }
+        String state = !recoveryClear ? "cleanup_pending"
+                : current == Phase.READY && !localFixture
                 ? "bootstrapped_route_unverified"
                 : current == Phase.NEW ? "uninitialized"
                 : current == Phase.READY ? "local_fixture"

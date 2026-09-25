@@ -9,6 +9,8 @@ import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
+import java.nio.charset.CodingErrorAction;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.util.HashSet;
@@ -62,7 +64,10 @@ final class EmbeddedDuplexStartJournal {
                 offset += count;
             }
             if (input.read() != -1) throw new IllegalStateException("duplex journal grew");
-            String result = new String(bytes, StandardCharsets.UTF_8);
+            String result = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes)).toString();
             phase(result);
             return result;
         }
