@@ -7,11 +7,12 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_manifold_peer::{
     ManifoldCommonLanPeerSessionProposal, ManifoldCommonLanReciprocalEd25519Context,
     ManifoldCommonLanReciprocalEd25519ReviewRequest, ManifoldCommonLanReciprocalEd25519Signature,
-    ManifoldPeerEnrollmentRejectionReason, ManifoldPeerEnrollmentRequest,
-    ManifoldPeerStatusProposal, COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID,
-    COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA, COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA,
-    COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID, PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA,
-    PEER_IDENTITY_SCHEMA, PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
+    ManifoldPeerEnrollmentAction, ManifoldPeerEnrollmentRejectionReason,
+    ManifoldPeerEnrollmentRequest, ManifoldPeerStatusProposal,
+    COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID, COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA,
+    COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA, COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID,
+    PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA, PEER_IDENTITY_SCHEMA,
+    PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
 };
 use rusty_quest_broker_authority::QuestCommonLanContextDraft;
 use serde::Serialize;
@@ -301,21 +302,34 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
         let current = snapshot(host)?;
         let (key_id, public) = key_facts(host, &peer.peer_id)?;
         let digest = key_id.strip_prefix("ed25519.").ok_or("pair key identity")?;
-        let request: ManifoldPeerEnrollmentRequest = serde_json::from_value(json!({
-            "$schema": PEER_ENROLLMENT_REQUEST_SCHEMA,
-            "request_id": format!("request.duplex.enroll.{suffix}.{}", peer.peer_id),
-            "expected_authority_revision": revision(&current, "/enrollment/authority_revision")?,
-            "operator_id": operator, "issued_at_ms": now, "action": "enroll",
-            "credential": {"$schema": PEER_CREDENTIAL_SCHEMA,
+        let credential = serde_json::from_value(json!({
+            "$schema": PEER_CREDENTIAL_SCHEMA,
                 "credential_id": format!("credential.duplex.{}.1", peer.peer_id),
                 "peer_id": peer.peer_id, "trust_domain": "trust.morphospace.peer",
                 "key_id": key_id, "key_generation": 1, "algorithm": "ed25519",
                 "public_key_hex": public, "public_key_sha256": format!("sha256:{digest}"),
                 "valid_from_ms": now.saturating_sub(1000),
                 "expires_at_ms": now.checked_add(180_000).ok_or("pair time overflow")?,
-                "status": "active", "replaced_by_key_id": null}
+                "status": "active", "replaced_by_key_id": null
         }))
         .map_err(safe_decode)?;
+        let request = ManifoldPeerEnrollmentRequest {
+            schema_id: serde_json::from_value(json!(PEER_ENROLLMENT_REQUEST_SCHEMA))
+                .map_err(safe_decode)?,
+            request_id: serde_json::from_value(json!(format!(
+                "request.duplex.enroll.{suffix}.{}",
+                peer.peer_id
+            )))
+            .map_err(safe_decode)?,
+            expected_authority_revision: serde_json::from_value(json!(revision(
+                &current,
+                "/enrollment/authority_revision"
+            )?))
+            .map_err(safe_decode)?,
+            operator_id: serde_json::from_value(json!(operator)).map_err(safe_decode)?,
+            issued_at_ms: now,
+            action: ManifoldPeerEnrollmentAction::Enroll { credential },
+        };
         let receipt = host.authority.review_enrollment(&request, now)?;
         if !receipt.applied {
             remember_specific_failure(
