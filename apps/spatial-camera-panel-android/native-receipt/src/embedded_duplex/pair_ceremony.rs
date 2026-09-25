@@ -7,11 +7,11 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_manifold_peer::{
     ManifoldCommonLanPeerSessionProposal, ManifoldCommonLanReciprocalEd25519Context,
     ManifoldCommonLanReciprocalEd25519ReviewRequest, ManifoldCommonLanReciprocalEd25519Signature,
-    ManifoldPeerEnrollmentRequest, ManifoldPeerStatusProposal,
-    COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID, COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA,
-    COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA, COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID,
-    PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA, PEER_IDENTITY_SCHEMA,
-    PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
+    ManifoldPeerEnrollmentRejectionReason, ManifoldPeerEnrollmentRequest,
+    ManifoldPeerStatusProposal, COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID,
+    COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA, COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA,
+    COMMON_LAN_TCP_TRANSPORT_CONTRACT_ID, PEER_CREDENTIAL_SCHEMA, PEER_ENROLLMENT_REQUEST_SCHEMA,
+    PEER_IDENTITY_SCHEMA, PEER_PROPOSAL_SCHEMA, PEER_STATUS_SCHEMA,
 };
 use rusty_quest_broker_authority::QuestCommonLanContextDraft;
 use serde::Serialize;
@@ -259,11 +259,14 @@ fn key_facts(host: &Host, peer_id: &str) -> Result<(String, String), String> {
 }
 
 fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
+    set_step(host, "prime_snapshot")?;
     let start = snapshot(host)?;
+    set_step(host, "prime_host")?;
     let expected_host = host.packaged_route.runtime_host_id(&host.local_peer_id)?;
     if start.get("host_id").and_then(Value::as_str) != Some(expected_host.as_str()) {
         return Err("pair Runtime Host differs from the packaged peer".into());
     }
+    set_step(host, "prime_freshness")?;
     if start
         .pointer("/enrollment/credentials")
         .and_then(Value::as_array)
@@ -275,6 +278,7 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
     {
         return Err("pair authority already initialized; close before retry".into());
     }
+    set_step(host, "prime_policy")?;
     let operator = start
         .pointer("/trust_policy/trusted_operator_ids/0")
         .and_then(Value::as_str)
@@ -285,7 +289,15 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
         .ok_or("pair adapter policy absent")?;
     let mut peers = host.packaged_route.peers.iter().collect::<Vec<_>>();
     peers.sort_by(|a, b| a.peer_id.cmp(&b.peer_id));
-    for peer in &peers {
+    for (index, peer) in peers.iter().enumerate() {
+        set_step(
+            host,
+            if index == 0 {
+                "prime_enroll_first"
+            } else {
+                "prime_enroll_second"
+            },
+        )?;
         let current = snapshot(host)?;
         let (key_id, public) = key_facts(host, &peer.peer_id)?;
         let digest = key_id.strip_prefix("ed25519.").ok_or("pair key identity")?;
@@ -304,11 +316,24 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
                 "status": "active", "replaced_by_key_id": null}
         }))
         .map_err(safe_decode)?;
-        if !host.authority.review_enrollment(&request, now)?.applied {
+        let receipt = host.authority.review_enrollment(&request, now)?;
+        if !receipt.applied {
+            remember_specific_failure(
+                host,
+                enrollment_rejection_code(receipt.rejection_reason.as_ref()),
+            );
             return Err("pair enrollment rejected".into());
         }
     }
-    for peer in &peers {
+    for (index, peer) in peers.iter().enumerate() {
+        set_step(
+            host,
+            if index == 0 {
+                "prime_status_first"
+            } else {
+                "prime_status_second"
+            },
+        )?;
         let current = snapshot(host)?;
         let (key_id, _) = key_facts(host, &peer.peer_id)?;
         let digest = key_id.strip_prefix("ed25519.").ok_or("pair key identity")?;
@@ -329,6 +354,7 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
             "payload_class": "low_rate_descriptor"
         })).map_err(safe_decode)?;
         if !host.authority.review_peer_status(proposal, now)?.1.applied {
+            remember_specific_failure(host, "peer_status_rejected");
             return Err("pair status rejected".into());
         }
     }
@@ -467,6 +493,39 @@ fn state(host: &Host) -> Result<std::sync::MutexGuard<'_, PairState>, String> {
         .map_err(|_| "pair state poisoned".into())
 }
 
+fn set_step(host: &Host, step: &'static str) -> Result<(), String> {
+    state(host)?.last_step = Some(step.to_owned());
+    Ok(())
+}
+
+fn remember_specific_failure(host: &Host, code: &'static str) {
+    if let Ok(mut current) = state(host) {
+        current.last_failure_code = Some(code);
+    }
+}
+
+fn enrollment_rejection_code(
+    reason: Option<&ManifoldPeerEnrollmentRejectionReason>,
+) -> &'static str {
+    use ManifoldPeerEnrollmentRejectionReason::*;
+    match reason {
+        Some(SchemaMismatch) => "enrollment_schema_mismatch",
+        Some(StaleAuthorityRevision) => "enrollment_stale_revision",
+        Some(ReplayedRequest) => "enrollment_replayed_request",
+        Some(UntrustedOperator) => "enrollment_untrusted_operator",
+        Some(StaleRequest) => "enrollment_stale_request",
+        Some(InvalidCredential) => "enrollment_invalid_credential",
+        Some(ActiveCredentialExists) => "enrollment_active_credential_exists",
+        Some(CredentialNotFound) => "enrollment_credential_not_found",
+        Some(CredentialNotActive) => "enrollment_credential_not_active",
+        Some(InvalidRotation) => "enrollment_invalid_rotation",
+        Some(IdentityCollision) => "enrollment_identity_collision",
+        Some(RevisionExhausted) => "enrollment_revision_exhausted",
+        Some(InvalidAuthorityState) => "enrollment_invalid_authority_state",
+        None => "enrollment_rejected",
+    }
+}
+
 fn checked_state(host: &Host, ceremony_id: &str, expected: Stage) -> Result<(), String> {
     let current = state(host)?;
     if current.stage != expected
@@ -515,14 +574,18 @@ fn failure_code(error: &str) -> &'static str {
 
 fn remember_failure(host: &Host, error: &str) {
     if let Ok(mut current) = state(host) {
-        current.last_failure_code = Some(failure_code(error));
+        if current.last_failure_code.is_none() {
+            current.last_failure_code = Some(failure_code(error));
+        }
     }
 }
 
 fn fail(host: &Host, error: &str) {
     if let Ok(mut current) = state(host) {
         current.stage = Stage::Failed;
-        current.last_failure_code = Some(failure_code(error));
+        if current.last_failure_code.is_none() {
+            current.last_failure_code = Some(failure_code(error));
+        }
     }
 }
 

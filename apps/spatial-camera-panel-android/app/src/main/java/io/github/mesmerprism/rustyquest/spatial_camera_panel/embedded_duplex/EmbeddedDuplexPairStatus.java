@@ -21,8 +21,7 @@ public final class EmbeddedDuplexPairStatus {
                 || "peer_session_current_route_unverified".equals(state))
                 || sessionId != null && !sessionId.matches("session\\.duplex\\.[0-9a-f]{64}")
                 || expiresAtMs < 0L
-                || lastStep != null && !(lastStep.equals("hello") || lastStep.equals("sign_a")
-                    || lastStep.equals("prepare_b") || lastStep.equals("finish_b"))
+                || lastStep != null && !lastStep.matches("[a-z][a-z0-9_]{0,63}")
                 || lastFailureCode != null && !lastFailureCode.matches("[a-z][a-z0-9_]{0,63}")) {
             throw new IllegalArgumentException("pair status invalid");
         }
