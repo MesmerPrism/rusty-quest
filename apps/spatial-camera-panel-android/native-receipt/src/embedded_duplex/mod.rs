@@ -11,6 +11,7 @@ mod java_bridge;
 pub(crate) mod packaged_config;
 pub(crate) mod packaged_route;
 pub(crate) mod pair_lifetime_policy;
+pub(crate) mod start_transaction;
 #[cfg(target_os = "android")]
 mod runtime_host;
 mod runtime_slot;
