@@ -33,6 +33,16 @@ component, path, or generic command. Production peer enrollment remains with
 the private application's reviewed enrollment surface. The local fixture
 proves no peer possession, Sink arm, stereo frames, or reciprocal duplex.
 
+The separate embedded duplex operator provider is debug-source-set only,
+requires DUMP plus the runtime shell UID, and accepts only typed status,
+review, and confirm calls. Status returns verified installed facts and sealed
+record state. Review accepts bounded role, peer public key, policy IDs, and TTL
+fields, then uses the same app-owned review handler as the panel. Confirm
+consumes that exact process-held review object once under an expiry and record
+revision fence. It accepts no caller JSON, native command, fixture selection,
+URI, Intent, component, or private key. This transport does not itself prove
+peer possession, media start, stereo frames, or reciprocal duplex.
+
 The P70 `lsl-rust-float32-lan-outlet-android` package is an opt-in,
 same-LAN, one-channel Float32 Quest-outlet to host-inlet qualification only.
 It does not establish the reverse direction or a default runtime feature.

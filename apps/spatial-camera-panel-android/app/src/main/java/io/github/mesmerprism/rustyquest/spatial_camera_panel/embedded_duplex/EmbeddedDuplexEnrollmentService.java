@@ -7,6 +7,11 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexEnrollmentService {
     private EmbeddedDuplexEnrollmentService() {}
 
+    public static CompletableFuture<EmbeddedDuplexEnrollmentStatus> status(
+            Context context, String roleId) {
+        return EmbeddedDuplexProcessHost.forApplication(context).enrollmentStatus(roleId);
+    }
+
     public static CompletableFuture<EmbeddedDuplexEnrollmentReview> review(
             Context context, EmbeddedDuplexEnrollmentDraft draft) {
         return EmbeddedDuplexProcessHost.forApplication(context).reviewEnrollment(draft);

@@ -1,0 +1,101 @@
+package io.github.mesmerprism.rustyquest.spatial_camera_panel
+
+import android.content.ContentProvider
+import android.content.ContentValues
+import android.content.res.AssetFileDescriptor
+import android.database.Cursor
+import android.net.Uri
+import android.os.Binder
+import android.os.Bundle
+import android.os.ParcelFileDescriptor
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEnrollmentReview
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEnrollmentService
+
+/** Explicit shell operator calls share the panel's app-owned status/review/confirm service. */
+class EmbeddedDuplexOperatorProvider : ContentProvider() {
+  private val gate = Any()
+  private val pending = EmbeddedDuplexOperatorReviewSlot<EmbeddedDuplexEnrollmentReview>()
+
+  override fun onCreate(): Boolean = context != null
+
+  override fun call(method: String, argument: String?, extras: Bundle?): Bundle {
+    if (!BuildConfig.DEBUG || !EmbeddedDuplexOperatorContract.callerIsShell(Binder.getCallingUid())) {
+      closed()
+    }
+    val request = try {
+      EmbeddedDuplexOperatorContract.parseCall(method, argument, extras)
+    } catch (_: Exception) { closed() }
+    val app = requireNotNull(context).applicationContext
+    return try {
+      when (request.route) {
+        EmbeddedDuplexOperatorContract.Route.STATUS -> {
+          val status = EmbeddedDuplexEnrollmentService.status(app, requireNotNull(request.roleId)).get()
+          Bundle().apply {
+            header("verified")
+            putString("challenge", request.challenge)
+            putString("role_id", status.installed.roleId)
+            putString("package_id", status.installed.packageId)
+            putString("signer_sha256", status.installed.signerSha256)
+            putString("manifest_sha256", status.installed.manifestSha256)
+            putString("route_sha256", status.installed.routeSha256)
+            putString("local_key_id", status.installed.localKeyId)
+            putString("local_public_key_hex", status.installed.localPublicKeyHex)
+            putString("local_device_id", status.installed.localDeviceId)
+            putString("local_peer_id", status.installed.localPeerId)
+            putString("remote_device_id", status.installed.remoteDeviceId)
+            putString("remote_peer_id", status.installed.remotePeerId)
+            putString("record_state", status.state)
+            putLong("revision", status.revision)
+            status.recordSha256?.let { putString("record_sha256", it) }
+          }
+        }
+        EmbeddedDuplexOperatorContract.Route.REVIEW -> synchronized(gate) {
+          pending.clear()
+          val review = EmbeddedDuplexEnrollmentService.review(app, requireNotNull(request.draft)).get()
+          pending.install(request.challenge, review.reviewSha256, review)
+          Bundle().apply {
+            header("reviewed")
+            putString("challenge", request.challenge)
+            putString("review_sha256", review.reviewSha256)
+            putString("remote_key_id", review.remoteKeyId)
+            putString("review_details", review.details)
+          }
+        }
+        EmbeddedDuplexOperatorContract.Route.CONFIRM -> {
+          val reviewed = synchronized(gate) {
+            pending.consume(request.challenge, requireNotNull(request.reviewSha256))
+          }
+          val saved = EmbeddedDuplexEnrollmentService.confirm(app, reviewed).get()
+          Bundle().apply {
+            header("committed")
+            putString("challenge", request.challenge)
+            putString("review_sha256", reviewed.reviewSha256)
+            putString("role_id", saved.installed.roleId)
+            putLong("revision", saved.revision)
+            putString("record_sha256", saved.recordSha256)
+            putBoolean("local_fixture", saved.localFixture)
+          }
+        }
+      }
+    } catch (_: Exception) { closed() }
+  }
+
+  private fun Bundle.header(status: String) {
+    putString("schema", EmbeddedDuplexOperatorContract.SCHEMA)
+    putString("status", status)
+  }
+
+  override fun query(uri: Uri, projection: Array<out String>?, selection: String?,
+      selectionArgs: Array<out String>?, sortOrder: String?): Cursor = closed()
+  override fun getType(uri: Uri): String = closed()
+  override fun insert(uri: Uri, values: ContentValues?): Uri? = closed()
+  override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = closed()
+  override fun update(uri: Uri, values: ContentValues?, selection: String?,
+      selectionArgs: Array<out String>?): Int = closed()
+  override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor = closed()
+  override fun openAssetFile(uri: Uri, mode: String): AssetFileDescriptor = closed()
+  override fun openTypedAssetFile(uri: Uri, mimeTypeFilter: String,
+      opts: Bundle?): AssetFileDescriptor = closed()
+
+  private fun closed(): Nothing = throw SecurityException("embedded_duplex_operator_request_rejected")
+}

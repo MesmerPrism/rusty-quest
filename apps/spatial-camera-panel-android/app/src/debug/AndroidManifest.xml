@@ -15,5 +15,12 @@
             android:exported="true"
             android:grantUriPermissions="false"
             android:permission="android.permission.DUMP" />
+        <provider
+            android:name=".EmbeddedDuplexOperatorProvider"
+            android:authorities="${applicationId}.embedded-duplex-operator"
+            android:enabled="true"
+            android:exported="true"
+            android:grantUriPermissions="false"
+            android:permission="android.permission.DUMP" />
     </application>
 </manifest>

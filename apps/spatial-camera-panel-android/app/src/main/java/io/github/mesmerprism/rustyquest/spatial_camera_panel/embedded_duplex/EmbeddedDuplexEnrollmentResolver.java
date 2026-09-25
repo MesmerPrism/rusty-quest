@@ -86,6 +86,24 @@ final class EmbeddedDuplexEnrollmentResolver {
                 (EmbeddedDuplexEnrollmentFence) candidate);
     }
 
+    static EmbeddedDuplexEnrollmentStatus status(Context context, String roleId) throws Exception {
+        if (context == null || context.getApplicationContext() == null || roleId == null) {
+            throw new IllegalArgumentException("enrollment status inputs");
+        }
+        Context app = context.getApplicationContext();
+        EmbeddedDuplexEnrollmentRequest installed =
+                EmbeddedDuplexEnrollmentRequest.localSnapshot(app, roleId);
+        Class<?> registry = Class.forName(REGISTRY);
+        Method method = registry.getMethod("statusEmbeddedDuplexEnrollment",
+                Context.class, Object.class);
+        Object candidate = invoke(method, app, installed);
+        if (!(candidate instanceof EmbeddedDuplexEnrollmentStatus)
+                || ((EmbeddedDuplexEnrollmentStatus) candidate).installed != installed) {
+            throw new IllegalStateException("private enrollment status unavailable");
+        }
+        return (EmbeddedDuplexEnrollmentStatus) candidate;
+    }
+
     static EmbeddedDuplexEnrollment replaceReviewed(Context context,
             EmbeddedDuplexEnrollmentReview review) throws Exception {
         if (context == null || context.getApplicationContext() == null || review == null) {

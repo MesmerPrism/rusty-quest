@@ -215,6 +215,13 @@ final class EmbeddedDuplexProcessHost {
         });
     }
 
+    CompletableFuture<EmbeddedDuplexEnrollmentStatus> enrollmentStatus(String roleId) {
+        if (!("peer_a".equals(roleId) || "peer_b".equals(roleId))) {
+            return failed(new IllegalArgumentException("installed role invalid"));
+        }
+        return submit(() -> EmbeddedDuplexEnrollmentResolver.status(applicationContext, roleId));
+    }
+
     CompletableFuture<EmbeddedDuplexEnrollment> confirmEnrollment(
             EmbeddedDuplexEnrollmentReview review) {
         synchronized (attachmentGate) {
