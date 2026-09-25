@@ -1,7 +1,6 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 
 import android.content.Context;
-import android.system.ErrnoException;
 import android.system.Os;
 import android.system.OsConstants;
 import android.util.Base64;
@@ -9,11 +8,15 @@ import android.util.Base64;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileOutputStream;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
+import java.nio.file.StandardCopyOption;
 import java.security.KeyFactory;
 import java.security.MessageDigest;
 import java.security.PrivateKey;
@@ -63,6 +66,8 @@ final class EmbeddedDuplexIdentity {
     private static final int MAX_AUTHORITY_BYTES = 131142;
     private static final String DIRECTORY_NAME = "embedded-duplex-identity";
     private static final String RECORD_NAME = "ed25519-identity.v1";
+    private static final String PUBLICATION_LOCK_NAME = "ed25519-identity.publish.lock";
+    private static final Object PUBLICATION_MONITOR = new Object();
 
     private EmbeddedDuplexIdentity() {}
 
@@ -98,13 +103,9 @@ final class EmbeddedDuplexIdentity {
         rejectSymbolicLink(temporary);
         try {
             writeNewPrivateFile(temporary, encoded);
-            try {
-                // link(2) publishes the complete fsynced bytes without replacing an existing identity.
-                Os.link(temporary.getAbsolutePath(), record.getAbsolutePath());
-            } catch (ErrnoException raced) {
-                if (raced.errno != OsConstants.EEXIST) {
-                    throw raced;
-                }
+            try (FileOutputStream lock = openPrivatePublicationLock(directory)) {
+                publishCompleteRecord(lock.getChannel(), temporary, record,
+                        () -> syncPrivateDirectory(directory));
             }
         } finally {
             Arrays.fill(encoded, (byte) 0);
@@ -113,6 +114,57 @@ final class EmbeddedDuplexIdentity {
             }
         }
         return load(record);
+    }
+
+    interface DirectorySync { void sync() throws Exception; }
+
+    /** The OS lock coordinates app processes; the monitor avoids overlapping locks in one VM. */
+    static boolean publishCompleteRecord(FileChannel lockChannel, File temporary, File record,
+            DirectorySync directorySync) throws Exception {
+        synchronized (PUBLICATION_MONITOR) {
+            try (FileLock ignored = lockChannel.lock()) {
+                rejectSymbolicLink(record);
+                if (record.exists()) {
+                    return false;
+                }
+                // Both paths are in the same private directory. A crash sees either no record or
+                // the complete fsynced staging file; the lock prevents a second app publisher.
+                Files.move(temporary.toPath(), record.toPath(), StandardCopyOption.ATOMIC_MOVE);
+                directorySync.sync();
+                return true;
+            }
+        }
+    }
+
+    private static FileOutputStream openPrivatePublicationLock(File directory) throws Exception {
+        File lock = new File(directory, PUBLICATION_LOCK_NAME);
+        FileDescriptor descriptor = Os.open(lock.getAbsolutePath(),
+                OsConstants.O_CREAT | OsConstants.O_RDWR | OsConstants.O_CLOEXEC | OsConstants.O_NOFOLLOW,
+                0600);
+        try {
+            int mode = Os.fstat(descriptor).st_mode;
+            if ((mode & OsConstants.S_IFMT) != OsConstants.S_IFREG ||
+                    (mode & (OsConstants.S_IRWXG | OsConstants.S_IRWXO)) != 0) {
+                throw new IllegalStateException("identity publication lock is not private and regular");
+            }
+            return new FileOutputStream(descriptor);
+        } catch (Exception failure) {
+            Os.close(descriptor);
+            throw failure;
+        }
+    }
+
+    private static void syncPrivateDirectory(File directory) throws Exception {
+        FileDescriptor descriptor = Os.open(directory.getAbsolutePath(),
+                OsConstants.O_RDONLY | OsConstants.O_CLOEXEC | OsConstants.O_NOFOLLOW, 0);
+        try {
+            if ((Os.fstat(descriptor).st_mode & OsConstants.S_IFMT) != OsConstants.S_IFDIR) {
+                throw new IllegalStateException("identity directory changed during publication");
+            }
+            Os.fsync(descriptor);
+        } finally {
+            Os.close(descriptor);
+        }
     }
 
     static byte[] signExactAuthorityBytes(Identity identity, byte[] signingBytes) throws Exception {
