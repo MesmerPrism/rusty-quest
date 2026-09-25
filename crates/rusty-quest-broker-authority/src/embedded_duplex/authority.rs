@@ -31,7 +31,8 @@ use rusty_quest_media_stream_android::{
     CurrentOwnerProjectionSource, OwnerDispatchAuthorityProjection, OwnerDispatchAuthorityVerifier,
     OwnerDispatchAuthorizationKind, OwnerDispatchClock, OwnerDispatchRequest,
     ProductActivationAuthorityVerifier, ProductActivationRequest,
-    MAX_OWNER_DISPATCH_FUTURE_SKEW_MS, MAX_OWNER_DISPATCH_REQUEST_AGE_MS,
+    RetainedCleanupAuthorityProjection, MAX_OWNER_DISPATCH_FUTURE_SKEW_MS,
+    MAX_OWNER_DISPATCH_REQUEST_AGE_MS, RETAINED_CLEANUP_PROJECTION_SCHEMA,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -471,6 +472,80 @@ impl QuestEmbeddedDuplexAuthority {
         })
     }
 
+    /// Builds a distinct two-principal cleanup projection from current peer,
+    /// Broker, original-target and requester evidence. It is not an owner
+    /// dispatch request and cannot itself enter the Java registry.
+    pub fn retained_cleanup_projection(
+        &self,
+        grant_id: &DottedId,
+        requester_id: &DottedId,
+        requester_lease_id: &DottedId,
+        authority_peer_id: &DottedId,
+        executor_peer_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<RetainedCleanupAuthorityProjection, String> {
+        let target =
+            self.retained_cleanup_target(grant_id, requester_id, requester_lease_id, now_ms)?;
+        let broker = read_broker(&self.broker)?;
+        let peer = read_peer(&self.peer)?;
+        let snapshot = peer.snapshot();
+        let snapshot_json = peer.snapshot_json().map_err(host_error)?;
+        ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
+            &snapshot_json,
+            &snapshot.trust_policy,
+            &snapshot.provider_epoch_id,
+            &broker,
+        )
+        .map_err(host_error)?;
+        let route = snapshot
+            .pair_media_routes
+            .routes
+            .iter()
+            .find(|route| route.grant_id() == grant_id)
+            .ok_or_else(|| "cleanup route is absent".to_owned())?;
+        let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(route) = route else {
+            return Err("cleanup requires common-LAN route".to_owned());
+        };
+        let topology = &route.signed_topology_evidence;
+        let peers_match = (&topology.initiator_peer_id == authority_peer_id
+            || &topology.responder_peer_id == authority_peer_id)
+            && (&topology.initiator_peer_id == executor_peer_id
+                || &topology.responder_peer_id == executor_peer_id)
+            && authority_peer_id != executor_peer_id;
+        if !peers_match
+            || target.terminal_route_sha256 != typed_sha256(route)?
+            || target.provider_epoch_id != snapshot.provider_epoch_id
+            || target.platform_runtime_spec_id != route.platform_runtime_spec_id
+            || target.requester_expires_at_ms <= now_ms
+        {
+            return Err("retained cleanup source authority differs".to_owned());
+        }
+        Ok(RetainedCleanupAuthorityProjection {
+            schema_id: RETAINED_CLEANUP_PROJECTION_SCHEMA.to_owned(),
+            authority_peer_id: authority_peer_id.to_string(),
+            executor_peer_id: executor_peer_id.to_string(),
+            peer_session_id: route.peer_session_id.to_string(),
+            route_grant_id: route.grant_id.to_string(),
+            route_authority_revision: snapshot.pair_media_routes.authority_revision.get(),
+            provider_epoch_id: target.provider_epoch_id.to_string(),
+            platform_runtime_spec_id: target.platform_runtime_spec_id.to_string(),
+            target_client_id: target.target_client_id.to_string(),
+            target_runtime_lease_id: target.target_runtime_lease_id.to_string(),
+            requester_id: target.requester_id.to_string(),
+            requester_runtime_lease_id: target.requester_lease_id.to_string(),
+            trusted_revoker: target.trusted_revoker,
+            cleanup_target_sha256: target.cleanup_target_sha256,
+            terminal_route_sha256: target.terminal_route_sha256,
+            signed_topology_sha256: typed_sha256(topology)?,
+            historical_topology_expires_at_ms: topology.expires_at_ms,
+            requester_expires_at_ms: target.requester_expires_at_ms,
+            expires_at_ms: retained_cleanup_projection_expiry(
+                target.requester_expires_at_ms,
+                now_ms,
+            ),
+        })
+    }
+
     /// Returns the complete durable v5 Runtime Host snapshot JSON.
     ///
     /// # Errors
@@ -514,6 +589,13 @@ impl QuestEmbeddedDuplexAuthority {
         let peer = read_peer(&self.peer)?;
         verify_projection_against_retained(&peer, projection, signer_key_id, now_ms)
     }
+}
+
+// Historical topology expiry is deliberately not an input: terminal cleanup
+// retains its digest as target evidence but derives fresh authority solely
+// from the current requester lease.
+fn retained_cleanup_projection_expiry(requester_expires_at_ms: u64, now_ms: u64) -> u64 {
+    requester_expires_at_ms.min(now_ms.saturating_add(30_000))
 }
 
 /// Concrete dispatcher verifier over the same live authority instances.
@@ -1026,6 +1108,12 @@ mod tests {
         lease.lease_id = revoker_lease.clone();
         lease.holder_id = revoker.clone();
         assert_eq!(check(&lease, &revoker, &revoker_lease, 100), Ok(true));
+        let historical_topology_expired_at_ms = 50;
+        assert!(historical_topology_expired_at_ms < 100);
+        assert_eq!(
+            retained_cleanup_projection_expiry(lease.expires_at_ms, 100),
+            200
+        );
         assert!(check(&lease, &attacker, &revoker_lease, 100).is_err());
         lease.derivative_binding = Some(ManifoldRuntimeDerivativeLeaseBinding {
             schema_id: SchemaId::new("rusty.manifold.runtime_host.derivative_lease_binding.v1")

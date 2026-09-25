@@ -2,8 +2,10 @@
 //! one process-local Android owner registry.
 
 mod owner_dispatch;
+mod retained_cleanup;
 
 pub use owner_dispatch::*;
+pub use retained_cleanup::*;
 
 use rusty_quest_media_stream::{
     MediaStreamOwnerAction, MediaStreamOwnerActionKind, MediaStreamOwnerKind,
