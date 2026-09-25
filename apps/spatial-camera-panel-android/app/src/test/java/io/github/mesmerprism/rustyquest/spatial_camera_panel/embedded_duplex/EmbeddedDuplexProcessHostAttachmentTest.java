@@ -65,6 +65,20 @@ public final class EmbeddedDuplexProcessHostAttachmentTest {
         assertEquals(generation + 1L, host.attachDisplay(new FakeDisplay()));
     }
 
+    @Test public void typedNoMediaCloseReturnsFreshAttachmentGeneration() throws Exception {
+        EmbeddedDuplexProcessHost host = newIsolatedHost();
+        long first = host.attachDisplay(new FakeDisplay());
+        EmbeddedDuplexRuntimeStatus ready = host.runtimeStatus().get();
+        assertEquals("uninitialized", ready.state);
+        assertTrue(ready.displayAttached);
+        ExecutionException stale = assertThrows(ExecutionException.class,
+                () -> host.closeRealPeerNoMedia(first + 1L).get());
+        assertTrue(stale.getCause().getMessage().contains("unavailable"));
+        assertEquals("uninitialized-display-detached", host.closeRealPeerNoMedia(first).get());
+        assertFalse(host.runtimeStatus().get().displayAttached);
+        assertEquals(first + 1L, host.attachDisplay(new FakeDisplay()));
+    }
+
     private static EmbeddedDuplexProcessHost newIsolatedHost() throws Exception {
         Constructor<EmbeddedDuplexProcessHost> constructor =
                 EmbeddedDuplexProcessHost.class.getDeclaredConstructor(Context.class);

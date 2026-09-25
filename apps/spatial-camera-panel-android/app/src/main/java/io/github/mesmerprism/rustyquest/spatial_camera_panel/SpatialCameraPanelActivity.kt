@@ -3485,6 +3485,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   embeddedDuplexRuntimeFuture = null
                   scheduleOrderedActivityDestroyCleanup()
                 } else {
+                  // Keep the old display callback and lifecycle executor reachable.
+                  // The process host remains CLOSING for exact no-media retry;
+                  // Activity replacement must not silently adopt this generation.
                   runOnUiThread { marker("channel=embedded-duplex status=no-media-close-pending") }
                 }
               }

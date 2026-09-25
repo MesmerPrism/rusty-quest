@@ -1942,3 +1942,6 @@ inputs. Bootstrap returns `bootstrapped_route_unverified`; it does not prove
 peer possession, admitted media, rendered frames, Stop, or Revoke. A no-media
 close is terminal only after the native no-effect proof, Java resources, and
 display barrier all succeed. A rejected close keeps that exact host for retry.
+While the Activity remains started, its lifecycle poll installs a fresh display
+generation after a successful close. Operators can wait for `display_attached`
+in `runtime_status` before another bootstrap.
