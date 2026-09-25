@@ -182,6 +182,9 @@ final class EmbeddedDuplexProcessHost {
         }
         return submit(() -> {
             try {
+                if (new EmbeddedDuplexStartJournal(applicationContext).unresolved()) {
+                    throw new IllegalStateException("retained duplex Start requires recovery");
+                }
                 EmbeddedDuplexEnrollment enrollment =
                         EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
                 EmbeddedDuplexSessionInputs inputs =
