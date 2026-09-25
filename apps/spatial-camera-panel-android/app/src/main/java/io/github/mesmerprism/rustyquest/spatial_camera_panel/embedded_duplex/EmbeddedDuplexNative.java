@@ -4,6 +4,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 public final class EmbeddedDuplexNative {
     public static final int FRAME_IDENTITY_WORDS = 14;
     public static final int FRAME_OBSERVATION_WORDS = 17;
+    public static final int FRAME_TIMED_OBSERVATION_WORDS = 19;
     static { System.loadLibrary("spatial_camera_panel_native_receipt"); }
     private EmbeddedDuplexNative() {}
 
@@ -12,6 +13,11 @@ public final class EmbeddedDuplexNative {
     public static native boolean registerReceiverFrame(long[] identity);
     public static native boolean recordReceiverFrameRendered(long[] identity);
     public static native long[] currentReceiverFrame(long receiverGeneration,
+            long connectionGeneration, long routeGeneration, long decoderToken,
+            long readerGeneration, long maxAgeNs);
+    // Same 17 words, followed by native CLOCK_MONOTONIC observed-at and
+    // observed-at minus the oldest register/render/acquire witness.
+    public static native long[] currentReceiverFrameTimed(long receiverGeneration,
             long connectionGeneration, long routeGeneration, long decoderToken,
             long readerGeneration, long maxAgeNs);
     public static native void retireReceiverGeneration(long receiverGeneration);

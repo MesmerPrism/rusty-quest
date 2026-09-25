@@ -124,6 +124,83 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_currentReceiverFrameTimed(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    receiver: jlong,
+    connection: jlong,
+    route: jlong,
+    decoder: jlong,
+    reader: jlong,
+    max_age_ns: jlong,
+) -> jlongArray {
+    if [receiver, connection, route, decoder, reader, max_age_ns]
+        .iter()
+        .any(|value| *value <= 0)
+        || max_age_ns > 5_000_000_000
+    {
+        return std::ptr::null_mut();
+    }
+    let Some((observation, observed_at)) =
+        stream::current_embedded_receiver_frame_timed_observation(
+            receiver as u64,
+            connection as u64,
+            route as u64,
+            decoder as u64,
+            reader as u64,
+            max_age_ns as u64,
+        )
+    else {
+        return std::ptr::null_mut();
+    };
+    let identity = observation.identity;
+    let oldest = observation
+        .registered_monotonic_ns
+        .min(observation.rendered_monotonic_ns)
+        .min(observation.acquired_monotonic_ns);
+    if oldest == 0
+        || oldest > observed_at
+        || observed_at > i64::MAX as u64
+        || observation.registered_monotonic_ns > observed_at
+        || observation.rendered_monotonic_ns > observed_at
+        || observation.acquired_monotonic_ns > observed_at
+        || observation.registered_monotonic_ns > observation.rendered_monotonic_ns
+        || observation.registered_monotonic_ns > observation.acquired_monotonic_ns
+        || observed_at - oldest > i64::MAX as u64
+    {
+        return std::ptr::null_mut();
+    }
+    let words = [
+        receiver,
+        connection,
+        route,
+        decoder,
+        reader,
+        identity.presentation_time_ns,
+        identity.source_elapsed_ns,
+        identity.source_unix_ns,
+        identity.pair_id as i64,
+        identity.left_source_frame as i64,
+        identity.right_source_frame as i64,
+        identity.left_sensor_timestamp_ns,
+        identity.right_sensor_timestamp_ns,
+        identity.pair_delta_ns as i64,
+        observation.registered_monotonic_ns as i64,
+        observation.rendered_monotonic_ns as i64,
+        observation.acquired_monotonic_ns as i64,
+        observed_at as i64,
+        (observed_at - oldest) as i64,
+    ];
+    let Ok(array) = env.new_long_array(words.len() as i32) else {
+        return std::ptr::null_mut();
+    };
+    if env.set_long_array_region(&array, 0, &words).is_err() {
+        return std::ptr::null_mut();
+    }
+    array.into_raw()
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_retireReceiverGeneration(
     _env: JNIEnv<'_>,
     _class: JClass<'_>,

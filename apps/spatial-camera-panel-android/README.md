@@ -1959,3 +1959,13 @@ selection. The ceremony does not call `media_command`, issue a media route, or
 start an owner. `close_no_media` is the terminal retry path after a rejected or
 expired ceremony. These peer-session receipts are not a current media route
 or reciprocal rendered-frame acceptance.
+
+The frame-window source slice adds a separate native 19-word readback: the
+existing exact 17 frame words plus `CLOCK_MONOTONIC` observed-at and oldest
+register/render/acquire witness age. `EmbeddedDuplexFrameWindow` samples in
+process every 250 ms, retains sticky continuity failures, and can produce a
+challenge-bound 110-second receipt. It is not connected to Start or the debug
+provider yet. The Start owner must supply live route and activation fences
+before and after each native sample and at receipt readback, arm only after
+verified activation, and cancel before Stop/cleanup. Until that shared handler
+exists, `frame_status` and reciprocal frame qualification remain unavailable.

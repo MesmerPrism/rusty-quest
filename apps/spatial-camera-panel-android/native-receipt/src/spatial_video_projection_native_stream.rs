@@ -275,6 +275,30 @@ pub(crate) fn current_embedded_receiver_frame_observation(
     reader_generation: u64,
     max_age_ns: u64,
 ) -> Option<crate::embedded_duplex::frame_identity::ReceiverFrameObservation> {
+    current_embedded_receiver_frame_timed_observation(
+        receiver_generation,
+        connection_generation,
+        route_generation,
+        decoder_token,
+        reader_generation,
+        max_age_ns,
+    )
+    .map(|(observation, _)| observation)
+}
+
+/// The observation time must come from the same CLOCK_MONOTONIC query that
+/// establishes freshness; Java wall time cannot reconstruct this witness.
+pub(crate) fn current_embedded_receiver_frame_timed_observation(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    max_age_ns: u64,
+) -> Option<(
+    crate::embedded_duplex::frame_identity::ReceiverFrameObservation,
+    u64,
+)> {
     if max_age_ns == 0
         || !projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
     {
@@ -294,7 +318,7 @@ pub(crate) fn current_embedded_receiver_frame_observation(
     )?;
     observation
         .is_fresh_at(now as u64, max_age_ns)
-        .then_some(observation)
+        .then_some((observation, now as u64))
 }
 
 pub(crate) fn retire_embedded_receiver_generation(receiver_generation: u64) {

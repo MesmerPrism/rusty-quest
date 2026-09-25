@@ -150,6 +150,19 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                 ? evidence : null;
     }
 
+    /** Native-clock receipt witness, preserving the exact 17-word frame ABI. */
+    public long[] currentTimedFrame(long maxAgeNs) {
+        long connection = connectionGeneration;
+        ReceiverRuntime current = receiver;
+        if (surfaceReleased || connection <= 0L || current == null
+                || !"receiving".equals(current.snapshot().state())) return null;
+        long[] evidence = EmbeddedDuplexNative.currentReceiverFrameTimed(generation, connection,
+                staged.routeGeneration(), staged.decoderToken(), staged.readerGeneration(), maxAgeNs);
+        return connection == connectionGeneration && !surfaceReleased
+                && evidence != null && evidence.length == EmbeddedDuplexNative.FRAME_TIMED_OBSERVATION_WORDS
+                ? evidence : null;
+    }
+
     @Override public synchronized MediaProviderReadback execute(MediaOwnerAction action,
             CancellationHandle cancellation) throws Exception {
         if ("arm_receiver".equals(action.actionKind())) prepare();
