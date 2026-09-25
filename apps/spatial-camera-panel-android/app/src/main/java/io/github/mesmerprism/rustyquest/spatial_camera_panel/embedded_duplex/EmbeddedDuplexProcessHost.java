@@ -41,6 +41,8 @@ final class EmbeddedDuplexProcessHost {
     private String runtimeConfigSha256;
     private volatile boolean localFixture;
     private String diagnosticChallenge;
+    // A single process-local review is held by object identity and consumed once.
+    private EmbeddedDuplexEnrollmentReview pendingReview;
 
     private EmbeddedDuplexProcessHost(Context applicationContext) {
         this.applicationContext = applicationContext;
@@ -88,6 +90,7 @@ final class EmbeddedDuplexProcessHost {
                     || !phase.compareAndSet(Phase.NEW, Phase.BOOTSTRAPPING)) {
                 return failed(new IllegalStateException("embedded process host or display unavailable"));
             }
+            pendingReview = null;
         }
         // The caller may mutate its JSON after returning; command lane sees an
         // exact private copy and never retains an Activity, Intent or Bundle.
@@ -172,6 +175,7 @@ final class EmbeddedDuplexProcessHost {
                     || !phase.compareAndSet(Phase.NEW, Phase.PROVISIONING)) {
                 return failed(new IllegalStateException("process authority must terminate before enrollment change"));
             }
+            pendingReview = null;
         }
         return submit(() -> {
             try {
@@ -179,6 +183,55 @@ final class EmbeddedDuplexProcessHost {
                     throw new IllegalStateException("native process or staged route is not terminal");
                 }
                 return EmbeddedDuplexEnrollmentResolver.replace(applicationContext, reviewedDraft);
+            } finally {
+                phase.set(Phase.NEW);
+            }
+        });
+    }
+
+    CompletableFuture<EmbeddedDuplexEnrollmentReview> reviewEnrollment(
+            EmbeddedDuplexEnrollmentDraft draft) {
+        synchronized (attachmentGate) { pendingReview = null; }
+        if (draft == null) return failed(new IllegalArgumentException("enrollment review draft"));
+        return submit(() -> {
+            synchronized (attachmentGate) {
+                if (displayDetaching || closeInFlight || platform != null || resources != null
+                        || runtimeConfigSha256 != null || phase.get() != Phase.NEW) {
+                    throw new IllegalStateException("process authority must terminate before enrollment review");
+                }
+            }
+            if (!EmbeddedDuplexNative.processIdleForEnrollment()) {
+                throw new IllegalStateException("native process or staged route is not terminal");
+            }
+            EmbeddedDuplexEnrollmentReview review =
+                    EmbeddedDuplexEnrollmentResolver.review(applicationContext, draft);
+            synchronized (attachmentGate) {
+                if (displayDetaching || closeInFlight || phase.get() != Phase.NEW) {
+                    throw new IllegalStateException("process changed during enrollment review");
+                }
+                pendingReview = review;
+            }
+            return review;
+        });
+    }
+
+    CompletableFuture<EmbeddedDuplexEnrollment> confirmEnrollment(
+            EmbeddedDuplexEnrollmentReview review) {
+        synchronized (attachmentGate) {
+            if (review == null || pendingReview != review || review.expired()
+                    || displayDetaching || closeInFlight || platform != null || resources != null
+                    || runtimeConfigSha256 != null
+                    || !phase.compareAndSet(Phase.NEW, Phase.PROVISIONING)) {
+                return failed(new IllegalStateException("enrollment review unavailable or expired"));
+            }
+            pendingReview = null;
+        }
+        return submit(() -> {
+            try {
+                if (review.expired() || !EmbeddedDuplexNative.processIdleForEnrollment()) {
+                    throw new IllegalStateException("review expired or native process is not terminal");
+                }
+                return EmbeddedDuplexEnrollmentResolver.replaceReviewed(applicationContext, review);
             } finally {
                 phase.set(Phase.NEW);
             }

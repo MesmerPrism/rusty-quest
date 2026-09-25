@@ -7,8 +7,13 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexEnrollmentService {
     private EmbeddedDuplexEnrollmentService() {}
 
-    public static CompletableFuture<EmbeddedDuplexEnrollment> replaceAfterTerminalClose(
-            Context context, EmbeddedDuplexEnrollmentDraft reviewedDraft) {
-        return EmbeddedDuplexProcessHost.forApplication(context).replaceEnrollment(reviewedDraft);
+    public static CompletableFuture<EmbeddedDuplexEnrollmentReview> review(
+            Context context, EmbeddedDuplexEnrollmentDraft draft) {
+        return EmbeddedDuplexProcessHost.forApplication(context).reviewEnrollment(draft);
+    }
+
+    public static CompletableFuture<EmbeddedDuplexEnrollment> confirm(
+            Context context, EmbeddedDuplexEnrollmentReview review) {
+        return EmbeddedDuplexProcessHost.forApplication(context).confirmEnrollment(review);
     }
 }

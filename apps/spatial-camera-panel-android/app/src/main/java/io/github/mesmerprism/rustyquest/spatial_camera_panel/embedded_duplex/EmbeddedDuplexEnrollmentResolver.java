@@ -67,6 +67,58 @@ final class EmbeddedDuplexEnrollmentResolver {
         return resolved;
     }
 
+    static EmbeddedDuplexEnrollmentReview review(Context context,
+            EmbeddedDuplexEnrollmentDraft draft) throws Exception {
+        if (context == null || context.getApplicationContext() == null || draft == null) {
+            throw new IllegalArgumentException("enrollment review inputs");
+        }
+        Context app = context.getApplicationContext();
+        EmbeddedDuplexEnrollmentRequest installed =
+                EmbeddedDuplexEnrollmentRequest.localSnapshot(app, draft.roleId);
+        Class<?> registry = Class.forName(REGISTRY);
+        Method method = registry.getMethod("reviewEmbeddedDuplexEnrollment",
+                Context.class, Object.class, Object.class);
+        Object candidate = invoke(method, app, installed, draft);
+        if (!(candidate instanceof EmbeddedDuplexEnrollmentFence)) {
+            throw new IllegalStateException("private enrollment review unavailable");
+        }
+        return new EmbeddedDuplexEnrollmentReview(installed, draft,
+                (EmbeddedDuplexEnrollmentFence) candidate);
+    }
+
+    static EmbeddedDuplexEnrollment replaceReviewed(Context context,
+            EmbeddedDuplexEnrollmentReview review) throws Exception {
+        if (context == null || context.getApplicationContext() == null || review == null) {
+            throw new IllegalArgumentException("enrollment confirmation inputs");
+        }
+        Context app = context.getApplicationContext();
+        EmbeddedDuplexEnrollmentRequest current =
+                EmbeddedDuplexEnrollmentRequest.localSnapshot(app, review.draft.roleId);
+        if (!review.installed.sameFacts(current)) {
+            throw new IllegalStateException("installed package or identity changed after review");
+        }
+        Class<?> registry = Class.forName(REGISTRY);
+        Method method = registry.getMethod("replaceReviewedEmbeddedDuplexEnrollment",
+                Context.class, Object.class, Object.class, Object.class);
+        Object candidate = invoke(method, app, current, review.draft, review.fence);
+        if (!(candidate instanceof EmbeddedDuplexEnrollment)) {
+            throw new IllegalStateException("private reviewed replacement unavailable");
+        }
+        EmbeddedDuplexEnrollment result = (EmbeddedDuplexEnrollment) candidate;
+        if (result.installed != current || !review.draft.remotePublicKeyHex.equals(result.remotePublicKeyHex)
+                || !review.draft.runtimeHostId.equals(result.runtimeHostId)
+                || !review.draft.trustedOperatorId.equals(result.trustedOperatorId)
+                || !review.draft.adapterId.equals(result.adapterId)
+                || !review.draft.mediaRevokerId.equals(result.mediaRevokerId)
+                || !review.draft.admissionAuthorityId.equals(result.admissionAuthorityId)
+                || review.draft.maxTokenTtlMs != result.maxTokenTtlMs
+                || review.draft.localFixture != result.localFixture
+                || result.revision != review.fence.revision + 1L) {
+            throw new IllegalStateException("private enrollment changed reviewed transaction");
+        }
+        return result;
+    }
+
     /** Private app authors the fixed debug fixture; shell contributes no enrollment fields. */
     static EmbeddedDuplexEnrollmentDraft localDiagnosticDraft(Context context) throws Exception {
         if (context == null || context.getApplicationContext() == null) {

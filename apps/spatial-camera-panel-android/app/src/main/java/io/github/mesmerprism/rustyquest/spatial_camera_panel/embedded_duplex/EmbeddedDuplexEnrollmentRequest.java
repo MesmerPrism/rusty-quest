@@ -79,4 +79,15 @@ public final class EmbeddedDuplexEnrollmentRequest {
         }
         return value.toString();
     }
+
+    boolean sameFacts(EmbeddedDuplexEnrollmentRequest other) {
+        return other != null && roleId.equals(other.roleId)
+                && packageId.equals(other.packageId) && signerSha256.equals(other.signerSha256)
+                && manifestSha256.equals(other.manifestSha256)
+                && routeSha256.equals(other.routeSha256) && localKeyId.equals(other.localKeyId)
+                && localPublicKeyHex.equals(other.localPublicKeyHex)
+                && localDeviceId.equals(other.localDeviceId) && localPeerId.equals(other.localPeerId)
+                && remoteDeviceId.equals(other.remoteDeviceId)
+                && remotePeerId.equals(other.remotePeerId);
+    }
 }
