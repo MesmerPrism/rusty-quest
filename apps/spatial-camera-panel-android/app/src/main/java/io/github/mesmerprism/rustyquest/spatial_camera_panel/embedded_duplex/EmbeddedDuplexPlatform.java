@@ -23,6 +23,20 @@ import java.nio.file.LinkOption;
 
 /** App-private JNI callbacks. Authority stays in the embedded Rust Runtime Host. */
 final class EmbeddedDuplexPlatform {
+    private volatile EmbeddedDuplexProcessFence.CallbackGuard processCallbacks;
+    void bindProcessFence(EmbeddedDuplexProcessFence fence) {
+        if (fence == null || processCallbacks != null) throw new IllegalStateException("callback fence unavailable");
+        processCallbacks = fence.callbacks();
+    }
+    void retireProcessCallbacks() {
+        EmbeddedDuplexProcessFence.CallbackGuard guard = processCallbacks;
+        if (guard != null) guard.retire();
+    }
+    private void requireProcessCallback() {
+        EmbeddedDuplexProcessFence.CallbackGuard guard = processCallbacks;
+        if (guard == null) throw new IllegalStateException("app callback fence absent");
+        guard.requireLive();
+    }
     private static final int MAX_REPLAY_BYTES = 16 * 1024 * 1024;
     private final EmbeddedDuplexIdentity.Identity identity;
     private final EmbeddedDuplexDisplay display;
@@ -103,6 +117,7 @@ final class EmbeddedDuplexPlatform {
         if (registry == null || endpoint != null) throw new IllegalStateException("control initialization order");
         endpoint = new OwnerDispatchTcpEndpoint(numericIpv4(localControlIp), localControlPort,
                 frame -> {
+                    requireProcessCallback();
                     if (localFixture) {
                         throw new IllegalStateException("local fixture has no peer owner authority");
                     }
@@ -116,6 +131,7 @@ final class EmbeddedDuplexPlatform {
     // Public visibility is solely for GetMethodID. This package-private object is
     // retained by native GlobalRef and is never exported through an Android component.
     public String executeAndVerify(String authorityJson, String ticketJson, boolean compensate) throws Exception {
+        requireProcessCallback();
         JSONObject authority = new JSONObject(authorityJson);
         MediaOwnerAction ticket = MediaOwnerAction.parse(ticketJson);
         if (!"rusty.quest.c1.owner_projection.v1".equals(authority.getString("$schema"))
@@ -129,6 +145,7 @@ final class EmbeddedDuplexPlatform {
         }
         PackagedAndroidMediaOwnerRegistry current = registry;
         if (current == null) throw new IllegalStateException("platform registry absent");
+        requireProcessCallback();
         EmbeddedDuplexActivationGate gate = activationGate;
         EmbeddedDuplexActivationGate.MediaTicket activationTicket = activationTicket(ticket);
         if (gate != null) gate.beforeOwnerEffect(authority, activationTicket, compensate);
@@ -155,30 +172,36 @@ final class EmbeddedDuplexPlatform {
     // Public visibility is required by the native ProductActivationRegistry callback.
     public String activateProduct(String activationId, String authorityJson, String proofJson)
             throws Exception {
+        requireProcessCallback();
         EmbeddedDuplexActivationGate gate = activationGate;
         if (gate == null || resources == null) throw new IllegalStateException("resources absent");
         return gate.activate(activationId, authorityJson, proofJson);
     }
 
     public byte[] signAuthorityBytes(byte[] exactNativeBytes) throws Exception {
+        requireProcessCallback();
         return EmbeddedDuplexIdentity.signExactAuthorityBytes(identity, exactNativeBytes);
     }
 
     // Native calls this only after current route, enrollment, endpoint and time
     // validation. The generic dispatch signer cannot sign this domain.
     public byte[] signValidatedCommonLanBytes(byte[] validatedNativeBytes) throws Exception {
+        requireProcessCallback();
         return EmbeddedDuplexIdentity.signValidatedCommonLanBytes(identity, validatedNativeBytes);
     }
 
     public byte[] signPairCeremonyBytes(byte[] exactNativeBytes) throws Exception {
+        requireProcessCallback();
         return EmbeddedDuplexIdentity.signPairCeremonyBytes(identity, exactNativeBytes);
     }
 
     public byte[] localPublicKeyBytes() {
+        requireProcessCallback();
         return identity.rawPublicKey();
     }
 
     public byte[] exchangeOwnerFrame(String targetPeerId, byte[] exactFrame) throws Exception {
+        requireProcessCallback();
         if (!remotePeerId.equals(targetPeerId) || !controlReady()) {
             throw new IllegalStateException("owner control target unavailable");
         }
@@ -186,10 +209,12 @@ final class EmbeddedDuplexPlatform {
     }
 
     public synchronized void persistDispatchReplay(String snapshotJson) throws Exception {
+        requireProcessCallback();
         persistReplay(replayFile, snapshotJson);
     }
 
     public synchronized void persistActivationReplay(String snapshotJson) throws Exception {
+        requireProcessCallback();
         persistReplay(activationReplayFile, snapshotJson);
     }
 

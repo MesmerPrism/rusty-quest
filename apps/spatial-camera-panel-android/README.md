@@ -1969,3 +1969,32 @@ provider yet. The Start owner must supply live route and activation fences
 before and after each native sample and at receipt readback, arm only after
 verified activation, and cancel before Stop/cleanup. Until that shared handler
 exists, `frame_status` and reciprocal frame qualification remain unavailable.
+
+## Embedded duplex app process fence
+
+`EmbeddedDuplexProcessFence` owns a fixed app-private FileChannel lock for the
+ProcessHost singleton lifetime. Every queued app handler acquires or checks it;
+bootstrap records a synced app generation, random process nonce, pending marker,
+and exact checkpoint/evidence byte digests before native route preparation.
+Platform JNI callbacks and authenticated ingress use a generation-bound app
+callback guard. Successful no-media native closure plus Java/display barriers
+retire that callback object and clear the app pending marker; releasing a lock
+alone never clears it. The lock inode and initialization witness are permanent
+private state and must never be replaced or deleted during ordinary operation.
+
+A restarted pending writer remains cleanup-only. There is currently no native
+cleanup restoration handler, so this state cannot bootstrap, enroll, sign, or
+claim terminal via an empty in-memory registry. Existing journals without a
+fence binding, changed bound journal bytes, missing state/witness, malformed
+records, and interrupted fence initialization fail closed. Migration requires
+separate reviewed recovery; no reboot clock continuity is inferred or restored.
+These digest bindings capture app startup and before-effect snapshots; they do
+not attest a native journal writer or a native executor process generation.
+
+`tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1` tests actual competing
+host processes, abrupt process death/reacquisition, durable generation,
+retired/stale callbacks, journal digest mismatch, and missing/corrupt state.
+This gate proves app writer exclusion only. JNI executor-generation binding,
+physical provider teardown, device force-stop behavior, and reciprocal media
+remain unverified. UI and debug typed operator calls retain the same app handlers
+and existing pre-Start boundary; this slice adds no Start operation.

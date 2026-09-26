@@ -23,6 +23,8 @@ final class EmbeddedDuplexProcessHost {
     }
 
     private final Context applicationContext;
+    // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
+    private volatile EmbeddedDuplexProcessFence processFence;
     private final EmbeddedDuplexDisplaySlot display = new EmbeddedDuplexDisplaySlot();
     private final Object attachmentGate = new Object();
     private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.NEW);
@@ -69,6 +71,9 @@ final class EmbeddedDuplexProcessHost {
      * host needs typed Stop and platform cleanup before its display can move. */
     void detachUninitializedDisplay(long expectedGeneration) throws Exception {
         synchronized (attachmentGate) {
+            if (processFence != null && processFence.recoveryOnly()) {
+                throw new IllegalStateException("retained process effects require recovery; display detach is not cleanup");
+            }
             if (phase.get() != Phase.NEW || attachmentGeneration != expectedGeneration
                     || expectedGeneration == 0L) {
                 throw new IllegalStateException("embedded product cleanup required before display detach");
@@ -108,8 +113,11 @@ final class EmbeddedDuplexProcessHost {
             EmbeddedDuplexBootstrap.Trace trace) throws Exception {
             localFixture = fixture;
             try {
+                requireFreshProcess();
+                new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 JSONObject runtime = new JSONObject(runtimeCopy);
                 JSONObject enrollment = new JSONObject(startupCopy);
+                processFence.beforeRuntimeEffects(checkpointSnapshot(), evidenceSnapshot());
                 EmbeddedDuplexBootstrap.Prepared prepared = EmbeddedDuplexBootstrap.prepare(
                         applicationContext, role, runtime, trace);
                 // Preparation stages this exact route in native process state.
@@ -123,6 +131,7 @@ final class EmbeddedDuplexProcessHost {
                         display, identity, prepared.localPeerId, prepared.remotePeerId,
                         prepared.routeConfigurationSha256, prepared.remoteControlHost,
                         prepared.remoteControlPort, fixture);
+                callbacks.bindProcessFence(processFence);
                 JSONObject bootstrap = EmbeddedDuplexBootstrap.runtimeBootstrap(prepared,
                         identity.keyId(), enrollment,
                         new JSONObject(callbacks.loadDispatchReplay()),
@@ -152,7 +161,8 @@ final class EmbeddedDuplexProcessHost {
             } catch (Exception failure) {
                 // A prepared native route, even without a completed host, must
                 // be closed under its exact digest before another bootstrap.
-                phase.set(runtimeConfigSha256 == null ? Phase.NEW : Phase.FAILED);
+                phase.set(runtimeConfigSha256 == null && (processFence == null
+                        || !processFence.effectsPending()) ? Phase.NEW : Phase.FAILED);
                 throw failure;
             }
     }
@@ -163,6 +173,7 @@ final class EmbeddedDuplexProcessHost {
             return failed(new IllegalArgumentException("embedded command bounds"));
         }
         return submit(() -> {
+            requireFreshProcess();
             if (phase.get() != Phase.READY || localFixture) {
                 throw new IllegalStateException("embedded process host not ready");
             }
@@ -182,6 +193,7 @@ final class EmbeddedDuplexProcessHost {
         }
         return submit(() -> {
             try {
+                requireFreshProcess();
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 EmbeddedDuplexEnrollment enrollment =
                         EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
@@ -193,7 +205,8 @@ final class EmbeddedDuplexProcessHost {
                 return runtimeStatusOnCommandLane();
             } catch (Exception failure) {
                 if (phase.get() == Phase.BOOTSTRAPPING) {
-                    phase.set(runtimeConfigSha256 == null ? Phase.NEW : Phase.FAILED);
+                    phase.set(runtimeConfigSha256 == null && (processFence == null
+                        || !processFence.effectsPending()) ? Phase.NEW : Phase.FAILED);
                 }
                 throw failure;
             }
@@ -201,11 +214,14 @@ final class EmbeddedDuplexProcessHost {
     }
 
     CompletableFuture<EmbeddedDuplexRuntimeStatus> runtimeStatus() {
-        return submit(this::runtimeStatusOnCommandLane);
+        return submit(this::runtimeStatusOnCommandLane).handle((status, failure) ->
+                failure == null ? status : new EmbeddedDuplexRuntimeStatus("cleanup_pending",
+                        attachmentGeneration != 0L, runtimeConfigSha256, enrollmentRecordSha256));
     }
 
     CompletableFuture<EmbeddedDuplexPairStatus> pairStatus() {
         return submit(() -> {
+            requireFreshProcess();
             if (phase.get() != Phase.READY || localFixture) {
                 throw new IllegalStateException("real-peer authority unavailable");
             }
@@ -221,8 +237,10 @@ final class EmbeddedDuplexProcessHost {
                 return failed(new IllegalStateException("real-peer pair ceremony unavailable"));
             }
         }
-        return submit(() -> EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand(
-                "pair_ceremony", "{}")));
+        return submit(() -> {
+            requireFreshProcess();
+            return EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand("pair_ceremony", "{}"));
+        });
     }
 
     CompletableFuture<EmbeddedDuplexStartPreflight> prepareStartPreflight(long expectedGeneration) {
@@ -241,6 +259,7 @@ final class EmbeddedDuplexProcessHost {
                     throw new IllegalStateException("pre-Start process changed");
                 }
             }
+            requireFreshProcess();
             EmbeddedDuplexPairStatus pair = EmbeddedDuplexPairStatus.parse(
                     EmbeddedDuplexNative.runtimeCommand("pair_status", "{}"));
             EmbeddedDuplexStartPreflight next = EmbeddedDuplexStartPreflight.prepare(pair,
@@ -255,7 +274,12 @@ final class EmbeddedDuplexProcessHost {
 
     boolean preflightLive(EmbeddedDuplexStartPreflight observed) {
         synchronized (attachmentGate) {
-            return observed != null && pendingStartPreflight == observed
+            try {
+                if (processFence == null) return false;
+                processFence.requireLive(processFence.generation());
+            } catch (IllegalStateException stale) { return false; }
+            return !processFence.recoveryOnly()
+                    && observed != null && pendingStartPreflight == observed
                     && phase.get() == Phase.READY && !localFixture && !displayDetaching
                     && !closeInFlight && attachmentGeneration == observed.displayGeneration
                     && observed.matches(runtimeConfigSha256, enrollmentRecordSha256,
@@ -268,7 +292,8 @@ final class EmbeddedDuplexProcessHost {
         Phase current = phase.get();
         boolean recoveryClear;
         try {
-            recoveryClear = new EmbeddedDuplexRecoveryCoordinator(applicationContext)
+            recoveryClear = processFence != null && !processFence.recoveryOnly()
+                    && new EmbeddedDuplexRecoveryCoordinator(applicationContext)
                     .freshBootstrapAllowed();
         } catch (Exception unavailable) {
             recoveryClear = false;
@@ -313,6 +338,8 @@ final class EmbeddedDuplexProcessHost {
         }
         return submit(() -> {
             try {
+                requireFreshProcess();
+                new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 if (!EmbeddedDuplexNative.processIdleForEnrollment()) {
                     throw new IllegalStateException("native process or staged route is not terminal");
                 }
@@ -334,6 +361,8 @@ final class EmbeddedDuplexProcessHost {
                     throw new IllegalStateException("process authority must terminate before enrollment review");
                 }
             }
+            requireFreshProcess();
+            new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
             if (!EmbeddedDuplexNative.processIdleForEnrollment()) {
                 throw new IllegalStateException("native process or staged route is not terminal");
             }
@@ -369,6 +398,8 @@ final class EmbeddedDuplexProcessHost {
         }
         return submit(() -> {
             try {
+                requireFreshProcess();
+                new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 if (review.expired() || !EmbeddedDuplexNative.processIdleForEnrollment()) {
                     throw new IllegalStateException("review expired or native process is not terminal");
                 }
@@ -441,7 +472,8 @@ final class EmbeddedDuplexProcessHost {
                         fresh.startup.toString(), true, trace);
             } catch (Exception failure) {
                 if (phase.get() == Phase.BOOTSTRAPPING) {
-                    phase.set(runtimeConfigSha256 == null ? Phase.NEW : Phase.FAILED);
+                    phase.set(runtimeConfigSha256 == null && (processFence == null
+                        || !processFence.effectsPending()) ? Phase.NEW : Phase.FAILED);
                 }
                 throw failure;
             }
@@ -541,6 +573,9 @@ final class EmbeddedDuplexProcessHost {
                     EmbeddedDuplexResources currentResources = resources;
                     if (currentResources != null) currentResources.closeUnstartedAndVerify();
                 });
+                new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
+                processFence.afterVerifiedNoMediaCleanup(checkpointSnapshot(), evidenceSnapshot());
+                if (platform != null) platform.retireProcessCallbacks();
                 platform = null;
                 resources = null;
                 runtimeConfigSha256 = null;
@@ -559,11 +594,39 @@ final class EmbeddedDuplexProcessHost {
         });
     }
 
+    private String checkpointSnapshot() throws Exception {
+        return new EmbeddedDuplexStartJournal(applicationContext).read();
+    }
+    private String evidenceSnapshot() throws Exception {
+        return new EmbeddedDuplexRecoveryEvidenceJournal(applicationContext).readValidated();
+    }
+    private void requireFreshProcess() {
+        if (processFence == null) throw new IllegalStateException("process fence unavailable");
+        processFence.requireFresh();
+    }
+    private void ensureProcessFence() throws Exception {
+        if (processFence != null) {
+            processFence.requireLive(processFence.generation());
+            return;
+        }
+        // Journal constructors validate the private directory and file types.
+        String checkpoint = checkpointSnapshot();
+        String evidence = evidenceSnapshot();
+        java.io.File directory = new java.io.File(applicationContext.getNoBackupFilesDir(),
+                "embedded-duplex-replay");
+        processFence = EmbeddedDuplexProcessFence.acquire(directory, checkpoint, evidence, () -> {
+            java.io.FileDescriptor fd = android.system.Os.open(directory.getAbsolutePath(),
+                    android.system.OsConstants.O_RDONLY | android.system.OsConstants.O_CLOEXEC, 0);
+            try { android.system.Os.fsync(fd); } finally { android.system.Os.close(fd); }
+        });
+        android.system.Os.chmod(new java.io.File(directory, "process-fence.v1.lock").getAbsolutePath(), 0600);
+    }
+
     private interface Work<T> { T run() throws Exception; }
     private <T> CompletableFuture<T> submit(Work<T> action) {
         CompletableFuture<T> result = new CompletableFuture<>();
         commands.execute(() -> {
-            try { result.complete(action.run()); }
+            try { ensureProcessFence(); result.complete(action.run()); }
             catch (Throwable failure) { result.completeExceptionally(failure); }
         });
         return result;

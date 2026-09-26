@@ -69,7 +69,8 @@ public final class EmbeddedDuplexProcessHostAttachmentTest {
         EmbeddedDuplexProcessHost host = newIsolatedHost();
         long first = host.attachDisplay(new FakeDisplay());
         EmbeddedDuplexRuntimeStatus ready = host.runtimeStatus().get();
-        assertEquals("uninitialized", ready.state);
+        // A null test Context cannot read durable recovery evidence.
+        assertEquals("cleanup_pending", ready.state);
         assertTrue(ready.displayAttached);
         ExecutionException stale = assertThrows(ExecutionException.class,
                 () -> host.closeRealPeerNoMedia(first + 1L).get());
@@ -79,11 +80,45 @@ public final class EmbeddedDuplexProcessHostAttachmentTest {
         assertEquals(first + 1L, host.attachDisplay(new FakeDisplay()));
     }
 
+    @Test public void restartedPendingHostCannotUseNoMediaCloseAsRecovery() throws Exception {
+        java.io.File directory = java.nio.file.Files.createTempDirectory("pending-host-fence").toFile();
+        try (EmbeddedDuplexProcessFence predecessor = EmbeddedDuplexProcessFence.acquire(
+                directory, null, null, () -> {})) {
+            predecessor.beforeRuntimeEffects(null, null);
+        }
+        try (EmbeddedDuplexProcessFence recovered = EmbeddedDuplexProcessFence.acquire(
+                directory, null, null, () -> {})) {
+            Constructor<EmbeddedDuplexProcessHost> constructor =
+                    EmbeddedDuplexProcessHost.class.getDeclaredConstructor(Context.class);
+            constructor.setAccessible(true);
+            EmbeddedDuplexProcessHost host = constructor.newInstance((Context) null);
+            Field fence = EmbeddedDuplexProcessHost.class.getDeclaredField("processFence");
+            fence.setAccessible(true);
+            fence.set(host, recovered);
+            long attachment = host.attachDisplay(new FakeDisplay());
+            assertEquals("cleanup_pending", host.runtimeStatus().get().state);
+            ExecutionException close = assertThrows(ExecutionException.class,
+                    () -> host.closeRealPeerNoMedia(attachment).get());
+            assertTrue(close.getCause().getMessage().contains("retained process effects"));
+            ExecutionException bootstrap = assertThrows(ExecutionException.class,
+                    () -> host.bootstrapRealPeer(attachment).get());
+            assertTrue(bootstrap.getCause().getMessage().contains("process recovery pending"));
+            assertFalse(host.ready());
+            assertEquals("cleanup_pending", host.runtimeStatus().get().state);
+        }
+    }
+
     private static EmbeddedDuplexProcessHost newIsolatedHost() throws Exception {
         Constructor<EmbeddedDuplexProcessHost> constructor =
                 EmbeddedDuplexProcessHost.class.getDeclaredConstructor(Context.class);
         constructor.setAccessible(true);
-        return constructor.newInstance((Context) null);
+        EmbeddedDuplexProcessHost host = constructor.newInstance((Context) null);
+        Field fence = EmbeddedDuplexProcessHost.class.getDeclaredField("processFence");
+        fence.setAccessible(true);
+        fence.set(host, EmbeddedDuplexProcessFence.acquire(
+                java.nio.file.Files.createTempDirectory("attachment-fence").toFile(),
+                null, null, () -> {}));
+        return host;
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
