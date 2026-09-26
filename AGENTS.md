@@ -12,6 +12,11 @@ Use `docs/MEDIA_SESSION_RUNTIME.md` for the executor boundary and
 `docs/MEDIA_STREAM_RUNTIME.md` for host tests and two-consumer build checks.
 Those checks do not establish device, camera, codec, LAN, or duplex readiness.
 
+For embedded duplex native execution fencing, read
+`docs/EMBEDDED_DUPLEX_R5_CONTINUITY.md`. The focused native-fence runner binds
+an explicit supplier composition; its Android typecheck and API34 source
+checks remain separate from app compilation, physical cleanup and streaming.
+
 ## Debug host receipt boundary
 
 The Spatial Camera Panel debug host receipt provider is debug-source-set only.

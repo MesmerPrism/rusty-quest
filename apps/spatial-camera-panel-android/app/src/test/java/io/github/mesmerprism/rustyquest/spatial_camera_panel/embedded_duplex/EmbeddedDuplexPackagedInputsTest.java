@@ -117,7 +117,6 @@ public final class EmbeddedDuplexPackagedInputsTest {
                 .put("remote_key_id", "ed25519." + sha256(remotePublic))
                 .put("remote_public_key_hex", repeat('1', 64))
                 .put("route_grant_id", "grant.route")
-                .put("executor_generation", 9)
                 .put("device_peers", new JSONArray()
                         .put(new JSONObject().put("device_id", "device.fixture.a")
                                 .put("peer_id", "peer.fixture.a"))

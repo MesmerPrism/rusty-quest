@@ -201,7 +201,7 @@ final class EmbeddedDuplexBootstrap {
             throw new IllegalArgumentException("runtime bootstrap inputs");
         }
         fields(startup, "remote_key_id", "remote_public_key_hex", "route_grant_id",
-                "executor_generation", "device_peers");
+                "device_peers");
         fields(replay, "pending_request_sha256", "terminal");
         fields(activationReplay, "pending_request_sha256", "terminal");
         String remotePublic = startup.getString("remote_public_key_hex");
@@ -214,8 +214,6 @@ final class EmbeddedDuplexBootstrap {
                         .matches("[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+")) {
             throw new IllegalStateException("fresh enrolled signing identity differs");
         }
-        long generation = startup.getLong("executor_generation");
-        if (generation <= 0L) throw new IllegalStateException("executor generation");
         JSONArray peers = startup.getJSONArray("device_peers");
         if (peers.length() != 2) throw new IllegalStateException("device/peer placement cardinality");
         Set<String> seenDevices = new HashSet<>(), seenPeers = new HashSet<>();
@@ -252,7 +250,6 @@ final class EmbeddedDuplexBootstrap {
                 .put("incoming_runtime_spec_id", prepared.incomingRuntimeSpecId)
                 .put("route_grant_id", startup.getString("route_grant_id"))
                 .put("route_configuration_sha256", prepared.routeConfigurationSha256)
-                .put("executor_generation", generation)
                 .put("device_peers", new JSONArray(peers.toString()))
                 .put("replay", new JSONObject(replay.toString()))
                 .put("activation_replay", new JSONObject(activationReplay.toString()));

@@ -1,4 +1,5 @@
 use super::common_lan_signing::ValidatedCommonLanSigning;
+use super::process_fence::NativeCapability;
 use std::sync::Arc;
 
 use jni::objects::{GlobalRef, JByteArray, JObject, JString, JValue};
@@ -19,6 +20,7 @@ const MAX_REPLAY_JSON_BYTES: usize = 16 * 1024 * 1024;
 /// App-owned Java callbacks captured for short calls outside native authority locks.
 #[derive(Clone)]
 pub(crate) struct JavaOwnerCallbacks {
+    capability: Arc<NativeCapability>,
     vm: Arc<JavaVM>,
     callback: GlobalRef,
     key_id: String,
@@ -32,8 +34,10 @@ impl JavaOwnerCallbacks {
 
     pub(crate) fn local_public_key(&self) -> Result<[u8; 32], String> {
         let mut env = self.attached()?;
+        self.capability.require_live()?;
         let call = env.call_method(self.callback.as_obj(), "localPublicKeyBytes", "()[B", &[]);
-        let result = checked_call(&mut env, call, "java_bridge.local_public_key")?
+        let result = self
+            .checked_call(&mut env, call, "java_bridge.local_public_key")?
             .l()
             .map_err(|_| "java_bridge.local_public_key_type".to_owned())?;
         if result.is_null() {
@@ -41,7 +45,7 @@ impl JavaOwnerCallbacks {
         }
         let array = JByteArray::from(result);
         let bytes_result = env.convert_byte_array(&array);
-        checked_call(&mut env, bytes_result, "java_bridge.local_public_key_bytes")?
+        self.checked_call(&mut env, bytes_result, "java_bridge.local_public_key_bytes")?
             .try_into()
             .map_err(|_| "java_bridge.local_public_key_length".into())
     }
@@ -62,15 +66,17 @@ impl JavaOwnerCallbacks {
         }
         let mut env = self.attached()?;
         let input_result = env.byte_array_from_slice(message);
-        let input = checked_call(&mut env, input_result, "java_bridge.sign_input")?;
+        let input = self.checked_call(&mut env, input_result, "java_bridge.sign_input")?;
         let input_object = JObject::from(input);
+        self.capability.require_live()?;
         let call = env.call_method(
             self.callback.as_obj(),
             method,
             "([B)[B",
             &[JValue::Object(&input_object)],
         );
-        let result = checked_call(&mut env, call, "java_bridge.sign_call")?
+        let result = self
+            .checked_call(&mut env, call, "java_bridge.sign_call")?
             .l()
             .map_err(|_| "java_bridge.sign_type".to_owned())?;
         if result.is_null() {
@@ -78,7 +84,7 @@ impl JavaOwnerCallbacks {
         }
         let array = JByteArray::from(result);
         let bytes_result = env.convert_byte_array(&array);
-        let bytes = checked_call(&mut env, bytes_result, "java_bridge.sign_bytes")?;
+        let bytes = self.checked_call(&mut env, bytes_result, "java_bridge.sign_bytes")?;
         bytes
             .try_into()
             .map_err(|_| "java_bridge.sign_length".to_owned())
@@ -89,6 +95,7 @@ impl JavaOwnerCallbacks {
         callback: JObject<'_>,
         key_id: String,
         target_peer_id: String,
+        capability: Arc<NativeCapability>,
     ) -> Result<Self, String> {
         if callback.is_null()
             || !valid_key_id(&key_id)
@@ -103,7 +110,9 @@ impl JavaOwnerCallbacks {
             .map_err(|_| "java_bridge.vm".to_owned())?;
         let global_ref = env.new_global_ref(callback);
         let callback = checked_call(env, global_ref, "java_bridge.global_ref")?;
+        capability.require_live()?;
         Ok(Self {
+            capability,
             vm,
             callback,
             key_id,
@@ -111,7 +120,18 @@ impl JavaOwnerCallbacks {
         })
     }
 
+    fn checked_call<'local, T>(
+        &self,
+        env: &mut JNIEnv<'local>,
+        result: jni::errors::Result<T>,
+        error_class: &'static str,
+    ) -> Result<T, String> {
+        let result = checked_call(env, result, error_class);
+        self.capability.require_live()?;
+        result
+    }
     fn attached(&self) -> Result<jni::AttachGuard<'_>, String> {
+        self.capability.require_live()?;
         self.vm
             .attach_current_thread()
             .map_err(|_| "java_bridge.attach".to_owned())
@@ -134,11 +154,13 @@ impl JavaOwnerCallbacks {
         let mut env = self.attached()?;
         let authority_result = env.new_string(authority_json);
         let authority_string =
-            checked_call(&mut env, authority_result, "java_bridge.authority_string")?;
+            self.checked_call(&mut env, authority_result, "java_bridge.authority_string")?;
         let ticket_result = env.new_string(ticket_json);
-        let ticket_string = checked_call(&mut env, ticket_result, "java_bridge.ticket_string")?;
+        let ticket_string =
+            self.checked_call(&mut env, ticket_result, "java_bridge.ticket_string")?;
         let authority_object = JObject::from(authority_string);
         let ticket_object = JObject::from(ticket_string);
+        self.capability.require_live()?;
         let call = env.call_method(
             self.callback.as_obj(),
             "executeAndVerify",
@@ -149,7 +171,8 @@ impl JavaOwnerCallbacks {
                 JValue::Bool(u8::from(compensate)),
             ],
         );
-        let result = checked_call(&mut env, call, "java_bridge.execute_call")?
+        let result = self
+            .checked_call(&mut env, call, "java_bridge.execute_call")?
             .l()
             .map_err(|_| "java_bridge.execute_type".to_owned())?;
         if result.is_null() {
@@ -157,8 +180,9 @@ impl JavaOwnerCallbacks {
         }
         let result_string = JString::from(result);
         let string_result = env.get_string(&result_string);
-        let result_json: String =
-            checked_call(&mut env, string_result, "java_bridge.execute_string")?.into();
+        let result_json: String = self
+            .checked_call(&mut env, string_result, "java_bridge.execute_string")?
+            .into();
         if result_json.is_empty() || result_json.len() > MAX_EFFECT_JSON_BYTES {
             return Err("java_bridge.execute_output_bounds".to_owned());
         }
@@ -201,18 +225,19 @@ impl ProductActivationRegistry for JavaOwnerCallbacks {
         }
         let mut env = self.attached()?;
         let id_result = env.new_string(activation_id);
-        let id = checked_call(&mut env, id_result, "java_bridge.activation_id")?;
+        let id = self.checked_call(&mut env, id_result, "java_bridge.activation_id")?;
         let authority_result = env.new_string(authority_json);
-        let authority = checked_call(
+        let authority = self.checked_call(
             &mut env,
             authority_result,
             "java_bridge.activation_authority",
         )?;
         let proof_result = env.new_string(proof_json);
-        let proof = checked_call(&mut env, proof_result, "java_bridge.activation_proof")?;
+        let proof = self.checked_call(&mut env, proof_result, "java_bridge.activation_proof")?;
         let id = JObject::from(id);
         let authority = JObject::from(authority);
         let proof = JObject::from(proof);
+        self.capability.require_live()?;
         let call = env.call_method(
             self.callback.as_obj(),
             "activateProduct",
@@ -223,7 +248,8 @@ impl ProductActivationRegistry for JavaOwnerCallbacks {
                 JValue::Object(&proof),
             ],
         );
-        let result = checked_call(&mut env, call, "java_bridge.activation_call")?
+        let result = self
+            .checked_call(&mut env, call, "java_bridge.activation_call")?
             .l()
             .map_err(|_| "java_bridge.activation_type".to_owned())?;
         if result.is_null() {
@@ -231,8 +257,9 @@ impl ProductActivationRegistry for JavaOwnerCallbacks {
         }
         let result = JString::from(result);
         let text_result = env.get_string(&result);
-        let text: String =
-            checked_call(&mut env, text_result, "java_bridge.activation_readback")?.into();
+        let text: String = self
+            .checked_call(&mut env, text_result, "java_bridge.activation_readback")?
+            .into();
         if text.is_empty() || text.len() > MAX_EFFECT_JSON_BYTES {
             return Err("java_bridge.activation_output_bounds".to_owned());
         }
@@ -265,11 +292,12 @@ impl OwnerDispatchTransport for JavaOwnerCallbacks {
         }
         let mut env = self.attached()?;
         let target_result = env.new_string(&self.target_peer_id);
-        let target = checked_call(&mut env, target_result, "java_bridge.exchange_target")?;
+        let target = self.checked_call(&mut env, target_result, "java_bridge.exchange_target")?;
         let frame_result = env.byte_array_from_slice(request_frame);
-        let frame = checked_call(&mut env, frame_result, "java_bridge.exchange_frame")?;
+        let frame = self.checked_call(&mut env, frame_result, "java_bridge.exchange_frame")?;
         let target_object = JObject::from(target);
         let frame_object = JObject::from(frame);
+        self.capability.require_live()?;
         let call = env.call_method(
             self.callback.as_obj(),
             "exchangeOwnerFrame",
@@ -279,7 +307,8 @@ impl OwnerDispatchTransport for JavaOwnerCallbacks {
                 JValue::Object(&frame_object),
             ],
         );
-        let result = checked_call(&mut env, call, "java_bridge.exchange_call")?
+        let result = self
+            .checked_call(&mut env, call, "java_bridge.exchange_call")?
             .l()
             .map_err(|_| "java_bridge.exchange_type".to_owned())?;
         if result.is_null() {
@@ -287,7 +316,7 @@ impl OwnerDispatchTransport for JavaOwnerCallbacks {
         }
         let array = JByteArray::from(result);
         let bytes_result = env.convert_byte_array(&array);
-        let bytes = checked_call(&mut env, bytes_result, "java_bridge.exchange_bytes")?;
+        let bytes = self.checked_call(&mut env, bytes_result, "java_bridge.exchange_bytes")?;
         if bytes.is_empty() || bytes.len() > max_response_bytes {
             return Err("java_bridge.exchange_output_bounds".to_owned());
         }
@@ -318,15 +347,17 @@ impl JavaOwnerCallbacks {
         }
         let mut env = self.attached()?;
         let snapshot_result = env.new_string(snapshot_json);
-        let snapshot_string = checked_call(&mut env, snapshot_result, "java_bridge.replay_string")?;
+        let snapshot_string =
+            self.checked_call(&mut env, snapshot_result, "java_bridge.replay_string")?;
         let snapshot_object = JObject::from(snapshot_string);
+        self.capability.require_live()?;
         let call = env.call_method(
             self.callback.as_obj(),
             method,
             "(Ljava/lang/String;)V",
             &[JValue::Object(&snapshot_object)],
         );
-        checked_call(&mut env, call, "java_bridge.replay_call")?;
+        self.checked_call(&mut env, call, "java_bridge.replay_call")?;
         Ok(())
     }
 }

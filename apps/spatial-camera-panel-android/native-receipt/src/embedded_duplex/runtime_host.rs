@@ -8,8 +8,10 @@ use super::common_lan_signing::{
     CommonLanSigningPolicy,
 };
 use super::java_bridge::JavaOwnerCallbacks;
+use super::native_fence_jni;
 use super::packaged_config::assemble_packaged_config_request_json;
 use super::packaged_route::PackagedDuplexRoute;
+use super::process_fence::NativeCapability;
 use super::runtime_slot::Checkout;
 use jni::objects::{JByteArray, JClass, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jstring, JNI_FALSE, JNI_TRUE};
@@ -79,7 +81,6 @@ struct Bootstrap {
     incoming_runtime_spec_id: String,
     route_grant_id: String,
     route_configuration_sha256: String,
-    executor_generation: u64,
     device_peers: Vec<AndroidMediaDevicePeerPlacement>,
     replay: OwnerDispatchReplaySnapshot,
     activation_replay: ProductActivationReplaySnapshot,
@@ -110,6 +111,7 @@ impl CurrentOwnerProjectionSource for ConfiguredProjectionSource {
 
 #[derive(Clone)]
 struct Host {
+    capability: Arc<NativeCapability>,
     provider: Arc<Mutex<Option<QuestBrokerRuntimeProvider>>>,
     server: Arc<Mutex<Option<DispatchServer>>>,
     activation_server: Arc<Mutex<Option<ActivationServer>>>,
@@ -179,6 +181,7 @@ fn prepared_route() -> &'static Mutex<Option<(String, PackagedDuplexRoute)>> {
 }
 
 fn stage_packaged_route(config_sha256: String, route: PackagedDuplexRoute) -> Result<(), String> {
+    let capability = native_fence_jni::active()?;
     let state = process().lock().map_err(|_| "process state poisoned")?;
     if state.initializing || state.closing || state.host.is_some() {
         return Err("packaged route cannot replace a process authority".into());
@@ -193,6 +196,8 @@ fn stage_packaged_route(config_sha256: String, route: PackagedDuplexRoute) -> Re
     }
     *slot = Some((config_sha256, route));
     drop(state);
+    drop(slot);
+    capability.require_live()?;
     Ok(())
 }
 
@@ -273,7 +278,10 @@ fn host() -> Result<HostLease, String> {
         .host_leases
         .checked_add(1)
         .ok_or("runtime host lease overflow")?;
-    Ok(HostLease(host))
+    drop(state);
+    let lease = HostLease(host);
+    lease.capability.require_live()?;
+    Ok(lease)
 }
 
 fn slot_present<T>(slot: &Arc<Mutex<Option<T>>>) -> Result<(), String> {
@@ -285,6 +293,15 @@ fn slot_present<T>(slot: &Arc<Mutex<Option<T>>>) -> Result<(), String> {
 }
 
 fn close_no_media_runtime(expected_sha: &str) -> Result<String, String> {
+    let capability = native_fence_jni::active()?;
+    close_no_media_runtime_with_capability(expected_sha, &capability)
+}
+
+fn close_no_media_runtime_with_capability(
+    expected_sha: &str,
+    capability: &NativeCapability,
+) -> Result<String, String> {
+    capability.require_live()?;
     if expected_sha.len() != 64
         || !expected_sha
             .bytes()
@@ -408,6 +425,7 @@ fn close_no_media_runtime(expected_sha: &str) -> Result<String, String> {
         "staged_route_closed"
     };
     drop(removed);
+    capability.require_live()?;
     Ok(
         json!({"$schema":"rusty.quest.embedded_duplex.no_media_closed.v1",
         "config_sha256":expected_sha,"disposition":disposition})
@@ -441,6 +459,47 @@ fn initialize(
     bootstrap_json: String,
     callback: JObject<'_>,
 ) -> Result<String, String> {
+    let capability = native_fence_jni::active()?;
+    initialize_with_capability(
+        &capability,
+        || {
+            build_host(
+                env,
+                config_json,
+                expected_sha,
+                entropy,
+                bootstrap_json,
+                callback,
+            )
+        },
+        |state, (host, result)| {
+            state.host = Some(host);
+            state.last_closed_sha256 = None;
+            Ok(result)
+        },
+    )
+}
+
+// Initialization ownership must unwind even when construction or its final
+// capability check fails. This releases only the process gate, never effects,
+// the staged route, the native capability, or durable cleanup obligations.
+struct InitializationGuard;
+
+impl Drop for InitializationGuard {
+    fn drop(&mut self) {
+        process()
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .initializing = false;
+    }
+}
+
+fn initialize_with_capability<T, R>(
+    capability: &NativeCapability,
+    build: impl FnOnce() -> Result<T, String>,
+    publish: impl FnOnce(&mut ProcessState, T) -> Result<R, String>,
+) -> Result<R, String> {
+    capability.require_live()?;
     {
         let mut state = process().lock().map_err(|_| "process state poisoned")?;
         if state.initializing || state.closing || state.host.is_some() {
@@ -448,20 +507,11 @@ fn initialize(
         }
         state.initializing = true;
     }
-    let built = build_host(
-        env,
-        config_json,
-        expected_sha,
-        entropy,
-        bootstrap_json,
-        callback,
-    );
+    let _initialization = InitializationGuard;
+    let built = build();
+    capability.require_live()?;
     let mut state = process().lock().map_err(|_| "process state poisoned")?;
-    state.initializing = false;
-    let (host, result) = built?;
-    state.host = Some(host);
-    state.last_closed_sha256 = None;
-    Ok(result)
+    publish(&mut state, built?)
 }
 
 fn build_host(
@@ -472,6 +522,7 @@ fn build_host(
     bootstrap_json: String,
     callback: JObject<'_>,
 ) -> Result<(Host, String), String> {
+    let capability = native_fence_jni::active()?;
     let config: QuestBrokerRuntimeConfig =
         serde_json::from_str(&config_json).map_err(safe_decode)?;
     if config.bridge_kind != QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni {
@@ -496,8 +547,6 @@ fn build_host(
             .device_peers
             .iter()
             .any(|entry| entry.peer_id == bootstrap.remote_peer_id)
-        || bootstrap.executor_generation == 0
-        || bootstrap.executor_generation > i64::MAX as u64
         || bootstrap.route_configuration_sha256.len() != 71
         || !bootstrap.route_configuration_sha256.starts_with("sha256:")
         || !bootstrap.route_configuration_sha256.as_bytes()[7..]
@@ -566,6 +615,7 @@ fn build_host(
         callback,
         bootstrap.local_key_id,
         bootstrap.remote_peer_id.clone(),
+        capability.clone(),
     )?;
     let remote_public_key = decode_key(&bootstrap.remote_public_key_hex)?;
     let local_public_key = callbacks.local_public_key()?;
@@ -586,7 +636,7 @@ fn build_host(
         route_configuration_sha256: bootstrap.route_configuration_sha256.clone(),
     };
     let executor = CompositeAndroidMediaOwnerExecutor::new(
-        bootstrap.executor_generation,
+        capability.generation,
         bootstrap.local_peer_id.clone(),
         placements.clone(),
         Box::new(callbacks.clone()),
@@ -621,10 +671,13 @@ fn build_host(
         "runtime": status, "owner_placements": placements,
         "incoming_owner_placements": incoming_placements,
         "outgoing_runtime_spec": outgoing_spec, "incoming_runtime_spec": incoming_spec,
-        "executor_generation": bootstrap.executor_generation})
+        "executor_generation": capability.generation,
+        "app_process_generation":capability.binding.generation,
+        "app_record_sha256":capability.binding.record_sha256})
     .to_string();
     Ok((
         Host {
+            capability,
             provider: Arc::new(Mutex::new(Some(provider))),
             server: Arc::new(Mutex::new(Some(server))),
             activation_server: Arc::new(Mutex::new(Some(activation_server))),
@@ -701,7 +754,10 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     request: JString<'_>,
 ) -> jstring {
     let result = read_string(&mut env, &request, 8 * 1024 * 1024)
-        .and_then(|text| assemble_packaged_config_request_json(&text))
+        .and_then(|text| {
+            native_fence_jni::active()?;
+            assemble_packaged_config_request_json(&text)
+        })
         .and_then(|(result, config_sha256, route)| {
             stage_packaged_route(config_sha256, route)?;
             Ok(result)
@@ -741,6 +797,44 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_finishNativeNoMediaCleanup(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    generation: jni::sys::jlong,
+    expected_sha: JString<'_>,
+) {
+    let result = (|| {
+        let sha = read_string(&mut env, &expected_sha, 64)?;
+        let cap = native_fence_jni::active()?;
+        if generation <= 0 || cap.generation != generation as u64 {
+            return Err("native cleanup incarnation differs".into());
+        }
+        {
+            let state = process().lock().map_err(|_| "process state poisoned")?;
+            if state.initializing
+                || state.closing
+                || state.host.is_some()
+                || state.host_leases != 0
+                || state.lease_integrity_failed
+                || state.last_closed_sha256.as_deref() != Some(sha.as_str())
+            {
+                return Err("native no-media closure not retained".into());
+            }
+            let route = prepared_route()
+                .lock()
+                .map_err(|_| "packaged route slot poisoned")?;
+            if route.is_some() {
+                return Err("native route cleanup pending".into());
+            }
+        }
+        cap.retire()
+    })();
+    if let Err(reason) = result {
+        let _ = env.throw_new("java/lang/IllegalStateException", reason);
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_processIdleForEnrollment(
     _env: JNIEnv<'_>,
     _class: JClass<'_>,
@@ -770,10 +864,12 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             .map_err(|_| "owner frame bytes")?;
         let host = host()?;
         if bytes.starts_with(pair_ceremony::FRAME_MAGIC) {
-            return pair_ceremony::handle_frame(&host, &bytes);
+            let result = pair_ceremony::handle_frame(&host, &bytes);
+            host.capability.require_live()?;
+            return result;
         }
         host.owner_effect_attempted.store(true, Ordering::SeqCst);
-        if decode_product_activation_request(&bytes).is_ok() {
+        let result = if decode_product_activation_request(&bytes).is_ok() {
             Checkout::take(host.activation_server.clone())?
                 .get()
                 .handle_frame(&bytes)
@@ -783,7 +879,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
                 .get()
                 .handle_frame(&bytes)
                 .map_err(|_| "owner dispatch rejected".to_owned())
-        }
+        };
+        host.capability.require_live()?;
+        result
     })();
     match result {
         Ok(bytes) => env
@@ -981,7 +1079,7 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
         host.owner_effect_attempted.store(true, Ordering::SeqCst);
     }
     let now = host.clock.now_ms()?;
-    match operation {
+    let result = match operation {
         "runtime_evidence" => Checkout::take(host.provider.clone())?
             .get()
             .evidence_json()
@@ -1110,7 +1208,9 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
             serde_json::to_string(&host.authority.current_route(&grant, now)?).map_err(safe_decode)
         }
         _ => Err("unsupported embedded runtime operation".into()),
-    }
+    };
+    host.capability.require_live()?;
+    result
 }
 
 #[no_mangle]
@@ -1134,10 +1234,54 @@ mod no_media_close_tests {
     use crate::embedded_duplex::packaged_route::{
         PackagedEndpoint, PackagedPeer, PackedStereoProfile,
     };
+    use crate::embedded_duplex::process_fence::{AppFenceSource, NativeFenceRegistry};
+    use std::os::unix::fs::PermissionsExt;
 
     static TEST_GATE: Mutex<()> = Mutex::new(());
     const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const OTHER_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    struct AppFenceFixture(Mutex<String>);
+
+    impl AppFenceSource for AppFenceFixture {
+        fn record(&self) -> Result<String, String> {
+            self.0
+                .lock()
+                .map(|value| value.clone())
+                .map_err(|_| "fixture poisoned".into())
+        }
+    }
+
+    struct NativeFenceFixture {
+        capability: Arc<NativeCapability>,
+        source: Arc<AppFenceFixture>,
+    }
+
+    impl NativeFenceFixture {
+        fn new() -> Self {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+            let path = std::env::temp_dir().join(format!(
+                "rq-runtime-fence-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::SeqCst)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let body = "rusty.quest.embedded_duplex.app_process_fence.v1\n1\n01234567-89ab-cdef-0123-456789abcdef\npending\n-\n-\n";
+            let source = Arc::new(AppFenceFixture(Mutex::new(format!(
+                "{body}{}\n",
+                rusty_quest_broker_authority::packaged_json_sha256(body)
+            ))));
+            let capability = NativeFenceRegistry::default()
+                .claim(&path, source.clone())
+                .unwrap();
+            Self { capability, source }
+        }
+
+        fn close(&self, sha: &str) -> Result<String, String> {
+            close_no_media_runtime_with_capability(sha, &self.capability)
+        }
+    }
 
     fn route() -> PackagedDuplexRoute {
         let endpoint = PackagedEndpoint {
@@ -1191,32 +1335,133 @@ mod no_media_close_tests {
     }
 
     #[test]
+    fn construction_failure_unwinds_and_allows_exact_retry_without_clearing_route() {
+        let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
+        reset_with_staged_route();
+        let result: Result<(), String> = initialize_with_capability(
+            &fence.capability,
+            || Err::<(), _>("construction failed".into()),
+            |_, _| panic!("failed construction must not publish"),
+        );
+        assert_eq!(result, Err("construction failed".into()));
+        assert!(!process().lock().unwrap().initializing);
+        assert!(process().lock().unwrap().host.is_none());
+        assert!(process().lock().unwrap().last_closed_sha256.is_none());
+        assert_eq!(prepared_route().lock().unwrap().as_ref().unwrap().0, SHA);
+        assert!(fence.capability.require_live().is_ok());
+        let result = initialize_with_capability(
+            &fence.capability,
+            || Ok(7_u8),
+            |state, value| {
+                assert!(state.initializing);
+                Ok(value)
+            },
+        );
+        assert_eq!(result, Ok(7));
+        assert!(!process().lock().unwrap().initializing);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&fence.close(SHA).unwrap()).unwrap()
+                ["disposition"],
+            "staged_route_closed"
+        );
+    }
+
+    #[test]
+    fn failed_postcheck_discards_candidate_and_retains_cleanup_without_publishing() {
+        let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
+        reset_with_staged_route();
+        let result: Result<(), String> = initialize_with_capability(
+            &fence.capability,
+            || {
+                *fence.source.0.lock().unwrap() = "damaged".into();
+                Ok(())
+            },
+            |_, _| panic!("invalid capability must not install constructed host"),
+        );
+        assert!(result.is_err());
+        assert!(!process().lock().unwrap().initializing);
+        assert!(process().lock().unwrap().host.is_none());
+        assert!(process().lock().unwrap().last_closed_sha256.is_none());
+        assert_eq!(prepared_route().lock().unwrap().as_ref().unwrap().0, SHA);
+        assert!(fence.close(SHA).is_err());
+        assert!(prepared_route().lock().unwrap().is_some());
+        let retry: Result<(), String> = initialize_with_capability(
+            &fence.capability,
+            || panic!("poisoned capability must reject before reconstruction"),
+            |_, _: ()| Ok(()),
+        );
+        assert!(retry.is_err());
+        assert!(!process().lock().unwrap().initializing);
+    }
+
+    #[test]
+    fn invalid_capability_rejects_before_construction_without_claiming_teardown() {
+        let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
+        reset_with_staged_route();
+        *fence.source.0.lock().unwrap() = "damaged".into();
+        let result: Result<(), String> = initialize_with_capability(
+            &fence.capability,
+            || panic!("invalid capability must reject before construction"),
+            |_, _: ()| Ok(()),
+        );
+        assert!(result.is_err());
+        assert!(!process().lock().unwrap().initializing);
+        assert!(process().lock().unwrap().last_closed_sha256.is_none());
+        assert!(prepared_route().lock().unwrap().is_some());
+        assert!(fence.close(SHA).is_err());
+    }
+
+    #[test]
+    fn construction_unwind_releases_only_initialization_gate() {
+        let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
+        reset_with_staged_route();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: Result<(), String> = initialize_with_capability(
+                &fence.capability,
+                || panic!("construction unwind"),
+                |_, _: ()| Ok(()),
+            );
+        }));
+        assert!(result.is_err());
+        assert!(!process().lock().unwrap().initializing);
+        assert!(process().lock().unwrap().host.is_none());
+        assert!(process().lock().unwrap().last_closed_sha256.is_none());
+        assert!(prepared_route().lock().unwrap().is_some());
+        assert!(fence.capability.require_live().is_ok());
+        assert!(fence.close(SHA).is_ok());
+    }
+
+    #[test]
     fn failed_initialize_staged_route_requires_exact_sha_then_closes_idempotently() {
         let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
         reset_with_staged_route();
-        assert!(close_no_media_runtime(OTHER_SHA).is_err());
+        assert!(fence.close(OTHER_SHA).is_err());
         assert_eq!(prepared_route().lock().unwrap().as_ref().unwrap().0, SHA);
-        let first: serde_json::Value =
-            serde_json::from_str(&close_no_media_runtime(SHA).unwrap()).unwrap();
+        let first: serde_json::Value = serde_json::from_str(&fence.close(SHA).unwrap()).unwrap();
         assert_eq!(first["disposition"], "staged_route_closed");
         assert_eq!(first["config_sha256"], SHA);
         assert!(prepared_route().lock().unwrap().is_none());
-        let retry: serde_json::Value =
-            serde_json::from_str(&close_no_media_runtime(SHA).unwrap()).unwrap();
+        let retry: serde_json::Value = serde_json::from_str(&fence.close(SHA).unwrap()).unwrap();
         assert_eq!(retry["disposition"], "already_closed");
-        assert!(close_no_media_runtime(OTHER_SHA).is_err());
+        assert!(fence.close(OTHER_SHA).is_err());
     }
 
     #[test]
     fn busy_lease_refuses_close_and_exact_retry_finishes() {
         let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
         reset_with_staged_route();
         process().lock().unwrap().host_leases = 1;
-        assert_eq!(close_no_media_runtime(SHA), Err("runtime host busy".into()));
+        assert_eq!(fence.close(SHA), Err("runtime host busy".into()));
         assert!(process().lock().unwrap().closing);
         assert!(prepared_route().lock().unwrap().is_some());
         process().lock().unwrap().host_leases = 0;
-        assert!(close_no_media_runtime(SHA).is_ok());
+        assert!(fence.close(SHA).is_ok());
         assert!(!process().lock().unwrap().closing);
     }
 
@@ -1236,12 +1481,13 @@ mod no_media_close_tests {
     #[test]
     fn missing_route_and_lease_integrity_failure_never_close() {
         let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
         *process().lock().unwrap() = ProcessState::default();
         *prepared_route().lock().unwrap() = None;
-        assert!(close_no_media_runtime(SHA).is_err());
+        assert!(fence.close(SHA).is_err());
         reset_with_staged_route();
         process().lock().unwrap().lease_integrity_failed = true;
-        assert!(close_no_media_runtime(SHA).is_err());
+        assert!(fence.close(SHA).is_err());
         assert!(prepared_route().lock().unwrap().is_some());
     }
 

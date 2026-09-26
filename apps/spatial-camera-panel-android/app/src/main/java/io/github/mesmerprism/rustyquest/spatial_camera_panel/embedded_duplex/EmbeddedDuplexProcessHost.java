@@ -25,6 +25,8 @@ final class EmbeddedDuplexProcessHost {
     private final Context applicationContext;
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
     private volatile EmbeddedDuplexProcessFence processFence;
+    private long nativeExecutorGeneration;
+    private String nativeAppRecordSha256;
     private final EmbeddedDuplexDisplaySlot display = new EmbeddedDuplexDisplaySlot();
     private final Object attachmentGate = new Object();
     private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.NEW);
@@ -118,6 +120,16 @@ final class EmbeddedDuplexProcessHost {
                 JSONObject runtime = new JSONObject(runtimeCopy);
                 JSONObject enrollment = new JSONObject(startupCopy);
                 processFence.beforeRuntimeEffects(checkpointSnapshot(), evidenceSnapshot());
+                JSONObject nativeFence = new JSONObject(EmbeddedDuplexNative.claimNativeProcessFence(processFence));
+                String recordSha = EmbeddedDuplexProcessFence.digest(processFence.nativeAdmissionRecord());
+                if (!"rusty.quest.embedded_duplex.native_fence_admitted.v1".equals(nativeFence.getString("$schema"))
+                        || nativeFence.getLong("app_generation") != processFence.generation()
+                        || !recordSha.equals(nativeFence.getString("app_record_sha256"))
+                        || nativeFence.getLong("executor_generation") <= 0L) {
+                    throw new IllegalStateException("native process fence binding differs");
+                }
+                nativeExecutorGeneration = nativeFence.getLong("executor_generation");
+                nativeAppRecordSha256 = recordSha;
                 EmbeddedDuplexBootstrap.Prepared prepared = EmbeddedDuplexBootstrap.prepare(
                         applicationContext, role, runtime, trace);
                 // Preparation stages this exact route in native process state.
@@ -147,6 +159,12 @@ final class EmbeddedDuplexProcessHost {
                     throw new IllegalStateException("embedded native initialization unavailable");
                 }
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_INSTALL);
+                JSONObject nativeResult = new JSONObject(initialized);
+                if (nativeResult.getLong("executor_generation") != nativeExecutorGeneration
+                        || nativeResult.getLong("app_process_generation") != processFence.generation()
+                        || !nativeAppRecordSha256.equals(nativeResult.getString("app_record_sha256"))) {
+                    throw new IllegalStateException("native initialized process incarnation differs");
+                }
                 EmbeddedDuplexResources installed = new EmbeddedDuplexResources(applicationContext,
                         display, new JSONObject(initialized), prepared.maxPairDeltaNs);
                 resources = installed;
@@ -574,11 +592,14 @@ final class EmbeddedDuplexProcessHost {
                     if (currentResources != null) currentResources.closeUnstartedAndVerify();
                 });
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
+                EmbeddedDuplexNative.finishNativeNoMediaCleanup(nativeExecutorGeneration, expectedSha);
                 processFence.afterVerifiedNoMediaCleanup(checkpointSnapshot(), evidenceSnapshot());
                 if (platform != null) platform.retireProcessCallbacks();
                 platform = null;
                 resources = null;
                 runtimeConfigSha256 = null;
+                nativeExecutorGeneration = 0L;
+                nativeAppRecordSha256 = null;
                 enrollmentRecordSha256 = null;
                 pendingStartPreflight = null;
                 localFixture = false;

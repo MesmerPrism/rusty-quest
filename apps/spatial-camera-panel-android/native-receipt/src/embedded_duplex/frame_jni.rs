@@ -3,6 +3,7 @@ use jni::sys::{jboolean, jlong, jlongArray};
 use jni::JNIEnv;
 
 use super::frame_identity::{ReceiverFrameObservationResult, ReceiverFrameRegistrationResult};
+use super::native_fence_jni::generation_current;
 use crate::spatial_video_projection_native_stream::{self as stream, EmbeddedReceiverFrameRequest};
 
 const IDENTITY_WORDS: usize = 14;
@@ -21,7 +22,10 @@ fn read_identity(env: &JNIEnv<'_>, array: JLongArray<'_>) -> Option<EmbeddedRece
     }
     let mut words = [0_i64; IDENTITY_WORDS];
     env.get_long_array_region(&array, 0, &mut words).ok()?;
-    if words.iter().any(|value| *value < 0) || words[..6].contains(&0) {
+    if words.iter().any(|value| *value < 0)
+        || words[..6].contains(&0)
+        || !generation_current(words[0] as u64)
+    {
         return None;
     }
     Some(EmbeddedReceiverFrameRequest {
@@ -49,8 +53,10 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     identity: JLongArray<'_>,
 ) -> jboolean {
     read_identity(&env, identity).is_some_and(|request| {
-        stream::register_embedded_receiver_frame(request)
-            == ReceiverFrameRegistrationResult::Accepted
+        let generation = request.receiver_generation;
+        let accepted = stream::register_embedded_receiver_frame(request)
+            == ReceiverFrameRegistrationResult::Accepted;
+        accepted && generation_current(generation)
     }) as jboolean
 }
 
@@ -61,8 +67,10 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     identity: JLongArray<'_>,
 ) -> jboolean {
     read_identity(&env, identity).is_some_and(|request| {
-        stream::record_embedded_receiver_frame_rendered(request)
-            == ReceiverFrameObservationResult::Accepted
+        let generation = request.receiver_generation;
+        let accepted = stream::record_embedded_receiver_frame_rendered(request)
+            == ReceiverFrameObservationResult::Accepted;
+        accepted && generation_current(generation)
     }) as jboolean
 }
 
@@ -81,6 +89,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         .iter()
         .any(|value| *value <= 0)
         || max_age_ns > 5_000_000_000
+        || !generation_current(receiver as u64)
     {
         return std::ptr::null_mut();
     }
@@ -120,6 +129,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     if env.set_long_array_region(&array, 0, &words).is_err() {
         return std::ptr::null_mut();
     }
+    if !generation_current(receiver as u64) {
+        return std::ptr::null_mut();
+    }
     array.into_raw()
 }
 
@@ -138,6 +150,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         .iter()
         .any(|value| *value <= 0)
         || max_age_ns > 5_000_000_000
+        || !generation_current(receiver as u64)
     {
         return std::ptr::null_mut();
     }
@@ -197,6 +210,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     if env.set_long_array_region(&array, 0, &words).is_err() {
         return std::ptr::null_mut();
     }
+    if !generation_current(receiver as u64) {
+        return std::ptr::null_mut();
+    }
     array.into_raw()
 }
 
@@ -206,7 +222,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _class: JClass<'_>,
     receiver: jlong,
 ) {
-    if receiver > 0 {
+    if receiver > 0 && generation_current(receiver as u64) {
         stream::retire_embedded_receiver_generation(receiver as u64);
     }
 }
@@ -218,7 +234,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     receiver: jlong,
     connection: jlong,
 ) {
-    if receiver > 0 && connection > 0 {
+    if receiver > 0 && connection > 0 && generation_current(receiver as u64) {
         stream::retire_embedded_receiver_connection(receiver as u64, connection as u64);
     }
 }

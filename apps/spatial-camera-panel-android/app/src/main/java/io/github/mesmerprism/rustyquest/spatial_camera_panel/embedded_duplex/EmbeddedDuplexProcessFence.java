@@ -17,6 +17,8 @@ import java.util.UUID;
  * fails closed. No elapsed/reboot clock is restored from this record. */
 final class EmbeddedDuplexProcessFence implements AutoCloseable {
     interface DirectorySync { void sync() throws Exception; }
+    private final File directory;
+    private boolean persistenceFailed;
     private final FileChannel channel;
     private final FileLock lock;
     private final DirectorySync directorySync;
@@ -39,7 +41,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         if (witnessed && (!Files.isRegularFile(witness.toPath(), LinkOption.NOFOLLOW_LINKS)
                 || Files.size(witness.toPath()) > 128
                 || !"rusty.quest.embedded_duplex.app_process_fence.v1\n".equals(
-                        Files.readString(witness.toPath(), StandardCharsets.US_ASCII)))) {
+                        new String(Files.readAllBytes(witness.toPath()), StandardCharsets.US_ASCII)))) {
             throw new IllegalStateException("process fence initialization witness corrupt");
         }
         if (witnessed && !Files.exists(file.toPath(), LinkOption.NOFOLLOW_LINKS)) {
@@ -100,7 +102,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                     throw new IllegalStateException("process fence journal binding differs; migration unsupported");
                 }
             }
-            EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(channel, lock,
+            EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, channel, lock,
                     sync, Math.addExact(priorGeneration, 1), pending, checkpointHash, evidenceHash);
             result.persist();
             return result;
@@ -111,8 +113,9 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         }
     }
 
-    private EmbeddedDuplexProcessFence(FileChannel channel, FileLock lock, DirectorySync sync,
+    private EmbeddedDuplexProcessFence(File directory, FileChannel channel, FileLock lock, DirectorySync sync,
             long generation, boolean pending, String checkpoint, String evidence) {
+        this.directory = directory;
         this.channel = channel; this.lock = lock; this.directorySync = sync;
         this.generation = generation; this.nonce = UUID.randomUUID().toString();
         this.pending = pending; this.recoveryOnly = pending;
@@ -140,7 +143,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     synchronized boolean effectsPending() { return pending; }
     synchronized boolean recoveryOnly() { return recoveryOnly; }
     synchronized void requireLive(long expectedGeneration) {
-        if (!lock.isValid() || !channel.isOpen() || expectedGeneration != generation) {
+        if (persistenceFailed || !lock.isValid() || !channel.isOpen() || expectedGeneration != generation) {
             throw new IllegalStateException("stale app process generation");
         }
     }
@@ -166,18 +169,43 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private void bind(String checkpoint, String evidence) throws Exception {
         checkpointDigest = digest(checkpoint); evidenceDigest = digest(evidence);
     }
-    private void persist() throws Exception {
-        requireLive(generation);
+    /** Called only by the captured native owner; reads the already held channel.
+     * Opening/closing another descriptor for Java's fcntl inode could release it. */
+    public synchronized String nativeAdmissionRecord() throws Exception {
+        requireFresh();
+        if (!pending) throw new IllegalStateException("native admission requires durable pending marker");
+        try {
+            long size = channel.size();
+            if (size <= 0 || size > 512) throw new IllegalStateException("native app record bounds");
+            ByteBuffer bytes = ByteBuffer.allocate((int) size);
+            channel.position(0);
+            while (bytes.hasRemaining()) if (channel.read(bytes) < 0) throw new IllegalStateException("native app record truncated");
+            String record = new String(bytes.array(), StandardCharsets.US_ASCII);
+            if (!record.equals(serializedRecord())) throw new IllegalStateException("native app record changed");
+            return record;
+        } catch (Exception failure) { persistenceFailed = true; throw failure; }
+    }
+    public synchronized String nativeFenceDirectory() throws Exception {
+        requireFresh();
+        return directory.getCanonicalPath();
+    }
+    private String serializedRecord() throws Exception {
         String body = "rusty.quest.embedded_duplex.app_process_fence.v1\n" + generation + "\n"
                 + nonce + "\n" + (pending ? "pending" : "clear") + "\n"
                 + checkpointDigest + "\n" + evidenceDigest + "\n";
-        byte[] bytes = (body + digest(body) + "\n").getBytes(StandardCharsets.US_ASCII);
+        return body + digest(body) + "\n";
+    }
+    private void persist() throws Exception {
+        requireLive(generation);
+        try {
+        byte[] bytes = serializedRecord().getBytes(StandardCharsets.US_ASCII);
         channel.position(0);
         ByteBuffer buffer = ByteBuffer.wrap(bytes);
         while (buffer.hasRemaining()) channel.write(buffer);
         channel.truncate(bytes.length);
         channel.force(true);
         directorySync.sync();
+        } catch (Exception failure) { persistenceFailed = true; throw failure; }
     }
     static String digest(String exact) throws Exception {
         if (exact == null) return "-";

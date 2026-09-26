@@ -1998,3 +1998,8 @@ This gate proves app writer exclusion only. JNI executor-generation binding,
 physical provider teardown, device force-stop behavior, and reciprocal media
 remain unverified. UI and debug typed operator calls retain the same app handlers
 and existing pre-Start boundary; this slice adds no Start operation.
+
+The native capability candidate and initialization unwind contract are routed in
+[Embedded duplex finite authority and native fencing](../../docs/EMBEDDED_DUPLEX_R5_CONTINUITY.md).
+Its separate native lock and executor counter do not provide durable restoration
+or physical cleanup evidence.

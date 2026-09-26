@@ -39,8 +39,6 @@ final class EmbeddedDuplexSessionInputs {
         byte[] entropy = new byte[32], nonce = new byte[12];
         random.nextBytes(entropy);
         random.nextBytes(nonce);
-        long generation = random.nextLong() & Long.MAX_VALUE;
-        if (generation == 0L) generation = 1L;
         long wallMs = System.currentTimeMillis();
         long monotonicNs = System.nanoTime();
         if (wallMs <= 0L || monotonicNs <= 0L || wallMs > Long.MAX_VALUE - 300_000L) {
@@ -67,7 +65,7 @@ final class EmbeddedDuplexSessionInputs {
                 .put("validation_monotonic_elapsed_ns", monotonicNs);
         return new EmbeddedDuplexSessionInputs(
                 EmbeddedDuplexPackagedInputs.InstalledRole.parse(enrollment.installed.roleId),
-                runtime, enrollment.startupJson(generation, grantId));
+                runtime, enrollment.startupJson(grantId));
     }
 
     private static String hex(byte[] bytes) {

@@ -49,15 +49,14 @@ public final class EmbeddedDuplexEnrollment {
         this.localFixture = localFixture;
     }
 
-    JSONObject startupJson(long freshExecutorGeneration, String freshRouteGrantId) throws Exception {
-        if (freshExecutorGeneration <= 0L || !dotted(freshRouteGrantId)) {
+    JSONObject startupJson(String freshRouteGrantId) throws Exception {
+        if (!dotted(freshRouteGrantId)) {
             throw new IllegalArgumentException("fresh session binding");
         }
         return new JSONObject()
                 .put("remote_key_id", remoteKeyId)
                 .put("remote_public_key_hex", remotePublicKeyHex)
                 .put("route_grant_id", freshRouteGrantId)
-                .put("executor_generation", freshExecutorGeneration)
                 .put("device_peers", new JSONArray()
                         .put(new JSONObject().put("device_id", installed.localDeviceId)
                                 .put("peer_id", installed.localPeerId))
