@@ -85,3 +85,12 @@ inspection when its required dynamic Rust standard-library payload is absent.
 shell/resources/dex/APK, and inspection durations. Candidate mode additionally
 records classified Gradle task counts, aggregate task durations, and cache
 outcomes.
+A caller may select a separately authenticated native source root with
+`-NativeRepoRoot` while keeping shell/package work in `-RepoRoot`. The native
+Quest Git identity, tracked paths and raw bytes must match the selected shell
+source. The caller owns fresh dependency authentication and an exclusive
+source-forest lock through compilation and final source checks; its build lease
+and the cache mutex remain required. Keep generated outputs outside that forest,
+reject unexpected state, and let Cargo decide reuse. This optional layout
+preserves per-run evidence and does not establish a cache hit or runtime
+qualification.

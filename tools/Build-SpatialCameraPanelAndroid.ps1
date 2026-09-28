@@ -1,5 +1,6 @@
 param(
     [string]$RepoRoot,
+    [string]$NativeRepoRoot,
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$NdkHome = $env:ANDROID_NDK_HOME,
@@ -1624,6 +1625,34 @@ if ($null -ne $embeddedDuplexProductInputs) {
 
 $nativeReceiptRoot = Join-Path $appRoot "native-receipt"
 $nativeReceiptCargoManifest = Join-Path $nativeReceiptRoot "Cargo.toml"
+if($NativeRepoRoot){
+    $nativeRoot=(Resolve-Path -LiteralPath $NativeRepoRoot).Path
+    $cursor=$nativeRoot
+    while($cursor){
+        if((Get-Item -LiteralPath $cursor).Attributes-band[IO.FileAttributes]::ReparsePoint){throw 'Native source ancestors cannot be links.'}
+        $cursor=Split-Path -Parent $cursor
+    }
+    if(@(Get-ChildItem -LiteralPath $nativeRoot -Force -Recurse|Where-Object{$_.Attributes-band[IO.FileAttributes]::ReparsePoint}).Count){throw 'Native source contains linked payload.'}
+    # The optional layout seam changes only Cargo's physical source root. Match
+    # exact Quest Git and raw tracked bytes to the separately selected shell.
+    foreach($root in @([string]$repoRoot,$nativeRoot)){
+        $status=(& git.exe -C $root status --porcelain=v1 -z --untracked-files=no)-join''
+        if($LASTEXITCODE-ne0-or$status){throw 'Native/shell source is not tracked-clean.'}
+    }
+    $shellHead=(& git.exe -C $repoRoot rev-parse HEAD)-join''
+    $nativeHead=(& git.exe -C $nativeRoot rev-parse HEAD)-join''
+    if($LASTEXITCODE-ne0-or$shellHead-cne$nativeHead){throw 'Native/shell Quest Git identity differs.'}
+    $paths=((& git.exe -C $repoRoot ls-files -z)-join'').Split([char]0,[StringSplitOptions]::RemoveEmptyEntries)
+    $nativePaths=((& git.exe -C $nativeRoot ls-files -z)-join'').Split([char]0,[StringSplitOptions]::RemoveEmptyEntries)
+    if($LASTEXITCODE-ne0-or($paths-join[char]0)-cne($nativePaths-join[char]0)){throw 'Native/shell tracked inventory differs.'}
+    foreach($path in $paths){
+        $nativeFile=Join-Path $nativeRoot $path
+        if(-not(Test-Path -LiteralPath $nativeFile -PathType Leaf)-or((Get-Item -LiteralPath $nativeFile).Attributes-band[IO.FileAttributes]::ReparsePoint)-or
+           (Get-FileSha256 -Path $nativeFile)-cne(Get-FileSha256 -Path (Join-Path $repoRoot $path))){throw 'Native/shell raw source bytes differ.'}
+    }
+    if(((& git.exe -C $nativeRoot ls-files --others -z)-join'').Length){throw 'Native source contains generated/unexpected payload; retain it.'}
+    $nativeReceiptCargoManifest=Join-Path $nativeRoot 'apps/spatial-camera-panel-android/native-receipt/Cargo.toml'
+}
 $nativeReceiptJniRoot = Join-Path $appBuildDir "generated\rustJniLibs"
 $nativeReceiptJniAbiDir = Join-Path $nativeReceiptJniRoot "arm64-v8a"
 $nativeReceiptJniLib = Join-Path $nativeReceiptJniAbiDir "libspatial_camera_panel_native_receipt.so"
