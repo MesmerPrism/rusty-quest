@@ -147,9 +147,35 @@ final class EmbeddedDuplexPlatform {
     private volatile OwnerStage failedOwnerStage = OwnerStage.NONE;
     private volatile String failedSinkStage = "NONE";
     private volatile String failedOwnerAction = "NONE";
+    private volatile ProviderReason failedProviderReason = ProviderReason.NONE;
+    enum ProviderReason { NONE, TICKET_PARSE, STALE_GENERATION, UNDECLARED_BINDING,
+        REGISTRY_CLOSED, PROVIDER_BUSY, CAPACITY, PREPARATION_ALREADY_ATTEMPTED,
+        FOREIGN_READBACK, RECEIPT_COLLISION, OTHER }
+    // Fixed owner-local categories only. Never return or log exception messages or ticket fields.
+    static ProviderReason providerReason(Throwable failure) {
+        for (int depth = 0; failure != null && depth < 8; depth++, failure = failure.getCause()) {
+            String message = failure.getMessage();
+            if (message == null) continue;
+            if (message.equals("media execution generation is stale") || message.equals("stale registry generation")) return ProviderReason.STALE_GENERATION;
+            if (message.equals("undeclared media provider binding")) return ProviderReason.UNDECLARED_BINDING;
+            if (message.equals("no-media registry closed")) return ProviderReason.REGISTRY_CLOSED;
+            if (message.equals("ProviderBusy")) return ProviderReason.PROVIDER_BUSY;
+            if (message.equals("media execution registry full")) return ProviderReason.CAPACITY;
+            if (message.equals("receiver preparation already attempted")) return ProviderReason.PREPARATION_ALREADY_ATTEMPTED;
+            if (message.equals("provider returned foreign readback")) return ProviderReason.FOREIGN_READBACK;
+            if (message.equals("receipt collision")) return ProviderReason.RECEIPT_COLLISION;
+            if (failure instanceof IllegalArgumentException) {
+                for (StackTraceElement frame : failure.getStackTrace()) {
+                    if (frame.getClassName().equals(MediaOwnerAction.class.getName())) return ProviderReason.TICKET_PARSE;
+                }
+            }
+        }
+        return ProviderReason.OTHER;
+    }
     public String ownerFailureDiagnostic() throws Exception {
         return new JSONObject().put("stage", failedOwnerStage.name())
-                .put("sink_stage", failedSinkStage).put("action", failedOwnerAction).put("code", failedOwnerStage == OwnerStage.NONE
+                .put("sink_stage", failedSinkStage).put("action", failedOwnerAction)
+                .put("provider_reason", failedProviderReason.name()).put("code", failedOwnerStage == OwnerStage.NONE
                         ? "NONE" : "OWNER_EFFECT_REJECTED").toString();
     }
     public String executeAndVerify(String authorityJson, String ticketJson, boolean compensate) throws Exception {
@@ -210,12 +236,15 @@ final class EmbeddedDuplexPlatform {
                     failedOwnerAction = "arm_receiver".equals(kind) ? "ARM_RECEIVER"
                             : "arm_cleanup".equals(kind) ? "ARM_CLEANUP" : "start".equals(kind) ? "START"
                             : "stop".equals(kind) ? "STOP" : "cleanup".equals(kind) ? "CLEANUP" : "BEFORE_TICKET";
+                    failedProviderReason = stage == OwnerStage.PROVIDER_EXECUTION
+                            ? providerReason(failure) : ProviderReason.NONE;
                     failedOwnerStage = stage;
                 }
             }
             android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=owner-effect-rejected stage="
                     + stage.name() + " primaryStage=" + failedOwnerStage.name() + " primaryAction=" + failedOwnerAction
-                    + " sinkStage=" + failedSinkStage + " code=OWNER_EFFECT_REJECTED");
+                    + " sinkStage=" + failedSinkStage + " providerReason=" + failedProviderReason.name()
+                    + " code=OWNER_EFFECT_REJECTED");
             throw failure;
         }
     }
