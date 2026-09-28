@@ -49,6 +49,28 @@ then performs the same Rust issue-token and authorize-use operations for each
 mutation. It replaces caller-supplied epoch, token, revisions, and requester id;
 settings-supplied authority config is rejected.
 
+### Bounded concurrent authority renewal
+
+The selected concurrent consumer bounds initial Start token/use lifetime by
+the authenticated enrollment policy and 120 seconds; ordinary paths retain
+their existing limit. Stop uses its separate short-lived authorization. These
+bounds do not grant a full streaming window at Start.
+
+Renewal uses current credentials and fresh reciprocal signed nonces to refresh
+the same keys, then a new reciprocal context to renew the same accepted session
+and original decision. Accepted receipts join outer Broker admission/control
+leases, inner media authority and the exact retained routes before extending
+resource deadlines. It neither resets enrollment nor stops and restarts media;
+transport, source ownership and session identity remain intact. Expired,
+replayed or uncertain phases retain Pending state and cannot be replaced by an
+observer or a caller-declared revision. Renewal histories are bounded.
+
+Trusted Revoke and retained Stop recovery preserve the original target and
+separately validate a fresh requester lease. Revocation authority is not a
+physical Stop receipt. The executor must still obtain actual owner teardown
+and retained-route cleanup; ordinary expired grants are never relabeled as a
+current requester.
+
 ## Independent product clients
 
 `crates/rusty-quest-broker-client` validates the product-facing client specs.

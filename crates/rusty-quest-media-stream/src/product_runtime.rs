@@ -176,6 +176,21 @@ pub struct MediaStreamOwnerAction {
     pub action_kind: MediaStreamOwnerActionKind,
 }
 
+/// Actual trusted revoker authorization for physical cleanup of a retained session.
+#[derive(Clone,Debug,Deserialize,Eq,PartialEq,Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaStreamTrustedRevokerCleanupEvidence {
+    /// Actual independent lease adoption.
+    pub adoption:rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeTrustedMediaRevokerLeaseAdoptionReceipt,
+    /// A fresh cleanup requester adoption; original terminating adoption remains byte-exact.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub cleanup_requester_adoption:Option<rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeTrustedMediaRevokerLeaseAdoptionReceipt>,
+    /// Actual typed owner termination request.
+    pub request:rusty_manifold_media_session::ManifoldMediaSessionTerminationRequest,
+    /// Actual owner applied termination.
+    pub termination:rusty_manifold_media_session::ManifoldMediaSessionMutationReceipt,
+}
+
 /// Rust-authored action that platform code may execute, but not reinterpret.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -191,6 +206,9 @@ pub struct MediaStreamPlatformAction {
     pub operation: MediaStreamPlatformOperation,
     /// Exact admitted client and lease that authorized this action.
     pub client_authority: MediaStreamClientAuthorityBinding,
+    /// When present, authorizes physical Stop from actual trusted Revoke; client_authority retains the original subject and is not a new ordinary grant.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub trusted_revoker_cleanup:Option<MediaStreamTrustedRevokerCleanupEvidence>,
     /// Exact selected runtime spec identity.
     pub runtime_spec_id: String,
     /// Exact canonical Quest runtime-spec digest.
@@ -519,7 +537,109 @@ enum MediaStreamAuthoritySource {
     },
 }
 
+/// Actual product authority adoption with unchanged retained physical owner graph.
+#[derive(Clone,Debug,Serialize,Deserialize,PartialEq)]
+pub struct MediaStreamConcurrentAuthorityAdoptionReceipt {
+    /// Fixed source-owned schema.
+    #[serde(rename="$schema")]
+    pub schema_id:String,
+    /// Actual coupled owner operation.
+    pub owner_request_id:DottedId,
+    /// Actual owner current readback after adoption.
+    pub current_acceptance:ManifoldMediaSessionCurrentReceipt,
+    /// Real retained physical graph digest before adoption.
+    pub prior_physical_graph_sha256:String,
+    /// Real retained physical graph digest after adoption.
+    pub physical_graph_sha256:String,
+}
+
 impl MediaStreamSessionProductRuntime {
+    /// Adopts an exact live owner renewal without recreating any physical media owner.
+    /// The host must already retain the coupled operation and the live Broker join.
+    pub fn adopt_concurrent_authority_renewal(
+        &mut self,
+        host: &ManifoldPeerRuntimeHost,
+        broker: &ManifoldBrokerRuntime,
+        receipt: &rusty_manifold_peer_runtime_host::ManifoldConcurrentMediaAuthorityRenewalReceipt,
+        now_ms: u64,
+    ) -> Result<MediaStreamConcurrentAuthorityAdoptionReceipt, MediaStreamProductRuntimeError> {
+        let prior_graph=self.concurrent_physical_graph_sha256()?;
+        if !receipt.applied || receipt.provider_epoch_id.as_str()!=self.authority_epoch_id
+            || !host.snapshot().concurrent_media_renewals.contains(receipt)
+            || self.pending_action.is_some() || self.cleanup_only_after_restore || self.abort_in_progress {
+            return Err(MediaStreamProductRuntimeError::AcceptedSessionMismatch);
+        }
+        let current=host.validate_media_session_with_live_broker_runtime(broker,&receipt.renewed_media.decision_id,now_ms)
+            .map_err(|_|MediaStreamProductRuntimeError::AcceptedSessionNotCurrent)?;
+        if current.session.as_ref()!=Some(&receipt.renewed_media) {
+            return Err(MediaStreamProductRuntimeError::AcceptedSessionMismatch);
+        }
+        if self.current_acceptance.session.as_ref()==Some(&receipt.renewed_media) {
+            self.commit_recovery_journal()?;
+            return Ok(MediaStreamConcurrentAuthorityAdoptionReceipt{schema_id:"rusty.quest.media_stream.concurrent_authority_adoption_receipt.v1".to_owned(),owner_request_id:receipt.request_id.clone(),current_acceptance:current,prior_physical_graph_sha256:prior_graph.clone(),physical_graph_sha256:prior_graph});
+        }
+        if self.current_acceptance.session.as_ref()!=Some(&receipt.prior_media) {
+            return Err(MediaStreamProductRuntimeError::AcceptedSessionSuperseded);
+        }
+        let mut prior=self.current_acceptance.clone();
+        prior.session.as_mut().ok_or(MediaStreamProductRuntimeError::AcceptedSessionMismatch)?.expires_at_ms=receipt.renewed_media.expires_at_ms;
+        validate_current_acceptance(&self.binding,&current,&self.authority_epoch_id,now_ms,true,Some(&prior))?;
+        self.current_acceptance=current;
+        self.commit_recovery_journal()?;
+        let graph=self.concurrent_physical_graph_sha256()?;
+        if graph!=prior_graph {return Err(MediaStreamProductRuntimeError::AcceptedSessionMismatch);}
+        Ok(MediaStreamConcurrentAuthorityAdoptionReceipt{schema_id:"rusty.quest.media_stream.concurrent_authority_adoption_receipt.v1".to_owned(),owner_request_id:receipt.request_id.clone(),current_acceptance:self.current_acceptance.clone(),prior_physical_graph_sha256:prior_graph,physical_graph_sha256:graph})
+    }
+
+    fn concurrent_physical_graph_sha256(&self)->Result<String,MediaStreamProductRuntimeError> {
+        let mut snapshot=serde_json::to_value(self.recovery_snapshot()?).map_err(MediaStreamProductRuntimeError::Encode)?;
+        snapshot.as_object_mut().ok_or(MediaStreamProductRuntimeError::RecoverySnapshotInvalid)?.remove("accepted_subject");
+        Ok(format!("sha256:{:x}",Sha256::digest(serde_json::to_vec(&snapshot).map_err(MediaStreamProductRuntimeError::Encode)?)))
+    }
+
+    /// Prepares physical Stop only after actual trusted owner Revoke, including expired ordinary authority.
+    pub fn prepare_trusted_revoker_cleanup(
+        &mut self, host:&ManifoldPeerRuntimeHost,
+        evidence:MediaStreamTrustedRevokerCleanupEvidence,
+        action_id:String, now_ms:u64,
+    )->Result<MediaStreamPlatformAction,MediaStreamProductRuntimeError> {
+        let requester=evidence.cleanup_requester_adoption.as_ref().unwrap_or(&evidence.adoption);
+        let accepted=self.current_acceptance.session.as_ref().ok_or(MediaStreamProductRuntimeError::AcceptedSessionMismatch)?;
+        let current=host.validate_media_session(&accepted.decision_id,now_ms);
+        let ended=current.session.as_ref().ok_or(MediaStreamProductRuntimeError::AcceptedSessionMismatch)?;
+        if !evidence.termination.applied || evidence.termination.source_id!=evidence.request.request_id
+            || evidence.request.action!=rusty_manifold_media_session::ManifoldMediaSessionTerminationAction::Revoke
+            || evidence.request.decision_id!=accepted.decision_id || evidence.request.session_id!=accepted.session_id
+            || evidence.request.expected_provider_epoch_id.as_str()!=self.authority_epoch_id
+            || evidence.adoption.provider_epoch_id.as_str()!=self.authority_epoch_id
+            || requester.provider_epoch_id!=evidence.adoption.provider_epoch_id || requester.revoker_id!=evidence.adoption.revoker_id
+            || !requester.runtime_adoption.applied || requester.lease.derivative_binding.is_some()
+            || !host.snapshot().media_command_runtime.reviewed_control_lease_adoption_ids.contains(&requester.runtime_adoption.adoption_id)
+            || requester.lease.expires_at_ms<=now_ms
+            || !host.snapshot().media_command_runtime.leases.contains(&requester.lease)
+            || !host.snapshot().trust_policy.trusted_media_revoker_ids.contains(&requester.revoker_id)
+            || ended.lifecycle_status!=ManifoldMediaSessionLifecycleStatus::Revoked
+            || ended.ended_by_id.as_ref()!=Some(&evidence.request.request_id)
+            || !host.snapshot().audit_events.iter().any(|event|event.event_kind==rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeAuditKind::MediaSessionTermination && event.source_id==evidence.request.request_id && event.applied)
+            || !same_accepted_subject(ended,accepted) || self.pending_action.is_some()
+            || action_id.trim().is_empty() || self.applied_action_ids.contains(&action_id) || self.aborted_action_ids.contains(&action_id) {
+            return Err(MediaStreamProductRuntimeError::AcceptedSessionMismatch);
+        }
+        let client_authority=self.active_client_authority.clone().ok_or(MediaStreamProductRuntimeError::MissingClientAuthority)?;
+        self.current_acceptance=current.clone();
+        let action=MediaStreamPlatformAction{schema_id:MEDIA_STREAM_PLATFORM_ACTION_SCHEMA.to_owned(),action_id,
+            authority_epoch_id:self.authority_epoch_id.clone(),operation:MediaStreamPlatformOperation::Stop,client_authority,
+            trusted_revoker_cleanup:Some(evidence),runtime_spec_id:self.binding.spec.runtime_spec_id.clone(),
+            runtime_spec_canonical_sha256:self.binding.runtime_spec_canonical_sha256.clone(),
+            manifold_descriptor_canonical_sha256:ended.product_descriptor_canonical_sha256.clone(),
+            manifold_decision_id:ended.decision_id.to_string(),manifold_session_revision:ended.session_authority_revision.get(),
+            media_acceptance_authority_revision:self.current_acceptance.acceptance_state_authority_revision.get(),
+            expected_runtime_revision:self.runtime.state().runtime_revision,
+            owner_actions:ordered_owner_actions(&self.binding.spec.owner_selections,MediaStreamPlatformOperation::Stop)};
+        self.pending_owner_receipts.clear();self.pending_uncertain_owner=None;self.pending_action=Some(action.clone());
+        self.commit_recovery_journal()?;Ok(action)
+    }
+
     /// Creates one runtime bound to a live in-process Manifold peer Runtime Host.
     pub fn new(
         binding: MediaStreamRuntimeProductBinding,
@@ -1178,6 +1298,7 @@ impl MediaStreamSessionProductRuntime {
             authority_epoch_id: self.authority_epoch_id.clone(),
             operation,
             client_authority,
+            trusted_revoker_cleanup:None,
             runtime_spec_id: self.binding.spec.runtime_spec_id.clone(),
             runtime_spec_canonical_sha256: self.binding.runtime_spec_canonical_sha256.clone(),
             manifold_descriptor_canonical_sha256: self
@@ -2135,11 +2256,12 @@ fn validate_recovery_action(
             .operation_admission_use_request_id
             .trim()
             .is_empty()
-        || action.client_authority.operation_capability_id
+        || (action.trusted_revoker_cleanup.is_none() && action.client_authority.operation_capability_id
             != match action.operation {
                 MediaStreamPlatformOperation::Start => "capability.command.media.session.start",
                 MediaStreamPlatformOperation::Stop => "capability.command.media.session.stop",
-            }
+            })
+        || action.trusted_revoker_cleanup.as_ref().is_some_and(|evidence|action.operation!=MediaStreamPlatformOperation::Stop || !evidence.termination.applied || evidence.termination.source_id!=evidence.request.request_id || evidence.request.decision_id!=accepted.decision_id || evidence.request.action!=rusty_manifold_media_session::ManifoldMediaSessionTerminationAction::Revoke || accepted.lifecycle_status!=ManifoldMediaSessionLifecycleStatus::Revoked || accepted.ended_by_id.as_ref()!=Some(&evidence.request.request_id))
         || action.owner_actions
             != ordered_owner_actions(&binding.spec.owner_selections, action.operation)
     {

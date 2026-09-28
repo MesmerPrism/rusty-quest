@@ -262,6 +262,9 @@ android {
       ndk { abiFilters += "arm64-v8a" }
       externalNativeBuild {
         cmake {
+          val sourceBanks = providers.gradleProperty("rqSourceBanksForeignOwnership").orElse("false").get()
+          require(sourceBanks == "true" || sourceBanks == "false") { "invalid source-bank ownership selection" }
+          arguments += "-DRQ_SOURCE_BANKS_FOREIGN_OWNERSHIP=" + (if (sourceBanks == "true") "ON" else "OFF")
           cppFlags += listOf("-std=c++20")
           targets += "XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff"
         }

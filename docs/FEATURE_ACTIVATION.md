@@ -53,6 +53,22 @@ Any mismatch produces a typed rejection before marker, input, scene, media,
 permission, route, or rendering effects. A conformance lock is test evidence;
 it does not change an application's inert default lock.
 
+### Concurrent stereo selection
+
+`quest-stereo-input-set` is disabled by default. The concurrent consumer binds
+one selected `quest-adapter` entry, the exact authenticated feature-lock bytes,
+`selected-lock-and-runtime-input`, and
+`rusty.quest.stereo_input_set.activation_receipt.v1`. Its explicit runtime
+input is `quest.stereo.concurrent-inputs`; the compiled provider and all finite
+Own capture hold limits must be present together. Missing, partial or mismatched
+selection fails before acquiring capture ownership.
+
+Bootstrap selection is distinct from effective rendering. A live source-set
+pipeline still requires actual retained content, device import capabilities,
+and matching source-bank shaders. Source presence or accepted bootstrap does
+not prove frames, mapped pixels or device readiness. Without selection, the
+existing route and shader/uniform ABI remain unchanged.
+
 ## Build And Run Closure
 
 Feature presence in source is not packaging authority. Native app resolution

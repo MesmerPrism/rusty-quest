@@ -11,6 +11,7 @@ import org.json.JSONObject;
 /** Owns the one outgoing capture graph and the independently assigned incoming sink. */
 final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Target {
     private final long generation;
+    private final OwnStereoCaptureRuntime ownCapture;
     private final EmbeddedDuplexDisplay display;
     private final PackedStereoMediaSourceRuntime.Pipeline pipeline;
     private final PackedStereoMediaOwnerSet outgoing;
@@ -28,6 +29,8 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         }
         generation = nativeInitialization.getLong("executor_generation");
         this.display = display;
+        ownCapture = nativeInitialization.optBoolean("own_stereo_capture_enabled", false)
+                ? OwnStereoCaptureRuntime.forApplication(context) : null;
         JSONObject outgoingSpec = nativeInitialization.getJSONObject("outgoing_runtime_spec");
         JSONObject incomingSpec = nativeInitialization.getJSONObject("incoming_runtime_spec");
         incomingRuntimeSpecId = incomingSpec.getString("runtime_spec_id");
@@ -43,11 +46,29 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                 sink.width, sink.height, sink.fps,
                 new PackedStereoMediaReceiver.Bounds(64 * 1024, sink.maxPacketBytes,
                         sink.width, sink.height, 12, 3000, 4000, 100, 15000, 10000, 8, 250));
+        try {
+        if (ownCapture != null) {
+            io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner capture = ownCapture.startAccepted(
+                    new OwnStereoCaptureRuntime.Configuration(source.width / 2, source.height,
+                            source.fps, leftCamera, rightCamera, maxPairDeltaNs));
+            display.activateOwnProjection();
+            pipeline = PackedStereoMediaSourceRuntime.createSharedCapturePipeline(context, source.plan.getString("session_id"),
+                    source.source.getString("source_kind"), source.endpoint.getString("source_host"),
+                    source.endpoint.getInt("source_port"), source.width, source.height,
+                    source.width / 2, source.height, source.fps, source.bitrate,
+                    leftCamera, rightCamera, maxPairDeltaNs, capture, generation);
+        } else {
         pipeline = PackedStereoMediaSourceRuntime.createPipeline(context, source.plan.getString("session_id"),
                 source.source.getString("source_kind"), source.endpoint.getString("source_host"),
                 source.endpoint.getInt("source_port"), source.width, source.height,
                 source.width / 2, source.height, source.fps, source.bitrate,
                 leftCamera, rightCamera, maxPairDeltaNs);
+        }
+        } catch (Exception invalid) {
+            try { incoming.closeUnstartedAndVerify(); }
+            catch (Exception cleanup) { invalid.addSuppressed(cleanup); }
+            throw invalid;
+        }
         try {
             outgoing = new PackedStereoMediaOwnerSet(generation, pipeline);
             MediaProductBinding.Builder builder = new MediaProductBinding.Builder(outgoingSpec.getString("runtime_spec_id"));
@@ -94,7 +115,18 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     @Override public long generation() { return generation; }
     MediaProductBinding binding() { return binding; }
     EmbeddedDuplexReceiver incoming() { return incoming; }
-    JSONObject sourceSnapshot() throws Exception { return pipeline.snapshot(); }
+    JSONObject sourceSnapshot() throws Exception {
+        JSONObject snapshot = pipeline.snapshot();
+        if (ownCapture != null) {
+            snapshot.put("capture_scope", "peer_subscription_only");
+            snapshot.put("own_app_capture", ownCapture.phase().name());
+            io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner retained = ownCapture.retainedCapture();
+            snapshot.put("own_app_capture_fresh", retained != null && retained.fresh());
+        }
+        return snapshot;
+    }
+    boolean ownAppCaptureEnabled() { return ownCapture != null; }
+    String ownAppCaptureState() { return ownCapture == null ? "disabled" : ownCapture.phase().name(); }
 
     @Override public String incomingRuntimeSpecId() { return incomingRuntimeSpecId; }
     @Override public void awaitFirstRenderedFrame() throws Exception { incoming.awaitFirstRenderedFrame(); }

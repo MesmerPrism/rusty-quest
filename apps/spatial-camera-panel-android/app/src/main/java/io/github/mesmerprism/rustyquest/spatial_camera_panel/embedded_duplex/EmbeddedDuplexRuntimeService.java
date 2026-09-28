@@ -7,6 +7,21 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
 
+    public static CompletableFuture<String> armConcurrentQualification(Context context, String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).concurrentQualification(true, challenge);
+    }
+    public static CompletableFuture<String> concurrentQualificationStatus(Context context, String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).concurrentQualification(false, challenge);
+    }
+
+    public static CompletableFuture<String> concurrentPolicy(Context context, String challenge, long[] policy) {
+        return EmbeddedDuplexProcessHost.forApplication(context).concurrentPolicy(challenge, policy);
+    }
+
+    public static CompletableFuture<String> peerLifecycle(Context context, EmbeddedDuplexPeerAction action, String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).peerLifecycle(action, challenge);
+    }
+
     public static CompletableFuture<EmbeddedDuplexRuntimeStatus> status(Context context) {
         return EmbeddedDuplexProcessHost.forApplication(context).runtimeStatus();
     }

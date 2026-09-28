@@ -11,6 +11,8 @@ internal object EmbeddedDuplexActivityAttachment {
   /** This is valid only before native bootstrap. A live host requires typed Stop first. */
   fun detachUninitialized(context: Context, generation: Long) {
     EmbeddedDuplexProcessHost.forApplication(context).detachUninitializedDisplay(generation)
+    // Activity-owned capture stop is independent from the already-cleaned Peer subscription.
+    OwnStereoCaptureRuntime.currentForApplication()?.requestStopOwn()
   }
 
   fun diagnoseLocalFixture(context: Context, generation: Long): CompletableFuture<String> =

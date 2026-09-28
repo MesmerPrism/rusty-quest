@@ -8,6 +8,7 @@ extern "C" {
 
 #define RQ_DEPTH_GPU_ABI_V1 1U
 #define RQ_SPATIAL_DEPTH_HANDOFF_ABI_V2 2U
+#define RQ_SPATIAL_DEPTH_CAP_FOREIGN_QUEUE_OWNERSHIP_V2 (1U << 5U)
 #define RQ_DEPTH_GPU_EYE_ORDER_LAYER0_LEFT_LAYER1_RIGHT 1U
 
 typedef enum rq_depth_gpu_status_v1 {

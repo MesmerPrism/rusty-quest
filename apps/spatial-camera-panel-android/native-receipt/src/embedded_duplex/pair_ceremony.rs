@@ -2,11 +2,10 @@
 //! private enrollment select every peer, key, endpoint and trust root; the
 //! operator supplies only the fixed `pair_ceremony` action.
 
-use super::*;
 use super::super::pair_lifetime_policy::{
-    CEREMONY_TTL_MS, CONTEXT_TTL_MS, ISSUE_BACKDATE_MS, PAIR_CREDENTIAL_TTL_MS,
-    PAIR_STATUS_TTL_MS,
+    CEREMONY_TTL_MS, CONTEXT_TTL_MS, ISSUE_BACKDATE_MS, PAIR_CREDENTIAL_TTL_MS, PAIR_STATUS_TTL_MS,
 };
+use super::*;
 use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_manifold_peer::{
     ManifoldCommonLanPeerSessionProposal, ManifoldCommonLanReciprocalEd25519Context,
@@ -23,6 +22,16 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs::File;
 use std::io::Read;
+
+#[path = "pair_renewal.rs"]
+mod pair_renewal;
+
+pub(super) fn renew(host: &Host) -> Result<String, String> {
+    pair_renewal::run(host)
+}
+pub(super) fn finish_renewal_cycle(host: &Host, id: &str) -> Result<(), String> {
+    pair_renewal::finish_cycle(host, id)
+}
 
 pub(super) const FRAME_MAGIC: &[u8] = b"RQPC1";
 const FRAME_SCHEMA: &str = "rusty.quest.embedded_duplex.pair_ceremony_frame.v1";
@@ -42,6 +51,8 @@ enum Stage {
 
 pub(super) struct PairState {
     stage: Stage,
+    renewal: pair_renewal::RenewalState,
+    renewal_ledger: pair_renewal::CycleLedger,
     last_step: Option<String>,
     last_failure_code: Option<&'static str>,
     ceremony_id: Option<String>,
@@ -59,6 +70,8 @@ impl Default for PairState {
     fn default() -> Self {
         Self {
             stage: Stage::Idle,
+            renewal: pair_renewal::RenewalState::default(),
+            renewal_ledger: pair_renewal::CycleLedger::default(),
             last_step: None,
             last_failure_code: None,
             ceremony_id: None,
@@ -209,6 +222,14 @@ fn decode(
         "prepared_b" => &["context", "signature"][..],
         "finish_b" => &["signature"][..],
         "finished_b" => &["current_session"][..],
+        "renew_hello" => &["phase", "session_id", "nonce_a", "current_session"][..],
+        "renew_hello_ack" => &["phase", "nonce_b", "current_session"][..],
+        "renew_sign_a" => &["phase", "context"][..],
+        "renew_signed_a" => &["phase", "signature"][..],
+        "renew_prepare_b" => &["phase"][..],
+        "renew_prepared_b" => &["phase", "context", "signature"][..],
+        "renew_finish_b" => &["phase", "signature", "initiator_receipt"][..],
+        "renew_finished_b" => &["phase", "receipt", "current_session", "provider_renewal"][..],
         _ => return Err("pair frame kind invalid".into()),
     };
     let fields = body
@@ -768,6 +789,11 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
 }
 
 pub(super) fn handle_frame(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    // Renewal failure must not replace the accepted original ceremony state.
+    let checked = decode(host, bytes, None, None)?;
+    if checked.kind.starts_with("renew_") {
+        return pair_renewal::handle_frame(host, checked);
+    }
     let result = handle_frame_inner(host, bytes);
     if let Err(error) = &result {
         remember_failure(host, error);
@@ -777,6 +803,9 @@ pub(super) fn handle_frame(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String>
 
 fn handle_frame_inner(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String> {
     let frame = decode(host, bytes, None, None)?;
+    if frame.kind.starts_with("renew_") {
+        return pair_renewal::handle_frame(host, frame);
+    }
     let id = frame.ceremony_id.as_str();
     let result = match frame.kind.as_str() {
         "hello" => {
@@ -942,7 +971,7 @@ pub(super) fn status(host: &Host) -> Result<String, String> {
             else if stage == Stage::Idle { "not_started" } else { "in_progress" },
         "session_id":session_id, "native_current_session":native_current,
         "last_step":last_step,"last_failure_code":last_failure_code,
-        "route_current":false,"media_effect_proven":false})
+        "route_current":false,"media_effect_proven":false, "renewal":pair_renewal::status(host)?})
         .to_string(),
     )
 }

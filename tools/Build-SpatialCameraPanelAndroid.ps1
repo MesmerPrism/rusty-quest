@@ -1326,6 +1326,13 @@ $embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
     -Path $EmbeddedDuplexProductInputRoot `
     -ApplicationId $resolvedAppId `
     -SigningCertificateSha256 $normalizedExpectedSignerSha256
+Import-Module (Join-Path $repoRoot 'tools/src/SourceBankBuildInputs.psm1') -Force
+$sourceBankBuildInputs = Resolve-SourceBankBuildInputs -PrivateLayerProfilePath $resolvedPrivateLayerProfilePath `
+    -ValidatedProductInputs $embeddedDuplexProductInputs -VertexShaderPath $resolvedOpaqueProjectionVertexShader `
+    -FragmentShaderPath $resolvedOpaqueProjectionShader
+if ($sourceBankBuildInputs.enabled -and $EnvironmentDepthOwner -cne 'spatial-sdk-api-layer') {
+    throw 'Source-bank capture requires the selected shared Vulkan capability owner.'
+}
 $embeddedMediaModuleRoot = Join-Path $repoRoot "crates\rusty-quest-media-stream-android\android\library"
 $embeddedMediaSourceFiles = @(
     Join-Path $embeddedMediaModuleRoot "build.gradle"
@@ -1472,6 +1479,7 @@ $nativeIdentityDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.native_cache_identity.v1"
     source_sha256 = $nativeSourceSha256
     private_inputs = $privateNativeIdentity
+    source_bank_inputs = $sourceBankBuildInputs
     ndk_version = $NdkVersion
     target = "aarch64-linux-android"
     profile = "release"
@@ -1499,6 +1507,7 @@ $shellIdentityInputs = [ordered]@{
     broker_client_android = Join-Path $repoRoot "crates\rusty-quest-broker-client\android"
     broker_admission_android = Join-Path $repoRoot "crates\rusty-quest-broker-admission\android"
     media_stream_android = $embeddedMediaModuleRoot
+    spatial_sdk_api_layer = Join-Path $appRoot "app/src/main/cpp/spatial_depth_layer"
 }
 if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) {
     $shellIdentityInputs["private_source"] = $resolvedPrivateFeatureSourceDir
@@ -1517,6 +1526,7 @@ $shellIdentityDescriptor = [ordered]@{
     gradle_version = $GradleVersion
     android_sdk_build_tools = Split-Path -Leaf $buildTools
     defaults = $buildInputDescriptor.defaults
+    source_bank_enabled = [bool]$sourceBankBuildInputs.enabled
     camera_projection_default_enabled = [bool]$CameraProjectionDefaultEnabled
     immersive_video_default_enabled = [bool]$ImmersiveVideoDefaultEnabled
     immersive_video_default_offline_pack_id = $resolvedImmersiveVideoDefaultOfflinePackId
@@ -1700,6 +1710,14 @@ Write-Host ("BUILD_CACHE rust_target={0}" -f $(if ($rustTargetInstalled) { "alre
 New-Item -ItemType Directory -Force -Path $nativeReceiptJniAbiDir, $nativeReceiptTargetDir | Out-Null
 $nativeStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $cargoOutput = [Collections.Generic.List[string]]::new()
+$sourceBankCargoEnvironment = @{}
+foreach ($name in @('RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES')) {
+    $sourceBankCargoEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+}
 $previousAndroidHomeForCargo = $env:ANDROID_HOME
 $previousNdkHomeForCargo = $env:ANDROID_NDK_HOME
 $previousLinkerForCargo = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
@@ -1748,6 +1766,15 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE = $resolvedPrivateLayerProfilePath
+    }
+    foreach ($entry in @(
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER';path=$resolvedOpaqueProjectionVertexShader},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER';path=$resolvedOpaqueProjectionShader},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS';path=$sourceBankBuildInputs.own_capture_hold_limits.slots},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES';path=$sourceBankBuildInputs.own_capture_hold_limits.bytes},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES';path=$sourceBankBuildInputs.own_capture_hold_limits.gpu_uses})) {
+        $value = if ($sourceBankBuildInputs.enabled) { [string]$entry.path } else { $null }
+        [Environment]::SetEnvironmentVariable($entry.name, $value, 'Process')
     }
     if ($privateLayerShaderInputsConfigured) {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER = $resolvedOpaqueGuideShader
@@ -1849,6 +1876,9 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE = $previousPrivateLayerProfile
+    }
+    foreach ($name in $sourceBankCargoEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $sourceBankCargoEnvironment[$name], 'Process')
     }
     if ($null -eq $previousOpaqueGuideShader) {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER -ErrorAction SilentlyContinue
@@ -2064,6 +2094,7 @@ try {
         "-Pandroid.aapt2FromMavenOverride=$shortAapt2",
         "-PandroidJar=$mediaAndroidJar",
         "-PmediaBuildDir=$mediaAndroidBuildRoot",
+        "-PrqSourceBanksForeignOwnership=$($sourceBankBuildInputs.enabled.ToString().ToLowerInvariant())",
         "-p", ([string]$appRoot),
         ":app:assemble$BuildType"
     )
@@ -2782,6 +2813,8 @@ $manifest = [ordered]@{
         "debug.rustyquest.spatial.camera_hwb_projection_probe.camera.sampling"
     )
     spatial_public_opaque_guide_native_phase_rate_hz = (0.5 * $resolvedDistortionSpeedScale)
+    source_bank_inputs = $sourceBankBuildInputs
+    source_bank_enabled = [bool]$sourceBankBuildInputs.enabled
     spatial_public_multistack_private_layer_profile_configured = (-not [string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath))
     spatial_public_multistack_private_shader_inputs = $(if ($privateLayerShaderInputsConfigured) { "external-build-inputs" } else { "not-configured-raw-camera-fallback" })
     spatial_public_multistack_opaque_guide_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader))

@@ -48,6 +48,8 @@ final class EmbeddedDuplexPlatform {
     private final File replayDirectory;
     private final AtomicFile replayFile;
     private final AtomicFile activationReplayFile;
+    private final AtomicFile retainedCleanupReplayFile;
+    private final AtomicFile cleanupPreparationsFile;
     private final boolean localFixture;
     private volatile PackagedAndroidMediaOwnerRegistry registry;
     private volatile OwnerDispatchTcpEndpoint endpoint;
@@ -94,6 +96,16 @@ final class EmbeddedDuplexPlatform {
         rejectLink(new File(activationBase.getPath() + ".new"));
         rejectLink(new File(activationBase.getPath() + ".bak"));
         activationReplayFile = new AtomicFile(activationBase);
+        File cleanupBase = new File(replayDirectory, "retained-cleanup.v2.json");
+        rejectLink(cleanupBase);
+        rejectLink(new File(cleanupBase.getPath() + ".new"));
+        rejectLink(new File(cleanupBase.getPath() + ".bak"));
+        retainedCleanupReplayFile = new AtomicFile(cleanupBase);
+        File preparedBase = new File(replayDirectory, "retained-cleanup-preparations.v1.json");
+        rejectLink(preparedBase);
+        rejectLink(new File(preparedBase.getPath() + ".new"));
+        rejectLink(new File(preparedBase.getPath() + ".bak"));
+        cleanupPreparationsFile = new AtomicFile(preparedBase);
     }
 
     /** Called once with resource tuples derived by Rust from packaged bindings. */
@@ -206,6 +218,63 @@ final class EmbeddedDuplexPlatform {
             throw new IllegalStateException("owner control target unavailable");
         }
         return OwnerDispatchTcpEndpoint.exchange(remoteControlAddress, remoteControlPort, exactFrame);
+    }
+
+    /** Fixed native v2 callback; target identity is preserved independently of requester. */
+    public String executeRetainedCleanupAndVerify(String authorityJson, String ticketJson,
+            boolean compensate) throws Exception {
+        requireProcessCallback();
+        JSONObject authority = new JSONObject(authorityJson);
+        MediaOwnerAction ticket = MediaOwnerAction.parse(ticketJson);
+        if (!"rusty.quest.android.media.retained_cleanup_projection.v2".equals(authority.getString("$schema"))
+                || !localPeerId.equals(authority.getString("executor_peer_id"))
+                || authority.getLong("expires_at_ms") <= System.currentTimeMillis()
+                || authority.getLong("requester_expires_at_ms") <= System.currentTimeMillis()
+                || !ticket.authorityEpochId().equals(authority.getString("provider_epoch_id"))
+                || !ticket.clientId().equals(authority.getString("target_client_id"))
+                || !ticket.leaseId().equals(authority.getString("target_runtime_lease_id"))
+                || !"stop".equals(ticket.operation())
+                || !("stop".equals(ticket.actionKind()) || "cleanup".equals(ticket.actionKind()))) {
+            throw new IllegalStateException("retained cleanup target binding rejected");
+        }
+        boolean distinct = authority.getBoolean("trusted_revoker");
+        if (distinct != (!ticket.clientId().equals(authority.getString("requester_id"))
+                && !ticket.leaseId().equals(authority.getString("requester_runtime_lease_id")))) {
+            throw new IllegalStateException("retained cleanup requester binding rejected");
+        }
+        PackagedAndroidMediaOwnerRegistry current = registry;
+        if (current == null) throw new IllegalStateException("platform registry absent");
+        EmbeddedDuplexActivationGate gate = activationGate;
+        if (gate != null) gate.beforeOwnerEffect(authority, activationTicket(ticket), compensate);
+        requireProcessCallback();
+        String readback = current.execute(ticketJson, compensate);
+        String verified = current.verifyAndReadEvidence(ticketJson, readback);
+        if (verified == null) throw new IllegalStateException("retained cleanup live evidence rejected");
+        return new JSONObject().put("readback", new JSONObject(readback))
+                .put("readback_json", readback).put("verified", new JSONObject(verified)).toString();
+    }
+
+    public synchronized void persistCleanupPreparations(String snapshotJson) throws Exception {
+        requireProcessCallback();
+        persistReplay(cleanupPreparationsFile, snapshotJson);
+    }
+    public synchronized String loadCleanupPreparations() throws Exception {
+        requireProcessCallback();
+        if (!cleanupPreparationsFile.getBaseFile().exists()
+                && !new File(cleanupPreparationsFile.getBaseFile().getPath() + ".bak").exists()) {
+            return "{\"originals\":{},\"prepared\":{}}";
+        }
+        return loadReplay(cleanupPreparationsFile);
+    }
+
+    public synchronized void persistRetainedCleanupReplay(String snapshotJson) throws Exception {
+        requireProcessCallback();
+        persistReplay(retainedCleanupReplayFile, snapshotJson);
+    }
+
+    public synchronized String loadRetainedCleanupReplay() throws Exception {
+        requireProcessCallback();
+        return loadReplay(retainedCleanupReplayFile);
     }
 
     public synchronized void persistDispatchReplay(String snapshotJson) throws Exception {

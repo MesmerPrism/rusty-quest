@@ -22,3 +22,8 @@ target_link_libraries(
   XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff
   PRIVATE android log vulkan
 )
+
+option(RQ_SOURCE_BANKS_FOREIGN_OWNERSHIP "Enable selected retained source-bank foreign ownership" OFF)
+if(RQ_SOURCE_BANKS_FOREIGN_OWNERSHIP)
+  target_compile_definitions(XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff PRIVATE RQ_SOURCE_BANKS_FOREIGN_OWNERSHIP=1)
+endif()
