@@ -2,6 +2,10 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 
 /** Platform display effects invoked only by the embedded product host. */
 public interface EmbeddedDuplexDisplay {
+    default void resumeOwnProjection(java.util.function.BooleanSupplier ownerAlive) {
+        if (ownerAlive==null || !ownerAlive.getAsBoolean()) throw new IllegalStateException("Own resume superseded");
+        activateOwnProjection();
+    }
     default void activateOwnProjection() { throw new IllegalStateException("Own display carrier unavailable"); }
     default void requestWholeProjectionStop() { throw new IllegalStateException("whole projection stop unavailable"); }
     long ensureLocalCaptureStopped();

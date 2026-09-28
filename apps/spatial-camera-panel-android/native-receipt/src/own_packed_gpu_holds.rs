@@ -36,6 +36,11 @@ pub(crate) unsafe fn poll_vk_retired(token:u64)->Result<bool,String> {
  let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;let owner=q.get_mut(&observation.0).ok_or("GPU pool disappeared")?;
  match observed {Ok(true)=>{owner.holds.remove(&token);Ok(true)},Ok(false)=>{if let Some(Hold::Vk{polling,..})=owner.holds.get_mut(&token){*polling=false;}Ok(false)},Err(e)=>{if let Some(Hold::Vk{polling,phase,..})=owner.holds.get_mut(&token){*polling=false;*phase=PhysicalUsePhase::Quarantined;}Err(format!("Vk fence failed; hold quarantined {e:?}"))}}
 }
+// Renderer recovery cannot consume or waive any retained Vk use. Encoder owners remain independent.
+pub(crate) fn renderer_holds_retired(epoch:SourceEpoch)->bool {
+ quotas().lock().is_ok_and(|q|q.values().filter(|owner|owner.epoch==epoch)
+  .all(|owner|owner.holds.values().all(|hold|matches!(hold,Hold::Encoder(_)))))
+}
 pub(crate) fn retire_pool_if_empty(pool:u64)->Result<bool,String> {let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;let Some(owner)=q.get(&pool) else{return Ok(true);};if !owner.holds.is_empty(){return Ok(false);}q.remove(&pool);Ok(true)}
 
 pub(crate) unsafe fn submit_vk_pending(token:u64,queue:vk::Queue,submits:&[vk::SubmitInfo<'_>])->Result<(),String> {

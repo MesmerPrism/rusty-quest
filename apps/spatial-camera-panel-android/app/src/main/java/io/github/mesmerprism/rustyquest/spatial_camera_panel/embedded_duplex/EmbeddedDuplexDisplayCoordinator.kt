@@ -31,17 +31,23 @@ internal class EmbeddedDuplexDisplayCoordinator(
   private var ownedDecoderToken = 0L
   private var ownedReaderGeneration = 0L
   private fun concurrentOwn(): Boolean = OwnPackedPoolNative.captureRouteSelected() && OwnStereoCaptureRuntime.currentForApplication() != null
-  override fun activateOwnProjection() = serialized {
+  override fun resumeOwnProjection(ownerAlive: java.util.function.BooleanSupplier) = serialized {
+    activateOwnProjectionCurrent(ownerAlive)
+  }
+  override fun activateOwnProjection() = serialized { activateOwnProjectionCurrent(null) }
+  private fun activateOwnProjectionCurrent(ownerAlive: java.util.function.BooleanSupplier?) {
+    check(ownerAlive?.asBoolean != false) { "Own resume superseded" }
     val capture = checkNotNull(OwnStereoCaptureRuntime.currentForApplication()?.retainedCapture()) {
       "accepted Own capture unavailable"
     }
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
     while (!capture.fresh()) {
+      check(ownerAlive?.asBoolean != false) { "Own resume superseded" }
       check(System.nanoTime() < deadline) { "Own producer readiness remains Pending" }
       Thread.sleep(10)
     }
+    check(ownerAlive?.asBoolean != false) { "Own resume superseded" }
     check(startOwn?.invoke() == true) { "retained Own source carrier unavailable" }
-    Unit
   }
 
   override fun requestWholeProjectionStop() = serialized {

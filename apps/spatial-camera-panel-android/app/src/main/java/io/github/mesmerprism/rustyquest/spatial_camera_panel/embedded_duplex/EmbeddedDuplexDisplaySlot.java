@@ -135,6 +135,9 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
     @Override public long ensureLocalCaptureStopped() {
         return call(EmbeddedDuplexDisplay::ensureLocalCaptureStopped);
     }
+    @Override public void resumeOwnProjection(java.util.function.BooleanSupplier ownerAlive) {
+        call(display -> { display.resumeOwnProjection(ownerAlive); return null; });
+    }
     @Override public void activateOwnProjection() {
         call(display -> { display.activateOwnProjection(); return null; });
     }
