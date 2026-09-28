@@ -2086,7 +2086,7 @@ try {
         throw "The embedded media module requires the same Android 34 platform as its host."
     }
     $gradleArguments = @(
-        $(if ($BuildMode -eq "DevFast") { "--daemon" } else { "--no-daemon" }),
+        "--no-daemon",
         $(if ($BuildMode -eq "DevFast") { "--configuration-cache" } else { "--no-configuration-cache" }),
         "--console=plain",
         "--build-cache",
@@ -2101,6 +2101,7 @@ try {
     if ($BuildMode -eq "Candidate") {
         $gradleArguments = @("--init-script", $gradleTimingInitPath) + $gradleArguments
     }
+    if ($BuildMode -eq "DevFast") { $gradleArguments = @("-Pkotlin.compiler.execution.strategy=in-process") + $gradleArguments }
     $gradleStopwatch = [Diagnostics.Stopwatch]::StartNew()
     $gradleOutput = [Collections.Generic.List[string]]::new()
     & $gradleBat @gradleArguments 2>&1 | ForEach-Object {
@@ -2185,7 +2186,7 @@ try {
         package_prior_cache_available = $packagePriorCacheAvailable
         package_invalidation = $packageInvalidation
         gradle_observed_outcomes = $gradleOutcomeSummary
-        gradle_daemon = ($BuildMode -eq "DevFast")
+        gradle_daemon = $false
         aapt2_override = "verified-short-copy"
         status = "pass"
     })
