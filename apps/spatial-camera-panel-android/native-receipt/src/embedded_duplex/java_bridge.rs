@@ -463,19 +463,7 @@ impl JavaOwnerCallbacks {
             .l().map_err(|_| "java_bridge.owner_diagnostic_type")?;
         if value.is_null() { return Err("java_bridge.owner_diagnostic_null".into()); }
         let text: String = env.get_string(&JString::from(value)).map_err(|_| "java_bridge.owner_diagnostic_string")?.into();
-        if text.len() > 256 { return Err("java_bridge.owner_diagnostic_bounds".into()); }
-        let value: serde_json::Value = serde_json::from_str(&text).map_err(|_| "java_bridge.owner_diagnostic_json")?;
-        let stage = value.get("stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_stage")?;
-        let sink = value.get("sink_stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_sink")?;
-        let action = value.get("action").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_action")?;
-        let code = value.get("code").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_code")?;
-        if !matches!(stage,"NONE"|"CALLBACK_FENCE"|"PROJECTION_BINDING"|"REGISTRY_BINDING"|"INCOMING_FENCE"|"LOCAL_QUIESCENCE"|"PROVIDER_EXECUTION"|"RECEIPT_VERIFICATION"|"INCOMING_ARM_VERIFICATION")
-            || !matches!(sink,"NONE"|"PEER_PROJECTION"|"READER_STAGE"|"READER_IDENTITY"|"RECEIVER_CREATE"|"PROVIDER_GETTER"|"PEER_BIND"|"RECEIVER_EFFECT")
-            || !matches!(action,"NONE"|"ARM_RECEIVER"|"ARM_CLEANUP"|"START"|"STOP"|"CLEANUP"|"BEFORE_TICKET")
-            || !matches!(code,"NONE"|"OWNER_EFFECT_REJECTED")
-            || (stage=="NONE") != (code=="NONE")
-            || value.as_object().is_none_or(|v|v.len()!=4) {return Err("java_bridge.owner_diagnostic_closed_values".into());}
-        Ok(value)
+        parse_owner_failure_diagnostic(&text)
     }
     pub(crate) fn load_cleanup_preparations(&self) -> Result<String, String> {
         self.load_bounded_cleanup_string("loadCleanupPreparations")
@@ -503,4 +491,27 @@ impl JavaOwnerCallbacks {
         }
         Ok(text)
     }
+}
+
+fn parse_owner_failure_diagnostic(text: &str) -> Result<serde_json::Value, String> {
+    if text.len() > 256 { return Err("java_bridge.owner_diagnostic_bounds".into()); }
+    let value: serde_json::Value = serde_json::from_str(text).map_err(|_| "java_bridge.owner_diagnostic_json")?;
+    let stage = value.get("stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_stage")?;
+    let sink = value.get("sink_stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_sink")?;
+    let action = value.get("action").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_action")?;
+    let code = value.get("code").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_code")?;
+    // Accept only the previous four-field producer or the current five-field producer.
+    // This diagnostic compatibility is not a media/authority contract migration.
+    let fields = value.as_object().ok_or("java_bridge.owner_diagnostic_closed_values")?;
+    let reason = if fields.len() == 5 {
+        Some(value.get("provider_reason").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_reason")?)
+    } else if fields.len() == 4 { None } else { return Err("java_bridge.owner_diagnostic_closed_values".into()); };
+    if reason.is_some_and(|r| !matches!(r,"NONE"|"TICKET_PARSE"|"STALE_GENERATION"|"UNDECLARED_BINDING"|"REGISTRY_CLOSED"|"PROVIDER_BUSY"|"CAPACITY"|"PREPARATION_ALREADY_ATTEMPTED"|"FOREIGN_READBACK"|"RECEIPT_COLLISION"|"OTHER")
+        || (stage != "PROVIDER_EXECUTION" && r != "NONE")) { return Err("java_bridge.owner_diagnostic_closed_values".into()); }
+    if !matches!(stage,"NONE"|"CALLBACK_FENCE"|"PROJECTION_BINDING"|"REGISTRY_BINDING"|"INCOMING_FENCE"|"LOCAL_QUIESCENCE"|"PROVIDER_EXECUTION"|"RECEIPT_VERIFICATION"|"INCOMING_ARM_VERIFICATION")
+        || !matches!(sink,"NONE"|"PEER_PROJECTION"|"READER_STAGE"|"READER_IDENTITY"|"RECEIVER_CREATE"|"PROVIDER_GETTER"|"PEER_BIND"|"RECEIVER_EFFECT")
+        || !matches!(action,"NONE"|"ARM_RECEIVER"|"ARM_CLEANUP"|"START"|"STOP"|"CLEANUP"|"BEFORE_TICKET")
+        || !matches!(code,"NONE"|"OWNER_EFFECT_REJECTED")
+        || (stage=="NONE") != (code=="NONE") {return Err("java_bridge.owner_diagnostic_closed_values".into());}
+    Ok(value)
 }

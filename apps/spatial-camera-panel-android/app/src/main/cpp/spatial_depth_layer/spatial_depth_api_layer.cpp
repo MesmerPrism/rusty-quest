@@ -2844,6 +2844,8 @@ int32_t abiV2EnqueueSubmitPresent(
   queued.result.struct_size = sizeof(rq_depth_gpu_request_result_v1);
   queued.result.abi_version = RQ_DEPTH_GPU_ABI_V1;
   queued.result.request_id = request->request_id;
+  // PRESENT result identity binds the session that admitted this exact request.
+  queued.result.generation = request->expected_session_generation;
   queued.result.lease_id = request->lease_id;
   queued.result.kind = RQ_DEPTH_GPU_REQUEST_PRESENT;
   queued.result.state = RQ_DEPTH_GPU_REQUEST_STATE_QUEUED;
