@@ -13,6 +13,10 @@ internal object EmbeddedDuplexActivityAttachment {
       EmbeddedDuplexProcessHost.forApplication(context).selectLocalAfterTerminal(
           fence,ticket,currentRouteGeneration,ownerAlive)
 
+  fun resumeOwnProjection(context: Context, generation: Long,
+      ownerAlive: java.util.function.BooleanSupplier): CompletableFuture<Boolean> =
+      EmbeddedDuplexProcessHost.forApplication(context).resumeOwnProjection(generation, ownerAlive)
+
   fun attach(context: Context, display: EmbeddedDuplexDisplayCoordinator): Long =
       EmbeddedDuplexProcessHost.forApplication(context).attachDisplay(display)
 

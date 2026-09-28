@@ -166,6 +166,7 @@ struct PeerCommonGraphSessionOwner {
     cancellation: Option<Arc<AtomicBool>>,
     worker: Option<thread::JoinHandle<()>>,
     window_address: usize,
+    own_epoch: Option<crate::stereo_input_set::SourceEpoch>,
 }
 
 // A concurrent Peer joins this exact retained source-set renderer. It cannot stop or

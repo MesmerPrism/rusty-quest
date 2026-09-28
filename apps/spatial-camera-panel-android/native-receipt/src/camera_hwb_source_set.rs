@@ -511,6 +511,8 @@ pub(crate) unsafe fn start_source_set_common_graph(
     } else {
         (frame_count as u32).min(CAMERA_HWB_PROBE_MAX_FRAMES)
     };
+    let admitted_epoch=match crate::own_stereo_capture_runtime::own_image_fresh_observed(){Ok(epoch)=>epoch,Err(_)=>{ACameraNativeWindow_release(window);return 0;}};
+    if admitted_epoch.process_generation!=crate::own_packed_pool_jni::process_generation().unwrap_or(0) || admitted_epoch.source_generation==0 {ACameraNativeWindow_release(window);return 0;}
     let window_address = window as usize;
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
     let cancellation = Arc::new(AtomicBool::new(false));
@@ -520,14 +522,35 @@ pub(crate) unsafe fn start_source_set_common_graph(
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if owner.claim.generation()==Some(route_generation) && owner.worker.as_ref().is_some_and(|worker|!worker.is_finished()) {
             // Reuse only this exact physical carrier; never replace or stop the Own worker.
-            let same_window=owner.window_address==window_address;
+            let same_window=owner.window_address==window_address && owner.own_epoch==Some(admitted_epoch);
             ACameraNativeWindow_release(window);return if same_window {1} else {0};
+        }
+        if owner.claim.generation()==Some(route_generation) {
+            // Recover only this finished actor and physical carrier, while its independent Own producer lives.
+            let epoch=crate::own_stereo_capture_runtime::own_image_fresh_observed().ok();
+            let recover=owner.window_address==window_address && owner.own_epoch==Some(admitted_epoch)
+                && owner.worker.as_ref().is_some_and(|worker|worker.is_finished())
+                && crate::own_stereo_capture_runtime::capture_claimed()
+                && crate::own_stereo_capture_runtime::capture_configured()
+                && crate::spatial_stereo_qualification::physical_cleanup_terminal()
+                && !crate::spatial_public_multistack_runtime::source_banks_enabled()
+                && epoch.is_some_and(crate::own_packed_gpu_holds::renderer_holds_retired);
+            if !recover {ACameraNativeWindow_release(window);return 0;}
+            let worker=owner.worker.take().expect("finished renderer retained");
+            if worker.join().is_err() || epoch!=crate::own_stereo_capture_runtime::own_image_fresh_observed().ok()
+                || !crate::own_stereo_capture_runtime::capture_claimed()
+                || !crate::spatial_stereo_qualification::physical_cleanup_terminal()
+                || epoch.is_none_or(|epoch|!crate::own_packed_gpu_holds::renderer_holds_retired(epoch)) {
+                ACameraNativeWindow_release(window);return 0;
+            }
+            owner.cancellation=None;
+            if !owner.claim.release(route_generation) {ACameraNativeWindow_release(window);return 0;}
         }
         if !owner.claim.claim(route_generation) {
             ACameraNativeWindow_release(window);
             return 0;
         }
-        owner.window_address=window_address;
+        owner.window_address=window_address;owner.own_epoch=Some(admitted_epoch);
         owner.cancellation = Some(cancellation.clone());
         let worker_cancellation = cancellation.clone();
         ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_add(1, Ordering::AcqRel);

@@ -338,6 +338,22 @@ final class EmbeddedDuplexProcessHost {
         });
     }
 
+    CompletableFuture<Boolean> resumeOwnProjection(long expectedGeneration,
+            java.util.function.BooleanSupplier ownerAlive) {
+        return submit(() -> {
+            requireFreshProcess();
+            synchronized (attachmentGate) {
+                if (expectedGeneration<=0L || attachmentGeneration!=expectedGeneration || displayDetaching
+                        || closeInFlight || phase.get()!=Phase.READY || localFixture || resources==null
+                        || runtimeConfigSha256==null || ownerAlive==null || !ownerAlive.getAsBoolean()) return false;
+            }
+            OwnStereoCaptureRuntime own=OwnStereoCaptureRuntime.currentForApplication();
+            if (own==null || own.phase()!=OwnStereoCaptureRuntime.Phase.Live || own.retainedCapture()==null) return false;
+            display.resumeOwnProjection(ownerAlive);
+            return true; // Native owner acceptance only; moving pixels remain separately observed.
+        });
+    }
+
     CompletableFuture<String> command(String operation, String exactInputJson) {
         if (operation == null || exactInputJson == null || operation.length() > 64
                 || exactInputJson.length() > 2 * 1024 * 1024) {

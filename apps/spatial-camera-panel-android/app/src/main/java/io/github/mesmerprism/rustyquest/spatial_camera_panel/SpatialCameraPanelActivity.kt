@@ -3534,8 +3534,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         ConnectionHubSurfaceClient(this, target).also(ConnectionHubSurfaceClient::start)
   }
 
+  @Volatile private var ownResumeGeneration = 0L
+  @Volatile private var ownResumeActive = false
   override fun onResume() {
     super.onResume()
+    val resumeGeneration = ++ownResumeGeneration
+    ownResumeActive = true
+    val attachment = embeddedDuplexAttachmentGeneration
+    if (attachment>0L && !embeddedDuplexActivityDestroying) {
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+          .EmbeddedDuplexActivityAttachment.resumeOwnProjection(this, attachment) {
+            ownResumeActive && ownResumeGeneration==resumeGeneration &&
+                embeddedDuplexAttachmentGeneration==attachment && !embeddedDuplexActivityDestroying
+          }.whenComplete { accepted, failure ->
+            marker("channel=embedded-duplex status=own-resume-observed accepted=${accepted==true} rejected=${failure!=null} movingPixelsClaimed=false")
+          }
+    }
     EmbeddedDuplexDiagnosticActivityGate.resumed(this)
     PrivateLayerZoneCompositorPanelBridge.reapply("activity-resume")
     immersiveVideoPanelCoordinator.resume("activity-resume")
@@ -3552,6 +3566,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     connectionHubWearerControlClient.refresh()
   }
   override fun onPause() {
+    ownResumeActive = false
+    ++ownResumeGeneration
     EmbeddedDuplexDiagnosticActivityGate.paused(this)
     immersiveVideoPanelCoordinator.pause("activity-pause")
     backgroundImmersiveVideoPanelCoordinator.pause("activity-pause")
