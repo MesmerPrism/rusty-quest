@@ -500,12 +500,23 @@ fn parse_owner_failure_diagnostic(text: &str) -> Result<serde_json::Value, Strin
     let sink = value.get("sink_stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_sink")?;
     let action = value.get("action").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_action")?;
     let code = value.get("code").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_code")?;
-    // Accept only the previous four-field producer or the current five-field producer.
+    // Accept retained four/five-field diagnostics and the reviewed seven-field owner/cause producer.
     // This diagnostic compatibility is not a media/authority contract migration.
     let fields = value.as_object().ok_or("java_bridge.owner_diagnostic_closed_values")?;
-    let reason = if fields.len() == 5 {
+    let reason = if matches!(fields.len(), 5 | 7) {
         Some(value.get("provider_reason").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_reason")?)
     } else if fields.len() == 4 { None } else { return Err("java_bridge.owner_diagnostic_closed_values".into()); };
+    if fields.len() == 7 {
+        let owner = value.get("owner").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_owner")?;
+        let cause = value.get("cause").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_cause")?;
+        if !matches!(owner,"NONE"|"source"|"processor"|"route"|"socket"|"codec"|"cleanup"|"sink")
+            || !matches!(cause,"NONE"|"CODEC"|"TIMEOUT"|"IO"|"SECURITY"|"ARGUMENT"|"STATE"|"OTHER")
+            || (stage == "NONE" && owner != "NONE")
+            || (stage != "PROVIDER_EXECUTION" && cause != "NONE")
+            || (stage == "PROVIDER_EXECUTION" && cause == "NONE") {
+            return Err("java_bridge.owner_diagnostic_closed_values".into());
+        }
+    }
     if reason.is_some_and(|r| !matches!(r,"NONE"|"TICKET_PARSE"|"STALE_GENERATION"|"UNDECLARED_BINDING"|"REGISTRY_CLOSED"|"PROVIDER_BUSY"|"CAPACITY"|"PREPARATION_ALREADY_ATTEMPTED"|"FOREIGN_READBACK"|"RECEIPT_COLLISION"|"DISPLAY_LOCAL_SHUTDOWN"|"DISPLAY_DISPATCH_FENCED"|"DISPLAY_TRANSITION_TIMEOUT"|"DISPLAY_ADMISSION_REJECTED"|"DISPLAY_NATIVE_ACTIVE_EPOCH"|"DISPLAY_NATIVE_ACTIVE_STATE"|"DISPLAY_NATIVE_BOUNDS"|"DISPLAY_NATIVE_CAPTURE"|"DISPLAY_NATIVE_CARRIER"|"DISPLAY_NATIVE_CLOCK"|"DISPLAY_NATIVE_FRAME_ABSENT"|"DISPLAY_NATIVE_FRAME_EPOCH"|"DISPLAY_NATIVE_FRAME_FUTURE"|"DISPLAY_NATIVE_FRAME_STALE"|"DISPLAY_NATIVE_INPUT"|"DISPLAY_NATIVE_LOCAL"|"DISPLAY_NATIVE_PROCESS_EPOCH"|"DISPLAY_NATIVE_SOURCE_STATE"|"DISPLAY_NATIVE_SUPERSEDED"|"DISPLAY_OWN_CAPTURE_STATE"|"DISPLAY_OWN_CAPTURE_FRESH"|"DISPLAY_OWN_CARRIER_SUPERSEDED"|"DISPLAY_NATIVE_SHAPE"|"DISPLAY_ROUTING_SUPERSEDED"|"OTHER")
         || (stage != "PROVIDER_EXECUTION" && r != "NONE")) { return Err("java_bridge.owner_diagnostic_closed_values".into()); }
     if !matches!(stage,"NONE"|"CALLBACK_FENCE"|"PROJECTION_BINDING"|"REGISTRY_BINDING"|"INCOMING_FENCE"|"LOCAL_QUIESCENCE"|"PROVIDER_EXECUTION"|"RECEIPT_VERIFICATION"|"INCOMING_ARM_VERIFICATION")

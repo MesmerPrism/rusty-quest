@@ -168,6 +168,24 @@ struct PeerCommonGraphSessionOwner {
     window_address: usize,
 }
 
+// A concurrent Peer joins this exact retained source-set renderer. It cannot stop or
+// replace that actor. This lock covers only owner facts and pure source receipt selection.
+pub(crate) fn select_peer_source_with_own_actor(
+    words:[i64; crate::peer_projection_runtime::SOURCE_ABI_WORDS],
+    window_address:usize,
+    proof:[i64;5],
+)->Option<crate::peer_projection_runtime::SourceReceipt> {
+    if words[2]!=crate::peer_projection_runtime::SOURCE_PEER || words[5]!=proof[1]
+        || words[6]!=proof[2] || window_address==0 {return None;}
+    let owner=PEER_COMMON_GRAPH_SESSION.lock().ok()?;
+    let claim_generation=(u64::try_from(proof[3]).ok()? & i64::MAX as u64).max(1) as i64;
+    if owner.claim.generation()!=Some(claim_generation) || owner.window_address!=window_address
+        || !owner.worker.as_ref().is_some_and(|worker|!worker.is_finished())
+        || !owner.cancellation.as_ref().is_some_and(|cancel|!cancel.load(Ordering::Acquire))
+        || !crate::own_stereo_capture_runtime::concurrent_peer_epoch_is_current(proof) {return None;}
+    Some(crate::peer_projection_runtime::request_source_with_current_carrier(words,[proof[0],proof[1],proof[2]]))
+}
+
 fn stop_peer_common_graph_session() {
     let owned = {
         let mut owner = PEER_COMMON_GRAPH_SESSION
