@@ -170,3 +170,12 @@ locked offline `jni` 0.21.1. Physical actors, clock and Looper remain fixtures;
 this proves no Android JNI supplier composition, physical device cause or duplex
 acceptance and adds no APK prerequisite. The host fixture explicitly exits after
 assertions because actual supplier executors have no fixture shutdown route.
+
+The same JNI caller check includes default Local initialization, stale polling
+and the extracted actual Activity Local stop branch. Local intent generation
+and its later native retirement generation remain separate: the concurrent
+proof binds both counters and exact native carrier words, then rechecks both
+before Peer reservation. A fresh JVM isolates that native source-owner case;
+prior-native-counter and substituted-word negatives retain the guards. The
+Activity carrier/Surface and physical actors are fixture suppliers; Pending
+Local retirement does not become terminal cleanup evidence.

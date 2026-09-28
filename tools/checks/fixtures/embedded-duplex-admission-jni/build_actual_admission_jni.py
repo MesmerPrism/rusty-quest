@@ -62,7 +62,17 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
  PUBLISHED_EPOCH.store(epoch.source_generation,Ordering::Release);*ACTIVE_EPOCH.lock().unwrap()=Some(epoch);shared_sources().bind(StereoOrigin::OwnStereo,epoch).unwrap();publish(epoch,1,if mode==9 {1001}else{999});
  if mode==10 {CLOCK.store(4_000_001_000,Ordering::Release);}
  if mode==4 {*ACTIVE_EPOCH.lock().unwrap()=Some(SourceEpoch{process_generation:30,source_generation:epoch.source_generation+1});}
- let requested=[1,1,1,0,0,10,20,0,0,0,1|4|8|32|64,0,0,1,0,0];peer_projection_runtime::request_source(requested,true);
+ let requested=[1,1,1,0,0,10,20,0,0,0,1|4|8|32|64,0,0,1,0,0];if mode!=11 {peer_projection_runtime::request_source(requested,true);}
+}
+'''
+source += r'''
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_OwnPackedPoolNative_fixtureRequestSource(mut env:JNIEnv<'_>,_class:JClass<'_>,input:jni::objects::JLongArray<'_>)->jlongArray {
+ let mut words=[0i64;16];env.get_long_array_region(&input,0,&mut words).unwrap();let receipt=peer_projection_runtime::request_source(words,true);let array=env.new_long_array(16).unwrap();env.set_long_array_region(&array,0,&receipt.words).unwrap();array.into_raw()
+}
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_OwnPackedPoolNative_fixtureReadSource(mut env:JNIEnv<'_>,_class:JClass<'_>,route:jlong)->jlongArray {
+ let receipt=peer_projection_runtime::read_source(route);let array=env.new_long_array(16).unwrap();env.set_long_array_region(&array,0,&receipt.words).unwrap();array.into_raw()
 }
 '''
 (out/'src/lib.rs').write_text(source)
@@ -75,3 +85,12 @@ for args in [['generate-lockfile','--offline'], ['build','--offline','--locked',
 library=Path(a.target).resolve()/'debug'/('actual_admission_jni_fixture.dll' if sys.platform=='win32' else ('libactual_admission_jni_fixture.dylib' if sys.platform=='darwin' else 'libactual_admission_jni_fixture.so'))
 (out/'library-path.txt').write_text(str(library))
 print(library)
+
+template=Path(__file__).with_name('DefaultLocalRetirementFixture.kt').read_text(encoding='utf-8')
+activity=(owner/'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialCameraPanelActivity.kt').read_text(encoding='utf-8')
+start=activity.index('                SpatialVideoSource.Local -> {',activity.index('override fun stopSourceAcquisition'))
+end=activity.index('                SpatialVideoSource.Disabled -> true',start)
+block=activity[start:end].strip();body=block[block.index('{')+1:block.rfind('}')]
+assert template.count('ACTUAL_ACTIVITY_LOCAL_STOP')==1
+(out/'DefaultLocalRetirementFixture.kt').write_text(template.replace('ACTUAL_ACTIVITY_LOCAL_STOP',body),encoding='utf-8')
+(out/'activity-local-stop-extracted.txt').write_text(block,encoding='utf-8')

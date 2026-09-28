@@ -49,15 +49,20 @@ if ($LASTEXITCODE -ne 0) { throw 'actual Receiver/Registry compilation failed' }
 $kotlinSources = @((Join-Path $app 'SpatialVideoSourceRoutingCoordinator.kt'), (Join-Path $app 'embedded_duplex/EmbeddedDuplexDisplayCoordinator.kt'))
 $compilerArguments = @('-no-stdlib', '-no-reflect', '-jvm-target', '1.8', '-classpath', "$classes$separator$dependencies")
 if ($KotlinFriendPaths) { $compilerArguments += "-Xfriend-paths=$KotlinFriendPaths" }
-& $java -cp $KotlinCompilerClassPath org.jetbrains.kotlin.cli.jvm.K2JVMCompiler @compilerArguments -d $kotlin @kotlinSources 1> (Join-Path $output 'owner-kotlin.stdout') 2> (Join-Path $output 'owner-kotlin.stderr')
+& $java -cp $KotlinCompilerClassPath org.jetbrains.kotlin.cli.jvm.K2JVMCompiler @compilerArguments -d $kotlin @kotlinSources (Join-Path $nativeOutput 'DefaultLocalRetirementFixture.kt') 1> (Join-Path $output 'owner-kotlin.stdout') 2> (Join-Path $output 'owner-kotlin.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'actual Display/Router compilation failed' }
 $classPath = "$kotlin$separator$classes$separator$dependencies"
-& $javac --release 8 '-Xlint:all' -Werror -cp $classPath -d $classes (Join-Path $fixture 'ConcurrentCallerRegression.java') (Join-Path $jniFixture 'AdmissionJniRegression.java') 1> (Join-Path $output 'fixture-compile.stdout') 2> (Join-Path $output 'fixture-compile.stderr')
+& $javac --release 8 '-Xlint:all' -Werror -cp $classPath -d $classes (Join-Path $fixture 'ConcurrentCallerRegression.java') (Join-Path $jniFixture 'AdmissionJniRegression.java') (Join-Path $jniFixture 'RetirementJniCaller.java') 1> (Join-Path $output 'fixture-compile.stdout') 2> (Join-Path $output 'fixture-compile.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'complete caller fixture compilation failed' }
 & $java "-Drusty.quest.admission.fixture.library=$library" -cp $classPath io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.AdmissionJniRegression 1> (Join-Path $output 'test.stdout') 2> (Join-Path $output 'test.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'complete concurrent Peer caller regression failed' }
+# A fresh JVM gives the actual native source owner its bootstrap-empty state.
+& $java "-Drusty.quest.admission.fixture.library=$library" -cp $classPath io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.RetirementJniCaller 1> (Join-Path $output 'retirement-test.stdout') 2> (Join-Path $output 'retirement-test.stderr')
+if ($LASTEXITCODE -ne 0) { throw 'complete default Local retirement/native-generation caller regression failed' }
+$activitySource = Join-Path $app 'SpatialCameraPanelActivity.kt'
+
 $nativeSources = @('own_stereo_capture_runtime.rs', 'own_packed_pool_jni.rs', 'stereo_source_payload.rs', 'stereo_input_set.rs', 'peer_projection_runtime.rs') | ForEach-Object { Join-Path $repo ('apps/spatial-camera-panel-android/native-receipt/src/' + $_) }
-$hashes = @($sources + $kotlinSources + $nativeSources | ForEach-Object {
+$hashes = @($sources + $kotlinSources + $nativeSources + $activitySource | ForEach-Object {
     [ordered]@{path=[IO.Path]::GetRelativePath($repo, $_).Replace('\', '/'); sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()}
 })
 [ordered]@{
@@ -68,4 +73,6 @@ $hashes = @($sources + $kotlinSources + $nativeSources | ForEach-Object {
     native_library_sha256=(Get-FileHash -LiteralPath $library).Hash.ToLowerInvariant()
     native_fixture_source_sha256=(Get-FileHash -LiteralPath (Join-Path $nativeOutput 'src/lib.rs')).Hash.ToLowerInvariant()
     fixture_process_exit='explicit exit 0 after assertions; actual supplier executors have no fixture shutdown route'
+    retirement_scope='actual default Local1, stale poll, extracted Activity stop branch -> native Disabled2; intent1/native2 join reserves Peer3; stale native counter and substituted proof word rejected'
+    activity_local_stop_sha256=(Get-FileHash -LiteralPath (Join-Path $nativeOutput 'activity-local-stop-extracted.txt')).Hash.ToLowerInvariant()
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $output 'result.json') -Encoding utf8
