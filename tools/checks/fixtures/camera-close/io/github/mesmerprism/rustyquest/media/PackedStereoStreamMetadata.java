@@ -1,0 +1,1 @@
+package io.github.mesmerprism.rustyquest.media;public class PackedStereoStreamMetadata {public static class Layout{public final int perEyeWidth,perEyeHeight;public final long maxPairDeltaNs;public Layout(int w,int h,int ew,int eh,long delta){perEyeWidth=ew;perEyeHeight=eh;maxPairDeltaNs=delta;}}}

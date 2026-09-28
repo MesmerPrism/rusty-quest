@@ -1,0 +1,1 @@
+package android.hardware.camera2;public class CaptureRequest {public static final Object CONTROL_AE_TARGET_FPS_RANGE=new Object();public static class Builder{public void addTarget(android.view.Surface s){}public void set(Object k,Object v){}public CaptureRequest build(){return new CaptureRequest();}}}

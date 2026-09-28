@@ -1,0 +1,1 @@
+package android.util; public class Size {public int getWidth(){return 16;}public int getHeight(){return 16;}}

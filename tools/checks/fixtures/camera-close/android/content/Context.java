@@ -1,0 +1,1 @@
+package android.content; public class Context { public static final String CAMERA_SERVICE="camera"; public static android.hardware.camera2.CameraManager manager; public Context getApplicationContext(){return this;} public Object getSystemService(String s){return manager;} }

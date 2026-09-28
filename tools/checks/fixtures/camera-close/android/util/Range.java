@@ -1,0 +1,1 @@
+package android.util; public class Range<T extends Comparable<T>> {public boolean contains(T t){return true;}public T getUpper(){return null;}public T getLower(){return null;}}

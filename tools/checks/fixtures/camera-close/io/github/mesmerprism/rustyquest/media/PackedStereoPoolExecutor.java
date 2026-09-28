@@ -1,0 +1,1 @@
+package io.github.mesmerprism.rustyquest.media;public class PackedStereoPoolExecutor{public void awaitCameraOwnership(){}public boolean ownImageFresh(){return true;}}

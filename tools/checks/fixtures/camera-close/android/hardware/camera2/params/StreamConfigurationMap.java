@@ -1,0 +1,1 @@
+package android.hardware.camera2.params; public class StreamConfigurationMap {public android.util.Size[] getOutputSizes(Class<?> c){return new android.util.Size[]{new android.util.Size()};}}

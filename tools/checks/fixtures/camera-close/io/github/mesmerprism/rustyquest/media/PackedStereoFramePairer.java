@@ -1,0 +1,1 @@
+package io.github.mesmerprism.rustyquest.media;public class PackedStereoFramePairer{public static final String LEFT="left",RIGHT="right";public static class Pair{}}

@@ -1,0 +1,1 @@
+package android.hardware.camera2;public class TotalCaptureResult extends CaptureResult {public long getFrameNumber(){return 1;}}
