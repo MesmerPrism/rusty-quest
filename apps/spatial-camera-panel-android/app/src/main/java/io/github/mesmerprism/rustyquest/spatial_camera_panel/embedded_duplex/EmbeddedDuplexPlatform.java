@@ -150,7 +150,7 @@ final class EmbeddedDuplexPlatform {
     private volatile ProviderReason failedProviderReason = ProviderReason.NONE;
     enum ProviderReason { NONE, TICKET_PARSE, STALE_GENERATION, UNDECLARED_BINDING,
         REGISTRY_CLOSED, PROVIDER_BUSY, CAPACITY, PREPARATION_ALREADY_ATTEMPTED,
-        FOREIGN_READBACK, RECEIPT_COLLISION, DISPLAY_LOCAL_SHUTDOWN, DISPLAY_DISPATCH_FENCED, DISPLAY_TRANSITION_TIMEOUT, DISPLAY_ADMISSION_REJECTED, OTHER }
+        FOREIGN_READBACK, RECEIPT_COLLISION, DISPLAY_LOCAL_SHUTDOWN, DISPLAY_DISPATCH_FENCED, DISPLAY_TRANSITION_TIMEOUT, DISPLAY_ADMISSION_REJECTED, DISPLAY_NATIVE_ACTIVE_EPOCH, DISPLAY_NATIVE_ACTIVE_STATE, DISPLAY_NATIVE_BOUNDS, DISPLAY_NATIVE_CAPTURE, DISPLAY_NATIVE_CARRIER, DISPLAY_NATIVE_CLOCK, DISPLAY_NATIVE_FRAME_ABSENT, DISPLAY_NATIVE_FRAME_EPOCH, DISPLAY_NATIVE_FRAME_FUTURE, DISPLAY_NATIVE_FRAME_STALE, DISPLAY_NATIVE_INPUT, DISPLAY_NATIVE_LOCAL, DISPLAY_NATIVE_PROCESS_EPOCH, DISPLAY_NATIVE_SOURCE_STATE, DISPLAY_NATIVE_SUPERSEDED, DISPLAY_OWN_CAPTURE_STATE, DISPLAY_OWN_CAPTURE_FRESH, DISPLAY_OWN_CARRIER_SUPERSEDED, DISPLAY_NATIVE_SHAPE, DISPLAY_ROUTING_SUPERSEDED, OTHER }
     // Fixed owner-local categories only. Never return or log exception messages or ticket fields.
     static ProviderReason providerReason(Throwable failure) {
         for (int depth = 0; failure != null && depth < 8; depth++, failure = failure.getCause()) {
@@ -159,6 +159,26 @@ final class EmbeddedDuplexPlatform {
             if (message == null) continue;
             if ((message.equals("embedded receiver requires actual local acquisition shutdown") || message.equals("old native local acquisition remains Pending") || message.equals("local capture still owns camera resources") || message.equals("local camera shutdown incomplete"))) return ProviderReason.DISPLAY_LOCAL_SHUTDOWN;
             if (message.equals("Activity lifecycle is already fenced")) return ProviderReason.DISPLAY_DISPATCH_FENCED;
+            if (message.equals("concurrent Own native admission ACTIVE_EPOCH")) return ProviderReason.DISPLAY_NATIVE_ACTIVE_EPOCH;
+            if (message.equals("concurrent Own native admission ACTIVE_STATE")) return ProviderReason.DISPLAY_NATIVE_ACTIVE_STATE;
+            if (message.equals("concurrent Own native admission BOUNDS")) return ProviderReason.DISPLAY_NATIVE_BOUNDS;
+            if (message.equals("concurrent Own native admission CAPTURE")) return ProviderReason.DISPLAY_NATIVE_CAPTURE;
+            if (message.equals("concurrent Own native admission CARRIER")) return ProviderReason.DISPLAY_NATIVE_CARRIER;
+            if (message.equals("concurrent Own native admission CLOCK")) return ProviderReason.DISPLAY_NATIVE_CLOCK;
+            if (message.equals("concurrent Own native admission FRAME_ABSENT")) return ProviderReason.DISPLAY_NATIVE_FRAME_ABSENT;
+            if (message.equals("concurrent Own native admission FRAME_EPOCH")) return ProviderReason.DISPLAY_NATIVE_FRAME_EPOCH;
+            if (message.equals("concurrent Own native admission FRAME_FUTURE")) return ProviderReason.DISPLAY_NATIVE_FRAME_FUTURE;
+            if (message.equals("concurrent Own native admission FRAME_STALE")) return ProviderReason.DISPLAY_NATIVE_FRAME_STALE;
+            if (message.equals("concurrent Own native admission INPUT")) return ProviderReason.DISPLAY_NATIVE_INPUT;
+            if (message.equals("concurrent Own native admission LOCAL")) return ProviderReason.DISPLAY_NATIVE_LOCAL;
+            if (message.equals("concurrent Own native admission PROCESS_EPOCH")) return ProviderReason.DISPLAY_NATIVE_PROCESS_EPOCH;
+            if (message.equals("concurrent Own native admission SOURCE_STATE")) return ProviderReason.DISPLAY_NATIVE_SOURCE_STATE;
+            if (message.equals("concurrent Own native admission SUPERSEDED")) return ProviderReason.DISPLAY_NATIVE_SUPERSEDED;
+            if (message.equals("concurrent Own capture unavailable") || message.equals("concurrent Own capture not Live") || message.equals("concurrent Own capture superseded")) return ProviderReason.DISPLAY_OWN_CAPTURE_STATE;
+            if (message.equals("concurrent Own capture not fresh")) return ProviderReason.DISPLAY_OWN_CAPTURE_FRESH;
+            if (message.equals("concurrent Own carrier superseded")) return ProviderReason.DISPLAY_OWN_CARRIER_SUPERSEDED;
+            if (message.equals("concurrent Own native admission unavailable")) return ProviderReason.DISPLAY_NATIVE_SHAPE;
+            if (message.equals("concurrent Peer reservation superseded")) return ProviderReason.DISPLAY_ROUTING_SUPERSEDED;
             if (message.startsWith("concurrent Own ") || message.equals("concurrent Peer reservation superseded")) return ProviderReason.DISPLAY_ADMISSION_REJECTED;
             if (message.equals("media execution generation is stale") || message.equals("stale registry generation")) return ProviderReason.STALE_GENERATION;
             if (message.equals("undeclared media provider binding")) return ProviderReason.UNDECLARED_BINDING;
