@@ -118,3 +118,27 @@ hash-pinned `org.json` 20240303 jar, resolved from the local Gradle cache or
 `-HostJsonJar`. Missing tools fail explicitly; these commands do not download
 dependencies. Each invocation preserves prior evidence in its own output
 capsule under the selected repository `target` directory.
+
+## Embedded diagnostic producer/consumer regression
+
+`tools/checks/Test-EmbeddedDuplexDiagnosticProducerConsumer.ps1` compiles the
+selected actual Java Platform, Registry, ticket, binding and readback sources,
+then feeds their full diagnostic getter payload into the extracted actual Rust
+closed parser. It also checks that the JNI string consumer delegates to that
+parser. Run this focused check when changing either side of this diagnostic
+seam; it is separate from the build and device routes above.
+
+Supply `-RepoRoot`, `-JavaHome`, `-CompiledOwnerClassPath`, `-HostJsonJar`,
+`-RustCompiler`, `-RustDependencyDirectory`, `-SerdeJsonLibrary` and a fresh
+`-OutputDirectory`. The classpath contains the selected app/SDK dependencies;
+the host JSON jar and serde_json library are existing host artifacts. Run in
+an environment with the selected Rust compiler's linker prerequisites. The
+check downloads nothing and records the selected source and artifact hashes.
+
+A parsed ticket reaches an actual Registry callback whose mock provider returns
+foreign readback; the actual classifier feeds the actual getter. Every compiled
+ProviderReason value follows the same getter, then the actual parser checks
+legacy compatibility, closed fields/values and the 256-byte bound. Reflection
+transfers diagnostic state into the getter to exclude constructor effects.
+This proves the exercised producer/parser seam, not complete Platform dispatch,
+JNI invocation, physical effects, Android compilation or streaming readiness.
