@@ -1,4 +1,4 @@
-param([string]$RepoRoot=(Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),[string]$EvidenceRoot='')
+param([string]$RepoRoot=(Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),[string]$EvidenceRoot='',[switch]$ProcessorStartRegression,[string]$JavaHome='', [string]$CompiledOwnerClassPath='',[string]$HostJsonJar='',[string]$PythonExecutable='python')
 $QuestRoot=$RepoRoot
 if(-not$EvidenceRoot){$EvidenceRoot=Join-Path $RepoRoot (".local/packed-raster-check-"+[guid]::NewGuid().ToString('N'))}
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
@@ -41,3 +41,9 @@ foreach($eye in 0,1){foreach($x in 0,1){foreach($y in 0,1){
 if(-not$shader.Contains('halfOrigin + localUv.x * 0.5')-or-not$shader.Contains('halfOrigin + 0.5 - packedInset.x')){throw 'Eye boundary mapping changed'}
 @{passed=$true;baseline_vertical_reflection_reproduced=-not$fixed;candidate_own_correct=$fixed;peer_unchanged=$true;source_derived_coordinate_fixture=$true;device_matrix_captured=$false;physical_orientation_qualified=$false;cases=$cases;shader_sha256=(Get-FileHash (Join-Path $native 'shaders/packed_sbs_normalize.frag.glsl')).Hash.ToLowerInvariant()}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $EvidenceRoot 'result.json')
 Write-Host 'Source-derived GL packing -> Vulkan normalization -> common-raster mapping PASS'
+
+if($ProcessorStartRegression){
+ if(-not$JavaHome-or-not$CompiledOwnerClassPath-or-not$HostJsonJar){throw 'Explicit JDK, compiled owner dependencies and host JSON implementation required'}
+ & $PythonExecutable (Join-Path $PSScriptRoot 'fixtures/packed-encoder-processor/check_processor_caller.py') --repo-root $QuestRoot --java-home $JavaHome --compiled-owner-class-path $CompiledOwnerClassPath --host-json-jar $HostJsonJar --output-directory (Join-Path $EvidenceRoot 'processor-start')
+ if($LASTEXITCODE-ne0){throw 'Actual packed encoder processor owner regression failed'}
+}

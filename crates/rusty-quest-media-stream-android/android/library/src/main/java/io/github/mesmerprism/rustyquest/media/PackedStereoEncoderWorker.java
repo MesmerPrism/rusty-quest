@@ -142,7 +142,7 @@ public final class PackedStereoEncoderWorker implements PackedStereoCaptureOwner
                 int fragment = 0;
                 try {
                     fragment = shader(GLES20.GL_FRAGMENT_SHADER,
-                            "precision mediump float;varying vec2 v;uniform sampler2D packed;void main(){gl_FragColor=texture2D(packed,v);}");
+                            "precision mediump float;varying vec2 v;uniform sampler2D packedImage;void main(){gl_FragColor=texture2D(packedImage,v);}");
                     program = GLES20.glCreateProgram();
                     GLES20.glAttachShader(program, vertex); GLES20.glAttachShader(program, fragment);
                     GLES20.glLinkProgram(program); int[] linked = new int[1];
@@ -162,7 +162,7 @@ public final class PackedStereoEncoderWorker implements PackedStereoCaptureOwner
             vertices.position(2); GLES20.glVertexAttribPointer(uv, 2, GLES20.GL_FLOAT, false, 16, vertices);
             GLES20.glEnableVertexAttribArray(position); GLES20.glEnableVertexAttribArray(uv);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, image.texture);
-            GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "packed"), 0);
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(program, "packedImage"), 0);
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
             require(GLES20.glGetError() == GLES20.GL_NO_ERROR, "encoder packed sampling");
             require(EGLExt.eglPresentationTimeANDROID(display, window, ptsNs), "encoder PTS");

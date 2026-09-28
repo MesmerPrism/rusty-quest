@@ -191,3 +191,14 @@ check actor and predecessor receipt preservation. Capture/frame/clock/window
 observations and platform SDK effects are mocks; this proves no Android JNI
 invocation, camera, render, network or headset readiness. It is a focused owner
 regression, not a new qualification prerequisite.
+
+`Test-PackedStereoRasterOrientation.ps1 -ProcessorStartRegression` optionally
+compiles the current Java Registry, OwnerSet, shared-capture Pipeline/Runtime,
+EncoderWorker and capture subscription caller. Supply the existing JDK, compiled
+owner dependency classpath and host JSON library. It consumes retained actual
+ANGLE WebGL1 compiler results only for exact matching public shader strings;
+the prior reserved sampler fails and the current sampler links and attaches.
+Missing codec, stale subscription and rejected EGL config remain failures.
+Route/socket/codec effects, EGL/window and capture observations are mocked.
+This check needs no browser and proves no Android GLES, encoding, network,
+rendered frames or physical cleanup; it adds no universal prerequisite.

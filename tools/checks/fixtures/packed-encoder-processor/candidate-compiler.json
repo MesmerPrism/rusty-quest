@@ -1,0 +1,19 @@
+{
+  "vertex_source": "attribute vec2 position;attribute vec2 uv;varying vec2 v;void main(){v=uv;gl_Position=vec4(position,0.,1.);}",
+  "fragment_source": "precision mediump float;varying vec2 v;uniform sampler2D packedImage;void main(){gl_FragColor=texture2D(packedImage,v);}",
+  "result": {
+    "vertex": true,
+    "vertex_log": "",
+    "fragment": true,
+    "fragment_log": "",
+    "linked": true,
+    "link_log": "",
+    "packed_uniform_available": true,
+    "version": "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
+    "shading_language": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)",
+    "renderer": "WebKit WebGL",
+    "vendor": "WebKit"
+  },
+  "scope": "Retained actual offline ANGLE WebGL1 shader compile/link/uniform evidence; compiler statuses consumed only for exact matching public shader strings",
+  "physical_claim": "none; not Android EGL/codec/AHB/camera/render/device qualification"
+}
