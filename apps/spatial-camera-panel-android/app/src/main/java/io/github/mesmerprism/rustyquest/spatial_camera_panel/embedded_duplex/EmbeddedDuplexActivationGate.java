@@ -8,6 +8,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.TimeUnit;
 
 /** Serializes the authenticated incoming Sink arm, graph activation, and cleanup. */
 final class EmbeddedDuplexActivationGate {
@@ -26,6 +27,7 @@ final class EmbeddedDuplexActivationGate {
         long readerGeneration();
         void activateIncomingProjection();
         long[] currentProjection();
+        default String incomingDiagnostic() { return "receiverState=UNAVAILABLE connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1"; }
     }
 
     interface Clock { long wallTimeMillis(); }
@@ -93,7 +95,38 @@ final class EmbeddedDuplexActivationGate {
         } finally { lock.unlock(); }
     }
 
+    private enum ActivationStage { ARM_PROOF, FIRST_RENDER, NATIVE_ACQUISITION, GRAPH_ATTACH, NATIVE_EFFECTIVE }
+    private static final class ActivationAttempt { ActivationStage stage = ActivationStage.ARM_PROOF; }
+
     String activate(String activationId, String authorityJson, String proofJson) throws Exception {
+        ActivationAttempt attempt = new ActivationAttempt();
+        try { return activateObserved(activationId, authorityJson, proofJson, attempt); }
+        catch (Exception failure) {
+            String category = closedActivationCause(failure);
+            String receiverDiagnostic;
+            try { receiverDiagnostic = target.incomingDiagnostic(); }
+            catch (RuntimeException unavailable) { receiverDiagnostic = "receiverState=UNAVAILABLE connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1"; }
+            android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-rejected stage="
+                    + attempt.stage.name() + " cause=" + category + " code=ACTIVATION_EFFECT_UNCERTAIN " + receiverDiagnostic);
+            throw failure;
+        }
+    }
+
+    private static String closedActivationCause(Throwable failure) {
+        String category = "OTHER";
+        Throwable current = failure;
+        for (int i = 0; current != null && i < 8; i++, current = current.getCause()) {
+            if ("android.media.MediaCodec$CodecException".equals(current.getClass().getName())) return "CODEC";
+            if (current instanceof InterruptedException) return "INTERRUPTED";
+            if (current instanceof java.util.concurrent.TimeoutException) return "TIMEOUT";
+            if (current instanceof java.io.IOException) category = "IO";
+            else if (current instanceof IllegalStateException && "OTHER".equals(category)) category = "STATE";
+        }
+        return category;
+    }
+
+    private String activateObserved(String activationId, String authorityJson, String proofJson,
+            ActivationAttempt attempt) throws Exception {
         ArmEvidence current;
         long claimedRevision;
         lock.lock();
@@ -122,13 +155,18 @@ final class EmbeddedDuplexActivationGate {
 
         // Display and native callbacks can reenter the process. Keep the claim
         // uncertain until readback succeeds, without holding the state lock.
+        long readinessDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        attempt.stage = ActivationStage.FIRST_RENDER;
         target.awaitFirstRenderedFrame();
-        long[] frame = target.currentIncomingFrame(MAX_FRAME_AGE_NS);
+        attempt.stage = ActivationStage.NATIVE_ACQUISITION;
+        long[] frame = awaitCurrentIncomingFrame(current, claimedRevision, readinessDeadline);
         if (!currentFrame(frame) || clock.wallTimeMillis() >= current.expiresAtMs) {
             throw new IllegalStateException("fresh incoming frame unavailable");
         }
         requireCurrentClaim(current, claimedRevision);
+        attempt.stage = ActivationStage.GRAPH_ATTACH;
         target.activateIncomingProjection();
+        attempt.stage = ActivationStage.NATIVE_EFFECTIVE;
         long[] projection = target.currentProjection();
         if (!effectiveProjection(projection) || clock.wallTimeMillis() >= current.expiresAtMs) {
             throw new IllegalStateException("native Peer projection not effective");
@@ -148,6 +186,25 @@ final class EmbeddedDuplexActivationGate {
             result.put("activated", true);
             return result.toString();
         } finally { lock.unlock(); }
+    }
+
+    private long[] awaitCurrentIncomingFrame(ArmEvidence current, long claimedRevision,
+            long deadlineNs) throws Exception {
+        while (true) {
+            requireCurrentClaim(current, claimedRevision);
+            if (clock.wallTimeMillis() >= current.expiresAtMs) {
+                throw new IllegalStateException("fresh incoming frame unavailable");
+            }
+            long[] frame = target.currentIncomingFrame(MAX_FRAME_AGE_NS);
+            // Native null can mean that the independent AImageReader acquisition
+            // callback has not joined the decoder render callback yet. A present
+            // identity mismatch remains an immediate rejection.
+            if (frame != null) return frame;
+            if (System.nanoTime() >= deadlineNs) {
+                throw new IllegalStateException("fresh incoming frame unavailable");
+            }
+            Thread.sleep(5L);
+        }
     }
 
     private void requireCurrentClaim(ArmEvidence current, long claimedRevision) {

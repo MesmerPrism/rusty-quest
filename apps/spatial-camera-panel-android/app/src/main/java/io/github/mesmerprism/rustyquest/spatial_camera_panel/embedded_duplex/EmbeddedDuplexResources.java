@@ -143,6 +143,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     boolean ownAppCaptureEnabled() { return ownCapture != null; }
     String ownAppCaptureState() { return ownCapture == null ? "disabled" : ownCapture.phase().name(); }
 
+    @Override public String incomingDiagnostic() { return incoming.activationDiagnostic(); }
     @Override public String incomingRuntimeSpecId() { return incomingRuntimeSpecId; }
     @Override public void awaitFirstRenderedFrame() throws Exception { incoming.awaitFirstRenderedFrame(); }
     @Override public long[] currentIncomingFrame(long maxAgeNs) { return incoming.currentFrame(maxAgeNs); }

@@ -477,10 +477,28 @@ public final class PackedStereoMediaSourceRuntime {
 
         @Override
         public void onCompositorFailure(Throwable failure) {
+            logClosedSourceFailure("ENCODER_INPUT", failure);
             error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);
             closeReason = "gpu_compositor_failure";
             state = "failed";
             stopRequested = true;
+        }
+
+        private void logClosedSourceFailure(String stage, Throwable failure) {
+            String category = "OTHER";
+            Throwable current = failure;
+            for (int i = 0; current != null && i < 8; i++, current = current.getCause()) {
+                if ("android.media.MediaCodec$CodecException".equals(current.getClass().getName())) {
+                    category = "CODEC"; break;
+                }
+                if (current instanceof java.io.IOException) category = "IO";
+                else if (current instanceof InterruptedException) category = "INTERRUPTED";
+                else if (current instanceof IllegalStateException && "OTHER".equals(category)) category = "STATE";
+            }
+            android.util.Log.i("RQSpatialCameraPanel", "channel=packed-source status=source-failed stage="
+                    + stage + " cause=" + category + " encodedFrames=" + encodedFrames
+                    + " packetCount=" + packetCount + " keyframeCount=" + keyframeCount
+                    + " consumerAcceptCount=" + consumerAcceptCount + " code=SOURCE_EFFECT_UNCERTAIN");
         }
 
         void sourceLoop() {
@@ -560,6 +578,7 @@ public final class PackedStereoMediaSourceRuntime {
                 }
             } catch (Throwable failure) {
                 if (!stopRequested) {
+                    logClosedSourceFailure("SOURCE_LOOP", failure);
                     error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);
                     closeReason = "exception";
                     state = "failed";
