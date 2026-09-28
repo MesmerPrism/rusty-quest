@@ -179,3 +179,15 @@ before Peer reservation. A fresh JVM isolates that native source-owner case;
 prior-native-counter and substituted-word negatives retain the guards. The
 Activity carrier/Surface and physical actors are fixture suppliers; Pending
 Local retirement does not become terminal cleanup evidence.
+
+The same focused concurrent caller check accepts `-NativeSharedOwnerRegression`
+with an explicit Rust compiler and Python executable. This opt-in case retains
+default Local1, stale polling, native Disabled2 and released ingress binding,
+then joins the live Own source-set actor with the exact current native carrier
+for Peer3. It compiles the current Kotlin/Java caller and extracts the owning
+native selection, admission, bound-release, actor-stop and receipt-CAS bodies.
+Thirteen native owner cases and five rejection cases with no ingress binding
+check actor and predecessor receipt preservation. Capture/frame/clock/window
+observations and platform SDK effects are mocks; this proves no Android JNI
+invocation, camera, render, network or headset readiness. It is a focused owner
+regression, not a new qualification prerequisite.

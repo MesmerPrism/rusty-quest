@@ -5,6 +5,9 @@ param(
     [Parameter(Mandatory)][string]$HostJsonJar,
     [Parameter(Mandatory)][string]$KotlinCompilerClassPath,
     [string]$KotlinFriendPaths = '',
+    [switch]$NativeSharedOwnerRegression,
+    [string]$RustCompiler = 'rustc',
+    [string]$PythonExecutable = 'python',
     [Parameter(Mandatory)][string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
@@ -44,6 +47,10 @@ $classPath = "$kotlin$separator$classes$separator$dependencies"
 if ($LASTEXITCODE -ne 0) { throw 'complete caller fixture compilation failed' }
 & $java -cp $classPath io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.ConcurrentCallerRegression 1> (Join-Path $output 'test.stdout') 2> (Join-Path $output 'test.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'complete concurrent Peer caller regression failed' }
+if ($NativeSharedOwnerRegression) {
+    & $PythonExecutable (Join-Path $fixture 'check_native_shared_owner.py') --source-root (Join-Path $repo 'apps/spatial-camera-panel-android/native-receipt/src') --output-directory (Join-Path $output 'native-shared-owner') --rust-compiler $RustCompiler --java $java --javac $javac --class-path $classPath --fixture-java (Join-Path $fixture 'ConcurrentNativeCallerRegression.java')
+    if ($LASTEXITCODE -ne 0) { throw 'complete native shared owner regression failed' }
+}
 $hashes = @($sources + $kotlinSources | ForEach-Object {
     [ordered]@{path=[IO.Path]::GetRelativePath($repo, $_).Replace('\', '/'); sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()}
 })

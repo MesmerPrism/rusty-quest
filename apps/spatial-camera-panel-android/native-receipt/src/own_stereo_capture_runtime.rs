@@ -54,6 +54,17 @@ pub(crate) fn prepare_capture_bootstrap()->Result<bool,String> {
 
 pub(crate) fn own_capture_provider_requested()->bool {OWN_CAPTURE_PROVIDER_SELECTED}
 
+// Selection rechecks the already admitted native epoch while the shared renderer owner is held.
+// No route mutation or replacement capture actor is authorized by this proof.
+pub(crate) fn concurrent_peer_epoch_is_current(proof:[i64;5])->bool {
+ if !capture_claimed() || !capture_configured() || !crate::camera_hwb_probe::local_camera_acquisition_quiescent() {return false;}
+ let Ok(epoch)=own_image_fresh_observed() else {return false;};
+ let Ok(process)=crate::own_packed_pool_jni::process_generation() else {return false;};
+ proof[3]>0 && proof[4]>0 && epoch.process_generation==process
+  && i64::try_from(epoch.process_generation).ok()==Some(proof[3])
+  && i64::try_from(epoch.source_generation).ok()==Some(proof[4]) && capture_claimed()
+}
+
 // Read-only proof from the actual claimed capture actor and current retained frame epoch.
 pub(crate) fn concurrent_peer_admission(route:i64,challenge:i64,surface:i64)->Option<[i64;5]> {
  concurrent_peer_admission_observed(route,challenge,surface).ok()

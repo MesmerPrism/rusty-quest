@@ -243,6 +243,28 @@ pub(crate) fn request_source(
     words: [i64; SOURCE_ABI_WORDS],
     carrier_available: bool,
 ) -> SourceReceipt {
+    request_source_checked(words,carrier_available,None)
+}
+
+// Concurrent Own admission binds the exact predecessor carrier atomically with selection.
+pub(crate) fn request_source_with_current_carrier(
+    words:[i64;SOURCE_ABI_WORDS],current_carrier:[i64;3],
+)->SourceReceipt {
+    request_source_checked(words,true,Some(current_carrier))
+}
+
+// A Disabled predecessor releases its ingress window binding, but retains this
+// actual receipt carrier. The common source-set owner independently proves the window.
+pub(crate) fn current_carrier_for_selection(challenge:i64,surface:i64)->Option<[i64;3]> {
+    let owner=SOURCE_OWNER.lock().ok()?;
+    let receipt=owner.receipt?;
+    (receipt.words[1]>0 && challenge>0 && surface>0 && receipt.words[5]==challenge
+        && receipt.words[6]==surface).then_some([receipt.words[1],challenge,surface])
+}
+
+fn request_source_checked(
+    words:[i64;SOURCE_ABI_WORDS],carrier_available:bool,current_carrier:Option<[i64;3]>,
+)->SourceReceipt {
     let route_generation = words[1];
     let request = match SourceRequest::decode(words) {
         Ok(request) => request,
@@ -251,6 +273,11 @@ pub(crate) fn request_source(
     let mut owner = SOURCE_OWNER
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if current_carrier.is_some_and(|expected| !owner.receipt.is_some_and(|receipt| {
+        [receipt.words[1],receipt.words[5],receipt.words[6]]==expected
+    })) {
+        return SourceReceipt::new(request,RESULT_REJECTED,REASON_RECEIPT_FOREIGN,0);
+    }
     if owner
         .receipt
         .is_some_and(|receipt| receipt.words[1] >= request.route_generation)
