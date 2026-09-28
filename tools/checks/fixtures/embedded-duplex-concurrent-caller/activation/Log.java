@@ -1,0 +1,1 @@
+package android.util;public final class Log{public static int i(String tag,String message){System.out.println(message);return 0;}}

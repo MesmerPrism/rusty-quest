@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory)][string]$KotlinCompilerClassPath,
     [string]$KotlinFriendPaths = '',
     [switch]$NativeSharedOwnerRegression,
+    [switch]$ActivationReadinessRegression,
     [string]$RustCompiler = 'rustc',
     [string]$PythonExecutable = 'python',
     [Parameter(Mandatory)][string]$OutputDirectory
@@ -50,6 +51,10 @@ if ($LASTEXITCODE -ne 0) { throw 'complete concurrent Peer caller regression fai
 if ($NativeSharedOwnerRegression) {
     & $PythonExecutable (Join-Path $fixture 'check_native_shared_owner.py') --source-root (Join-Path $repo 'apps/spatial-camera-panel-android/native-receipt/src') --output-directory (Join-Path $output 'native-shared-owner') --rust-compiler $RustCompiler --java $java --javac $javac --class-path $classPath --fixture-java (Join-Path $fixture 'ConcurrentNativeCallerRegression.java')
     if ($LASTEXITCODE -ne 0) { throw 'complete native shared owner regression failed' }
+}
+if ($ActivationReadinessRegression) {
+    & $PythonExecutable (Join-Path $fixture 'activation/check_activation_caller.py') --repo-root $repo --java-home $JavaHome --class-path $dependencies --output-directory (Join-Path $output 'activation-readiness')
+    if ($LASTEXITCODE -ne 0) { throw 'complete activation readiness caller regression failed' }
 }
 $hashes = @($sources + $kotlinSources | ForEach-Object {
     [ordered]@{path=[IO.Path]::GetRelativePath($repo, $_).Replace('\', '/'); sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()}

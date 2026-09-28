@@ -139,6 +139,48 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         }
     }
 
+    /** Closed observations only; start may already have performed its internal Stop. */
+    String activationDiagnostic() {
+        ReceiverRuntime current = receiver;
+        if (current == null) return "receiverState=UNPREPARED connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1";
+        MediaRuntimeSnapshot snapshot = current.snapshot();
+        if (snapshot == null) return "receiverState=UNAVAILABLE connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1";
+        String[] detail = snapshot.detail().split(",", 5);
+        if (detail.length < 4 || !detail[0].startsWith("packets=")
+                || !detail[1].startsWith("frames=") || !detail[2].startsWith("reconnects=")
+                || !detail[3].startsWith("connection=")) {
+            return "receiverState=" + closedReceiverState(snapshot.state())
+                    + " connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1";
+        }
+        return "receiverState=" + closedReceiverState(snapshot.state())
+                + " connection=" + closedReceiverState(detail[3].substring(11))
+                + " packets=" + closedCounter(detail[0].substring(8))
+                + " frames=" + closedCounter(detail[1].substring(7))
+                + " reconnects=" + closedCounter(detail[2].substring(11));
+    }
+
+    private static String closedReceiverState(String state) {
+        if (state == null) return "UNAVAILABLE";
+        switch (state) {
+            case "new": return "NEW";
+            case "receiver_armed": return "ARMED";
+            case "connecting": return "CONNECTING";
+            case "decoder_configured": return "DECODER_CONFIGURED";
+            case "receiving": return "RECEIVING";
+            case "waiting_reconnect": return "WAITING_RECONNECT";
+            case "stopping": return "STOPPING";
+            case "stopped": return "STOPPED";
+            case "failed": return "FAILED";
+            default: return "UNAVAILABLE";
+        }
+    }
+
+    private static long closedCounter(String value) {
+        if (!value.matches("[0-9]{1,19}")) return -1L;
+        try { return Long.parseLong(value); }
+        catch (NumberFormatException unavailable) { return -1L; }
+    }
+
     public long routeGeneration() { return staged == null ? 0L : staged.routeGeneration(); }
     public long decoderToken() { return staged == null ? 0L : staged.decoderToken(); }
     public long readerGeneration() { return staged == null ? 0L : staged.readerGeneration(); }

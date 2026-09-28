@@ -202,3 +202,13 @@ Missing codec, stale subscription and rejected EGL config remain failures.
 Route/socket/codec effects, EGL/window and capture observations are mocked.
 This check needs no browser and proves no Android GLES, encoding, network,
 rendered frames or physical cleanup; it adds no universal prerequisite.
+
+`Test-EmbeddedDuplexConcurrentPeerCaller.ps1 -ActivationReadinessRegression`
+optionally runs the actual compiled Registry/Receiver/activation gate caller,
+including a temporary one-read historical counterexample and the bounded
+current acquisition join. Zero ingress, timeout, expiry, cancellation, foreign
+identity/proof, Pending Effective and reentry reject. Typed cause and closed
+receiver counts are checked without exposing failure detail. Codec, transport
+and native callbacks are mocks; no JNI or headset effect is established. The
+existing optional processor check also exercises the actual encoder failure
+listener's closed source diagnostic. Neither adds a universal prerequisite.

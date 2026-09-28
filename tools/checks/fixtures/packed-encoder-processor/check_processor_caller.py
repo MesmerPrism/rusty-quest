@@ -29,6 +29,7 @@ public static int glCreateProgram(){return ++next;}public static void glAttachSh
 public static void glDeleteShader(int s){}public static void glDeleteProgram(int p){}public static void glBindFramebuffer(int a,int b){}public static void glViewport(int a,int b,int c,int d){}public static void glDisable(int x){}public static void glUseProgram(int x){}public static int glGetAttribLocation(int p,String n){return 1;}public static void glVertexAttribPointer(int a,int b,int c,boolean d,int e,Buffer f){}public static void glEnableVertexAttribArray(int x){}public static void glActiveTexture(int x){}public static void glBindTexture(int a,int b){}public static int glGetUniformLocation(int p,String n){if(!compiler().getString("fragment_source").contains("sampler2D "+n+";"))throw new AssertionError("uniform binding differs from actual compiled shader");return 1;}public static void glUniform1i(int a,int b){}public static void glDrawArrays(int a,int b,int c){}public static int glGetError(){return 0;}}
 '''
 write('GLES20',gl)
+write('Log','package android.util;public final class Log{public static int i(String t,String m){System.out.println(m);return 0;}}')
 write('ProcessorCallerRegression','''package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 import io.github.mesmerprism.rustyquest.media.*;import android.content.Context;import org.json.*;import java.lang.reflect.*;
 public final class ProcessorCallerRegression {
@@ -60,4 +61,9 @@ for variant,worker in [('baseline',baseline_worker),('candidate',media/'PackedSt
   if case=='config':args+=['-DeglCase=config']
   args+=['io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.ProcessorCallerRegression',case]
   p=subprocess.run(args,capture_output=True,text=True,timeout=30);(out/(variant+'-'+case+'.stdout')).write_text(p.stdout);(out/(variant+'-'+case+'.stderr')).write_text(p.stderr);assert p.returncode==0,(variant,case,p.stdout,p.stderr);records.append({'variant':variant,'case':case,'stdout':p.stdout})
+for row in records:
+ if row['case'] in ('baseline','config'):
+  markers=[line for line in row['stdout'].splitlines() if line.startswith('channel=packed-source ')]
+  assert len(markers)==1 and 'stage=ENCODER_INPUT cause=STATE' in markers[0] and 'encodedFrames=0 packetCount=0 keyframeCount=0 consumerAcceptCount=0' in markers[0], 'actual async worker listener closed diagnostic missing'
+  assert 'encoder GL shader' not in markers[0] and 'encoder EGL config' not in markers[0], 'raw source failure message leaked'
 (out/'result.json').write_text(json.dumps({'status':'passed','cases':records,'scope':'actual compiled ordered route/socket/codec provider prefix (physical effects injected) -> actual Registry/OwnerSet/Pipeline/Runtime shared capture processor -> actual EncoderWorker/GlState/shader/await -> actual CaptureOwner subscription; GL compile statuses bound to exact shader strings and real offline WebGL1 compiler evidence','limits':'EGL/codec/surface/context/frame/camera/network observations mocked; no JNI/device/codec encoding/render delivery or physical cleanup claim'},indent=2));print(json.dumps(records,indent=2))
