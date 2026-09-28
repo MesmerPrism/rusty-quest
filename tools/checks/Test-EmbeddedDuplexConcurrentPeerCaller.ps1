@@ -7,6 +7,7 @@ param(
     [string]$KotlinFriendPaths = '',
     [switch]$NativeSharedOwnerRegression,
     [switch]$ActivationReadinessRegression,
+    [switch]$TransportDiagnosticRegression,
     [string]$RustCompiler = 'rustc',
     [string]$PythonExecutable = 'python',
     [Parameter(Mandatory)][string]$OutputDirectory
@@ -19,6 +20,11 @@ $null = New-Item -ItemType Directory -Path $output
 $suffix = if ($IsWindows) { '.exe' } else { '' }
 $java = Join-Path $JavaHome "bin/java$suffix"
 $javac = Join-Path $JavaHome "bin/javac$suffix"
+if ($TransportDiagnosticRegression) {
+    & $PythonExecutable (Join-Path $PSScriptRoot 'fixtures/embedded-duplex-concurrent-caller/transport/check_transport_diagnostics.py') --repo-root $repo --java-home $JavaHome --compiled-owner-class-path $CompiledOwnerClassPath --host-json-jar $HostJsonJar --output-directory (Join-Path $output 'transport-diagnostics')
+    if ($LASTEXITCODE -ne 0) { throw 'actual source transport diagnostic regression failed' }
+    return
+}
 $fixture = Join-Path $PSScriptRoot 'fixtures/embedded-duplex-concurrent-caller'
 $app = Join-Path $repo 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel'
 $media = Join-Path $repo 'crates/rusty-quest-media-stream-android/android/library/src/main/java/io/github/mesmerprism/rustyquest/media'

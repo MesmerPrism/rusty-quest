@@ -1,0 +1,1 @@
+package android.os;public class HandlerThread extends Thread{volatile boolean quit;public HandlerThread(String n){super(n);}public void run(){while(!quit){try{Thread.sleep(5);}catch(InterruptedException e){}}}public boolean quitSafely(){quit=true;return true;}public Looper getLooper(){return new Looper();}}

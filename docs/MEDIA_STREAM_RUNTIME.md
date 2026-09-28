@@ -212,3 +212,13 @@ receiver counts are checked without exposing failure detail. Codec, transport
 and native callbacks are mocks; no JNI or headset effect is established. The
 existing optional processor check also exercises the actual encoder failure
 listener's closed source diagnostic. Neither adds a universal prerequisite.
+
+`Test-EmbeddedDuplexConcurrentPeerCaller.ps1 -TransportDiagnosticRegression`
+optionally runs only the current compiled Registry/OwnerSet/Source socket and
+Receiver diagnostic cases over real loopback TCP, with a synthetic
+2560x1280 packed profile and bounded full-size packets. Refusal, header IO,
+EOF, mixed IO then decoder-config failure, and failed source header writing
+retain first/final closed observations before and after Stop. Android
+lifecycle and decoder configuration are mocked; this proves no H264 decode,
+JNI, headset LAN, rendered frames, physical cleanup or field failure cause.
+It uses explicit host dependencies and adds no universal prerequisite.

@@ -1,0 +1,1 @@
+package android.content;public class Context {public static final String CAMERA_SERVICE="camera";public Context getApplicationContext(){return this;}public Object getSystemService(String n){throw new AssertionError("no camera");}}

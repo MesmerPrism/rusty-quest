@@ -1,0 +1,1 @@
+package android.media;public class MediaFormat {public static final String KEY_COLOR_FORMAT="color",KEY_BIT_RATE="rate",KEY_FRAME_RATE="fps",KEY_I_FRAME_INTERVAL="interval";public static MediaFormat createVideoFormat(String m,int w,int h){throw new IllegalStateException("fixture decoder configuration failure");}public void setInteger(String k,int v){}}
