@@ -20,7 +20,7 @@ $fixture = Join-Path $PSScriptRoot 'fixtures/embedded-duplex-diagnostic-seam'
 $platform = Join-Path $repo 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexPlatform.java'
 $bridge = Join-Path $repo 'apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex/java_bridge.rs'
 $media = Join-Path $repo 'crates/rusty-quest-media-stream-android/android/library/src/main/java/io/github/mesmerprism/rustyquest/media'
-$sources = @($platform)
+$sources = @($platform,(Join-Path $repo 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexProcessFence.java'),(Join-Path $fixture 'OwnerDiagnosticCase.java'),(Join-Path $fixture 'EmbeddedDuplexNative.java'),(Join-Path $fixture 'Log.java'))
 foreach ($name in @('PackagedAndroidMediaOwnerRegistry', 'MediaOwnerAction', 'MediaProductBinding', 'MediaProviderReadback', 'MediaOwnerProvider', 'CancellationHandle', 'MediaRuntimeSnapshot', 'AndroidMediaOwnerRegistry')) {
     $sources += Join-Path $media "$name.java"
 }
@@ -28,11 +28,16 @@ $classes = Join-Path $output 'classes'
 $null = New-Item -ItemType Directory -Path $classes
 # Put the working host JSON implementation before Android's stub classes.
 $classPath = "$HostJsonJar$([IO.Path]::PathSeparator)$CompiledOwnerClassPath"
-& $javac --release 8 '-Xlint:all' -Werror -cp $classPath -d $classes @sources (Join-Path $fixture 'DiagnosticJsonProducer.java') 1> (Join-Path $output 'java-compile.stdout') 2> (Join-Path $output 'java-compile.stderr')
+& $javac --release 8 '-Xlint:all,-try' -Werror -cp $classPath -d $classes @sources (Join-Path $fixture 'DiagnosticJsonProducer.java') 1> (Join-Path $output 'java-compile.stdout') 2> (Join-Path $output 'java-compile.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'actual diagnostic producer compilation failed' }
 $payload = Join-Path $output 'producer.ndjson'
 & $java -cp "$classes$([IO.Path]::PathSeparator)$classPath" 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.DiagnosticJsonProducer' 1> $payload 2> (Join-Path $output 'java-test.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'actual Registry/classifier/getter producer failed' }
+# Complete real callback path; only provider, local-quiescence JNI and Log are fixture boundaries.
+$fullPayload = Join-Path $output 'full-callback.ndjson'
+& $java -cp "$classes$([IO.Path]::PathSeparator)$classPath" 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.OwnerDiagnosticCase' true 1> $fullPayload 2> (Join-Path $output 'full-callback.stderr')
+if ($LASTEXITCODE -ne 0) { throw 'actual Platform/Registry/getter full failure regression failed' }
+[IO.File]::AppendAllText($payload,[IO.File]::ReadAllText($fullPayload),[Text.UTF8Encoding]::new($false))
 $bridgeText = [IO.File]::ReadAllText($bridge)
 $consumer = [regex]::Matches($bridgeText, '(?ms)^    pub\(crate\) fn owner_failure_diagnostic\(&self\)[^\r\n]*\{.*?^    \}')
 if ($consumer.Count -ne 1 -or $consumer[0].Value -notmatch 'parse_owner_failure_diagnostic\(&text\)') {
@@ -59,5 +64,7 @@ $sourceHashes = @($sources + $bridge | ForEach-Object {
     host_json_sha256=(Get-FileHash -LiteralPath $HostJsonJar -Algorithm SHA256).Hash.ToLowerInvariant()
     serde_json_sha256=(Get-FileHash -LiteralPath $SerdeJsonLibrary -Algorithm SHA256).Hash.ToLowerInvariant()
     producer_sha256=(Get-FileHash -LiteralPath $payload -Algorithm SHA256).Hash.ToLowerInvariant()
-    physical_claim='none; mock foreign provider, reflection transfer into actual getter; no JNI/device/platform effects'
+    physical_claim='none; mock foreign provider, local-quiescence JNI true and Log; real callback/registry/getter and extracted parser; no JNI VM/device effects'
+    focused_host_lint='all/Werror except preexisting process-fence AutoCloseable try warning'
+    full_callback_source_families=5; compensation_primary_retention_cases=5; cause_chain_cases=11
 } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $output 'result.json') -Encoding utf8

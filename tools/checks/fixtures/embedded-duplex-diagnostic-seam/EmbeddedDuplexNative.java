@@ -1,0 +1,1 @@
+package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex; final class EmbeddedDuplexNative { static boolean localCameraQuiescent(){return true;} static byte[] handleOwnerFrame(byte[] frame){throw new AssertionError("no native frame dispatch");} }

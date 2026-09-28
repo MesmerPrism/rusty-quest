@@ -7,7 +7,7 @@ fn main() {
         assert!(value.get("provider_reason").is_some());
         count += 1;
         let mut legacy = value.clone();
-        legacy.as_object_mut().unwrap().remove("provider_reason");
+        legacy.as_object_mut().unwrap().remove("provider_reason"); legacy.as_object_mut().unwrap().remove("owner"); legacy.as_object_mut().unwrap().remove("cause");
         assert!(parse_owner_failure_diagnostic(&legacy.to_string()).is_ok());
         for (key, replacement) in [
             ("provider_reason", "UNKNOWN_REASON"), ("stage", "UNKNOWN_STAGE"),
@@ -16,6 +16,11 @@ fn main() {
             let mut unknown = value.clone();
             unknown[key] = serde_json::json!(replacement);
             assert!(parse_owner_failure_diagnostic(&unknown.to_string()).is_err(), "unknown {key}");
+        }
+        if value.get("owner").is_some() {
+            for (key,replacement) in [("owner",serde_json::json!("unknown")),("cause",serde_json::json!("private raw cause")),("owner",serde_json::json!(7))] {let mut bad=value.clone();bad[key]=replacement;assert!(parse_owner_failure_diagnostic(&bad.to_string()).is_err());}
+            let mut bad=value.clone();bad.as_object_mut().unwrap().remove("cause");assert!(parse_owner_failure_diagnostic(&bad.to_string()).is_err());
+            let mut bad=value.clone();bad["stage"]=serde_json::json!("REGISTRY_BINDING");bad["provider_reason"]=serde_json::json!("NONE");assert!(parse_owner_failure_diagnostic(&bad.to_string()).is_err());
         }
         let mut extra = value.clone();
         extra["private_exception"] = serde_json::json!("PRIVATE_PAYLOAD");

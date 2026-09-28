@@ -152,6 +152,20 @@ final class EmbeddedDuplexPlatform {
         REGISTRY_CLOSED, PROVIDER_BUSY, CAPACITY, PREPARATION_ALREADY_ATTEMPTED,
         FOREIGN_READBACK, RECEIPT_COLLISION, DISPLAY_LOCAL_SHUTDOWN, DISPLAY_DISPATCH_FENCED, DISPLAY_TRANSITION_TIMEOUT, DISPLAY_ADMISSION_REJECTED, DISPLAY_NATIVE_ACTIVE_EPOCH, DISPLAY_NATIVE_ACTIVE_STATE, DISPLAY_NATIVE_BOUNDS, DISPLAY_NATIVE_CAPTURE, DISPLAY_NATIVE_CARRIER, DISPLAY_NATIVE_CLOCK, DISPLAY_NATIVE_FRAME_ABSENT, DISPLAY_NATIVE_FRAME_EPOCH, DISPLAY_NATIVE_FRAME_FUTURE, DISPLAY_NATIVE_FRAME_STALE, DISPLAY_NATIVE_INPUT, DISPLAY_NATIVE_LOCAL, DISPLAY_NATIVE_PROCESS_EPOCH, DISPLAY_NATIVE_SOURCE_STATE, DISPLAY_NATIVE_SUPERSEDED, DISPLAY_OWN_CAPTURE_STATE, DISPLAY_OWN_CAPTURE_FRESH, DISPLAY_OWN_CARRIER_SUPERSEDED, DISPLAY_NATIVE_SHAPE, DISPLAY_ROUTING_SUPERSEDED, OTHER }
     // Fixed owner-local categories only. Never return or log exception messages or ticket fields.
+    private volatile String failedOwnerKind = "NONE";
+    private volatile String failedCause = "NONE";
+    static String failureCategory(Throwable failure) {
+        boolean state = false;
+        for (int depth = 0; failure != null && depth < 8; depth++, failure = failure.getCause()) {
+            if (failure instanceof android.media.MediaCodec.CodecException) return "CODEC";
+            if (failure instanceof java.util.concurrent.TimeoutException) return "TIMEOUT";
+            if (failure instanceof java.io.IOException) return "IO";
+            if (failure instanceof SecurityException) return "SECURITY";
+            if (failure instanceof IllegalArgumentException) return "ARGUMENT";
+            state |= failure instanceof IllegalStateException;
+        }
+        return state ? "STATE" : "OTHER";
+    }
     static ProviderReason providerReason(Throwable failure) {
         for (int depth = 0; failure != null && depth < 8; depth++, failure = failure.getCause()) {
             String message = failure.getMessage();
@@ -199,7 +213,8 @@ final class EmbeddedDuplexPlatform {
     public String ownerFailureDiagnostic() throws Exception {
         return new JSONObject().put("stage", failedOwnerStage.name())
                 .put("sink_stage", failedSinkStage).put("action", failedOwnerAction)
-                .put("provider_reason", failedProviderReason.name()).put("code", failedOwnerStage == OwnerStage.NONE
+                .put("provider_reason", failedProviderReason.name()).put("owner", failedOwnerKind)
+                .put("cause", failedCause).put("code", failedOwnerStage == OwnerStage.NONE
                         ? "NONE" : "OWNER_EFFECT_REJECTED").toString();
     }
     public String executeAndVerify(String authorityJson, String ticketJson, boolean compensate) throws Exception {
@@ -262,6 +277,8 @@ final class EmbeddedDuplexPlatform {
                             : "stop".equals(kind) ? "STOP" : "cleanup".equals(kind) ? "CLEANUP" : "BEFORE_TICKET";
                     failedProviderReason = stage == OwnerStage.PROVIDER_EXECUTION
                             ? providerReason(failure) : ProviderReason.NONE;
+                    failedOwnerKind = ticket == null ? "NONE" : ticket.ownerKind();
+                    failedCause = stage == OwnerStage.PROVIDER_EXECUTION ? failureCategory(failure) : "NONE";
                     failedOwnerStage = stage;
                 }
             }
