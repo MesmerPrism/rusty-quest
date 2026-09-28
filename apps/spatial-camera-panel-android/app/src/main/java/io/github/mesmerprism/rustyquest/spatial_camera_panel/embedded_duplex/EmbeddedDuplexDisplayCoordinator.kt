@@ -75,10 +75,10 @@ internal class EmbeddedDuplexDisplayCoordinator(
       val capture = checkNotNull(own.retainedCapture()) { "concurrent Own capture not Live" }
       check(own.phase() == OwnStereoCaptureRuntime.Phase.Live) { "concurrent Own capture not Live" }
       check(capture.fresh()) { "concurrent Own capture not fresh" }
-      val before = routing.snapshot()
+      val admissionRequest = routing.concurrentPeerAdmissionRequest()
       val context = checkNotNull(carrier()) { "projection carrier unavailable" }
-      val proof = SpatialConcurrentPeerAdmission.observed(before.generation, context,
-          OwnPackedPoolNative.concurrentPeerAdmission(before.generation, context.launchChallenge, context.surfaceGeneration))
+      val proof = SpatialConcurrentPeerAdmission.observed(admissionRequest, context,
+          OwnPackedPoolNative.concurrentPeerAdmission(admissionRequest.nativeGeneration, context.launchChallenge, context.surfaceGeneration))
       check(OwnStereoCaptureRuntime.currentForApplication() === own && own.retainedCapture() === capture &&
           own.phase() == OwnStereoCaptureRuntime.Phase.Live) { "concurrent Own capture superseded" }
       check(capture.fresh()) { "concurrent Own capture not fresh" }

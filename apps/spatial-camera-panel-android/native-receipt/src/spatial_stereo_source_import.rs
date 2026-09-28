@@ -120,6 +120,16 @@ impl StereoSourceImports {
         }
         Ok(())
     }
+    // Positive typed SDK never-entered proof is bound to this exact imported frame fence.
+    // Unknown or accepted submission cannot use this path.
+    pub(crate) fn cancel_sdk_unsubmitted(&mut self,session:u64,request:u64,
+        proof:&crate::spatial_sdk_depth_handoff::SpatialUnsubmittedProof)->Result<(),String> {
+        use ash::vk::Handle;
+        let fence=self.pending.ok_or("stereo-import SDK fence unavailable")?;
+        if !proof.matches(session,request,fence.as_raw()){return Err("stereo-import SDK proof differs".into());}
+        self.pending=None;
+        Ok(())
+    }
     /// Refresh only after actual common fence retirement; snapshot owns bytes
     /// before releasing source lock. Never cache an AHB pointer as frame content.
     pub(crate) unsafe fn refresh(&mut self,device:&ash::Device,memory:&vk::PhysicalDeviceMemoryProperties,
