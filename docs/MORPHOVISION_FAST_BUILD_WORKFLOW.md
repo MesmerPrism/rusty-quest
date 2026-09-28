@@ -38,9 +38,11 @@ why a lane was expected to invalidate.
 
 ## Modes
 
-`-BuildMode DevFast` uses the Gradle daemon, configuration cache, build cache,
-and stable local intermediates. It still performs signer preflight and inspects
-every APK.
+`-BuildMode DevFast` uses a single-use Gradle process and in-process Kotlin
+compilation so build-owned persistent daemons do not retain redirected output
+handles. Configuration cache, build cache and stable local intermediates remain
+enabled. JVM/compiler warm state is not retained between builds. Signer
+preflight and inspection of every APK remain required.
 
 `-BuildMode Candidate` requires a frozen clean source composition, uses an
 explicit signer and expected certificate fingerprint, disables the Gradle
