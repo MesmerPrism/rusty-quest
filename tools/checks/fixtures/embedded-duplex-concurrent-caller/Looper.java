@@ -1,0 +1,1 @@
+package android.os;public final class Looper {private static final Looper MAIN=new Looper(),WORKER=new Looper();public static Looper myLooper(){return WORKER;}public static Looper getMainLooper(){return MAIN;}}

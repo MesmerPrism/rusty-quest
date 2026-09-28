@@ -142,3 +142,18 @@ legacy compatibility, closed fields/values and the 256-byte bound. Reflection
 transfers diagnostic state into the getter to exclude constructor effects.
 This proves the exercised producer/parser seam, not complete Platform dispatch,
 JNI invocation, physical effects, Android compilation or streaming readiness.
+
+`tools/checks/Test-EmbeddedDuplexConcurrentPeerCaller.ps1` compiles the current
+Kotlin Display/Router and Java Receiver/Registry before exercising the complete
+concurrent Own-to-Peer preparation caller. Its happy case must preserve Own;
+non-live/stale Own, absent native actor proof, native local quiescence failure,
+and fenced dispatch must reject with the retained Receiver failure stage. The
+exclusive Local shutdown guard remains a separate rejection.
+
+Pass explicit JDK, Kotlin compiler classpath, compiled owner dependencies, host
+JSON jar, optional Kotlin friend paths, and a fresh output directory. The fixture
+uses actual capture freshness/deadline methods with injected pool freshness and
+mocked Own instance, Looper/clock and JNI observations. It proves no camera,
+renderer, network, physical cleanup or JNI execution. Timeout coverage checks
+the closed exception category, not a timed wait. This focused owner regression
+is callable independently; it is not a new APK or lifecycle prerequisite.
