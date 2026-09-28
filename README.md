@@ -900,16 +900,23 @@ stereo lanes bound through `p2p0`; no app-visible Android Wi-Fi Direct `Network`
 was required or claimed. QCL099/Makepad remains an explicit legacy compatibility
 lane and is not part of this promotion.
 
-Packed side-by-side stereo is separately promoted by
-`qcl100-packed-sbs-duplex45-20260710T155638Z`. It preserves the two duplex
-direction paths but reduces each direction to one Camera2 `50`/`51`
-source-timestamp pairer, one GPU SBS compositor, one H.264/RMANVID v4 stream,
-one Rusty-owned `p2p0` socket, one hardware decoder, and one packed
-`AHardwareBuffer` sampled through the existing left/right UV halves. Packed SBS
-is the recommended explicit QCL100 native OpenXR profile. The runtime default
-remains `separate-eye-streams` for compatibility, so adopting packed SBS still
-requires `media_layout=side-by-side-left-right`; the earlier two-lane promotion
-remains the rollback and differential-diagnosis authority.
+Packed side-by-side stereo initially passed automated acceptance in
+`qcl100-packed-sbs-duplex45-20260710T155638Z`, but the retained July 10 history
+retracted that promotion after operator observation found the full packed raster
+sampled into both eyes. The corrected
+`qcl100-packed-sbs-native-square-observe60-20260710T1929Z` candidate passed
+transport, decode, source-layout and per-eye UV gates; wearer confirmation of
+correct eye separation and proportions remained pending. The independently
+promoted dual-lane native OpenXR route remains the known-good rollback and
+differential-diagnosis authority.
+
+Packed SBS uses one Camera2 `50`/`51` source-timestamp pairer, GPU compositor,
+H.264/RMANVID v4 stream, Rusty-owned `p2p0` socket, hardware decoder and packed
+`AHardwareBuffer` per direction. It remains an explicit candidate profile via
+`media_layout=side-by-side-left-right`; the compatibility default remains
+`separate-eye-streams`. The Spatial Camera Panel `broker-rmanvid1` adapter was
+build/static qualified separately, with headset runtime validation not recorded
+in that native OpenXR promotion history.
 
 See `docs/REMOTE_CAMERA_STREAMING.md`.
 

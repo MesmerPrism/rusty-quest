@@ -390,8 +390,9 @@ scope of its historical evidence.
 
 ## Packed Side-By-Side QCL100 Profile
 
-Run `qcl100-packed-sbs-duplex45-20260710T155638Z` separately promoted the
-packed native OpenXR profile. The topology still has two simultaneous
+Run `qcl100-packed-sbs-duplex45-20260710T155638Z` initially passed automated
+acceptance for packed native OpenXR; its promotion was later retracted after
+operator visual rejection. The topology still has two simultaneous
 end-to-end directions, but each direction has exactly one logical `stereo`
 lane: Camera2 `50` and `51` frames are capture-result correlated, paired by
 bounded nearest sensor timestamp, GPU-composited side-by-side, encoded once,
@@ -408,17 +409,27 @@ hardware decoder each, sustained roughly 90 FPS OpenXR scorecards, and reported
 zero native/system fatals. Both device lifecycle checks, cleanup readback, and
 strict final route clear passed.
 
-Packed SBS is now the recommended explicit QCL100 native profile, while
-`separate-eye-streams` remains the implementation default and the independently
-promoted dual-lane route remains available for rollback, compatibility, and
-differential diagnosis. Select packed mode explicitly with
+The later retained July 10 state records an operator-observed defect: both
+camera halves were sampled into both eyes. A corrected intermediate candidate
+also used a camera size that was not advertised. The subsequent
+`qcl100-packed-sbs-native-square-observe60-20260710T1929Z` candidate used the
+exact advertised 1280x1280 camera mode and a 2560x1280 packed raster. Its
+transport, hardware decode, source-layout and per-eye UV gates passed, but
+explicit wearer confirmation of eye separation and proportions remained
+pending. Automated frame counts therefore do not restore the packed promotion.
+
+The independently promoted dual-lane route remains the known-good rollback,
+compatibility and differential-diagnosis authority. `separate-eye-streams`
+remains the implementation default. Select the packed candidate explicitly with
 `-MediaLayout side-by-side-left-right` on the QCL100 runner. Use
 `tools/Invoke-Qcl100PackedStereoLocalLoopback.ps1` for synthetic or Camera2
 local qualification and `tools/Test-Qcl100PackedStereoRun.ps1` to reduce a
 one-way or duplex artifact set. A one-way reducer result may pass prerequisites
 but cannot promote. The Spatial Camera Panel `broker-rmanvid1` adapter consumes
-the same layout explicitly; it is build/static qualified and not part of this
-native OpenXR hardware promotion.
+the same layout explicitly; its historical build/static qualification did not
+include a headset runtime run and is separate from native OpenXR acceptance.
+These historical results do not establish the current shared Own/Peer Spatial
+SDK renderer, viewer-relative placement or cleanup behavior.
 
 The live end-to-end entry point is
 `Invoke-Qcl100NativeStereoPromotionCandidate.ps1`. It keeps both Agent Board
