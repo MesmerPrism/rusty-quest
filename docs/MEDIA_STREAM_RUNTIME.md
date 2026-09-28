@@ -157,3 +157,16 @@ mocked Own instance, Looper/clock and JNI observations. It proves no camera,
 renderer, network, physical cleanup or JNI execution. Timeout coverage checks
 the closed exception category, not a timed wait. This focused owner regression
 is callable independently; it is not a new APK or lifecycle prerequisite.
+
+`tools/checks/Test-EmbeddedDuplexAdmissionJniCaller.ps1` reuses the concurrent
+caller fixture and compiles current Kotlin/Java callers against an actual host
+JVM JNI library. The library extracts the owning admission/getter functions
+and uses the actual source/input-set and peer-route modules. It checks coherent
+clock/read interleaving, strict freshness/epoch/carrier rejection, and closed
+Java pre-JNI versus native first-failure reasons. Supply the existing Java/Kotlin
+dependencies, Python/Cargo executables, an absent run-owned native target path
+(short enough for the host linker), and an absent output directory. Cargo uses
+locked offline `jni` 0.21.1. Physical actors, clock and Looper remain fixtures;
+this proves no Android JNI supplier composition, physical device cause or duplex
+acceptance and adds no APK prerequisite. The host fixture explicitly exits after
+assertions because actual supplier executors have no fixture shutdown route.

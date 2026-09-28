@@ -45,7 +45,7 @@ public final class ConcurrentCallerRegression {
   finally{clear();}
  }
  public static void main(String[] args)throws Exception {
-  run("happy",null);run("false-own","DISPLAY_ADMISSION_REJECTED");run("not-fresh","DISPLAY_ADMISSION_REJECTED");run("native-actor","DISPLAY_ADMISSION_REJECTED");run("stale-generation","DISPLAY_ADMISSION_REJECTED");run("dispatch-fence","DISPLAY_DISPATCH_FENCED");run("native-quiescence","DISPLAY_LOCAL_SHUTDOWN");
+  run("happy",null);run("false-own","DISPLAY_OWN_CAPTURE_STATE");run("not-fresh","DISPLAY_OWN_CAPTURE_FRESH");run("native-actor","DISPLAY_NATIVE_SHAPE");run("stale-generation","DISPLAY_ROUTING_SUPERSEDED");run("dispatch-fence","DISPLAY_DISPATCH_FENCED");run("native-quiescence","DISPLAY_LOCAL_SHUTDOWN");
   SpatialVideoSourceExecutionAdapter adapter=(SpatialVideoSourceExecutionAdapter)Proxy.newProxyInstance(ConcurrentCallerRegression.class.getClassLoader(),new Class<?>[]{SpatialVideoSourceExecutionAdapter.class},(p,m,a)->{throw new AssertionError();});SpatialVideoSourceRoutingCoordinator routing=new SpatialVideoSourceRoutingCoordinator(adapter,()->1L);
   try{routing.beginEmbeddedProjectionPeerRequest();throw new AssertionError("exclusive guard must remain");}catch(IllegalStateException expected){if(!expected.getMessage().equals("embedded receiver requires actual local acquisition shutdown"))throw expected;}
   if(!"DISPLAY_TRANSITION_TIMEOUT".equals(EmbeddedDuplexPlatform.providerReason(new java.util.concurrent.TimeoutException()).name()))throw new AssertionError("closed timeout");
