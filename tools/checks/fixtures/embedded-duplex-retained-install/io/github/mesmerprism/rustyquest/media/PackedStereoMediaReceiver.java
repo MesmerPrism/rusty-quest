@@ -1,0 +1,1 @@
+package io.github.mesmerprism.rustyquest.media; public class PackedStereoMediaReceiver {public static class Bounds {public Bounds(int a,int b,int c,int d,int e,int f,int g,int h,int i,int j,int k,int l){}}}

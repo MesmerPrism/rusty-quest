@@ -1,0 +1,1 @@
+package io.github.mesmerprism.rustyquest.media; public class PackedStereoCaptureOwner {public boolean fresh(){return true;} }

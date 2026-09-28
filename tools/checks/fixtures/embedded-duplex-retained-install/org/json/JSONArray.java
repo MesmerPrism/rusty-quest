@@ -1,0 +1,1 @@
+package org.json; import java.util.*; public class JSONArray {final java.util.List<JSONObject> a=new ArrayList<>(); public JSONArray put(JSONObject x){a.add(x);return this;} public int length(){return a.size();} public JSONObject getJSONObject(int i){return a.get(i);} }
