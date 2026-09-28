@@ -35,11 +35,13 @@ pub(crate) fn capture_configured()->bool {LIMITS.lock().ok().is_some_and(|v|v.is
 
 pub(crate) fn bind_active_epoch(epoch:crate::stereo_input_set::SourceEpoch)->Result<(),String> { *ACTIVE_EPOCH.lock().map_err(|_|"active capture epoch poisoned")?=Some(epoch);Ok(()) }
 pub(crate) fn retire_active_epoch(epoch:crate::stereo_input_set::SourceEpoch)->Result<(),String> {let mut active=ACTIVE_EPOCH.lock().map_err(|_|"active capture epoch poisoned")?;if *active==Some(epoch){*active=None;}Ok(())}
-pub(crate) fn own_image_fresh()->bool {
- let Some(now)=crate::own_packed_pool::monotonic_ns() else{return false;};
- let Some(epoch)=ACTIVE_EPOCH.lock().ok().and_then(|v|*v) else{return false;};
- let Ok(snapshot)=shared_sources().snapshot(now,3_000_000_000) else{return false;};
- snapshot[0].as_ref().is_some_and(|frame|frame.identity.epoch==epoch)
+pub(crate) fn own_image_fresh()->bool {own_image_fresh_observed().is_ok()}
+pub(crate) fn own_image_fresh_observed()->Result<crate::stereo_input_set::SourceEpoch,&'static str> {
+ let active=ACTIVE_EPOCH.lock().map_err(|_|"concurrent Own native admission ACTIVE_STATE")?;
+ let epoch=(*active).ok_or("concurrent Own native admission ACTIVE_EPOCH")?;
+ let frame=shared_sources().own_current(crate::own_packed_pool::monotonic_ns,3_000_000_000)?;
+ if frame.identity.epoch!=epoch {return Err("concurrent Own native admission FRAME_EPOCH");}
+ Ok(epoch)
 }
 
 pub(crate) fn prepare_capture_bootstrap()->Result<bool,String> {
@@ -54,14 +56,21 @@ pub(crate) fn own_capture_provider_requested()->bool {OWN_CAPTURE_PROVIDER_SELEC
 
 // Read-only proof from the actual claimed capture actor and current retained frame epoch.
 pub(crate) fn concurrent_peer_admission(route:i64,challenge:i64,surface:i64)->Option<[i64;5]> {
- if route<=0 || challenge<=0 || surface<=0 || !capture_claimed() || !capture_configured() || !own_image_fresh()
-     || !crate::camera_hwb_probe::local_camera_acquisition_quiescent() {return None;}
+ concurrent_peer_admission_observed(route,challenge,surface).ok()
+}
+// Fixed owner-local categories only; no raw handle, ticket, path or exception text.
+pub(crate) fn concurrent_peer_admission_observed(route:i64,challenge:i64,surface:i64)->Result<[i64;5],&'static str> {
+ if route<=0 || challenge<=0 || surface<=0 {return Err("concurrent Own native admission INPUT");}
+ if !capture_claimed() || !capture_configured() {return Err("concurrent Own native admission CAPTURE");}
+ let _first_epoch=own_image_fresh_observed()?;
+ if !crate::camera_hwb_probe::local_camera_acquisition_quiescent() {return Err("concurrent Own native admission LOCAL");}
  let receipt=crate::peer_projection_runtime::read_source(route);
- if receipt.words[1]!=route || receipt.words[5]!=challenge || receipt.words[6]!=surface {return None;}
- let active=ACTIVE_EPOCH.lock().ok()?;let epoch=(*active)?;
- let now=crate::own_packed_pool::monotonic_ns()?;
- let snapshot=shared_sources().snapshot(now,3_000_000_000).ok()?;
- if !snapshot[0].as_ref().is_some_and(|f|f.identity.epoch==epoch) || !capture_claimed() {return None;}
- if epoch.process_generation!=crate::own_packed_pool_jni::process_generation().ok()? || epoch.source_generation==0 {return None;}
- Some([route,challenge,surface,i64::try_from(epoch.process_generation).ok()?,i64::try_from(epoch.source_generation).ok()?])
+ if receipt.words[1]!=route || receipt.words[5]!=challenge || receipt.words[6]!=surface {return Err("concurrent Own native admission CARRIER");}
+ let active=ACTIVE_EPOCH.lock().map_err(|_|"concurrent Own native admission ACTIVE_STATE")?;
+ let epoch=(*active).ok_or("concurrent Own native admission ACTIVE_EPOCH")?;
+ let frame=shared_sources().own_current(crate::own_packed_pool::monotonic_ns,3_000_000_000)?;
+ if frame.identity.epoch!=epoch {return Err("concurrent Own native admission FRAME_EPOCH");}
+ if !capture_claimed() {return Err("concurrent Own native admission SUPERSEDED");}
+ if epoch.process_generation!=crate::own_packed_pool_jni::process_generation().map_err(|_|"concurrent Own native admission PROCESS_EPOCH")? || epoch.source_generation==0 {return Err("concurrent Own native admission PROCESS_EPOCH");}
+ Ok([route,challenge,surface,i64::try_from(epoch.process_generation).map_err(|_|"concurrent Own native admission BOUNDS")?,i64::try_from(epoch.source_generation).map_err(|_|"concurrent Own native admission BOUNDS")?])
 }

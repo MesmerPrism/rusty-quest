@@ -4005,7 +4005,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
     }
     cameraLatencyDiagnosticModule.resetPoseCapture("camera-hwb-projection-pre-run")
-    cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run")
+    check(cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run") == "destroyed") {
+      "SDK projection cleanup remains Pending before new launch"
+    }
     cameraHwbProjectionPanelCarrierCoordinator.cleanup("camera-hwb-projection-pre-run")
     spatialVideoProjectionRuntimeCoordinator.adoptSettings(
         videoSettings,
@@ -4078,9 +4080,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
     spatialVideoProjectionRuntimeCoordinator.stop(reason)
     cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
-    cameraHwbProjectionRawCarrierCoordinator.recordLayerRemoved(reason)
-    val rawCleanupStatus = sdkQuadResourceCoordinator.cleanup(reason)
-    cameraHwbProjectionEntity = null
+    val rawCleanupStatus = cleanupSdkProjectionResourcesOnUiThread(reason)
     val carrierCleanupStatus =
         "panel-$panelCleanupStatus-raw-$rawCleanupStatus"
     return SpatialProjectionPanelStopReceipt(
@@ -4092,12 +4092,50 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
 
+  private fun cleanupSdkProjectionResourcesOnUiThread(reason: String): String {
+    val expectedRevision = sdkQuadResourceCoordinator.ownershipRevision()
+    val expectedEntity = cameraHwbProjectionEntity
+    val expectedCarrier = cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext()
+    val cleanup = {
+      check(sdkQuadResourceCoordinator.ownershipRevision() == expectedRevision &&
+          cameraHwbProjectionEntity === expectedEntity &&
+          cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext() == expectedCarrier) {
+        "SDK projection cleanup ownership changed"
+      }
+      val status = sdkQuadResourceCoordinator.cleanup(reason)
+      if (status == "destroyed") {
+        cameraHwbProjectionRawCarrierCoordinator.recordLayerRemoved(reason)
+        cameraHwbProjectionEntity = null
+      }
+      status
+    }
+    if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) return cleanup()
+    val disposition = java.util.concurrent.atomic.AtomicInteger(0)
+    val result = CompletableFuture<String>()
+    val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+    runOnUiThread {
+      if (disposition.compareAndSet(0, 1)) {
+        try {
+          check(System.nanoTime() <= deadline) { "SDK projection cleanup dispatch expired" }
+          result.complete(cleanup())
+        } catch (failure: Throwable) {
+          result.completeExceptionally(failure)
+        }
+      }
+    }
+    try {
+      return result.get(10, java.util.concurrent.TimeUnit.SECONDS)
+    } catch (failure: Exception) {
+      disposition.compareAndSet(0, 2)
+      throw failure
+    }
+  }
+
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
     privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     spatialVideoProjectionRuntimeCoordinator.stop("sdk-quad-surface-$reason")
     cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
-    cameraHwbProjectionRawCarrierCoordinator.recordLayerRemoved(reason)
-    return sdkQuadResourceCoordinator.cleanup(reason)
+    return cleanupSdkProjectionResourcesOnUiThread(reason)
   }
 
 

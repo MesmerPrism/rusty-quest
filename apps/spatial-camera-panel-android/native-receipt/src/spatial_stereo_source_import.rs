@@ -139,6 +139,7 @@ impl StereoSourceImports {
             };
             let (properties,format)=ahb::query_ahb_vulkan_import_properties(ahb_device,&hardware)?;
             let mut normalizer=PackedSbsNormalizer::create(device,memory,descriptor.width,descriptor.height,properties.format_key,&format)?;
+            normalizer.set_source_bottom_up(matches!(&frame.lease,StereoSourceLease::Own(_)));
             let image=match ahb::import_ahb_sampled_image(device,memory,&hardware,AhbVulkanSampledImageCreateInfo {
                 width:descriptor.width,height:descriptor.height,format_key:properties.format_key,
                 allocation_size:properties.allocation_size,memory_type_bits:properties.memory_type_bits,

@@ -73,15 +73,16 @@ internal class EmbeddedDuplexDisplayCoordinator(
     val staged = if (concurrentOwn()) {
       val own = checkNotNull(OwnStereoCaptureRuntime.currentForApplication()) { "concurrent Own capture unavailable" }
       val capture = checkNotNull(own.retainedCapture()) { "concurrent Own capture not Live" }
-      check(own.phase() == OwnStereoCaptureRuntime.Phase.Live && capture.fresh()) { "concurrent Own capture not fresh" }
+      check(own.phase() == OwnStereoCaptureRuntime.Phase.Live) { "concurrent Own capture not Live" }
+      check(capture.fresh()) { "concurrent Own capture not fresh" }
       val before = routing.snapshot()
       val context = checkNotNull(carrier()) { "projection carrier unavailable" }
       val proof = SpatialConcurrentPeerAdmission.observed(before.generation, context,
           OwnPackedPoolNative.concurrentPeerAdmission(before.generation, context.launchChallenge, context.surfaceGeneration))
       check(OwnStereoCaptureRuntime.currentForApplication() === own && own.retainedCapture() === capture &&
-          own.phase() == OwnStereoCaptureRuntime.Phase.Live && capture.fresh() && carrier() == context) {
-        "concurrent Own admission superseded"
-      }
+          own.phase() == OwnStereoCaptureRuntime.Phase.Live) { "concurrent Own capture superseded" }
+      check(capture.fresh()) { "concurrent Own capture not fresh" }
+      check(carrier() == context) { "concurrent Own carrier superseded" }
       routing.beginEmbeddedConcurrentProjectionPeerRequest(proof)
     } else routing.beginEmbeddedProjectionPeerRequest()
     ownedPeerGeneration = staged.generation

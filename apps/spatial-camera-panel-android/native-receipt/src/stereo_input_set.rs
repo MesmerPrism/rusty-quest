@@ -53,6 +53,9 @@ impl<L> Default for StereoInputSet<L> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FreshnessFailure { Absent, Future, Stale }
+
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum PublishError { UnboundEpoch, Replay, InvalidIdentity, RegressedClock }
 
 impl<L> StereoInputSet<L> {
@@ -120,9 +123,14 @@ impl<L> StereoInputSet<L> {
     }
     pub(crate) fn fresh(&self, origin: StereoOrigin, now_ns: u64, max_age_ns: u64)
         -> Option<&RetainedStereoFrame<L>> {
-        let frame = self.slot(origin).latest.as_ref()?;
-        let age = now_ns.checked_sub(frame.observed_at_ns)?;
-        (age <= max_age_ns).then_some(frame)
+        self.fresh_observed(origin, now_ns, max_age_ns).ok()
+    }
+    pub(crate) fn fresh_observed(&self, origin: StereoOrigin, now_ns: u64, max_age_ns: u64)
+        -> Result<&RetainedStereoFrame<L>, FreshnessFailure> {
+        let frame = self.slot(origin).latest.as_ref().ok_or(FreshnessFailure::Absent)?;
+        let age = now_ns.checked_sub(frame.observed_at_ns).ok_or(FreshnessFailure::Future)?;
+        if age > max_age_ns { return Err(FreshnessFailure::Stale); }
+        Ok(frame)
     }
 }
 

@@ -21,6 +21,12 @@ internal data class SpatialSdkQuadResourceBindings(
 internal class SpatialSdkQuadResourceCoordinator(
     private val bindings: SpatialSdkQuadResourceBindings,
 ) {
+  @Volatile private var ownershipRevision = 0L
+  private val uncertainLayerRemovals = mutableSetOf<SceneQuadLayer>()
+  private val uncertainObjectRemovals = mutableSetOf<SceneObject>()
+  private val uncertainMeshRemovals = mutableSetOf<SceneMesh>()
+  private val uncertainMaterialRemovals = mutableSetOf<SceneMaterial>()
+  private val uncertainSwapchainRemovals = mutableSetOf<SceneSwapchain>()
   private val layers = mutableListOf<SceneQuadLayer>()
   private val sceneObjects = mutableListOf<SceneObject>()
   private var swapchain: SceneSwapchain? = null
@@ -28,24 +34,38 @@ internal class SpatialSdkQuadResourceCoordinator(
   private val anchorMeshes = mutableListOf<SceneMesh>()
   private val anchorMaterials = mutableListOf<SceneMaterial>()
 
+  fun ownershipRevision(): Long = ownershipRevision
+
   fun adoptSwapchain(value: SceneSwapchain) {
+    checkNoUncertainRemovals()
+    check(swapchain === value || (swapchain == null && surface == null && layers.isEmpty() &&
+        sceneObjects.isEmpty() && anchorMeshes.isEmpty() && anchorMaterials.isEmpty())) {
+      "SDK projection resources are still owned"
+    }
+    ownershipRevision = Math.addExact(ownershipRevision, 1L)
     swapchain = value
   }
 
   fun adoptSurface(value: AndroidSurface?) {
+    checkNoUncertainRemovals()
+    check(surface == null || surface === value) { "SDK projection surface is still owned" }
+    ownershipRevision = Math.addExact(ownershipRevision, 1L)
     surface = value
   }
 
   fun registerAnchor(material: SceneMaterial, mesh: SceneMesh) {
+    ownershipRevision = Math.addExact(ownershipRevision, 1L)
     anchorMaterials += material
     anchorMeshes += mesh
   }
 
   fun registerSceneObject(value: SceneObject) {
+    ownershipRevision = Math.addExact(ownershipRevision, 1L)
     sceneObjects += value
   }
 
   fun registerLayer(value: SceneQuadLayer) {
+    ownershipRevision = Math.addExact(ownershipRevision, 1L)
     layers += value
   }
 
@@ -57,36 +77,63 @@ internal class SpatialSdkQuadResourceCoordinator(
     var meshDestroyed = true
     var materialDestroyed = true
 
-    layers.asReversed().forEach { ownedLayer ->
-      layerDestroyed = runCatching { ownedLayer.destroy() }.isSuccess && layerDestroyed
+    layers.toList().asReversed().forEach { ownedLayer ->
+      val destroyed = if (ownedLayer in uncertainLayerRemovals) false else
+          runCatching { ownedLayer.destroy() }.onFailure { failure ->
+            uncertainLayerRemovals += ownedLayer
+            recordRemovalFailure("LAYER", failure)
+          }.isSuccess
+      if (destroyed) layers.remove(ownedLayer)
+      layerDestroyed = destroyed && layerDestroyed
     }
-    layers.clear()
+    if (!layerDestroyed) {
+      bindings.marker(SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeSceneAnchorDestroyedMarker(
+          reason, false, false, false, false, "uncertain-sdk-layer-removal"))
+      return "incomplete"
+    }
 
-    sceneObjects.asReversed().forEach { ownedSceneObject ->
-      val destroyed =
-          runCatching {
-                bindings.scene.destroyObject(ownedSceneObject)
-                true
-              }
-              .recoverCatching {
-                ownedSceneObject.destroy()
-                true
-              }
-              .getOrDefault(false)
+    sceneObjects.toList().asReversed().forEach { ownedSceneObject ->
+      val destroyed = if (ownedSceneObject in uncertainObjectRemovals) false else
+          runCatching { bindings.scene.destroyObject(ownedSceneObject) }.onFailure { failure ->
+            uncertainObjectRemovals += ownedSceneObject
+            recordRemovalFailure("SCENE_OBJECT", failure)
+          }.isSuccess
+      if (destroyed) sceneObjects.remove(ownedSceneObject)
       sceneObjectDestroyed = destroyed && sceneObjectDestroyed
     }
-    sceneObjects.clear()
+    if (!sceneObjectDestroyed) {
+      bindings.marker(SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeSceneAnchorDestroyedMarker(
+          reason, true, false, false, false, "uncertain-sdk-object-removal"))
+      return "incomplete"
+    }
     bindings.onSceneResourcesCleared()
 
-    anchorMeshes.asReversed().forEach { ownedMesh ->
-      meshDestroyed = runCatching { ownedMesh.destroy() }.isSuccess && meshDestroyed
+    anchorMeshes.toList().asReversed().forEach { ownedMesh ->
+      val destroyed = if (ownedMesh in uncertainMeshRemovals) false else
+          runCatching { ownedMesh.destroy() }.onFailure { failure ->
+            uncertainMeshRemovals += ownedMesh
+            recordRemovalFailure("ANCHOR_MESH", failure)
+          }.isSuccess
+      if (destroyed) anchorMeshes.remove(ownedMesh)
+      meshDestroyed = destroyed && meshDestroyed
     }
-    anchorMeshes.clear()
 
-    anchorMaterials.asReversed().forEach { ownedMaterial ->
-      materialDestroyed = runCatching { ownedMaterial.destroy() }.isSuccess && materialDestroyed
+
+    if (!meshDestroyed) {
+      bindings.marker(SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeSceneAnchorDestroyedMarker(
+          reason, true, true, false, false, "incomplete"))
+      return "incomplete"
     }
-    anchorMaterials.clear()
+    anchorMaterials.toList().asReversed().forEach { ownedMaterial ->
+      val destroyed = if (ownedMaterial in uncertainMaterialRemovals) false else
+          runCatching { ownedMaterial.destroy() }.onFailure { failure ->
+            uncertainMaterialRemovals += ownedMaterial
+            recordRemovalFailure("ANCHOR_MATERIAL", failure)
+          }.isSuccess
+      if (destroyed) anchorMaterials.remove(ownedMaterial)
+      materialDestroyed = destroyed && materialDestroyed
+    }
+
 
     val cleanupStatus =
         if (layerDestroyed && sceneObjectDestroyed && meshDestroyed && materialDestroyed) {
@@ -121,16 +168,17 @@ internal class SpatialSdkQuadResourceCoordinator(
     val sceneCleanupDestroyed = sceneCleanupStatus == "destroyed"
     var swapchainDestroyed = swapchain == null
 
-    swapchain?.let { ownedSwapchain ->
-      swapchainDestroyed =
-          runCatching {
-                ownedSwapchain.destroy()
-                true
-              }
-              .getOrDefault(false)
+    if (sceneCleanupDestroyed) swapchain?.let { ownedSwapchain ->
+      swapchainDestroyed = if (ownedSwapchain in uncertainSwapchainRemovals) false else
+          runCatching { ownedSwapchain.destroy() }.onFailure { failure ->
+            uncertainSwapchainRemovals += ownedSwapchain
+            recordRemovalFailure("SWAPCHAIN", failure)
+          }.isSuccess
     }
-    swapchain = null
-    surface = null
+    if (sceneCleanupDestroyed && swapchainDestroyed) {
+      swapchain = null
+      surface = null
+    }
 
     val cleanupStatus =
         if (sceneCleanupDestroyed && swapchainDestroyed) {
@@ -149,6 +197,25 @@ internal class SpatialSdkQuadResourceCoordinator(
       )
     }
     return cleanupStatus
+  }
+
+  private fun checkNoUncertainRemovals() {
+    check(uncertainLayerRemovals.isEmpty() && uncertainObjectRemovals.isEmpty() &&
+        uncertainMeshRemovals.isEmpty() && uncertainMaterialRemovals.isEmpty() &&
+        uncertainSwapchainRemovals.isEmpty()) { "SDK projection removal is uncertain" }
+  }
+
+  private fun recordRemovalFailure(stage: String, failure: Throwable) {
+    val code = when (failure) {
+      is SecurityException -> "SECURITY"
+      is IllegalStateException -> "STATE"
+      is IllegalArgumentException -> "ARGUMENT"
+      is LinkageError -> "NATIVE_LINK"
+      else -> "OTHER"
+    }
+    bindings.marker("channel=sdk-owned-quad-surface-probe status=cleanup-rejected " +
+        "stage=$stage code=$code physicalRemoval=uncertain " +
+        "onSceneThread=${android.os.Looper.myLooper() == android.os.Looper.getMainLooper()}")
   }
 
   @OptIn(SpatialSDKExperimentalAPI::class)
