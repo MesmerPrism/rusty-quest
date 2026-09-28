@@ -831,6 +831,20 @@ fn read_string(env: &mut JNIEnv<'_>, input: &JString<'_>, max: usize) -> Result<
     Ok(text)
 }
 
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_selectLocalAfterTerminal(
+ mut env:JNIEnv<'_>,_class:JClass<'_>,expected_sha:JString<'_>)->jstring {
+ let result=(|| {
+  let sha=read_string(&mut env,&expected_sha,64)?;
+  let state=process().lock().map_err(|_|"process state poisoned")?;
+  let closed=!state.initializing&&!state.closing&&!state.lease_integrity_failed&&state.host.is_none()
+   &&state.host_leases==0&&state.last_closed_sha256.as_deref()==Some(sha.as_str());
+  crate::own_stereo_capture_runtime::select_local_after_terminal(closed)?;
+  Ok(serde_json::json!({"schema":"rusty.quest.local_rollback_native.v1","config_sha256":sha,
+   "feature_enabled":false,"physical_cleanup":"terminal","scope":"route-selection-only"}).to_string())
+ })(); return_string(&mut env,result)
+}
+
 fn return_string(env: &mut JNIEnv<'_>, result: Result<String, String>) -> jstring {
     match result {
         Ok(value) => match env.new_string(value) {

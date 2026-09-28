@@ -5,6 +5,8 @@ use crate::{own_packed_pool::PackedLease,own_packed_pool_policy::HoldLimits,
  spatial_video_projection_native_stream::SpatialVideoProjectionFrame};
 include!(concat!(env!("OUT_DIR"),"/own_capture_build.rs"));
 include!(concat!(env!("OUT_DIR"),"/spatial_source_bank_build.rs"));
+#[path="local_rollback_policy.rs"] mod local_rollback_policy;
+static LOCAL_ROLLBACK_SELECTED:AtomicBool=AtomicBool::new(false);
 static CAPTURE_ROUTE_SELECTED:AtomicBool=AtomicBool::new(false);
 static CAPTURE_CLAIMED:AtomicBool=AtomicBool::new(false);
 static ACTIVE_EPOCH:Mutex<Option<crate::stereo_input_set::SourceEpoch>>=Mutex::new(None);
@@ -18,9 +20,19 @@ pub(crate) fn configure_capture_limits(limits:HoldLimits)->Result<(),String> {
  let mut config=LIMITS.lock().map_err(|_|"capture configuration poisoned")?;
  if CAPTURE_CLAIMED.load(Ordering::Acquire) {return if *config==Some(limits) {Ok(())} else {Err("capture owner already claimed with a different hold contract".into())};}*config=Some(limits);Ok(())
 }
-pub(crate) fn capture_route_selected()->bool {CAPTURE_ROUTE_SELECTED.load(Ordering::Acquire) || (OWN_CAPTURE_PROVIDER_SELECTED && SOURCE_BANK_SHADER_COMPILED && OWN_CAPTURE_HOLD_LIMITS.is_some())}
+pub(crate) fn capture_route_selected()->bool {!LOCAL_ROLLBACK_SELECTED.load(Ordering::Acquire) && (CAPTURE_ROUTE_SELECTED.load(Ordering::Acquire) || (OWN_CAPTURE_PROVIDER_SELECTED && SOURCE_BANK_SHADER_COMPILED && OWN_CAPTURE_HOLD_LIMITS.is_some()))}
+// Called only with the closed native host lock held. No request/timeout releases an owner.
+pub(crate) fn select_local_after_terminal(host_closed:bool)->Result<(),String> {
+ let epoch=ACTIVE_EPOCH.lock().map_err(|_|"capture epoch unavailable")?;
+ let facts=local_rollback_policy::CleanupFacts{host_closed,own_unclaimed:!capture_claimed(),epoch_retired:epoch.is_none(),
+  renderer_terminal:crate::spatial_stereo_qualification::physical_cleanup_terminal(),
+  banks_inactive:!crate::spatial_public_multistack_runtime::source_banks_enabled()};
+ if !local_rollback_policy::allow_local(facts){return Err("Local rollback physical cleanup remains Pending".into());}
+ LOCAL_ROLLBACK_SELECTED.store(true,Ordering::Release);Ok(())
+}
 pub(crate) fn capture_claimed()->bool {CAPTURE_CLAIMED.load(Ordering::Acquire)}
 pub(crate) unsafe fn claim_capture_actor()->Result<(),String> {
+ if LOCAL_ROLLBACK_SELECTED.load(Ordering::Acquire){return Err("Own route disabled until a fresh app process".into());}
  // Actual EGL owner, process claim and supplier contract precede any platform allocation.
  let _=crate::packed_ahb_gl_primitives::Extensions::load_current()?;
  let limits={let config=LIMITS.lock().map_err(|_|"capture configuration poisoned")?;
@@ -45,7 +57,7 @@ pub(crate) fn own_image_fresh_observed()->Result<crate::stereo_input_set::Source
 }
 
 pub(crate) fn prepare_capture_bootstrap()->Result<bool,String> {
- if !OWN_CAPTURE_PROVIDER_SELECTED {return Ok(false);}
+ if LOCAL_ROLLBACK_SELECTED.load(Ordering::Acquire) || !OWN_CAPTURE_PROVIDER_SELECTED {return Ok(false);}
  if !SOURCE_BANK_SHADER_COMPILED {return Err("selected Own/Peer bank shader did not compile".into());}
  let (slots,bytes,gpu_uses)=OWN_CAPTURE_HOLD_LIMITS.ok_or("selected Own capture hold contract absent")?;
  if !capture_claimed() {configure_capture_limits(HoldLimits{slots,bytes,gpu_uses})?;}

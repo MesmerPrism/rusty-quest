@@ -7,6 +7,7 @@ public final class EmbeddedDuplexNative {
     public static final int FRAME_TIMED_OBSERVATION_WORDS = 19;
     static { System.loadLibrary("spatial_camera_panel_native_receipt"); }
     private EmbeddedDuplexNative() {}
+    static native String selectLocalAfterTerminal(String expectedConfigSha256);
 
     // Identity: receiver, connection, route, decoder, reader, PTS ns, source elapsed,
     // source Unix, pair, left frame, right frame, left sensor, right sensor, pair delta.
