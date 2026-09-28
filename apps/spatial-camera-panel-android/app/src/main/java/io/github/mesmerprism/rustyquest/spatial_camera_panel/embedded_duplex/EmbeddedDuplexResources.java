@@ -13,10 +13,16 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     private final long generation;
     private final OwnStereoCaptureRuntime ownCapture;
     private final EmbeddedDuplexDisplay display;
-    private final PackedStereoMediaSourceRuntime.Pipeline pipeline;
-    private final PackedStereoMediaOwnerSet outgoing;
+    private PackedStereoMediaSourceRuntime.Pipeline pipeline;
+    private PackedStereoMediaOwnerSet outgoing;
     private final EmbeddedDuplexReceiver incoming;
-    private final MediaProductBinding binding;
+    private MediaProductBinding binding;
+    private final Context context;
+    private final JSONObject nativeInitialization, outgoingSpec;
+    private final long maxPairDeltaNs;
+    private final Lane source;
+    private final String leftCamera, rightCamera;
+    private boolean installationAttempted;
     private final String incomingRuntimeSpecId;
 
     // nativeInitialization is returned directly by initializeRuntime after all
@@ -27,17 +33,20 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                 nativeInitialization.getString("$schema")) || maxPairDeltaNs <= 0L || maxPairDeltaNs > 100_000_000L) {
             throw new IllegalArgumentException("embedded resource initialization");
         }
+        this.context = context;
+        this.nativeInitialization = nativeInitialization;
+        this.maxPairDeltaNs = maxPairDeltaNs;
         generation = nativeInitialization.getLong("executor_generation");
         this.display = display;
         ownCapture = nativeInitialization.optBoolean("own_stereo_capture_enabled", false)
                 ? OwnStereoCaptureRuntime.forApplication(context) : null;
-        JSONObject outgoingSpec = nativeInitialization.getJSONObject("outgoing_runtime_spec");
+        outgoingSpec = nativeInitialization.getJSONObject("outgoing_runtime_spec");
         JSONObject incomingSpec = nativeInitialization.getJSONObject("incoming_runtime_spec");
         incomingRuntimeSpecId = incomingSpec.getString("runtime_spec_id");
-        Lane source = new Lane(outgoingSpec);
+        source = new Lane(outgoingSpec);
         Lane sink = new Lane(incomingSpec);
-        String leftCamera = camera(source.source, "left");
-        String rightCamera = camera(source.source, "right");
+        leftCamera = camera(source.source, "left");
+        rightCamera = camera(source.source, "right");
         if (!"camera2_mediacodec_surface".equals(source.source.getString("source_kind"))) {
             throw new IllegalArgumentException("embedded product requires Camera2 stereo source");
         }
@@ -46,6 +55,12 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                 sink.width, sink.height, sink.fps,
                 new PackedStereoMediaReceiver.Bounds(64 * 1024, sink.maxPacketBytes,
                         sink.width, sink.height, 12, 3000, 4000, 100, 15000, 10000, 8, 250));
+    }
+
+    /** Host retains this owner before any Own capture or display effect runs. */
+    void install() throws Exception {
+        if (installationAttempted) throw new IllegalStateException("resource installation already attempted");
+        installationAttempted = true;
         try {
         if (ownCapture != null) {
             io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner capture = ownCapture.startAccepted(
@@ -101,12 +116,12 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             }
             binding = builder.build();
         } catch (Exception invalid) {
-            // No owner action has run yet; pipeline construction creates no camera,
-            // codec or network worker. Retire both staged registrations even if
-            // product binding fails before a registry can retain this object.
+            // Peer Start has not run. Own capture may already be Live; it remains
+            // process-owned. The Host retains this partial object and its exact
+            // created Peer owners for no-media cleanup and the later Own stop.
             try { incoming.closeUnstartedAndVerify(); }
             catch (Exception cleanup) { invalid.addSuppressed(cleanup); }
-            try { pipeline.close(); }
+            try { if (pipeline != null) pipeline.close(); }
             catch (Exception cleanup) { invalid.addSuppressed(cleanup); }
             throw invalid;
         }
@@ -141,6 +156,15 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
 
     boolean productResourcesTerminal() {
         if (!incoming.snapshot().terminal()) return false;
+        // A pipeline is retained immediately on return from its factory. Its
+        // real physical barrier is required even if owner-set construction failed.
+        if (pipeline != null) {
+            try { pipeline.requireStopped(); }
+            catch (IllegalStateException pending) { return false; }
+        }
+        // No outgoing registry exists when creation was never completed. This
+        // is installation-owned absence, never a substitute for Own/renderer proof.
+        if (outgoing == null) return true;
         for (String kind : new String[] {"source", "processor", "route", "socket", "codec", "cleanup"}) {
             if (!outgoing.provider(kind).snapshot().terminal()) return false;
         }
@@ -149,7 +173,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
 
     void closeUnstartedAndVerify() {
         incoming.closeUnstartedAndVerify();
-        pipeline.close();
+        if (pipeline != null) pipeline.close();
         if (!productResourcesTerminal()) {
             throw new IllegalStateException("unstarted product resources remain live");
         }

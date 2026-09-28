@@ -22,6 +22,7 @@ class OwnStereoCaptureRuntime private constructor(context: Context) {
     @Volatile private var failure: Throwable? = null
     private var configuration: Configuration? = null
     private var capture: PackedStereoCaptureOwner? = null
+    private var lastCleanupStatus: PackedStereoCaptureOwner.CleanupStatus? = null
     @Volatile private var captureEverOwned = false
     private var startup: CompletableFuture<PackedStereoCaptureOwner>? = null
 
@@ -30,7 +31,10 @@ class OwnStereoCaptureRuntime private constructor(context: Context) {
             val owner = synchronized(lock) { if (phase == Phase.StopPending) capture else null }
             if (owner != null) try {
                 if (owner.pollStopped()) synchronized(lock) {
-                    if (capture === owner) { capture = null; startup = null; phase = Phase.Idle }
+                    if (capture === owner) {
+                        lastCleanupStatus = owner.cleanupStatus()
+                        capture = null; startup = null; phase = Phase.Idle
+                    }
                 }
             } catch (error: Throwable) { failure = error }
         }, 50, 50, TimeUnit.MILLISECONDS)
@@ -53,6 +57,7 @@ class OwnStereoCaptureRuntime private constructor(context: Context) {
                     configuration.rightCamera, configuration.maxPairDeltaNs, pool)
                 val next = CompletableFuture<PackedStereoCaptureOwner>()
                 this.configuration = configuration; capture = owner; startup = next; captureEverOwned = true
+                lastCleanupStatus = null
                 phase = Phase.Starting; failure = null
                 control.execute {
                     try {
@@ -84,6 +89,9 @@ class OwnStereoCaptureRuntime private constructor(context: Context) {
     }
     fun pollStopped(): Boolean = phase == Phase.Idle
     fun physicalCleanupState(): String = if (!captureEverOwned) "unknown" else if (phase == Phase.Idle) "terminal" else "pending"
+    fun cleanupStatus(): PackedStereoCaptureOwner.CleanupStatus? = synchronized(lock) {
+        capture?.cleanupStatus() ?: lastCleanupStatus
+    }
     fun phase(): Phase = phase
     fun failure(): Throwable? = failure
     fun retainedCapture(): PackedStereoCaptureOwner? = synchronized(lock) {

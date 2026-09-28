@@ -132,6 +132,28 @@ public final class PackedStereoCaptureOwner {
     }
     public Throwable failure() { return failure; }
 
+    /** Observation only. No callback flag, elapsed time or projection confers cleanup authority. */
+    public static final class CleanupStatus {
+        public final boolean stopRequested, startupSettled, cameraThreadAlive, compositorThreadAlive;
+        public final boolean compositorPhysicallyRetired, compositorCleanupRejected;
+        public final String leftCallbackBarrier, rightCallbackBarrier, compositorBarrier;
+        private CleanupStatus(boolean stop, boolean startup, boolean cameraThread,
+                boolean compositorThread, boolean compositorPhysical, boolean rejected,
+                String left, String right, String barrier) {
+            stopRequested=stop; startupSettled=startup; cameraThreadAlive=cameraThread;
+            compositorThreadAlive=compositorThread; compositorPhysicallyRetired=compositorPhysical;
+            compositorCleanupRejected=rejected; leftCallbackBarrier=left; rightCallbackBarrier=right;
+            compositorBarrier=barrier;
+        }
+    }
+    public CleanupStatus cleanupStatus() {
+        Endpoint a=left, b=right; HandlerThread camera=cameraThread; PackedStereoGlCompositor gl=compositor;
+        return new CleanupStatus(stopRequested,startupSettled,camera!=null&&camera.isAlive(),
+                gl!=null&&!gl.isTerminated(),gl!=null&&gl.isPhysicallyRetired(),gl!=null&&gl.cleanupRejected(),
+                a==null?"NOT_CREATED":a.callbackBarrier(),b==null?"NOT_CREATED":b.callbackBarrier(),
+                gl==null?"NOT_CREATED":gl.cleanupBarrier());
+    }
+
     /** Requests stop. Closed flags, elapsed time and joins never confer terminal status. */
     public void requestStop() {
         synchronized (this) {
@@ -249,6 +271,14 @@ public final class PackedStereoCaptureOwner {
             }
             CameraDevice activeDevice = device;
             if (activeDevice != null) activeDevice.close();
+        }
+        String callbackBarrier() {
+            if (!closeRequested) return "STOP_NOT_REQUESTED";
+            if (openRequested && !openSettled) return "OPEN_CALLBACK_PENDING";
+            if (device != null && !deviceClosed) return "DEVICE_CLOSE_CALLBACK_PENDING";
+            if (sessionRequested && !sessionSettled) return "SESSION_CALLBACK_PENDING";
+            if (session != null && !sessionClosed) return "SESSION_CLOSE_CALLBACK_PENDING";
+            return "TERMINAL";
         }
         boolean retired() {
             return closeRequested && (!openRequested || (openSettled && (device == null || deviceClosed)))

@@ -35,6 +35,11 @@ final class PackedStereoGlCompositor implements Closeable {
     private final Surface encoderInputSurface;
     private final PackedStereoPoolExecutor poolExecutor;
     private volatile boolean physicallyRetired;
+    enum CleanupBarrier { NOT_REQUESTED, STOP_REQUESTED, NATIVE_POOL_PENDING, CAMERA_CALLBACKS_PENDING, CAPTURE_CONTEXT_PENDING, TERMINAL }
+    private volatile CleanupBarrier cleanupBarrier = CleanupBarrier.NOT_REQUESTED;
+    private volatile boolean cleanupRejected;
+    String cleanupBarrier() { return cleanupBarrier.name(); }
+    boolean cleanupRejected() { return cleanupRejected; }
     // Failed native initialization/retirement cannot confer permission to destroy its EGL context.
     private volatile GlState quarantinedGl;
     private final boolean synthetic;
@@ -186,6 +191,7 @@ final class PackedStereoGlCompositor implements Closeable {
 
     void requestStop() {
         stopRequested = true;
+        if (cleanupBarrier == CleanupBarrier.NOT_REQUESTED) cleanupBarrier = CleanupBarrier.STOP_REQUESTED;
         synchronized (signal) { signal.notifyAll(); }
     }
 
@@ -402,6 +408,7 @@ final class PackedStereoGlCompositor implements Closeable {
     private void drainPoolOnCaptureContext(PackedStereoPoolExecutor.Pool pool, GlState gl) {
         try {
             gl.makePbufferCurrent();
+            cleanupBarrier = CleanupBarrier.NATIVE_POOL_PENDING;
             pool.stopAccepting();
             while (!pool.retireStopped()) {
                 pool.pollReady();
@@ -409,12 +416,16 @@ final class PackedStereoGlCompositor implements Closeable {
                 try { synchronized (signal) { signal.wait(50L); } }
                 catch (InterruptedException ignored) { /* keep the physical ownership actor */ }
             }
+            cleanupBarrier = CleanupBarrier.CAMERA_CALLBACKS_PENDING;
             while (!listener.canRetireCaptureInputs()) {
                 try { synchronized (signal) { signal.wait(50L); } }
                 catch (InterruptedException ignored) { /* actual camera callbacks own the barrier */ }
             }
+            cleanupBarrier = CleanupBarrier.CAPTURE_CONTEXT_PENDING;
             gl.closeCaptureContext(); quarantinedGl = null; physicallyRetired = true;
+            cleanupBarrier = CleanupBarrier.TERMINAL;
         } catch (Throwable pendingFailure) {
+            cleanupRejected = true;
             // Preserve resources and an explicit nonterminal barrier after an uncertain platform failure.
             notifyFailure(pendingFailure);
         }

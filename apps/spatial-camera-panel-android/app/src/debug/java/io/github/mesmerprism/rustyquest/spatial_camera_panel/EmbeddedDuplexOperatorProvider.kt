@@ -159,6 +159,19 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
           putString("cleanup_scope", state.cleanupScope)
           putString("own_app_capture_state", state.ownAppCaptureState)
         }
+        state.ownCleanupStatus?.let {
+          putBoolean("own_stop_requested", it.stopRequested)
+          putBoolean("own_startup_settled", it.startupSettled)
+          putBoolean("own_camera_thread_alive", it.cameraThreadAlive)
+          putBoolean("own_compositor_thread_alive", it.compositorThreadAlive)
+          putBoolean("own_compositor_physically_retired", it.compositorPhysicallyRetired)
+          putBoolean("own_compositor_cleanup_rejected", it.compositorCleanupRejected)
+          putString("own_left_callback_barrier", it.leftCallbackBarrier)
+          putString("own_right_callback_barrier", it.rightCallbackBarrier)
+          putString("own_compositor_barrier", it.compositorBarrier)
+        }
+        state.lastBootstrapFailureStage?.let { putString("last_bootstrap_failure_stage", it) }
+        state.lastBootstrapFailureCode?.let { putString("last_bootstrap_failure_code", it) }
         state.runtimeConfigSha256?.let { putString("runtime_config_sha256", it) }
         state.enrollmentRecordSha256?.let { putString("enrollment_record_sha256", it) }
         putBoolean("peer_route_proven", false)
