@@ -1443,13 +1443,19 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL xrCreateVulkanDeviceKHR(
       const bool createSucceeded =
           result == XR_SUCCESS &&
           (vulkanResult == nullptr || *vulkanResult == VK_SUCCESS);
-      gState.vulkanDeviceForeignQueueOwnershipEnabled = foreignOwnershipRequested &&
-          foreignOwnershipSupported && foreignOwnershipEnumerationCallable &&
-          forwardedHasExtension(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) &&
-          result == XR_SUCCESS && vulkanResult != nullptr && *vulkanResult == VK_SUCCESS &&
-          vulkanDevice != nullptr && *vulkanDevice != VK_NULL_HANDLE;
-      gState.foreignQueueOwnershipDevice = gState.vulkanDeviceForeignQueueOwnershipEnabled
-          ? *vulkanDevice : VK_NULL_HANDLE;
+      // A later auxiliary device must not replace the bound SDK device's proof.
+      const bool observedDeviceTargetsSdk =
+          gState.sdkVulkanBinding.device == VK_NULL_HANDLE ||
+          (vulkanDevice != nullptr && *vulkanDevice == gState.sdkVulkanBinding.device);
+      if (observedDeviceTargetsSdk) {
+        gState.vulkanDeviceForeignQueueOwnershipEnabled = foreignOwnershipRequested &&
+            foreignOwnershipSupported && foreignOwnershipEnumerationCallable &&
+            forwardedHasExtension(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) &&
+            result == XR_SUCCESS && vulkanResult != nullptr && *vulkanResult == VK_SUCCESS &&
+            vulkanDevice != nullptr && *vulkanDevice != VK_NULL_HANDLE;
+        gState.foreignQueueOwnershipDevice = gState.vulkanDeviceForeignQueueOwnershipEnabled
+            ? *vulkanDevice : VK_NULL_HANDLE;
+      }
       gState.vulkanDeviceSwapchainRequested = swapchainForwarded && createSucceeded;
       gState.vulkanDeviceAhbRequested = ahbForwarded && createSucceeded;
       gState.vulkanDeviceYcbcrExtensionRequested =

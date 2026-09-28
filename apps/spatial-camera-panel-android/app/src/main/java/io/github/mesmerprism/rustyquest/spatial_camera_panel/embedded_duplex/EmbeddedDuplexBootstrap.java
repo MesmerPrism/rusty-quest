@@ -17,6 +17,8 @@ final class EmbeddedDuplexBootstrap {
 
     /** Fixed diagnostic facts only; never carries an exception message or input value. */
     enum Failure {
+        PROCESS_FENCE("process_fence", "rejected"),
+        SESSION_INPUTS("session_inputs", "rejected"),
         ENROLLMENT_RESOLVE("enrollment_resolve", "rejected"),
         FIXTURE_INPUTS("fixture_inputs", "rejected"),
         PRODUCT_GATE("product_gate", "disabled"),

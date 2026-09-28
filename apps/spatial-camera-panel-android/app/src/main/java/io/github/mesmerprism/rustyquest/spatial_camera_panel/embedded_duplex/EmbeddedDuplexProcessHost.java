@@ -53,6 +53,7 @@ final class EmbeddedDuplexProcessHost {
     private EmbeddedDuplexPlatform platform;
     private volatile EmbeddedDuplexResources resources;
     private String runtimeConfigSha256;
+    private volatile EmbeddedDuplexBootstrap.Failure lastBootstrapFailure;
     private String ownFeatureLockSha256;
     private String ownNoMediaConfigSha256;
     private String ownNoMediaFeatureSha256;
@@ -135,6 +136,7 @@ final class EmbeddedDuplexProcessHost {
             String runtimeCopy, String startupCopy, boolean fixture,
             EmbeddedDuplexBootstrap.Trace trace) throws Exception {
             localFixture = fixture;
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.PROCESS_FENCE);
             try {
                 requireFreshProcess();
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
@@ -191,6 +193,7 @@ final class EmbeddedDuplexProcessHost {
                 EmbeddedDuplexResources installed = new EmbeddedDuplexResources(applicationContext,
                         display, new JSONObject(initialized), prepared.maxPairDeltaNs);
                 resources = installed;
+                installed.install();
                 callbacks.installResources(installed);
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.CONTROL_ENDPOINT);
                 callbacks.startControl(prepared.localControlHost, prepared.localControlPort);
@@ -330,19 +333,25 @@ final class EmbeddedDuplexProcessHost {
             }
             pendingReview = null;
         }
+        EmbeddedDuplexBootstrap.Trace trace = new EmbeddedDuplexBootstrap.Trace();
         return submit(() -> {
+            lastBootstrapFailure = null;
+            trace.mark(EmbeddedDuplexBootstrap.Failure.PROCESS_FENCE);
             try {
                 requireFreshProcess();
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
+                trace.mark(EmbeddedDuplexBootstrap.Failure.ENROLLMENT_RESOLVE);
                 EmbeddedDuplexEnrollment enrollment =
                         EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
+                trace.mark(EmbeddedDuplexBootstrap.Failure.SESSION_INPUTS);
                 EmbeddedDuplexSessionInputs inputs =
                         EmbeddedDuplexSessionInputs.createRealPeer(enrollment);
                 enrollmentRecordSha256 = enrollment.recordSha256;
                 initializeOnCommandLane(inputs.role, inputs.runtimeBindings.toString(),
-                        inputs.startup.toString(), false, null);
+                        inputs.startup.toString(), false, trace);
                 return runtimeStatusOnCommandLane();
             } catch (Exception failure) {
+                lastBootstrapFailure = trace.failure();
                 if (phase.get() == Phase.BOOTSTRAPPING) {
                     phase.set(runtimeConfigSha256 == null && (processFence == null
                         || !processFence.effectsPending()) ? Phase.NEW : Phase.FAILED);
@@ -444,9 +453,9 @@ final class EmbeddedDuplexProcessHost {
                 : current == Phase.READY ? "local_fixture"
                 : current == Phase.BOOTSTRAPPING ? "bootstrapping" : "cleanup_pending";
         EmbeddedDuplexRuntimeStatus status = new EmbeddedDuplexRuntimeStatus(state, attachmentGeneration != 0L,
-                runtimeConfigSha256, enrollmentRecordSha256);
+                runtimeConfigSha256, enrollmentRecordSha256, lastBootstrapFailure);
         OwnStereoCaptureRuntime ownCapture = OwnStereoCaptureRuntime.currentForApplication();
-        return ownCapture != null ? new EmbeddedDuplexRuntimeStatus(status, ownCapture.phase().name()) : status;
+        return ownCapture != null ? new EmbeddedDuplexRuntimeStatus(status, ownCapture.phase().name(), ownCapture.cleanupStatus()) : status;
     }
 
     CompletableFuture<String> closeRealPeerNoMedia(long expectedGeneration) {
