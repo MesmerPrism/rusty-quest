@@ -233,3 +233,12 @@ mod tests {
         assert_eq!(s.cleanup,3);s.record(frame(a,1,None),20);s.armed=false;assert!(s.pending.is_some());assert_eq!(s.cleanup,3);
         s.retire(1,8,30);assert_eq!(s.gpu,0);assert!(s.pending.is_none());assert_eq!(s.cleanup,3);}
 }
+
+/// Cancel only the exact typed never-submitted SDK frame. No GPU or rendered counters advance.
+pub(crate) fn cancel_sdk_unsubmitted(ordinal:u64,surface:u64,proof:&crate::spatial_sdk_depth_handoff::SpatialUnsubmittedProof){
+    if ordinal==0||ordinal>u32::MAX as u64||surface==0||surface>u32::MAX as u64{return;}
+    if let Ok(mut s)=STATE.lock(){
+        if s.pending.is_some_and(|f|f.ordinal==ordinal&&f.surface==surface)
+            &&proof.matches_request(s.sdk_session,(surface<<32)|ordinal){s.pending=None;}
+    }
+}

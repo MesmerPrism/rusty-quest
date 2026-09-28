@@ -261,6 +261,21 @@ internal object SpatialVideoSourceIntentParser {
   }
 }
 
+/** Native-observed current Own actor and old-local quiescence, bound to this route/carrier. */
+internal class SpatialConcurrentPeerAdmission private constructor(
+    val routingGeneration: Long, val carrier: SpatialVideoSourceCarrierContext,
+    val processGeneration: Long, val sourceGeneration: Long,
+) {
+  companion object {
+    fun observed(generation: Long, carrier: SpatialVideoSourceCarrierContext, words: LongArray): SpatialConcurrentPeerAdmission {
+      check(words.size == 5 && generation > 0L && carrier.launchChallenge > 0L && carrier.surfaceGeneration > 0L &&
+          words[0] == generation && words[1] == carrier.launchChallenge && words[2] == carrier.surfaceGeneration &&
+          words[3] > 0L && words[4] > 0L) { "concurrent Own native admission unavailable" }
+      return SpatialConcurrentPeerAdmission(generation, carrier, words[3], words[4])
+    }
+  }
+}
+
 internal class SpatialVideoSourceRoutingCoordinator(
     private val execution: SpatialVideoSourceExecutionAdapter,
     private val monotonicNowNs: () -> Long,
@@ -310,6 +325,15 @@ internal class SpatialVideoSourceRoutingCoordinator(
     beginProjectionSourceRequest(SpatialVideoSource.Peer, null).also {
       embeddedPeerGeneration = it.generation
     }
+  }
+
+  /** Separate concurrent source-set reservation; the exclusive Local shutdown guard is unchanged. */
+  fun beginEmbeddedConcurrentProjectionPeerRequest(proof: SpatialConcurrentPeerAdmission): SpatialVideoSourceRoutingState = synchronized(stateLock) {
+    check(state.generation == proof.routingGeneration && state.requested != SpatialVideoSource.Peer &&
+        state.ownedAcquisition != SpatialVideoSource.Peer) { "concurrent Peer reservation superseded" }
+    // Native proof observed old-local quiescence; this does not stop the independent Own actor.
+    state = state.copy(ownedAcquisition = null, ownedAcquisitionGeneration = 0L)
+    beginProjectionSourceRequest(SpatialVideoSource.Peer, null).also { embeddedPeerGeneration = it.generation }
   }
 
   fun requestProjectionSource(

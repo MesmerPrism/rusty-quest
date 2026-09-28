@@ -337,7 +337,7 @@ unsafe fn render_source_set_common_graph(
             #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
             {
                 let request_id = (surface_generation << 32) | u64::from(frames_presented + 1);
-                if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.mark_stereo_submission_entered()?;}
+                if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.mark_stereo_sdk_submission_entered(sdk_binding.session_generation,request_id)?;}
                 let enqueue = crate::spatial_sdk_depth_handoff::enqueue_spatial_submit_present(
                     sdk_binding,
                     request_id,
@@ -358,7 +358,7 @@ unsafe fn render_source_set_common_graph(
                 }
                 let retirement_deadline = Instant::now() + Duration::from_secs(2);
                 let mut retirement =
-                    crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState::new(request_id);
+                    crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState::new_bound(request_id,sdk_binding.session_generation,frame_fence.as_raw());
                 let mut shutdown_reason = None;
                 loop {
                     if shutdown_reason.is_none()
@@ -426,6 +426,10 @@ unsafe fn render_source_set_common_graph(
                             break;
                         }
                         crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseUnsubmittedFailure => {
+                            if let Some(proof)=retirement.unsubmitted_proof(){
+                                if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.cancel_stereo_sdk_unsubmitted(proof)?;}
+                                projection_readback.cancel_unsubmitted("peer-spatial-sdk-typed-unsubmitted");
+                            }
                             return Err(shutdown_reason.map(str::to_string).unwrap_or_else(|| {
                                 format!(
                                     "peer-spatial-sdk-unsubmitted-{}-vk-{}",
@@ -503,12 +507,15 @@ pub(crate) unsafe fn start_source_set_common_graph(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if owner.claim.generation()==Some(route_generation) && owner.worker.as_ref().is_some_and(|worker|!worker.is_finished()) {
-            ACameraNativeWindow_release(window);return 1;
+            // Reuse only this exact physical carrier; never replace or stop the Own worker.
+            let same_window=owner.window_address==window_address;
+            ACameraNativeWindow_release(window);return if same_window {1} else {0};
         }
         if !owner.claim.claim(route_generation) {
             ACameraNativeWindow_release(window);
             return 0;
         }
+        owner.window_address=window_address;
         owner.cancellation = Some(cancellation.clone());
         let worker_cancellation = cancellation.clone();
         ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_add(1, Ordering::AcqRel);

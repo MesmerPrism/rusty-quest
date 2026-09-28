@@ -114,6 +114,7 @@ pub(crate) struct StereoBankResources {
     recorded_keys: [Option<StereoGuideKey>;2],
     vk_hold_tokens: [Option<u64>;2],
     submission_entered:bool,
+    sdk_submission:Option<(u64,u64)>,
     receipt_frame:Option<(u64,u64)>,
 }
 impl Drop for StereoBankResources {
@@ -146,7 +147,7 @@ impl SpatialPublicGuideTargets {
             policy_buffer:vk::Buffer::null(),policy_memory:vk::DeviceMemory::null(),
             pipeline_layout:vk::PipelineLayout::null(),pipeline:vk::Pipeline::null(),
             displacement_pipeline:vk::Pipeline::null(),video_layout,vertex_spirv:vertex_spirv.to_vec(),fragment_spirv:fragment_spirv.to_vec(),pending_fence:None,
-            retained:[None,None],recorded_keys:[None,None],vk_hold_tokens:[None,None],submission_entered:false,receipt_frame:None };
+            retained:[None,None],recorded_keys:[None,None],vk_hold_tokens:[None,None],submission_entered:false,sdk_submission:None,receipt_frame:None };
         let result=(|| {
             state.peer=Some(ScalarProducerBank::create(self,device,memory)?);
             state.guides_layout=device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default()
@@ -226,7 +227,7 @@ impl SpatialPublicGuideTargets {
                 }
                 if let Some((ordinal,surface))=state.receipt_frame.take(){crate::spatial_stereo_qualification::gpu_retired(ordinal,surface);}
                 state.pending_fence=None;state.retained=[None,None];state.recorded_keys=[None,None];
-                state.submission_entered=false;
+                state.submission_entered=false;state.sdk_submission=None;
             }
         }
         Ok(())
@@ -243,6 +244,32 @@ impl SpatialPublicGuideTargets {
             crate::spatial_stereo_qualification::observe_submission_entry();
         }
         Ok(())
+    }
+
+    pub(crate) fn mark_stereo_sdk_submission_entered(&mut self,session:u64,request:u64)->Result<(),String>{
+        if let Some(state)=self.stereo_banks.as_mut(){
+            if state.pending_fence.is_none()||state.submission_entered||session==0||request==0{return Err("stereo SDK submit state invalid".into());}
+            #[cfg(target_os="android")]
+            for token in state.vk_hold_tokens.iter().flatten(){crate::own_packed_gpu_holds::mark_vk_sdk_submission_entered(*token,session,request)?;}
+            state.submission_entered=true;state.sdk_submission=Some((session,request));
+            crate::spatial_stereo_qualification::observe_submission_entry();
+        }Ok(())
+    }
+    pub(crate) fn cancel_stereo_sdk_unsubmitted(&mut self,proof:&crate::spatial_sdk_depth_handoff::SpatialUnsubmittedProof)->Result<(),String>{
+        use ash::vk::Handle;
+        if let Some(state)=self.stereo_banks.as_mut(){
+            let (session,request)=state.sdk_submission.ok_or("stereo SDK identity unavailable")?;
+            let fence=state.pending_fence.ok_or("stereo SDK fence unavailable")?;
+            if !state.submission_entered||!proof.matches(session,request,fence.as_raw()){return Err("stereo SDK proof differs".into());}
+            #[cfg(target_os="android")]
+            for token in &mut state.vk_hold_tokens{if let Some(value)=*token{
+                if !crate::own_packed_gpu_holds::cancel_vk_sdk_unsubmitted(value,proof)?{return Err("stereo SDK hold proof rejected".into());}*token=None;
+            }}
+            if state.vk_hold_tokens.iter().any(Option::is_some){return Err("stereo SDK holds pending".into());}
+            state.pending_fence=None;state.retained=[None,None];state.recorded_keys=[None,None];
+            if let Some((ordinal,surface))=state.receipt_frame.take(){crate::spatial_stereo_qualification::cancel_sdk_unsubmitted(ordinal,surface,proof);}
+            state.submission_entered=false;state.sdk_submission=None;
+        }Ok(())
     }
 
     pub(crate) unsafe fn record_stereo_source_banks(&mut self,device:&ash::Device,command:vk::CommandBuffer,

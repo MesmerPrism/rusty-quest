@@ -4,7 +4,7 @@ use ash::vk;
 use crate::own_packed_pool_policy::PhysicalUsePhase;
 use crate::{own_packed_pool::{PackedLease,serial},stereo_input_set::SourceEpoch};
 struct Quota {epoch:SourceEpoch,limit:usize,holds:HashMap<u64,Hold>}
-enum Hold {Encoder(PackedLease),Vk{lease:PackedLease,device:ash::Device,fence:vk::Fence,polling:bool,phase:PhysicalUsePhase}}
+enum Hold {Encoder(PackedLease),Vk{lease:PackedLease,device:ash::Device,fence:vk::Fence,polling:bool,phase:PhysicalUsePhase,sdk_submission:Option<(u64,u64)>}}
 fn quotas()->&'static Mutex<HashMap<u64,Quota>> {static Q:OnceLock<Mutex<HashMap<u64,Quota>>>=OnceLock::new();Q.get_or_init(||Mutex::new(HashMap::new()))}
 pub(crate) fn install_pool(pool:u64,epoch:SourceEpoch,limit:usize)->Result<(),String> {let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;if limit==0 || q.contains_key(&pool){return Err("GPU quota unavailable".into());}q.insert(pool,Quota{epoch,limit,holds:HashMap::new()});Ok(())}
 fn reserve(lease:&PackedLease)->Result<Option<(u64,u64)>,String> {let v=lease.contents().version;let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;let owner=q.get_mut(&v.pool_generation).ok_or("pool quota unavailable")?;if owner.epoch.process_generation!=v.process_generation || owner.epoch.source_generation!=v.source_generation {return Err("stale content or GPU hold capacity exhausted".into());}if owner.holds.len()>=owner.limit {return Ok(None);}
@@ -26,7 +26,7 @@ pub(crate) unsafe fn register_vk_pending(lease:PackedLease,device:ash::Device,fe
  match device.get_fence_status(fence) {Ok(false)=>{},Ok(true)=>return Err("submission fence must actually be unsignaled before reservation".into()),Err(e)=>return Err(format!("fence prerequisite {e:?}"))}
  let (pool,token)=reserve(&lease)?.ok_or("GPU hold capacity exhausted")?;
  let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;let owner=q.get_mut(&pool).ok_or("pool quota disappeared")?;
- owner.holds.insert(token,Hold::Vk{lease,device,fence,polling:false,phase:PhysicalUsePhase::Prepared});Ok(token)
+ owner.holds.insert(token,Hold::Vk{lease,device,fence,polling:false,phase:PhysicalUsePhase::Prepared,sdk_submission:None});Ok(token)
 }
 pub(crate) unsafe fn poll_vk_retired(token:u64)->Result<bool,String> {
  let observation={let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;
@@ -48,4 +48,25 @@ pub(crate) fn cancel_vk_unsubmitted(token:u64)->Result<bool,String> {
 
 pub(crate) fn mark_vk_submission_entered(token:u64)->Result<(),String> {
  let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;for owner in q.values_mut(){if let Some(Hold::Vk{phase,..})=owner.holds.get_mut(&token){if !phase.enter(){return Err("submission token already entered/quarantined".into());}return Ok(());}}Err("Vk hold token unavailable".into())
+}
+
+pub(crate) fn mark_vk_sdk_submission_entered(token:u64,session:u64,request:u64)->Result<(),String>{
+ if session==0||request==0{return Err("SDK submission identity invalid".into());}
+ let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;
+ for owner in q.values_mut(){if let Some(Hold::Vk{phase,sdk_submission,..})=owner.holds.get_mut(&token){
+  if !phase.enter(){return Err("submission token already entered/quarantined".into());}
+  *sdk_submission=Some((session,request));return Ok(());
+ }}Err("submission hold unavailable".into())
+}
+pub(crate) fn cancel_vk_sdk_unsubmitted(token:u64,proof:&crate::spatial_sdk_depth_handoff::SpatialUnsubmittedProof)->Result<bool,String>{
+ use ash::vk::Handle;
+ let mut q=quotas().lock().map_err(|_|"GPU registry poisoned")?;
+ for owner in q.values_mut(){
+  let cancellable=match owner.holds.get(&token){
+   Some(Hold::Vk{phase:PhysicalUsePhase::Entered,polling:false,sdk_submission:Some((session,request)),fence,..})=>proof.matches(*session,*request,fence.as_raw()),
+   _=>false,
+  };
+  if cancellable{owner.holds.remove(&token);return Ok(true);}
+  if owner.holds.contains_key(&token){return Ok(false);}
+ }Err("Vk hold token unavailable".into())
 }

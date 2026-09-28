@@ -51,3 +51,17 @@ pub(crate) fn prepare_capture_bootstrap()->Result<bool,String> {
 }
 
 pub(crate) fn own_capture_provider_requested()->bool {OWN_CAPTURE_PROVIDER_SELECTED}
+
+// Read-only proof from the actual claimed capture actor and current retained frame epoch.
+pub(crate) fn concurrent_peer_admission(route:i64,challenge:i64,surface:i64)->Option<[i64;5]> {
+ if route<=0 || challenge<=0 || surface<=0 || !capture_claimed() || !capture_configured() || !own_image_fresh()
+     || !crate::camera_hwb_probe::local_camera_acquisition_quiescent() {return None;}
+ let receipt=crate::peer_projection_runtime::read_source(route);
+ if receipt.words[1]!=route || receipt.words[5]!=challenge || receipt.words[6]!=surface {return None;}
+ let active=ACTIVE_EPOCH.lock().ok()?;let epoch=(*active)?;
+ let now=crate::own_packed_pool::monotonic_ns()?;
+ let snapshot=shared_sources().snapshot(now,3_000_000_000).ok()?;
+ if !snapshot[0].as_ref().is_some_and(|f|f.identity.epoch==epoch) || !capture_claimed() {return None;}
+ if epoch.process_generation!=crate::own_packed_pool_jni::process_generation().ok()? || epoch.source_generation==0 {return None;}
+ Some([route,challenge,surface,i64::try_from(epoch.process_generation).ok()?,i64::try_from(epoch.source_generation).ok()?])
+}

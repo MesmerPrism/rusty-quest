@@ -1,6 +1,7 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
 
 import android.os.Looper
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialConcurrentPeerAdmission
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialPeerProjectionDecoderIdentity
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialVideoSource
@@ -69,7 +70,20 @@ internal class EmbeddedDuplexDisplayCoordinator(
 
   override fun preparePeerProjection(): Long = serialized {
     ensureLocalCaptureStopped()
-    val staged = routing.beginEmbeddedProjectionPeerRequest()
+    val staged = if (concurrentOwn()) {
+      val own = checkNotNull(OwnStereoCaptureRuntime.currentForApplication()) { "concurrent Own capture unavailable" }
+      val capture = checkNotNull(own.retainedCapture()) { "concurrent Own capture not Live" }
+      check(own.phase() == OwnStereoCaptureRuntime.Phase.Live && capture.fresh()) { "concurrent Own capture not fresh" }
+      val before = routing.snapshot()
+      val context = checkNotNull(carrier()) { "projection carrier unavailable" }
+      val proof = SpatialConcurrentPeerAdmission.observed(before.generation, context,
+          OwnPackedPoolNative.concurrentPeerAdmission(before.generation, context.launchChallenge, context.surfaceGeneration))
+      check(OwnStereoCaptureRuntime.currentForApplication() === own && own.retainedCapture() === capture &&
+          own.phase() == OwnStereoCaptureRuntime.Phase.Live && capture.fresh() && carrier() == context) {
+        "concurrent Own admission superseded"
+      }
+      routing.beginEmbeddedConcurrentProjectionPeerRequest(proof)
+    } else routing.beginEmbeddedProjectionPeerRequest()
     ownedPeerGeneration = staged.generation
     retirementGeneration = 0L
     ownedDecoderToken = 0L

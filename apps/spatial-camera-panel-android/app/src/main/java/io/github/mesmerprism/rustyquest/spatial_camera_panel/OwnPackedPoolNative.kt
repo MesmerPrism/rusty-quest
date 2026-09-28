@@ -74,6 +74,7 @@ class OwnPackedPoolNative(private val onEncoderLease: (EncoderLease) -> Unit) : 
     }
     companion object {
         init { System.loadLibrary("spatial_camera_panel_native_receipt") }
+        @JvmStatic external fun concurrentPeerAdmission(routeGeneration: Long, launchChallenge: Long, surfaceGeneration: Long): LongArray
         @JvmStatic external fun captureConfigured(): Boolean
         @JvmStatic external fun captureRouteSelected(): Boolean
         @JvmStatic external fun nativeRetirePeerSource(route: Long, decoder: Long, reader: Long): Boolean
