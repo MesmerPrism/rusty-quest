@@ -1622,6 +1622,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun attachEmbeddedDuplexDisplayWhenReady() {
     if (!BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED || embeddedDuplexActivityDestroying ||
         embeddedDuplexDiagnosticFinished ||
+        !io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected() ||
         embeddedDuplexAttachmentGeneration != 0L || !spatialSceneReady ||
         cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext() == null) return
     runCatching {
@@ -1784,6 +1785,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           )
         }
   }
+  private val localRollbackRequestFence = LocalRollbackRequestFence()
+  @Volatile private var localRollbackConfigSha256: String? = null
+  private val localRollbackObservedGeneration = java.util.concurrent.atomic.AtomicLong(0L)
   private val projectionSourceRouteTransitionMarker = SpatialVideoSourceRouteTransitionMarker()
   @Volatile private var localSourceRetirementGeneration = 0L
   private var projectionSourcePollJob: Job? = null
@@ -1793,6 +1797,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       reason: String,
   ) {
     projectionSourceRouteTransitionMarker.markerFor(state, reason)?.let(::marker)
+    val config=localRollbackConfigSha256
+    val readback=state.readback
+    if (config != null && state.requested == SpatialVideoSource.Local &&
+        state.effective == SpatialVideoSource.Local && state.pending == null && state.failed == null &&
+        readback != null && readback.routeGeneration == state.generation &&
+        readback.source == SpatialVideoSource.Local && readback.result == SpatialVideoSourceResult.Effective &&
+        readback.hasStages(SpatialVideoSourceStage.requiredFor(SpatialVideoSource.Local)) &&
+        !io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected() &&
+        localRollbackObservedGeneration.getAndSet(state.generation) != state.generation) {
+      marker("channel=local-rollback status=native-local-effective configSha256=$config " +
+          "routeGeneration=${state.generation} launchChallenge=${readback.launchChallenge} " +
+          "layerGeneration=${readback.surfaceGeneration} source=local result=effective " +
+          "stages=${readback.stages} acquisitionTimeNs=${readback.acquisitionTimeNs} " +
+          "decoderToken=${readback.decoderToken} cameraStartRequested=${readback.cameraStartRequested} " +
+          "featureEnabled=false proofScope=native-route-not-moving-render-proof")
+    }
   }
 
   /** Single Activity-owned route used by ordinary startup, explicit Intents, and the live panel. */
@@ -1801,6 +1821,41 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       requestIntent: Intent?,
       reason: String,
   ): SpatialVideoSourceRoutingState {
+    val rollbackTicket=localRollbackRequestFence.begin(spatialVideoSourceRoutingCoordinator.snapshot().generation)
+    if (source == SpatialVideoSource.Local && !reason.startsWith("activity-create") &&
+        io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected()) {
+      val retained=spatialVideoSourceRoutingCoordinator.snapshot()
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+          .EmbeddedDuplexActivityAttachment.selectLocalAfterTerminal(this,localRollbackRequestFence,rollbackTicket,
+              { spatialVideoSourceRoutingCoordinator.snapshot().generation },
+              { !embeddedDuplexActivityDestroying }).whenComplete { receipt, failure ->
+        runOnUiThread {
+          if (!localRollbackRequestFence.isCurrent(rollbackTicket,spatialVideoSourceRoutingCoordinator.snapshot().generation) ||
+              embeddedDuplexActivityDestroying) return@runOnUiThread
+          val verified = failure == null && runCatching {
+            val proof=org.json.JSONObject(checkNotNull(receipt))
+            val config=proof.getString("config_sha256")
+            proof.getString("schema")=="rusty.quest.local_rollback_native.v1" &&
+                config.matches(Regex("[0-9a-f]{64}")) && config==proof.getString("app_verified_config_sha256") &&
+                !proof.getBoolean("feature_enabled") && proof.getString("physical_cleanup")=="terminal" &&
+                proof.getString("scope")=="route-selection-only" &&
+                !io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected()
+          }.getOrDefault(false)
+          if (!verified) {
+            marker("channel=local-rollback status=blocked cleanupRequired=true generation=${retained.generation} routeUnchanged=true")
+          } else {
+            localRollbackConfigSha256=org.json.JSONObject(checkNotNull(receipt)).getString("config_sha256")
+            marker("channel=local-rollback status=feature-off physicalCleanup=terminal priorGeneration=${retained.generation}")
+            requestProjectionSource(SpatialVideoSource.Local,null,"local-rollback-after-terminal")
+            cameraHwbProjectionLaunchCoordinator.markStopped()
+            cameraHwbProjectionCarrierStateCoordinator.refreshCarrierMode()
+            cameraHwbProjectionLaunchCoordinator.restart("local-rollback-after-terminal",
+                currentCameraHwbProjectionLaunchRequest(currentProjectionVideoSettings()))
+          }
+        }
+      }
+      return retained
+    }
     val peerSettings =
         if (source == SpatialVideoSource.Peer) {
           val resolved = spatialVideoProjectionRuntimeCoordinator.resolveSettings(requestIntent)

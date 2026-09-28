@@ -158,6 +158,7 @@ pub(crate) fn gpu_retired(ordinal:u64,surface:u64){if let Some(now)=now_ns(){if 
 pub(crate) fn peer_removed(epoch:crate::stereo_input_set::SourceEpoch){if let Some(now)=now_ns(){if let Ok(mut s)=STATE.lock(){if s.armed&&epoch.process_generation==s.process {
     s.peer_removed_at=now;s.peer_removed_count=s.peer_removed_count.saturating_add(1);s.origins[1].removed_at=now;s.origins[1].removals=s.origins[1].removals.saturating_add(1);
 }}}}
+pub(crate) fn physical_cleanup_terminal()->bool {STATE.lock().map_or(false,|s|s.cleanup==2&&!s.carrier_live&&s.pending.is_none())}
 pub(crate) fn carrier_live(){if let Some(now)=now_ns(){if let Ok(mut s)=STATE.lock(){s.carrier_live=true;if s.armed{if s.cleanup!=3{s.cleanup=1;}s.pending_since=now;}}}}
 pub(crate) fn carrier_device(foreign_enabled:bool,capability_mask:u64,sdk_session:u64){if let Ok(mut s)=STATE.lock(){s.foreign_enabled=foreign_enabled;s.capability_mask=capability_mask;s.sdk_session=sdk_session;}}
 pub(crate) fn carrier_cleanup(terminal:bool){if let Ok(mut s)=STATE.lock(){s.carrier_live=false;if !terminal||s.cleanup==3{s.cleanup=3;}else{s.cleanup=2;}}}

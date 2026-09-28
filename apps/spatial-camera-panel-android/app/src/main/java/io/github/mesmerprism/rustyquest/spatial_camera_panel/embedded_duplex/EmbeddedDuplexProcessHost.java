@@ -309,6 +309,35 @@ final class EmbeddedDuplexProcessHost {
         });
     }
 
+    CompletableFuture<String> selectLocalAfterTerminal(
+            io.github.mesmerprism.rustyquest.spatial_camera_panel.LocalRollbackRequestFence fence,
+            io.github.mesmerprism.rustyquest.spatial_camera_panel.LocalRollbackRequestFence.Ticket ticket,
+            java.util.function.LongSupplier currentRouteGeneration,
+            java.util.function.BooleanSupplier ownerAlive) {
+        return submit(() -> {
+            if (phase.get()!=Phase.NEW || terminalWholeReceipt==null || closeInFlight
+                    || platform!=null || resources!=null || runtimeConfigSha256!=null)
+                throw new IllegalStateException("verified whole-app cleanup required before Local");
+            JSONObject proof=new JSONObject(terminalWholeReceipt).getJSONObject("peer_lifecycle");
+            if (!"terminal".equals(proof.optString("whole_app_physical_cleanup")))
+                throw new IllegalStateException("whole-app cleanup remains Pending");
+            OwnStereoCaptureRuntime own=OwnStereoCaptureRuntime.currentForApplication();
+            if (own==null || !"terminal".equals(own.physicalCleanupState()))
+                throw new IllegalStateException("Own physical cleanup remains Pending");
+            String expectedConfig=proof.getString("config_sha256");
+            String nativeReceipt=fence.commitIfCurrent(ticket,currentRouteGeneration,ownerAlive,
+                    () -> EmbeddedDuplexNative.selectLocalAfterTerminal(expectedConfig));
+            JSONObject selected=new JSONObject(nativeReceipt);
+            if (!"rusty.quest.local_rollback_native.v1".equals(selected.getString("schema"))
+                    || !expectedConfig.equals(selected.getString("config_sha256"))
+                    || selected.getBoolean("feature_enabled")
+                    || !"terminal".equals(selected.getString("physical_cleanup"))
+                    || !"route-selection-only".equals(selected.getString("scope")))
+                throw new IllegalStateException("native Local feature-off proof differs");
+            return selected.put("app_verified_config_sha256",expectedConfig).toString();
+        });
+    }
+
     CompletableFuture<String> command(String operation, String exactInputJson) {
         if (operation == null || exactInputJson == null || operation.length() > 64
                 || exactInputJson.length() > 2 * 1024 * 1024) {

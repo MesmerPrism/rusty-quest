@@ -30,7 +30,7 @@ internal class EmbeddedDuplexDisplayCoordinator(
   private var retirementGeneration = 0L
   private var ownedDecoderToken = 0L
   private var ownedReaderGeneration = 0L
-  private fun concurrentOwn(): Boolean = OwnStereoCaptureRuntime.currentForApplication() != null
+  private fun concurrentOwn(): Boolean = OwnPackedPoolNative.captureRouteSelected() && OwnStereoCaptureRuntime.currentForApplication() != null
   override fun activateOwnProjection() = serialized {
     val capture = checkNotNull(OwnStereoCaptureRuntime.currentForApplication()?.retainedCapture()) {
       "accepted Own capture unavailable"
