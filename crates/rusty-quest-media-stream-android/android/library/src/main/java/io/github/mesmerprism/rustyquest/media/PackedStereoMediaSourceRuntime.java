@@ -338,6 +338,9 @@ public final class PackedStereoMediaSourceRuntime {
         volatile long cachedCodecConfigPtsUs;
         volatile int cachedCodecConfigFlags;
         volatile long consumerAcceptCount;
+        volatile long socketAcceptCount;
+        String firstHandshakeStage = "NONE", firstHandshakeCause = "NONE";
+        String finalHandshakeStage = "NONE", finalHandshakeCause = "NONE";
         volatile long consumerReconnectCount;
         volatile long headerWriteCount;
         volatile long bytesWritten;
@@ -484,7 +487,7 @@ public final class PackedStereoMediaSourceRuntime {
             stopRequested = true;
         }
 
-        private void logClosedSourceFailure(String stage, Throwable failure) {
+        private String closedFailureCause(Throwable failure) {
             String category = "OTHER";
             Throwable current = failure;
             for (int i = 0; current != null && i < 8; i++, current = current.getCause()) {
@@ -495,6 +498,11 @@ public final class PackedStereoMediaSourceRuntime {
                 else if (current instanceof InterruptedException) category = "INTERRUPTED";
                 else if (current instanceof IllegalStateException && "OTHER".equals(category)) category = "STATE";
             }
+            return category;
+        }
+
+        private void logClosedSourceFailure(String stage, Throwable failure) {
+            String category = closedFailureCause(failure);
             android.util.Log.i("RQSpatialCameraPanel", "channel=packed-source status=source-failed stage="
                     + stage + " cause=" + category + " encodedFrames=" + encodedFrames
                     + " packetCount=" + packetCount + " keyframeCount=" + keyframeCount
@@ -663,10 +671,13 @@ public final class PackedStereoMediaSourceRuntime {
             while (!stopRequested) {
                 closeRetiredConnection();
                 Socket client = null;
+                String handshakeStage = "ACCEPT";
                 try {
                     ServerSocket server = serverSocket;
                     if (server == null) break;
                     client = server.accept();
+                    socketAcceptCount++;
+                    handshakeStage = "HEADER_WRITE";
                     client.setTcpNoDelay(true);
                     OutputStream clientOutput = client.getOutputStream();
                     synchronized (outputLock) {
@@ -680,7 +691,9 @@ public final class PackedStereoMediaSourceRuntime {
                     // The accept worker owns all potentially blocking handshake I/O.
                     // The client is already published so Stop can close it to unblock us.
                     writeHeader(clientOutput);
+                    handshakeStage = "CONFIG_REPLAY";
                     replayCodecConfig(clientOutput);
+                    handshakeStage = "PUMP_PUBLICATION";
                     BoundedPacketPump pump = new BoundedPacketPump(
                             clientOutput, 48, "rusty-packed-source-socket-pump");
                     synchronized (outputLock) {
@@ -693,12 +706,14 @@ public final class PackedStereoMediaSourceRuntime {
                         }
                     }
                     closeRetiredConnection();
+                    logHandshake("handshake-observed", handshakeStage, "NONE");
                     requestSyncFrame(encoder);
                     while (!stopRequested && socket == client && !client.isClosed()) {
                         Thread.sleep(25L);
                     }
                 } catch (Throwable failure) {
                     if (!stopRequested) {
+                        logHandshake("handshake-rejected", handshakeStage, closedFailureCause(failure));
                         error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);
                     }
                 } finally {
@@ -708,6 +723,23 @@ public final class PackedStereoMediaSourceRuntime {
                 }
             }
             closeRetiredConnection();
+        }
+
+        void logHandshake(String status, String stage, String cause) {
+            if (!"NONE".equals(cause)) {
+                if ("NONE".equals(firstHandshakeStage)) { firstHandshakeStage=stage; firstHandshakeCause=cause; }
+                finalHandshakeStage=stage; finalHandshakeCause=cause;
+            }
+            android.util.Log.i("RQSpatialCameraPanel", "channel=packed-source status=" + status
+                    + " stage=" + stage + " cause=" + cause
+                    + " firstStage=" + firstHandshakeStage + " firstCause=" + firstHandshakeCause
+                    + " finalStage=" + finalHandshakeStage + " finalCause=" + finalHandshakeCause
+                    + " socketAccepts=" + socketAcceptCount + " headerWrites=" + headerWriteCount
+                    + " configAvailable=" + (cachedCodecConfig != null)
+                    + " consumers=" + consumerAcceptCount + " pumpPublished=" + (packetPump != null) + " packets=" + packetCount
+                    + " packedWidth=" + layout.packedWidth + " packedHeight=" + layout.packedHeight
+                    + " perEyeWidth=" + layout.perEyeWidth + " perEyeHeight=" + layout.perEyeHeight
+                    + " code=HANDSHAKE_OBSERVATION_ONLY");
         }
 
         DetachedConnection detachConnection(Socket expected) {

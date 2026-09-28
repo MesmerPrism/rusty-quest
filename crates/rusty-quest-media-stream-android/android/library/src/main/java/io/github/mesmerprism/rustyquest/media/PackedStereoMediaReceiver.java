@@ -49,6 +49,9 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private long renderedFrames;
     private long receivedPackets;
     private int reconnects;
+    private volatile String transportStage = "IDLE";
+    private String firstTransportStage = "NONE", firstTransportCause = "NONE";
+    private String finalTransportStage = "NONE", finalTransportCause = "NONE";
     private long connectionGeneration;
     private long retiredConnectionGeneration;
 
@@ -215,12 +218,15 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                     receiveConnection();
                 } catch (IOException connectionFailure) {
                     if (stopRequested) break;
+                    recordTransportFailure(connectionFailure);
                     terminalFailure = connectionFailure;
                 } finally {
                     releaseConnection();
                 }
             }
         } catch (Throwable error) {
+            if (!(error instanceof IOException) || firstTransportStage.equals("NONE")) recordTransportFailure(error);
+            logTransportFailure("attempts-finished");
             terminalFailure = error;
         } finally {
             releaseConnection();
@@ -241,6 +247,34 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         }
     }
 
+    private void recordTransportFailure(Throwable failure) {
+        String cause = "android.media.MediaCodec$CodecException".equals(failure.getClass().getName()) ? "CODEC"
+                : failure instanceof java.net.ConnectException ? "REFUSED"
+                : failure instanceof java.net.SocketTimeoutException
+                ? ("CONNECT".equals(transportStage) ? "CONNECT_TIMEOUT" : "READ_TIMEOUT")
+                : failure instanceof java.io.EOFException ? "EOF"
+                : failure instanceof IOException ? ("HEADER".equals(transportStage) ? "HEADER_IO" : "IO")
+                : failure instanceof IllegalStateException ? "STATE" : "OTHER";
+        synchronized (lock) {
+            if ("NONE".equals(firstTransportStage)) {
+                firstTransportStage = transportStage; firstTransportCause = cause;
+            }
+            finalTransportStage = transportStage; finalTransportCause = cause;
+        }
+        logTransportFailure("connection-rejected");
+    }
+
+    private void logTransportFailure(String status) {
+        synchronized (lock) {
+            android.util.Log.i("RQSpatialCameraPanel", "channel=packed-receiver status=" + status
+                    + " firstStage=" + firstTransportStage + " firstCause=" + firstTransportCause
+                    + " finalStage=" + finalTransportStage + " finalCause=" + finalTransportCause
+                    + " reconnects=" + reconnects + " packets=" + receivedPackets
+                    + " frames=" + renderedFrames + " maxWidth=" + bounds.maxWidth + " maxHeight=" + bounds.maxHeight
+                    + " maxPacketBytes=" + bounds.maxPacketBytes + " code=TRANSPORT_EFFECT_UNCERTAIN");
+        }
+    }
+
     private void receiveConnection() throws Exception {
         Socket connection = new Socket();
         synchronized (lock) {
@@ -250,13 +284,16 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }
             socket = connection;
         }
+        transportStage = "CONNECT";
         connection.connect(new InetSocketAddress(host, port), bounds.connectTimeoutMs);
         connection.setSoTimeout(bounds.readTimeoutMs);
         connection.setTcpNoDelay(true);
         RmanvidPacketReader reader = new RmanvidPacketReader(
                 new DataInputStream(new BufferedInputStream(connection.getInputStream())),
                 bounds.maxHeaderBytes, bounds.maxPacketBytes, bounds.maxWidth, bounds.maxHeight);
+        transportStage = "HEADER";
         RmanvidPacketReader.Header header = reader.readHeader();
+        transportStage = "DECODER_CONFIG";
         MediaFormat format = MediaFormat.createVideoFormat(MIME_H264, header.width, header.height);
         MediaCodec codec = MediaCodec.createDecoderByType(MIME_H264);
         decoder = codec;
@@ -279,7 +316,9 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         boolean configurationSeen = false;
         boolean keyframeSeen = false;
         while (!stopRequested) {
+            transportStage = "PACKET_READ";
             RmanvidPacketReader.Packet packet = reader.readPacket();
+            transportStage = "DECODE";
             boolean config = (packet.flags & RmanvidPacketReader.FLAG_CODEC_CONFIG) != 0;
             boolean keyframe = (packet.flags & RmanvidPacketReader.FLAG_KEY_FRAME) != 0;
             if (!configurationSeen && !config) continue;
