@@ -634,3 +634,5 @@ mod tests {
         );
     }
 }
+
+pub(crate) const SPATIAL_DEPTH_CAP_FOREIGN_QUEUE_OWNERSHIP_V2:u32=1<<5;

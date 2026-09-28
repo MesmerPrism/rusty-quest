@@ -385,7 +385,10 @@ final class EmbeddedDuplexIdentity {
     }
 
     static boolean hasSupportedAuthorityDomain(byte[] value) {
-        return startsWith(value, OWNER_DISPATCH_REQUEST_DOMAIN)
+        return startsWith(value, "rusty.quest.android.media.retained_cleanup_dispatch.v2\0request\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                || startsWith(value, "rusty.quest.android.media.retained_cleanup_dispatch.v2\0response\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                || startsWith(value, "rusty.quest.android.media.retained_cleanup_prepare.v1\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                || startsWith(value, OWNER_DISPATCH_REQUEST_DOMAIN)
                 || startsWith(value, OWNER_DISPATCH_RESPONSE_DOMAIN)
                 || startsWith(value, PRODUCT_ACTIVATION_DOMAIN)
                 || startsWith(value, PRODUCT_ACTIVATION_ACK_DOMAIN);

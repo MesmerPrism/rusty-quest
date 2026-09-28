@@ -14,6 +14,7 @@ import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.Emb
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPairStatus
 import java.util.concurrent.TimeUnit
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPeerAction
 
 /** Explicit shell operator calls share the panel's app-owned status/review/confirm service. */
 class EmbeddedDuplexOperatorProvider : ContentProvider() {
@@ -32,6 +33,30 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     val app = requireNotNull(context).applicationContext
     return try {
       when (request.route) {
+        EmbeddedDuplexOperatorContract.Route.START, EmbeddedDuplexOperatorContract.Route.RENEW_AUTHORITY,
+        EmbeddedDuplexOperatorContract.Route.PEER_STOP, EmbeddedDuplexOperatorContract.Route.PEER_REVOKE,
+        EmbeddedDuplexOperatorContract.Route.PEER_STATUS, EmbeddedDuplexOperatorContract.Route.WHOLE_APP_CLOSE -> {
+          val action = when (request.route) {
+            EmbeddedDuplexOperatorContract.Route.START -> EmbeddedDuplexPeerAction.START
+            EmbeddedDuplexOperatorContract.Route.RENEW_AUTHORITY -> EmbeddedDuplexPeerAction.RENEW_AUTHORITY
+            EmbeddedDuplexOperatorContract.Route.PEER_STOP -> EmbeddedDuplexPeerAction.STOP
+            EmbeddedDuplexOperatorContract.Route.PEER_REVOKE -> EmbeddedDuplexPeerAction.REVOKE
+            EmbeddedDuplexOperatorContract.Route.PEER_STATUS -> EmbeddedDuplexPeerAction.STATUS
+            else -> EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
+          }
+          val receipt = EmbeddedDuplexRuntimeService.peerLifecycle(app, action, request.challenge).get(120, TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
+        }
+        EmbeddedDuplexOperatorContract.Route.POLICY_READ, EmbeddedDuplexOperatorContract.Route.POLICY_UPDATE -> {
+          val receipt = EmbeddedDuplexRuntimeService.concurrentPolicy(app, request.challenge, request.policy).get(30, TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
+        }
+        EmbeddedDuplexOperatorContract.Route.CONCURRENT_ARM, EmbeddedDuplexOperatorContract.Route.CONCURRENT_STATUS -> {
+          val receipt = if (request.route == EmbeddedDuplexOperatorContract.Route.CONCURRENT_ARM)
+            EmbeddedDuplexRuntimeService.armConcurrentQualification(app, request.challenge).get(30, TimeUnit.SECONDS)
+          else EmbeddedDuplexRuntimeService.concurrentQualificationStatus(app, request.challenge).get(30, TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
+        }
         EmbeddedDuplexOperatorContract.Route.STATUS -> {
           val status = EmbeddedDuplexEnrollmentService.status(app, requireNotNull(request.roleId)).get()
           Bundle().apply {
@@ -87,7 +112,8 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
               EmbeddedDuplexDiagnosticActivityGate.requestRealPeerBootstrap().get(120, TimeUnit.SECONDS))
         EmbeddedDuplexOperatorContract.Route.CLOSE_NO_MEDIA -> {
           val closed = EmbeddedDuplexDiagnosticActivityGate.requestNoMediaClose().get(120, TimeUnit.SECONDS)
-          require(closed == "no-media-closed" || closed == "uninitialized-display-detached")
+          require(closed == "no-media-closed" || closed == "uninitialized-display-detached" ||
+              closed == "peer-no-media-closed-own-capture-scope")
           runtimeBundle(request.challenge,
               EmbeddedDuplexRuntimeService.status(app).get(10, TimeUnit.SECONDS)).apply {
             putString("close_disposition", closed)
@@ -129,6 +155,10 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         putString("challenge", challenge)
         putString("runtime_state", state.state)
         putBoolean("display_attached", state.displayAttached)
+        if (state.cleanupScope == "peer_subscription_only") {
+          putString("cleanup_scope", state.cleanupScope)
+          putString("own_app_capture_state", state.ownAppCaptureState)
+        }
         state.runtimeConfigSha256?.let { putString("runtime_config_sha256", it) }
         state.enrollmentRecordSha256?.let { putString("enrollment_record_sha256", it) }
         putBoolean("peer_route_proven", false)

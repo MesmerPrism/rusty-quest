@@ -140,6 +140,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         return new CallbackGuard(this);
     }
     long generation() { return generation; }
+    String epochId() { requireLive(generation); return "app-process." + generation + "." + nonce; }
     synchronized boolean effectsPending() { return pending; }
     synchronized boolean recoveryOnly() { return recoveryOnly; }
     synchronized void requireLive(long expectedGeneration) {
@@ -165,6 +166,13 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         bind(checkpoint, evidence);
         pending = false;
         persist();
+    }
+    /** Called after the process owner joined authoritative native effects, physical owners and control closure. */
+    synchronized void afterVerifiedWholeProductCleanup(String checkpoint, String evidence, String joinedProofSha256) throws Exception {
+        requireFresh();
+        if (joinedProofSha256 == null || !joinedProofSha256.matches("[0-9a-f]{64}"))
+            throw new IllegalStateException("whole-product cleanup proof absent");
+        bind(checkpoint, evidence); pending = false; persist();
     }
     private void bind(String checkpoint, String evidence) throws Exception {
         checkpointDigest = digest(checkpoint); evidenceDigest = digest(evidence);

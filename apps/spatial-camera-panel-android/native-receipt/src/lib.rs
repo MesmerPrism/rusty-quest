@@ -815,3 +815,18 @@ fn append_native_marker_file(message: &str) {
         let _ = writeln!(file, "{} {}", timestamp_ms, message);
     }
 }
+
+mod stereo_bank_transport_v1;
+mod stereo_input_set;
+#[cfg(target_os="android")] mod pinned_packed_contents;
+#[cfg(target_os="android")] mod packed_ahb_gl_primitives;
+#[cfg(target_os="android")] mod own_packed_pool;
+#[cfg(target_os="android")] mod own_packed_pool_jni;
+#[cfg(target_os="android")] mod own_packed_pool_policy;
+#[cfg(target_os="android")] mod own_packed_encoder;
+#[cfg(target_os="android")] mod stereo_source_payload;
+#[cfg(target_os="android")] mod own_stereo_capture_runtime;
+#[cfg(target_os="android")] mod own_packed_gpu_holds;
+#[cfg(target_os="android")] mod spatial_stereo_source_import;
+mod spatial_stereo_qualification;
+#[cfg(target_os="android")] mod stereo_bank_control_jni;

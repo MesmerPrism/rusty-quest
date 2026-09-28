@@ -10,7 +10,17 @@ import java.util.concurrent.atomic.AtomicReference;
 /** One app-context mutation lane. Endpoint and Activity display callbacks never enter its queue. */
 final class EmbeddedDuplexProcessHost {
     private enum Phase { NEW, PROVISIONING, BOOTSTRAPPING, READY, CLOSING, FAILED }
-    private static EmbeddedDuplexProcessHost instance;
+    private static volatile EmbeddedDuplexProcessHost instance;
+
+    /** Native observes actual retained providers; absence and uncertainty are not terminal. */
+    public static boolean nativeProductResourcesTerminal() {
+        EmbeddedDuplexProcessHost current = instance;
+        if (current == null) return false;
+        EmbeddedDuplexResources retained = current.resources;
+        if (retained == null) return false;
+        try { return retained.productResourcesTerminal(); }
+        catch (RuntimeException unavailable) { return false; }
+    }
 
     static synchronized EmbeddedDuplexProcessHost forApplication(Context context) {
         if (instance == null) {
@@ -41,8 +51,19 @@ final class EmbeddedDuplexProcessHost {
     // Retain the callback after native GlobalRef capture, including a failed
     // post-initialization resource installation, so no second host can start.
     private EmbeddedDuplexPlatform platform;
-    private EmbeddedDuplexResources resources;
+    private volatile EmbeddedDuplexResources resources;
     private String runtimeConfigSha256;
+    private String ownFeatureLockSha256;
+    private String ownNoMediaConfigSha256;
+    private String ownNoMediaFeatureSha256;
+    private String ownNoMediaCloseProof;
+    private long ownNoMediaExecutorGeneration;
+    private long ownNoMediaAppGeneration;
+    private Runnable ownNoMediaStopTarget;
+    private boolean ownNoMediaCleanupAttempted;
+    private String retainedWholeNativeReceipt;
+    private String terminalWholeReceipt;
+    private String terminalWholeChallenge;
     private String enrollmentRecordSha256;
     private volatile boolean localFixture;
     private String diagnosticChallenge;
@@ -160,6 +181,8 @@ final class EmbeddedDuplexProcessHost {
                 }
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_INSTALL);
                 JSONObject nativeResult = new JSONObject(initialized);
+                JSONObject ownBootstrap = nativeResult.optJSONObject("own_capture_bootstrap");
+                ownFeatureLockSha256 = ownBootstrap == null ? null : ownBootstrap.getString("app_feature_lock_sha256");
                 if (nativeResult.getLong("executor_generation") != nativeExecutorGeneration
                         || nativeResult.getLong("app_process_generation") != processFence.generation()
                         || !nativeAppRecordSha256.equals(nativeResult.getString("app_record_sha256"))) {
@@ -174,6 +197,9 @@ final class EmbeddedDuplexProcessHost {
                 if (!callbacks.controlReady()) {
                     throw new IllegalStateException("authenticated control endpoint unavailable");
                 }
+                // Supersede retained cleanup facts only after the new authenticated host owns real resources/control.
+                ownNoMediaCloseProof = null; ownNoMediaStopTarget = null;
+                terminalWholeReceipt = null; terminalWholeChallenge = null; retainedWholeNativeReceipt = null;
                 phase.set(Phase.READY);
                 return initialized;
             } catch (Exception failure) {
@@ -183,6 +209,101 @@ final class EmbeddedDuplexProcessHost {
                         || !processFence.effectsPending()) ? Phase.NEW : Phase.FAILED);
                 throw failure;
             }
+    }
+
+    CompletableFuture<String> concurrentQualification(boolean arm, String challenge) {
+        return concurrentQualificationOnLane(arm, challenge, false, null, null);
+    }
+    CompletableFuture<String> concurrentPolicy(String challenge, long[] policy) {
+        return concurrentQualificationOnLane(false, challenge, true, policy == null ? null : policy.clone(), null);
+    }
+    CompletableFuture<String> peerLifecycle(EmbeddedDuplexPeerAction action, String challenge) {
+        if (action == null) return failed(new IllegalArgumentException("peer action required"));
+        return concurrentQualificationOnLane(false, challenge, false, null, action);
+    }
+    private CompletableFuture<String> concurrentQualificationOnLane(boolean arm, String challenge, boolean policyAction, long[] policy, EmbeddedDuplexPeerAction peerAction) {
+        return submit(() -> {
+            requireFreshProcess();
+            if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE && terminalWholeReceipt != null) {
+                if (!challenge.equals(terminalWholeChallenge)) throw new IllegalStateException("closed challenge differs");
+                processFence.requireLive(processFence.generation());
+                return terminalWholeReceipt;
+            }
+            Phase observedPhase = phase.get();
+            boolean cleanupObservation = !policyAction && (peerAction == null
+                    || peerAction == EmbeddedDuplexPeerAction.STOP
+                    || peerAction == EmbeddedDuplexPeerAction.REVOKE
+                    || peerAction == EmbeddedDuplexPeerAction.STATUS
+                    || peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE);
+            boolean noMediaFallback = observedPhase == Phase.NEW && runtimeConfigSha256 == null
+                    && nativeExecutorGeneration == 0L && ownNoMediaCloseProof != null
+                    && ownNoMediaAppGeneration == processFence.generation();
+            boolean fallbackAction = peerAction == null || peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE;
+            boolean phaseAllowed = noMediaFallback && cleanupObservation && fallbackAction
+                    || observedPhase == Phase.READY || cleanupObservation
+                    && (observedPhase == Phase.FAILED || observedPhase == Phase.CLOSING);
+            if (!phaseAllowed || localFixture || processFence == null
+                    || (noMediaFallback ? ownNoMediaConfigSha256 == null || ownNoMediaFeatureSha256 == null
+                        : runtimeConfigSha256 == null || ownFeatureLockSha256 == null)) {
+                throw new IllegalStateException("selected process observation unavailable");
+            }
+            processFence.requireLive(processFence.generation());
+            String epoch = processFence.epochId();
+            final String receiptConfig = noMediaFallback ? ownNoMediaConfigSha256 : runtimeConfigSha256;
+            final String receiptFeature = noMediaFallback ? ownNoMediaFeatureSha256 : ownFeatureLockSha256;
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            try (java.io.InputStream input = new java.io.FileInputStream(applicationContext.getApplicationInfo().sourceDir)) {
+                byte[] block = new byte[65536]; int count;
+                while ((count = input.read(block)) != -1) digest.update(block, 0, count);
+            }
+            StringBuilder apk = new StringBuilder();
+            for (byte b : digest.digest()) apk.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
+            if (peerAction != null) {
+                // Check the retained process/challenge/arm before any authority mutation.
+                ConcurrentStereoQualification.status(challenge, epoch, receiptConfig,
+                        receiptFeature, apk.toString());
+                if (peerAction == EmbeddedDuplexPeerAction.START && !preflightLive(pendingStartPreflight))
+                    throw new IllegalStateException("current paired Start intent unavailable");
+                if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE) {
+                    OwnStereoCaptureRuntime own = OwnStereoCaptureRuntime.currentForApplication();
+                    if (noMediaFallback) {
+                        if (!ownNoMediaCleanupAttempted) {
+                            if (processFence.effectsPending()) throw new IllegalStateException("another durable effect is Pending");
+                            processFence.beforeRuntimeEffects(checkpointSnapshot(), evidenceSnapshot());
+                            ownNoMediaCleanupAttempted = true;
+                        }
+                        if (ownNoMediaStopTarget == null) throw new IllegalStateException("retained Own stop target unavailable");
+                        if (own != null) own.requestStopOwn();
+                        ownNoMediaStopTarget.run();
+                    } else {
+                        if (own != null) own.requestStopOwn();
+                        display.requestWholeProjectionStop();
+                    }
+                }
+                String nativeReceipt = noMediaFallback ? noMediaWholeProof(receiptConfig)
+                        : retainedWholeNativeReceipt != null && peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
+                            ? retainedWholeNativeReceipt : EmbeddedDuplexNative.peerLifecycle(peerAction.word);
+                if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE) {
+                    OwnStereoCaptureRuntime own = OwnStereoCaptureRuntime.currentForApplication();
+                    JSONObject physical = new JSONObject(nativeReceipt);
+                    physical.put("java_own_capture_cleanup", own == null ? "unknown" : own.physicalCleanupState());
+                    if ("terminal".equals(physical.optString("native_host_physical_cleanup")))
+                        retainedWholeNativeReceipt = nativeReceipt;
+                    finishWholeAppProof(physical, receiptConfig, noMediaFallback);
+
+                    nativeReceipt = physical.toString();
+                }
+                String receipt = ConcurrentStereoQualification.lifecycle(peerAction.action, challenge, epoch, receiptConfig, receiptFeature, apk.toString(), nativeReceipt);
+                if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
+                        && "terminal".equals(new JSONObject(nativeReceipt).optString("whole_app_physical_cleanup"))) {
+                    terminalWholeReceipt = receipt; terminalWholeChallenge = challenge;
+                }
+                return receipt;
+            }
+            if (policyAction) return ConcurrentStereoQualification.policy(challenge, epoch, receiptConfig, receiptFeature, apk.toString(), policy);
+            return arm ? ConcurrentStereoQualification.arm(challenge, epoch, receiptConfig, receiptFeature, apk.toString())
+                : ConcurrentStereoQualification.status(challenge, epoch, receiptConfig, receiptFeature, apk.toString());
+        });
     }
 
     CompletableFuture<String> command(String operation, String exactInputJson) {
@@ -322,8 +443,10 @@ final class EmbeddedDuplexProcessHost {
                 : current == Phase.NEW ? "uninitialized"
                 : current == Phase.READY ? "local_fixture"
                 : current == Phase.BOOTSTRAPPING ? "bootstrapping" : "cleanup_pending";
-        return new EmbeddedDuplexRuntimeStatus(state, attachmentGeneration != 0L,
+        EmbeddedDuplexRuntimeStatus status = new EmbeddedDuplexRuntimeStatus(state, attachmentGeneration != 0L,
                 runtimeConfigSha256, enrollmentRecordSha256);
+        OwnStereoCaptureRuntime ownCapture = OwnStereoCaptureRuntime.currentForApplication();
+        return ownCapture != null ? new EmbeddedDuplexRuntimeStatus(status, ownCapture.phase().name()) : status;
     }
 
     CompletableFuture<String> closeRealPeerNoMedia(long expectedGeneration) {
@@ -569,6 +692,12 @@ final class EmbeddedDuplexProcessHost {
         return submit(() -> {
             try {
                 final String expectedSha = runtimeConfigSha256;
+                final OwnStereoCaptureRuntime ownCapture = OwnStereoCaptureRuntime.currentForApplication();
+                final boolean ownScope = ownCapture != null && !ownCapture.pollStopped();
+                final long closedExecutorGeneration = nativeExecutorGeneration;
+                final long closedAppGeneration = processFence.generation();
+                final Runnable retainedStop = ownScope ? display.retainOwnedProjectionStopTarget(expectedGeneration) : null;
+                final String[] closedProof = new String[1];
                 if (expectedSha == null || !expectedSha.matches("[0-9a-f]{64}")) {
                     throw new IllegalStateException("prepared native route identity unavailable");
                 }
@@ -589,11 +718,27 @@ final class EmbeddedDuplexProcessHost {
                         throw new IllegalStateException("native no-media close proof differs");
                     }
                     EmbeddedDuplexResources currentResources = resources;
-                    if (currentResources != null) currentResources.closeUnstartedAndVerify();
+                    if (ownScope
+                            && !"peer_subscription_only".equals(closed.optString("cleanup_scope"))) {
+                        throw new IllegalStateException("native no-media receipt lacks explicit Peer-only cleanup scope");
+                    }
+                    if (ownScope && currentResources == null) throw new IllegalStateException("Own-retained Java no-media proof unavailable");
+                    if (currentResources != null) {
+                        currentResources.closeUnstartedAndVerify();
+                        if (ownScope && !currentResources.productResourcesTerminal())
+                            throw new IllegalStateException("Own-retained Java no-media barriers Pending");
+                    }
+                    closedProof[0] = closed.toString();
                 });
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 EmbeddedDuplexNative.finishNativeNoMediaCleanup(nativeExecutorGeneration, expectedSha);
                 processFence.afterVerifiedNoMediaCleanup(checkpointSnapshot(), evidenceSnapshot());
+                if (ownScope && closedProof[0] != null && ownFeatureLockSha256 != null) {
+                    ownNoMediaConfigSha256 = expectedSha; ownNoMediaFeatureSha256 = ownFeatureLockSha256;
+                    ownNoMediaCloseProof = closedProof[0]; ownNoMediaExecutorGeneration = closedExecutorGeneration;
+                    ownNoMediaAppGeneration = closedAppGeneration; ownNoMediaStopTarget = retainedStop;
+                    ownNoMediaCleanupAttempted = false;
+                }
                 if (platform != null) platform.retireProcessCallbacks();
                 platform = null;
                 resources = null;
@@ -608,11 +753,80 @@ final class EmbeddedDuplexProcessHost {
                     displayDetaching = false;
                     phase.set(Phase.NEW);
                 }
-                return "no-media-closed";
+                return ownScope ? "peer-no-media-closed-own-capture-scope" : "no-media-closed";
             } finally {
                 synchronized (attachmentGate) { closeInFlight = false; }
             }
         });
+    }
+
+    /** Scoped proof is retained only after actual native finish and Java no-media barriers. */
+    private String noMediaWholeProof(String expectedSha) throws Exception {
+        JSONObject closed = new JSONObject(ownNoMediaCloseProof);
+        if (!expectedSha.equals(ownNoMediaConfigSha256) || !expectedSha.equals(closed.getString("config_sha256"))
+                || ownNoMediaExecutorGeneration <= 0L || ownNoMediaAppGeneration != processFence.generation()
+                || !"rusty.quest.embedded_duplex.no_media_closed.v1".equals(closed.getString("$schema"))
+                || !"peer_subscription_only".equals(closed.getString("cleanup_scope"))
+                || !closed.getBoolean("own_app_capture_retained") || platform != null || resources != null
+                || nativeExecutorGeneration != 0L || runtimeConfigSha256 != null) {
+            throw new IllegalStateException("retained no-media cleanup scope differs");
+        }
+        return new JSONObject().put("$schema", "rusty.quest.embedded_duplex.concurrent_no_media_own_cleanup.v1")
+                .put("action", "whole_app_close").put("config_sha256", expectedSha)
+                .put("native_executor_generation", ownNoMediaExecutorGeneration)
+                .put("app_process_generation", ownNoMediaAppGeneration)
+                .put("native_no_media_close_receipt", closed)
+                .put("native_no_media_finish_verified", true)
+                .put("java_no_media_barriers_verified", true)
+                .put("peer_physical_cleanup", "never_attempted_native_proved")
+                .put("native_host_physical_cleanup", "terminal")
+                .put("whole_app_physical_cleanup", "pending").toString();
+    }
+
+    private void finishWholeAppProof(JSONObject proof, String expectedSha, boolean noMedia) throws Exception {
+        proof.put("whole_app_physical_cleanup", "pending");
+        long[] snapshot = io.github.mesmerprism.rustyquest.spatial_camera_panel.StereoBankControls.INSTANCE.concurrentQualification();
+        boolean rendererTerminal = snapshot.length == 160 && snapshot[0] == 1L && snapshot[1] == 160L
+                && snapshot[9] == 2L && snapshot[63] == 0L && snapshot[156] == 0L && snapshot[157] == 0L;
+        proof.put("java_renderer_cleanup", rendererTerminal ? "terminal" : "pending");
+        if (!expectedSha.equals(proof.getString("config_sha256"))
+                || proof.getLong("app_process_generation") != processFence.generation()
+                || proof.getLong("native_executor_generation") != (noMedia ? ownNoMediaExecutorGeneration : nativeExecutorGeneration))
+            throw new IllegalStateException("whole cleanup owner binding differs");
+        if (!rendererTerminal || !"terminal".equals(proof.optString("java_own_capture_cleanup"))
+                || !"terminal".equals(proof.optString("native_host_physical_cleanup"))) return;
+        if (!noMedia && (!"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(proof.getString("$schema"))
+                || !"terminal".equals(proof.optString("peer_physical_cleanup"))
+                || !(proof.opt("media_stop_effect_receipt") instanceof JSONObject)
+                || !(proof.opt("route_cleanup") instanceof org.json.JSONArray)
+                || !(proof.opt("broker_evidence") instanceof JSONObject))) return;
+        // The typed native facade only publishes Peer terminal after cleanup succeeds.
+        // An empty cleanup array is a real idempotent retry; the native facade preserves retained route/effect receipts.
+        if (noMedia) {
+            // Never manufacture a seven-owner Stop effect for a native-proved unstarted route.
+            noMediaWholeProof(expectedSha);
+        } else {
+            EmbeddedDuplexPlatform held = platform;
+            if (held == null || resources == null || !resources.productResourcesTerminal()) return;
+            display.detachAfterCleanup(attachmentGeneration, held::closeControlAfterProductCleanup);
+            held.retireProcessCallbacks();
+        }
+        proof.put("java_control_cleanup", "terminal");
+        String joinedDigest = EmbeddedDuplexProcessFence.digest(proof.toString());
+        EmbeddedDuplexStartJournal journal = new EmbeddedDuplexStartJournal(applicationContext);
+        String prior = journal.read();
+        if (prior != null) {
+            JSONObject checkpoint = new JSONObject(prior);
+            checkpoint.put("phase", "terminal").put("revision", Math.addExact(checkpoint.getLong("revision"), 1L))
+                    .put("last_verified_receipt_sha256", joinedDigest);
+            journal.persist(checkpoint.toString());
+        }
+        processFence.afterVerifiedWholeProductCleanup(checkpointSnapshot(), evidenceSnapshot(), joinedDigest);
+        proof.put("app_process_fence_cleanup", "terminal").put("whole_app_physical_cleanup", "terminal").put("status", "terminal");
+        platform = null; resources = null; runtimeConfigSha256 = null; nativeExecutorGeneration = 0L;
+        nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; pendingStartPreflight = null;
+        ownNoMediaStopTarget = null;
+        synchronized (attachmentGate) { attachmentGeneration = 0L; displayDetaching = false; phase.set(Phase.NEW); }
     }
 
     private String checkpointSnapshot() throws Exception {

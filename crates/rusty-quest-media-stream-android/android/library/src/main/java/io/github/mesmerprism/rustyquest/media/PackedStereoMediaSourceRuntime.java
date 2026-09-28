@@ -108,6 +108,24 @@ public final class PackedStereoMediaSourceRuntime {
         return new Pipeline(runtime);
     }
 
+    /** Opt-in peer consumer of an already-owned app capture. Never opens a second camera. */
+    public static Pipeline createSharedCapturePipeline(Context context, String sessionId,
+            String sourceKind, String sourceHost, int sourcePort, int packedWidth, int packedHeight,
+            int perEyeWidth, int perEyeHeight, int frameRateHz, int bitrateBps,
+            String leftCameraId, String rightCameraId, long maxPairDeltaNs,
+            PackedStereoCaptureOwner captureOwner, long consumerGeneration) throws Exception {
+        if (captureOwner == null || consumerGeneration <= 0
+                || !captureOwner.matchesConfiguration(perEyeWidth, perEyeHeight, frameRateHz,
+                        leftCameraId, rightCameraId, maxPairDeltaNs))
+            throw new IllegalArgumentException("shared capture does not match admitted peer binding");
+        Pipeline pipeline = createPipeline(context, sessionId, sourceKind, sourceHost, sourcePort,
+                packedWidth, packedHeight, perEyeWidth, perEyeHeight, frameRateHz, bitrateBps,
+                leftCameraId, rightCameraId, maxPairDeltaNs);
+        pipeline.runtime.sharedCapture = captureOwner;
+        pipeline.runtime.captureConsumerGeneration = consumerGeneration;
+        return pipeline;
+    }
+
     /** Staged ownership surface over one connected packed stereo pipeline. */
     public static final class Pipeline implements PackedStereoPipeline {
         private final Runtime runtime;
@@ -130,10 +148,11 @@ public final class PackedStereoMediaSourceRuntime {
         }
         public void startProcessor() throws Exception {
             if (runtime.encoder == null) throw new IllegalStateException("codec must start before processor");
-            if (runtime.compositor == null) runtime.startProcessor();
+            if (runtime.compositor == null && runtime.encoderWorker == null) runtime.startProcessor();
         }
         public void startSource() throws Exception {
-            if (runtime.compositor == null) throw new IllegalStateException("processor must start before source");
+            if (runtime.compositor == null && runtime.encoderWorker == null)
+                throw new IllegalStateException("processor must start before source");
             if (runtime.sourceThread == null) runtime.startSource();
             long deadline=SystemClock.elapsedRealtime()+CAMERA_SESSION_TIMEOUT_MS*2L;
             while (!runtime.sourceFresh()) {
@@ -309,6 +328,9 @@ public final class PackedStereoMediaSourceRuntime {
         volatile MediaCodec encoder;
         volatile Surface encoderSurface;
         volatile PackedStereoGlCompositor compositor;
+        volatile PackedStereoCaptureOwner sharedCapture;
+        volatile long captureConsumerGeneration;
+        volatile PackedStereoEncoderWorker encoderWorker;
         volatile HandlerThread cameraThread;
         volatile CameraEndpoint leftCamera;
         volatile CameraEndpoint rightCamera;
@@ -406,7 +428,27 @@ public final class PackedStereoMediaSourceRuntime {
         }
 
         void startProcessor() throws Exception {
-            compositor = new PackedStereoGlCompositor(layout, encoderSurface, synthetic, this);
+            if (sharedCapture == null) {
+                compositor = new PackedStereoGlCompositor(layout, encoderSurface, synthetic, this);
+            } else {
+                encoderWorker = new PackedStereoEncoderWorker(captureConsumerGeneration, encoderSurface,
+                        new PackedStereoEncoderWorker.Listener() {
+                            public void onPairSubmitting(PackedStereoPoolExecutor.PairIdentity pair, long ptsUs) {
+                                synchronized (pairLock) {
+                                    presentedPairs.put(ptsUs, new PackedStereoStreamMetadata.PairRecord(
+                                            pair.pairId, pair.leftFrame, pair.rightFrame,
+                                            pair.leftSensorNs, pair.rightSensorNs,
+                                            Math.abs(pair.leftSensorNs - pair.rightSensorNs)));
+                                    while (presentedPairs.size() > 64) {
+                                        presentedPairs.pollFirstEntry(); encodedPacketsWithoutPair++;
+                                    }
+                                }
+                            }
+                            public void onFailure(Throwable error) { onCompositorFailure(error); }
+                        });
+                encoderWorker.awaitStarted();
+                sharedCapture.attachEncoder(captureConsumerGeneration, encoderWorker);
+            }
             state = "processor_started";
         }
 
@@ -443,7 +485,7 @@ public final class PackedStereoMediaSourceRuntime {
 
         void sourceLoop() {
             try {
-                if (!synthetic) {
+                if (!synthetic && sharedCapture == null) {
                     if (context == null) {
                         throw new IllegalStateException("Android context is unavailable");
                     }
@@ -477,7 +519,7 @@ public final class PackedStereoMediaSourceRuntime {
                             compositor,
                             new Runnable() { @Override public void run() { onCameraTerminal(); } });
                 }
-                state = synthetic
+                state = sharedCapture != null ? "source_streaming_shared_capture" : synthetic
                         ? "source_streaming_packed_synthetic"
                         : "source_streaming_packed_camera2";
                 sourceStreamingSinceMs = SystemClock.elapsedRealtime();
@@ -504,6 +546,9 @@ public final class PackedStereoMediaSourceRuntime {
                     }
                     Thread.sleep(2L);
                 }
+                fenceSharedEncoder();
+                PackedStereoEncoderWorker inputWorker = encoderWorker;
+                while (inputWorker != null && !inputWorker.isPhysicallyRetired()) Thread.sleep(10L);
                 try {
                     encoder.signalEndOfInputStream();
                     drainEncoder(true);
@@ -816,8 +861,24 @@ public final class PackedStereoMediaSourceRuntime {
         }
 
 
+        void fenceSharedEncoder() {
+            PackedStereoCaptureOwner capture = sharedCapture;
+            if (capture != null) capture.detachEncoder(captureConsumerGeneration);
+            PackedStereoEncoderWorker worker = encoderWorker;
+            if (worker != null) worker.requestStop();
+        }
+
         void releaseLocalResources() {
+            fenceSharedEncoder();
             synchronized (lifecycleLock) {
+                PackedStereoEncoderWorker worker = encoderWorker;
+                if (worker != null) {
+                    if (!worker.isPhysicallyRetired()) {
+                        markStopFailure("encoder physical input remains Pending");
+                        return; // codec and Surface remain owned until the worker's physical barrier
+                    }
+                    encoderWorker = null;
+                }
                 CameraEndpoint left = leftCamera;
                 CameraEndpoint right = rightCamera;
                 requestCameraClose(left);
@@ -874,6 +935,11 @@ public final class PackedStereoMediaSourceRuntime {
 
         boolean sourceFresh() {
             long now=SystemClock.elapsedRealtime();
+            if (sharedCapture != null) {
+                PackedStereoEncoderWorker worker = encoderWorker;
+                return state.startsWith("source_streaming_") && sharedCapture.fresh()
+                        && worker != null && worker.failure() == null;
+            }
             PackedStereoGlCompositor active = compositor;
             if (active == null || !state.startsWith("source_streaming_")) return false;
             if (synthetic) return active.syntheticFrames() >= 2L && active.composedFrames() >= 2L
@@ -907,6 +973,7 @@ public final class PackedStereoMediaSourceRuntime {
 
         void stop(String reason) {
             stopRequested = true;
+            fenceSharedEncoder();
             closeReason = reason;
             if (!"failed".equals(state)) state = "stopping";
             ServerSocket server = serverSocket;
@@ -946,7 +1013,7 @@ public final class PackedStereoMediaSourceRuntime {
                     && (cameraThread == null || !cameraThread.isAlive())
                     && serverSocket == null && socket == null && output == null && packetPump == null
                     && retiredConnection == null && unresolvedConnection == null
-                    && encoder == null && encoderSurface == null && compositor == null
+                    && encoder == null && encoderSurface == null && compositor == null && encoderWorker == null
                     && leftCamera == null && rightCamera == null;
         }
 
@@ -980,6 +1047,9 @@ public final class PackedStereoMediaSourceRuntime {
             json.put("pair_timestamp_authority", PackedStereoStreamMetadata.TIMESTAMP_AUTHORITY);
             json.put("pairing_policy", PackedStereoStreamMetadata.PAIRING_POLICY);
             json.put("pair_delta_bound_ns", layout.maxPairDeltaNs);
+            json.put("shared_app_capture", sharedCapture != null);
+            json.put("shared_capture_fresh", sharedCapture != null && sharedCapture.fresh());
+            json.put("encoder_input_pending", encoderWorker != null && !encoderWorker.isPhysicallyRetired());
             json.put("gpu_compositor_active", compositor != null && compositor.gpuCompositorActive());
             json.put("cpu_pixel_copy", false);
             json.put("encoder_instance_count", encoder != null ? 1 : 0);

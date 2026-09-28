@@ -226,6 +226,7 @@ internal fun PrivateLayerControlPanel(
   var localBackgroundVideoSession by remember { mutableStateOf(backgroundVideoSession()) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
   var localProjectionSource by remember { mutableStateOf(projectionSource()) }
+  var localStereoBanks by remember { mutableStateOf(StereoBankControls.snapshot()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibraryStatus()) }
   var localConnectionHub by remember { mutableStateOf(connectionHubStatus()) }
@@ -296,6 +297,7 @@ internal fun PrivateLayerControlPanel(
       if (latestVideoCadenceMode != localVideoCadenceMode) {
         localVideoCadenceMode = latestVideoCadenceMode
       }
+      localStereoBanks = StereoBankControls.snapshot()
       val latestProjectionSource = projectionSource()
       if (latestProjectionSource != localProjectionSource) {
         localProjectionSource = latestProjectionSource
@@ -842,6 +844,70 @@ internal fun PrivateLayerControlPanel(
               style = MaterialTheme.typography.bodyMedium,
               color = LayerPanelAccent,
           )
+          if (localStereoBanks.enabled) {
+            HelpLabel("Center camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.center == StereoImageOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(center = StereoImageOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.center == StereoImageOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(center = StereoImageOrigin.Peer))
+              }
+            }
+            HelpLabel("Middle camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.middle == StereoImageOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(middle = StereoImageOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.middle == StereoImageOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(middle = StereoImageOrigin.Peer))
+              }
+            }
+            HelpLabel("Outer camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.outer == StereoImageOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(outer = StereoImageOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.outer == StereoImageOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(outer = StereoImageOrigin.Peer))
+              }
+            }
+            HelpLabel("Geometry camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.geometry == StereoImageOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(geometry = StereoImageOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.geometry == StereoImageOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(geometry = StereoImageOrigin.Peer))
+              }
+            }
+            HelpLabel("Brightness camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.brightness == StereoGuideOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(brightness = StereoGuideOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.brightness == StereoGuideOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(brightness = StereoGuideOrigin.Peer))
+              }
+              ChoiceButton("Follow region", localStereoBanks.policy.brightness == StereoGuideOrigin.FollowRegion) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(brightness = StereoGuideOrigin.FollowRegion))
+              }
+            }
+            HelpLabel("Strength camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.strength == StereoGuideOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(strength = StereoGuideOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.strength == StereoGuideOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(strength = StereoGuideOrigin.Peer))
+              }
+              ChoiceButton("Follow region", localStereoBanks.policy.strength == StereoGuideOrigin.FollowRegion) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(strength = StereoGuideOrigin.FollowRegion))
+              }
+            }
+            Text("A selected camera can be unavailable while its stream starts or stops. The other camera stays independent.",
+                style = MaterialTheme.typography.bodySmall, color = LayerPanelMuted)
+          } else {
           HelpLabel("Projection source")
           Row(
               horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -867,6 +933,7 @@ internal fun PrivateLayerControlPanel(
               style = MaterialTheme.typography.bodySmall,
               color = if (localProjectionSource.failed == null) LayerPanelAccent else LayerPanelWarm,
           )
+          }
           Text(
               "Targets and relay credentials are run-owned inputs and are never saved in profiles, playlists, Hub, or Fleet. Broker route endpoints remain private run evidence and are redacted from this UI and log markers.",
               style = MaterialTheme.typography.bodySmall,

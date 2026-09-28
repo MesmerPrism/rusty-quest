@@ -88,6 +88,17 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
         finally { lock.unlock(); }
     }
 
+    /** Retains only the accepted stop callback across a Peer-only detach. */
+    Runnable retainOwnedProjectionStopTarget(long expectedGeneration) {
+        lock.lock();
+        try {
+            if (attached == null || generation != expectedGeneration || detaching || cleanupRunning)
+                throw new IllegalStateException("Own cleanup display target unavailable");
+            EmbeddedDuplexDisplay retained = attached;
+            return retained::requestWholeProjectionStop;
+        } finally { lock.unlock(); }
+    }
+
     private void awaitIdle() throws InterruptedException {
         long remaining = TimeUnit.SECONDS.toNanos(10);
         while (inFlight != 0) {
@@ -123,6 +134,12 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
 
     @Override public long ensureLocalCaptureStopped() {
         return call(EmbeddedDuplexDisplay::ensureLocalCaptureStopped);
+    }
+    @Override public void activateOwnProjection() {
+        call(display -> { display.activateOwnProjection(); return null; });
+    }
+    @Override public void requestWholeProjectionStop() {
+        call(display -> { display.requestWholeProjectionStop(); return null; });
     }
     @Override public long preparePeerProjection() {
         return call(EmbeddedDuplexDisplay::preparePeerProjection);

@@ -141,6 +141,8 @@ internal data class SpatialCameraHwbProjectionRawCarrierBindings(
     val startNative: (AndroidSurface, Int, Int, Int, Int, Long, Long, Long, Int) -> Long,
     val updateFromViewer: (String, Boolean) -> Unit,
     val marker: (String) -> Unit,
+    val startSourceSetCommonGraph: ((AndroidSurface, Int, Int, Int) -> Long)? = null,
+    val deferOwnNativeStart: () -> Boolean = { false },
 )
 
 internal data class SpatialCameraHwbProjectionRawStartSequenceBindings(
@@ -155,6 +157,7 @@ internal data class SpatialCameraHwbProjectionRawStartSequenceBindings(
     val privateLayerOverrideLifecycleCurrent: () -> Boolean,
     val startNative: () -> Long,
     val cleanup: (String) -> String,
+    val deferNativeStart: () -> Boolean = { false },
 )
 
 internal data class SpatialCameraHwbProjectionRawStartSequenceResult(
@@ -237,7 +240,7 @@ internal object SpatialCameraHwbProjectionRawStartSequence {
             message = "native-lifecycle-invalidated-before-start",
         )
       }
-      val startMask = bindings.startNative()
+      val startMask = if (bindings.deferNativeStart()) null else bindings.startNative()
       SpatialCameraHwbProjectionRawStartSequenceResult(
           admitted = true,
           cleanupStatus = null,
@@ -436,7 +439,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                   bindings.configureVideoProjection(videoSettings, reason)
                 },
                 startVideoProjection =
-                    if (SpatialCompositorVideoStartupPolicy.shouldStart(videoSettings)) {
+                    if (!bindings.deferOwnNativeStart() && SpatialCompositorVideoStartupPolicy.shouldStart(videoSettings)) {
                       { bindings.startVideoProjection(videoSettings, reason) }
                     } else {
                       null
@@ -459,6 +462,7 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                   ) else 0L
                 },
                 cleanup = bindings.cleanup,
+                deferNativeStart = bindings.deferOwnNativeStart,
             )
         )
     if (!startSequence.admitted) {
@@ -485,7 +489,11 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
         SpatialOpenXrRouteModule.spatialEnvironmentDepthProviderStarted(
             nativeEnvironmentDepthStartMask
         )
-    val startMask = requireNotNull(startSequence.startMask)
+    val startMask = startSequence.startMask
+    if (startMask == null) {
+      bindings.marker("quest-source-set-carrier-retained nativeStartDeferred=true sourcePixelsObserved=false ${launchFence.markerFields()}")
+      return@sourceLifecycle
+    }
     bindings.marker(
         CameraHwbProjectionModule.rawProjectionNativeStartRequestedMarker(
             surfaceValid = surfaceValid,
@@ -668,6 +676,19 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
         identity,
         context,
     )
+  }
+
+  fun startOwnSourceSetCommonGraph(): Boolean {
+    val retained = synchronized(rawLayerPublicationMonitor) {
+      Triple(activeRenderSurface, activeLayerFence, activeRenderSurface?.isValid == true)
+    }
+    val surface = retained.first ?: return false
+    val fence = retained.second ?: return false
+    if (!retained.third || !bindings.privateLayerOverrideLifecycleCurrent(fence.launchChallenge)) return false
+    val start = bindings.startSourceSetCommonGraph ?: return false
+    // One means the existing native actor accepted this retained surface. Pixels require real source freshness.
+    return start(surface, CAMERA_HWB_PROJECTION_WIDTH_PX, CAMERA_HWB_PROJECTION_HEIGHT_PX,
+        CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED) == 1L
   }
 
   private fun createObservedLayerForNewLaunch(

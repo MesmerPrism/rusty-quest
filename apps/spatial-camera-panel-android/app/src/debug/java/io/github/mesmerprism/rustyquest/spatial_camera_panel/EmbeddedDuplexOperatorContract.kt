@@ -35,13 +35,14 @@ internal object EmbeddedDuplexOperatorContract {
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
   enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
-    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT }
+    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, POLICY_READ, POLICY_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
   data class Request(
       val route: Route,
       val challenge: String,
       val roleId: String? = null,
       val draft: EmbeddedDuplexEnrollmentDraft? = null,
       val reviewSha256: String? = null,
+      val policy: LongArray? = null,
   )
 
   fun callerIsShell(uid: Int): Boolean = uid == Process.SHELL_UID
@@ -63,6 +64,16 @@ internal object EmbeddedDuplexOperatorContract {
       METHOD_PAIR_STATUS -> Route.PAIR_STATUS
       METHOD_PAIR_SESSION -> Route.PAIR_SESSION
       METHOD_START_PREFLIGHT -> Route.START_PREFLIGHT
+      "concurrent_arm" -> Route.CONCURRENT_ARM
+      "concurrent_status" -> Route.CONCURRENT_STATUS
+      "policy_read" -> Route.POLICY_READ
+      "policy_update" -> Route.POLICY_UPDATE
+      "start" -> Route.START
+      "renew_authority" -> Route.RENEW_AUTHORITY
+      "peer_stop" -> Route.PEER_STOP
+      "peer_revoke" -> Route.PEER_REVOKE
+      "peer_status" -> Route.PEER_STATUS
+      "whole_app_close" -> Route.WHOLE_APP_CLOSE
       else -> throw IllegalArgumentException("operator-method-invalid")
     }
     val expected = when (route) {
@@ -70,10 +81,21 @@ internal object EmbeddedDuplexOperatorContract {
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
       Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.CLOSE_NO_MEDIA,
-      Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT -> emptySet()
+      Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.POLICY_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
+      Route.POLICY_UPDATE -> setOf("center", "middle", "outer", "geometry", "brightness", "strength")
     }
     require(fields.keys == expected) { "operator-fields-invalid" }
-    if (route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER ||
+    if (route == Route.POLICY_UPDATE) {
+      val words = arrayOf("center", "middle", "outer", "geometry", "brightness", "strength").mapIndexed { index, name ->
+        val value = fields[name] as? Int ?: throw IllegalArgumentException("policy type")
+        require(value in 0..(if (index < 4) 1 else 2))
+        value.toLong()
+      }.toLongArray()
+      return Request(route, argument, policy = words)
+    }
+    if (route in setOf(Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE)) return Request(route, argument)
+    if (route == Route.POLICY_READ || route == Route.CONCURRENT_ARM || route == Route.CONCURRENT_STATUS ||
+        route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER ||
         route == Route.CLOSE_NO_MEDIA || route == Route.PAIR_STATUS ||
         route == Route.PAIR_SESSION || route == Route.START_PREFLIGHT)
       return Request(route, argument)

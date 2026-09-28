@@ -1052,6 +1052,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     transition_right_camera_image: bool,
     packed_normalizer: Option<(&mut PackedSbsNormalizer, &AhbVulkanSampledImage, bool)>,
     public_guide_targets: Option<&mut SpatialPublicGuideTargets>,
+    stereo_sources: Option<crate::spatial_public_multistack_runtime::StereoRecordingInputs<'_>>,
     elapsed_seconds: f32,
     video_renderer: Option<&mut SpatialVideoProjectionRenderer>,
     video_frame: Option<&SpatialVideoProjectionFrame>,
@@ -1145,6 +1146,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let retained_unused_video_descriptor = video_renderer
         .as_deref()
         .and_then(SpatialVideoProjectionRenderer::retained_unused_descriptor_binding);
+    let stereo_selected=stereo_sources.is_some();
     let prepared_video = match (video_renderer, video_frame) {
         (Some(renderer), Some(frame))
             if video_settings.active()
@@ -1198,6 +1200,10 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     {
         false
     } else if let Some(targets) = public_guide_targets.as_deref_mut() {
+        if let Some(inputs) = stereo_sources {
+            guide_record = targets.record_stereo_source_banks(device,command_buffer,gpu_timestamps,
+                frame_slot,elapsed_seconds,inputs)?;
+        } else {
         guide_record = targets.record_spatial_public_guide_passes(
             device,
             command_buffer,
@@ -1209,6 +1215,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             projection_guard_band.source_overscan_uv,
             guide_plan,
         )?;
+        }
         let sampling_ready = guide_record.complete()
             && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
         if sampling_ready {
@@ -1286,6 +1293,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                     descriptor_set_layout,
                     resource_lease,
                 )?;
+                if prepare_status.ready() {targets.prepare_stereo_video_layout(device,descriptor_set_layout)?;}
                 projection_zone_prepare_status = prepare_status.marker_token();
                 projection_zone_ready = prepare_status.ready();
                 if projection_zone_ready {
@@ -1416,7 +1424,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 );
         }
         rendered
-    } else if public_projection_ready {
+    } else if public_projection_ready && !stereo_selected {
         public_guide_targets
             .as_deref()
             .ok_or_else(|| "public-guide-targets-missing-after-ready".to_string())?
@@ -1433,7 +1441,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     } else {
         false
     };
-    if camera_projection_visible && !projected_by_public_stack {
+    if camera_projection_visible && !projected_by_public_stack && !stereo_selected {
         record_camera_hwb_fallback_projection(
             device,
             command_buffer,

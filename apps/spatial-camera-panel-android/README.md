@@ -131,6 +131,29 @@ starts with explicit OpenXR handles. It emits a `channel=hand-adapter` receipt;
 Spatial SDK scene mapping, hand rendering, capture, and product policy remain
 app-local. Stopping the bridge is the rollback and leaves the adapter inert.
 
+## Concurrent Own and Peer stereo inputs
+
+The explicitly selected concurrent-input route uses one app-owned stereo camera
+capture actor. Own is its retained local packed image; Peer is a separately
+retained decoded subscription. Peer Start, Stop, Revoke and restart preserve
+Own capture and the common renderer. Whole-app close separately joins actual
+camera callbacks, consumer fences, media owners and control-endpoint teardown.
+An uncertain callback or fence remains Pending; a stop request is not terminal
+cleanup.
+
+The selected profile requests 60 Hz capture. Sensor, renderer and encoder rates
+must be observed separately; configured cadence and successful submission do
+not prove delivered frames. Each origin retains its actual process/source
+identity, pair timestamps and content version. CPU leases and observed GPU
+holds are independent, with explicit finite slot, byte and GPU-use limits.
+
+Center, Middle, Outer and geometry can select Own or Peer independently, while
+brightness and strength policies remain separate. Each bank retains its exact
+source and policy revision until the real submission fence retires. The
+unselected route retains the existing single-source shader/uniform ABI and
+capture behavior. Source compilation and host protocol checks establish no
+headset, mapped-pixel, sustained-rate or physical-cleanup acceptance.
+
 ## Public Scope
 
 - Spatial SDK panel registration, placement, scaling, and headlock controls.

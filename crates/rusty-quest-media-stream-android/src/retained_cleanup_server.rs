@@ -413,6 +413,7 @@ mod tests {
         ) -> Result<AuthenticatedOwnerEffect, String> {
             self.0.fetch_add(1, Ordering::SeqCst);
             let readback = AndroidMediaOwnerReadback {
+                remote_cleanup: None,
                 schema_id: ANDROID_MEDIA_READBACK_SCHEMA.into(),
                 capability: target.capability.clone(),
                 executor_generation: target.executor_generation,
@@ -701,5 +702,133 @@ mod tests {
         .unwrap();
         assert_eq!(restarted.handle(&request).unwrap(), first);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn independent_target_stop_nested_proof_preserves_actual_raw_effect() {
+        use crate::{
+            retained_cleanup_prepared_signing_bytes, RemoteRetainedCleanupEffect,
+            RetainedCleanupPreparedStop,
+        };
+        let (request, coordinator, projection, target) = fixture();
+        let executor = TestSigner(SigningKey::from_bytes(&[28; 32]), "key.peer.b.1");
+        let key = executor.0.verifying_key().to_bytes();
+        let mut source_ticket = target.clone();
+        source_ticket.capability = "source.capability".into();
+        source_ticket.action_id = "source.action".into();
+        source_ticket.executor_generation = 21;
+        source_ticket.expected_runtime_revision = 19;
+        source_ticket.media_acceptance_authority_revision = 23;
+        let mut prepared = RetainedCleanupPreparedStop {
+            schema_id: "rusty.quest.android.media.retained_cleanup_prepared_stop.v1".into(),
+            prepare_request_sha256: format!("sha256:{}", "a".repeat(64)),
+            dispatch_id: request.dispatch_id.clone(),
+            target_preparation_revision: 2,
+            source_ticket: source_ticket.clone(),
+            target_ticket: target.clone(),
+            authority: projection.clone(),
+            signer_key_id: executor.key_id().into(),
+            signature_base64: String::new(),
+        };
+        prepared.signature_base64 = encode_signature_base64(
+            &executor
+                .sign(&retained_cleanup_prepared_signing_bytes(&prepared).unwrap())
+                .unwrap(),
+        );
+        let mut server = RetainedCleanupDispatchServer::restore(
+            "peer.b".into(),
+            executor.key_id().into(),
+            Source {
+                projection,
+                target: target.clone(),
+                key: coordinator.0.verifying_key().to_bytes(),
+                calls: Arc::new(AtomicUsize::new(0)),
+            },
+            SuccessRegistry(Arc::new(AtomicUsize::new(0))),
+            executor,
+            Clock,
+            RetainedCleanupReplaySnapshot::default(),
+            Store,
+        )
+        .unwrap();
+        let response_bytes = server.handle(&request).unwrap();
+        let proof = RemoteRetainedCleanupEffect {
+            schema_id: "rusty.quest.android.media.remote_retained_cleanup_effect.v1".into(),
+            prepared,
+            commit: request,
+            response_bytes: response_bytes.clone(),
+            enrolled_target_key: key,
+        };
+        let actual = proof.verify(&source_ticket, "key.peer.b.1", &key).unwrap();
+        let raw = actual.readback_json.clone();
+        let wrapper = proof
+            .clone()
+            .source_readback(&source_ticket, "key.peer.b.1", &key)
+            .unwrap();
+        assert_ne!(wrapper.capability, actual.readback.capability);
+        assert_eq!(
+            wrapper.expected_runtime_revision,
+            source_ticket.expected_runtime_revision
+        );
+        assert_eq!(
+            wrapper.remote_cleanup.as_ref().unwrap().response_bytes,
+            response_bytes
+        );
+        assert_eq!(
+            wrapper
+                .remote_cleanup
+                .as_ref()
+                .unwrap()
+                .verify(&source_ticket, "key.peer.b.1", &key)
+                .unwrap()
+                .readback_json,
+            raw
+        );
+        crate::validate_readback(&source_ticket, &wrapper).unwrap();
+        let ordinary = serde_json::to_value(&actual.readback).unwrap();
+        assert!(ordinary.get("remote_cleanup").is_none());
+        let mut changed = source_ticket.clone();
+        changed.lease_id = "lease.revoker".into();
+        assert!(proof.verify(&changed, "key.peer.b.1", &key).is_err());
+        let mut tampered = proof.clone();
+        tampered.prepared.target_ticket.action_id = "unprepared".into();
+        assert!(tampered
+            .verify(&source_ticket, "key.peer.b.1", &key)
+            .is_err());
+        let mut tampered = proof.clone();
+        tampered.response_bytes[5] ^= 1;
+        assert!(tampered
+            .verify(&source_ticket, "key.peer.b.1", &key)
+            .is_err());
+        assert!(proof
+            .verify(&source_ticket, "key.peer.b.1", &[3; 32])
+            .is_err());
+        let mut forged = wrapper;
+        forged.provider_state_revision += 1;
+        assert!(crate::validate_readback(&source_ticket, &forged).is_err());
+    }
+    #[test]
+    fn target_derivation_uses_only_retained_original_start_and_fresh_native_identity() {
+        let (_, _, _, mut original) = fixture();
+        original.operation = MediaStreamPlatformOperation::Start;
+        original.action_kind = MediaStreamOwnerActionKind::Start;
+        original.sequence = 7;
+        let stop = crate::derive_retained_target_stop(&original, 71, &"c".repeat(32)).unwrap();
+        assert_ne!(stop.capability, original.capability);
+        assert_ne!(stop.action_id, original.action_id);
+        assert_eq!(stop.executor_generation, 71);
+        assert_eq!(stop.sequence, 1);
+        assert_eq!(stop.client_id, original.client_id);
+        assert_eq!(stop.lease_id, original.lease_id);
+        assert_eq!(
+            stop.media_acceptance_authority_revision,
+            original.media_acceptance_authority_revision
+        );
+        assert_eq!(
+            stop.expected_runtime_revision,
+            original.expected_runtime_revision
+        );
+        assert!(crate::derive_retained_target_stop(&stop, 71, &"c".repeat(32)).is_err());
+        assert!(crate::derive_retained_target_stop(&original, 0, &"c".repeat(32)).is_err());
+        assert!(crate::derive_retained_target_stop(&original, 71, "caller-pointer").is_err());
     }
 }

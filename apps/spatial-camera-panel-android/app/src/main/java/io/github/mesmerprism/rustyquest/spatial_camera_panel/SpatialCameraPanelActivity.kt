@@ -1608,6 +1608,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         read = cameraHwbProjectionRawCarrierCoordinator::readNativeSource,
         readWords = ::nativeReadSpatialVideoProjectionSource,
         restartLocal = cameraHwbProjectionRawCarrierCoordinator::restartLocalAcquisition,
+        startOwn = cameraHwbProjectionRawCarrierCoordinator::startOwnSourceSetCommonGraph,
+        stopWholeProjection = { stopCameraHwbProjectionPanel("concurrent-qualification-whole-app-close"); Unit },
     )
   }
   @Volatile private var embeddedDuplexAttachmentGeneration = 0L
@@ -2082,6 +2084,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
             },
             startPeerCommonGraph = ::nativeStartSpatialPeerProjectionCommonGraph,
+            startSourceSetCommonGraph = ::nativeStartSourceSetCommonGraph,
+            deferOwnNativeStart = io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative::captureRouteSelected,
             updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
             startNative = ::nativeStartCameraHwbProjectionProbeWithFence,
             updateFromViewer = { reason, forceLog ->
@@ -3511,6 +3515,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   override fun onDestroy() {
     EmbeddedDuplexDiagnosticActivityGate.paused(this)
     embeddedDuplexActivityDestroying = true
+    io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .OwnStereoCaptureRuntime.currentForApplication()?.requestStopOwn()
     // Keep the lifecycle executor available until the fixture has completed its
     // display barrier. Fencing it while waiting on the diagnostic can deadlock
     // a callback that needs that executor.
@@ -5076,6 +5082,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       producerSession: Long,
       producerEpoch: Long,
   ): LongArray
+
+  private external fun nativeStartSourceSetCommonGraph(surface: AndroidSurface, width: Int, height: Int, frameCount: Int): Long
 
   private external fun nativeStartSpatialPeerProjectionCommonGraph(
       routeGeneration: Long,

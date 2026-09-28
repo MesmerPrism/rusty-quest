@@ -404,7 +404,12 @@ impl ProjectionReadback {
 
     pub(crate) fn observe_control(&mut self, settings: ProjectionZoneCompositorSettings) {
         let toggle = settings.outer_stretch_option_flags & PROJECTION_READBACK_TOGGLE != 0;
-        let Some(serial) = self.toggle_edges.observe(toggle) else {
+        let requested=crate::spatial_stereo_qualification::take_requested_readback();
+        let Some(serial) = self.toggle_edges.observe(toggle).or_else(|| {
+            if !requested{return None;}
+            self.toggle_edges.next_serial=self.toggle_edges.next_serial.checked_add(1)?;
+            Some(self.toggle_edges.next_serial)
+        }) else {
             return;
         };
         if self.in_flight.is_some() {
@@ -623,6 +628,10 @@ impl ProjectionReadback {
         }
         let bytes = std::slice::from_raw_parts(mapped, staging.bytes as usize);
         let format = self.format.expect("format validated before submission");
+        let hash=bytes.iter().fold(0xcbf29ce484222325u64,|value,byte|(value^u64::from(*byte)).wrapping_mul(0x100000001b3));
+        crate::spatial_stereo_qualification::readback_complete(identity.frame_id,identity.surface_generation,
+            plan.points.len() as u64,hash,match format{StoredPixelFormat::Rgba8=>1,StoredPixelFormat::Bgra8=>2},
+            self.width,self.height,identity.recorded_flags,identity.region_contract_version);
         emit_samples(
             identity,
             &plan,
@@ -737,6 +746,7 @@ impl ProjectionReadback {
     }
 
     fn log_unavailable(&self, identity: CaptureIdentity, reason: &str) {
+        crate::spatial_stereo_qualification::readback_unavailable();
         log_marker(format!(
             "status=projection-producer-readback-unavailable serial={} reason={} selectedFormat={:?} selectedColorSpace={:?} selectedCompositeAlpha={:?} surfaceUsageTransferSrcSupported={} nonfatal=true runtimeCrash=false",
             identity.serial, reason, self.vk_format, self.color_space, self.composite_alpha, self.transfer_src_supported,

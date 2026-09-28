@@ -4,6 +4,8 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 public final class EmbeddedDuplexRuntimeStatus {
     public final String state;
     public final boolean displayAttached;
+    public final String ownAppCaptureState;
+    public final String cleanupScope;
     public final String runtimeConfigSha256;
     public final String enrollmentRecordSha256;
 
@@ -18,9 +20,21 @@ public final class EmbeddedDuplexRuntimeStatus {
                         && !enrollmentRecordSha256.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("runtime status invalid");
         }
+        this.ownAppCaptureState = "disabled";
+        this.cleanupScope = "whole_product";
         this.state = state;
         this.displayAttached = displayAttached;
         this.runtimeConfigSha256 = runtimeConfigSha256;
         this.enrollmentRecordSha256 = enrollmentRecordSha256;
+    }
+    EmbeddedDuplexRuntimeStatus(EmbeddedDuplexRuntimeStatus peerStatus, String ownAppCaptureState) {
+        if (!("Idle".equals(ownAppCaptureState) || "Starting".equals(ownAppCaptureState)
+                || "Live".equals(ownAppCaptureState) || "StopPending".equals(ownAppCaptureState)))
+            throw new IllegalArgumentException("Own app capture state invalid");
+        this.state = peerStatus.state; this.displayAttached = peerStatus.displayAttached;
+        this.runtimeConfigSha256 = peerStatus.runtimeConfigSha256;
+        this.enrollmentRecordSha256 = peerStatus.enrollmentRecordSha256;
+        this.ownAppCaptureState = ownAppCaptureState;
+        this.cleanupScope = "peer_subscription_only";
     }
 }

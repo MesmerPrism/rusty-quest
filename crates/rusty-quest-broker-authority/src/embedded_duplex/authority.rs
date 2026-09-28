@@ -1,4 +1,4 @@
-//! Borrowed façade over the one live Broker and durable peer Runtime Host.
+//! Borrowed faÃ§ade over the one live Broker and durable peer Runtime Host.
 
 use std::sync::{Arc, RwLock};
 
@@ -266,6 +266,21 @@ impl QuestEmbeddedDuplexAuthority {
             .map_err(host_error)
     }
 
+    /// Refreshes the same retained signing keys only from accepted current-key mutual proof.
+    pub fn refresh_concurrent_pair_credentials(
+        &self, proof: &ManifoldCommonLanReciprocalEd25519Receipt, now_ms: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldConcurrentPairCredentialRefreshReceipt, String> {
+        write_peer(&self.peer)?.refresh_concurrent_pair_credentials(proof, now_ms).map_err(host_error)
+    }
+
+    /// Advances an accepted same-session signed scope without replacing its decision identity.
+    pub fn apply_common_lan_session_renewal(
+        &self, proposal: &ManifoldCommonLanPeerSessionProposal,
+        reciprocal: &ManifoldCommonLanReciprocalEd25519Receipt, now_ms: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldConcurrentPairSessionRenewalReceipt, String> {
+        write_peer(&self.peer)?.apply_common_lan_session_renewal(proposal, reciprocal, now_ms).map_err(host_error)
+    }
+
     /// Revalidates an accepted pair session against live peer authority and time.
     #[must_use]
     pub fn current_common_lan_session(
@@ -484,6 +499,22 @@ impl QuestEmbeddedDuplexAuthority {
         executor_peer_id: &DottedId,
         now_ms: u64,
     ) -> Result<RetainedCleanupAuthorityProjection, String> {
+        self.retained_cleanup_projection_inner(grant_id,requester_id,requester_lease_id,authority_peer_id,executor_peer_id,now_ms,false)
+    }
+
+    /// Derives a local registry cleanup projection with both peer identities genuinely local.
+    /// Remote retained-cleanup protocol validators continue to require distinct peers.
+    pub fn retained_local_cleanup_projection(
+        &self,grant_id:&DottedId,requester_id:&DottedId,requester_lease_id:&DottedId,
+        local_peer_id:&DottedId,now_ms:u64,
+    )->Result<RetainedCleanupAuthorityProjection,String> {
+        self.retained_cleanup_projection_inner(grant_id,requester_id,requester_lease_id,local_peer_id,local_peer_id,now_ms,true)
+    }
+
+    fn retained_cleanup_projection_inner(
+        &self,grant_id:&DottedId,requester_id:&DottedId,requester_lease_id:&DottedId,
+        authority_peer_id:&DottedId,executor_peer_id:&DottedId,now_ms:u64,local:bool,
+    )->Result<RetainedCleanupAuthorityProjection,String> {
         let target =
             self.retained_cleanup_target(grant_id, requester_id, requester_lease_id, now_ms)?;
         let broker = read_broker(&self.broker)?;
@@ -511,7 +542,7 @@ impl QuestEmbeddedDuplexAuthority {
             || &topology.responder_peer_id == authority_peer_id)
             && (&topology.initiator_peer_id == executor_peer_id
                 || &topology.responder_peer_id == executor_peer_id)
-            && authority_peer_id != executor_peer_id;
+            && (local || authority_peer_id != executor_peer_id);
         if !peers_match
             || target.terminal_route_sha256 != typed_sha256(route)?
             || target.provider_epoch_id != snapshot.provider_epoch_id

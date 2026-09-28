@@ -18,6 +18,9 @@
 #include <vector>
 #include <unistd.h>
 
+#ifndef RQ_SOURCE_BANKS_FOREIGN_OWNERSHIP
+#define RQ_SOURCE_BANKS_FOREIGN_OWNERSHIP 0
+#endif
 namespace {
 
 constexpr char kLayerName[] = "XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff";
@@ -214,6 +217,8 @@ struct ProbeState {
   bool vulkanDeviceExternalSemaphoreFdEnumerationCallable = false;
   bool vulkanDeviceExternalSemaphoreFdAugmented = false;
   bool vulkanDeviceExternalSemaphoreFdRequested = false;
+  bool vulkanDeviceForeignQueueOwnershipEnabled = false;
+  VkDevice foreignQueueOwnershipDevice = VK_NULL_HANDLE;
   YcbcrFeatureStructSource vulkanDeviceYcbcrFeatureStructSource =
       YcbcrFeatureStructSource::kNone;
 };
@@ -1133,6 +1138,12 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL xrCreateVulkanDeviceKHR(
           createInfo->pfnGetInstanceProcAddr,
           VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
           &extensionEnumerationCallable);
+  constexpr bool foreignOwnershipRequested = RQ_SOURCE_BANKS_FOREIGN_OWNERSHIP == 1;
+  bool foreignOwnershipEnumerationCallable = false;
+  const bool foreignOwnershipSupported = foreignOwnershipRequested && createInfo != nullptr &&
+      queryDeviceExtensionSupport(observedVulkanInstance,createInfo->vulkanPhysicalDevice,
+          createInfo->pfnGetInstanceProcAddr,VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME,
+          &foreignOwnershipEnumerationCallable);
   bool swapchainEnumerationCallable = false;
   const bool swapchainPhysicallySupported =
       createInfo != nullptr && queryDeviceExtensionSupport(
@@ -1304,6 +1315,10 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL xrCreateVulkanDeviceKHR(
       forwardedExtensionNames.push_back(VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME);
       externalSemaphoreFdAugmented = true;
     }
+    if (foreignOwnershipRequested && foreignOwnershipSupported &&
+        !forwardedHasExtension(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME)) {
+      forwardedExtensionNames.push_back(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME);
+    }
     forwardedVkInfo.enabledExtensionCount =
         static_cast<uint32_t>(forwardedExtensionNames.size());
     forwardedVkInfo.ppEnabledExtensionNames = forwardedExtensionNames.data();
@@ -1331,7 +1346,7 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL xrCreateVulkanDeviceKHR(
   const bool illegalFeatureChain =
       featureInspection.source == YcbcrFeatureStructSource::kIllegalDuplicate ||
       (augmentationAttempted && !augmentationLegal);
-  const bool preflightFailClosed = malformedExtensionName ||
+  const bool preflightFailClosed = (foreignOwnershipRequested && !foreignOwnershipSupported) || malformedExtensionName ||
       !finalExtensionSetUnique || !requiredCapabilitiesSupported || illegalFeatureChain;
   const bool swapchainForwarded = !preflightFailClosed &&
       (swapchainRequestedBefore || swapchainAugmented);
@@ -1428,6 +1443,13 @@ extern "C" XRAPI_ATTR XrResult XRAPI_CALL xrCreateVulkanDeviceKHR(
       const bool createSucceeded =
           result == XR_SUCCESS &&
           (vulkanResult == nullptr || *vulkanResult == VK_SUCCESS);
+      gState.vulkanDeviceForeignQueueOwnershipEnabled = foreignOwnershipRequested &&
+          foreignOwnershipSupported && foreignOwnershipEnumerationCallable &&
+          forwardedHasExtension(VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME) &&
+          result == XR_SUCCESS && vulkanResult != nullptr && *vulkanResult == VK_SUCCESS &&
+          vulkanDevice != nullptr && *vulkanDevice != VK_NULL_HANDLE;
+      gState.foreignQueueOwnershipDevice = gState.vulkanDeviceForeignQueueOwnershipEnabled
+          ? *vulkanDevice : VK_NULL_HANDLE;
       gState.vulkanDeviceSwapchainRequested = swapchainForwarded && createSucceeded;
       gState.vulkanDeviceAhbRequested = ahbForwarded && createSucceeded;
       gState.vulkanDeviceYcbcrExtensionRequested =
@@ -2772,7 +2794,10 @@ int32_t abiV2GetDeviceBinding(rq_spatial_depth_device_binding_v2* outBinding) {
       (gState.vulkanDeviceSwapchainRequested ? 1U << 1U : 0U) |
       (gState.vulkanDeviceAhbRequested ? 1U << 2U : 0U) |
       (gState.vulkanDeviceYcbcrFeatureRequested ? 1U << 3U : 0U) |
-      (gState.vulkanDeviceExternalSemaphoreFdRequested ? 1U << 4U : 0U);
+      (gState.vulkanDeviceExternalSemaphoreFdRequested ? 1U << 4U : 0U) |
+      (gState.vulkanDeviceForeignQueueOwnershipEnabled &&
+          gState.foreignQueueOwnershipDevice == gState.sdkVulkanBinding.device
+          ? RQ_SPATIAL_DEPTH_CAP_FOREIGN_QUEUE_OWNERSHIP_V2 : 0U);
   return RQ_DEPTH_GPU_STATUS_OK;
 }
 

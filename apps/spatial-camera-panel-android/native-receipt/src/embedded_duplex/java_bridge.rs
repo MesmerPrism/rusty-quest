@@ -143,8 +143,24 @@ impl JavaOwnerCallbacks {
         ticket: &AndroidMediaExecutionTicket,
         compensate: bool,
     ) -> Result<AuthenticatedOwnerEffect, String> {
-        let authority_json = serde_json::to_string(&authority)
-            .map_err(|_| "java_bridge.authority_json".to_owned())?;
+        self.execute_json_callback(
+            "executeAndVerify",
+            serde_json::to_string(&authority)
+                .map_err(|_| "java_bridge.authority_json".to_owned())?,
+            ticket,
+            compensate,
+        )
+    }
+
+    fn execute_json_callback(
+        &self,
+        method: &str,
+        authority_json: String,
+        ticket: &AndroidMediaExecutionTicket,
+        compensate: bool,
+    ) -> Result<AuthenticatedOwnerEffect, String> {
+        let authority_json =
+            Ok::<_, String>(authority_json).map_err(|_| "java_bridge.authority_json".to_owned())?;
         let ticket_json =
             serde_json::to_string(ticket).map_err(|_| "java_bridge.ticket_json".to_owned())?;
         if authority_json.len() > MAX_EFFECT_JSON_BYTES || ticket_json.len() > MAX_EFFECT_JSON_BYTES
@@ -163,7 +179,7 @@ impl JavaOwnerCallbacks {
         self.capability.require_live()?;
         let call = env.call_method(
             self.callback.as_obj(),
-            "executeAndVerify",
+            method,
             "(Ljava/lang/String;Ljava/lang/String;Z)Ljava/lang/String;",
             &[
                 JValue::Object(&authority_object),
@@ -408,4 +424,62 @@ fn valid_dotted_id(value: &str) -> bool {
 
 fn is_dotted_edge(value: u8) -> bool {
     value.is_ascii_lowercase() || value.is_ascii_digit()
+}
+
+impl rusty_quest_media_stream_android::RetainedCleanupRegistry for JavaOwnerCallbacks {
+    fn execute_and_verify(
+        &mut self,
+        authority: &rusty_quest_media_stream_android::RetainedCleanupAuthorityProjection,
+        target: &AndroidMediaExecutionTicket,
+        mode: AndroidMediaExecutionMode,
+    ) -> Result<AuthenticatedOwnerEffect, String> {
+        self.execute_json_callback(
+            "executeRetainedCleanupAndVerify",
+            serde_json::to_string(authority).map_err(|_| "cleanup authority encode")?,
+            target,
+            mode == AndroidMediaExecutionMode::CompensateUncertain,
+        )
+    }
+}
+impl rusty_quest_media_stream_android::RetainedCleanupReplayStore for JavaOwnerCallbacks {
+    fn commit(
+        &mut self,
+        snapshot: &rusty_quest_media_stream_android::RetainedCleanupReplaySnapshot,
+    ) -> Result<(), String> {
+        self.persist_replay(
+            "persistRetainedCleanupReplay",
+            serde_json::to_string(snapshot).map_err(|_| "cleanup replay encode")?,
+        )
+    }
+}
+impl JavaOwnerCallbacks {
+    pub(crate) fn persist_cleanup_preparations(&self, text: &str) -> Result<(), String> {
+        self.persist_replay("persistCleanupPreparations", text.to_owned())
+    }
+    pub(crate) fn load_cleanup_preparations(&self) -> Result<String, String> {
+        self.load_bounded_cleanup_string("loadCleanupPreparations")
+    }
+    pub(crate) fn load_retained_cleanup_replay(&self) -> Result<String, String> {
+        self.load_bounded_cleanup_string("loadRetainedCleanupReplay")
+    }
+    fn load_bounded_cleanup_string(&self, method: &str) -> Result<String, String> {
+        let mut env = self.attached()?;
+        let call = env.call_method(self.callback.as_obj(), method, "()Ljava/lang/String;", &[]);
+        let object = self
+            .checked_call(&mut env, call, "cleanup replay load")?
+            .l()
+            .map_err(|_| "cleanup replay type")?;
+        if object.is_null() {
+            return Err("cleanup replay absent".into());
+        }
+        let value = JString::from(object);
+        let result = env.get_string(&value);
+        let text: String = self
+            .checked_call(&mut env, result, "cleanup replay string")?
+            .into();
+        if text.len() > MAX_REPLAY_JSON_BYTES {
+            return Err("cleanup replay bounds".into());
+        }
+        Ok(text)
+    }
 }

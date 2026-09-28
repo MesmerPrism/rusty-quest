@@ -1,5 +1,20 @@
 //! Stateful standalone/embedded server entrypoint over one Manifold broker runtime.
 
+#[path = "broker_peer_admission.rs"]
+mod broker_peer_admission;
+pub use broker_peer_admission::{QuestConcurrentPeerCommand, QuestConcurrentPeerMutation};
+
+#[path = "broker_peer_routes.rs"]
+mod broker_peer_routes;
+
+#[path = "broker_concurrent_renewal.rs"]
+mod broker_concurrent_renewal;
+pub use broker_concurrent_renewal::QuestConcurrentAuthorityRenewalReceipt;
+#[path = "broker_revoker_cleanup.rs"]
+mod broker_revoker_cleanup;
+pub use broker_revoker_cleanup::QuestConcurrentPeerRevokerCleanupReceipt;
+
+
 use rusty_manifold_admission::{
     ManifoldAdmissionRequest, ManifoldAdmissionRevocationRequest, ManifoldAdmissionUseRequest,
     ADMISSION_REQUEST_SCHEMA, ADMISSION_REVOCATION_REQUEST_SCHEMA, ADMISSION_USE_REQUEST_SCHEMA,
@@ -489,6 +504,9 @@ pub struct QuestBrokerAuthorityRuntime {
     media_bindings: Vec<QuestBrokerMediaSessionProductBinding>,
     peer_runtime_host: Option<Arc<RwLock<ManifoldPeerRuntimeHost>>>,
     media_sessions: BTreeMap<DottedId, MediaStreamSessionProductRuntime>,
+    concurrent_revoker_authority: Option<broker_peer_routes::QuestConcurrentRevokerAuthority>,
+    concurrent_renewal: broker_concurrent_renewal::QuestConcurrentRenewalState,
+    concurrent_revoker_cleanup: broker_revoker_cleanup::QuestConcurrentRevokerCleanupState,
 }
 
 /// Process-local owner that distinguishes same-provider rebind from restart.
@@ -778,6 +796,19 @@ impl QuestBrokerRuntimeProvider {
         client_id: &DottedId,
         now_ms: u64,
     ) -> Result<String, QuestBrokerRuntimeError> {
+        let response = self.complete_media_stop_for_cleanup_typed(client_id, now_ms)?;
+        serde_json::to_string(&response).map_err(QuestBrokerRuntimeError::Encode)
+    }
+
+    /// Completes the native Stop while retaining its actual typed effect receipt.
+    ///
+    /// # Errors
+    /// Rejects missing/non-Stop actions and executor or lifecycle failures.
+    pub fn complete_media_stop_for_cleanup_typed(
+        &mut self,
+        client_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<QuestBrokerMediaCompletionResponse, QuestBrokerRuntimeError> {
         let runtime = self
             .runtime
             .as_mut()
@@ -795,7 +826,7 @@ impl QuestBrokerRuntimeProvider {
             executor.as_mut(),
             &mut self.next_media_execution_nonce,
         )?;
-        serde_json::to_string(&response).map_err(QuestBrokerRuntimeError::Encode)
+        Ok(response)
     }
 
     /// Continues an already retained failed-Start abort at its next owner.
@@ -1067,6 +1098,9 @@ impl QuestBrokerAuthorityRuntime {
             media_bindings,
             peer_runtime_host,
             media_sessions: BTreeMap::new(),
+            concurrent_revoker_authority: None,
+            concurrent_renewal: Default::default(),
+            concurrent_revoker_cleanup: Default::default(),
         })
     }
 
@@ -2432,6 +2466,8 @@ fn derive_grant_capabilities(
                         || capability.as_str().starts_with("capability.sink.")))
                 || (peer_session_selected
                     && capability.as_str() == "capability.peer.session.observe")
+                || (media_selected && peer_session_selected
+                    && capability.as_str() == "capability.manifold.control_lease.renew")
         })
         .cloned()
         .collect()
@@ -2473,6 +2509,19 @@ fn build_initial_control_lease_authority(
                 .map_err(|_| QuestBrokerRuntimeError::ControlLeaseBootstrap)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let bootstrap_capabilities = capabilities.clone();
+    if config.embedded_duplex.is_some() {
+        for packaged in &config.packaged_authority.client_locks {
+            let client: QuestBrokerClientLockSpec = serde_json::from_str(&packaged.client_lock_json)
+                .map_err(|_| QuestBrokerRuntimeError::ClientLockInvalid)?;
+            if derive_grant_capabilities(&config.product_lock, &client).iter()
+                .any(|cap| cap.as_str() == "capability.manifold.control_lease.renew") {
+                capabilities.push(DottedId::new("capability.manifold.control_lease.renew")
+                    .expect("static renewal capability"));
+                break;
+            }
+        }
+    }
     capabilities.sort();
     if capabilities.windows(2).any(|pair| pair[0] >= pair[1]) {
         return Err(QuestBrokerRuntimeError::ControlLeaseBootstrap);
@@ -2519,7 +2568,7 @@ fn build_initial_control_lease_authority(
         active_stream_subscriptions: Vec::new(),
     };
     let mut sources = Vec::with_capacity(requested_leases.len());
-    for (lease, required_capability) in requested_leases.iter().zip(capabilities) {
+    for (lease, required_capability) in requested_leases.iter().zip(bootstrap_capabilities) {
         let lease_suffix = lease
             .lease_id
             .as_str()
@@ -3004,6 +3053,59 @@ impl std::error::Error for QuestBrokerRuntimeError {}
 
 #[cfg(test)]
 mod tests {
+    include!("pair_renewal_tests.rs");
+    include!("coupled_renewal_tests.rs");
+    include!("broker_peer_routes_tests.rs");
+    fn concurrent_provider() -> QuestBrokerRuntimeProvider {
+        let runtime = runtime_for(QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession], "command.media.session.start", true, "91");
+        QuestBrokerRuntimeProvider { runtime: Some(runtime), ..Default::default() }
+    }
+
+    #[test]
+    fn concurrent_fixed_start_reads_live_revisions_after_prior_admission() {
+        let mut provider = concurrent_provider();
+        let runtime = provider.runtime.as_mut().unwrap();
+        // Prior real admission advances state without any media preparation.
+        let (_, _) = admit(runtime, "command.session.list");
+        let before = runtime.evidence().unwrap().runtime.admission_snapshot.authority_revision;
+        let c = caller();
+        let result = provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
+            c.sending_uid, &c.package_name, &c.signing_certificate_sha256, 4_000, &"92".repeat(32)).unwrap();
+        assert!(result.mutation.accepted);
+        assert!(result.issue.receipt.applied && result.authorized_use.receipt.applied);
+        assert!(result.issue.receipt.resulting_authority_revision > before);
+        assert_eq!(result.client_id, identity().client_id);
+        assert_eq!(result.mutation.platform_action.unwrap().operation, MediaStreamPlatformOperation::Start);
+        assert!(provider.runtime.as_ref().unwrap().evidence().unwrap().media_pending_action.is_some());
+    }
+
+    #[test]
+    fn concurrent_fixed_command_rejects_foreign_installed_certificate_before_writes() {
+        let mut provider = concurrent_provider();
+        let before = provider.evidence_json().unwrap();
+        let c = caller();
+        assert!(provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
+            c.sending_uid, &c.package_name, &"ff".repeat(32), 4_000, &"93".repeat(32)).is_err());
+        assert_eq!(before, provider.evidence_json().unwrap());
+    }
+
+    #[test]
+    fn concurrent_fixed_command_rejects_expired_lease_and_replayed_entropy() {
+        let mut provider = concurrent_provider();
+        let c = caller();
+        let before = provider.evidence_json().unwrap();
+        assert!(provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
+            c.sending_uid, &c.package_name, &c.signing_certificate_sha256, 60_001, &"94".repeat(32)).is_err());
+        assert_eq!(before, provider.evidence_json().unwrap());
+        provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
+            c.sending_uid, &c.package_name, &c.signing_certificate_sha256, 4_000, &"95".repeat(32)).unwrap();
+        let prepared = provider.runtime.as_ref().unwrap().evidence().unwrap().media_pending_action;
+        assert!(provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
+            c.sending_uid, &c.package_name, &c.signing_certificate_sha256, 4_001, &"95".repeat(32)).is_err());
+        assert_eq!(prepared, provider.runtime.as_ref().unwrap().evidence().unwrap().media_pending_action);
+    }
+
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
     use rusty_manifold_admission::{

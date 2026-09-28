@@ -1,6 +1,7 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
 
 import android.os.Looper
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialPeerProjectionDecoderIdentity
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialVideoSource
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialVideoSourceCarrierContext
@@ -21,11 +22,38 @@ internal class EmbeddedDuplexDisplayCoordinator(
     private val read: (Long) -> SpatialVideoSourceNativeReadback?,
     private val readWords: (Long) -> LongArray,
     private val restartLocal: (Long) -> Boolean,
+    private val startOwn: (() -> Boolean)? = null,
+    private val stopWholeProjection: (() -> Unit)? = null,
 ) : EmbeddedDuplexDisplay {
   private var ownedPeerGeneration = 0L
   private var retirementGeneration = 0L
+  private var ownedDecoderToken = 0L
+  private var ownedReaderGeneration = 0L
+  private fun concurrentOwn(): Boolean = OwnStereoCaptureRuntime.currentForApplication() != null
+  override fun activateOwnProjection() = serialized {
+    val capture = checkNotNull(OwnStereoCaptureRuntime.currentForApplication()?.retainedCapture()) {
+      "accepted Own capture unavailable"
+    }
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+    while (!capture.fresh()) {
+      check(System.nanoTime() < deadline) { "Own producer readiness remains Pending" }
+      Thread.sleep(10)
+    }
+    check(startOwn?.invoke() == true) { "retained Own source carrier unavailable" }
+    Unit
+  }
+
+  override fun requestWholeProjectionStop() = serialized {
+    checkNotNull(stopWholeProjection) { "whole projection stop unavailable" }.invoke()
+    Unit
+  }
+
   override fun ensureLocalCaptureStopped(): Long = serialized {
     val current = routing.snapshot()
+    if (concurrentOwn()) {
+      check(EmbeddedDuplexNative.localCameraQuiescent()) { "old native local acquisition remains Pending" }
+      return@serialized current.generation
+    }
     if (current.requested == SpatialVideoSource.Peer) {
       check(EmbeddedDuplexNative.localCameraQuiescent()) { "local capture still owns camera resources" }
       current.generation
@@ -44,6 +72,8 @@ internal class EmbeddedDuplexDisplayCoordinator(
     val staged = routing.beginEmbeddedProjectionPeerRequest()
     ownedPeerGeneration = staged.generation
     retirementGeneration = 0L
+    ownedDecoderToken = 0L
+    ownedReaderGeneration = 0L
     val context = checkNotNull(carrier()) { "projection carrier unavailable" }
     val selected = routing.executeRequest(staged.generation, context, "embedded-sink-arm")
     check(selected.failed == null && selected.readback?.hasStages(SpatialVideoSourceStage.ProviderSelected) == true) {
@@ -57,6 +87,8 @@ internal class EmbeddedDuplexDisplayCoordinator(
     check(bind(SpatialPeerProjectionDecoderIdentity(routeGeneration, decoderToken, readerGeneration))) {
       "native embedded decoder binding rejected"
     }
+    ownedDecoderToken = decoderToken
+    ownedReaderGeneration = readerGeneration
   }
 
   override fun activatePeerProjection(routeGeneration: Long, decoderToken: Long, readerGeneration: Long) = serialized {
@@ -74,6 +106,17 @@ internal class EmbeddedDuplexDisplayCoordinator(
   }
 
   override fun retirePeerProjection() = serialized {
+    if (concurrentOwn()) {
+      if (ownedPeerGeneration != 0L && ownedDecoderToken != 0L && ownedReaderGeneration != 0L) {
+        check(OwnPackedPoolNative.nativeRetirePeerSource(ownedPeerGeneration, ownedDecoderToken, ownedReaderGeneration)) {
+          "exact Peer source retirement remains Pending"
+        }
+      }
+      // Removal is source-only. Incoming decoder and submitted GPU fences own terminal proof.
+      ownedPeerGeneration = 0L; ownedDecoderToken = 0L; ownedReaderGeneration = 0L
+      retirementGeneration = 0L
+      return@serialized Unit
+    }
     if (ownedPeerGeneration != 0L) {
       val current = routing.snapshot()
       if (retirementGeneration == 0L) {
@@ -97,6 +140,7 @@ internal class EmbeddedDuplexDisplayCoordinator(
 
   override fun restoreLocalAfterProductCleanup() = serialized {
     retirePeerProjection()
+    if (concurrentOwn()) return@serialized Unit
     val disabled = request(SpatialVideoSource.Disabled)
     awaitSource(disabled, SpatialVideoSource.Disabled)
     check(EmbeddedDuplexNative.localCameraQuiescent()) { "native capture cleanup incomplete" }

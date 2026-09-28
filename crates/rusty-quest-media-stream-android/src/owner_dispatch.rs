@@ -1743,7 +1743,8 @@ fn encode_hex(bytes: &[u8]) -> String {
     out
 }
 
-pub(crate) fn encode_signature_base64(signature: &[u8; 64]) -> String {
+/// Canonical padded Base64 for closed signed owner/cleanup protocols.
+pub fn encode_signature_base64(signature: &[u8; 64]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut encoded = String::with_capacity(88);
     for chunk in signature.chunks(3) {
@@ -1766,7 +1767,8 @@ pub(crate) fn encode_signature_base64(signature: &[u8; 64]) -> String {
     encoded
 }
 
-pub(crate) fn decode_signature_base64(text: &str) -> Result<[u8; 64], String> {
+/// Strict canonical padded Base64 signature decoding.
+pub fn decode_signature_base64(text: &str) -> Result<[u8; 64], String> {
     if text.len() != 88 || !text.ends_with("==") {
         return Err("invalid Ed25519 signature base64 length".to_owned());
     }
@@ -2007,6 +2009,7 @@ mod tests {
             }
             *self.calls.lock().expect("calls") += 1;
             let readback = AndroidMediaOwnerReadback {
+                remote_cleanup: None,
                 schema_id: crate::ANDROID_MEDIA_READBACK_SCHEMA.to_owned(),
                 capability: ticket.capability.clone(),
                 executor_generation: ticket.executor_generation,

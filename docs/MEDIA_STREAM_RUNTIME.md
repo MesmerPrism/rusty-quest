@@ -73,6 +73,22 @@ encoder/render callbacks promptly, bound its queues, and gate reconnect on
 configuration plus a keyframe. Camera disconnect/error and terminal cleanup
 must appear in effective state rather than leaving a stale active label.
 
+### Shared packed capture
+
+An embedded host may own one `PackedStereoCaptureOwner` independently of a
+Peer media subscription. `createSharedCapturePipeline` attaches a bounded
+encoder consumer to an already started, configuration-matching owner; closing
+that subscription does not stop app-owned capture. Capture and encoder EGL
+contexts retain separate content leases and real consumer fences. Mailbox
+pressure drops bounded complete inputs rather than creating an unbounded
+queue or declaring a blocked fence ready.
+
+A selected profile can request 60 Hz on supporting cameras. Measure actual
+sensor, renderer and encoder cadence separately. Pair identity and exact
+sensor timestamps survive encoding and decoding; an allocation handle alone
+is not a frame identity. Whole-capture shutdown keeps the capture context
+alive until actual camera closure and all retained consumers retire.
+
 Run the bounded host and source checks before Android compilation:
 
 ```powershell

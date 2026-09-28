@@ -22,6 +22,7 @@ final class PackedStereoGlCompositor implements Closeable {
         void onPairPresented(PackedStereoFramePairer.Pair pair, long presentationTimeUs);
 
         void onCompositorFailure(Throwable error);
+        default boolean canRetireCaptureInputs() { return true; }
     }
 
     private static final int EGL_RECORDABLE_ANDROID = 0x3142;
@@ -32,6 +33,10 @@ final class PackedStereoGlCompositor implements Closeable {
     private final Object signal = new Object();
     private final PackedStereoStreamMetadata.Layout layout;
     private final Surface encoderInputSurface;
+    private final PackedStereoPoolExecutor poolExecutor;
+    private volatile boolean physicallyRetired;
+    // Failed native initialization/retirement cannot confer permission to destroy its EGL context.
+    private volatile GlState quarantinedGl;
     private final boolean synthetic;
     private final Listener listener;
     private final PackedStereoFramePairer pairer;
@@ -59,13 +64,26 @@ final class PackedStereoGlCompositor implements Closeable {
     private int leftPending;
     private int rightPending;
     private SyntheticRequest syntheticRequest;
+    private PackedStereoPoolExecutor.Pool activePool;
 
     PackedStereoGlCompositor(
             PackedStereoStreamMetadata.Layout layout,
             Surface encoderInputSurface,
             boolean synthetic,
             Listener listener) throws Exception {
+        this(layout, encoderInputSurface, synthetic, listener, null);
+    }
+
+    PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
+            PackedStereoPoolExecutor executor, Listener listener) throws Exception {
+        this(layout, null, false, listener, executor);
+    }
+
+    private PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
+            Surface encoderInputSurface, boolean synthetic, Listener listener,
+            PackedStereoPoolExecutor executor) throws Exception {
         this.layout = layout;
+        this.poolExecutor = executor;
         this.encoderInputSurface = encoderInputSurface;
         this.synthetic = synthetic;
         this.listener = listener;
@@ -77,6 +95,10 @@ final class PackedStereoGlCompositor implements Closeable {
             }
         }, "rusty-remote-camera-packed-gl");
         this.thread.start();
+        if (executor == null) awaitStarted();
+    }
+
+    void awaitStarted() throws Exception {
         if (!ready.await(START_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
             close();
             throw new IllegalStateException("packed GL compositor startup timed out");
@@ -152,11 +174,8 @@ final class PackedStereoGlCompositor implements Closeable {
 
     @Override
     public void close() {
-        stopRequested = true;
-        synchronized (signal) {
-            signal.notifyAll();
-        }
-        thread.interrupt();
+        requestStop();
+        if (poolExecutor == null) thread.interrupt();
         try {
             thread.join(2_000L);
         } catch (InterruptedException interrupted) {
@@ -165,12 +184,26 @@ final class PackedStereoGlCompositor implements Closeable {
         pairer.clear();
     }
 
+    void requestStop() {
+        stopRequested = true;
+        synchronized (signal) { signal.notifyAll(); }
+    }
+
     boolean isTerminated() { return !thread.isAlive(); }
+    boolean isPhysicallyRetired() { return physicallyRetired && isTerminated(); }
 
     private void run() {
         GlState gl = null;
+        PackedStereoPoolExecutor.Pool pool = null;
+        boolean poolCreationAttempted = false;
         try {
             gl = new GlState(layout, encoderInputSurface, !synthetic);
+            if (poolExecutor != null) {
+                gl.makePbufferCurrent();
+                poolCreationAttempted = true;
+                pool = poolExecutor.createForCurrentContext(layout.packedWidth, layout.packedHeight);
+                if (pool == null) throw new IllegalStateException("native capture pool unavailable");
+            }
             if (!synthetic) {
                 leftCameraSurface = gl.leftInput.cameraSurface;
                 rightCameraSurface = gl.rightInput.cameraSurface;
@@ -195,6 +228,7 @@ final class PackedStereoGlCompositor implements Closeable {
                             }
                         });
             }
+            activePool = pool;
             gpuCompositorActive = true;
         } catch (Throwable error) {
             startupFailure = error;
@@ -203,8 +237,10 @@ final class PackedStereoGlCompositor implements Closeable {
         }
         if (startupFailure != null) {
             notifyFailure(startupFailure);
-            if (gl != null) {
-                gl.close();
+            if (gl != null && !poolCreationAttempted) { gl.close(); physicallyRetired = true; }
+            else if (gl != null) {
+                quarantinedGl = gl;
+                if (pool != null) drainPoolOnCaptureContext(pool, gl);
             }
             return;
         }
@@ -220,6 +256,7 @@ final class PackedStereoGlCompositor implements Closeable {
                             && rightPending == 0
                             && syntheticRequest == null) {
                         signal.wait(50L);
+                        if (pool != null) break; // producer/consumer fence progress without camera callbacks
                     }
                     consumeLeft = leftPending;
                     consumeRight = rightPending;
@@ -231,6 +268,7 @@ final class PackedStereoGlCompositor implements Closeable {
                 if (stopRequested) {
                     break;
                 }
+                if (pool != null) { gl.makePbufferCurrent(); pool.pollReady(); }
                 if (request != null) {
                     renderSynthetic(gl, request);
                 }
@@ -249,7 +287,8 @@ final class PackedStereoGlCompositor implements Closeable {
             notifyFailure(error);
         } finally {
             gpuCompositorActive = false;
-            gl.close();
+            if (pool == null) { gl.close(); physicallyRetired = true; }
+            else { quarantinedGl = gl; drainPoolOnCaptureContext(pool, gl); }
         }
     }
 
@@ -319,6 +358,27 @@ final class PackedStereoGlCompositor implements Closeable {
         }
     }
 
+    // Capture-only path: no encoder window submission on this actor. It intentionally does not call
+    // onPairPresented: native producer-fence polling supplies image publication.
+    private boolean composePairIntoPool(GlState gl, PackedStereoFramePairer.Pair pair,
+            PackedStereoPoolExecutor.Pool pool) throws Exception {
+        PackedStereoPoolExecutor.Write write = pool.beginWrite();
+        if (write == null) return false;
+        boolean pendingRegistered = false;
+        try {
+            gl.composeIntoFramebuffer(write.framebuffer,
+                    gl.leftInput.snapshotTextures[pair.left.textureSlot],
+                    gl.rightInput.snapshotTextures[pair.right.textureSlot]);
+            pool.finishWrite(write, new PackedStereoPoolExecutor.PairIdentity(pair.pairId,
+                    pair.left.sourceFrame, pair.right.sourceFrame,
+                    pair.left.sensorTimestampNs, pair.right.sensorTimestampNs));
+            pendingRegistered = true;
+            return true; // producer Pending registered, not frame ready/terminal
+        } finally {
+            if (!pendingRegistered) pool.quarantineWrite(write, "pack-or-fence-export-failed");
+        }
+    }
+
     private void composePair(GlState gl, PackedStereoFramePairer.Pair pair) throws Exception {
         long startNs = SystemClock.elapsedRealtimeNanos();
         int leftTexture = gl.leftInput.snapshotTextures[pair.left.textureSlot];
@@ -326,13 +386,38 @@ final class PackedStereoGlCompositor implements Closeable {
         long presentationNs = Math.max(
                 pair.left.sensorTimestampNs,
                 pair.right.sensorTimestampNs);
-        gl.compose(leftTexture, rightTexture, presentationNs);
+        if (activePool != null) {
+            if (!composePairIntoPool(gl, pair, activePool)) return;
+        } else {
+            gl.compose(leftTexture, rightTexture, presentationNs);
+        }
         long elapsedNs = Math.max(0L, SystemClock.elapsedRealtimeNanos() - startNs);
         composedFrames++;
         compositionFreshness.progress(SystemClock.elapsedRealtime());
         compositorTimeTotalNs += elapsedNs;
         compositorTimeMaxNs = Math.max(compositorTimeMaxNs, elapsedNs);
-        listener.onPairPresented(pair, presentationNs / 1_000L);
+        if (activePool == null) listener.onPairPresented(pair, presentationNs / 1_000L);
+    }
+
+    private void drainPoolOnCaptureContext(PackedStereoPoolExecutor.Pool pool, GlState gl) {
+        try {
+            gl.makePbufferCurrent();
+            pool.stopAccepting();
+            while (!pool.retireStopped()) {
+                pool.pollReady();
+                // A timeout only schedules another observation, never a release.
+                try { synchronized (signal) { signal.wait(50L); } }
+                catch (InterruptedException ignored) { /* keep the physical ownership actor */ }
+            }
+            while (!listener.canRetireCaptureInputs()) {
+                try { synchronized (signal) { signal.wait(50L); } }
+                catch (InterruptedException ignored) { /* actual camera callbacks own the barrier */ }
+            }
+            gl.closeCaptureContext(); quarantinedGl = null; physicallyRetired = true;
+        } catch (Throwable pendingFailure) {
+            // Preserve resources and an explicit nonterminal barrier after an uncertain platform failure.
+            notifyFailure(pendingFailure);
+        }
     }
 
     private CaptureCorrelation correlation(String eye) {
@@ -551,12 +636,8 @@ final class PackedStereoGlCompositor implements Closeable {
             };
             pbufferSurface = EGL14.eglCreatePbufferSurface(display, configs[0], pbufferAttributes, 0);
             int[] windowAttributes = {EGL14.EGL_NONE};
-            encoderSurface = EGL14.eglCreateWindowSurface(
-                    display,
-                    configs[0],
-                    encoderInputSurface,
-                    windowAttributes,
-                    0);
+            encoderSurface = encoderInputSurface == null ? EGL14.EGL_NO_SURFACE : EGL14.eglCreateWindowSurface(
+                    display, configs[0], encoderInputSurface, windowAttributes, 0);
             makePbufferCurrent();
             oesProgram = createProgram(
                     vertexShader(),
@@ -633,7 +714,30 @@ final class PackedStereoGlCompositor implements Closeable {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
         }
 
+        // New capture-only caller. Pool ticket/metadata must be registered by
+        // the injected native executor; this method cannot publish an image.
+        void composeIntoFramebuffer(int outputFramebuffer, int leftTexture, int rightTexture) {
+            require(outputFramebuffer > 0, "invalid packed framebuffer");
+            makePbufferCurrent();
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, outputFramebuffer);
+            try {
+                require(GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)
+                        == GLES20.GL_FRAMEBUFFER_COMPLETE, "packed framebuffer incomplete");
+                GLES20.glViewport(0, 0, layout.packedWidth, layout.packedHeight);
+                GLES20.glClearColor(0f, 0f, 0f, 1f);
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+                GLES20.glViewport(0, 0, layout.perEyeWidth, layout.perEyeHeight);
+                drawTexture(textureProgram, GLES20.GL_TEXTURE_2D, leftTexture, identity());
+                GLES20.glViewport(layout.perEyeWidth, 0, layout.perEyeWidth, layout.perEyeHeight);
+                drawTexture(textureProgram, GLES20.GL_TEXTURE_2D, rightTexture, identity());
+                require(GLES20.glGetError() == GLES20.GL_NO_ERROR, "packed draw failed");
+            } finally {
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
+            }
+        }
+
         void compose(int leftTexture, int rightTexture, long presentationNs) {
+            require(encoderSurface != EGL14.EGL_NO_SURFACE, "legacy encoder Surface absent");
             require(EGL14.eglMakeCurrent(
                     display,
                     encoderSurface,
@@ -677,7 +781,9 @@ final class PackedStereoGlCompositor implements Closeable {
         }
 
         @Override
-        public void close() {
+        public void close() { destroyContext(false); }
+        void closeCaptureContext() { destroyContext(true); }
+        private void destroyContext(boolean preserveProcessDisplay) {
             try {
                 makePbufferCurrent();
                 leftInput.close();
@@ -692,10 +798,14 @@ final class PackedStereoGlCompositor implements Closeable {
                     EGL14.EGL_NO_SURFACE,
                     EGL14.EGL_NO_SURFACE,
                     EGL14.EGL_NO_CONTEXT);
-            EGL14.eglDestroySurface(display, encoderSurface);
-            EGL14.eglDestroySurface(display, pbufferSurface);
-            EGL14.eglDestroyContext(display, context);
-            EGL14.eglTerminate(display);
+            boolean windowClosed = encoderSurface == EGL14.EGL_NO_SURFACE
+                    || EGL14.eglDestroySurface(display, encoderSurface);
+            boolean pbufferClosed = EGL14.eglDestroySurface(display, pbufferSurface);
+            boolean contextClosed = EGL14.eglDestroyContext(display, context);
+            if (preserveProcessDisplay) {
+                require(windowClosed && pbufferClosed && contextClosed, "capture EGL retirement");
+                EGL14.eglReleaseThread();
+            } else EGL14.eglTerminate(display);
         }
 
         private static String vertexShader() {
