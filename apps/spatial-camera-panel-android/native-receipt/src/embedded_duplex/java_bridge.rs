@@ -456,6 +456,27 @@ impl JavaOwnerCallbacks {
     pub(crate) fn persist_cleanup_preparations(&self, text: &str) -> Result<(), String> {
         self.persist_replay("persistCleanupPreparations", text.to_owned())
     }
+    pub(crate) fn owner_failure_diagnostic(&self) -> Result<serde_json::Value, String> {
+        let mut env = self.attached()?;
+        let call = env.call_method(self.callback.as_obj(), "ownerFailureDiagnostic", "()Ljava/lang/String;", &[]);
+        let value = self.checked_call(&mut env, call, "java_bridge.owner_diagnostic_call")?
+            .l().map_err(|_| "java_bridge.owner_diagnostic_type")?;
+        if value.is_null() { return Err("java_bridge.owner_diagnostic_null".into()); }
+        let text: String = env.get_string(&JString::from(value)).map_err(|_| "java_bridge.owner_diagnostic_string")?.into();
+        if text.len() > 256 { return Err("java_bridge.owner_diagnostic_bounds".into()); }
+        let value: serde_json::Value = serde_json::from_str(&text).map_err(|_| "java_bridge.owner_diagnostic_json")?;
+        let stage = value.get("stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_stage")?;
+        let sink = value.get("sink_stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_sink")?;
+        let action = value.get("action").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_action")?;
+        let code = value.get("code").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_code")?;
+        if !matches!(stage,"NONE"|"CALLBACK_FENCE"|"PROJECTION_BINDING"|"REGISTRY_BINDING"|"INCOMING_FENCE"|"LOCAL_QUIESCENCE"|"PROVIDER_EXECUTION"|"RECEIPT_VERIFICATION"|"INCOMING_ARM_VERIFICATION")
+            || !matches!(sink,"NONE"|"PEER_PROJECTION"|"READER_STAGE"|"READER_IDENTITY"|"RECEIVER_CREATE"|"PROVIDER_GETTER"|"PEER_BIND"|"RECEIVER_EFFECT")
+            || !matches!(action,"NONE"|"ARM_RECEIVER"|"ARM_CLEANUP"|"START"|"STOP"|"CLEANUP"|"BEFORE_TICKET")
+            || !matches!(code,"NONE"|"OWNER_EFFECT_REJECTED")
+            || (stage=="NONE") != (code=="NONE")
+            || value.as_object().is_none_or(|v|v.len()!=4) {return Err("java_bridge.owner_diagnostic_closed_values".into());}
+        Ok(value)
+    }
     pub(crate) fn load_cleanup_preparations(&self) -> Result<String, String> {
         self.load_bounded_cleanup_string("loadCleanupPreparations")
     }

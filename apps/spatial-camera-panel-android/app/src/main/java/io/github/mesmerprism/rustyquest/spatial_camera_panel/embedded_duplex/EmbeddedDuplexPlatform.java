@@ -142,10 +142,24 @@ final class EmbeddedDuplexPlatform {
 
     // Public visibility is solely for GetMethodID. This package-private object is
     // retained by native GlobalRef and is never exported through an Android component.
+    enum OwnerStage { NONE, CALLBACK_FENCE, PROJECTION_BINDING, REGISTRY_BINDING,
+        INCOMING_FENCE, LOCAL_QUIESCENCE, PROVIDER_EXECUTION, RECEIPT_VERIFICATION, INCOMING_ARM_VERIFICATION }
+    private volatile OwnerStage failedOwnerStage = OwnerStage.NONE;
+    private volatile String failedSinkStage = "NONE";
+    private volatile String failedOwnerAction = "NONE";
+    public String ownerFailureDiagnostic() throws Exception {
+        return new JSONObject().put("stage", failedOwnerStage.name())
+                .put("sink_stage", failedSinkStage).put("action", failedOwnerAction).put("code", failedOwnerStage == OwnerStage.NONE
+                        ? "NONE" : "OWNER_EFFECT_REJECTED").toString();
+    }
     public String executeAndVerify(String authorityJson, String ticketJson, boolean compensate) throws Exception {
+        OwnerStage stage = OwnerStage.CALLBACK_FENCE;
+        MediaOwnerAction ticket = null;
+        try {
         requireProcessCallback();
         JSONObject authority = new JSONObject(authorityJson);
-        MediaOwnerAction ticket = MediaOwnerAction.parse(ticketJson);
+        ticket = MediaOwnerAction.parse(ticketJson);
+        stage = OwnerStage.PROJECTION_BINDING;
         if (!"rusty.quest.c1.owner_projection.v1".equals(authority.getString("$schema"))
                 || !localPeerId.equals(authority.getString("executor_peer_id"))
                 || !routeConfigurationSha256.equals(authority.getString("route_configuration_sha256"))
@@ -155,22 +169,28 @@ final class EmbeddedDuplexPlatform {
                 || !ticket.leaseId().equals(authority.getString("authority_runtime_lease_id"))) {
             throw new IllegalStateException("platform projection binding rejected");
         }
+        stage = OwnerStage.REGISTRY_BINDING;
         PackagedAndroidMediaOwnerRegistry current = registry;
         if (current == null) throw new IllegalStateException("platform registry absent");
         requireProcessCallback();
         EmbeddedDuplexActivationGate gate = activationGate;
         EmbeddedDuplexActivationGate.MediaTicket activationTicket = activationTicket(ticket);
+        stage = OwnerStage.INCOMING_FENCE;
         if (gate != null) gate.beforeOwnerEffect(authority, activationTicket, compensate);
         if (!compensate && "source".equals(ticket.ownerKind()) && "start".equals(ticket.actionKind())) {
+            stage = OwnerStage.LOCAL_QUIESCENCE;
             display.ensureLocalCaptureStopped();
             if (!EmbeddedDuplexNative.localCameraQuiescent()) {
                 throw new IllegalStateException("local Camera2 ownership remains live");
             }
         }
+        stage = OwnerStage.PROVIDER_EXECUTION;
         String readback = current.execute(ticketJson, compensate);
+        stage = OwnerStage.RECEIPT_VERIFICATION;
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
         if (verified == null) throw new IllegalStateException("live provider evidence rejected");
         if (gate != null) {
+            stage = OwnerStage.INCOMING_ARM_VERIFICATION;
             gate.afterVerifiedOwnerEffect(authority, activationTicket,
                     new JSONObject(readback), new JSONObject(verified), compensate);
         }
@@ -179,6 +199,25 @@ final class EmbeddedDuplexPlatform {
         result.put("readback_json", readback);
         result.put("verified", new JSONObject(verified));
         return result.toString();
+        } catch (Exception failure) {
+            // Retain the primary failure within this incarnation. Cleanup failures must not erase it.
+            synchronized (this) {
+                if (failedOwnerStage == OwnerStage.NONE) {
+                    EmbeddedDuplexResources currentResources = resources;
+                    failedSinkStage = ticket != null && "sink".equals(ticket.ownerKind())
+                            && currentResources != null ? currentResources.incoming().failedArmStage() : "NONE";
+                    String kind = ticket == null ? "NONE" : ticket.actionKind();
+                    failedOwnerAction = "arm_receiver".equals(kind) ? "ARM_RECEIVER"
+                            : "arm_cleanup".equals(kind) ? "ARM_CLEANUP" : "start".equals(kind) ? "START"
+                            : "stop".equals(kind) ? "STOP" : "cleanup".equals(kind) ? "CLEANUP" : "BEFORE_TICKET";
+                    failedOwnerStage = stage;
+                }
+            }
+            android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=owner-effect-rejected stage="
+                    + stage.name() + " primaryStage=" + failedOwnerStage.name() + " primaryAction=" + failedOwnerAction
+                    + " sinkStage=" + failedSinkStage + " code=OWNER_EFFECT_REJECTED");
+            throw failure;
+        }
     }
 
     // Public visibility is required by the native ProductActivationRegistry callback.

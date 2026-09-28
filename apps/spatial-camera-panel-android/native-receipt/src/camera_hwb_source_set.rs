@@ -468,6 +468,11 @@ unsafe fn render_source_set_common_graph(
     })();
 
     let cleanup_result = owned.teardown();
+    if let Err(error) = &cleanup_result {
+        let stage = source_set_cleanup_failure_stage(error);
+        crate::camera_hwb_marker::log_camera_hwb_marker(format!(
+            "channel=source-set-cleanup status=rejected stage={stage} code=PHYSICAL_RETIREMENT_PENDING"));
+    }
     crate::spatial_stereo_qualification::carrier_cleanup(cleanup_result.is_ok());
     run_result.and(cleanup_result)
 }
@@ -587,4 +592,13 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 )->i64 {
     if surface.is_null(){return 0;}
     unsafe {let window=ANativeWindow_fromSurface(env,surface);start_source_set_common_graph(window.cast(),width.max(64) as u32,height.max(64) as u32,frame_count)}
+}
+
+fn source_set_cleanup_failure_stage(error: &str) -> &'static str {
+    if error.starts_with("peer-device-wait-idle-") { "DEVICE_IDLE" }
+    else if error == "stereo-fence-pending" || error.starts_with("stereo-retirement-fence-") { "SHARED_FENCE" }
+    else if error == "stereo-pool-vk-retirement-pending" || error == "GPU registry poisoned"
+        || error == "pool quota unavailable" || error.starts_with("Vk fence failed; hold quarantined")
+        || error.starts_with("native queue submission failed; exact contents remain quarantined") { "CONTENT_HOLD" }
+    else { "UNKNOWN_RETIREMENT" }
 }

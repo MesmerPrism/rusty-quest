@@ -142,6 +142,7 @@ struct Host {
     installed_signing_certificate_sha256: String,
     peer_lifecycle: Arc<Mutex<Option<peer_lifecycle::State>>>,
     owner_effect_attempted: Arc<AtomicBool>,
+    owner_dispatch_failure: Arc<Mutex<Option<&'static str>>>,
     restored_owner_replay: bool,
 }
 
@@ -792,6 +793,7 @@ fn build_host(
             installed_signing_certificate_sha256,
             peer_lifecycle: Arc::new(Mutex::new(Some(peer_lifecycle::State::default()))),
             owner_effect_attempted: Arc::new(AtomicBool::new(false)),
+            owner_dispatch_failure: Arc::new(Mutex::new(None)),
             restored_owner_replay,
         },
         result,
@@ -985,7 +987,34 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             Checkout::take(host.server.clone())?
                 .get()
                 .handle_frame(&bytes)
-                .map_err(|_| "owner dispatch rejected".to_owned())
+                .map_err(|error| {
+                    let stage = match error.as_str() {
+                        "dispatch frame bounds"|"dispatch frame bounds or magic"|"dispatch frame lengths"|
+                        "metadata length"|"payload length"|"payload digest mismatch"|"invalid dispatch request metadata"|
+                        "invalid ticket payload"|"invalid dispatch request" => "FRAME_DECODE",
+                        "dispatch request binding mismatch" => "TICKET_TARGET_BINDING",
+                        "dispatch request is not currently fresh"|"owner dispatch request is not currently fresh" => "FRESHNESS",
+                        "dispatch signer is not currently enrolled"|"dispatch signature"|"request signature"|
+                        "invalid enrolled key"|"invalid Ed25519 signature base64 length"|
+                        "invalid Ed25519 signature base64 padding"|"invalid Ed25519 signature base64 bytes"|
+                        "non-canonical Ed25519 signature base64"|"invalid Ed25519 signature base64" => "SIGNER_ADMISSION",
+                        "projected signed topology is absent"|"owner projection is stale or altered"|
+                        "owner projection expired or malformed"|"owner projection schema mismatch"|
+                        "owner projection schema/signing mismatch"|"projection schema"|"peer authority lock poisoned" => "CURRENT_AUTHORITY",
+                        "dispatch replay identity collision"|"dispatch replay capacity"|"dispatch replay byte capacity"|
+                        "invalid dispatch replay state" => "REPLAY_BINDING",
+                        "verified readback JSON is invalid"|"verified owner effect mismatch"|
+                        "completed response omitted raw readback"|"invalid dispatch response metadata"|
+                        "invalid readback payload"|"readback payload UTF-8"|"unexpected response payload"|
+                        "invalid dispatch response"|"response metadata encoding" => "RECEIPT_PROOF",
+                        _ if error.starts_with("dispatch pending persistence:")||error.starts_with("java_bridge.replay") => "REPLAY_PERSISTENCE",
+                        _ if error.starts_with("java_bridge.sign") => "RECEIPT_SIGNATURE",
+                        _ => "FRAME_OR_DISPATCH_BOUNDARY",
+                    };
+                    if let Ok(mut failed)=host.owner_dispatch_failure.lock(){if failed.is_none(){*failed=Some(stage);}}
+                    crate::camera_hwb_marker::log_camera_hwb_marker(format!("status=owner-dispatch-rejected stage={stage} code=PRE_EFFECT_OR_RECEIPT_REJECTED"));
+                    "owner dispatch rejected".to_owned()
+                })
         };
         host.capability.require_live()?;
         result

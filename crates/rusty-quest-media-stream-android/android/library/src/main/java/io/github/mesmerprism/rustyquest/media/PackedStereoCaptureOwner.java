@@ -187,7 +187,7 @@ public final class PackedStereoCaptureOwner {
         volatile CameraDevice device;
         volatile CameraCaptureSession session;
         volatile boolean closeRequested, openRequested, openSettled, deviceClosed;
-        volatile boolean sessionRequested, sessionSettled, sessionClosed;
+        volatile boolean sessionRequested, sessionSettled, sessionClosed, sessionConfigurationFailed;
         volatile Throwable error;
         Endpoint(String id, String eye) { this.id = id; this.eye = eye; }
 
@@ -205,7 +205,7 @@ public final class PackedStereoCaptureOwner {
                 manager.openCamera(id, new CameraDevice.StateCallback() {
                     public void onOpened(CameraDevice value) {
                         device = value; openSettled = true; opened.countDown();
-                        if (closeRequested || stopRequested) value.close();
+                        if (closeRequested || stopRequested) requestClose();
                     }
                     public void onDisconnected(CameraDevice value) { failedDevice(value, "camera disconnected"); }
                     public void onError(CameraDevice value, int code) { failedDevice(value, "camera error " + code); }
@@ -230,11 +230,16 @@ public final class PackedStereoCaptureOwner {
                         if (closeRequested || stopRequested) value.close();
                     }
                     public void onConfigureFailed(CameraCaptureSession value) {
-                        session = value; sessionSettled = true;
+                        // Android defines onConfigureFailed as an already-closed session;
+                        // it need not subsequently deliver onClosed.
+                        session = value; sessionConfigurationFailed = true; sessionSettled = true;
                         error = new IllegalStateException("camera session rejected");
-                        value.close(); configured.countDown(); fail(error);
+                        configured.countDown(); fail(error);
                     }
-                    public void onClosed(CameraCaptureSession value) { sessionClosed = true; }
+                    public void onClosed(CameraCaptureSession value) {
+                        sessionClosed = true;
+                        if (closeRequested || stopRequested) closeDeviceAfterSession();
+                    }
                 }));
             } catch (Exception failure) { sessionSettled = true; throw failure; }
             if (!configured.await(5, TimeUnit.SECONDS)) {
@@ -265,10 +270,17 @@ public final class PackedStereoCaptureOwner {
         void requestClose() {
             closeRequested = true;
             CameraCaptureSession active = session;
-            if (active != null) {
+            if (active != null && !sessionConfigurationFailed && !sessionClosed) {
                 try { active.stopRepeating(); } catch (Exception ignored) { }
                 active.close();
             }
+            closeDeviceAfterSession();
+        }
+        void closeDeviceAfterSession() {
+            // Keep the device callback executor alive until its successful session
+            // has drained. Closing the device first can suppress sequence callbacks.
+            if (sessionRequested && (!sessionSettled
+                    || (session != null && !sessionClosed && !sessionConfigurationFailed))) return;
             CameraDevice activeDevice = device;
             if (activeDevice != null) activeDevice.close();
         }
@@ -277,12 +289,12 @@ public final class PackedStereoCaptureOwner {
             if (openRequested && !openSettled) return "OPEN_CALLBACK_PENDING";
             if (device != null && !deviceClosed) return "DEVICE_CLOSE_CALLBACK_PENDING";
             if (sessionRequested && !sessionSettled) return "SESSION_CALLBACK_PENDING";
-            if (session != null && !sessionClosed) return "SESSION_CLOSE_CALLBACK_PENDING";
+            if (session != null && !sessionClosed && !sessionConfigurationFailed) return "SESSION_CLOSE_CALLBACK_PENDING";
             return "TERMINAL";
         }
         boolean retired() {
             return closeRequested && (!openRequested || (openSettled && (device == null || deviceClosed)))
-                    && (!sessionRequested || (sessionSettled && (session == null || sessionClosed)));
+                    && (!sessionRequested || (sessionSettled && (session == null || sessionClosed || sessionConfigurationFailed)));
         }
     }
 }

@@ -45,6 +45,11 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     private volatile long connectionGeneration;
     private volatile boolean surfaceReleased;
     private volatile boolean projectionRetired = true;
+    enum ArmStage { NONE, PEER_PROJECTION, READER_STAGE, READER_IDENTITY, RECEIVER_CREATE,
+        PROVIDER_GETTER, PEER_BIND, RECEIVER_EFFECT }
+    private volatile ArmStage armStage = ArmStage.NONE;
+    private volatile ArmStage failedArmStage = ArmStage.NONE;
+    String failedArmStage() { return failedArmStage.name(); }
 
     public EmbeddedDuplexReceiver(long generation, EmbeddedDuplexDisplay display, String sourceHost,
             int sourcePort, int width, int height, int fpsCap,
@@ -80,11 +85,15 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         preparationRevision++;
         projectionRetired = false;
         try {
+            armStage = ArmStage.PEER_PROJECTION;
             long routeGeneration = display.preparePeerProjection();
+            armStage = ArmStage.READER_STAGE;
             staged = runtimeFactory.stage(width, height, 4, fpsCap, routeGeneration);
+            armStage = ArmStage.READER_IDENTITY;
             if (staged == null || staged.readerGeneration() <= 0L) {
                 throw new IllegalStateException("embedded reader generation unavailable");
             }
+            armStage = ArmStage.RECEIVER_CREATE;
             receiver = runtimeFactory.create(staged, sourceHost, sourcePort,
                     generation, bounds, new PackedStereoMediaReceiver.FrameLifecycleListener() {
                 @Override public boolean onFrameReadyForRender(long receiverGeneration,
@@ -110,14 +119,17 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                     if (connectionGeneration == connection) connectionGeneration = 0L;
                 }
             });
+            armStage = ArmStage.PROVIDER_GETTER;
             if (receiver == null || receiver.provider() == null) {
                 throw new IllegalStateException("embedded receiver unavailable");
             }
             provider = receiver.provider();
+            armStage = ArmStage.PEER_BIND;
             display.bindPeerProjection(staged.routeGeneration(), staged.decoderToken(),
                     staged.readerGeneration());
             preparationState = "prepared";
         } catch (RuntimeException failure) {
+            failedArmStage = armStage;
             preparationState = "preparation_failed";
             preparationRevision++;
             // The registry retains this object, including the exact staged handle.
@@ -172,7 +184,14 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             }
             return cleanupUnprepared(action);
         }
-        MediaProviderReadback result = provider.execute(action, cancellation);
+        MediaProviderReadback result;
+        try {
+            armStage = ArmStage.RECEIVER_EFFECT;
+            result = provider.execute(action, cancellation);
+        } catch (Exception failure) {
+            if ("arm_receiver".equals(action.actionKind())) failedArmStage = armStage;
+            throw failure;
+        }
         if ("stop".equals(action.actionKind()) || "cleanup".equals(action.actionKind())) {
             releaseStoppedReaderAndProjection();
         }
