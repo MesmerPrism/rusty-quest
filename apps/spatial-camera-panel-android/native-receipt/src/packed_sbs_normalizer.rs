@@ -84,6 +84,7 @@ pub(crate) struct PackedSbsNormalizer {
     sampler_ycbcr_conversion: Option<vk::SamplerYcbcrConversion>,
     eyes: [EyeTarget; 2],
     outputs_initialized: bool,
+    source_bottom_up: bool,
 }
 
 impl PackedSbsNormalizer {
@@ -186,7 +187,7 @@ impl PackedSbsNormalizer {
             let push_ranges = [vk::PushConstantRange::default()
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                 .offset(0)
-                .size(mem::size_of::<u32>() as u32)];
+                .size(mem::size_of::<[u32; 2]>() as u32)];
             let pipeline_layout = device
                 .create_pipeline_layout(
                     &vk::PipelineLayoutCreateInfo::default()
@@ -222,12 +223,18 @@ impl PackedSbsNormalizer {
                     build.eyes[1].take().expect("right eye initialized"),
                 ],
                 outputs_initialized: false,
+                source_bottom_up: false,
             })
         })();
         if result.is_err() {
             build.destroy(device);
         }
         result
+    }
+
+    // GL-rendered Own AHBs and decoder Peer AImages have distinct raster origins.
+    pub(crate) fn set_source_bottom_up(&mut self, bottom_up: bool) {
+        self.source_bottom_up = bottom_up;
     }
 
     pub(crate) fn extent(&self) -> vk::Extent2D {
@@ -350,9 +357,10 @@ impl PackedSbsNormalizer {
                     .clear_values(&clear),
                 vk::SubpassContents::INLINE,
             );
+            let words = [eye_index, u32::from(self.source_bottom_up)];
             let push = slice::from_raw_parts(
-                (&eye_index as *const u32).cast::<u8>(),
-                mem::size_of::<u32>(),
+                words.as_ptr().cast::<u8>(),
+                mem::size_of::<[u32; 2]>(),
             );
             device.cmd_push_constants(
                 command_buffer,
