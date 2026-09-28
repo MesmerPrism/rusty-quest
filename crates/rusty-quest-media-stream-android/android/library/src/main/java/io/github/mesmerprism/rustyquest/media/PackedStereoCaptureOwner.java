@@ -9,6 +9,8 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
 import android.hardware.camera2.TotalCaptureResult;
+import android.hardware.camera2.params.OutputConfiguration;
+import android.hardware.camera2.params.SessionConfiguration;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.os.Handler;
 import android.os.HandlerThread;
@@ -18,6 +20,7 @@ import android.view.Surface;
 import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.RejectedExecutionException;
 
 /** App-owned capture. Peer subscriptions never own these cameras or compositor. */
 public final class PackedStereoCaptureOwner {
@@ -194,7 +197,12 @@ public final class PackedStereoCaptureOwner {
                 throw new IllegalStateException("camera unavailable", error);
             sessionRequested = true;
             try {
-                device.createCaptureSession(Collections.singletonList(surface), new CameraCaptureSession.StateCallback() {
+                // API 28+ (library minimum is 29); keep callbacks on the retained camera owner Handler.
+                device.createCaptureSession(new SessionConfiguration(SessionConfiguration.SESSION_REGULAR,
+                        Collections.singletonList(new OutputConfiguration(surface)), command -> {
+                            if (!handler.post(command))
+                                throw new RejectedExecutionException("capture callback owner has stopped");
+                        }, new CameraCaptureSession.StateCallback() {
                     public void onConfigured(CameraCaptureSession value) {
                         session = value; sessionSettled = true; configured.countDown();
                         if (closeRequested || stopRequested) value.close();
@@ -205,7 +213,7 @@ public final class PackedStereoCaptureOwner {
                         value.close(); configured.countDown(); fail(error);
                     }
                     public void onClosed(CameraCaptureSession value) { sessionClosed = true; }
-                }, handler);
+                }));
             } catch (Exception failure) { sessionSettled = true; throw failure; }
             if (!configured.await(5, TimeUnit.SECONDS)) {
                 requestClose(); throw new IllegalStateException("camera session Pending");
