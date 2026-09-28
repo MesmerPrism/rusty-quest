@@ -421,6 +421,10 @@ unsafe fn render_source_set_common_graph(
                         crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::Wait => {}
                         crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseSuccess => {
                             if let Some(reason) = shutdown_reason {
+                                // ReleaseSuccess includes the actual accepted-frame fence observation.
+                                if let Some(mut imports)=stereo_source_imports.take(){
+                                    imports.retire_after_fence(device)?;imports.destroy(device)?;
+                                }
                                 return Err(reason.to_string());
                             }
                             break;
@@ -428,6 +432,10 @@ unsafe fn render_source_set_common_graph(
                         crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseUnsubmittedFailure => {
                             if let Some(proof)=retirement.unsubmitted_proof(){
                                 if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.cancel_stereo_sdk_unsubmitted(proof)?;}
+                                if let Some(mut imports)=stereo_source_imports.take(){
+                                    imports.cancel_sdk_unsubmitted(sdk_binding.session_generation,retirement.request_id,proof)?;
+                                    imports.destroy(device)?;
+                                }
                                 projection_readback.cancel_unsubmitted("peer-spatial-sdk-typed-unsubmitted");
                             }
                             return Err(shutdown_reason.map(str::to_string).unwrap_or_else(|| {
@@ -439,6 +447,10 @@ unsafe fn render_source_set_common_graph(
                             }));
                         }
                         crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseSubmittedFailure => {
+                            // Submitted failure is releasable only after its actual fence observation.
+                            if let Some(mut imports)=stereo_source_imports.take(){
+                                imports.retire_after_fence(device)?;imports.destroy(device)?;
+                            }
                             return Err(shutdown_reason.map(str::to_string).unwrap_or_else(|| {
                                 format!(
                                     "peer-spatial-sdk-submitted-{}-vk-{}",

@@ -1,4 +1,10 @@
-param([string]$RepoRoot)
+param(
+    [string]$RepoRoot,
+    [switch]$ImportCancellationRegression,
+    [string]$PythonExecutable='python',
+    [string]$RustCompiler='rustc',
+    [string]$ImportCancellationOutDir
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -6,6 +12,16 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 }
 $repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
+# Opt-in focused owner regression; physical Vulkan/AHB/SDK effects are mocked.
+# Existing static callers and lifecycle/build prerequisites are unchanged.
+if ($ImportCancellationRegression) {
+    if ([string]::IsNullOrWhiteSpace($ImportCancellationOutDir)) {
+        throw 'ImportCancellationOutDir must name an absent output directory'
+    }
+    & $PythonExecutable (Join-Path $PSScriptRoot 'fixtures/sdk-import-cancellation/check_import_cancellation.py') --repo-root $repoRootPath --output $ImportCancellationOutDir --rust-compiler $RustCompiler
+    if ($LASTEXITCODE -ne 0) { throw 'SDK cancellation/import ownership regression failed' }
+    return
+}
 
 function Read-RequiredText {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
