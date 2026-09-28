@@ -88,3 +88,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_OwnPackedPoolNative_captureRouteSelected(_env:JNIEnv<'_>,_class:JClass<'_>)->jni::sys::jboolean {crate::own_stereo_capture_runtime::capture_route_selected() as u8}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_OwnPackedPoolNative_concurrentPeerAdmission(env:JNIEnv<'_>,_class:JClass<'_>,route:jlong,challenge:jlong,surface:jlong)->jlongArray {
+ let words=crate::own_stereo_capture_runtime::concurrent_peer_admission(route,challenge,surface);
+ let Ok(array)=env.new_long_array(if words.is_some(){5}else{0}) else{return std::ptr::null_mut();};
+ if let Some(words)=words {if env.set_long_array_region(&array,0,&words).is_err(){return std::ptr::null_mut();}}
+ array.into_raw()
+}

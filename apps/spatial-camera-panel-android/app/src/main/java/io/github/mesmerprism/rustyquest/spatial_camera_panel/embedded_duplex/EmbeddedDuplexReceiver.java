@@ -128,13 +128,14 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             display.bindPeerProjection(staged.routeGeneration(), staged.decoderToken(),
                     staged.readerGeneration());
             preparationState = "prepared";
-        } catch (RuntimeException failure) {
+        } catch (Exception failure) {
             failedArmStage = armStage;
             preparationState = "preparation_failed";
             preparationRevision++;
             // The registry retains this object, including the exact staged handle.
             // Its compensating action performs and verifies cleanup, with retries.
-            throw failure;
+            if (failure instanceof RuntimeException) throw (RuntimeException) failure;
+            throw new IllegalStateException("receiver preparation failed", failure);
         }
     }
 

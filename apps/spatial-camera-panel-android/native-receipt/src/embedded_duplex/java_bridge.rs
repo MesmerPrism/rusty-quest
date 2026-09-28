@@ -506,7 +506,7 @@ fn parse_owner_failure_diagnostic(text: &str) -> Result<serde_json::Value, Strin
     let reason = if fields.len() == 5 {
         Some(value.get("provider_reason").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_reason")?)
     } else if fields.len() == 4 { None } else { return Err("java_bridge.owner_diagnostic_closed_values".into()); };
-    if reason.is_some_and(|r| !matches!(r,"NONE"|"TICKET_PARSE"|"STALE_GENERATION"|"UNDECLARED_BINDING"|"REGISTRY_CLOSED"|"PROVIDER_BUSY"|"CAPACITY"|"PREPARATION_ALREADY_ATTEMPTED"|"FOREIGN_READBACK"|"RECEIPT_COLLISION"|"OTHER")
+    if reason.is_some_and(|r| !matches!(r,"NONE"|"TICKET_PARSE"|"STALE_GENERATION"|"UNDECLARED_BINDING"|"REGISTRY_CLOSED"|"PROVIDER_BUSY"|"CAPACITY"|"PREPARATION_ALREADY_ATTEMPTED"|"FOREIGN_READBACK"|"RECEIPT_COLLISION"|"DISPLAY_LOCAL_SHUTDOWN"|"DISPLAY_DISPATCH_FENCED"|"DISPLAY_TRANSITION_TIMEOUT"|"DISPLAY_ADMISSION_REJECTED"|"OTHER")
         || (stage != "PROVIDER_EXECUTION" && r != "NONE")) { return Err("java_bridge.owner_diagnostic_closed_values".into()); }
     if !matches!(stage,"NONE"|"CALLBACK_FENCE"|"PROJECTION_BINDING"|"REGISTRY_BINDING"|"INCOMING_FENCE"|"LOCAL_QUIESCENCE"|"PROVIDER_EXECUTION"|"RECEIPT_VERIFICATION"|"INCOMING_ARM_VERIFICATION")
         || !matches!(sink,"NONE"|"PEER_PROJECTION"|"READER_STAGE"|"READER_IDENTITY"|"RECEIVER_CREATE"|"PROVIDER_GETTER"|"PEER_BIND"|"RECEIVER_EFFECT")

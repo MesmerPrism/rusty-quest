@@ -507,12 +507,15 @@ pub(crate) unsafe fn start_source_set_common_graph(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if owner.claim.generation()==Some(route_generation) && owner.worker.as_ref().is_some_and(|worker|!worker.is_finished()) {
-            ACameraNativeWindow_release(window);return 1;
+            // Reuse only this exact physical carrier; never replace or stop the Own worker.
+            let same_window=owner.window_address==window_address;
+            ACameraNativeWindow_release(window);return if same_window {1} else {0};
         }
         if !owner.claim.claim(route_generation) {
             ACameraNativeWindow_release(window);
             return 0;
         }
+        owner.window_address=window_address;
         owner.cancellation = Some(cancellation.clone());
         let worker_cancellation = cancellation.clone();
         ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_add(1, Ordering::AcqRel);

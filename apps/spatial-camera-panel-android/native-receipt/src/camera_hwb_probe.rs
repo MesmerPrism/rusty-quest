@@ -165,6 +165,7 @@ struct PeerCommonGraphSessionOwner {
     claim: PeerSessionClaimState,
     cancellation: Option<Arc<AtomicBool>>,
     worker: Option<thread::JoinHandle<()>>,
+    window_address: usize,
 }
 
 fn stop_peer_common_graph_session() {
@@ -1132,7 +1133,16 @@ pub(crate) unsafe fn start_peer_common_graph(
     route_generation: i64,
 ) -> i64 {
     if crate::own_stereo_capture_runtime::capture_route_selected() {
-        return start_source_set_common_graph(window,requested_width,requested_height,frame_count);
+        let pending=crate::peer_projection_runtime::read_source(route_generation);
+        if route_generation<=0 || pending.words[1]!=route_generation || pending.words[2]!=crate::peer_projection_runtime::SOURCE_PEER
+            || pending.words[11]!=crate::peer_projection_runtime::RESULT_PENDING || pending.words[3]<=0 || pending.words[4]<=0
+            || !projection_peer_binding_matches(route_generation as u64,pending.words[3] as u64,pending.words[4] as u64) {
+            if !window.is_null(){ACameraNativeWindow_release(window);}return 0;
+        }
+        let result=start_source_set_common_graph(window,requested_width,requested_height,frame_count);
+        if result<=0 {return result;}
+        let attached=crate::peer_projection_runtime::record_peer_common_graph_attached(route_generation);
+        return if attached.words[11]==crate::peer_projection_runtime::RESULT_PENDING {result} else {0};
     }
     if window.is_null() || route_generation <= 0 {
         return 0;

@@ -150,12 +150,16 @@ final class EmbeddedDuplexPlatform {
     private volatile ProviderReason failedProviderReason = ProviderReason.NONE;
     enum ProviderReason { NONE, TICKET_PARSE, STALE_GENERATION, UNDECLARED_BINDING,
         REGISTRY_CLOSED, PROVIDER_BUSY, CAPACITY, PREPARATION_ALREADY_ATTEMPTED,
-        FOREIGN_READBACK, RECEIPT_COLLISION, OTHER }
+        FOREIGN_READBACK, RECEIPT_COLLISION, DISPLAY_LOCAL_SHUTDOWN, DISPLAY_DISPATCH_FENCED, DISPLAY_TRANSITION_TIMEOUT, DISPLAY_ADMISSION_REJECTED, OTHER }
     // Fixed owner-local categories only. Never return or log exception messages or ticket fields.
     static ProviderReason providerReason(Throwable failure) {
         for (int depth = 0; failure != null && depth < 8; depth++, failure = failure.getCause()) {
             String message = failure.getMessage();
+            if (failure instanceof java.util.concurrent.TimeoutException) return ProviderReason.DISPLAY_TRANSITION_TIMEOUT;
             if (message == null) continue;
+            if ((message.equals("embedded receiver requires actual local acquisition shutdown") || message.equals("old native local acquisition remains Pending") || message.equals("local capture still owns camera resources") || message.equals("local camera shutdown incomplete"))) return ProviderReason.DISPLAY_LOCAL_SHUTDOWN;
+            if (message.equals("Activity lifecycle is already fenced")) return ProviderReason.DISPLAY_DISPATCH_FENCED;
+            if (message.startsWith("concurrent Own ") || message.equals("concurrent Peer reservation superseded")) return ProviderReason.DISPLAY_ADMISSION_REJECTED;
             if (message.equals("media execution generation is stale") || message.equals("stale registry generation")) return ProviderReason.STALE_GENERATION;
             if (message.equals("undeclared media provider binding")) return ProviderReason.UNDECLARED_BINDING;
             if (message.equals("no-media registry closed")) return ProviderReason.REGISTRY_CLOSED;
