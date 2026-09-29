@@ -721,6 +721,66 @@ mod tests {
     }
 
     #[test]
+    fn custom_camera_passthrough_keeps_camera_and_hands_with_transparent_exterior() {
+        let options = options_from(&[
+            (PROP_RENDER_MODE, "custom-stereo-projection-passthrough"),
+            (PROP_CAMERA_OUTPUT_MODE, "guide-public"),
+            (PROP_HAND_MESH_INPUT_SOURCE, "live-meta"),
+            (PROP_HAND_MESH_REAL_HANDS_VISIBLE, "true"),
+            (PROP_HAND_MESH_GRAFT_COPIES_ENABLED, "true"),
+            (PROP_ENABLE_SDF_VISUAL, "true"),
+        ]);
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "custom-stereo-projection-passthrough"
+        );
+        assert!(options.render_mode.uses_custom_stereo_projection());
+        assert!(options.render_mode.uses_native_passthrough());
+        assert!(options.render_mode.projection_layer_alpha_blend());
+        assert!(!options.render_mode.uses_solid_black_background());
+        assert_eq!(options.render_mode.camera_runtime_mode(), "camera2-hwb");
+        assert!(options.camera_output_mode.camera_import_enabled());
+        assert!(options.camera_output_mode.guide_projection_enabled());
+        assert!(options.hand_mesh_real_hands_visible);
+        assert!(options.hand_mesh_graft_copies_enabled);
+        assert!(options.sdf_visual_enabled);
+        for eye in 0..2 {
+            assert_eq!(
+                options.render_mode.projection_background_clear(eye),
+                [0.0; 4]
+            );
+        }
+    }
+
+    #[test]
+    fn opaque_camera_route_and_stimulus_volume_keep_opaque_projection_clear() {
+        for token in [
+            "custom-stereo-projection",
+            "native-passthrough-stimulus-volume",
+            "solid-black-hands-and-grafts",
+        ] {
+            let options = options_from(&[(PROP_RENDER_MODE, token)]);
+            assert!(!options.render_mode.projection_layer_alpha_blend());
+            for eye in 0..2 {
+                assert_eq!(options.render_mode.projection_background_clear(eye)[3], 1.0);
+            }
+        }
+        let opaque = options_from(&[(PROP_RENDER_MODE, "custom-stereo-projection")]);
+        assert!(opaque.render_mode.uses_custom_stereo_projection());
+        assert!(!opaque.render_mode.uses_native_passthrough());
+        assert_ne!(
+            opaque.render_mode.projection_background_clear(0),
+            opaque.render_mode.projection_background_clear(1)
+        );
+        let passthrough = options_from(&[(PROP_RENDER_MODE, "native-passthrough-graft-only")]);
+        assert_eq!(
+            passthrough.render_mode.projection_background_clear(0),
+            [0.0; 4]
+        );
+        assert!(!passthrough.render_mode.uses_custom_stereo_projection());
+    }
+
+    #[test]
     fn native_passthrough_graft_only_forces_grafts_and_disables_sdf_visual() {
         let options = options_from(&[
             (PROP_RENDER_MODE, "native-passthrough-graft-only"),

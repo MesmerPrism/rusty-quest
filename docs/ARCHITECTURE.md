@@ -473,16 +473,22 @@ as raw camera, passthrough texture, environment-depth, or geometry truth, and
 high-rate JSON frame payloads are out of contract.
 
 The camera/hand-graft app selects only `HandGraftCameraPanelModule` through its
-exact panel source closure. That Android adapter saves the bounded
+exact panel source closure. That Android adapter automatically saves the bounded
 `rusty.quest.hand_graft_controls.v1` scalar candidate in app-private storage and
-returns to the existing NativeActivity. `hand_graft_controls.rs` validates
+submits changes through a same-process JNI queue. `hand_graft_controls.rs` validates
 revisions/ranges, preserves the last valid settings on rejection, and publishes
 status after frame submission. Its importer is inert unless the packaged panel
-mode selects this route. The same per-eye calibrated virtual-plane footprint
+mode selects this route. The queue coalesces pending edits for immediate
+frame-boundary adoption; identical persisted copies cannot undo controller
+tuning or turn a successful live update into a rejection. The same per-eye calibrated virtual-plane footprint
 controls camera placement and hand/graft affine projection; metric tracking,
 skinning, and fingertip attachment remain native. Visibility toggles cannot
 override tracking-loss suppression. Panel lifecycle and return-to-VR reuse the
 existing generated shell; this module introduces no additional XR session.
+`custom-stereo-projection-passthrough` explicitly combines Camera2 projection
+with the existing native passthrough underlay. It clears the exterior to alpha
+zero and submits the camera/hand layer with source-alpha blending; the opaque
+custom route keeps its previous background and composition flags.
 `ahardware_buffer_vulkan.rs` owns the reusable Vulkan import mechanics for
 Android `AHardwareBuffer` images: property query, external-memory image
 creation, memory binding, image-view creation, layout transition, and retained

@@ -16,6 +16,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeRendererRenderMode {
     CustomStereoProjection,
+    CustomStereoProjectionPassthrough,
     NativePassthroughStyleOnly,
     NativePassthroughMediaOnly,
     NativePassthroughGraftOnly,
@@ -34,6 +35,7 @@ impl NativeRendererRenderMode {
             .trim()
             .to_ascii_lowercase();
         match normalized.as_str() {
+            "custom-stereo-projection-passthrough" => Self::CustomStereoProjectionPassthrough,
             "native-passthrough-style-only"
             | "passthrough-style-only"
             | "meta-passthrough-style-only"
@@ -74,6 +76,7 @@ impl NativeRendererRenderMode {
     pub(crate) fn marker_value(self) -> &'static str {
         match self {
             Self::CustomStereoProjection => "custom-stereo-projection",
+            Self::CustomStereoProjectionPassthrough => "custom-stereo-projection-passthrough",
             Self::NativePassthroughStyleOnly => "native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "native-passthrough-graft-only",
@@ -88,13 +91,17 @@ impl NativeRendererRenderMode {
     }
 
     pub(crate) fn uses_custom_stereo_projection(self) -> bool {
-        matches!(self, Self::CustomStereoProjection)
+        matches!(
+            self,
+            Self::CustomStereoProjection | Self::CustomStereoProjectionPassthrough
+        )
     }
 
     pub(crate) fn uses_native_passthrough(self) -> bool {
         matches!(
             self,
-            Self::NativePassthroughStyleOnly
+            Self::CustomStereoProjectionPassthrough
+                | Self::NativePassthroughStyleOnly
                 | Self::NativePassthroughMediaOnly
                 | Self::NativePassthroughGraftOnly
                 | Self::NativePassthroughStimulusVolume
@@ -122,6 +129,19 @@ impl NativeRendererRenderMode {
         self.uses_native_passthrough() && !self.uses_stimulus_volume()
     }
 
+    /// Projection pixels outside custom camera/hand draws reveal the compositor underlay.
+    pub(crate) fn projection_background_clear(self, eye_index: usize) -> [f32; 4] {
+        if self.uses_stimulus_volume() || self.uses_solid_black_background() {
+            [0.0, 0.0, 0.0, 1.0]
+        } else if self.projection_layer_alpha_blend() {
+            [0.0, 0.0, 0.0, 0.0]
+        } else if eye_index == 0 {
+            [0.012, 0.030, 0.038, 1.0]
+        } else {
+            [0.034, 0.016, 0.050, 1.0]
+        }
+    }
+
     pub(crate) fn requests_openxr_default_hand_visual(self) -> bool {
         matches!(self, Self::SolidBlackOpenXrHandsAnchorParticles)
     }
@@ -143,7 +163,7 @@ impl NativeRendererRenderMode {
 
     pub(crate) fn camera_runtime_mode(self) -> &'static str {
         match self {
-            Self::CustomStereoProjection => "camera2-hwb",
+            Self::CustomStereoProjection | Self::CustomStereoProjectionPassthrough => "camera2-hwb",
             Self::NativePassthroughStyleOnly => "skipped-native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "skipped-native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "skipped-native-passthrough",
@@ -159,7 +179,9 @@ impl NativeRendererRenderMode {
 
     pub(crate) fn disabled_camera_projection_path(self) -> &'static str {
         match self {
-            Self::CustomStereoProjection => "metadata-target-direct-hwb-fallback",
+            Self::CustomStereoProjection | Self::CustomStereoProjectionPassthrough => {
+                "metadata-target-direct-hwb-fallback"
+            }
             Self::NativePassthroughStyleOnly => "disabled-native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "disabled-native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "disabled-native-passthrough-graft-only",
@@ -174,7 +196,10 @@ impl NativeRendererRenderMode {
     }
 
     pub(crate) fn allows_sdf_visual(self) -> bool {
-        matches!(self, Self::CustomStereoProjection)
+        matches!(
+            self,
+            Self::CustomStereoProjection | Self::CustomStereoProjectionPassthrough
+        )
     }
 }
 

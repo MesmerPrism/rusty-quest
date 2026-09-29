@@ -1,0 +1,68 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.background.custom_projection_passthrough",
+  "module_path": "background/custom-projection-passthrough",
+  "module_kind": "background-route",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Custom Camera2 stereo projection over native Meta passthrough; the app runtime profile explicitly selects custom-stereo-projection-passthrough.",
+  "provides": [
+    "render.background.custom_projection_passthrough"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "camera.hwb"
+  ],
+  "incompatible_with": [
+    "renderer.background.solid_black",
+    "renderer.background.native_passthrough"
+  ],
+  "exclusive_groups": {
+    "background": "custom-projection-passthrough"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [
+      "com.oculus.feature.PASSTHROUGH"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.passthrough.style.mode": "disabled"
+    },
+    "clear_families": [
+      "passthrough_style"
+    ],
+    "expected_render_modes": [
+      "custom-stereo-projection-passthrough"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "nativePassthroughRequested=true",
+      "customStereoProjectionEnabled=true",
+      "projectionLayerAlphaBlend=true"
+    ],
+    "forbidden": [
+      "solidBlackBackground=true"
+    ]
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns transparent custom projection and the native passthrough underlay; downstream camera and hand effects remain separately selected."
+}

@@ -48,7 +48,8 @@
       "processing"
     ],
     "expected_render_modes": [
-      "custom-stereo-projection"
+      "custom-stereo-projection",
+      "custom-stereo-projection-passthrough"
     ]
   },
   "build_inputs": {

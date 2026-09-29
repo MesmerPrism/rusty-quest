@@ -3,6 +3,8 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 import android.app.Activity;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.AtomicFile;
 import android.view.Gravity;
 import android.view.View;
@@ -31,6 +33,12 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
     private CheckBox hands, originals, grafts, joystick, wireframe;
     private TextView message;
     private long latestRevision;
+    private final Handler changes = new Handler(Looper.getMainLooper());
+    private boolean loading = true;
+    private boolean updatePending;
+    private final Runnable publishChange = new Runnable() {
+        @Override public void run() { updatePending = false; saveChanges(); }
+    };
 
     @Override public String panelModuleId() { return MODULE_ID; }
 
@@ -38,6 +46,17 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
         super.onCreate(state);
         setContentView(buildView());
         loadSavedSettings();
+        loading = false;
+    }
+
+    @Override protected void onPause() {
+        flushChanges();
+        super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        changes.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     private View buildView() {
@@ -55,12 +74,13 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
         Button close = button("Return to VR");
         close.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) {
+                flushChanges();
                 ControlPanelActivity.closePanelAndReturnToImmersive(HandGraftCameraPanelModule.this);
             }
         });
         header.addView(close);
         root.addView(header);
-        root.addView(text("Change the settings, then apply and return to VR. Press B three times in VR to reopen this panel.", 14, MUTED));
+        root.addView(text("Changes update automatically. Press B three times in VR to reopen this panel.", 14, MUTED));
 
         root.addView(text("Projection", 20, FOREGROUND));
         distance = scalar(root, "Distance", .25, 4, 1, 100, " m", 1);
@@ -84,16 +104,13 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
         Button reset = button("Reset defaults");
         reset.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View view) {
+                changes.removeCallbacks(publishChange);
+                updatePending = false;
                 setValues(null);
-                message.setText("Defaults restored. Apply to save them.");
+                saveChanges();
             }
         });
         actions.addView(reset);
-        Button apply = button("Apply & return to VR");
-        apply.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View view) { saveAndResume(); }
-        });
-        actions.addView(apply);
         root.addView(actions);
         message = text("", 14, MUTED);
         root.addView(message);
@@ -117,16 +134,18 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
             if ("rejected".equals(status.optString("adoption_status"))) {
                 message.setText("Last change was rejected: " + status.optString("rejection_reason", "invalid settings"));
             } else if (status.optLong("last_submitted_frame", 0) > 0 && effectiveRevision > 0) {
-                message.setText("Saved settings were used in VR. Your edits apply when you return.");
+                message.setText("Changes update automatically.");
             } else {
-                message.setText("Settings loaded. Apply to use them in VR.");
+                message.setText("Changes update automatically.");
             }
         } else {
-            message.setText("Settings loaded. Apply to use them in VR.");
+            message.setText("Changes update automatically.");
         }
     }
 
     private void setValues(JSONObject values) {
+        boolean wasLoading = loading;
+        loading = true;
         distance.set(value(values, "panel_distance_m", 1));
         offsetX.set(value(values, "offset_x_uv", 0));
         offsetY.set(value(values, "offset_y_uv", 0));
@@ -139,9 +158,24 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
         grafts.setChecked(flag(values, "grafts_visible", true));
         joystick.setChecked(flag(values, "joystick_enabled", true));
         wireframe.setChecked(flag(values, "wireframe_enabled", false));
+        loading = wasLoading;
     }
 
-    private void saveAndResume() {
+    private void requestChange() {
+        if (loading || updatePending) return;
+        updatePending = true;
+        changes.postDelayed(publishChange, 50L);
+    }
+
+    private void flushChanges() {
+        if (!updatePending) return;
+        changes.removeCallbacks(publishChange);
+        updatePending = false;
+        saveChanges();
+    }
+
+    private void saveChanges() {
+        if (loading) return;
         AtomicFile file = new AtomicFile(new File(getFilesDir(), CANDIDATE_FILE));
         FileOutputStream output = null;
         try {
@@ -160,11 +194,14 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
             file.finishWrite(output);
             output = null;
             latestRevision = revision;
-            message.setText("Saved. Returning to VR to apply settings…");
-            ControlPanelActivity.closePanelAndReturnToImmersive(this);
+            JSONObject receipt = new JSONObject(ControlPanelActivity.nativeSubmitLiveHandGraftControls(settings.toString()));
+            if (!"queued".equals(receipt.optString("status")) || receipt.optLong("candidate_revision") != revision) {
+                throw new IllegalStateException(receipt.optString("reason", "Update was not accepted"));
+            }
+            message.setText("Changes update automatically.");
         } catch (Exception error) {
             if (output != null) file.failWrite(output);
-            message.setText("Could not save settings: " + error.getMessage());
+            message.setText("Could not update settings: " + error.getMessage());
         }
     }
 
@@ -187,6 +224,9 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
     private CheckBox toggle(LinearLayout root, String title, boolean initial) {
         CheckBox box = new CheckBox(this);
         box.setText(title); box.setTextSize(17); box.setTextColor(FOREGROUND); box.setChecked(initial);
+        box.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(android.widget.CompoundButton button, boolean checked) { requestChange(); }
+        });
         root.addView(box); return box;
     }
     private Scalar scalar(LinearLayout root, String title, double min, double max,
@@ -212,9 +252,12 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
             slider = new SeekBar(HandGraftCameraPanelModule.this);
             slider.setMax((int) Math.round((max - min) * steps));
             slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) { updateLabel(); }
+                @Override public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                    updateLabel();
+                    if (fromUser) requestChange();
+                }
                 @Override public void onStartTrackingTouch(SeekBar bar) { }
-                @Override public void onStopTrackingTouch(SeekBar bar) { }
+                @Override public void onStopTrackingTouch(SeekBar bar) { flushChanges(); }
             });
             set(initial);
         }

@@ -750,8 +750,11 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
 @"
     static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
 "@
-    } elseif ($selectedPanelModuleId -ceq "polar-controls" -or
-              $selectedPanelModuleId -ceq "hand-graft-camera-controls") {
+    } elseif ($selectedPanelModuleId -ceq "hand-graft-camera-controls") {
+@"
+    static native String nativeSubmitLiveHandGraftControls(String candidateJson);
+"@
+    } elseif ($selectedPanelModuleId -ceq "polar-controls") {
         ""
     } elseif ($selectedPanelModuleId -ceq "breath-composition-controls") {
 @"

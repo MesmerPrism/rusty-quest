@@ -345,11 +345,19 @@ Three presses of the right controller's B button open the same-APK 2D
 `4.0` m), horizontal/vertical offsets (up to half the image), shared camera/hand
 scale, thumbstick enablement, master hand visibility, original-hand and graft
 visibility, graft size, opacity, rim strength, and an optional wireframe toggle.
-The default material remains opaque and filled. Apply & return to VR saves an
-atomic app-private scalar candidate; the native frame loop validates and adopts
-it when rendering resumes. Reopening restores saved/native-effective settings;
-Reset defaults does not take effect until Apply. No camera, mesh, or pose data
-passes through the panel.
+The default material remains opaque and filled. Sliders and toggles save
+automatically and submit a validated scalar candidate through the same-process
+JNI queue. The next renderer frame consumes the newest edit, with short
+coalescing while dragging. There is no Apply button; Return to VR only closes
+the panel. Reset defaults updates immediately too. The atomic app-private
+candidate preserves settings across restarts. Reopening restores saved/native-
+effective settings. No camera, mesh, or pose data passes through the panel.
+
+This app selects `custom-stereo-projection-passthrough`: the projection exterior
+clears to transparent, and an `XR_FB_passthrough` underlay stays active beneath
+the alpha-blended camera/hand projection. Camera2 continues to supply the custom
+central projection; standalone passthrough and the original opaque custom
+camera mode remain distinct opt-in routes.
 
 Distance moves the calibrated head-relative virtual projection footprint from
 its reference distance of `1.0` m. Both size and per-eye stereo placement change;

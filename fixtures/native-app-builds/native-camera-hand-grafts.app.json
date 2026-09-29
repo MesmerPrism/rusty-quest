@@ -12,7 +12,8 @@
     "hand_mesh_live_input",
     "hand_mesh_visual",
     "ui.hand_graft_camera_control_panel",
-    "input.right_secondary_same_apk_panel_triple_press"
+    "input.right_secondary_same_apk_panel_triple_press",
+    "renderer.background.custom_projection_passthrough"
   ],
   "denied_features": [
     "display_composite",
@@ -74,7 +75,7 @@
       "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload": "false",
       "debug.rustyquest.native_renderer.projection.target.controls": "true",
       "debug.rustyquest.native_renderer.projection.target.joystick.controls": "true",
-      "debug.rustyquest.native_renderer.render.mode": "custom-stereo-projection",
+      "debug.rustyquest.native_renderer.render.mode": "custom-stereo-projection-passthrough",
       "debug.rustyquest.native_renderer.replay.visual_proof.enabled": "false",
       "debug.rustyquest.native_renderer.sdf.field_visual.enabled": "false",
       "debug.rustyquest.native_renderer.sdf.visual.enabled": "false",
@@ -105,7 +106,8 @@
       "android.opengl.gles.3.1",
       "oculus.software.handtracking",
       "android.hardware.camera",
-      "android.hardware.camera2.full"
+      "android.hardware.camera2.full",
+      "com.oculus.feature.PASSTHROUGH"
     ],
     "activities": [
       "android.app.NativeActivity",
@@ -113,7 +115,7 @@
     ],
     "services": []
   },
-  "expected_render_mode": "custom-stereo-projection",
+  "expected_render_mode": "custom-stereo-projection-passthrough",
   "settings_assertions": {
     "required_values": {
       "native_renderer.camera.output": "guide-public",
@@ -145,7 +147,7 @@
       "native_renderer.projection.target.breath.high_rate_json_payload": "false",
       "native_renderer.projection.target.controls": "true",
       "native_renderer.projection.target.joystick.controls": "true",
-      "native_renderer.render.mode": "custom-stereo-projection",
+      "native_renderer.render.mode": "custom-stereo-projection-passthrough",
       "native_renderer.replay.visual_proof.enabled": "false",
       "native_renderer.sdf.field_visual.enabled": "false",
       "native_renderer.sdf.visual.enabled": "false",
@@ -167,7 +169,8 @@
       "input/controllers-and-hands",
       "projection-target/breathing-room",
       "ui/hand-graft-camera-panel",
-      "input/same-apk-panel/right-secondary-triple-press"
+      "input/same-apk-panel/right-secondary-triple-press",
+      "background/custom-projection-passthrough"
     ],
     "forbidden_modules": [
       "background/native-passthrough",
@@ -200,9 +203,11 @@
   "expected_markers": {
     "required": [
       "RUSTY_QUEST_NATIVE_RENDERER channel=render-mode",
-      "renderMode=custom-stereo-projection",
+      "renderMode=custom-stereo-projection-passthrough",
       "customStereoProjectionEnabled=true",
-      "nativePassthroughRequested=false",
+      "nativePassthroughRequested=true",
+      "nativePassthroughLayerActive=true",
+      "projectionLayerAlphaBlend=true",
       "handMeshGraftCopiesEnabled=true",
       "handMeshGraftScaleMultiplier=0.85",
       "handMeshRealHandsVisible=true",
@@ -215,7 +220,6 @@
       "handMeshVisualMaterialAlpha=1.00"
     ],
     "forbidden": [
-      "nativePassthroughRequested=true",
       "sdfVisualEnabled=true",
       "sdfFieldVisualEnabled=true",
       "handAnchorParticlesEnabled=true",

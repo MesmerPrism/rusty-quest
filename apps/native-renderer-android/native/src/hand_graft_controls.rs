@@ -4,12 +4,84 @@ use serde_json::{json, Value};
 use std::{
     io::Read,
     path::PathBuf,
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
 const SCHEMA: &str = "rusty.quest.hand_graft_controls.v1";
 const MAX_BYTES: u64 = 4096;
 const INTERVAL: Duration = Duration::from_millis(250);
+
+/// Coalesces low-rate UI edits; frame data never enters this queue.
+#[derive(Default)]
+struct LiveQueue {
+    highest_revision: u64,
+    latest_request: Option<HandGraftControls>,
+    pending: Option<HandGraftControls>,
+}
+
+impl LiveQueue {
+    fn adopted(&mut self, candidate: HandGraftControls) {
+        if candidate.revision >= self.highest_revision {
+            self.highest_revision = candidate.revision;
+            self.latest_request = Some(candidate);
+        }
+        // Persistence may reach the renderer before JNI. Discard an already
+        // superseded queued snapshot without disturbing a newer live edit.
+        if self
+            .pending
+            .is_some_and(|pending| pending.revision <= candidate.revision)
+        {
+            self.pending = None;
+        }
+    }
+    fn push(&mut self, candidate: HandGraftControls) -> Result<(), &'static str> {
+        if candidate.revision <= self.highest_revision {
+            if self.latest_request == Some(candidate) {
+                return Ok(());
+            }
+            return Err("stale-revision");
+        }
+        self.highest_revision = candidate.revision;
+        self.latest_request = Some(candidate);
+        self.pending = Some(candidate);
+        Ok(())
+    }
+}
+
+fn live_queue() -> &'static Mutex<LiveQueue> {
+    static QUEUE: OnceLock<Mutex<LiveQueue>> = OnceLock::new();
+    QUEUE.get_or_init(|| Mutex::new(LiveQueue::default()))
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveHandGraftControls(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    candidate_json: jni::objects::JString,
+) -> jni::sys::jstring {
+    match env.with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+        let text = candidate_json.try_to_string(env)?;
+        let result = if crate::native_renderer_panel_bridge::packaged_control_panel_mode_is_hand_graft_camera() {
+            HandGraftControls::parse(text.as_bytes()).and_then(|candidate| {
+                live_queue().lock().map_err(|_| "queue-unavailable".to_owned())?
+                    .push(candidate).map_err(str::to_owned)?;
+                Ok(candidate.revision)
+            })
+        } else {
+            Err("panel-not-packaged".to_owned())
+        };
+        let response = match result {
+            Ok(revision) => json!({"schema":SCHEMA,"status":"queued","candidate_revision":revision,"transport":"jni-live-queue"}),
+            Err(reason) => json!({"schema":SCHEMA,"status":"rejected","reason":reason}),
+        };
+        env.new_string(response.to_string()).map(|value| value.into_raw())
+    }).into_outcome() {
+        jni::Outcome::Ok(value) => value,
+        _ => std::ptr::null_mut(),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct HandGraftControls {
@@ -179,6 +251,7 @@ impl HandGraftControls {
 pub(crate) struct HandGraftControlPoller {
     path: Option<PathBuf>,
     pub(crate) effective: HandGraftControls,
+    last_adopted: Option<HandGraftControls>,
     last_poll: Option<Instant>,
     last_status: Option<Instant>,
     last_bytes: Vec<u8>,
@@ -192,6 +265,7 @@ impl HandGraftControlPoller {
         Self {
             path,
             effective: HandGraftControls::default(),
+            last_adopted: None,
             last_poll: None,
             last_status: None,
             last_bytes: Vec::new(),
@@ -204,6 +278,22 @@ impl HandGraftControlPoller {
         self.path.is_some()
     }
     pub(crate) fn poll(&mut self) -> Option<HandGraftControls> {
+        if self.path.is_none() {
+            return None;
+        }
+        // A live edit bypasses the persistence polling interval, so the next
+        // render frame observes the newest validated settings.
+        let pending = live_queue()
+            .lock()
+            .ok()
+            .and_then(|mut queue| queue.pending.take());
+        if let Some(candidate) = pending {
+            if candidate.revision > self.effective.revision {
+                if let Some(adopted) = self.adopt(candidate) {
+                    return Some(adopted);
+                }
+            }
+        }
         let path = self.path.as_ref()?;
         if self.last_poll.is_some_and(|last| last.elapsed() < INTERVAL) {
             return None;
@@ -229,24 +319,38 @@ impl HandGraftControlPoller {
         }
         self.last_bytes = bytes.clone();
         match HandGraftControls::parse(&bytes) {
-            Ok(candidate) => {
-                self.candidate_revision = candidate.revision;
-                if candidate.revision <= self.effective.revision {
-                    self.adoption_status = "rejected";
-                    self.rejection_reason = "stale-revision".into();
-                    return None;
-                }
-                self.effective = candidate;
-                self.adoption_status = "adopted";
-                self.rejection_reason.clear();
-                Some(candidate)
-            }
+            Ok(candidate) => self.adopt(candidate),
             Err(reason) => {
                 self.adoption_status = "rejected";
                 self.rejection_reason = reason;
                 None
             }
         }
+    }
+
+    fn adopt(&mut self, candidate: HandGraftControls) -> Option<HandGraftControls> {
+        // An identical persisted copy of a live edit is benign. Keep the
+        // immutable adopted request apart from controller-tuned effective scale.
+        if self.last_adopted == Some(candidate) {
+            self.candidate_revision = candidate.revision;
+            self.adoption_status = "adopted";
+            self.rejection_reason.clear();
+            return None;
+        }
+        self.candidate_revision = candidate.revision;
+        if candidate.revision <= self.effective.revision {
+            self.adoption_status = "rejected";
+            self.rejection_reason = "stale-revision".into();
+            return None;
+        }
+        self.effective = candidate;
+        self.last_adopted = Some(candidate);
+        self.adoption_status = "adopted";
+        self.rejection_reason.clear();
+        if let Ok(mut queue) = live_queue().lock() {
+            queue.adopted(candidate);
+        }
+        Some(candidate)
     }
     pub(crate) fn submitted(&mut self, frame: u64, rects: [TargetRect; 2], shared_scale: f32) {
         let Some(path) = self.path.as_ref() else {
@@ -268,6 +372,7 @@ impl HandGraftControlPoller {
             "distance_semantics":"calibrated-relative-headlocked-plane",
             "reference_distance_m":1.0,"footprint_policy":"clip-at-raster",
             "effective_state":"submitted-frame","last_submitted_frame":frame,
+            "live_update_transport":"jni-live-queue-next-frame",
             "submission_proof":"openxr-frame-end-success-not-visual-acceptance"});
         let temp = path.join("hand_graft_controls_status.json.tmp");
         if std::fs::write(&temp, value.to_string()).is_ok() {
@@ -284,6 +389,82 @@ mod tests {
         value["schema"] = SCHEMA.into();
         value["revision"] = 1.into();
         value
+    }
+    #[test]
+    fn live_updates_coalesce_and_reject_conflicting_old_revisions() {
+        let first = HandGraftControls {
+            revision: 10,
+            ..Default::default()
+        };
+        let newest = HandGraftControls {
+            revision: 11,
+            shared_scale: 1.25,
+            ..first
+        };
+        let mut queue = LiveQueue::default();
+        queue.push(first).unwrap();
+        queue.push(newest).unwrap();
+        assert_eq!(queue.pending.take(), Some(newest));
+        assert_eq!(queue.push(first), Err("stale-revision"));
+        assert!(queue.push(newest).is_ok());
+        assert!(queue.pending.is_none());
+        assert_eq!(
+            queue.push(HandGraftControls {
+                shared_scale: 2.0,
+                ..newest
+            }),
+            Err("stale-revision")
+        );
+    }
+
+    #[test]
+    fn persisted_adoption_discards_superseded_live_edits_and_preserves_newer_edits() {
+        let first = HandGraftControls {
+            revision: 10,
+            ..Default::default()
+        };
+        let newest = HandGraftControls {
+            revision: 12,
+            ..first
+        };
+        let mut queue = LiveQueue::default();
+        queue.push(first).unwrap();
+        queue.adopted(HandGraftControls {
+            revision: 11,
+            ..first
+        });
+        assert!(queue.pending.is_none());
+        queue.push(newest).unwrap();
+        queue.adopted(HandGraftControls {
+            revision: 11,
+            ..first
+        });
+        assert_eq!(queue.pending, Some(newest));
+        queue.adopted(newest);
+        assert!(queue.pending.is_none());
+        assert!(queue.push(newest).is_ok());
+        assert!(queue.pending.is_none());
+    }
+
+    #[test]
+    fn persisted_live_edit_does_not_undo_controller_tuning_or_report_rejection() {
+        let candidate = HandGraftControls {
+            revision: 7,
+            ..Default::default()
+        };
+        let mut poller = HandGraftControlPoller::new(None);
+        assert_eq!(poller.adopt(candidate), Some(candidate));
+        poller.effective.shared_scale = 1.3;
+        assert!(poller.adopt(candidate).is_none());
+        assert_eq!(poller.effective.shared_scale, 1.3);
+        assert_eq!(poller.adoption_status, "adopted");
+        assert!(poller
+            .adopt(HandGraftControls {
+                shared_scale: 2.0,
+                ..candidate
+            })
+            .is_none());
+        assert_eq!(poller.adoption_status, "rejected");
     }
     #[test]
     fn rejects_partial_unknown_nonfinite_and_out_of_bounds_without_clamping() {

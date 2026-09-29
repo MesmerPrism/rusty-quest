@@ -101,7 +101,9 @@ pub(super) fn write_projection_scorecard(
         direct_projection_active || guide_projection_active || private_projection_active;
     let direct_hwb_projection_diagnostic =
         direct_projection_active && camera_output_mode.direct_hwb_forced();
-    let camera_projection_path = if render_mode.uses_native_passthrough() {
+    let camera_projection_path = if render_mode.uses_native_passthrough()
+        && !render_mode.uses_custom_stereo_projection()
+    {
         render_mode.disabled_camera_projection_path()
     } else if render_mode.uses_solid_black_background() {
         render_mode.disabled_camera_projection_path()

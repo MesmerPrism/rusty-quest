@@ -4823,6 +4823,7 @@
       "value_kind": "token",
       "allowed_values": [
         "custom-stereo-projection",
+        "custom-stereo-projection-passthrough",
         "native-passthrough-style-only",
         "native-passthrough-media-only",
         "native-passthrough-graft-only",

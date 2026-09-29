@@ -5387,7 +5387,6 @@ unsafe fn record_projection_diagnostic(
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
     let mut visual_stats = ReplayVisualStats::default();
-    let passthrough_alpha_clear = render_mode.projection_layer_alpha_blend();
     let stimulus_volume_route = render_mode.uses_stimulus_volume();
     let custom_stereo_projection = render_mode.uses_custom_stereo_projection();
     let draw_base_hand_meshes = should_draw_base_hand_meshes(
@@ -5528,15 +5527,7 @@ unsafe fn record_projection_diagnostic(
                 gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
             }
         }
-        let background = if stimulus_volume_route || render_mode.uses_solid_black_background() {
-            [0.0, 0.0, 0.0, 1.0]
-        } else if passthrough_alpha_clear {
-            [0.0, 0.0, 0.0, 0.0]
-        } else if eye_index == 0 {
-            [0.012, 0.030, 0.038, 1.0]
-        } else {
-            [0.034, 0.016, 0.050, 1.0]
-        };
+        let background = render_mode.projection_background_clear(eye_index);
         if hand_mesh_visual_stats.graft_copies_visible() {
             if let Some(renderer) = gpu_hand_mesh_visual_renderer {
                 if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
