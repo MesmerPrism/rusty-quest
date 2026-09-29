@@ -113,6 +113,25 @@ impl<L> StereoInputSet<L> {
         true
     }
 
+    // The caller supplies a positive stopped-producer proof. Never-published
+    // sources can be absent or follow an older inactive tombstone. Active
+    // foreign and newer epochs reject, and retirement keeps a replay fence.
+    // None rejects a foreign epoch; Some reports whether an active source changed.
+    pub(crate) fn retire_stopped_or_unbound(&mut self, origin: StereoOrigin, epoch: SourceEpoch) -> Option<bool> {
+        if epoch.process_generation == 0 || epoch.source_generation == 0 { return None; }
+        let slot = self.slot_mut(origin);
+        if slot.epoch.is_some_and(|accepted| accepted != epoch &&
+            (slot.active || accepted.process_generation > epoch.process_generation ||
+             (accepted.process_generation == epoch.process_generation && accepted.source_generation >= epoch.source_generation))) {
+            return None;
+        }
+        let changed = slot.active;
+        slot.epoch = Some(epoch);
+        slot.active = false;
+        slot.latest = None;
+        Some(changed)
+    }
+
     // A single local monotonic observation point; source timestamps stay identity.
     pub(crate) fn fresh_inputs(&self, now_ns: u64, max_age_ns: u64)
         -> StereoInputSnapshot<'_, L> {
@@ -138,6 +157,30 @@ impl<L> StereoInputSet<L> {
 mod tests {
     use super::*;
     const E: SourceEpoch = SourceEpoch { process_generation: 1, source_generation: 1 };
+    #[test] fn stopped_empty_peer_retirement_is_idempotent_and_fences_replay() {
+        let mut set: StereoInputSet<&str> = StereoInputSet::default();
+        assert_eq!(set.retire_stopped_or_unbound(StereoOrigin::PeerStereo, E), Some(false));
+        assert_eq!(set.retire_stopped_or_unbound(StereoOrigin::PeerStereo, E), Some(false));
+        assert_eq!(set.bind(StereoOrigin::PeerStereo, E), Err(PublishError::Replay));
+        let next = SourceEpoch { source_generation: 2, ..E };
+        assert_eq!(set.retire_stopped_or_unbound(StereoOrigin::PeerStereo, next), Some(false));
+        assert_eq!(set.retire_stopped_or_unbound(StereoOrigin::PeerStereo, E), None);
+    }
+    #[test] fn stopped_peer_cleanup_preserves_own_and_rejects_foreign_epoch() {
+        let mut set = StereoInputSet::default();
+        set.bind(StereoOrigin::OwnStereo, E).unwrap();
+        set.publish(StereoOrigin::OwnStereo, frame(1, 100)).unwrap();
+        set.bind(StereoOrigin::PeerStereo, E).unwrap();
+        set.publish(StereoOrigin::PeerStereo, frame(1, 100)).unwrap();
+        let next = SourceEpoch { source_generation: 2, ..E };
+        assert_eq!(set.retire_stopped_or_unbound(StereoOrigin::PeerStereo, next), None);
+        assert!(set.fresh(StereoOrigin::PeerStereo, 101, 10).is_some());
+        assert_eq!(set.retire_stopped_or_unbound(StereoOrigin::PeerStereo, E), Some(true));
+        assert_eq!(set.retire_stopped_or_unbound(StereoOrigin::PeerStereo, E), Some(false));
+        assert!(set.fresh(StereoOrigin::OwnStereo, 101, 10).is_some());
+        set.bind(StereoOrigin::PeerStereo, next).unwrap();
+        assert_eq!(set.retire_stopped_or_unbound(StereoOrigin::PeerStereo, E), None);
+    }
     fn frame(seq: u64, observed: u64) -> RetainedStereoFrame<&'static str> {
         RetainedStereoFrame { identity: StereoFrameIdentity { epoch: E, pair_sequence: seq,
             left_timestamp_ns: 10, right_timestamp_ns: 12, packed_pts_ns: 12,

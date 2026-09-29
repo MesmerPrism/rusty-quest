@@ -119,6 +119,29 @@ hash-pinned `org.json` 20240303 jar, resolved from the local Gradle cache or
 dependencies. Each invocation preserves prior evidence in its own output
 capsule under the selected repository `target` directory.
 
+## Accepted embedded LAN placement
+
+The embedded packed-stereo executor keeps three endpoints distinct: the local
+encoded-source endpoint, the accepted source-to-sink transport route, and the
+sink's receiving listener. A source binding is local producer plumbing; it is
+not the remote consumer's dial target. The outgoing socket owner forwards the
+unchanged framed stream from that local source to the accepted route's sink.
+The incoming receiver binds its selected transport receive port before reporting
+receiver readiness. Device, lane, track and endpoint identities must match the
+packaged runtime plan; no ambient address or reversed route is substituted.
+
+The forwarding worker owns its sockets, bounded transfer buffer and cancellation.
+Reconnect obtains a fresh source connection so configuration and keyframe gating
+remain with the existing packed source. Stop closes connected or connecting
+sockets and requires worker retirement; a join deadline alone is not terminal
+cleanup. Authority renewal keeps the same media graph. The original explicit
+connect-mode receiver remains available to other hosts.
+
+Compilation establishes only that this composition builds. A complete transport
+check uses separate source and sink roles from the assembled specification, then
+the app-owned device receipts must establish both directions, render switching,
+renewal, interruption/retry and physical cleanup.
+
 ## Embedded diagnostic producer/consumer regression
 
 `tools/checks/Test-EmbeddedDuplexDiagnosticProducerConsumer.ps1` compiles the

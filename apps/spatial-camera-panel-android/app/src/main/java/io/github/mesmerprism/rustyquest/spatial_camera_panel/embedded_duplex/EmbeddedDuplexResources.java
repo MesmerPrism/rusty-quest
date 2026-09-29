@@ -51,7 +51,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             throw new IllegalArgumentException("embedded product requires Camera2 stereo source");
         }
         incoming = new EmbeddedDuplexReceiver(generation, display,
-                sink.endpoint.getString("source_host"), sink.endpoint.getInt("source_port"),
+                sink.sinkTransportHost, sink.sinkTransportPort, sink.sourceTransportHost,
                 sink.width, sink.height, sink.fps,
                 new PackedStereoMediaReceiver.Bounds(64 * 1024, sink.maxPacketBytes,
                         sink.width, sink.height, 12, 3000, 4000, 100, 15000, 10000, 8, 250));
@@ -79,6 +79,8 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                 source.width / 2, source.height, source.fps, source.bitrate,
                 leftCamera, rightCamera, maxPairDeltaNs);
         }
+        pipeline.configureAcceptedLanRoute(source.sourceTransportHost,
+                source.sinkTransportHost, source.sinkTransportPort);
         } catch (Exception invalid) {
             try { incoming.closeUnstartedAndVerify(); }
             catch (Exception cleanup) { invalid.addSuppressed(cleanup); }
@@ -196,6 +198,8 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
 
     private static final class Lane {
         final JSONObject plan, source, endpoint;
+        final String sourceTransportHost, sinkTransportHost;
+        final int sinkTransportPort;
         final int width, height, fps, bitrate, maxPacketBytes;
         Lane(JSONObject spec) throws Exception {
             plan = spec.getJSONObject("plan");
@@ -218,7 +222,42 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             source = unique(plan.getJSONArray("sources"), "source_id", lane.getString("source_id"));
             JSONObject device = unique(plan.getJSONArray("runtime_endpoints"), "device_id", lane.getString("source_device_id"));
             endpoint = unique(device.getJSONArray("source_bindings"), "source_id", source.getString("source_id"));
+            String role = media.getString("track_role");
+            JSONObject sinkDevice = unique(plan.getJSONArray("runtime_endpoints"), "device_id", lane.getString("sink_device_id"));
+            JSONObject sinkPort = unique(sinkDevice.getJSONArray("transport_receive_ports"), "track_role", role);
+            JSONObject route = unique(plan.getJSONArray("transport_routes"), "lane_id", lane.getString("lane_id"));
+            sourceTransportHost = numericIpv4(device.getString("transport_bind_host"));
+            sinkTransportHost = numericIpv4(sinkDevice.getString("transport_bind_host"));
+            sinkTransportPort = sinkPort.getInt("port");
+            if (!"stereo".equals(role) || !role.equals(endpoint.getString("track_role"))
+                    || !source.getString("device_id").equals(lane.getString("source_device_id"))
+                    || lane.getString("source_device_id").equals(lane.getString("sink_device_id"))
+                    || !"127.0.0.1".equals(endpoint.getString("source_host"))
+                    || endpoint.getInt("source_port") <= 0 || endpoint.getInt("source_port") > 65535
+                    || sinkTransportPort <= 0 || sinkTransportPort > 65535
+                    || !"direct_tcp_connect".equals(route.getString("route_kind"))
+                    || !role.equals(route.getString("track_role"))
+                    || !lane.getString("source_device_id").equals(route.getString("source_device_id"))
+                    || !lane.getString("sink_device_id").equals(route.getString("sink_device_id"))
+                    || !sinkTransportHost.equals(route.getString("connect_host"))
+                    || sinkTransportPort != route.getInt("connect_port")) {
+                throw new IllegalArgumentException("accepted directional LAN route closure");
+            }
         }
+    }
+
+    private static String numericIpv4(String host) {
+        String[] parts = host.split("\\.", -1);
+        if (parts.length != 4) throw new IllegalArgumentException("numeric LAN host required");
+        for (String part : parts) {
+            if (!part.matches("0|[1-9][0-9]{0,2}") || Integer.parseInt(part) > 255) {
+                throw new IllegalArgumentException("numeric LAN host required");
+            }
+        }
+        if ("0".equals(parts[0]) || "127".equals(parts[0]) || Integer.parseInt(parts[0]) >= 224) {
+            throw new IllegalArgumentException("unicast LAN host required");
+        }
+        return host;
     }
 
     private static JSONObject unique(JSONArray candidates, String field, String expected) throws Exception {

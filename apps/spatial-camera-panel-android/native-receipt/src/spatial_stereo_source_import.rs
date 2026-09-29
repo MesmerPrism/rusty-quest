@@ -70,12 +70,10 @@ pub(crate) fn publish_peer_source(frame:SpatialVideoProjectionFrame)->Result<(),
 /// Registry source removal only. Decoder/GPU owner teardown remains separate;
 /// previously submitted source leases stay alive until actual fence retirement.
 pub(crate) fn retire_peer_source(route:u64,decoder:u64,reader:u64)->Result<bool,String> {
-    if !projection_peer_binding_matches(route,decoder,reader){return Ok(false);}
+    if !crate::spatial_video_projection_native_stream::projection_peer_reader_stopped(route,decoder,reader){return Ok(false);}
     let epoch=SourceEpoch{process_generation:crate::own_packed_pool_jni::process_generation()?,source_generation:reader};
-    let frames=crate::own_stereo_capture_runtime::shared_sources().snapshot(monotonic_ns()?,u64::MAX)?;
-    if frames[1].as_ref().is_none_or(|frame|frame.identity.epoch!=epoch){return Ok(false);}
-    crate::own_stereo_capture_runtime::shared_sources().retire(StereoOrigin::PeerStereo,epoch)?;
-    crate::spatial_stereo_qualification::peer_removed(epoch);
+    let Some(changed)=crate::own_stereo_capture_runtime::shared_sources().retire_stopped_or_unbound(StereoOrigin::PeerStereo,epoch)? else{return Ok(false);};
+    if changed {crate::spatial_stereo_qualification::peer_removed(epoch);}
     Ok(true)
 }
 #[no_mangle]
