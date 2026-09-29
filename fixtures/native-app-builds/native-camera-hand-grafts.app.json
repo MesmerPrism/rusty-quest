@@ -64,9 +64,9 @@
       "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "false",
       "debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source": "openxr-fb-mesh",
       "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile": "unity-basic-reference",
-      "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha": "0.74",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha": "1.0",
       "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength": "0.20",
-      "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled": "true",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled": "false",
       "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px": "1.35",
       "debug.rustyquest.native_renderer.private_layer.enabled": "false",
       "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode": "disabled",
@@ -133,10 +133,10 @@
       "native_renderer.hand_mesh.real_hands.visible": "true",
       "native_renderer.hand_mesh.visual.diagnostic.enabled": "false",
       "native_renderer.hand_mesh.visual.mesh_source": "openxr-fb-mesh",
-      "native_renderer.hand_mesh.visual.material.alpha": "0.74",
+      "native_renderer.hand_mesh.visual.material.alpha": "1.0",
       "native_renderer.hand_mesh.visual.material.profile": "unity-basic-reference",
       "native_renderer.hand_mesh.visual.material.rim_strength": "0.20",
-      "native_renderer.hand_mesh.visual.wireframe.enabled": "true",
+      "native_renderer.hand_mesh.visual.wireframe.enabled": "false",
       "native_renderer.hand_mesh.visual.wireframe.width_px": "1.35",
       "native_renderer.private_layer.enabled": "false",
       "native_renderer.projection.target.breath.bridge.mode": "disabled",
@@ -207,7 +207,9 @@
       "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
       "allowsRecordedFallback=false",
       "projectionTargetControlsEnabled=true",
-      "projectionTargetJoystickControlsEnabled=true"
+      "projectionTargetJoystickControlsEnabled=true",
+      "handMeshVisualWireframeEnabled=false",
+      "handMeshVisualMaterialAlpha=1.00"
     ],
     "forbidden": [
       "nativePassthroughRequested=true",
@@ -215,7 +217,8 @@
       "sdfFieldVisualEnabled=true",
       "handAnchorParticlesEnabled=true",
       "privateLayerEnabled=true",
-      "videoProjectionEnabled=true"
+      "videoProjectionEnabled=true",
+      "handMeshVisualWireframeEnabled=true"
     ]
   },
   "validation_tier": "quick"

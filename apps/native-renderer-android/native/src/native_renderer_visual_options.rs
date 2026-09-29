@@ -217,7 +217,59 @@ impl CompactHandInputSourceMode {
     }
 
     pub(crate) fn allows_recorded_fallback(self) -> bool {
-        matches!(self, Self::Auto | Self::RecordedReplay | Self::LiveMeta)
+        matches!(self, Self::Auto | Self::RecordedReplay)
+    }
+}
+
+/// Select only this frame's live input unless a replay route explicitly permits fallback.
+pub(crate) fn select_compact_hand_frame<'a, T>(
+    live: Option<&'a T>,
+    allow_recorded_fallback: bool,
+    recorded: impl FnOnce() -> Option<&'a T>,
+) -> Option<&'a T> {
+    live.or_else(|| allow_recorded_fallback.then(recorded).flatten())
+}
+
+#[cfg(test)]
+mod compact_hand_visibility_tests {
+    use super::{select_compact_hand_frame, CompactHandInputSourceMode};
+
+    #[test]
+    fn live_hands_hide_independently_on_loss_and_recover_without_replay() {
+        let left = 1;
+        let right = 2;
+        let mode = CompactHandInputSourceMode::LiveMeta;
+        for (inputs, visible, grafts) in [
+            ([Some(&left), Some(&right)], [true, true], true),
+            ([None, Some(&right)], [false, true], false),
+            ([Some(&left), None], [true, false], false),
+            ([None, None], [false, false], false),
+            ([Some(&left), Some(&right)], [true, true], true),
+        ] {
+            let selected = inputs.map(|input| {
+                select_compact_hand_frame(input, mode.allows_recorded_fallback(), || {
+                    panic!("live-only must not access replay")
+                })
+            });
+            assert_eq!(selected.map(|frame| frame.is_some()), visible);
+            assert_eq!(selected.iter().all(Option::is_some), grafts);
+        }
+    }
+
+    #[test]
+    fn replay_and_auto_diagnostics_keep_explicit_fallback() {
+        let recorded = 7;
+        for mode in [
+            CompactHandInputSourceMode::RecordedReplay,
+            CompactHandInputSourceMode::Auto,
+        ] {
+            assert_eq!(
+                select_compact_hand_frame(None, mode.allows_recorded_fallback(), || Some(
+                    &recorded
+                )),
+                Some(&recorded)
+            );
+        }
     }
 }
 

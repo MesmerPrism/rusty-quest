@@ -326,8 +326,8 @@ The optional field overlay now uses the clearer property
 alias.
 The staged property bundle for that later retest is
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;
-it forces `live-meta-openxr-hand-tracking`, keeps recorded fallback available
-until live joint frames arrive, enables the high-contrast mesh diagnostic plus SDF visual, and keeps live mesh/SDF
+it forces `live-meta-openxr-hand-tracking`, hides mesh visuals until tracked
+live joint frames arrive, enables the high-contrast mesh diagnostic plus SDF visual, and keeps live mesh/SDF
 acceptance pending until screenshot evidence shows visible overlay color.
 `fixtures/native-app-builds/native-camera-hand-grafts.app.json` combines custom
 Camera2 projection, both live GPU-skinned hands, and five animated copies of
@@ -335,7 +335,10 @@ each source hand on the opposite fingertips. The app uses a separate Android
 package and the existing hand conformance lock. Grafts retain the `0.85` scale
 multiplier. Right thumbstick Y scales the projection from `0.25` to `2.0`;
 right primary resets it to `1.0`. Put the controllers down to inspect both
-tracked hands. No recorded-joint fallback is selected.
+tracked hands. The hand material is an opaque colored surface with wireframe
+disabled. Each live hand mesh disappears when that hand loses tracking;
+opposite-finger grafts require both hands to be tracked. No recorded-joint
+fallback is selected.
 
 In custom camera mode, live base hands and grafts receive the same per-eye
 screen-space scale and offset as the camera footprint after OpenXR eye

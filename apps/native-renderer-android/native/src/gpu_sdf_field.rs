@@ -6,6 +6,7 @@ use ash::vk;
 
 use crate::{
     camera_projection_metadata::TargetRect,
+    native_renderer_visual_options::select_compact_hand_frame,
     recorded_hand_replay::{
         RecordedHandGpuPose, RecordedHandReplaySummary, RecordedHandSkinningFrame,
         RecordedMeshTargetTransform,
@@ -278,11 +279,10 @@ impl GpuSdfFieldRenderer {
         live_hand_frame: Option<&RecordedHandSkinningFrame>,
         allow_recorded_replay_fallback: bool,
     ) -> Result<GpuSdfFieldFrameStats, String> {
-        let frame = live_hand_frame.or_else(|| {
-            allow_recorded_replay_fallback
-                .then(|| replay.skinning_frame_for_count(frame_count))
-                .flatten()
-        });
+        let frame =
+            select_compact_hand_frame(live_hand_frame, allow_recorded_replay_fallback, || {
+                replay.skinning_frame_for_count(frame_count)
+            });
         let Some(frame) = frame else {
             return Ok(GpuSdfFieldFrameStats::unavailable(replay, frame_count));
         };

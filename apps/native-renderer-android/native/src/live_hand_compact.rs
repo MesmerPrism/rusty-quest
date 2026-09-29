@@ -376,6 +376,14 @@ fn compact_frame_from_locations(
     frame_index: u32,
     timestamp_ns: u64,
 ) -> Result<RecordedHandSkinningFrame, &'static str> {
+    // Inferred finger joints may remain valid during partial occlusion, but a
+    // stale wrist anchor must not keep the whole hand (or its grafts) visible.
+    let wrist = valid_location(locations, xr::HandJoint::WRIST)?;
+    if !wrist.location_flags.contains(
+        xr::SpaceLocationFlags::POSITION_TRACKED | xr::SpaceLocationFlags::ORIENTATION_TRACKED,
+    ) {
+        return Err("hand-anchor-untracked");
+    }
     let runtime_joint_poses = runtime_joint_poses(locations)?;
     let tip_lengths = tip_lengths(locations)?;
     Ok(RecordedHandSkinningFrame {

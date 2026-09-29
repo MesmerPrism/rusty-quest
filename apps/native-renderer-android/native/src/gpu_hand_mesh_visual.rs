@@ -12,6 +12,7 @@ use crate::{
         HandMeshVisualDiagnosticSettings, HandMeshVisualMaterialSettings, HandMeshVisualMeshSource,
         PROP_HAND_MESH_VISUAL_MESH_SOURCE,
     },
+    native_renderer_visual_options::select_compact_hand_frame,
     recorded_hand_replay::{
         RecordedHandReplaySummary, RecordedHandSkinningFrame, RecordedMeshTargetTransform,
     },
@@ -428,24 +429,23 @@ impl GpuHandMeshVisualRenderer {
                 material_settings,
             ));
         }
-        let frame = match live_hand_frame.or_else(|| {
-            allow_recorded_replay_fallback
-                .then(|| replay.skinning_frame_for_count(frame_count))
-                .flatten()
-        }) {
-            Some(frame) => frame,
-            None => {
-                return Ok(GpuHandMeshVisualFrameStats::unavailable_with_source(
-                    replay,
-                    frame_count,
-                    handedness,
-                    mesh_source_selection,
-                    "no-compact-joint-frame",
-                    diagnostic_settings,
-                    material_settings,
-                ));
-            }
-        };
+        let frame =
+            match select_compact_hand_frame(live_hand_frame, allow_recorded_replay_fallback, || {
+                replay.skinning_frame_for_count(frame_count)
+            }) {
+                Some(frame) => frame,
+                None => {
+                    return Ok(GpuHandMeshVisualFrameStats::unavailable_with_source(
+                        replay,
+                        frame_count,
+                        handedness,
+                        mesh_source_selection,
+                        "no-compact-joint-frame",
+                        diagnostic_settings,
+                        material_settings,
+                    ));
+                }
+            };
         if !skinning_ready {
             return Ok(GpuHandMeshVisualFrameStats::unavailable_with_source(
                 replay,

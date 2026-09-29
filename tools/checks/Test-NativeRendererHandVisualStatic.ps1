@@ -334,4 +334,11 @@ Assert-ContainsTokens $handMeshVisualVertex @(
     'gl_Position = world_to_eye_clip\(vertex\.xyz\)'
 ) "post-eye-projection hand and graft affine map"
 
+Assert-ContainsTokens $liveHandCompact @(
+    'valid_location\(locations, xr::HandJoint::WRIST\)',
+    'POSITION_TRACKED \| xr::SpaceLocationFlags::ORIENTATION_TRACKED',
+    'hand-anchor-untracked'
+) "live hand tracked anchor visibility gate"
+Assert-ContainsTokens $gpuHandMeshVisual @('select_compact_hand_frame') "shared visual frame selection"
+
 Write-Host "Rusty Quest native renderer hand-visual static validation passed"

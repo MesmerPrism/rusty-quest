@@ -63,7 +63,7 @@
       "handMeshVisualMaterialProfile=unity-basic-reference",
       "handMeshVisualMeshSourceSelection=openxr-fb-mesh",
       "handMeshVisualResolvedMeshSource=openxr-fb-mesh",
-      "handMeshVisualWireframeEnabled=true",
+      "handMeshVisualWireframeAvailable=true",
       "handMeshVisualTextureImported=false"
     ],
     "forbidden": []
