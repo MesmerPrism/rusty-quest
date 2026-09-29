@@ -21,6 +21,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         MediaOwnerProvider provider();
         void start() throws Exception;
         MediaRuntimeSnapshot snapshot();
+        /** Closed enum/counter fields only; never exception text or endpoints. */
+        default String closedCounters() { return "counters=UNAVAILABLE"; }
     }
 
     interface RuntimeFactory {
@@ -163,7 +165,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                 + " connection=" + closedReceiverState(detail[3].substring(11))
                 + " packets=" + closedCounter(detail[0].substring(8))
                 + " frames=" + closedCounter(detail[1].substring(7))
-                + " reconnects=" + closedCounter(detail[2].substring(11));
+                + " reconnects=" + closedCounter(detail[2].substring(11))
+                + " " + current.closedCounters();
     }
 
     private static String closedReceiverState(String state) {
@@ -384,5 +387,6 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         @Override public MediaOwnerProvider provider() { return receiver.provider(); }
         @Override public void start() throws Exception { receiver.start(); }
         @Override public MediaRuntimeSnapshot snapshot() { return receiver.snapshot(); }
+        @Override public String closedCounters() { return receiver.closedActivationCounters(); }
     }
 }

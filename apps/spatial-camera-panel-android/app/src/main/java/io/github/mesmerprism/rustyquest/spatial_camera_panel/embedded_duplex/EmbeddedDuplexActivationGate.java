@@ -28,6 +28,12 @@ final class EmbeddedDuplexActivationGate {
         void activateIncomingProjection();
         long[] currentProjection();
         default String incomingDiagnostic() { return "receiverState=UNAVAILABLE connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1"; }
+        /**
+         * Persists one closed activation-failure record on the executor before the
+         * failure is returned to Rust (which maps it to the signed, schema-unchanged
+         * activation_effect_uncertain response). Must not throw; must not block long.
+         */
+        default void recordActivationFailure(String closedRecord) { }
     }
 
     interface Clock { long wallTimeMillis(); }
@@ -96,7 +102,11 @@ final class EmbeddedDuplexActivationGate {
     }
 
     private enum ActivationStage { ARM_PROOF, FIRST_RENDER, NATIVE_ACQUISITION, GRAPH_ATTACH, NATIVE_EFFECTIVE }
-    private static final class ActivationAttempt { ActivationStage stage = ActivationStage.ARM_PROOF; }
+    private static final class ActivationAttempt {
+        ActivationStage stage = ActivationStage.ARM_PROOF;
+        final long startedNs = System.nanoTime();
+        long elapsedMs() { return Math.max(0L, (System.nanoTime() - startedNs) / 1_000_000L); }
+    }
 
     String activate(String activationId, String authorityJson, String proofJson) throws Exception {
         ActivationAttempt attempt = new ActivationAttempt();
@@ -106,8 +116,12 @@ final class EmbeddedDuplexActivationGate {
             String receiverDiagnostic;
             try { receiverDiagnostic = target.incomingDiagnostic(); }
             catch (RuntimeException unavailable) { receiverDiagnostic = "receiverState=UNAVAILABLE connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1"; }
-            android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-rejected stage="
-                    + attempt.stage.name() + " cause=" + category + " code=ACTIVATION_EFFECT_UNCERTAIN " + receiverDiagnostic);
+            String record = "stage=" + attempt.stage.name() + " cause=" + category
+                    + " elapsedMs=" + attempt.elapsedMs()
+                    + " code=ACTIVATION_EFFECT_UNCERTAIN " + receiverDiagnostic;
+            // Persist first: logcat capture has already missed this line once.
+            try { target.recordActivationFailure(record); } catch (RuntimeException ignored) { }
+            android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-rejected " + record);
             throw failure;
         }
     }

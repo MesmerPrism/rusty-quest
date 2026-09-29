@@ -106,6 +106,9 @@ impl ReceiverFrameObservation {
 #[derive(Clone, Copy)]
 struct PendingObservation {
     identity: ReceiverFrameIdentity,
+    // Registration occurs before surface release; PTS is an exact lookup key,
+    // not a substitute for release order.
+    release_ordinal: u64,
     registered_monotonic_ns: u64,
     rendered_monotonic_ns: u64,
     acquired_monotonic_ns: u64,
@@ -114,7 +117,55 @@ struct PendingObservation {
 #[derive(Default)]
 struct ObservationState {
     pending: BTreeMap<FrameKey, PendingObservation>,
-    latest_complete: Option<ReceiverFrameObservation>,
+    // At most 128 exact active streams, removed by connection/generation retirement.
+    latest_complete: BTreeMap<FrameKey, Option<(u64, ReceiverFrameObservation)>>,
+    // Bounded exact history accepts delayed witnesses. No completion is possible
+    // without both actual witnesses; evicted history fails closed.
+    retired: BTreeMap<FrameKey, PendingObservation>,
+    next_release_ordinal: u64,
+    counters: ReceiverObservationCounters,
+}
+
+/// Process-local diagnostic counters; not part of the authority or JNI schema.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ReceiverObservationCounters {
+    pub(crate) registered: u64,
+    pub(crate) rendered: u64,
+    pub(crate) acquired: u64,
+    pub(crate) completed: u64,
+    pub(crate) retired_unacquired: u64,
+    /// Retired entries still awaiting their exact render callback.
+    pub(crate) retired_unrendered: u64,
+    pub(crate) rejected_invalid: u64,
+    pub(crate) rejected_duplicate: u64,
+    pub(crate) rejected_capacity: u64,
+    pub(crate) observation_missing: u64,
+    pub(crate) observation_mismatch: u64,
+}
+
+pub(crate) fn receiver_observation_counters() -> Option<ReceiverObservationCounters> {
+    OBSERVATIONS.lock().ok().map(|state| state.counters)
+}
+
+fn stream_key(mut frame: FrameKey) -> FrameKey {
+    frame.presentation_time_ns = 0;
+    frame
+}
+
+fn remember_retired(state: &mut ObservationState, pending: PendingObservation) {
+    if !state.retired.contains_key(&key(pending.identity))
+        && state.retired.len() >= MAX_PENDING_RECEIVER_FRAMES
+    {
+        if let Some(oldest) = state
+            .retired
+            .iter()
+            .min_by_key(|(_, value)| value.release_ordinal)
+            .map(|(key, _)| *key)
+        {
+            state.retired.remove(&oldest);
+        }
+    }
+    state.retired.insert(key(pending.identity), pending);
 }
 
 static OBSERVATIONS: LazyLock<Mutex<ObservationState>> =
@@ -124,23 +175,43 @@ pub(crate) fn register_receiver_frame(
     identity: ReceiverFrameIdentity,
     now_monotonic_ns: u64,
 ) -> ReceiverFrameRegistrationResult {
-    if !valid_identity(identity) || now_monotonic_ns == 0 {
-        return ReceiverFrameRegistrationResult::Invalid;
-    }
-    let key = key(identity);
     let Ok(mut state) = OBSERVATIONS.lock() else {
         return ReceiverFrameRegistrationResult::Invalid;
     };
-    if state.pending.contains_key(&key) {
+    if !valid_identity(identity) || now_monotonic_ns == 0 {
+        state.counters.rejected_invalid = state.counters.rejected_invalid.saturating_add(1);
+        return ReceiverFrameRegistrationResult::Invalid;
+    }
+    let frame_key = key(identity);
+    let stream = stream_key(frame_key);
+    if state.pending.contains_key(&frame_key)
+        || state.retired.contains_key(&frame_key)
+        || state.latest_complete.get(&stream).is_some_and(|entry| {
+            entry.is_some_and(|(_, observation)| key(observation.identity) == frame_key)
+        })
+    {
+        state.counters.rejected_duplicate = state.counters.rejected_duplicate.saturating_add(1);
         return ReceiverFrameRegistrationResult::Duplicate;
     }
-    if state.pending.len() >= MAX_PENDING_RECEIVER_FRAMES {
+    if state.pending.len() >= MAX_PENDING_RECEIVER_FRAMES
+        || (!state.latest_complete.contains_key(&stream)
+            && state.latest_complete.len() >= MAX_PENDING_RECEIVER_FRAMES)
+    {
+        state.counters.rejected_capacity = state.counters.rejected_capacity.saturating_add(1);
         return ReceiverFrameRegistrationResult::CapacityExceeded;
     }
+    let Some(release_ordinal) = state.next_release_ordinal.checked_add(1) else {
+        state.counters.rejected_invalid = state.counters.rejected_invalid.saturating_add(1);
+        return ReceiverFrameRegistrationResult::Invalid;
+    };
+    state.next_release_ordinal = release_ordinal;
+    state.latest_complete.entry(stream).or_insert(None);
+    state.counters.registered = state.counters.registered.saturating_add(1);
     state.pending.insert(
-        key,
+        frame_key,
         PendingObservation {
             identity,
+            release_ordinal,
             registered_monotonic_ns: now_monotonic_ns,
             rendered_monotonic_ns: 0,
             acquired_monotonic_ns: 0,
@@ -172,7 +243,18 @@ pub(crate) fn latest_receiver_frame_observation(
     now_monotonic_ns: u64,
 ) -> Option<ReceiverFrameObservation> {
     let state = OBSERVATIONS.lock().ok()?;
-    let observation = state.latest_complete?;
+    let observation = state
+        .latest_complete
+        .get(&FrameKey {
+            receiver_generation,
+            connection_generation,
+            route_generation,
+            decoder_token,
+            reader_generation,
+            presentation_time_ns: 0,
+        })?
+        .as_ref()?
+        .1;
     let identity = observation.identity;
     (identity.receiver_generation == receiver_generation
         && identity.connection_generation == connection_generation
@@ -189,12 +271,12 @@ pub(crate) fn retire_receiver_generation(receiver_generation: u64) {
         state
             .pending
             .retain(|_, pending| pending.identity.receiver_generation != receiver_generation);
-        if state
+        state
             .latest_complete
-            .is_some_and(|value| value.identity.receiver_generation == receiver_generation)
-        {
-            state.latest_complete = None;
-        }
+            .retain(|key, _| key.receiver_generation != receiver_generation);
+        state
+            .retired
+            .retain(|key, _| key.receiver_generation != receiver_generation);
     }
 }
 
@@ -204,12 +286,14 @@ pub(crate) fn retire_receiver_connection(receiver_generation: u64, connection_ge
             pending.identity.receiver_generation != receiver_generation
                 || pending.identity.connection_generation != connection_generation
         });
-        if state.latest_complete.is_some_and(|value| {
-            value.identity.receiver_generation == receiver_generation
-                && value.identity.connection_generation == connection_generation
-        }) {
-            state.latest_complete = None;
-        }
+        state.latest_complete.retain(|key, _| {
+            key.receiver_generation != receiver_generation
+                || key.connection_generation != connection_generation
+        });
+        state.retired.retain(|key, _| {
+            key.receiver_generation != receiver_generation
+                || key.connection_generation != connection_generation
+        });
     }
 }
 
@@ -218,29 +302,76 @@ fn observe(
     now_monotonic_ns: u64,
     rendered: bool,
 ) -> ReceiverFrameObservationResult {
-    if !valid_identity(identity) || now_monotonic_ns == 0 {
-        return ReceiverFrameObservationResult::IdentityMismatch;
-    }
-    let frame_key = key(identity);
     let Ok(mut state) = OBSERVATIONS.lock() else {
         return ReceiverFrameObservationResult::IdentityMismatch;
     };
-    let Some(pending) = state.pending.get_mut(&frame_key) else {
+    if !valid_identity(identity) || now_monotonic_ns == 0 {
+        state.counters.observation_mismatch = state.counters.observation_mismatch.saturating_add(1);
+        return ReceiverFrameObservationResult::IdentityMismatch;
+    }
+    let frame_key = key(identity);
+    // A native reader callback may consume A's source identity before B but
+    // deliver A's observation after B on another thread. Retained exact history
+    // accepts that actual acquire once, just as it accepts a delayed render.
+    let pending = if state.pending.contains_key(&frame_key) {
+        state.pending.get_mut(&frame_key)
+    } else {
+        state.retired.get_mut(&frame_key)
+    };
+    let Some(pending) = pending else {
+        state.counters.observation_missing = state.counters.observation_missing.saturating_add(1);
         return ReceiverFrameObservationResult::Missing;
     };
     if pending.identity != identity || now_monotonic_ns < pending.registered_monotonic_ns {
+        state.counters.observation_mismatch = state.counters.observation_mismatch.saturating_add(1);
         return ReceiverFrameObservationResult::IdentityMismatch;
     }
     if rendered {
         if pending.rendered_monotonic_ns != 0 {
+            state.counters.observation_mismatch =
+                state.counters.observation_mismatch.saturating_add(1);
             return ReceiverFrameObservationResult::IdentityMismatch;
         }
         pending.rendered_monotonic_ns = now_monotonic_ns;
     } else {
         if pending.acquired_monotonic_ns != 0 {
+            state.counters.observation_mismatch =
+                state.counters.observation_mismatch.saturating_add(1);
             return ReceiverFrameObservationResult::IdentityMismatch;
         }
         pending.acquired_monotonic_ns = now_monotonic_ns;
+    }
+    let pending = *pending;
+    if rendered {
+        state.counters.rendered = state.counters.rendered.saturating_add(1);
+    } else {
+        state.counters.acquired = state.counters.acquired.saturating_add(1);
+        // A real acquireLatestImage witness retires unwitnessed predecessors
+        // by release order. History preserves exact observations already in
+        // flight; render callback order alone proves no acquisition.
+        // Preserve older acquired entries so reordered callbacks can complete.
+        let predecessors: Vec<_> = state
+            .pending
+            .iter()
+            .filter_map(|(key, other)| {
+                (stream_key(*key) == stream_key(frame_key)
+                    && other.release_ordinal < pending.release_ordinal
+                    && other.acquired_monotonic_ns == 0)
+                    .then_some(*key)
+            })
+            .collect();
+        for predecessor in predecessors {
+            let skipped = state
+                .pending
+                .remove(&predecessor)
+                .expect("retained predecessor");
+            state.counters.retired_unacquired = state.counters.retired_unacquired.saturating_add(1);
+            if skipped.rendered_monotonic_ns == 0 {
+                state.counters.retired_unrendered =
+                    state.counters.retired_unrendered.saturating_add(1);
+            }
+            remember_retired(&mut state, skipped);
+        }
     }
     if pending.rendered_monotonic_ns != 0 && pending.acquired_monotonic_ns != 0 {
         let complete = ReceiverFrameObservation {
@@ -250,7 +381,15 @@ fn observe(
             acquired_monotonic_ns: pending.acquired_monotonic_ns,
         };
         state.pending.remove(&frame_key);
-        state.latest_complete = Some(complete);
+        state.counters.completed = state.counters.completed.saturating_add(1);
+        let latest = state
+            .latest_complete
+            .entry(stream_key(frame_key))
+            .or_default();
+        if latest.map_or(true, |(ordinal, _)| ordinal < pending.release_ordinal) {
+            *latest = Some((pending.release_ordinal, complete));
+        }
+        remember_retired(&mut state, pending);
     }
     ReceiverFrameObservationResult::Accepted
 }
@@ -299,8 +438,7 @@ mod tests {
         let mut state = OBSERVATIONS
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.pending.clear();
-        state.latest_complete = None;
+        *state = ObservationState::default();
         drop(state);
         guard
     }
@@ -502,5 +640,312 @@ mod tests {
             ReceiverFrameRegistrationResult::Accepted
         );
         retire_receiver_generation(401);
+    }
+
+    fn register(frame: ReceiverFrameIdentity, at: u64) {
+        assert_eq!(
+            register_receiver_frame(frame, at),
+            ReceiverFrameRegistrationResult::Accepted
+        );
+    }
+
+    fn render(frame: ReceiverFrameIdentity, at: u64) {
+        assert_eq!(
+            record_receiver_frame_rendered(frame, at),
+            ReceiverFrameObservationResult::Accepted
+        );
+    }
+
+    fn acquire(frame: ReceiverFrameIdentity, at: u64) {
+        assert_eq!(
+            record_receiver_frame_acquired(frame, at),
+            ReceiverFrameObservationResult::Accepted
+        );
+    }
+
+    #[test]
+    fn sustained_reader_skips_retire_without_exhausting_the_pending_window() {
+        let _guard = reset();
+        for n in 1..=4096_i64 {
+            let frame = identity(501, 1, n * 1000);
+            let at = n as u64 * 10;
+            register(frame, at);
+            render(frame, at + 1);
+            if n % 3 == 0 {
+                acquire(frame, at + 2);
+            }
+        }
+        let state = OBSERVATIONS.lock().unwrap();
+        assert_eq!(state.pending.len(), 1);
+        assert_eq!(state.retired.len(), MAX_PENDING_RECEIVER_FRAMES);
+        assert_eq!(state.counters.rejected_capacity, 0);
+        assert_eq!(state.counters.retired_unacquired, 2730);
+        assert_eq!(state.counters.completed, 1365);
+    }
+
+    #[test]
+    fn acquired_predecessor_survives_reordered_render_without_regressing_latest() {
+        let _guard = reset();
+        // PTS order differs from surface release order.
+        let a = identity(502, 1, 9000);
+        let b = identity(502, 1, 1000);
+        register(a, 10);
+        register(b, 11);
+        acquire(a, 12);
+        render(b, 13);
+        assert!(OBSERVATIONS.lock().unwrap().pending.contains_key(&key(a)));
+        acquire(b, 14);
+        render(a, 15);
+        assert_eq!(
+            latest_receiver_frame_observation(502, 1, 3, 4, 5, 16)
+                .unwrap()
+                .identity,
+            b
+        );
+        assert_eq!(receiver_observation_counters().unwrap().completed, 2);
+        assert_eq!(
+            record_receiver_frame_rendered(a, 17),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+    }
+
+    #[test]
+    fn render_alone_does_not_retire_or_infer_acquisition_for_predecessors() {
+        let _guard = reset();
+        let a = identity(503, 1, 1000);
+        let b = identity(503, 1, 2000);
+        register(a, 10);
+        register(b, 11);
+        render(b, 12);
+        acquire(a, 13);
+        render(a, 14);
+        assert_eq!(
+            latest_receiver_frame_observation(503, 1, 3, 4, 5, 15)
+                .unwrap()
+                .identity,
+            a
+        );
+        assert_eq!(
+            receiver_observation_counters().unwrap().retired_unacquired,
+            0
+        );
+        acquire(b, 16);
+        assert_eq!(
+            latest_receiver_frame_observation(503, 1, 3, 4, 5, 17)
+                .unwrap()
+                .identity,
+            b
+        );
+    }
+
+    #[test]
+    fn skipped_identity_accepts_one_exact_late_render_without_inferred_acquisition() {
+        let _guard = reset();
+        let a = identity(504, 1, 1000);
+        let b = identity(504, 1, 2000);
+        register(a, 10);
+        register(b, 11);
+        acquire(b, 12);
+        let mut wrong = a;
+        wrong.pair_id += 1;
+        assert_eq!(
+            record_receiver_frame_rendered(wrong, 13),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert_eq!(
+            record_receiver_frame_rendered(a, 9),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        render(a, 14);
+        assert!(latest_receiver_frame_observation(504, 1, 3, 4, 5, 15).is_none());
+        assert_eq!(
+            record_receiver_frame_rendered(a, 16),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert_eq!(
+            register_receiver_frame(a, 17),
+            ReceiverFrameRegistrationResult::Duplicate
+        );
+        render(b, 18);
+        assert_eq!(
+            latest_receiver_frame_observation(504, 1, 3, 4, 5, 19)
+                .unwrap()
+                .identity,
+            b
+        );
+        assert_eq!(receiver_observation_counters().unwrap().completed, 1);
+    }
+
+    #[test]
+    fn reordered_exact_acquisition_can_complete_from_history_without_regressing_latest() {
+        let _guard = reset();
+        let a = identity(512, 1, 1000);
+        let b = identity(512, 1, 2000);
+        register(a, 10);
+        register(b, 11);
+        render(a, 12);
+        // Native source consumption for A already happened, but its actual
+        // acquisition witness is delivered after B's on another callback thread.
+        acquire(b, 14);
+        render(b, 15);
+        acquire(a, 13);
+        assert_eq!(
+            latest_receiver_frame_observation(512, 1, 3, 4, 5, 16)
+                .unwrap()
+                .identity,
+            b
+        );
+        assert_eq!(
+            record_receiver_frame_acquired(a, 17),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert_eq!(receiver_observation_counters().unwrap().completed, 2);
+    }
+
+    #[test]
+    fn interleaved_streams_preserve_exact_pending_and_completed_witnesses() {
+        let _guard = reset();
+        let a = identity(505, 1, 1000);
+        let b = identity(505, 1, 2000);
+        let mut others = [a; 5];
+        others[0].receiver_generation += 1;
+        others[1].connection_generation += 1;
+        others[2].route_generation += 1;
+        others[3].decoder_token += 1;
+        others[4].reader_generation += 1;
+        register(a, 10);
+        register(b, 11);
+        for frame in others {
+            register(frame, 12);
+        }
+        acquire(b, 13);
+        // Each foreign stream acquires before skipped A's render arrives.
+        for frame in others {
+            acquire(frame, 14);
+            render(frame, 15);
+        }
+        render(a, 16);
+        assert!(latest_receiver_frame_observation(505, 1, 3, 4, 5, 17).is_none());
+        render(b, 18);
+        for frame in others.into_iter().chain([b]) {
+            assert_eq!(
+                latest_receiver_frame_observation(
+                    frame.receiver_generation,
+                    frame.connection_generation,
+                    frame.route_generation,
+                    frame.decoder_token,
+                    frame.reader_generation,
+                    19
+                )
+                .unwrap()
+                .identity,
+                frame
+            );
+        }
+        assert_eq!(
+            receiver_observation_counters().unwrap().retired_unacquired,
+            1
+        );
+    }
+
+    #[test]
+    fn connection_and_generation_retirement_clear_pending_history_and_latest_only_for_owner() {
+        let _guard = reset();
+        let a = identity(507, 1, 1000);
+        let b = identity(507, 1, 2000);
+        let c = identity(507, 1, 3000);
+        let other_connection = identity(507, 2, 1000);
+        let other_receiver = identity(508, 1, 1000);
+        for frame in [a, b, c, other_connection, other_receiver] {
+            register(frame, 10);
+        }
+        acquire(b, 11);
+        render(b, 12);
+        retire_receiver_connection(507, 1);
+        for frame in [a, b, c] {
+            assert_eq!(
+                record_receiver_frame_rendered(frame, 13),
+                ReceiverFrameObservationResult::Missing
+            );
+        }
+        assert!(latest_receiver_frame_observation(507, 1, 3, 4, 5, 14).is_none());
+        acquire(other_connection, 15);
+        render(other_connection, 16);
+        retire_receiver_generation(507);
+        assert_eq!(
+            record_receiver_frame_rendered(other_connection, 17),
+            ReceiverFrameObservationResult::Missing
+        );
+        assert!(latest_receiver_frame_observation(507, 2, 3, 4, 5, 18).is_none());
+        acquire(other_receiver, 19);
+        render(other_receiver, 20);
+        assert_eq!(
+            latest_receiver_frame_observation(508, 1, 3, 4, 5, 21)
+                .unwrap()
+                .identity,
+            other_receiver
+        );
+    }
+
+    #[test]
+    fn absent_skipped_callbacks_have_bounded_history_and_fail_closed_after_eviction() {
+        let _guard = reset();
+        for n in 1..=4096_i64 {
+            let frame = identity(509, 1, n * 1000);
+            register(frame, n as u64 * 10);
+            if n % 2 == 0 {
+                acquire(frame, n as u64 * 10 + 1);
+                render(frame, n as u64 * 10 + 2);
+            }
+        }
+        let last_skip = identity(509, 1, 4095_000);
+        render(last_skip, 50_000);
+        assert_eq!(
+            record_receiver_frame_rendered(identity(509, 1, 1000), 50_001),
+            ReceiverFrameObservationResult::Missing
+        );
+        let state = OBSERVATIONS.lock().unwrap();
+        assert!(state.pending.is_empty());
+        assert_eq!(state.retired.len(), MAX_PENDING_RECEIVER_FRAMES);
+        assert_eq!(state.counters.completed, 2048);
+        assert_eq!(state.counters.retired_unacquired, 2048);
+        assert_eq!(state.counters.retired_unrendered, 2048);
+        assert_eq!(state.counters.rejected_capacity, 0);
+    }
+
+    #[test]
+    fn missing_render_of_acquired_frames_retains_capacity_guard() {
+        let _guard = reset();
+        for n in 1..=128_i64 {
+            let frame = identity(510, 1, n * 1000);
+            register(frame, n as u64 * 10);
+            acquire(frame, n as u64 * 10 + 1);
+        }
+        assert_eq!(
+            register_receiver_frame(identity(510, 1, 129_000), 2000),
+            ReceiverFrameRegistrationResult::CapacityExceeded
+        );
+        assert_eq!(receiver_observation_counters().unwrap().completed, 0);
+        render(identity(510, 1, 1000), 2001);
+        register(identity(510, 1, 129_000), 2002);
+    }
+
+    #[test]
+    fn ordinal_exhaustion_rejects_without_publishing_or_wrapping() {
+        let _guard = reset();
+        OBSERVATIONS.lock().unwrap().next_release_ordinal = u64::MAX;
+        let frame = identity(511, 1, 1000);
+        assert_eq!(
+            register_receiver_frame(frame, 10),
+            ReceiverFrameRegistrationResult::Invalid
+        );
+        assert_eq!(
+            record_receiver_frame_rendered(frame, 11),
+            ReceiverFrameObservationResult::Missing
+        );
+        let state = OBSERVATIONS.lock().unwrap();
+        assert!(state.pending.is_empty());
+        assert!(state.latest_complete.is_empty());
+        assert_eq!(state.next_release_ordinal, u64::MAX);
     }
 }
