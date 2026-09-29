@@ -31,6 +31,17 @@ impl TargetRect {
         }
     }
 
+    /// Full-eye UV affine map from the base camera footprint to its current footprint.
+    /// The result encodes offset and scale, so its offsets may be negative.
+    pub(crate) fn world_eye_projection_rect(self, effective: Self, custom_camera: bool) -> Self {
+        if !custom_camera || !self.is_valid() || !effective.is_valid() {
+            return Self::UNIT;
+        }
+        let sx = effective.width / self.width;
+        let sy = effective.height / self.height;
+        Self::new(effective.x - self.x * sx, effective.y - self.y * sy, sx, sy)
+    }
+
     pub(crate) fn parse(text: &str) -> Option<Self> {
         let parts = text
             .split(|character| matches!(character, ',' | ';' | ' ' | '\t'))
@@ -68,6 +79,51 @@ impl TargetRect {
 #[cfg(test)]
 mod tests {
     use super::TargetRect;
+
+    #[test]
+    fn world_eye_map_preserves_camera_content_coordinates_for_each_eye() {
+        for base in [
+            TargetRect::new(0.12, 0.18, 0.72, 0.64),
+            TargetRect::new(0.16, 0.20, 0.68, 0.60),
+        ] {
+            for effective in [
+                base,
+                TargetRect::new(0.30, 0.35, 0.36, 0.30),
+                TargetRect::UNIT,
+            ] {
+                let map = base.world_eye_projection_rect(effective, true);
+                for content in [[0.0, 0.0], [0.5, 0.5], [1.0, 1.0], [0.23, 0.81]] {
+                    let actual = [
+                        map.x + (base.x + content[0] * base.width) * map.width,
+                        map.y + (base.y + content[1] * base.height) * map.height,
+                    ];
+                    let expected = [
+                        effective.x + content[0] * effective.width,
+                        effective.y + content[1] * effective.height,
+                    ];
+                    assert!((actual[0] - expected[0]).abs() < 0.000_001);
+                    assert!((actual[1] - expected[1]).abs() < 0.000_001);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn world_eye_map_is_unit_without_custom_camera_or_valid_metadata() {
+        let base = TargetRect::new(0.1, 0.2, 0.7, 0.6);
+        assert_eq!(
+            base.world_eye_projection_rect(TargetRect::UNIT, false),
+            TargetRect::UNIT
+        );
+        assert_eq!(
+            TargetRect::new(0.0, 0.0, 0.0, 1.0).world_eye_projection_rect(base, true),
+            TargetRect::UNIT
+        );
+        assert_eq!(
+            base.world_eye_projection_rect(TargetRect::new(f32::NAN, 0.0, 1.0, 1.0), true),
+            TargetRect::UNIT
+        );
+    }
 
     #[test]
     fn parses_target_rect_tokens() {

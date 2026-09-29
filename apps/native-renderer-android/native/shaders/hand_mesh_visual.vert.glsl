@@ -81,7 +81,11 @@ vec4 world_to_eye_clip(vec3 world) {
     float ndc_x = ((x_over_z - left_tan) / max(right_tan - left_tan, 0.0001)) * 2.0 - 1.0;
     float screen_y = 1.0 - ((y_over_z - down_tan) / max(up_tan - down_tan, 0.0001));
     float ndc_y = screen_y * 2.0 - 1.0;
-    return vec4(ndc_x, ndc_y, 0.0, 1.0);
+    // Apply the camera footprint's full-eye UV affine map after eye projection.
+    // Both the source hand and its animated graft instances share this map.
+    vec2 screen_uv = vec2(ndc_x, ndc_y) * 0.5 + vec2(0.5);
+    screen_uv = pc.target_rect.xy + screen_uv * pc.target_rect.zw;
+    return vec4(screen_uv * 2.0 - vec2(1.0), 0.0, 1.0);
 }
 
 float target_depth(vec3 world) {

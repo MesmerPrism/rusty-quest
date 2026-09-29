@@ -5383,6 +5383,9 @@ unsafe fn record_projection_diagnostic(
     for (eye_index, eye) in buffer.eyes.iter().enumerate() {
         let target_rect =
             projection_target_state.effective_rect(projection_metadata.rect_for_eye(eye_index));
+        let hand_world_eye_rect = projection_metadata
+            .rect_for_eye(eye_index)
+            .world_eye_projection_rect(target_rect, custom_stereo_projection);
         let eye_projection = views
             .get(eye_index)
             .map(hand_mesh_visual_eye_projection)
@@ -5640,7 +5643,11 @@ unsafe fn record_projection_diagnostic(
                         device,
                         cmd,
                         swapchain.extent,
-                        target_rect,
+                        if hand_mesh_visual_stats.primary.live_compact_input_frame {
+                            hand_world_eye_rect
+                        } else {
+                            target_rect
+                        },
                         eye_projection,
                         &hand_mesh_visual_stats.primary,
                     );
@@ -5656,7 +5663,11 @@ unsafe fn record_projection_diagnostic(
                         device,
                         cmd,
                         swapchain.extent,
-                        target_rect,
+                        if hand_mesh_visual_stats.secondary.live_compact_input_frame {
+                            hand_world_eye_rect
+                        } else {
+                            target_rect
+                        },
                         eye_projection,
                         &hand_mesh_visual_stats.secondary,
                     );
@@ -5786,7 +5797,7 @@ unsafe fn record_projection_diagnostic(
                     device,
                     cmd,
                     swapchain.extent,
-                    target_rect,
+                    hand_world_eye_rect,
                     eye_projection,
                     &hand_mesh_visual_stats.primary,
                 );
@@ -5798,7 +5809,7 @@ unsafe fn record_projection_diagnostic(
                     device,
                     cmd,
                     swapchain.extent,
-                    target_rect,
+                    hand_world_eye_rect,
                     eye_projection,
                     &hand_mesh_visual_stats.secondary,
                 );

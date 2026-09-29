@@ -319,4 +319,19 @@ Assert-ContainsTokens "$gpuMeshReplay`n$xrVulkanSurface" @(
     'cpuSdfPerFrame=false'
 ) "GPU mesh replay boundary"
 
+$projectionRect = Read-RequiredText (Join-Path $srcRoot "projection_rect.rs") "shared projection math"
+Assert-ContainsTokens "$projectionRect`n$xrVulkanSurface" @(
+    'world_eye_projection_rect',
+    'effective\.width / self\.width',
+    'effective\.x - self\.x \* sx',
+    'world_eye_projection_rect\(target_rect, custom_stereo_projection\)',
+    'hand_mesh_visual_stats\.primary\.live_compact_input_frame',
+    'hand_mesh_visual_stats\.secondary\.live_compact_input_frame',
+    'hand_world_eye_rect'
+) "custom camera hand projection alignment"
+Assert-ContainsTokens $handMeshVisualVertex @(
+    'screen_uv = pc\.target_rect\.xy \+ screen_uv \* pc\.target_rect\.zw',
+    'gl_Position = world_to_eye_clip\(vertex\.xyz\)'
+) "post-eye-projection hand and graft affine map"
+
 Write-Host "Rusty Quest native renderer hand-visual static validation passed"

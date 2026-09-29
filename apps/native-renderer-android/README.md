@@ -329,6 +329,22 @@ The staged property bundle for that later retest is
 it forces `live-meta-openxr-hand-tracking`, keeps recorded fallback available
 until live joint frames arrive, enables the high-contrast mesh diagnostic plus SDF visual, and keeps live mesh/SDF
 acceptance pending until screenshot evidence shows visible overlay color.
+`fixtures/native-app-builds/native-camera-hand-grafts.app.json` combines custom
+Camera2 projection, both live GPU-skinned hands, and five animated copies of
+each source hand on the opposite fingertips. The app uses a separate Android
+package and the existing hand conformance lock. Grafts retain the `0.85` scale
+multiplier. Right thumbstick Y scales the projection from `0.25` to `2.0`;
+right primary resets it to `1.0`. Put the controllers down to inspect both
+tracked hands. No recorded-joint fallback is selected.
+
+In custom camera mode, live base hands and grafts receive the same per-eye
+screen-space scale and offset as the camera footprint after OpenXR eye
+projection. Tracking, metric GPU skinning and graft attachment stay in their
+original coordinate space. Native passthrough and solid-black modes retain
+their unscaled world-eye projection. A build requires the existing external
+left/right hand rig capture; APK compilation alone does not establish headset
+alignment or visual acceptance.
+
 The optional graft-copy experiment is controlled separately by
 `debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled`; the shared
 profiles set it to `false` so replay and live diagnostic runs do not inherit a
