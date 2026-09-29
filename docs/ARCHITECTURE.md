@@ -471,6 +471,18 @@ native `AImage` acquisition, and `AHardwareBuffer` descriptor evidence. This
 route is explicitly `display_composite` media evidence: it must not be treated
 as raw camera, passthrough texture, environment-depth, or geometry truth, and
 high-rate JSON frame payloads are out of contract.
+
+The camera/hand-graft app selects only `HandGraftCameraPanelModule` through its
+exact panel source closure. That Android adapter saves the bounded
+`rusty.quest.hand_graft_controls.v1` scalar candidate in app-private storage and
+returns to the existing NativeActivity. `hand_graft_controls.rs` validates
+revisions/ranges, preserves the last valid settings on rejection, and publishes
+status after frame submission. Its importer is inert unless the packaged panel
+mode selects this route. The same per-eye calibrated virtual-plane footprint
+controls camera placement and hand/graft affine projection; metric tracking,
+skinning, and fingertip attachment remain native. Visibility toggles cannot
+override tracking-loss suppression. Panel lifecycle and return-to-VR reuse the
+existing generated shell; this module introduces no additional XR session.
 `ahardware_buffer_vulkan.rs` owns the reusable Vulkan import mechanics for
 Android `AHardwareBuffer` images: property query, external-memory image
 creation, memory binding, image-view creation, layout transition, and retained

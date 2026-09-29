@@ -68,6 +68,7 @@ mod gpu_stimulus_volume;
 #[cfg(target_os = "android")]
 mod guide_blur_graph;
 mod hand_adapter_consumer;
+mod hand_graft_controls;
 mod hand_mesh_graft;
 #[cfg(target_os = "android")]
 mod live_hand_compact;

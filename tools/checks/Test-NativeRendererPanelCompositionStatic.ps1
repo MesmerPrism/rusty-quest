@@ -188,6 +188,15 @@ try {
         -RequiredSourceNeedles @("PolarPanelModule.java", "PolarSensorPanel.java", "PolarSensorRuntime.java") `
         -ForbiddenSourceNeedles @("BreathCompositionPanelModule.java", "StimulusVolumePanelModule.java", "PrivateParticlePanelModule.java")
 
+    $handGraftCamera = Invoke-Resolution `
+        -Name "hand-graft-camera" `
+        -AppSpec (Join-Path $appRoot "native-camera-hand-grafts.app.json")
+    Assert-PanelClosure `
+        -Resolution $handGraftCamera `
+        -ExpectedModule "hand-graft-camera-controls" `
+        -RequiredSourceNeedles @("HandGraftCameraPanelModule.java") `
+        -ForbiddenSourceNeedles @("BreathCompositionPanelModule.java", "StimulusVolumePanelModule.java", "PrivateParticlePanelModule.java", "PolarPanelModule.java", "DriverProfilePanelModule.java")
+
     $noPanel = Invoke-Resolution `
         -Name "no-panel" `
         -AppSpec (Join-Path $appRoot "native-openxr-hand-lab.app.json")

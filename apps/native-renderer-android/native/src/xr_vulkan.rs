@@ -2113,6 +2113,16 @@ unsafe fn run_projection_frames(
     let mut last_camera_import_cache_misses = 0_u64;
     let mut projection_target_state =
         ProjectionTargetState::new(projection_target_settings.clone());
+    let panel_controls_enabled = render_mode.uses_custom_stereo_projection()
+        && crate::native_renderer_panel_bridge::packaged_control_panel_mode_is_hand_graft_camera();
+    let mut hand_graft_controls = crate::hand_graft_controls::HandGraftControlPoller::new(
+        panel_controls_enabled
+            .then(|| app.internal_data_path())
+            .flatten(),
+    );
+    if hand_graft_controls.enabled() {
+        projection_target_state.set_panel_controls(hand_graft_controls.effective);
+    }
     let mut breath_bridge = ManifoldBreathBridge::start(projection_target_settings);
     let mut previous_frame_instant = Instant::now();
     let mut private_particle_world_anchor =
@@ -2501,6 +2511,34 @@ unsafe fn run_projection_frames(
         );
 
         let frame_instant = Instant::now();
+        if let Some(candidate) = hand_graft_controls.poll() {
+            projection_target_state.set_panel_controls(candidate);
+        }
+        let hand_mesh_graft_copies_enabled = if hand_graft_controls.enabled() {
+            hand_graft_controls.effective.hands_enabled
+                && hand_graft_controls.effective.grafts_visible
+        } else {
+            hand_mesh_graft_copies_enabled
+        };
+        let hand_mesh_real_hands_visible = if hand_graft_controls.enabled() {
+            hand_graft_controls.effective.hands_enabled
+                && hand_graft_controls.effective.base_hands_visible
+        } else {
+            hand_mesh_real_hands_visible
+        };
+        let hand_mesh_graft_copy_scale = if hand_graft_controls.enabled() {
+            hand_graft_controls.effective.graft_scale
+        } else {
+            hand_mesh_graft_copy_scale
+        };
+        let mut hand_mesh_visual_material_settings = hand_mesh_visual_material_settings;
+        if hand_graft_controls.enabled() {
+            hand_mesh_visual_material_settings.alpha = hand_graft_controls.effective.material_alpha;
+            hand_mesh_visual_material_settings.rim_strength =
+                hand_graft_controls.effective.rim_strength;
+            hand_mesh_visual_material_settings.wireframe_enabled =
+                hand_graft_controls.effective.wireframe_enabled;
+        }
         let dt_seconds = (frame_instant - previous_frame_instant)
             .as_secs_f32()
             .clamp(0.0, 1.0);
@@ -2772,11 +2810,38 @@ unsafe fn run_projection_frames(
             }
         }
         projection_target_state.update_frame(dt_seconds);
+        if hand_graft_controls.enabled() && views.len() >= 2 {
+            let midpoint = [
+                (views[0].pose.position.x + views[1].pose.position.x) * 0.5,
+                (views[0].pose.position.y + views[1].pose.position.y) * 0.5,
+                (views[0].pose.position.z + views[1].pose.position.z) * 0.5,
+            ];
+            let mut controls = hand_graft_controls.effective;
+            controls.shared_scale = projection_target_state.live_scale();
+            let rects = std::array::from_fn(|eye| {
+                let view = &views[eye];
+                let q = view.pose.orientation;
+                let p = view.pose.position;
+                let delta = [p.x - midpoint[0], p.y - midpoint[1], p.z - midpoint[2]];
+                let local = rotate_by_quat([-q.x, -q.y, -q.z, q.w], delta);
+                controls.eye_rect(
+                    projection_metadata.rect_for_eye(eye),
+                    [
+                        view.fov.angle_left.tan(),
+                        view.fov.angle_right.tan(),
+                        view.fov.angle_up.tan(),
+                        view.fov.angle_down.tan(),
+                    ],
+                    local,
+                )
+            });
+            projection_target_state.set_panel_eye_rects(rects);
+        }
         if frame_count == 0 || frame_count % 120 == 0 {
-            let left_effective_rect =
-                projection_target_state.effective_rect(projection_metadata.rect_for_eye(0));
-            let right_effective_rect =
-                projection_target_state.effective_rect(projection_metadata.rect_for_eye(1));
+            let left_effective_rect = projection_target_state
+                .effective_rect_for_eye(projection_metadata.rect_for_eye(0), 0);
+            let right_effective_rect = projection_target_state
+                .effective_rect_for_eye(projection_metadata.rect_for_eye(1), 1);
             crate::marker(
                 "projection-target",
                 format!(
@@ -3258,8 +3323,11 @@ unsafe fn run_projection_frames(
         );
         let hand_mesh_visual_mesh_source =
             hotload_hand_mesh_visual_mesh_source(hand_mesh_visual_mesh_source);
-        let hand_mesh_visual_material_settings =
-            hotload_hand_mesh_visual_material_settings(hand_mesh_visual_material_settings);
+        let hand_mesh_visual_material_settings = if hand_graft_controls.enabled() {
+            hand_mesh_visual_material_settings
+        } else {
+            hotload_hand_mesh_visual_material_settings(hand_mesh_visual_material_settings)
+        };
         let mut primary_hand_mesh_visual_stats = if let Some(renderer) =
             gpu_hand_mesh_visual_renderer.as_mut()
         {
@@ -3901,6 +3969,14 @@ unsafe fn run_projection_frames(
             )
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
         trace_startup_frame(frame_count, "after-xr-end-frame");
+        hand_graft_controls.submitted(
+            frame_count,
+            std::array::from_fn(|eye| {
+                projection_target_state
+                    .effective_rect_for_eye(projection_metadata.rect_for_eye(eye), eye)
+            }),
+            projection_target_state.live_scale(),
+        );
         control_panel_command_poller.after_current_session_frame_submitted(
             app,
             openxr_session_generation,
@@ -5381,8 +5457,8 @@ unsafe fn record_projection_diagnostic(
         }
     }
     for (eye_index, eye) in buffer.eyes.iter().enumerate() {
-        let target_rect =
-            projection_target_state.effective_rect(projection_metadata.rect_for_eye(eye_index));
+        let target_rect = projection_target_state
+            .effective_rect_for_eye(projection_metadata.rect_for_eye(eye_index), eye_index);
         let hand_world_eye_rect = projection_metadata
             .rect_for_eye(eye_index)
             .world_eye_projection_rect(target_rect, custom_stereo_projection);

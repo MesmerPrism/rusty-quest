@@ -10,7 +10,9 @@
     "camera.hwb",
     "projection_target.breathing_room",
     "hand_mesh_live_input",
-    "hand_mesh_visual"
+    "hand_mesh_visual",
+    "ui.hand_graft_camera_control_panel",
+    "input.right_secondary_same_apk_panel_triple_press"
   ],
   "denied_features": [
     "display_composite",
@@ -37,7 +39,6 @@
     "renderer.stimulus_volume",
     "sdf_visual",
     "sensor.polar_h10_ble",
-    "ui.same_apk_control_panel",
     "ui.same_apk_questionnaire_panel",
     "video_projection",
     "renderer.background.solid_black",
@@ -85,7 +86,7 @@
       "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "true",
       "debug.rustyquest.native_renderer.projection.target.scale": "1.0",
       "debug.rustyquest.native_renderer.projection.target.min.scale": "0.25",
-      "debug.rustyquest.native_renderer.projection.target.max.scale": "2.0"
+      "debug.rustyquest.native_renderer.projection.target.max.scale": "3.0"
     },
     "allow_feature_overrides": "true"
   },
@@ -107,7 +108,8 @@
       "android.hardware.camera2.full"
     ],
     "activities": [
-      "android.app.NativeActivity"
+      "android.app.NativeActivity",
+      "ControlPanelActivity"
     ],
     "services": []
   },
@@ -154,7 +156,7 @@
       "native_renderer.guide.resolution": "camera-native",
       "native_renderer.projection.target.scale": "1.0",
       "native_renderer.projection.target.min.scale": "0.25",
-      "native_renderer.projection.target.max.scale": "2.0"
+      "native_renderer.projection.target.max.scale": "3.0"
     },
     "required_disabled_modules": [],
     "required_modules": [
@@ -163,7 +165,9 @@
       "hand/live-input",
       "hand/mesh",
       "input/controllers-and-hands",
-      "projection-target/breathing-room"
+      "projection-target/breathing-room",
+      "ui/hand-graft-camera-panel",
+      "input/same-apk-panel/right-secondary-triple-press"
     ],
     "forbidden_modules": [
       "background/native-passthrough",
@@ -187,7 +191,6 @@
       "sdf/visual",
       "sensor/polar-h10-ble",
       "stimulus/volume",
-      "ui/control-panel",
       "ui/questionnaire-panel",
       "video/projection",
       "background/solid-black",
@@ -217,8 +220,7 @@
       "sdfFieldVisualEnabled=true",
       "handAnchorParticlesEnabled=true",
       "privateLayerEnabled=true",
-      "videoProjectionEnabled=true",
-      "handMeshVisualWireframeEnabled=true"
+      "videoProjectionEnabled=true"
     ]
   },
   "validation_tier": "quick"

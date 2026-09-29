@@ -359,6 +359,14 @@ fn packaged_control_panel_mode_is_breath_mapping_installed() -> bool {
 }
 
 #[cfg(target_os = "android")]
+pub(crate) fn packaged_control_panel_mode_is_hand_graft_camera() -> bool {
+    PACKAGED_CONTROL_PANEL_MODE
+        .get()
+        .and_then(|value| value.as_deref())
+        .is_some_and(|value| value == "hand-graft-camera")
+}
+
+#[cfg(target_os = "android")]
 pub(crate) fn toggle_control_panel(
     app: &android_activity::AndroidApp,
     frame_count: u64,

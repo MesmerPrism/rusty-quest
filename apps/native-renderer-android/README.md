@@ -333,12 +333,29 @@ acceptance pending until screenshot evidence shows visible overlay color.
 Camera2 projection, both live GPU-skinned hands, and five animated copies of
 each source hand on the opposite fingertips. The app uses a separate Android
 package and the existing hand conformance lock. Grafts retain the `0.85` scale
-multiplier. Right thumbstick Y scales the projection from `0.25` to `2.0`;
+multiplier. Right thumbstick Y scales the projection from `0.25` to `3.0`;
 right primary resets it to `1.0`. Put the controllers down to inspect both
 tracked hands. The hand material is an opaque colored surface with wireframe
 disabled. Each live hand mesh disappears when that hand loses tracking;
 opposite-finger grafts require both hands to be tracked. No recorded-joint
 fallback is selected.
+
+Three presses of the right controller's B button open the same-APK 2D
+`hand-graft-camera-controls` panel. It exposes projection distance (`0.25` to
+`4.0` m), horizontal/vertical offsets (up to half the image), shared camera/hand
+scale, thumbstick enablement, master hand visibility, original-hand and graft
+visibility, graft size, opacity, rim strength, and an optional wireframe toggle.
+The default material remains opaque and filled. Apply & return to VR saves an
+atomic app-private scalar candidate; the native frame loop validates and adopts
+it when rendering resumes. Reopening restores saved/native-effective settings;
+Reset defaults does not take effect until Apply. No camera, mesh, or pose data
+passes through the panel.
+
+Distance moves the calibrated head-relative virtual projection footprint from
+its reference distance of `1.0` m. Both size and per-eye stereo placement change;
+this controls projection placement, rather than moving the tracked hands or
+changing their metric skinning. The native status file reports the applied
+revision, per-eye footprint, distance semantics, and last submitted frame.
 
 In custom camera mode, live base hands and grafts receive the same per-eye
 screen-space scale and offset as the camera footprint after OpenXR eye

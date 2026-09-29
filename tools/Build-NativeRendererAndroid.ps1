@@ -750,7 +750,8 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
 @"
     static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
 "@
-    } elseif ($selectedPanelModuleId -ceq "polar-controls") {
+    } elseif ($selectedPanelModuleId -ceq "polar-controls" -or
+              $selectedPanelModuleId -ceq "hand-graft-camera-controls") {
         ""
     } elseif ($selectedPanelModuleId -ceq "breath-composition-controls") {
 @"
@@ -1879,8 +1880,8 @@ $manifest = [ordered]@{
     java_compile_source_count = @($sourceFiles).Count
     java_compile_sources = @($sourceFiles | ForEach-Object { [System.IO.Path]::GetFullPath([string]$_) })
     panel_transport = "app-private-file"
-    panel_candidate_file = if ($selectedPanelModuleId -eq "stimulus-volume") { "stimulus_volume_candidate.json" } else { "" }
-    panel_status_file = if ($selectedPanelModuleId -eq "stimulus-volume") { "stimulus_volume_status.json" } else { "" }
+    panel_candidate_file = if ($selectedPanelModuleId -eq "stimulus-volume") { "stimulus_volume_candidate.json" } elseif ($selectedPanelModuleId -eq "hand-graft-camera-controls") { "hand_graft_controls_candidate.json" } else { "" }
+    panel_status_file = if ($selectedPanelModuleId -eq "stimulus-volume") { "stimulus_volume_status.json" } elseif ($selectedPanelModuleId -eq "hand-graft-camera-controls") { "hand_graft_controls_status.json" } else { "" }
     spatial_sdk_packaged = $false
     rust_native_crate = "apps/native-renderer-android/native/Cargo.toml"
     runtime_permission_request = "rust-jni-framework-activity-requestPermissions"

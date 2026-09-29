@@ -405,7 +405,8 @@
         "driver-profile-panel",
         "driver-profile-session",
         "polar-sensor",
-        "breath-mapping"
+        "breath-mapping",
+        "hand-graft-camera"
       ],
       "validators": [
         "runtime-parser",

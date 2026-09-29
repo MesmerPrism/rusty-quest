@@ -34,7 +34,7 @@ impl TargetRect {
     /// Full-eye UV affine map from the base camera footprint to its current footprint.
     /// The result encodes offset and scale, so its offsets may be negative.
     pub(crate) fn world_eye_projection_rect(self, effective: Self, custom_camera: bool) -> Self {
-        if !custom_camera || !self.is_valid() || !effective.is_valid() {
+        if !custom_camera || !self.is_valid() || !effective.is_finite_positive() {
             return Self::UNIT;
         }
         let sx = effective.width / self.width;
@@ -63,16 +63,22 @@ impl TargetRect {
     }
 
     pub(crate) fn is_valid(self) -> bool {
+        self.is_finite_positive()
+            && self.x >= 0.0
+            && self.y >= 0.0
+            && self.x + self.width <= 1.0
+            && self.y + self.height <= 1.0
+    }
+
+    /// Runtime projection footprints may extend past the eye viewport. The
+    /// metadata parser still requires `is_valid` bounds within the source eye.
+    pub(crate) fn is_finite_positive(self) -> bool {
         self.x.is_finite()
             && self.y.is_finite()
             && self.width.is_finite()
             && self.height.is_finite()
-            && self.x >= 0.0
-            && self.y >= 0.0
             && self.width > 0.0
             && self.height > 0.0
-            && self.x + self.width <= 1.0
-            && self.y + self.height <= 1.0
     }
 }
 

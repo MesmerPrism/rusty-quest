@@ -558,6 +558,7 @@ pub(crate) struct ProjectionTargetState {
     received_breath_samples: u64,
     scale_driver: ProjectionTargetScaleDriver,
     last_scale_driver_switch: &'static str,
+    panel_eye_rects: Option<[TargetRect; 2]>,
 }
 
 impl ProjectionTargetState {
@@ -584,6 +585,7 @@ impl ProjectionTargetState {
             received_breath_samples: 0,
             scale_driver,
             last_scale_driver_switch: "profile-default",
+            panel_eye_rects: None,
         }
     }
 
@@ -679,6 +681,29 @@ impl ProjectionTargetState {
         self.live_scale = self.clamp_scale(self.live_scale);
     }
 
+    pub(crate) fn set_panel_controls(
+        &mut self,
+        controls: crate::hand_graft_controls::HandGraftControls,
+    ) {
+        self.settings.controls_enabled = true;
+        self.settings.joystick_controls_enabled = controls.joystick_enabled;
+        self.settings.offset_uv = [controls.offset_x_uv, controls.offset_y_uv];
+        self.base_scale = controls.shared_scale;
+        self.tuned_max_scale = controls.shared_scale;
+        self.live_scale = controls.shared_scale;
+        self.source = ProjectionTargetScaleSource::ProfileDefaults;
+    }
+
+    pub(crate) fn set_panel_eye_rects(&mut self, rects: [TargetRect; 2]) {
+        self.panel_eye_rects = Some(rects);
+    }
+
+    pub(crate) fn effective_rect_for_eye(&self, base_rect: TargetRect, eye: usize) -> TargetRect {
+        self.panel_eye_rects
+            .and_then(|rects| rects.get(eye).copied())
+            .unwrap_or_else(|| self.effective_rect(base_rect))
+    }
+
     pub(crate) fn effective_rect(&self, base_rect: TargetRect) -> TargetRect {
         if !self.settings.controls_enabled {
             return base_rect;
@@ -719,7 +744,6 @@ impl ProjectionTargetState {
             && self.scale_driver == ProjectionTargetScaleDriver::Pmb
     }
 
-    #[cfg(test)]
     pub(crate) fn live_scale(&self) -> f32 {
         self.live_scale
     }
