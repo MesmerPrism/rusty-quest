@@ -4,6 +4,20 @@
 //! existing OpenXR owner translates its typed commands and observations into
 //! platform calls without creating another instance, session, or frame loop.
 
+/// Resolve generation reuse lazily: inactive adapters must never read session state.
+pub(crate) fn resume_session_generation(
+    selected: bool,
+    same_session: bool,
+    current_generation: impl FnOnce() -> Option<u64>,
+) -> Result<Option<u64>, &'static str> {
+    if !selected || !same_session {
+        return Ok(None);
+    }
+    current_generation()
+        .map(Some)
+        .ok_or("current session generation is missing")
+}
+
 use crate::native_renderer_properties::{
     PROP_SIMULTANEOUS_HANDS_CONTROLLERS_ACTIVATION_BINDING_SHA256,
     PROP_SIMULTANEOUS_HANDS_CONTROLLERS_ENABLED,
@@ -606,6 +620,36 @@ mod tests {
             Err("system-unsupported")
         );
         assert_eq!(lifecycle.begin_session(1), None);
+    }
+
+    #[test]
+    fn resume_generation_policy_is_inert_without_selection_and_strict_when_selected() {
+        for _ in 0..3 {
+            assert_eq!(
+                super::resume_session_generation(false, true, || panic!(
+                    "inactive generation lookup"
+                )),
+                Ok(None)
+            );
+            assert_eq!(
+                super::resume_session_generation(false, false, || panic!(
+                    "inactive generation lookup"
+                )),
+                Ok(None)
+            );
+        }
+        assert_eq!(
+            super::resume_session_generation(true, false, || panic!("new session lookup")),
+            Ok(None)
+        );
+        assert_eq!(
+            super::resume_session_generation(true, true, || Some(7)),
+            Ok(Some(7))
+        );
+        assert_eq!(
+            super::resume_session_generation(true, true, || None),
+            Err("current session generation is missing")
+        );
     }
 
     #[test]

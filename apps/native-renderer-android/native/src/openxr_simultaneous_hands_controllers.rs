@@ -8,8 +8,8 @@ use std::{
 use openxr as xr;
 
 use crate::simultaneous_hands_controllers::{
-    ActivationDecision, IndependentInputReadiness, LifecycleCommand, PlatformCallResult,
-    SimultaneousHandsControllersLifecycle,
+    resume_session_generation, ActivationDecision, IndependentInputReadiness, LifecycleCommand,
+    PlatformCallResult, SimultaneousHandsControllersLifecycle,
 };
 
 static NEXT_SESSION_GENERATION: AtomicU64 = AtomicU64::new(1);
@@ -137,11 +137,18 @@ impl OpenXrSimultaneousHandsControllers {
         instance: &xr::Instance,
         session: &xr::Session<G>,
     ) -> Result<(), String> {
+        // Unselected apps never own an extension session generation. Return before
+        // recording a handle so the later READY event remains an inert no-op too.
+        if !self.lifecycle.is_selected() {
+            return Ok(());
+        }
         let session_handle = session.as_raw();
         let generation = if self.session_handle == Some(session_handle) {
-            self.lifecycle
-                .session_generation()
-                .ok_or_else(|| "current session generation is missing".to_owned())?
+            resume_session_generation(self.lifecycle.is_selected(), true, || {
+                self.lifecycle.session_generation()
+            })
+            .map_err(str::to_owned)?
+            .expect("selected current session has a generation")
         } else {
             if self.session_handle.is_some() {
                 if let Some(previous_generation) = self.lifecycle.session_generation() {

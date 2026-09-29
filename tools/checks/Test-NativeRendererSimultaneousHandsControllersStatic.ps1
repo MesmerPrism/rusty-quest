@@ -29,6 +29,12 @@ function Assert-Tokens {
 
 $pure = Read-RequiredText "apps\native-renderer-android\native\src\simultaneous_hands_controllers.rs"
 $platform = Read-RequiredText "apps\native-renderer-android\native\src\openxr_simultaneous_hands_controllers.rs"
+# The Android-only adapter is not compiled by host unit tests. Prove that its
+# disabled route exits before reading or recording a native session handle.
+$resumePrefix = [regex]::Match($platform, '(?s)pub\(crate\) fn resume<G>\(.*?let session_handle = session\.as_raw\(\);').Value
+if ($resumePrefix -notmatch 'if !self\.lifecycle\.is_selected\(\)\s*\{\s*return Ok\(\(\)\);\s*\}\s*let session_handle = session\.as_raw\(\);') {
+    throw "Unselected simultaneous input must return before native session generation bookkeeping"
+}
 $xrVulkan = Read-RequiredText "apps\native-renderer-android\native\src\xr_vulkan.rs"
 $actions = Read-RequiredText "apps\native-renderer-android\native\src\openxr_stimulus_actions.rs"
 $diagnosticsContract = Read-RequiredText "apps\native-renderer-android\native\src\native_renderer_diagnostics_contract.rs"
