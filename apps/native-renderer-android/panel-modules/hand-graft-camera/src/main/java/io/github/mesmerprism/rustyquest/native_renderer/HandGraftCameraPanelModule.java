@@ -53,7 +53,11 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
         header.addView(text("Camera & hand grafts", 24, FOREGROUND),
             new LinearLayout.LayoutParams(0, -2, 1f));
         Button close = button("Return to VR");
-        close.setOnClickListener(view -> ControlPanelActivity.closePanelAndReturnToImmersive(this));
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                ControlPanelActivity.closePanelAndReturnToImmersive(HandGraftCameraPanelModule.this);
+            }
+        });
         header.addView(close);
         root.addView(header);
         root.addView(text("Change the settings, then apply and return to VR. Press B three times in VR to reopen this panel.", 14, MUTED));
@@ -78,10 +82,17 @@ public class HandGraftCameraPanelModule extends Activity implements PanelModule 
 
         LinearLayout actions = new LinearLayout(this);
         Button reset = button("Reset defaults");
-        reset.setOnClickListener(view -> { setValues(null); message.setText("Defaults restored. Apply to save them."); });
+        reset.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) {
+                setValues(null);
+                message.setText("Defaults restored. Apply to save them.");
+            }
+        });
         actions.addView(reset);
         Button apply = button("Apply & return to VR");
-        apply.setOnClickListener(view -> saveAndResume());
+        apply.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { saveAndResume(); }
+        });
         actions.addView(apply);
         root.addView(actions);
         message = text("", 14, MUTED);
