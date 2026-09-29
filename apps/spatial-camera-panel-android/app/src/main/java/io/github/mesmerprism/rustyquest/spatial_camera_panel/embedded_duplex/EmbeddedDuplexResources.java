@@ -53,8 +53,10 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         incoming = new EmbeddedDuplexReceiver(generation, display,
                 sink.sinkTransportHost, sink.sinkTransportPort, sink.sourceTransportHost,
                 sink.width, sink.height, sink.fps,
+                // Bounded headroom for codec delay and render callbacks. The
+                // first-frame deadline and explicit overflow failures remain enforced.
                 new PackedStereoMediaReceiver.Bounds(64 * 1024, sink.maxPacketBytes,
-                        sink.width, sink.height, 12, 3000, 4000, 100, 15000, 10000, 8, 250));
+                        sink.width, sink.height, 32, 3000, 4000, 100, 15000, 10000, 8, 250));
     }
 
     /** Host retains this owner before any Own capture or display effect runs. */
@@ -146,6 +148,51 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     String ownAppCaptureState() { return ownCapture == null ? "disabled" : ownCapture.phase().name(); }
 
     @Override public String incomingDiagnostic() { return incoming.activationDiagnostic(); }
+    private static final int MAX_ACTIVATION_RECORDS = 16;
+    private static final int MAX_ACTIVATION_RECORD_CHARS = 2048;
+    private static final int MAX_ACTIVATION_JOURNAL_BYTES = MAX_ACTIVATION_RECORDS * (MAX_ACTIVATION_RECORD_CHARS + 1);
+    private static final long PROCESS_STARTED_WALL_MS = System.currentTimeMillis();
+    private static final long PROCESS_STARTED_ELAPSED_NS = android.os.SystemClock.elapsedRealtimeNanos();
+    private static long activationRecordSequence;
+    /** Bounded app-private journal; closed fields only. Pulled with run-as before any reset. */
+    @Override public void recordActivationFailure(String closedRecord) {
+        if (!closedActivationRecord(closedRecord, false)) return;
+        synchronized (EmbeddedDuplexResources.class) {
+            java.io.File file = new java.io.File(context.getNoBackupFilesDir(),
+                    "embedded-duplex-activation-diagnostics.v1.txt");
+            android.util.AtomicFile atomic = new android.util.AtomicFile(file);
+            java.util.ArrayDeque<String> lines = new java.util.ArrayDeque<>();
+            try {
+                try (java.io.FileInputStream input = atomic.openRead()) {
+                    byte[] bytes = new byte[MAX_ACTIVATION_JOURNAL_BYTES + 1];
+                    int used = 0, count;
+                    while (used < bytes.length && (count = input.read(bytes, used, bytes.length - used)) > 0) used += count;
+                    if (used <= MAX_ACTIVATION_JOURNAL_BYTES) {
+                        for (String line : new String(bytes, 0, used, java.nio.charset.StandardCharsets.US_ASCII).split("\n")) {
+                            if (closedActivationRecord(line, true)) lines.addLast(line);
+                        }
+                    }
+                }
+            } catch (java.io.IOException unreadable) { lines.clear(); }
+            String attributed = "schema=rusty.quest.embedded_duplex.activation_failure.v1 wallMs="
+                    + System.currentTimeMillis() + " processStartedWallMs=" + PROCESS_STARTED_WALL_MS
+                    + " processStartedElapsedNs=" + PROCESS_STARTED_ELAPSED_NS
+                    + " processPid=" + android.os.Process.myPid()
+                    + " recordSequence=" + (++activationRecordSequence)
+                    + " executorGeneration=" + generation + " " + closedRecord;
+            if (!closedActivationRecord(attributed, true)) return;
+            lines.addLast(attributed);
+            while (lines.size() > MAX_ACTIVATION_RECORDS) lines.removeFirst();
+            java.io.FileOutputStream out = null;
+            try {
+                out = atomic.startWrite();
+                out.write((String.join("\n", lines) + "\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                atomic.finishWrite(out);
+            } catch (java.io.IOException failed) {
+                if (out != null) atomic.failWrite(out);
+            }
+        }
+    }
     @Override public String incomingRuntimeSpecId() { return incomingRuntimeSpecId; }
     @Override public void awaitFirstRenderedFrame() throws Exception { incoming.awaitFirstRenderedFrame(); }
     @Override public long[] currentIncomingFrame(long maxAgeNs) { return incoming.currentFrame(maxAgeNs); }
@@ -244,6 +291,60 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                 throw new IllegalArgumentException("accepted directional LAN route closure");
             }
         }
+    }
+
+    /** Exact closed vocabulary; arbitrary existing lines never enter a rewritten journal. */
+    private static boolean closedActivationRecord(String record, boolean attributed) {
+        if (record == null || record.length() > MAX_ACTIVATION_RECORD_CHARS || record.isEmpty()) return false;
+        java.util.HashSet<String> seen = new java.util.HashSet<>();
+        for (String field : record.split(" ", -1)) {
+            int equals = field.indexOf('=');
+            if (equals <= 0 || equals == field.length() - 1) return false;
+            String key = field.substring(0, equals), value = field.substring(equals + 1);
+            if (!seen.add(key)) return false;
+            switch (key) {
+                case "stage": if (!value.matches("ARM_PROOF|FIRST_RENDER|NATIVE_ACQUISITION|GRAPH_ATTACH|NATIVE_EFFECTIVE")) return false; break;
+                case "cause": if (!value.matches("OTHER|CODEC|INTERRUPTED|TIMEOUT|IO|STATE")) return false; break;
+                case "code": if (!"ACTIVATION_EFFECT_UNCERTAIN".equals(value)) return false; break;
+                case "receiverState": case "connection":
+                    if (!value.matches("UNAVAILABLE|UNPREPARED|NEW|ARMED|CONNECTING|LISTENING|DECODER_CONFIGURED|RECEIVING|WAITING_RECONNECT|STOPPING|STOPPED|FAILED")) return false; break;
+                case "firstFailure": case "finalFailure":
+                    if (!value.matches("NONE|DECODER_CREATE|DECODER_CONFIGURE|DECODER_START|DECODER_INPUT_TIMEOUT|DECODER_INPUT_CAPACITY|IDENTITY_PTS_COLLISION|IDENTITY_WINDOW_OVERFLOW_DECODE|IDENTITY_WINDOW_OVERFLOW_RENDER|OUTPUT_IDENTITY_MISSING|PRE_RENDER_IDENTITY_REJECTED|DECODER_CODEC_EXCEPTION|(?:NO_INCOMING_BYTES|NO_CODEC_CONFIG|NO_KEYFRAME|STREAM)_(?:TIMEOUT|EOF|IO)|REFUSED|CONNECT_TIMEOUT|HEADER_IO|STATE|OTHER")) return false; break;
+                case "decoder": if (!value.matches("NONE|HARDWARE|SOFTWARE|UNKNOWN")) return false; break;
+                case "counters": if (!"UNAVAILABLE".equals(value)) return false; break;
+                case "receiverFirstStage": case "receiverFinalStage":
+                    if (!value.matches("NONE|IDLE|LISTENER_BIND|CONNECT|ACCEPT|HEADER|DECODER_CONFIG|PACKET_READ|DECODE")) return false; break;
+                case "receiverFirstCause": case "receiverFinalCause":
+                    if (!value.matches("NONE|CODEC|REFUSED|CONNECT_TIMEOUT|READ_TIMEOUT|EOF|HEADER_IO|IO|STATE|OTHER")) return false; break;
+                case "schema": if (!attributed || !"rusty.quest.embedded_duplex.activation_failure.v1".equals(value)) return false; break;
+                case "wallMs": case "processStartedWallMs": case "processStartedElapsedNs":
+                case "processPid": case "recordSequence": case "executorGeneration":
+                    if (!attributed || !nonnegativeLong(value)) return false; break;
+                case "packets": case "frames": case "reconnects":
+                    if (!"-1".equals(value) && !nonnegativeLong(value)) return false; break;
+                case "elapsedMs": case "accepts": case "bytes": case "packetsRead": case "configPackets":
+                case "keyframePackets": case "preBootstrapDropped": case "inputs": case "outputs":
+                case "releasedForRender": case "renderCallbacks": case "renderSuperseded": case "lateCallbacks":
+                case "renderHistoryEvicted": case "preRenderRejected": case "windowOverflows":
+                case "maxQueuedWindow": case "maxRenderWindow": case "queuedWindow": case "renderWindow":
+                case "renderHistory": case "windowBound":
+                    if (!nonnegativeLong(value)) return false; break;
+                default: return false;
+            }
+        }
+        String[] required = {"stage", "cause", "elapsedMs", "code", "receiverState", "connection", "packets", "frames", "reconnects"};
+        for (String key : required) if (!seen.contains(key)) return false;
+        if (attributed) {
+            String[] attribution = {"schema", "wallMs", "processStartedWallMs", "processStartedElapsedNs", "processPid", "recordSequence", "executorGeneration"};
+            for (String key : attribution) if (!seen.contains(key)) return false;
+        }
+        return true;
+    }
+
+    private static boolean nonnegativeLong(String value) {
+        if (!value.matches("[0-9]{1,19}")) return false;
+        try { return Long.parseLong(value) >= 0L; }
+        catch (NumberFormatException overflow) { return false; }
     }
 
     private static String numericIpv4(String host) {

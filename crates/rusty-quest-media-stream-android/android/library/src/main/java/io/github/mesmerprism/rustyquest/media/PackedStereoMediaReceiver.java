@@ -10,12 +10,15 @@ import android.view.Surface;
 
 import java.io.BufferedInputStream;
 import java.io.DataInputStream;
+import java.io.FilterInputStream;
+import java.io.InputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -40,6 +43,10 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private final String handleId;
     private final AtomicLong revision = new AtomicLong();
     private final Map<Long, PendingFrame> pendingFrames = new LinkedHashMap<>();
+    // Exact, bounded history for late callbacks of superseded released frames.
+    // History is never proof that a callback or image acquisition happened.
+    private final Map<Long, PendingFrame> retiredRenderFrames = new LinkedHashMap<>();
+    private long nextReleaseOrdinal;
     private volatile String state = "new";
     private volatile String connectionState = "idle";
     private volatile String failure = "";
@@ -58,6 +65,16 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private String finalTransportStage = "NONE", finalTransportCause = "NONE";
     private long connectionGeneration;
     private long retiredConnectionGeneration;
+    // Closed receiver observability. Only enums and
+    // counters; no exception text, endpoints or tokens. First code is sticky per
+    // receiver generation and is never overwritten by cleanup-time failures.
+    private String firstFailureCode = "NONE", finalFailureCode = "NONE";
+    private long acceptedConnections, bytesRead, packetsRead, configPackets, keyframePackets;
+    private long packetsBeforeBootstrap, inputsQueued, outputsDequeued, outputsReleasedForRender;
+    private long renderCallbacks, renderCallbacksSuperseded, lateRenderCallbacks, renderHistoryEvicted;
+    private long preRenderRejected, identityWindowOverflows, maxQueuedWindow, maxRenderWindow;
+    private String decoderClass = "NONE";
+    private boolean connectionBytesSeen, connectionConfigSeen, connectionKeyframeSeen;
 
     public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
             Bounds bounds, FrameListener listener) {
@@ -254,6 +271,11 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                     SystemClock.sleep(bounds.reconnectDelayMs);
                 }
                 try {
+                    synchronized (lock) {
+                        connectionBytesSeen = false;
+                        connectionConfigSeen = false;
+                        connectionKeyframeSeen = false;
+                    }
                     receiveConnection();
                 } catch (IOException connectionFailure) {
                     if (stopRequested) break;
@@ -300,6 +322,9 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 firstTransportStage = transportStage; firstTransportCause = cause;
             }
             finalTransportStage = transportStage; finalTransportCause = cause;
+            String code = closedFailureCodeLocked(failure, cause);
+            if ("NONE".equals(firstFailureCode)) firstFailureCode = code;
+            finalFailureCode = code;
         }
         logTransportFailure("connection-rejected");
     }
@@ -311,7 +336,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                     + " finalStage=" + finalTransportStage + " finalCause=" + finalTransportCause
                     + " reconnects=" + reconnects + " packets=" + receivedPackets
                     + " frames=" + renderedFrames + " maxWidth=" + bounds.maxWidth + " maxHeight=" + bounds.maxHeight
-                    + " maxPacketBytes=" + bounds.maxPacketBytes + " code=TRANSPORT_EFFECT_UNCERTAIN");
+                    + " maxPacketBytes=" + bounds.maxPacketBytes + " " + closedCountersLocked()
+                    + " code=TRANSPORT_EFFECT_UNCERTAIN");
         }
     }
 
@@ -352,15 +378,27 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         connection.setSoTimeout(bounds.readTimeoutMs);
         connection.setTcpNoDelay(true);
         RmanvidPacketReader reader = new RmanvidPacketReader(
-                new DataInputStream(new BufferedInputStream(connection.getInputStream())),
+                new DataInputStream(new BufferedInputStream(new CountingInputStream(connection.getInputStream()))),
                 bounds.maxHeaderBytes, bounds.maxPacketBytes, bounds.maxWidth, bounds.maxHeight);
+        synchronized (lock) {
+            acceptedConnections++;
+            connectionBytesSeen = false; connectionConfigSeen = false; connectionKeyframeSeen = false;
+        }
         transportStage = "HEADER";
         RmanvidPacketReader.Header header = reader.readHeader();
         transportStage = "DECODER_CONFIG";
         MediaFormat format = MediaFormat.createVideoFormat(MIME_H264, header.width, header.height);
-        MediaCodec codec = MediaCodec.createDecoderByType(MIME_H264);
+        // The reader already bounds packets by maxPacketBytes; make the decoder
+        // allocate input buffers for that same bound instead of a codec default
+        // (a 2560x1280 IDR can exceed a default-sized input buffer).
+        format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, bounds.maxPacketBytes);
+        MediaCodec codec;
+        try { codec = MediaCodec.createDecoderByType(MIME_H264); }
+        catch (IOException | RuntimeException create) { throw closed("DECODER_CREATE", create); }
         decoder = codec;
-        codec.configure(format, surface, null, 0);
+        synchronized (lock) { decoderClass = closedDecoderClass(codec); }
+        try { codec.configure(format, surface, null, 0); }
+        catch (RuntimeException configure) { throw closed("DECODER_CONFIGURE", configure); }
         HandlerThread callbacks = renderThread;
         if (callbacks == null || !callbacks.isAlive()) {
             throw new IOException("render callback thread is unavailable");
@@ -373,7 +411,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 rendered(callbackCodec, activeConnection, mediaTimeUs);
             }
         }, new Handler(callbacks.getLooper()));
-        codec.start();
+        try { codec.start(); }
+        catch (RuntimeException start) { throw closed("DECODER_START", start); }
         connectionState = "decoder_configured";
 
         boolean configurationSeen = false;
@@ -384,11 +423,18 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             transportStage = "DECODE";
             boolean config = (packet.flags & RmanvidPacketReader.FLAG_CODEC_CONFIG) != 0;
             boolean keyframe = (packet.flags & RmanvidPacketReader.FLAG_KEY_FRAME) != 0;
-            if (!configurationSeen && !config) continue;
+            synchronized (lock) {
+                packetsRead++;
+                if (config) { configPackets++; connectionConfigSeen = true; }
+                if (config) connectionKeyframeSeen = false;
+                if (keyframe) { keyframePackets++; if (!config && connectionConfigSeen) connectionKeyframeSeen = true; }
+            }
+            if (!configurationSeen && !config) { synchronized (lock) { packetsBeforeBootstrap++; } continue; }
             if (config) {
                 configurationSeen = true;
                 keyframeSeen = false;
             } else if (!keyframeSeen && !keyframe) {
+                synchronized (lock) { packetsBeforeBootstrap++; }
                 continue;
             } else if (keyframe) {
                 keyframeSeen = true;
@@ -406,26 +452,34 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             inputIndex = codec.dequeueInputBuffer(10_000L);
             if (inputIndex < 0) drain(codec, activeConnection);
         } while (inputIndex < 0 && !stopRequested && SystemClock.elapsedRealtime() < deadline);
-        if (inputIndex < 0) throw new IOException("decoder input buffer timed out");
+        if (inputIndex < 0) throw closed("DECODER_INPUT_TIMEOUT", null);
         ByteBuffer input = codec.getInputBuffer(inputIndex);
         if (input == null || packet.payload.length > input.capacity()) {
-            throw new IOException("packet exceeds decoder input capacity");
+            throw closed("DECODER_INPUT_CAPACITY", null);
         }
         input.clear();
         input.put(packet.payload);
         boolean config = (packet.flags & RmanvidPacketReader.FLAG_CODEC_CONFIG) != 0;
         if (!config) {
             synchronized (lock) {
-                if (pendingFrames.size() >= bounds.maxPendingFrames
-                        || pendingFrames.containsKey(packet.ptsUs)) {
-                    throw new IOException("decoder frame identity queue collision or overflow");
+                if (pendingFrames.containsKey(packet.ptsUs) || retiredRenderFrames.containsKey(packet.ptsUs)) {
+                    throw closed("IDENTITY_PTS_COLLISION", null);
+                }
+                if (pendingFrames.size() >= bounds.maxPendingFrames) {
+                    identityWindowOverflows++;
+                    throw closed(queuedWindowLocked() >= renderWindowLocked()
+                            ? "IDENTITY_WINDOW_OVERFLOW_DECODE" : "IDENTITY_WINDOW_OVERFLOW_RENDER", null);
                 }
                 pendingFrames.put(packet.ptsUs,
                         new PendingFrame(activeConnection, FrameIdentity.from(packet)));
+                maxQueuedWindow = Math.max(maxQueuedWindow, queuedWindowLocked());
             }
         }
-        codec.queueInputBuffer(inputIndex, 0, packet.payload.length, packet.ptsUs, packet.flags);
-        synchronized (lock) { receivedPackets++; }
+        // Only the two MediaCodec flags that RMANVID semantically carries are
+        // forwarded; transport bits must never become EOS/PARTIAL_FRAME.
+        codec.queueInputBuffer(inputIndex, 0, packet.payload.length, packet.ptsUs,
+                codecInputFlags(packet.flags));
+        synchronized (lock) { receivedPackets++; inputsQueued++; }
     }
 
     private void drain(MediaCodec codec, long activeConnection) throws Exception {
@@ -443,10 +497,15 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }
             PendingFrame pending;
             synchronized (lock) {
+                outputsDequeued++;
                 pending = pendingFrames.get(info.presentationTimeUs);
-                if (pending == null || pending.connectionGeneration != activeConnection) {
-                    throw new IOException("decoder output has no exact current frame identity");
+                if (pending == null || pending.connectionGeneration != activeConnection
+                        || pending.readyForRender) {
+                    throw closed("OUTPUT_IDENTITY_MISSING", null);
                 }
+                // PTS is an exact lookup key, never an ordering promise. Retain
+                // queued frames across reordered output until their own output
+                // arrives or this connection is retired.
             }
             final long presentationTimeNs;
             try {
@@ -467,18 +526,25 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                     failure = "pre-render callback failed: " + safeMessage(callbackFailure);
                 }
             }
+            if (!accepted) {
+                synchronized (lock) { preRenderRejected++; }
+            }
             synchronized (lock) {
                 PendingFrame current = pendingFrames.get(info.presentationTimeUs);
                 accepted = accepted && current == pending && decoder == codec && !stopRequested;
                 if (accepted) {
                     pending.presentationTimeNs = presentationTimeNs;
+                    pending.releaseOrdinal = Math.incrementExact(nextReleaseOrdinal);
+                    nextReleaseOrdinal = pending.releaseOrdinal;
                     pending.readyForRender = true;
+                    outputsReleasedForRender++;
+                    maxRenderWindow = Math.max(maxRenderWindow, renderWindowLocked());
                 } else {
                     pendingFrames.remove(info.presentationTimeUs);
                 }
             }
             codec.releaseOutputBuffer(outputIndex, accepted);
-            if (!accepted) throw new IOException("decoder output pre-render identity was rejected");
+            if (!accepted) throw closed("PRE_RENDER_IDENTITY_REJECTED", null);
         }
     }
 
@@ -489,9 +555,21 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             if (decoder != callbackCodec || stopRequested || "stopping".equals(state)
                     || "stopped".equals(state) || "failed".equals(state)) return;
             PendingFrame pending = pendingFrames.get(ptsUs);
+            boolean late = false;
+            if (pending == null) {
+                pending = retiredRenderFrames.get(ptsUs);
+                late = pending != null;
+            }
             if (pending == null || pending.connectionGeneration != callbackConnection
                     || !pending.readyForRender || pending.presentationTimeNs <= 0L) return;
             pendingFrames.remove(ptsUs);
+            retiredRenderFrames.remove(ptsUs);
+            renderCallbacks++;
+            if (late) lateRenderCallbacks++;
+            // Use surface-release order, not PTS order. Preserve exact identities
+            // in bounded history so reordered late callbacks can still reach the
+            // native acquisition/render join without inventing either witness.
+            retireEarlierReleasedLocked(callbackConnection, pending.releaseOrdinal);
             identity = pending.identity;
             presentationTimeNs = pending.presentationTimeNs;
         }
@@ -543,6 +621,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         long retiredConnection = 0L;
         synchronized (lock) {
             pendingFrames.clear();
+            retiredRenderFrames.clear();
             if (connectionGeneration > retiredConnectionGeneration) {
                 retiredConnection = connectionGeneration;
                 retiredConnectionGeneration = connectionGeneration;
@@ -657,6 +736,114 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         }
     }
 
+    /** Closed receiver counters for activation/status diagnostics. Never contains free text. */
+    public String closedActivationCounters() {
+        synchronized (lock) { return closedCountersLocked(); }
+    }
+
+    private String closedCountersLocked() {
+        return "firstFailure=" + firstFailureCode + " finalFailure=" + finalFailureCode
+                + " accepts=" + acceptedConnections + " bytes=" + bytesRead
+                + " packetsRead=" + packetsRead + " configPackets=" + configPackets
+                + " keyframePackets=" + keyframePackets + " preBootstrapDropped=" + packetsBeforeBootstrap
+                + " decoder=" + decoderClass + " inputs=" + inputsQueued + " outputs=" + outputsDequeued
+                + " releasedForRender=" + outputsReleasedForRender + " renderCallbacks=" + renderCallbacks
+                + " renderSuperseded=" + renderCallbacksSuperseded + " lateCallbacks=" + lateRenderCallbacks
+                + " renderHistoryEvicted=" + renderHistoryEvicted
+                + " preRenderRejected=" + preRenderRejected + " windowOverflows=" + identityWindowOverflows
+                + " maxQueuedWindow=" + maxQueuedWindow + " maxRenderWindow=" + maxRenderWindow
+                + " queuedWindow=" + queuedWindowLocked() + " renderWindow=" + renderWindowLocked()
+                + " renderHistory=" + retiredRenderFrames.size() + " windowBound=" + bounds.maxPendingFrames
+                + " receiverFirstStage=" + firstTransportStage + " receiverFirstCause=" + firstTransportCause
+                + " receiverFinalStage=" + finalTransportStage + " receiverFinalCause=" + finalTransportCause;
+    }
+
+    private int queuedWindowLocked() {
+        int n = 0;
+        for (PendingFrame frame : pendingFrames.values()) if (!frame.readyForRender) n++;
+        return n;
+    }
+
+    private int renderWindowLocked() { return pendingFrames.size() - queuedWindowLocked(); }
+
+    /** Supersedes released predecessors; queued decode identities are never discarded by PTS. */
+    private void retireEarlierReleasedLocked(long connection, long releaseOrdinal) {
+        Iterator<Map.Entry<Long, PendingFrame>> it = pendingFrames.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<Long, PendingFrame> entry = it.next();
+            PendingFrame frame = entry.getValue();
+            if (frame.connectionGeneration == connection && frame.readyForRender
+                    && frame.releaseOrdinal < releaseOrdinal) {
+                retiredRenderFrames.put(entry.getKey(), frame);
+                it.remove();
+                renderCallbacksSuperseded++;
+            }
+        }
+        while (retiredRenderFrames.size() > bounds.maxPendingFrames) {
+            Iterator<Long> oldest = retiredRenderFrames.keySet().iterator();
+            oldest.next(); oldest.remove(); renderHistoryEvicted++;
+        }
+    }
+
+    private static int codecInputFlags(int rmanvidFlags) {
+        int flags = 0;
+        if ((rmanvidFlags & RmanvidPacketReader.FLAG_CODEC_CONFIG) != 0) flags |= MediaCodec.BUFFER_FLAG_CODEC_CONFIG;
+        if ((rmanvidFlags & RmanvidPacketReader.FLAG_KEY_FRAME) != 0) flags |= MediaCodec.BUFFER_FLAG_KEY_FRAME;
+        return flags;
+    }
+
+    private static String closedDecoderClass(MediaCodec codec) {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.media.MediaCodecInfo info = codec.getCodecInfo();
+                return info.isHardwareAccelerated() ? "HARDWARE" : info.isSoftwareOnly() ? "SOFTWARE" : "UNKNOWN";
+            }
+        } catch (RuntimeException unavailable) { return "UNKNOWN"; }
+        return "UNKNOWN";
+    }
+
+    /** Closed failure; the code is from a fixed vocabulary and the cause is never exported. */
+    private static final class ClosedReceiverFailure extends IOException {
+        private static final long serialVersionUID = 1L;
+        final String code;
+        ClosedReceiverFailure(String code, Throwable cause) { super(code, cause); this.code = code; }
+    }
+
+    private static IOException closed(String code, Throwable cause) {
+        return new ClosedReceiverFailure(code, cause);
+    }
+
+    private String closedFailureCodeLocked(Throwable failure, String transportCause) {
+        if (failure instanceof ClosedReceiverFailure) return ((ClosedReceiverFailure) failure).code;
+        if ("android.media.MediaCodec$CodecException".equals(failure.getClass().getName())) return "DECODER_CODEC_EXCEPTION";
+        if ("READ_TIMEOUT".equals(transportCause) || "EOF".equals(transportCause) || "IO".equals(transportCause)) {
+            String suffix = "READ_TIMEOUT".equals(transportCause) ? "TIMEOUT" : "EOF".equals(transportCause) ? "EOF" : "IO";
+            if (!connectionBytesSeen) return "NO_INCOMING_BYTES_" + suffix;
+            if (!connectionConfigSeen) return "NO_CODEC_CONFIG_" + suffix;
+            if (!connectionKeyframeSeen) return "NO_KEYFRAME_" + suffix;
+            return "STREAM_" + suffix;
+        }
+        switch (transportCause) {
+            case "REFUSED": case "CONNECT_TIMEOUT": case "HEADER_IO": case "STATE": return transportCause;
+            default: return "OTHER";
+        }
+    }
+
+    private final class CountingInputStream extends FilterInputStream {
+        CountingInputStream(InputStream in) { super(in); }
+        @Override public int read() throws IOException {
+            int value = super.read();
+            if (value >= 0) count(1);
+            return value;
+        }
+        @Override public int read(byte[] b, int off, int len) throws IOException {
+            int n = super.read(b, off, len);
+            if (n > 0) count(n);
+            return n;
+        }
+        private void count(int n) { synchronized (lock) { bytesRead += n; connectionBytesSeen = true; } }
+    }
+
     /** Explicit allocation and time bounds supplied by the embedding host. */
     public static final class Bounds {
         final int maxHeaderBytes;
@@ -709,6 +896,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         final FrameIdentity identity;
         long presentationTimeNs;
         boolean readyForRender;
+        long releaseOrdinal;
         PendingFrame(long connectionGeneration, FrameIdentity identity) {
             this.connectionGeneration = connectionGeneration;
             this.identity = identity;
