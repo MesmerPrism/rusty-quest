@@ -8,6 +8,7 @@ impl<O,P> Default for OwnPeerSourceSet<O,P> {fn default()->Self {Self{inputs:Mut
 impl<O:Clone,P:Clone> OwnPeerSourceSet<O,P> {
  pub(crate) fn bind(&self,origin:StereoOrigin,epoch:SourceEpoch)->Result<(),String> {self.inputs.lock().map_err(|_|"source set poisoned")?.bind(origin,epoch).map_err(|e|format!("source bind {e:?}"))}
  pub(crate) fn retire(&self,origin:StereoOrigin,epoch:SourceEpoch)->Result<(),String> {if self.inputs.lock().map_err(|_|"source set poisoned")?.retire(origin,epoch){Ok(())}else{Err("stale source retirement".into())}}
+ pub(crate) fn retire_stopped_or_unbound(&self,origin:StereoOrigin,epoch:SourceEpoch)->Result<Option<bool>,String> {Ok(self.inputs.lock().map_err(|_|"source set poisoned")?.retire_stopped_or_unbound(origin,epoch))}
  pub(crate) fn publish_own(&self,frame:RetainedStereoFrame<O>)->Result<(),String> {self.publish(StereoOrigin::OwnStereo,RetainedStereoFrame{identity:frame.identity,observed_at_ns:frame.observed_at_ns,lease:StereoSourceLease::Own(frame.lease)})}
  // Peer owner must pass its real ImageReader frame lease after exact reader/token checks.
  pub(crate) fn publish_peer(&self,frame:RetainedStereoFrame<P>)->Result<(),String> {self.publish(StereoOrigin::PeerStereo,RetainedStereoFrame{identity:frame.identity,observed_at_ns:frame.observed_at_ns,lease:StereoSourceLease::Peer(frame.lease)})}

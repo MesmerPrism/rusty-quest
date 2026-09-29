@@ -418,6 +418,8 @@ fn validate_bindings(
                 if endpoint.source_bindings.len() != 1
                     || endpoint.source_bindings[0].source_host != "127.0.0.1"
                     || endpoint.source_bindings[0].source_port != source.media.port
+                    || endpoint.source_bindings[0].track_role != "stereo"
+                    || endpoint.transport_bind_host != source.media.host
                     || !endpoint.receiver_ports.is_empty()
                     || !endpoint.transport_receive_ports.is_empty()
                 {
@@ -427,7 +429,10 @@ fn validate_bindings(
                 || endpoint.receiver_ports.len() != 1
                 || endpoint.transport_receive_ports.len() != 1
                 || endpoint.receiver_ports[0].port != sink.media.port
+                || endpoint.receiver_ports[0].track_role != "stereo"
+                || endpoint.receiver_bind_host != "127.0.0.1"
                 || endpoint.transport_receive_ports[0].port != sink.media.port
+                || endpoint.transport_receive_ports[0].track_role != "stereo"
                 || endpoint.transport_bind_host != sink.media.host
             {
                 return Err("binding sink endpoint closure".into());

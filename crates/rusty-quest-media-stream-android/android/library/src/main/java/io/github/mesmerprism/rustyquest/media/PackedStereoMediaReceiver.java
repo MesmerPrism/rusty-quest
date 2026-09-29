@@ -12,6 +12,8 @@ import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.util.LinkedHashMap;
@@ -29,6 +31,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private final Surface surface;
     private final String host;
     private final int port;
+    private final String expectedSourceHost;
+    private volatile ServerSocket incomingListener;
     private final long generation;
     private final Bounds bounds;
     private final FrameListener listener;
@@ -63,6 +67,13 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     /** Constructor for hosts that bind exact native identity before Surface rendering. */
     public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
             Bounds bounds, FrameListener listener, FrameLifecycleListener lifecycleListener) {
+        this(surface, host, port, generation, bounds, listener, lifecycleListener, null);
+    }
+
+    /** Explicit accepted source-to-sink placement; null retains source-connect mode. */
+    public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
+            Bounds bounds, FrameListener listener, FrameLifecycleListener lifecycleListener,
+            String expectedSourceHost) {
         if (surface == null || !surface.isValid()) throw new IllegalArgumentException("surface");
         if (host == null || host.trim().isEmpty() || host.length() > 1024
                 || port <= 0 || port > 65535 || generation <= 0L || bounds == null) {
@@ -71,6 +82,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         this.surface = surface;
         this.host = host.trim();
         this.port = port;
+        this.expectedSourceHost = expectedSourceHost;
         this.generation = generation;
         this.bounds = bounds;
         this.listener = listener;
@@ -82,9 +94,24 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     public void arm() {
         synchronized (lock) {
             if (!"new".equals(state)) throw new IllegalStateException("receiver is not startable");
+            if (expectedSourceHost != null) {
+                ServerSocket next = null;
+                try {
+                    next = new ServerSocket();
+                    incomingListener = next;
+                    next.setReuseAddress(true);
+                    next.bind(new InetSocketAddress(InetAddress.getByName(host), port));
+                    next.setSoTimeout(1000);
+                } catch (IOException failure) {
+                    transportStage = "LISTENER_BIND";
+                    recordTransportFailure(failure);
+                    closeListener();
+                    throw new IllegalStateException("accepted sink listener bind failed", failure);
+                }
+            }
             stopRequested = false;
             state = "receiver_armed";
-            connectionState = "connecting";
+            connectionState = expectedSourceHost == null ? "connecting" : "listening";
             revision.incrementAndGet();
             ready = new CountDownLatch(1);
             renderThread = new HandlerThread("rusty-packed-stereo-render-callback");
@@ -144,7 +171,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     }
 
     private boolean resourcesReleasedLocked() {
-        return socket == null && decoder == null && renderThread == null
+        return incomingListener == null && socket == null && decoder == null && renderThread == null
                 && pendingFrames.isEmpty() && worker == null;
     }
 
@@ -165,6 +192,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             active = worker;
         }
         closeSocket();
+        closeListener();
         if (active != null && active != Thread.currentThread()) {
             active.interrupt();
             try {
@@ -172,6 +200,12 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
             }
+        }
+        // A prior worker may have ended with retained decoder/socket ownership.
+        // Retry physical release only after its death is positively observed.
+        if (active == null || !active.isAlive()) {
+            releaseConnection();
+            closeListener();
         }
         synchronized (lock) {
             HandlerThread callbacks = renderThread;
@@ -181,7 +215,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
                 if (!callbacks.isAlive()) renderThread = null;
             }
-            if ((active != null && active.isAlive()) || socket != null || decoder != null
+            if ((active != null && active.isAlive()) || incomingListener != null || socket != null || decoder != null
                     || renderThread != null || !pendingFrames.isEmpty() || worker != null) {
                 state = "failed";
                 failure = "receiver resources did not terminate within deadline";
@@ -200,6 +234,11 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         Throwable terminalFailure = null;
         try {
             for (int attempt = 0; !stopRequested; attempt++) {
+                synchronized (lock) {
+                    if (socket != null || decoder != null || !pendingFrames.isEmpty()) {
+                        throw new IOException("prior receiver connection cleanup unresolved");
+                    }
+                }
                 if (attempt > bounds.maxReconnectAttempts) {
                     throw new IOException("receiver reconnect bound exhausted");
                 }
@@ -230,6 +269,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             terminalFailure = error;
         } finally {
             releaseConnection();
+            closeListener();
             releaseRenderThread();
             synchronized (lock) {
                 worker = null;
@@ -276,16 +316,39 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     }
 
     private void receiveConnection() throws Exception {
-        Socket connection = new Socket();
+        Socket connection;
+        if (expectedSourceHost == null) {
+            connection = new Socket();
+        } else {
+            transportStage = "ACCEPT";
+            connection = null;
+            while (!stopRequested && connection == null) {
+                ServerSocket accepting = incomingListener;
+                if (accepting == null) throw new IOException("accepted sink listener absent");
+                try { connection = accepting.accept(); }
+                catch (java.net.SocketTimeoutException idle) { continue; }
+                synchronized (lock) { socket = connection; }
+                // An unrelated LAN client cannot become this directional source.
+                if (!connection.getInetAddress().equals(InetAddress.getByName(expectedSourceHost))) {
+                    closeSocket();
+                    if (socket != null) throw new IOException("rejected source socket cleanup unresolved");
+                    connection = null;
+                }
+            }
+            if (connection == null) return;
+        }
         synchronized (lock) {
+            socket = connection;
             if (stopRequested) {
-                connection.close();
+                closeSocket();
+                if (socket != null) throw new IOException("retired accepted socket cleanup unresolved");
                 return;
             }
-            socket = connection;
         }
-        transportStage = "CONNECT";
-        connection.connect(new InetSocketAddress(host, port), bounds.connectTimeoutMs);
+        if (expectedSourceHost == null) {
+            transportStage = "CONNECT";
+            connection.connect(new InetSocketAddress(host, port), bounds.connectTimeoutMs);
+        }
         connection.setSoTimeout(bounds.readTimeoutMs);
         connection.setTcpNoDelay(true);
         RmanvidPacketReader reader = new RmanvidPacketReader(
@@ -500,9 +563,21 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         if (connection != null) {
             try {
                 connection.close();
-                if (socket == connection) socket = null;
+                if (socket == connection && connection.isClosed()) socket = null;
             } catch (IOException closeFailure) {
                 recordCleanupFailure("socket close failed: " + safeMessage(closeFailure));
+            }
+        }
+    }
+
+    private void closeListener() {
+        ServerSocket current = incomingListener;
+        if (current != null) {
+            try {
+                current.close();
+                if (incomingListener == current && current.isClosed()) incomingListener = null;
+            } catch (IOException failure) {
+                recordCleanupFailure("sink listener close failed: " + safeMessage(failure));
             }
         }
     }

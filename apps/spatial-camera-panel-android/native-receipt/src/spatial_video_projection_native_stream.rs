@@ -46,7 +46,7 @@ static SPATIAL_VIDEO_PROJECTION_LATEST_FRAME: Mutex<Option<SpatialVideoProjectio
 static PROJECTION_PEER_STREAM: Mutex<Option<NativeSpatialVideoProjectionStream>> = Mutex::new(None);
 static PROJECTION_PEER_LATEST_FRAME: Mutex<Option<SpatialVideoProjectionFrame>> = Mutex::new(None);
 static PROJECTION_PEER_BINDING: Mutex<Option<(u64, u64, u64)>> = Mutex::new(None);
-static PROJECTION_PEER_RETIRED_IDENTITY: Mutex<Option<(u64, u64)>> = Mutex::new(None);
+static PROJECTION_PEER_RETIRED_IDENTITY: Mutex<Option<(u64, u64, u64)>> = Mutex::new(None);
 static SPATIAL_VIDEO_PROJECTION_CONTEXTS: LazyLock<
     Mutex<BTreeMap<u64, Arc<NativeSpatialVideoProjectionReaderContext>>>,
 > = LazyLock::new(|| Mutex::new(BTreeMap::new()));
@@ -139,6 +139,15 @@ pub(crate) fn projection_peer_binding_matches(
         binding.as_ref().is_some_and(|(route, decoder, reader)| {
             *route == route_generation && *decoder == decoder_token && *reader == reader_generation
         })
+    })
+}
+
+/// Positive exact-reader stop proof, separate from a missing binding. A newer
+/// bound decoder prevents old cleanup from claiming the current source absent.
+pub(crate) fn projection_peer_reader_stopped(route: u64, decoder: u64, reader: u64) -> bool {
+    let Ok(binding) = PROJECTION_PEER_BINDING.lock() else { return false; };
+    binding.is_none() && PROJECTION_PEER_RETIRED_IDENTITY.lock().ok().is_some_and(|retired| {
+        *retired == Some((route, decoder, reader))
     })
 }
 
@@ -746,12 +755,13 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             .lock()
             .ok()
             .is_some_and(|retired| {
-                retired.as_ref().is_some_and(|(route, decoder)| {
+                retired.as_ref().is_some_and(|(route, decoder, _)| {
                     *route == route_generation as u64 && *decoder == decoder_token as u64
                 })
             });
         return projection_peer_stop_result(false, retired_match);
     }
+    let reader_generation = guard.as_ref().unwrap().context.reader_generation;
     guard.take();
     if let Ok(mut binding) = PROJECTION_PEER_BINDING.lock() {
         if binding.as_ref().is_some_and(|(route, decoder, _)| {
@@ -769,7 +779,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         }
     }
     if let Ok(mut retired) = PROJECTION_PEER_RETIRED_IDENTITY.lock() {
-        *retired = Some((route_generation as u64, decoder_token as u64));
+        *retired = Some((route_generation as u64, decoder_token as u64, reader_generation));
     }
     projection_peer_stop_result(true, false)
 }

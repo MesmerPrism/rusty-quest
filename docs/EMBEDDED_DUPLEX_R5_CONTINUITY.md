@@ -34,6 +34,22 @@ registry and stale callback suppression cannot prove old provider teardown.
 
 ## Validation boundaries
 
+### Peer source retirement after decoder shutdown
+
+Concurrent Peer teardown stops the decoder and releases its native reader before
+removing the registry source. Native code retains the exact stopped route,
+decoder and reader identity. Registry retirement consumes that positive stop
+proof with no current decoder binding; binding absence alone is insufficient.
+An exact source or a never-published source can then retire atomically, including
+a failed Start that received no frames. The source slot retains its epoch
+watermark so stale publication or cleanup cannot revive or remove a successor.
+
+This removes only the Peer registry reference. Own capture and previously
+submitted image leases remain under their existing owners; GPU fences and reader
+lease retirement still determine physical cleanup. Render-policy changes select
+Own or Peer through the existing stereo-bank control owner and do not perform a
+media stop or the separate Local rollback operation.
+
 Initialization regression tests use explicit native capabilities and retain the
 exact no-media close predicates. Counter exhaustion must start from a valid
 persisted maximal counter and reject allocation without wrapping or rewriting

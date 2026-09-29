@@ -58,6 +58,13 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                 new ProductionRuntimeFactory());
     }
 
+    EmbeddedDuplexReceiver(long generation, EmbeddedDuplexDisplay display, String bindHost,
+            int bindPort, String expectedSourceHost, int width, int height, int fpsCap,
+            PackedStereoMediaReceiver.Bounds bounds) {
+        this(generation, display, bindHost, bindPort, width, height, fpsCap, bounds,
+                new ProductionRuntimeFactory(expectedSourceHost));
+    }
+
     EmbeddedDuplexReceiver(long generation, EmbeddedDuplexDisplay display, String sourceHost,
             int sourcePort, int width, int height, int fpsCap,
             PackedStereoMediaReceiver.Bounds bounds, RuntimeFactory runtimeFactory) {
@@ -165,6 +172,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             case "new": return "NEW";
             case "receiver_armed": return "ARMED";
             case "connecting": return "CONNECTING";
+            case "listening": return "LISTENING";
             case "decoder_configured": return "DECODER_CONFIGURED";
             case "receiving": return "RECEIVING";
             case "waiting_reconnect": return "WAITING_RECONNECT";
@@ -322,6 +330,14 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     }
 
     private static final class ProductionRuntimeFactory implements RuntimeFactory {
+        private final String expectedSourceHost;
+        ProductionRuntimeFactory() { this.expectedSourceHost = null; }
+        ProductionRuntimeFactory(String expectedSourceHost) {
+            if (expectedSourceHost == null || expectedSourceHost.isEmpty()) {
+                throw new IllegalArgumentException("accepted source host absent");
+            }
+            this.expectedSourceHost = expectedSourceHost;
+        }
         @Override public ProjectionResource stage(int width, int height, int imageCount, int fpsCap,
                 long routeGeneration) {
             return new ProductionProjectionResource(
@@ -338,7 +354,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             SpatialStereoVideoPlayback.EmbeddedProjectionPeerSurface staged =
                     ((ProductionProjectionResource) projection).staged;
             return new ProductionReceiverRuntime(new PackedStereoMediaReceiver(staged.surface,
-                    sourceHost, sourcePort, generation, bounds, null, listener));
+                    sourceHost, sourcePort, generation, bounds, null, listener, expectedSourceHost));
         }
     }
 

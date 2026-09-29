@@ -845,6 +845,21 @@ internal fun PrivateLayerControlPanel(
               color = LayerPanelAccent,
           )
           if (localStereoBanks.enabled) {
+            HelpLabel("Render camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("All Own", localStereoBanks.policy.words().all { it == 0L }) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(
+                    center = StereoImageOrigin.Own, middle = StereoImageOrigin.Own,
+                    outer = StereoImageOrigin.Own, geometry = StereoImageOrigin.Own,
+                    brightness = StereoGuideOrigin.Own, strength = StereoGuideOrigin.Own))
+              }
+              ChoiceButton("All Peer", localStereoBanks.policy.words().all { it == 1L }) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(
+                    center = StereoImageOrigin.Peer, middle = StereoImageOrigin.Peer,
+                    outer = StereoImageOrigin.Peer, geometry = StereoImageOrigin.Peer,
+                    brightness = StereoGuideOrigin.Peer, strength = StereoGuideOrigin.Peer))
+              }
+            }
             HelpLabel("Center camera")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
               ChoiceButton("Own", localStereoBanks.policy.center == StereoImageOrigin.Own) {

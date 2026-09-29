@@ -130,6 +130,16 @@ public final class PackedStereoMediaSourceRuntime {
     public static final class Pipeline implements PackedStereoPipeline {
         private final Runtime runtime;
         private Pipeline(Runtime runtime) { this.runtime=runtime; }
+        /** Explicit source-local to accepted sink placement; compatibility remains local-only. */
+        public void configureAcceptedLanRoute(String localBindHost, String sinkHost, int sinkPort) {
+            synchronized (runtime.lifecycleLock) {
+                if (runtime.lanTransport != null || runtime.serverSocket != null || runtime.stopRequested) {
+                    throw new IllegalStateException("accepted LAN route already installed or active");
+                }
+                runtime.lanTransport = new PackedStereoLanTransport(runtime.sourceHost,
+                        runtime.profile.port, localBindHost, sinkHost, sinkPort);
+            }
+        }
         public void validateRoute() { runtime.validateRoute(); }
         public void startSocket() {
             try {
@@ -137,6 +147,7 @@ public final class PackedStereoMediaSourceRuntime {
                 else if (!runtime.serverSocket.isBound() || runtime.serverSocket.isClosed()) {
                     throw new IllegalStateException("route socket is not bound");
                 }
+                if (runtime.lanTransport != null) runtime.lanTransport.start();
             } catch (RuntimeException failure) {
                 throw failure;
             } catch (Exception failure) {
@@ -317,6 +328,7 @@ public final class PackedStereoMediaSourceRuntime {
         volatile Thread sourceThread;
         volatile Thread acceptThread;
         volatile ServerSocket serverSocket;
+        volatile PackedStereoLanTransport lanTransport;
         volatile Socket socket;
         volatile OutputStream output;
         volatile BoundedPacketPump packetPump;
@@ -401,9 +413,9 @@ public final class PackedStereoMediaSourceRuntime {
 
         void startSocket() throws Exception {
             ServerSocket server = new ServerSocket();
+            serverSocket = server;
             server.setReuseAddress(true);
             server.bind(new InetSocketAddress(InetAddress.getByName(sourceHost), profile.port));
-            serverSocket = server;
             state = "source_socket_bound";
             acceptThread = new Thread(new Runnable() {
                 @Override
@@ -1011,6 +1023,7 @@ public final class PackedStereoMediaSourceRuntime {
 
         boolean failed() {
             if ("failed".equals(state)) return true;
+            if (lanTransport != null && lanTransport.failed()) return true;
             if (freshnessExpired()) {
                 error="packed source freshness deadline expired";
                 closeReason="source_freshness_expired";
@@ -1024,6 +1037,8 @@ public final class PackedStereoMediaSourceRuntime {
 
         void stop(String reason) {
             stopRequested = true;
+            PackedStereoLanTransport transport = lanTransport;
+            if (transport != null) transport.stop();
             fenceSharedEncoder();
             closeReason = reason;
             if (!"failed".equals(state)) state = "stopping";
@@ -1059,7 +1074,8 @@ public final class PackedStereoMediaSourceRuntime {
         }
 
         boolean resourcesReleased() {
-            return (sourceThread == null || !sourceThread.isAlive())
+            return (lanTransport == null || lanTransport.terminal())
+                    && (sourceThread == null || !sourceThread.isAlive())
                     && (acceptThread == null || !acceptThread.isAlive())
                     && (cameraThread == null || !cameraThread.isAlive())
                     && serverSocket == null && socket == null && output == null && packetPump == null
@@ -1079,6 +1095,7 @@ public final class PackedStereoMediaSourceRuntime {
             json.put("schema", "rusty.quest.remote_camera.android_sender_source.v1");
             json.put("session_id", sessionId);
             json.put("source_group_id", runtimeId);
+            if (lanTransport != null) json.put("accepted_lan_transport", lanTransport.diagnostic());
             json.put("source_kind", sourceKind);
             json.put("state", state);
             json.put("lane_state", output != null ? "source_streaming" : "waiting_for_source_consumer");
