@@ -367,6 +367,9 @@ public final class PackedStereoMediaSourceRuntime {
         volatile long lastPacketElapsedMs = -1L;
         volatile long lastPacketUnixMs = -1L;
         volatile long sourceStreamingSinceMs = -1L;
+        volatile long lastSourceFreshElapsedMs = -1L;
+        volatile PackedSourceFailureCode.Operation sourceLoopOperation =
+                PackedSourceFailureCode.Operation.START;
 
         Runtime(
                 String key,
@@ -492,31 +495,38 @@ public final class PackedStereoMediaSourceRuntime {
 
         @Override
         public void onCompositorFailure(Throwable failure) {
-            logClosedSourceFailure("ENCODER_INPUT", failure);
+            logClosedSourceFailure("ENCODER_INPUT", PackedSourceFailureCode.Operation.ENCODER_INPUT, failure);
             error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);
             closeReason = "gpu_compositor_failure";
             state = "failed";
             stopRequested = true;
         }
 
-        private String closedFailureCause(Throwable failure) {
-            String category = "OTHER";
-            Throwable current = failure;
-            for (int i = 0; current != null && i < 8; i++, current = current.getCause()) {
-                if ("android.media.MediaCodec$CodecException".equals(current.getClass().getName())) {
-                    category = "CODEC"; break;
-                }
-                if (current instanceof java.io.IOException) category = "IO";
-                else if (current instanceof InterruptedException) category = "INTERRUPTED";
-                else if (current instanceof IllegalStateException && "OTHER".equals(category)) category = "STATE";
+        private void logClosedSourceFailure(String stage, PackedSourceFailureCode.Operation operation,
+                Throwable failure) {
+            long nowMs = SystemClock.elapsedRealtime();
+            PackedStereoCaptureOwner capture = sharedCapture;
+            PackedStereoEncoderWorker worker = encoderWorker;
+            boolean captureFresh = false;
+            int captureFreshMask = 0;
+            if (capture != null) {
+                try { captureFresh = capture.fresh(); }
+                catch (Throwable ignored) { /* Diagnostic sampling never masks the failure. */ }
+                captureFreshMask = capture.freshnessDiagnosticMask();
             }
-            return category;
-        }
-
-        private void logClosedSourceFailure(String stage, Throwable failure) {
-            String category = closedFailureCause(failure);
             android.util.Log.i("RQSpatialCameraPanel", "channel=packed-source status=source-failed stage="
-                    + stage + " cause=" + category + " encodedFrames=" + encodedFrames
+                    + stage + " cause=" + PackedSourceFailureCode.cause(failure)
+                    + " detail=" + PackedSourceFailureCode.detail(operation, failure)
+                    + " operation=" + operation.name()
+                    + " sourceCurrent=" + state.startsWith("source_streaming_")
+                    + " sharedCaptureFresh=" + captureFresh
+                    + " sharedCaptureFreshMask=" + captureFreshMask
+                    + " encoderWorkerFailed=" + (worker != null && worker.failure() != null)
+                    + " lastFreshAgeMs=" + PackedSourceFailureCode.ageMs(nowMs, lastSourceFreshElapsedMs)
+                    + " lastPacketAgeMs=" + PackedSourceFailureCode.ageMs(nowMs, lastPacketElapsedMs)
+                    + " streamingAgeMs=" + PackedSourceFailureCode.ageMs(nowMs, sourceStreamingSinceMs)
+                    + " freshnessLimitMs=" + SOURCE_FRESHNESS_TIMEOUT_MS
+                    + " encodedFrames=" + encodedFrames
                     + " packetCount=" + packetCount + " keyframeCount=" + keyframeCount
                     + " consumerAcceptCount=" + consumerAcceptCount + " code=SOURCE_EFFECT_UNCERTAIN");
         }
@@ -524,6 +534,7 @@ public final class PackedStereoMediaSourceRuntime {
         void sourceLoop() {
             try {
                 if (!synthetic && sharedCapture == null) {
+                    sourceLoopOperation = PackedSourceFailureCode.Operation.CAMERA_OPEN;
                     if (context == null) {
                         throw new IllegalStateException("Android context is unavailable");
                     }
@@ -567,6 +578,7 @@ public final class PackedStereoMediaSourceRuntime {
                 long nextSyncMs = SystemClock.elapsedRealtime() + SYNC_FRAME_INTERVAL_MS;
                 while (!stopRequested) {
                     if (synthetic && SystemClock.elapsedRealtimeNanos() >= nextSyntheticNs) {
+                        sourceLoopOperation = PackedSourceFailureCode.Operation.SYNTHETIC_REQUEST;
                         long leftTimestamp = nextSyntheticNs;
                         compositor.requestSyntheticFrame(
                                 syntheticFrame++,
@@ -575,15 +587,19 @@ public final class PackedStereoMediaSourceRuntime {
                         nextSyntheticNs += frameDurationNs;
                     }
                     if (SystemClock.elapsedRealtime() >= nextSyncMs) {
+                        sourceLoopOperation = PackedSourceFailureCode.Operation.SYNC_REQUEST;
                         requestSyncFrame(encoder);
                         nextSyncMs = SystemClock.elapsedRealtime() + SYNC_FRAME_INTERVAL_MS;
                     }
                     drainEncoder(false);
+                    sourceLoopOperation = PackedSourceFailureCode.Operation.FRESHNESS_CHECK;
                     if (freshnessExpired()) {
-                        throw new IllegalStateException("packed source freshness deadline expired");
+                        throw new PackedSourceFailureCode.FreshnessExpired();
                     }
+                    sourceLoopOperation = PackedSourceFailureCode.Operation.SLEEP;
                     Thread.sleep(2L);
                 }
+                sourceLoopOperation = PackedSourceFailureCode.Operation.STOP_DRAIN;
                 fenceSharedEncoder();
                 PackedStereoEncoderWorker inputWorker = encoderWorker;
                 while (inputWorker != null && !inputWorker.isPhysicallyRetired()) Thread.sleep(10L);
@@ -598,7 +614,7 @@ public final class PackedStereoMediaSourceRuntime {
                 }
             } catch (Throwable failure) {
                 if (!stopRequested) {
-                    logClosedSourceFailure("SOURCE_LOOP", failure);
+                    logClosedSourceFailure("SOURCE_LOOP", sourceLoopOperation, failure);
                     error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);
                     closeReason = "exception";
                     state = "failed";
@@ -622,6 +638,7 @@ public final class PackedStereoMediaSourceRuntime {
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             int emptyPolls = 0;
             while (!stopRequested || eos) {
+                sourceLoopOperation = PackedSourceFailureCode.Operation.ENCODER_DEQUEUE;
                 int status = encoder.dequeueOutputBuffer(info, ENCODER_DRAIN_TIMEOUT_US);
                 if (status == MediaCodec.INFO_TRY_AGAIN_LATER) {
                     if (!eos || emptyPolls++ > 50) {
@@ -632,6 +649,7 @@ public final class PackedStereoMediaSourceRuntime {
                 if (status == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED || status < 0) {
                     continue;
                 }
+                sourceLoopOperation = PackedSourceFailureCode.Operation.ENCODER_GET_OUTPUT;
                 ByteBuffer buffer = encoder.getOutputBuffer(status);
                 if (buffer != null && info.size > 0) {
                     byte[] payload = new byte[info.size];
@@ -645,12 +663,14 @@ public final class PackedStereoMediaSourceRuntime {
                     if (pair == null) {
                         encodedPacketsWithoutPair++;
                     } else {
+                        sourceLoopOperation = PackedSourceFailureCode.Operation.PAIR_VALIDATE;
                         pair.validate(codecConfig, layout.maxPairDeltaNs);
                         if (codecConfig) {
                             cachedCodecConfig = payload.clone();
                             cachedCodecConfigPtsUs = info.presentationTimeUs;
                             cachedCodecConfigFlags = info.flags;
                         }
+                        sourceLoopOperation = PackedSourceFailureCode.Operation.PACKET_OFFER;
                         writePacket(
                                 info.presentationTimeUs,
                                 info.flags,
@@ -664,6 +684,7 @@ public final class PackedStereoMediaSourceRuntime {
                     }
                 }
                 boolean outputEos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                sourceLoopOperation = PackedSourceFailureCode.Operation.ENCODER_RELEASE;
                 encoder.releaseOutputBuffer(status, false);
                 if (outputEos) {
                     break;
@@ -725,7 +746,8 @@ public final class PackedStereoMediaSourceRuntime {
                     }
                 } catch (Throwable failure) {
                     if (!stopRequested) {
-                        logHandshake("handshake-rejected", handshakeStage, closedFailureCause(failure));
+                        logHandshake("handshake-rejected", handshakeStage,
+                                PackedSourceFailureCode.cause(failure));
                         error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);
                     }
                 } finally {
@@ -1018,7 +1040,9 @@ public final class PackedStereoMediaSourceRuntime {
             if (!state.startsWith("source_streaming_") || sourceStreamingSinceMs < 0L) return false;
             long now=SystemClock.elapsedRealtime();
             if (now-sourceStreamingSinceMs <= SOURCE_FRESHNESS_TIMEOUT_MS) return false;
-            return !sourceFresh();
+            boolean fresh = sourceFresh();
+            if (fresh) lastSourceFreshElapsedMs = now;
+            return !fresh;
         }
 
         boolean failed() {
