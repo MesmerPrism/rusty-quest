@@ -60,6 +60,7 @@ pub(super) struct PairState {
     nonce_a: Option<String>,
     nonce_b: Option<String>,
     deadline_ms: u64,
+    signed_context_a_expires_at_ms: Option<u64>,
     prepared_b: Option<(
         ManifoldCommonLanReciprocalEd25519Context,
         ManifoldCommonLanReciprocalEd25519Signature,
@@ -79,6 +80,7 @@ impl Default for PairState {
             nonce_a: None,
             nonce_b: None,
             deadline_ms: 0,
+            signed_context_a_expires_at_ms: None,
             prepared_b: None,
         }
     }
@@ -465,6 +467,29 @@ fn sign(
     serde_json::from_str(&sign_common_lan(host, &input, host.clock.now_ms()?)?).map_err(safe_decode)
 }
 
+fn mutual_signed_session_expiry(
+    first_context_expires_at_ms: u64,
+    second_context_expires_at_ms: u64,
+    now_ms: u64,
+) -> Result<u64, String> {
+    let expiry = first_context_expires_at_ms.min(second_context_expires_at_ms);
+    if expiry <= now_ms {
+        return Err("mutual signed pair session deadline is not current".into());
+    }
+    Ok(expiry)
+}
+
+fn prepared_peer_signature_matches(
+    prepared: &ManifoldCommonLanReciprocalEd25519Signature,
+    local: &ManifoldCommonLanReciprocalEd25519Signature,
+    peer_id: &str,
+    peer_key_id: &str,
+) -> bool {
+    prepared.signer_peer_id.as_str() == peer_id
+        && prepared.signer_key_id.as_str() == peer_key_id
+        && prepared.context_sha256 == local.context_sha256
+}
+
 fn apply(
     host: &Host,
     ceremony_id: &str,
@@ -472,6 +497,7 @@ fn apply(
     context: ManifoldCommonLanReciprocalEd25519Context,
     local_signature: ManifoldCommonLanReciprocalEd25519Signature,
     remote_signature: ManifoldCommonLanReciprocalEd25519Signature,
+    session_expires_at_ms: u64,
 ) -> Result<Value, String> {
     set_step(host, "apply_reciprocal")?;
     let request: ManifoldCommonLanReciprocalEd25519ReviewRequest = serde_json::from_value(json!({
@@ -491,6 +517,9 @@ fn apply(
         return Err("pair reciprocal authority rejected".into());
     }
     set_step(host, "apply_session")?;
+    if session_expires_at_ms > reciprocal.expires_at_ms || session_expires_at_ms <= now {
+        return Err("mutual signed pair session deadline is not current".into());
+    }
     let current = snapshot(host)?;
     let proposal: ManifoldCommonLanPeerSessionProposal = serde_json::from_value(json!({
         "$schema": COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA,
@@ -504,7 +533,7 @@ fn apply(
         "requested_capability_ids": ["capability.rendezvous.ble",
             "capability.route.rust-direct-p2p", "capability.topology.wifi-direct"],
         "transport": transport(host)?,
-        "expires_at_ms": reciprocal.expires_at_ms
+        "expires_at_ms": session_expires_at_ms
     }))
     .map_err(safe_decode)?;
     let (decision, topology) =
@@ -713,7 +742,7 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
             return Err("pair nonces collided".into());
         }
         state(host)?.nonce_b = Some(nonce_b.into());
-        let (context_a, signature_a) = prepare(host, &ceremony_id, &nonce_a, nonce_b)?;
+        let (context_a, signature_a_for_a) = prepare(host, &ceremony_id, &nonce_a, nonce_b)?;
         let signed_a = exchange(
             host,
             "sign_a",
@@ -721,42 +750,55 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
             &ceremony_id,
             json!({"context": context_a}),
         )?;
-        let signature_b =
+        let signature_b_for_a =
             parse_signature(signed_a.get("signature").ok_or("peer signature absent")?)?;
-        let current_a = apply(
-            host,
-            &ceremony_id,
-            &session_id,
-            context_a,
-            signature_a,
-            signature_b,
-        )?;
         let prepared_b = exchange(host, "prepare_b", "prepared_b", &ceremony_id, json!({}))?;
         let context_b = parse_context(prepared_b.get("context").ok_or("peer context absent")?)?;
         if context_b.correlation_id.as_str() != format!("correlation.{ceremony_id}") {
             return Err("peer context correlation differs".into());
         }
-        let signature_b =
+        let signature_b_for_b =
             parse_signature(prepared_b.get("signature").ok_or("peer signature absent")?)?;
-        let signature_a = sign(host, &context_b)?;
-        if signature_b.signer_peer_id.as_str() != host.remote_peer_id
-            || signature_b.signer_key_id.as_str() != host.remote_key_id
-            || signature_b.context_sha256 != signature_a.context_sha256
-        {
+        let signature_a_for_b = sign(host, &context_b)?;
+        if !prepared_peer_signature_matches(
+            &signature_b_for_b,
+            &signature_a_for_b,
+            &host.remote_peer_id,
+            &host.remote_key_id,
+        ) {
             return Err("peer prepared signature binding differs".into());
         }
+        // Both separately signed contexts are available before either local
+        // session is accepted. A common deadline is within each reciprocal's
+        // authority without changing either signed context or wire schema.
+        let mutual_expiry = mutual_signed_session_expiry(
+            context_a.expires_at_ms,
+            context_b.expires_at_ms,
+            host.clock.now_ms()?,
+        )?;
+        let current_a = apply(
+            host,
+            &ceremony_id,
+            &session_id,
+            context_a,
+            signature_a_for_a,
+            signature_b_for_a,
+            mutual_expiry,
+        )?;
         let completed_b = exchange(
             host,
             "finish_b",
             "finished_b",
             &ceremony_id,
-            json!({"signature": signature_a}),
+            json!({"signature": signature_a_for_b}),
         )?;
         let current_b = completed_b
             .get("current_session")
             .ok_or("peer current session absent")?;
         if current_b.get("current").and_then(Value::as_bool) != Some(true)
             || current_b.get("session_id").and_then(Value::as_str) != Some(session_id.as_str())
+            || current_a.get("expires_at_ms").and_then(Value::as_u64) != Some(mutual_expiry)
+            || current_b.get("expires_at_ms").and_then(Value::as_u64) != Some(mutual_expiry)
         {
             return Err("peer current session receipt differs".into());
         }
@@ -864,6 +906,7 @@ fn handle_frame_inner(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String> {
                 drop(current);
                 prime(host, host.clock.now_ms()?, id)?;
                 let signature = sign(host, &context)?;
+                state(host)?.signed_context_a_expires_at_ms = Some(context.expires_at_ms);
                 encode(host, "signed_a", id, json!({"signature": signature}))
             })();
             if let Err(error) = &result {
@@ -913,8 +956,24 @@ fn handle_frame_inner(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String> {
                 let current = state(host)?;
                 let prepared = current_prepared(&current)?;
                 let session_id = current.session_id.clone().ok_or("pair session absent")?;
+                let initiator_expiry = current
+                    .signed_context_a_expires_at_ms
+                    .ok_or("signed initiator context deadline absent")?;
                 drop(current);
-                let proof = apply(host, id, &session_id, prepared.0, prepared.1, signature_a)?;
+                let mutual_expiry = mutual_signed_session_expiry(
+                    initiator_expiry,
+                    prepared.0.expires_at_ms,
+                    host.clock.now_ms()?,
+                )?;
+                let proof = apply(
+                    host,
+                    id,
+                    &session_id,
+                    prepared.0,
+                    prepared.1,
+                    signature_a,
+                    mutual_expiry,
+                )?;
                 state(host)?.stage = Stage::Completed;
                 encode(host, "finished_b", id, json!({"current_session":proof}))
             })();
@@ -974,4 +1033,78 @@ pub(super) fn status(host: &Host) -> Result<String, String> {
         "route_current":false,"media_effect_proven":false, "renewal":pair_renewal::status(host)?})
         .to_string(),
     )
+}
+
+#[cfg(test)]
+mod mutual_deadline_tests {
+    use super::*;
+    use rusty_manifold_peer::COMMON_LAN_RECIPROCAL_ED25519_SIGNATURE_SCHEMA;
+
+    #[test]
+    fn two_signed_contexts_converge_for_both_clock_orders_and_renewal() {
+        // The Warm18 Q/W receipts differed by 821 ms. Before this repair Q's
+        // route projection outlived W's accepted topology by that amount.
+        let now = 1_790_795_774_429;
+        let first = 1_790_795_823_765;
+        let second = first - 821;
+        for (a, b) in [(first, second), (second, first)] {
+            let a_session = mutual_signed_session_expiry(a, b, now).expect("A session");
+            let b_session = mutual_signed_session_expiry(b, a, now).expect("B session");
+            assert_eq!(a_session, b_session);
+            assert!(a_session <= a && a_session <= b);
+            // This is the deadline inequality required by the remote verifier;
+            // owner dispatch and effect execution require separate evidence.
+            assert!(a_session <= b_session && b_session <= a_session);
+        }
+        // The SESSION renewal uses the same two-context bound, while its
+        // credential phase keeps its existing separate short-lived scope.
+        let renewed_a = mutual_signed_session_expiry(first + 120_000, second + 120_000, now)
+            .expect("renewed A session");
+        let renewed_b = mutual_signed_session_expiry(second + 120_000, first + 120_000, now)
+            .expect("renewed B session");
+        assert_eq!(renewed_a, renewed_b);
+        assert!(mutual_signed_session_expiry(first, second, second).is_err());
+        assert!(mutual_signed_session_expiry(0, first, now).is_err());
+    }
+
+    #[test]
+    fn prepared_peer_signature_must_keep_exact_peer_key_and_context() {
+        let signature: ManifoldCommonLanReciprocalEd25519Signature =
+            serde_json::from_value(json!({
+                "$schema":COMMON_LAN_RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
+                "signer_peer_id":"peer.quest_b",
+                "signer_key_id":format!("ed25519.{}", "b".repeat(64)),
+                "context_sha256":format!("sha256:{}", "a".repeat(64)),
+                "signature_hex":"b".repeat(128)
+            }))
+            .expect("typed signature");
+        let key_b = format!("ed25519.{}", "b".repeat(64));
+        let key_a = format!("ed25519.{}", "a".repeat(64));
+        assert!(prepared_peer_signature_matches(
+            &signature,
+            &signature,
+            "peer.quest_b",
+            &key_b
+        ));
+        assert!(!prepared_peer_signature_matches(
+            &signature,
+            &signature,
+            "peer.quest_a",
+            &key_b
+        ));
+        assert!(!prepared_peer_signature_matches(
+            &signature,
+            &signature,
+            "peer.quest_b",
+            &key_a
+        ));
+        let mut other_context = signature.clone();
+        other_context.context_sha256 = format!("sha256:{}", "c".repeat(64));
+        assert!(!prepared_peer_signature_matches(
+            &signature,
+            &other_context,
+            "peer.quest_b",
+            &key_b
+        ));
+    }
 }
