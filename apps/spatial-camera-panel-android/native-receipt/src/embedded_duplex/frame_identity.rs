@@ -1314,6 +1314,8 @@ mod tests {
         route[10] = 512;
         route[11] = 1;
         assert!(!prime(0, peer, true, &route)); // already effective
+        route[11] = 4;
+        assert!(!prime(0, peer, true, &route)); // lost or stopped route
         route[11] = 0;
         route[2] = 1;
         assert!(!prime(0, peer, true, &route)); // foreign source

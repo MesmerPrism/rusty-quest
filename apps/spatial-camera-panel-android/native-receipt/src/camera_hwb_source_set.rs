@@ -185,7 +185,6 @@ unsafe fn render_source_set_common_graph(
         let sdk_binding = wsi.sdk_binding;
         let mut transition_packed_source = true;
         let mut frames_presented = 0_u32;
-        let mut last_peer_gpu_proof = None;
         let mut guard_band = CameraReprojectionGuardBandController::default();
         let render_started = Instant::now();
 
@@ -532,45 +531,42 @@ unsafe fn render_source_set_common_graph(
             projection_readback.retire_after_fence(&device);
             if record_result.projected_by_public_stack && record_result.projection_zone_stats.rendered {
                 if let Some((identity, import_sequence)) = submitted_peer {
-                    if last_peer_gpu_proof != Some((identity, import_sequence)) {
-                        // The first frame may retire before common-graph attach.
-                        // A stopped/rebound Peer can also leave a physically
-                        // retiring old lease. Neither may stop the Own carrier.
-                        if let (Ok(route_generation), Ok(decoder), Ok(reader)) = (
-                            i64::try_from(identity.route_generation),
-                            i64::try_from(identity.decoder_token),
-                            i64::try_from(identity.reader_generation),
-                        ) {
-                            let route = crate::peer_projection_runtime::read_source(route_generation);
-                            if projection_peer_binding_matches(identity.route_generation,
-                                    identity.decoder_token, identity.reader_generation)
-                                && route.words[1] == route_generation
-                                && route.words[2] == crate::peer_projection_runtime::SOURCE_PEER
-                                && route.words[3] == decoder && route.words[4] == reader
-                                && matches!(route.words[11],
-                                    crate::peer_projection_runtime::RESULT_PENDING
-                                    | crate::peer_projection_runtime::RESULT_EFFECTIVE)
-                                && route.words[10] & crate::peer_projection_runtime::STAGE_COMMON_GRAPH != 0
+                    // The first frame may retire before common-graph attach.
+                    // A stopped/rebound Peer can leave a physically retiring
+                    // old lease. Neither may stop the Own carrier.
+                    if let (Ok(route_generation), Ok(decoder), Ok(reader)) = (
+                        i64::try_from(identity.route_generation),
+                        i64::try_from(identity.decoder_token),
+                        i64::try_from(identity.reader_generation),
+                    ) {
+                        let route = crate::peer_projection_runtime::read_source(route_generation);
+                        if projection_peer_binding_matches(identity.route_generation,
+                                identity.decoder_token, identity.reader_generation)
+                            && route.words[1] == route_generation
+                            && route.words[2] == crate::peer_projection_runtime::SOURCE_PEER
+                            && route.words[3] == decoder && route.words[4] == reader
+                            && matches!(route.words[11],
+                                crate::peer_projection_runtime::RESULT_PENDING
+                                | crate::peer_projection_runtime::RESULT_EFFECTIVE)
+                            && route.words[10] & crate::peer_projection_runtime::STAGE_COMMON_GRAPH != 0
+                        {
+                            let retired_ns = crate::peer_projection_runtime::monotonic_now_ns();
+                            if retired_ns > 0
+                                && crate::embedded_duplex::frame_identity::record_receiver_frame_gpu_retired(
+                                    identity, import_sequence, retired_ns as u64,
+                                ) == crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::Accepted
                             {
-                                let retired_ns = crate::peer_projection_runtime::monotonic_now_ns();
-                                if retired_ns > 0
-                                    && crate::embedded_duplex::frame_identity::record_receiver_frame_gpu_retired(
-                                        identity, import_sequence, retired_ns as u64,
-                                    ) == crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::Accepted
-                                {
-                                    let effective = crate::peer_projection_runtime::record_peer_submission_retired(
-                                        route_generation,
-                                        PeerFrameWitness {
-                                            decoder_token: identity.decoder_token,
-                                            reader_generation: identity.reader_generation,
-                                            pair_generation: identity.pair_id,
-                                            import_generation: import_sequence,
-                                        },
-                                    );
-                                    if effective.words[11] == crate::peer_projection_runtime::RESULT_EFFECTIVE {
-                                        last_peer_gpu_proof = Some((identity, import_sequence));
-                                    }
-                                }
+                                let _ = crate::peer_projection_runtime::record_peer_submission_retired(
+                                    route_generation,
+                                    PeerFrameWitness {
+                                        decoder_token: identity.decoder_token,
+                                        reader_generation: identity.reader_generation,
+                                        pair_generation: identity.pair_id,
+                                        import_generation: import_sequence,
+                                    },
+                                );
+                                // The versioned getter still requires the
+                                // current route's exact effective pair/import.
                             }
                         }
                     }
