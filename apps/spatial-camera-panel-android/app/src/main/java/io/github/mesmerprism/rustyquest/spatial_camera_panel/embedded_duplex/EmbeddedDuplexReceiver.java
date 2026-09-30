@@ -196,11 +196,51 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     public long decoderToken() { return staged == null ? 0L : staged.decoderToken(); }
     public long readerGeneration() { return staged == null ? 0L : staged.readerGeneration(); }
 
-    /** Called only after the full ordered product Start has completed. */
-    public void awaitFirstRenderedFrame() throws Exception {
+    /** Called only after Start; the embedded receiver waits for an actual Surface image. */
+    public void awaitFirstSurfaceImage() throws Exception {
         ReceiverRuntime current = receiver;
         if (current == null || surfaceReleased) throw new IllegalStateException("receiver not prepared");
         current.start();
+    }
+
+    /** Current exact native image acquisition; no codec callback or GPU proof is implied. */
+    public long[] currentAcquiredFrameTimed(long maxAgeNs) {
+        long connection = connectionGeneration;
+        ReceiverRuntime current = receiver;
+        ProjectionResource projection = staged;
+        if (surfaceReleased || connection <= 0L || current == null || projection == null
+                || !"receiving".equals(current.snapshot().state())) return null;
+        long[] evidence = EmbeddedDuplexNative.currentReceiverAcquiredFrameTimed(generation,
+                connection, projection.routeGeneration(), projection.decoderToken(),
+                projection.readerGeneration(), maxAgeNs);
+        return connection == connectionGeneration && projection == staged && !surfaceReleased
+                && exactV2(evidence, EmbeddedDuplexNative.ACQUIRED_TIMED_OBSERVATION_WORDS,
+                        connection, projection) ? evidence : null;
+    }
+
+    /** GPU-fence-retired native effect for the current exact acquisition. */
+    public long[] currentEffectiveFrameTimed(long maxAgeNs) {
+        long connection = connectionGeneration;
+        ReceiverRuntime current = receiver;
+        ProjectionResource projection = staged;
+        if (surfaceReleased || connection <= 0L || current == null || projection == null
+                || !"receiving".equals(current.snapshot().state())) return null;
+        long[] evidence = EmbeddedDuplexNative.currentReceiverEffectiveFrameTimed(generation,
+                connection, projection.routeGeneration(), projection.decoderToken(),
+                projection.readerGeneration(), maxAgeNs);
+        return connection == connectionGeneration && projection == staged && !surfaceReleased
+                && exactV2(evidence, EmbeddedDuplexNative.EFFECTIVE_TIMED_OBSERVATION_WORDS,
+                        connection, projection) ? evidence : null;
+    }
+
+    private boolean exactV2(long[] evidence, int length, long connection,
+            ProjectionResource projection) {
+        return evidence != null && evidence.length == length
+                && evidence[0] == EmbeddedDuplexNative.FRAME_EVIDENCE_VERSION
+                && evidence[1] == generation && evidence[2] == connection
+                && evidence[3] == projection.routeGeneration()
+                && evidence[4] == projection.decoderToken()
+                && evidence[5] == projection.readerGeneration();
     }
 
     /** Null means there is no current matching render AND native acquisition. */
@@ -356,8 +396,24 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             }
             SpatialStereoVideoPlayback.EmbeddedProjectionPeerSurface staged =
                     ((ProductionProjectionResource) projection).staged;
+            PackedStereoMediaReceiver.SurfaceAcquisitionProbe probe = (receiverGeneration, connection) -> {
+                long[] acquired = EmbeddedDuplexNative.currentReceiverAcquiredFrameTimed(
+                        receiverGeneration, connection, staged.routeGeneration,
+                        staged.decoderToken, staged.readerGeneration, 500_000_000L);
+                if (acquired == null) return null;
+                if (acquired.length != EmbeddedDuplexNative.ACQUIRED_TIMED_OBSERVATION_WORDS
+                        || acquired[0] != EmbeddedDuplexNative.FRAME_EVIDENCE_VERSION
+                        || acquired[1] != receiverGeneration || acquired[2] != connection
+                        || acquired[3] != staged.routeGeneration
+                        || acquired[4] != staged.decoderToken
+                        || acquired[5] != staged.readerGeneration) return null;
+                return new PackedStereoMediaReceiver.AcquiredFrame(acquired[1], acquired[2],
+                        acquired[6], acquired[7], acquired[8], acquired[9], acquired[10],
+                        acquired[11], acquired[12], acquired[13], acquired[14]);
+            };
             return new ProductionReceiverRuntime(new PackedStereoMediaReceiver(staged.surface,
-                    sourceHost, sourcePort, generation, bounds, null, listener, expectedSourceHost));
+                    sourceHost, sourcePort, generation, bounds, null, listener,
+                    expectedSourceHost, probe));
         }
     }
 

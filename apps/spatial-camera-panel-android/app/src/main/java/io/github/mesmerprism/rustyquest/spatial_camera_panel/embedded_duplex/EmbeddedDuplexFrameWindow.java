@@ -19,7 +19,7 @@ final class EmbeddedDuplexFrameWindow {
     static final long MAX_GAP_NS = 500_000_000L;
     static final long MAX_STALL_NS = 1_000_000_000L;
     private static final long PERIOD_MS = 250L;
-    private static final String SCHEMA = "rusty.quest.embedded_duplex.frame_window_receipt.v1";
+    private static final String SCHEMA = "rusty.quest.embedded_duplex.frame_window_receipt.v2";
 
     interface Source {
         Sample observe() throws Exception;
@@ -107,30 +107,31 @@ final class EmbeddedDuplexFrameWindow {
             fail("route_or_activation_changed"); return;
         }
         long[] w = sample.nativeWords;
-        if (w == null || w.length != EmbeddedDuplexNative.FRAME_TIMED_OBSERVATION_WORDS) {
+        if (w == null || w.length != EmbeddedDuplexNative.EFFECTIVE_TIMED_OBSERVATION_WORDS) {
             fail("native_frame_absent"); return;
         }
-        long at = w[17], age = w[18];
-        if (at <= 0L || age < 0L || age > MAX_GAP_NS || w[13] < 0L
-                || w[11] <= 0L || w[12] <= 0L || w[14] <= 0L
-                || w[15] < w[14] || w[16] < w[14]
-                || w[15] > at || w[16] > at
-                || age != at - Math.min(w[14], Math.min(w[15], w[16]))) {
+        long at = w[18], age = w[19];
+        if (w[0] != EmbeddedDuplexNative.FRAME_EVIDENCE_VERSION
+                || at <= 0L || age < 0L || age > MAX_GAP_NS || w[14] < 0L
+                || w[12] <= 0L || w[13] <= 0L || w[15] <= 0L
+                || w[16] < w[15] || w[17] < w[16]
+                || w[17] > at || w[20] <= 0L
+                || age != at - w[15]) {
             fail("native_frame_stale_or_malformed"); return;
         }
-        for (int i = 0; i < 17; i++) {
-            if (i != 13 && w[i] <= 0L) { fail("native_frame_malformed"); return; }
+        for (int i = 1; i <= 14; i++) {
+            if (i != 14 && w[i] <= 0L) { fail("native_frame_malformed"); return; }
         }
         // Both sensor timestamps are positive signed longs, so their
         // difference and Math.abs cannot overflow the signed range.
-        if (w[13] != Math.abs(w[11] - w[12])) {
+        if (w[14] != Math.abs(w[12] - w[13])) {
             fail("native_frame_malformed"); return;
         }
-        if (sampleCount > 0L && w[1] != lastFrame[1]) {
+        if (sampleCount > 0L && w[2] != lastFrame[2]) {
             fail("connection_changed"); return;
         }
-        if (sampleCount > 0L && (w[0] != lastFrame[0] || w[2] != lastFrame[2]
-                || w[3] != lastFrame[3] || w[4] != lastFrame[4])) {
+        if (sampleCount > 0L && (w[1] != lastFrame[1] || w[3] != lastFrame[3]
+                || w[4] != lastFrame[4] || w[5] != lastFrame[5])) {
             fail("native_generation_changed"); return;
         }
         long gap = sampleCount == 0L ? 0L : at - lastObserved;
@@ -143,8 +144,8 @@ final class EmbeddedDuplexFrameWindow {
             firstIdentity = identity;
             lastAdvanceObserved = at;
         } else if (!identity.equals(lastIdentity)) {
-            if (w[5] <= lastFrame[5]) {
-                fail("presentation_time_not_advancing"); return;
+            if (w[20] <= lastFrame[20]) {
+                fail("gpu_import_sequence_not_advancing"); return;
             }
             frameAdvanceCount++;
             maxStall = Math.max(maxStall, at - lastAdvanceObserved);
@@ -238,7 +239,7 @@ final class EmbeddedDuplexFrameWindow {
                 .put("max_observation_gap_ns", maxGap)
                 .put("max_witness_age_ns", maxAge)
                 .put("max_identity_stall_ns", maxStall)
-                .put("matched_render_acquire_count", sampleCount)
+                .put("matched_acquire_gpu_effect_count", sampleCount)
                 .put("frame_advance_count", frameAdvanceCount)
                 .put("connection_changes", 0L);
         if (digestHex != null) result.put("sample_digest_sha256", digestHex);
@@ -246,10 +247,14 @@ final class EmbeddedDuplexFrameWindow {
         if (lastIdentity != null) result.put("last_frame_identity_sha256", lastIdentity);
         if (lastFrame != null) {
             JSONArray words = new JSONArray();
-            for (int i = 0; i < 17; i++) words.put(lastFrame[i]);
+            for (int i = 0; i <= 14; i++) words.put(lastFrame[i]);
             result.put("last_native_frame", new JSONObject()
-                    .put("words", words).put("observed_at_monotonic_ns", lastFrame[17])
-                    .put("witness_age_ns", lastFrame[18])
+                    .put("words", words).put("registered_monotonic_ns", lastFrame[15])
+                    .put("acquired_monotonic_ns", lastFrame[16])
+                    .put("gpu_retired_monotonic_ns", lastFrame[17])
+                    .put("observed_at_monotonic_ns", lastFrame[18])
+                    .put("witness_age_ns", lastFrame[19])
+                    .put("import_sequence", lastFrame[20])
                     .put("identity_sha256", lastIdentity));
         }
         return result.toString();
@@ -257,8 +262,8 @@ final class EmbeddedDuplexFrameWindow {
 
     private static String identitySha(long[] words) {
         StringBuilder value = new StringBuilder();
-        for (int i = 0; i < 14; i++) {
-            if (i != 0) value.append(',');
+        for (int i = 1; i <= 14; i++) {
+            if (i != 1) value.append(',');
             value.append(words[i]); // Java long uses invariant signed decimal formatting.
         }
         try {

@@ -7,6 +7,7 @@ use super::native_fence_jni::generation_current;
 use crate::spatial_video_projection_native_stream::{self as stream, EmbeddedReceiverFrameRequest};
 
 const IDENTITY_WORDS: usize = 14;
+const SURFACE_PROOF_VERSION: jlong = 2;
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_localCameraQuiescent(
@@ -214,6 +215,154 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         return std::ptr::null_mut();
     }
     array.into_raw()
+}
+
+fn valid_timed_request(
+    receiver: jlong,
+    connection: jlong,
+    route: jlong,
+    decoder: jlong,
+    reader: jlong,
+    max_age_ns: jlong,
+) -> bool {
+    [receiver, connection, route, decoder, reader, max_age_ns]
+        .iter()
+        .all(|value| *value > 0)
+        && max_age_ns <= 5_000_000_000
+        && generation_current(receiver as u64)
+}
+
+fn surface_identity_words(
+    identity: super::frame_identity::ReceiverFrameIdentity,
+) -> Option<[jlong; 14]> {
+    Some([
+        jlong::try_from(identity.receiver_generation).ok()?,
+        jlong::try_from(identity.connection_generation).ok()?,
+        jlong::try_from(identity.route_generation).ok()?,
+        jlong::try_from(identity.decoder_token).ok()?,
+        jlong::try_from(identity.reader_generation).ok()?,
+        identity.presentation_time_ns,
+        identity.source_elapsed_ns,
+        identity.source_unix_ns,
+        jlong::try_from(identity.pair_id).ok()?,
+        jlong::try_from(identity.left_source_frame).ok()?,
+        jlong::try_from(identity.right_source_frame).ok()?,
+        identity.left_sensor_timestamp_ns,
+        identity.right_sensor_timestamp_ns,
+        jlong::try_from(identity.pair_delta_ns).ok()?,
+    ])
+}
+
+fn put_timed_words(mut env: JNIEnv<'_>, words: &[jlong], receiver: jlong) -> jlongArray {
+    if !generation_current(receiver as u64) {
+        return std::ptr::null_mut();
+    }
+    let Ok(array) = env.new_long_array(words.len() as i32) else {
+        return std::ptr::null_mut();
+    };
+    if env.set_long_array_region(&array, 0, words).is_err() || !generation_current(receiver as u64)
+    {
+        return std::ptr::null_mut();
+    }
+    array.into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_currentReceiverAcquiredFrameTimed(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    receiver: jlong,
+    connection: jlong,
+    route: jlong,
+    decoder: jlong,
+    reader: jlong,
+    max_age_ns: jlong,
+) -> jlongArray {
+    if !valid_timed_request(receiver, connection, route, decoder, reader, max_age_ns) {
+        return std::ptr::null_mut();
+    }
+    let Some(timed) = stream::current_embedded_receiver_acquired_timed(
+        receiver as u64,
+        connection as u64,
+        route as u64,
+        decoder as u64,
+        reader as u64,
+        max_age_ns as u64,
+    ) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(registered) = jlong::try_from(timed.registered_monotonic_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(acquired) = jlong::try_from(timed.acquired_monotonic_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(observed) = jlong::try_from(timed.observed_at_monotonic_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(age) = jlong::try_from(timed.witness_age_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Some(identity) = surface_identity_words(timed.identity) else {
+        return std::ptr::null_mut();
+    };
+    let mut words = [0_i64; 19];
+    words[0] = SURFACE_PROOF_VERSION;
+    words[1..15].copy_from_slice(&identity);
+    words[15..].copy_from_slice(&[registered, acquired, observed, age]);
+    put_timed_words(env, &words, receiver)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_currentReceiverEffectiveFrameTimed(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    receiver: jlong,
+    connection: jlong,
+    route: jlong,
+    decoder: jlong,
+    reader: jlong,
+    max_age_ns: jlong,
+) -> jlongArray {
+    if !valid_timed_request(receiver, connection, route, decoder, reader, max_age_ns) {
+        return std::ptr::null_mut();
+    }
+    let Some(timed) = stream::current_embedded_receiver_effective_timed(
+        receiver as u64,
+        connection as u64,
+        route as u64,
+        decoder as u64,
+        reader as u64,
+        max_age_ns as u64,
+    ) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(registered) = jlong::try_from(timed.acquired.registered_monotonic_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(acquired) = jlong::try_from(timed.acquired.acquired_monotonic_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(gpu) = jlong::try_from(timed.gpu_retired_monotonic_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(observed) = jlong::try_from(timed.acquired.observed_at_monotonic_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(age) = jlong::try_from(timed.witness_age_ns) else {
+        return std::ptr::null_mut();
+    };
+    let Ok(import) = jlong::try_from(timed.import_sequence) else {
+        return std::ptr::null_mut();
+    };
+    let Some(identity) = surface_identity_words(timed.acquired.identity) else {
+        return std::ptr::null_mut();
+    };
+    let mut words = [0_i64; 21];
+    words[0] = SURFACE_PROOF_VERSION;
+    words[1..15].copy_from_slice(&identity);
+    words[15..].copy_from_slice(&[registered, acquired, gpu, observed, age, import]);
+    put_timed_words(env, &words, receiver)
 }
 
 #[no_mangle]

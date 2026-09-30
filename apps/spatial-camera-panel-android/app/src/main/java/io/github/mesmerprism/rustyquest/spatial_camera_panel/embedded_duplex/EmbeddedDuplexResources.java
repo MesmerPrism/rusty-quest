@@ -194,8 +194,17 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         }
     }
     @Override public String incomingRuntimeSpecId() { return incomingRuntimeSpecId; }
-    @Override public void awaitFirstRenderedFrame() throws Exception { incoming.awaitFirstRenderedFrame(); }
+    @Override public void awaitFirstRenderedFrame() {
+        throw new UnsupportedOperationException("legacy rendered-frame startup is not the embedded Surface-image path");
+    }
     @Override public long[] currentIncomingFrame(long maxAgeNs) { return incoming.currentFrame(maxAgeNs); }
+    @Override public void awaitFirstSurfaceImage() throws Exception { incoming.awaitFirstSurfaceImage(); }
+    @Override public long[] currentIncomingAcquiredFrame(long maxAgeNs) {
+        return incoming.currentAcquiredFrameTimed(maxAgeNs);
+    }
+    @Override public long[] currentIncomingEffectiveFrame(long maxAgeNs) {
+        return incoming.currentEffectiveFrameTimed(maxAgeNs);
+    }
     @Override public long routeGeneration() { return incoming.routeGeneration(); }
     @Override public long decoderToken() { return incoming.decoderToken(); }
     @Override public long readerGeneration() { return incoming.readerGeneration(); }
@@ -303,7 +312,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             String key = field.substring(0, equals), value = field.substring(equals + 1);
             if (!seen.add(key)) return false;
             switch (key) {
-                case "stage": if (!value.matches("ARM_PROOF|FIRST_RENDER|NATIVE_ACQUISITION|GRAPH_ATTACH|NATIVE_EFFECTIVE")) return false; break;
+                case "stage": if (!value.matches("ARM_PROOF|FIRST_RENDER|NATIVE_ACQUISITION|FIRST_SURFACE_IMAGE|GRAPH_ATTACH|NATIVE_EFFECTIVE")) return false; break;
                 case "cause": if (!value.matches("OTHER|CODEC|INTERRUPTED|TIMEOUT|IO|STATE")) return false; break;
                 case "code": if (!"ACTIVATION_EFFECT_UNCERTAIN".equals(value)) return false; break;
                 case "receiverState": case "connection":
@@ -331,6 +340,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                 case "elapsedMs": case "accepts": case "bytes": case "packetsRead": case "configPackets":
                 case "keyframePackets": case "preBootstrapDropped": case "inputs": case "outputs":
                 case "releasedForRender": case "renderCallbacks": case "rawRenderCallbacks":
+                case "acquiredFrames": case "acquiredSuperseded": case "acquisitionFeedbackRejected":
                 case "renderRejectCodec": case "renderRejectState": case "renderRejectMissingPts":
                 case "renderRejectConnection": case "renderRejectNotReady": case "renderRejectTimestamp":
                 case "renderRejectAfterWitness":
