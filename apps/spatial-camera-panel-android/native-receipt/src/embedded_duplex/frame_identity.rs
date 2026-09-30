@@ -61,6 +61,25 @@ pub(crate) struct TimedReceiverFrameObservation {
     pub(crate) witness_age_ns: u64,
 }
 
+/// Version 2: an exact decoded Surface image, independent of codec callback delivery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TimedSurfaceAcquiredFrame {
+    pub(crate) identity: ReceiverFrameIdentity,
+    pub(crate) registered_monotonic_ns: u64,
+    pub(crate) acquired_monotonic_ns: u64,
+    pub(crate) observed_at_monotonic_ns: u64,
+    pub(crate) witness_age_ns: u64,
+}
+
+/// Version 2: the same image was imported and its peer graph submission retired.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TimedPeerGpuRetiredFrame {
+    pub(crate) acquired: TimedSurfaceAcquiredFrame,
+    pub(crate) gpu_retired_monotonic_ns: u64,
+    pub(crate) witness_age_ns: u64,
+    pub(crate) import_sequence: u64,
+}
+
 impl ReceiverFrameObservation {
     pub(crate) fn is_fresh_at(&self, now_monotonic_ns: u64, max_age_ns: u64) -> bool {
         if max_age_ns == 0 {
@@ -112,6 +131,8 @@ struct PendingObservation {
     registered_monotonic_ns: u64,
     rendered_monotonic_ns: u64,
     acquired_monotonic_ns: u64,
+    gpu_retired_monotonic_ns: u64,
+    import_sequence: u64,
 }
 
 #[derive(Default)]
@@ -119,6 +140,8 @@ struct ObservationState {
     pending: BTreeMap<FrameKey, PendingObservation>,
     // At most 128 exact active streams, removed by connection/generation retirement.
     latest_complete: BTreeMap<FrameKey, Option<(u64, ReceiverFrameObservation)>>,
+    latest_acquired: BTreeMap<FrameKey, Option<(u64, PendingObservation)>>,
+    latest_effective: BTreeMap<FrameKey, Option<(u64, PendingObservation)>>,
     // Bounded exact history accepts delayed witnesses. No completion is possible
     // without both actual witnesses; evicted history fails closed.
     retired: BTreeMap<FrameKey, PendingObservation>,
@@ -189,6 +212,9 @@ pub(crate) fn register_receiver_frame(
         || state.latest_complete.get(&stream).is_some_and(|entry| {
             entry.is_some_and(|(_, observation)| key(observation.identity) == frame_key)
         })
+        || state.latest_acquired.get(&stream).is_some_and(|entry| {
+            entry.is_some_and(|(_, observation)| key(observation.identity) == frame_key)
+        })
     {
         state.counters.rejected_duplicate = state.counters.rejected_duplicate.saturating_add(1);
         return ReceiverFrameRegistrationResult::Duplicate;
@@ -196,6 +222,10 @@ pub(crate) fn register_receiver_frame(
     if state.pending.len() >= MAX_PENDING_RECEIVER_FRAMES
         || (!state.latest_complete.contains_key(&stream)
             && state.latest_complete.len() >= MAX_PENDING_RECEIVER_FRAMES)
+        || (!state.latest_acquired.contains_key(&stream)
+            && state.latest_acquired.len() >= MAX_PENDING_RECEIVER_FRAMES)
+        || (!state.latest_effective.contains_key(&stream)
+            && state.latest_effective.len() >= MAX_PENDING_RECEIVER_FRAMES)
     {
         state.counters.rejected_capacity = state.counters.rejected_capacity.saturating_add(1);
         return ReceiverFrameRegistrationResult::CapacityExceeded;
@@ -206,6 +236,8 @@ pub(crate) fn register_receiver_frame(
     };
     state.next_release_ordinal = release_ordinal;
     state.latest_complete.entry(stream).or_insert(None);
+    state.latest_acquired.entry(stream).or_insert(None);
+    state.latest_effective.entry(stream).or_insert(None);
     state.counters.registered = state.counters.registered.saturating_add(1);
     state.pending.insert(
         frame_key,
@@ -215,6 +247,8 @@ pub(crate) fn register_receiver_frame(
             registered_monotonic_ns: now_monotonic_ns,
             rendered_monotonic_ns: 0,
             acquired_monotonic_ns: 0,
+            gpu_retired_monotonic_ns: 0,
+            import_sequence: 0,
         },
     );
     ReceiverFrameRegistrationResult::Accepted
@@ -232,6 +266,130 @@ pub(crate) fn record_receiver_frame_acquired(
     now_monotonic_ns: u64,
 ) -> ReceiverFrameObservationResult {
     observe(identity, now_monotonic_ns, false)
+}
+
+/// Called only after the exact peer common-graph submission and frame fence retire.
+pub(crate) fn record_receiver_frame_gpu_retired(
+    identity: ReceiverFrameIdentity,
+    import_sequence: u64,
+    now_monotonic_ns: u64,
+) -> ReceiverFrameObservationResult {
+    let Ok(mut state) = OBSERVATIONS.lock() else {
+        return ReceiverFrameObservationResult::IdentityMismatch;
+    };
+    if !valid_identity(identity) || import_sequence == 0 || now_monotonic_ns == 0 {
+        return ReceiverFrameObservationResult::IdentityMismatch;
+    }
+    let frame_key = key(identity);
+    let pending = if let Some(pending) = state.pending.get_mut(&frame_key) {
+        pending
+    } else if let Some(pending) = state.retired.get_mut(&frame_key) {
+        pending
+    } else {
+        return ReceiverFrameObservationResult::Missing;
+    };
+    if pending.identity != identity
+        || pending.acquired_monotonic_ns == 0
+        || pending.gpu_retired_monotonic_ns != 0
+        || now_monotonic_ns < pending.acquired_monotonic_ns
+    {
+        return ReceiverFrameObservationResult::IdentityMismatch;
+    }
+    pending.gpu_retired_monotonic_ns = now_monotonic_ns;
+    pending.import_sequence = import_sequence;
+    let recorded = *pending;
+    let latest = state
+        .latest_effective
+        .entry(stream_key(frame_key))
+        .or_default();
+    if latest.map_or(true, |(ordinal, _)| ordinal < recorded.release_ordinal) {
+        *latest = Some((recorded.release_ordinal, recorded));
+    }
+    ReceiverFrameObservationResult::Accepted
+}
+
+pub(crate) fn latest_surface_acquired_timed(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    now_monotonic_ns: u64,
+    max_age_ns: u64,
+) -> Option<TimedSurfaceAcquiredFrame> {
+    let state = OBSERVATIONS.lock().ok()?;
+    let pending = state
+        .latest_acquired
+        .get(&FrameKey {
+            receiver_generation,
+            connection_generation,
+            route_generation,
+            decoder_token,
+            reader_generation,
+            presentation_time_ns: 0,
+        })?
+        .as_ref()?
+        .1;
+    timed_surface_acquired(pending, now_monotonic_ns, max_age_ns)
+}
+
+pub(crate) fn latest_peer_gpu_retired_timed(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    now_monotonic_ns: u64,
+    max_age_ns: u64,
+) -> Option<TimedPeerGpuRetiredFrame> {
+    let state = OBSERVATIONS.lock().ok()?;
+    let pending = state
+        .latest_effective
+        .get(&FrameKey {
+            receiver_generation,
+            connection_generation,
+            route_generation,
+            decoder_token,
+            reader_generation,
+            presentation_time_ns: 0,
+        })?
+        .as_ref()?
+        .1;
+    let acquired = timed_surface_acquired(pending, now_monotonic_ns, max_age_ns)?;
+    if pending.gpu_retired_monotonic_ns < acquired.acquired_monotonic_ns
+        || pending.gpu_retired_monotonic_ns > now_monotonic_ns
+        || pending.import_sequence == 0
+    {
+        return None;
+    }
+    Some(TimedPeerGpuRetiredFrame {
+        acquired,
+        gpu_retired_monotonic_ns: pending.gpu_retired_monotonic_ns,
+        witness_age_ns: now_monotonic_ns.checked_sub(acquired.registered_monotonic_ns)?,
+        import_sequence: pending.import_sequence,
+    })
+}
+
+fn timed_surface_acquired(
+    pending: PendingObservation,
+    now_monotonic_ns: u64,
+    max_age_ns: u64,
+) -> Option<TimedSurfaceAcquiredFrame> {
+    if max_age_ns == 0
+        || pending.registered_monotonic_ns == 0
+        || pending.acquired_monotonic_ns < pending.registered_monotonic_ns
+        || pending.acquired_monotonic_ns > now_monotonic_ns
+    {
+        return None;
+    }
+    let age = now_monotonic_ns.checked_sub(pending.registered_monotonic_ns)?;
+    (age <= max_age_ns).then_some(TimedSurfaceAcquiredFrame {
+        identity: pending.identity,
+        registered_monotonic_ns: pending.registered_monotonic_ns,
+        acquired_monotonic_ns: pending.acquired_monotonic_ns,
+        observed_at_monotonic_ns: now_monotonic_ns,
+        witness_age_ns: age,
+    })
 }
 
 pub(crate) fn latest_receiver_frame_observation(
@@ -275,6 +433,12 @@ pub(crate) fn retire_receiver_generation(receiver_generation: u64) {
             .latest_complete
             .retain(|key, _| key.receiver_generation != receiver_generation);
         state
+            .latest_acquired
+            .retain(|key, _| key.receiver_generation != receiver_generation);
+        state
+            .latest_effective
+            .retain(|key, _| key.receiver_generation != receiver_generation);
+        state
             .retired
             .retain(|key, _| key.receiver_generation != receiver_generation);
     }
@@ -287,6 +451,14 @@ pub(crate) fn retire_receiver_connection(receiver_generation: u64, connection_ge
                 || pending.identity.connection_generation != connection_generation
         });
         state.latest_complete.retain(|key, _| {
+            key.receiver_generation != receiver_generation
+                || key.connection_generation != connection_generation
+        });
+        state.latest_acquired.retain(|key, _| {
+            key.receiver_generation != receiver_generation
+                || key.connection_generation != connection_generation
+        });
+        state.latest_effective.retain(|key, _| {
             key.receiver_generation != receiver_generation
                 || key.connection_generation != connection_generation
         });
@@ -346,17 +518,23 @@ fn observe(
         state.counters.rendered = state.counters.rendered.saturating_add(1);
     } else {
         state.counters.acquired = state.counters.acquired.saturating_add(1);
+        let latest = state
+            .latest_acquired
+            .entry(stream_key(frame_key))
+            .or_default();
+        if latest.map_or(true, |(ordinal, _)| ordinal < pending.release_ordinal) {
+            *latest = Some((pending.release_ordinal, pending));
+        }
         // A real acquireLatestImage witness retires unwitnessed predecessors
-        // by release order. History preserves exact observations already in
-        // flight; render callback order alone proves no acquisition.
-        // Preserve older acquired entries so reordered callbacks can complete.
+        // by release order. Older acquired entries also move to bounded exact
+        // history so callback-free streams do not fill the pending registry.
+        // Late callbacks and GPU retirements can still join retained entries.
         let predecessors: Vec<_> = state
             .pending
             .iter()
             .filter_map(|(key, other)| {
                 (stream_key(*key) == stream_key(frame_key)
-                    && other.release_ordinal < pending.release_ordinal
-                    && other.acquired_monotonic_ns == 0)
+                    && other.release_ordinal < pending.release_ordinal)
                     .then_some(*key)
             })
             .collect();
@@ -365,7 +543,10 @@ fn observe(
                 .pending
                 .remove(&predecessor)
                 .expect("retained predecessor");
-            state.counters.retired_unacquired = state.counters.retired_unacquired.saturating_add(1);
+            if skipped.acquired_monotonic_ns == 0 {
+                state.counters.retired_unacquired =
+                    state.counters.retired_unacquired.saturating_add(1);
+            }
             if skipped.rendered_monotonic_ns == 0 {
                 state.counters.retired_unrendered =
                     state.counters.retired_unrendered.saturating_add(1);
@@ -914,20 +1095,143 @@ mod tests {
     }
 
     #[test]
-    fn missing_render_of_acquired_frames_retains_capacity_guard() {
+    fn callback_free_acquisitions_remain_bounded_beyond_two_thousand_frames() {
         let _guard = reset();
-        for n in 1..=128_i64 {
+        for n in 1..=4096_i64 {
             let frame = identity(510, 1, n * 1000);
             register(frame, n as u64 * 10);
             acquire(frame, n as u64 * 10 + 1);
         }
+        let latest = latest_surface_acquired_timed(510, 1, 3, 4, 5, 40_962, 50_000)
+            .expect("latest exact acquired image");
+        assert_eq!(latest.identity.presentation_time_ns, 4_096_000);
+        assert!(latest_peer_gpu_retired_timed(510, 1, 3, 4, 5, 40_962, 50_000).is_none());
+        let state = OBSERVATIONS.lock().unwrap();
+        assert_eq!(state.pending.len(), 1);
+        assert_eq!(state.retired.len(), MAX_PENDING_RECEIVER_FRAMES);
+        assert_eq!(state.counters.rejected_capacity, 0);
+        assert_eq!(state.counters.completed, 0);
+        drop(state);
         assert_eq!(
-            register_receiver_frame(identity(510, 1, 129_000), 2000),
-            ReceiverFrameRegistrationResult::CapacityExceeded
+            record_receiver_frame_rendered(identity(510, 1, 1000), 40_963),
+            ReceiverFrameObservationResult::Missing
         );
-        assert_eq!(receiver_observation_counters().unwrap().completed, 0);
-        render(identity(510, 1, 1000), 2001);
-        register(identity(510, 1, 129_000), 2002);
+        render(identity(510, 1, 4_095_000), 40_964);
+        assert!(
+            latest_receiver_frame_observation(510, 1, 3, 4, 5, 40_965)
+                .unwrap()
+                .identity
+                .presentation_time_ns
+                == 4_095_000
+        );
+        assert_eq!(
+            latest_surface_acquired_timed(510, 1, 3, 4, 5, 40_965, 50_000)
+                .unwrap()
+                .identity
+                .presentation_time_ns,
+            4_096_000
+        );
+    }
+
+    #[test]
+    fn gpu_retirement_requires_same_exact_acquired_frame_and_one_positive_import() {
+        let _guard = reset();
+        let a = identity(513, 1, 1000);
+        let b = identity(513, 1, 2000);
+        register(a, 10);
+        register(b, 11);
+        assert_eq!(
+            record_receiver_frame_gpu_retired(a, 3, 12),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        acquire(a, 12);
+        let mut wrong = a;
+        wrong.pair_id += 1;
+        assert_eq!(
+            record_receiver_frame_gpu_retired(wrong, 3, 13),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert_eq!(
+            record_receiver_frame_gpu_retired(a, 0, 13),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert_eq!(
+            record_receiver_frame_gpu_retired(a, 3, 11),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert!(latest_peer_gpu_retired_timed(513, 1, 3, 4, 5, 13, 100).is_none());
+        acquire(b, 14);
+        assert_eq!(
+            record_receiver_frame_gpu_retired(a, 3, 15),
+            ReceiverFrameObservationResult::Accepted
+        );
+        assert_eq!(
+            record_receiver_frame_gpu_retired(a, 4, 16),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert_eq!(
+            latest_peer_gpu_retired_timed(513, 1, 3, 4, 5, 16, 100)
+                .unwrap()
+                .acquired
+                .identity,
+            a
+        );
+        assert_eq!(
+            record_receiver_frame_gpu_retired(b, 4, 17),
+            ReceiverFrameObservationResult::Accepted
+        );
+        assert_eq!(
+            latest_peer_gpu_retired_timed(513, 1, 3, 4, 5, 18, 100)
+                .unwrap()
+                .acquired
+                .identity,
+            b
+        );
+        render(a, 19);
+        assert_eq!(
+            latest_peer_gpu_retired_timed(513, 1, 3, 4, 5, 20, 100)
+                .unwrap()
+                .acquired
+                .identity,
+            b
+        );
+    }
+
+    #[test]
+    fn acquired_and_effective_proofs_expire_and_retire_by_binding() {
+        let _guard = reset();
+        let a = identity(514, 1, 1000);
+        let b = identity(514, 2, 1000);
+        register(a, 10);
+        register(b, 11);
+        acquire(a, 12);
+        acquire(b, 13);
+        assert_eq!(
+            record_receiver_frame_gpu_retired(a, 1, 14),
+            ReceiverFrameObservationResult::Accepted
+        );
+        assert_eq!(
+            record_receiver_frame_gpu_retired(b, 2, 15),
+            ReceiverFrameObservationResult::Accepted
+        );
+        assert!(latest_surface_acquired_timed(514, 1, 3, 4, 6, 16, 100).is_none());
+        assert!(latest_peer_gpu_retired_timed(514, 1, 3, 4, 5, 112, 100).is_none());
+        retire_receiver_connection(514, 1);
+        assert!(latest_surface_acquired_timed(514, 1, 3, 4, 5, 16, 100).is_none());
+        assert!(latest_peer_gpu_retired_timed(514, 1, 3, 4, 5, 16, 100).is_none());
+        assert_eq!(
+            record_receiver_frame_gpu_retired(a, 3, 17),
+            ReceiverFrameObservationResult::Missing
+        );
+        assert_eq!(
+            latest_peer_gpu_retired_timed(514, 2, 3, 4, 5, 16, 100)
+                .unwrap()
+                .acquired
+                .identity,
+            b
+        );
+        retire_receiver_generation(514);
+        assert!(latest_peer_gpu_retired_timed(514, 2, 3, 4, 5, 16, 100).is_none());
     }
 
     #[test]

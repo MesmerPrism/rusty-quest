@@ -4203,6 +4203,40 @@ unsafe fn render_peer_common_graph(
             if effective.words[11] != crate::peer_projection_runtime::RESULT_EFFECTIVE {
                 return Err("peer-submission-retirement-rejected".to_string());
             }
+            // Only embedded-duplex frames carry receiver identities. Other
+            // peer video keeps its existing graph retirement behavior.
+            if let Some(packed) = current_frame
+                .packed_pair
+                .as_ref()
+                .filter(|pair| pair.receiver_generation != 0)
+            {
+                let gpu_identity = crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+                    receiver_generation: packed.receiver_generation,
+                    connection_generation: packed.connection_generation,
+                    route_generation: current_frame.route_generation,
+                    decoder_token: current_frame.decoder_token,
+                    reader_generation: current_frame.reader_generation,
+                    presentation_time_ns: current_frame.timestamp_ns,
+                    source_elapsed_ns: packed.source_elapsed_ns,
+                    source_unix_ns: packed.source_unix_ns,
+                    pair_id: packed.pair_id,
+                    left_source_frame: packed.left_source_frame,
+                    right_source_frame: packed.right_source_frame,
+                    left_sensor_timestamp_ns: packed.left_sensor_timestamp_ns,
+                    right_sensor_timestamp_ns: packed.right_sensor_timestamp_ns,
+                    pair_delta_ns: packed.pair_delta_ns,
+                };
+                let gpu_retired_ns = crate::peer_projection_runtime::monotonic_now_ns();
+                if gpu_retired_ns <= 0
+                    || crate::embedded_duplex::frame_identity::record_receiver_frame_gpu_retired(
+                        gpu_identity,
+                        current_frame.import_sequence,
+                        gpu_retired_ns as u64,
+                    ) != crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::Accepted
+                {
+                    return Err("peer-exact-gpu-identity-rejected".to_string());
+                }
+            }
             freshness.commit(
                 pair_generation,
                 current_frame.import_sequence,

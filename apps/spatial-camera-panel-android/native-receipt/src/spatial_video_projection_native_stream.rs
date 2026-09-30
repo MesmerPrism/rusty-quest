@@ -325,6 +325,77 @@ pub(crate) fn current_embedded_receiver_frame_timed_observation(
     observation.timed_at(now as u64, max_age_ns)
 }
 
+pub(crate) fn current_embedded_receiver_acquired_timed(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    max_age_ns: u64,
+) -> Option<crate::embedded_duplex::frame_identity::TimedSurfaceAcquiredFrame> {
+    if max_age_ns == 0
+        || !projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+    {
+        return None;
+    }
+    let now = peer_projection_runtime::monotonic_now_ns();
+    if now <= 0 {
+        return None;
+    }
+    let timed = crate::embedded_duplex::frame_identity::latest_surface_acquired_timed(
+        receiver_generation,
+        connection_generation,
+        route_generation,
+        decoder_token,
+        reader_generation,
+        now as u64,
+        max_age_ns,
+    )?;
+    projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+        .then_some(timed)
+}
+
+pub(crate) fn current_embedded_receiver_effective_timed(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    max_age_ns: u64,
+) -> Option<crate::embedded_duplex::frame_identity::TimedPeerGpuRetiredFrame> {
+    if max_age_ns == 0
+        || !projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+    {
+        return None;
+    }
+    let now = peer_projection_runtime::monotonic_now_ns();
+    if now <= 0 {
+        return None;
+    }
+    let timed = crate::embedded_duplex::frame_identity::latest_peer_gpu_retired_timed(
+        receiver_generation,
+        connection_generation,
+        route_generation,
+        decoder_token,
+        reader_generation,
+        now as u64,
+        max_age_ns,
+    )?;
+    let route = peer_projection_runtime::read_source(i64::try_from(route_generation).ok()?);
+    if route.words[1] != i64::try_from(route_generation).ok()?
+        || route.words[2] != peer_projection_runtime::SOURCE_PEER
+        || route.words[3] != i64::try_from(decoder_token).ok()?
+        || route.words[4] != i64::try_from(reader_generation).ok()?
+        || route.words[7] != i64::try_from(timed.acquired.identity.pair_id).ok()?
+        || route.words[8] != i64::try_from(timed.import_sequence).ok()?
+        || route.words[11] != peer_projection_runtime::RESULT_EFFECTIVE
+    {
+        return None;
+    }
+    projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+        .then_some(timed)
+}
+
 pub(crate) fn retire_embedded_receiver_generation(receiver_generation: u64) {
     crate::embedded_duplex::frame_identity::retire_receiver_generation(receiver_generation);
     if let Ok(contexts) = SPATIAL_VIDEO_PROJECTION_CONTEXTS.lock() {
