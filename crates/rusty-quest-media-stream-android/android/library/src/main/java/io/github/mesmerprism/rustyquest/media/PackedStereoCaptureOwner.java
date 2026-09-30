@@ -124,6 +124,24 @@ public final class PackedStereoCaptureOwner {
                 && current.compositionFresh(android.os.SystemClock.elapsedRealtime())
                 && poolExecutor.ownImageFresh();
     }
+
+    /** Failure-only observation: running=1, no-failure=2, composition-fresh=4,
+     * own-image-fresh=8, own-image-query-completed=16. No bit grants readiness. */
+    int freshnessDiagnosticMask() {
+        int mask = 0;
+        if (!stopRequested) mask |= 1;
+        if (failure == null) mask |= 2;
+        PackedStereoGlCompositor current = compositor;
+        if (current != null && current.compositionFresh(android.os.SystemClock.elapsedRealtime()))
+            mask |= 4;
+        try {
+            if (poolExecutor.ownImageFresh()) mask |= 8;
+            mask |= 16;
+        } catch (Throwable ignored) {
+            // An unavailable native observation cannot be treated as fresh.
+        }
+        return mask;
+    }
     public boolean matchesConfiguration(int width, int height, int rate,
             String leftCamera, String rightCamera, long deltaNs) {
         return layout.perEyeWidth == width && layout.perEyeHeight == height && frameRate == rate
