@@ -290,10 +290,20 @@ pub(crate) fn record_receiver_frame_gpu_retired(
     };
     if pending.identity != identity
         || pending.acquired_monotonic_ns == 0
-        || pending.gpu_retired_monotonic_ns != 0
         || now_monotonic_ns < pending.acquired_monotonic_ns
     {
         return ReceiverFrameObservationResult::IdentityMismatch;
+    }
+    // Re-presenting one acquired image after another successful fence is
+    // idempotent. Keep the first proof instant and exact import sequence.
+    if pending.gpu_retired_monotonic_ns != 0 {
+        return if pending.import_sequence == import_sequence
+            && now_monotonic_ns >= pending.gpu_retired_monotonic_ns
+        {
+            ReceiverFrameObservationResult::Accepted
+        } else {
+            ReceiverFrameObservationResult::IdentityMismatch
+        };
     }
     pending.gpu_retired_monotonic_ns = now_monotonic_ns;
     pending.import_sequence = import_sequence;
@@ -604,6 +614,39 @@ fn valid_identity(identity: ReceiverFrameIdentity) -> bool {
             == identity
                 .left_sensor_timestamp_ns
                 .abs_diff(identity.right_sensor_timestamp_ns)
+}
+
+/// Offscreen Peer-bank priming is permitted only for an exact attached,
+/// pending embedded Peer route. The display-origin policy is not changed.
+pub(crate) fn source_set_peer_priming_required(
+    demanded_prefix: usize,
+    peer: Option<(u64, u64, u64, u64)>, // receiver, route, decoder, reader
+    binding_current: bool,
+    route_words: &[i64; 16],
+    source_peer: i64,
+    result_pending: i64,
+    common_graph_stage: i64,
+) -> bool {
+    let Some((receiver, route, decoder, reader)) = peer else {
+        return false;
+    };
+    let (Ok(route), Ok(decoder), Ok(reader)) = (
+        i64::try_from(route),
+        i64::try_from(decoder),
+        i64::try_from(reader),
+    ) else {
+        return false;
+    };
+    demanded_prefix == 0
+        && receiver != 0
+        && binding_current
+        && common_graph_stage > 0
+        && route_words[1] == route
+        && route_words[2] == source_peer
+        && route_words[3] == decoder
+        && route_words[4] == reader
+        && route_words[11] == result_pending
+        && route_words[10] & common_graph_stage != 0
 }
 
 #[cfg(test)]
@@ -1166,8 +1209,22 @@ mod tests {
             ReceiverFrameObservationResult::Accepted
         );
         assert_eq!(
+            record_receiver_frame_gpu_retired(a, 3, 16),
+            ReceiverFrameObservationResult::Accepted
+        );
+        assert_eq!(
             record_receiver_frame_gpu_retired(a, 4, 16),
             ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert_eq!(
+            record_receiver_frame_gpu_retired(a, 3, 14),
+            ReceiverFrameObservationResult::IdentityMismatch
+        );
+        assert_eq!(
+            latest_peer_gpu_retired_timed(513, 1, 3, 4, 5, 16, 100)
+                .unwrap()
+                .gpu_retired_monotonic_ns,
+            15
         );
         assert_eq!(
             latest_peer_gpu_retired_timed(513, 1, 3, 4, 5, 16, 100)
@@ -1232,6 +1289,37 @@ mod tests {
         );
         retire_receiver_generation(514);
         assert!(latest_peer_gpu_retired_timed(514, 2, 3, 4, 5, 16, 100).is_none());
+    }
+
+    #[test]
+    fn own_only_policy_primes_only_an_attached_current_pending_embedded_peer() {
+        let _guard = reset();
+        let mut route = [0_i64; 16];
+        route[1] = 3;
+        route[2] = 2;
+        route[3] = 4;
+        route[4] = 5;
+        route[10] = 512;
+        let peer = Some((7, 3, 4, 5));
+        let prime = |demand, candidate, bound, words: &[i64; 16]| {
+            source_set_peer_priming_required(demand, candidate, bound, words, 2, 0, 512)
+        };
+        assert!(prime(0, peer, true, &route));
+        assert!(!prime(6, peer, true, &route)); // already demanded by Mixed policy
+        assert!(!prime(0, None, true, &route)); // no retained Peer lease
+        assert!(!prime(0, Some((0, 3, 4, 5)), true, &route)); // ordinary Peer
+        assert!(!prime(0, peer, false, &route)); // decoder/reader rebind
+        route[10] = 0;
+        assert!(!prime(0, peer, true, &route)); // graph has not attached
+        route[10] = 512;
+        route[11] = 1;
+        assert!(!prime(0, peer, true, &route)); // already effective
+        route[11] = 0;
+        route[2] = 1;
+        assert!(!prime(0, peer, true, &route)); // foreign source
+        route[2] = 2;
+        route[3] = 6;
+        assert!(!prime(0, peer, true, &route)); // foreign decoder
     }
 
     #[test]

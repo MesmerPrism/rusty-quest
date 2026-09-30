@@ -185,6 +185,7 @@ unsafe fn render_source_set_common_graph(
         let sdk_binding = wsi.sdk_binding;
         let mut transition_packed_source = true;
         let mut frames_presented = 0_u32;
+        let mut last_peer_gpu_proof = None;
         let mut guard_band = CameraReprojectionGuardBandController::default();
         let render_started = Instant::now();
 
@@ -249,7 +250,7 @@ unsafe fn render_source_set_common_graph(
             let normalized_images = normalizer.images();
             let video_settings = spatial_video_projection_settings();
             let latest_video_frame=if video_settings.active(){latest_spatial_video_projection_frame()}else{None};
-            let stereo_inputs=if let Some(imports)=stereo_source_imports.as_mut() {
+            let mut stereo_inputs=if let Some(imports)=stereo_source_imports.as_mut() {
                 let (words,revision)=crate::spatial_public_multistack_runtime::read_control_policy();
                 let policy=crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
                     region_origins:[words[0],words[1],words[2],words[3]],
@@ -261,6 +262,67 @@ unsafe fn render_source_set_common_graph(
                 for &origin in &words[4..]{if origin<2{prefixes[origin as usize]=6;}}
                 Some(imports.recording_inputs(policy,revision,prefixes,frame_fence,u64::from(frames_presented)+1,surface_generation)?)
             } else {None};
+            if let Some(inputs) = stereo_inputs.as_mut() {
+                // The default Own-only display policy cannot starve Peer
+                // activation. While its exact route is attached but pending,
+                // record one real offscreen Peer bank prefix. The final region
+                // and guide origin policy stays Own until the owner changes it.
+                let peer = inputs.sources[1].as_ref().and_then(|source| {
+                    if source.key.origin != 1 { return None; }
+                    let lease = source.lease.downcast_ref::<crate::stereo_source_payload::StereoSourceLease<
+                        crate::own_packed_pool::PackedLease, SpatialVideoProjectionFrame,
+                    >>()?;
+                    let crate::stereo_source_payload::StereoSourceLease::Peer(frame) = lease else { return None; };
+                    Some((frame.packed_pair.as_ref()?.receiver_generation,
+                        frame.route_generation, frame.decoder_token, frame.reader_generation))
+                });
+                let route_words = peer.and_then(|(_, route, _, _)| i64::try_from(route).ok())
+                    .map(|route| crate::peer_projection_runtime::read_source(route).words)
+                    .unwrap_or([0; 16]);
+                let binding_current = peer.is_some_and(|(_, route, decoder, reader)|
+                    projection_peer_binding_matches(route, decoder, reader));
+                let prime_peer = crate::embedded_duplex::frame_identity::source_set_peer_priming_required(
+                    inputs.demanded_prefixes[1], peer, binding_current, &route_words,
+                    crate::peer_projection_runtime::SOURCE_PEER,
+                    crate::peer_projection_runtime::RESULT_PENDING,
+                    crate::peer_projection_runtime::STAGE_COMMON_GRAPH,
+                );
+                if prime_peer { inputs.demanded_prefixes[1] = 6; }
+            }
+            // Capture the exact Peer lease that this submission will record.
+            // The latest reader frame may already have advanced by retirement.
+            let submitted_peer = stereo_inputs.as_ref().and_then(|inputs| {
+                if inputs.demanded_prefixes[1] == 0 { return None; }
+                let source = inputs.sources[1].as_ref()?;
+                if source.key.origin != 1 { return None; }
+                let lease = source.lease.downcast_ref::<crate::stereo_source_payload::StereoSourceLease<
+                    crate::own_packed_pool::PackedLease,
+                    SpatialVideoProjectionFrame,
+                >>()?;
+                let crate::stereo_source_payload::StereoSourceLease::Peer(frame) = lease else { return None; };
+                let pair = frame.packed_pair.as_ref().filter(|pair| pair.receiver_generation != 0)?;
+                if source.key.frame.pair_sequence != pair.pair_id
+                    || source.key.frame.packed_pts_ns != frame.timestamp_ns
+                    || source.content_serial != frame.import_sequence
+                    || source.key.frame.epoch.source_generation != frame.reader_generation
+                { return None; }
+                Some((crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+                    receiver_generation: pair.receiver_generation,
+                    connection_generation: pair.connection_generation,
+                    route_generation: frame.route_generation,
+                    decoder_token: frame.decoder_token,
+                    reader_generation: frame.reader_generation,
+                    presentation_time_ns: frame.timestamp_ns,
+                    source_elapsed_ns: pair.source_elapsed_ns,
+                    source_unix_ns: pair.source_unix_ns,
+                    pair_id: pair.pair_id,
+                    left_source_frame: pair.left_source_frame,
+                    right_source_frame: pair.right_source_frame,
+                    left_sensor_timestamp_ns: pair.left_sensor_timestamp_ns,
+                    right_sensor_timestamp_ns: pair.right_sensor_timestamp_ns,
+                    pair_delta_ns: pair.pair_delta_ns,
+                }, frame.import_sequence))
+            });
             let record_result = record_camera_hwb_probe_command_buffer(
                 &device,
                 command_buffer,
@@ -468,6 +530,52 @@ unsafe fn render_source_set_common_graph(
                 .map_err(|error| format!("peer-retirement-fence-{error:?}"))?;
             if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.retire_stereo_banks_after_fence(device)?;}
             projection_readback.retire_after_fence(&device);
+            if record_result.projected_by_public_stack && record_result.projection_zone_stats.rendered {
+                if let Some((identity, import_sequence)) = submitted_peer {
+                    if last_peer_gpu_proof != Some((identity, import_sequence)) {
+                        // The first frame may retire before common-graph attach.
+                        // A stopped/rebound Peer can also leave a physically
+                        // retiring old lease. Neither may stop the Own carrier.
+                        if let (Ok(route_generation), Ok(decoder), Ok(reader)) = (
+                            i64::try_from(identity.route_generation),
+                            i64::try_from(identity.decoder_token),
+                            i64::try_from(identity.reader_generation),
+                        ) {
+                            let route = crate::peer_projection_runtime::read_source(route_generation);
+                            if projection_peer_binding_matches(identity.route_generation,
+                                    identity.decoder_token, identity.reader_generation)
+                                && route.words[1] == route_generation
+                                && route.words[2] == crate::peer_projection_runtime::SOURCE_PEER
+                                && route.words[3] == decoder && route.words[4] == reader
+                                && matches!(route.words[11],
+                                    crate::peer_projection_runtime::RESULT_PENDING
+                                    | crate::peer_projection_runtime::RESULT_EFFECTIVE)
+                                && route.words[10] & crate::peer_projection_runtime::STAGE_COMMON_GRAPH != 0
+                            {
+                                let retired_ns = crate::peer_projection_runtime::monotonic_now_ns();
+                                if retired_ns > 0
+                                    && crate::embedded_duplex::frame_identity::record_receiver_frame_gpu_retired(
+                                        identity, import_sequence, retired_ns as u64,
+                                    ) == crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::Accepted
+                                {
+                                    let effective = crate::peer_projection_runtime::record_peer_submission_retired(
+                                        route_generation,
+                                        PeerFrameWitness {
+                                            decoder_token: identity.decoder_token,
+                                            reader_generation: identity.reader_generation,
+                                            pair_generation: identity.pair_id,
+                                            import_generation: import_sequence,
+                                        },
+                                    );
+                                    if effective.words[11] == crate::peer_projection_runtime::RESULT_EFFECTIVE {
+                                        last_peer_gpu_proof = Some((identity, import_sequence));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             frames_presented = frames_presented.saturating_add(1);
             record_presented_frame(record_result.video_stats.ready,record_result.video_stats.rendered,
                 record_result.video_stats.frame_index,record_result.video_stats.timestamp_ns,u64::from(frames_presented));
