@@ -72,6 +72,14 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private long acceptedConnections, bytesRead, packetsRead, configPackets, keyframePackets;
     private long packetsBeforeBootstrap, inputsQueued, outputsDequeued, outputsReleasedForRender;
     private long renderCallbacks, renderCallbacksSuperseded, lateRenderCallbacks, renderHistoryEvicted;
+    // The codec listener is informational on some Android releases. Count its
+    // actual entries separately from callbacks accepted by the identity join.
+    private long rawRenderCallbacks, renderRejectedCodec, renderRejectedState;
+    private long renderRejectedMissingPts, renderRejectedConnection, renderRejectedNotReady;
+    private long renderRejectedTimestamp, renderRejectedAfterWitness;
+    private String firstRenderRejectCode = "NONE";
+    private long firstRenderRejectMediaTimeUs, firstRenderRejectPendingPtsUs = -1L;
+    private int firstRenderRejectPendingCount;
     private long preRenderRejected, identityWindowOverflows, maxQueuedWindow, maxRenderWindow;
     private String decoderClass = "NONE";
     private boolean connectionBytesSeen, connectionConfigSeen, connectionKeyframeSeen;
@@ -552,16 +560,38 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         FrameIdentity identity;
         long presentationTimeNs;
         synchronized (lock) {
-            if (decoder != callbackCodec || stopRequested || "stopping".equals(state)
-                    || "stopped".equals(state) || "failed".equals(state)) return;
+            rawRenderCallbacks = saturatedIncrement(rawRenderCallbacks);
+            if (decoder != callbackCodec) {
+                recordRenderRejectLocked("CODEC", ptsUs);
+                return;
+            }
+            if (stopRequested || "stopping".equals(state)
+                    || "stopped".equals(state) || "failed".equals(state)) {
+                recordRenderRejectLocked("STATE", ptsUs);
+                return;
+            }
             PendingFrame pending = pendingFrames.get(ptsUs);
             boolean late = false;
             if (pending == null) {
                 pending = retiredRenderFrames.get(ptsUs);
                 late = pending != null;
             }
-            if (pending == null || pending.connectionGeneration != callbackConnection
-                    || !pending.readyForRender || pending.presentationTimeNs <= 0L) return;
+            if (pending == null) {
+                recordRenderRejectLocked("PTS_MISSING", ptsUs);
+                return;
+            }
+            if (pending.connectionGeneration != callbackConnection) {
+                recordRenderRejectLocked("CONNECTION", ptsUs);
+                return;
+            }
+            if (!pending.readyForRender) {
+                recordRenderRejectLocked("NOT_READY", ptsUs);
+                return;
+            }
+            if (pending.presentationTimeNs <= 0L) {
+                recordRenderRejectLocked("TIMESTAMP", ptsUs);
+                return;
+            }
             pendingFrames.remove(ptsUs);
             retiredRenderFrames.remove(ptsUs);
             renderCallbacks++;
@@ -586,7 +616,10 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         synchronized (lock) {
             if (decoder != callbackCodec || connectionGeneration != callbackConnection
                     || stopRequested || "stopping".equals(state) || "stopped".equals(state)
-                    || "failed".equals(state)) return;
+                    || "failed".equals(state)) {
+                recordRenderRejectLocked("AFTER_WITNESS", ptsUs);
+                return;
+            }
             renderedFrames++;
             connectionState = "receiving";
             if (liveRequested && "receiver_armed".equals(state)) {
@@ -603,6 +636,32 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 recordCleanupFailure("frame callback failed: " + safeMessage(callbackFailure));
                 closeSocket();
             }
+        }
+    }
+
+    private static long saturatedIncrement(long value) {
+        return value == Long.MAX_VALUE ? value : value + 1L;
+    }
+
+    /** Called only under lock; codes and the one exact PTS sample are bounded diagnostics. */
+    private void recordRenderRejectLocked(String code, long mediaTimeUs) {
+        switch (code) {
+            case "CODEC": renderRejectedCodec = saturatedIncrement(renderRejectedCodec); break;
+            case "STATE": renderRejectedState = saturatedIncrement(renderRejectedState); break;
+            case "PTS_MISSING": renderRejectedMissingPts = saturatedIncrement(renderRejectedMissingPts); break;
+            case "CONNECTION": renderRejectedConnection = saturatedIncrement(renderRejectedConnection); break;
+            case "NOT_READY": renderRejectedNotReady = saturatedIncrement(renderRejectedNotReady); break;
+            case "TIMESTAMP": renderRejectedTimestamp = saturatedIncrement(renderRejectedTimestamp); break;
+            case "AFTER_WITNESS": renderRejectedAfterWitness = saturatedIncrement(renderRejectedAfterWitness); break;
+            default: throw new AssertionError("unclosed render rejection code");
+        }
+        if ("NONE".equals(firstRenderRejectCode)) {
+            firstRenderRejectCode = code;
+            firstRenderRejectMediaTimeUs = mediaTimeUs;
+            firstRenderRejectPendingCount = pendingFrames.size() + retiredRenderFrames.size();
+            Map<Long, PendingFrame> sample = pendingFrames.isEmpty()
+                    ? retiredRenderFrames : pendingFrames;
+            if (!sample.isEmpty()) firstRenderRejectPendingPtsUs = sample.keySet().iterator().next();
         }
     }
 
@@ -748,6 +807,17 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 + " keyframePackets=" + keyframePackets + " preBootstrapDropped=" + packetsBeforeBootstrap
                 + " decoder=" + decoderClass + " inputs=" + inputsQueued + " outputs=" + outputsDequeued
                 + " releasedForRender=" + outputsReleasedForRender + " renderCallbacks=" + renderCallbacks
+                + " rawRenderCallbacks=" + rawRenderCallbacks
+                + " renderRejectCodec=" + renderRejectedCodec + " renderRejectState=" + renderRejectedState
+                + " renderRejectMissingPts=" + renderRejectedMissingPts
+                + " renderRejectConnection=" + renderRejectedConnection
+                + " renderRejectNotReady=" + renderRejectedNotReady
+                + " renderRejectTimestamp=" + renderRejectedTimestamp
+                + " renderRejectAfterWitness=" + renderRejectedAfterWitness
+                + " firstRenderReject=" + firstRenderRejectCode
+                + " firstRenderRejectMediaTimeUs=" + firstRenderRejectMediaTimeUs
+                + " firstRenderRejectPendingPtsUs=" + firstRenderRejectPendingPtsUs
+                + " firstRenderRejectPendingCount=" + firstRenderRejectPendingCount
                 + " renderSuperseded=" + renderCallbacksSuperseded + " lateCallbacks=" + lateRenderCallbacks
                 + " renderHistoryEvicted=" + renderHistoryEvicted
                 + " preRenderRejected=" + preRenderRejected + " windowOverflows=" + identityWindowOverflows
