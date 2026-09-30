@@ -3702,6 +3702,16 @@ mod tests {
         alpha: &SigningKey,
         beta: &SigningKey,
     ) -> ManifoldCommonLanReciprocalEd25519ReviewRequest {
+        reciprocal_request_with_expiry(authority, request_id, alpha, beta, 50_000)
+    }
+
+    fn reciprocal_request_with_expiry(
+        authority: &QuestEmbeddedDuplexAuthority,
+        request_id: &str,
+        alpha: &SigningKey,
+        beta: &SigningKey,
+        expires_at_ms: u64,
+    ) -> ManifoldCommonLanReciprocalEd25519ReviewRequest {
         let draft = crate::embedded_duplex::QuestCommonLanContextDraft {
             correlation_id: id(request_id),
             initiator: ManifoldCommonLanReciprocalEd25519PeerBinding {
@@ -3729,7 +3739,7 @@ mod tests {
             transport: common_lan_transport('5'),
             coordinator_epoch: 1,
             issued_at_ms: 1_300,
-            expires_at_ms: 50_000,
+            expires_at_ms,
         };
         let context = authority
             .prepare_common_lan_context(draft)
@@ -3877,8 +3887,11 @@ mod tests {
                 2,
             );
         }
-        let request_a =
-            reciprocal_request(&authority_a, "request.reciprocal.host-a", &alpha, &beta);
+        // A's independently signed context outlives B's by the 821 ms seen
+        // on Warm18. The accepted session must use the mutual signed bound.
+        let request_a = reciprocal_request_with_expiry(
+            &authority_a, "request.reciprocal.host-a", &alpha, &beta, 50_821,
+        );
         let request_b =
             reciprocal_request(&authority_b, "request.reciprocal.host-b", &alpha, &beta);
         assert_ne!(
@@ -3933,6 +3946,10 @@ mod tests {
         let (_, topology_b) = authority_b
             .apply_common_lan_session(&proposal("host-b"), &receipt_b, 1_500)
             .expect("session b");
+        assert_eq!(receipt_a.expires_at_ms, 50_821);
+        assert_eq!(receipt_b.expires_at_ms, 50_000);
+        assert_eq!(topology_a.expires_at_ms, 50_000);
+        assert_eq!(topology_b.expires_at_ms, 50_000);
         assert_ne!(
             sha256_hex(&serde_json::to_vec(&topology_a).expect("topology a")),
             sha256_hex(&serde_json::to_vec(&topology_b).expect("topology b"))
@@ -3955,13 +3972,32 @@ mod tests {
             ),
             route_configuration_sha256: common_lan_transport('5').route_configuration_sha256,
             route_authority_evidence_sha256: format!("sha256:{}", "7".repeat(64)),
-            expires_at_ms: 40_000,
+            expires_at_ms: 50_000,
             authorization_kind:
                 rusty_quest_media_stream_android::OwnerDispatchAuthorizationKind::CurrentRoute,
         };
         authority_b
             .verify_remote_projection_for_test(&projection, "key.peer.quest-a.1", 1_600)
             .expect("different host-local topology accepts semantic source projection");
+        let mut old_unbounded = projection.clone();
+        old_unbounded.expires_at_ms = receipt_a.expires_at_ms;
+        assert!(authority_b
+            .verify_remote_projection_for_test(&old_unbounded, "key.peer.quest-a.1", 1_600)
+            .is_err());
+        let mut reverse = projection.clone();
+        reverse.authority_peer_id = "peer.quest-b".to_owned();
+        reverse.executor_peer_id = "peer.quest-a".to_owned();
+        reverse.authority_runtime_host_id = "host.quest-b.media-runtime".to_owned();
+        reverse.signed_topology_sha256 = format!(
+            "sha256:{}", sha256_hex(&serde_json::to_vec(&topology_b).expect("topology b")));
+        authority_a
+            .verify_remote_projection_for_test(&reverse, "key.peer.quest-b.1", 1_600)
+            .expect("reverse signed source projection is within A topology");
+        let mut expired = projection.clone();
+        expired.expires_at_ms = 1_600;
+        assert!(authority_b
+            .verify_remote_projection_for_test(&expired, "key.peer.quest-a.1", 1_600)
+            .is_err());
         for damaged in [
             {
                 let mut value = projection.clone();

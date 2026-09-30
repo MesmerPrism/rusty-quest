@@ -19,6 +19,7 @@ struct Round {
     local_remote_signature: Option<ManifoldCommonLanReciprocalEd25519Signature>,
     nonce_a: Option<String>,
     nonce_b: Option<String>,
+    signed_context_a_expires_at_ms: Option<u64>,
     local: Option<(
         ManifoldCommonLanReciprocalEd25519Context,
         ManifoldCommonLanReciprocalEd25519Signature,
@@ -177,6 +178,7 @@ fn apply_round(
         ManifoldCommonLanReciprocalEd25519Signature,
     ),
     remote_signature: ManifoldCommonLanReciprocalEd25519Signature,
+    remote_context_expires_at_ms: Option<u64>,
 ) -> Result<Value, String> {
     require_cycle(host, id)?;
     let request: ManifoldCommonLanReciprocalEd25519ReviewRequest = serde_json::from_value(json!({
@@ -206,6 +208,10 @@ fn apply_round(
         )
         .map_err(safe_decode)?
     } else {
+        let remote_expiry =
+            remote_context_expires_at_ms.ok_or("mutual signed renewal deadline absent")?;
+        let mutual_expiry =
+            mutual_signed_session_expiry(reciprocal.expires_at_ms, remote_expiry, now)?;
         let snapshot = snapshot(host)?;
         // Reuse the exact accepted proposal's peer roles, capabilities and transport.
         let proposals = snapshot
@@ -241,7 +247,7 @@ fn apply_round(
             "expected_authority_revision".into(),
             json!(revision(&snapshot, "/peer_sessions/authority_revision")?),
         );
-        fields.insert("expires_at_ms".into(), json!(reciprocal.expires_at_ms));
+        fields.insert("expires_at_ms".into(), json!(mutual_expiry));
         let proposal: ManifoldCommonLanPeerSessionProposal =
             serde_json::from_value(proposal).map_err(safe_decode)?;
         serde_json::to_value(host.authority.apply_common_lan_session_renewal(
@@ -484,7 +490,15 @@ fn run_round(host: &Host, id: &str, phase: &str, session: &str) -> Result<(), St
     let local_receipt = match retained {
         Some(value) => value,
         None => {
-            let value = apply_round(host, id, phase, session, local, signature_remote)?;
+            let value = apply_round(
+                host,
+                id,
+                phase,
+                session,
+                local,
+                signature_remote,
+                (phase == SESSION).then_some(context_remote.expires_at_ms),
+            )?;
             round_mut(&mut state(host)?.renewal, phase)?.local_receipt = Some(value.clone());
             value
         }
@@ -503,6 +517,12 @@ fn run_round(host: &Host, id: &str, phase: &str, session: &str) -> Result<(), St
         .cloned()
         .ok_or("remote renewal owner receipt absent")?;
     validate_receipt(host, phase, session, &remote, true)?;
+    if phase == SESSION
+        && remote.get("expires_at_ms").and_then(Value::as_u64)
+            != local_receipt.get("expires_at_ms").and_then(Value::as_u64)
+    {
+        return Err("mutual signed renewal deadlines differ".into());
+    }
     current_decision(
         finished
             .get("current_session")
@@ -738,7 +758,10 @@ pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, Str
                 )
             };
             verify_context(host, id, phase, "a", &context, &a, &b)?;
-            ("renew_signed_a", json!({"signature":sign(host,&context)?}))
+            let signature = sign(host, &context)?;
+            round_mut(&mut state(host)?.renewal, phase)?.signed_context_a_expires_at_ms =
+                Some(context.expires_at_ms);
+            ("renew_signed_a", json!({"signature":signature}))
         }
         "renew_prepare_b" => {
             require_cycle(host, id)?;
@@ -772,6 +795,17 @@ pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, Str
                 .clone()
                 .ok_or("exact prepared renewal context absent")?;
             let retained = { state(host)?.renewal.round(phase)?.local_receipt.clone() };
+            let remote_context_expires_at_ms = if phase == SESSION {
+                Some(
+                    state(host)?
+                        .renewal
+                        .round(phase)?
+                        .signed_context_a_expires_at_ms
+                        .ok_or("signed initiator renewal context deadline absent")?,
+                )
+            } else {
+                None
+            };
             let receipt = match retained {
                 Some(value) => value,
                 None => {
@@ -787,12 +821,19 @@ pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, Str
                                 .get("signature")
                                 .ok_or("renewal signature absent")?,
                         )?,
+                        remote_context_expires_at_ms,
                     )?;
                     round_mut(&mut state(host)?.renewal, phase)?.local_receipt =
                         Some(value.clone());
                     value
                 }
             };
+            if phase == SESSION
+                && initiator.get("expires_at_ms").and_then(Value::as_u64)
+                    != receipt.get("expires_at_ms").and_then(Value::as_u64)
+            {
+                return Err("mutual signed renewal deadlines differ".into());
+            }
             round_mut(&mut state(host)?.renewal, phase)?.remote_receipt = Some(initiator.clone());
             let provider = if phase == SESSION {
                 let pair_proof = json!({"session_id":session,"renewal_id":id,"local_session_renewal":receipt,"remote_session_renewal":initiator});

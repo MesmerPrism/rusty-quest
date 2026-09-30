@@ -251,8 +251,13 @@ fn concurrent_actual_current_keys_and_same_session_renew_without_restart() {
                 assert!(refresh.applied); assert_eq!(refresh.expires_at_ms,now+300000);
                 assert_eq!(refresh.key_ids,proof.signer_key_ids);
                 assert_eq!(authority.refresh_concurrent_pair_credentials(&proof,now).unwrap(),refresh);
-                let fresh=renewal_reciprocal_request(authority,&format!("request.renew.c{cycle}.h{index}.session"),&alpha,&beta,now+1,now+235000,3+(cycle*10+index*4) as u8);
+                // Two independently signed SESSION contexts can differ by the
+                // observed 821 ms while both topology proposals use their
+                // common signed deadline.
+                let signed_expiry=now+235000+if index==0 {821} else {0};
+                let fresh=renewal_reciprocal_request(authority,&format!("request.renew.c{cycle}.h{index}.session"),&alpha,&beta,now+1,signed_expiry,3+(cycle*10+index*4) as u8);
                 let signed=authority.apply_common_lan_reciprocal(&fresh,now+1).unwrap(); assert!(signed.accepted,"actual rejection cycle{cycle} h{index}: {:?}",signed.rejection_reason);
+                assert_eq!(signed.expires_at_ms,signed_expiry);
                 let snapshot:rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot=serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
                 let mut next=proposal(&format!("renew.c{cycle}.h{index}"));
                 next.expected_authority_revision=snapshot.peer_sessions.authority_revision; next.expires_at_ms=now+235000;
@@ -269,5 +274,6 @@ fn concurrent_actual_current_keys_and_same_session_renew_without_restart() {
                 let mut malformed=snapshot.clone(); malformed.concurrent_session_renewals.last_mut().unwrap().renewed_session.decision_id=id("decision.forged");
                 assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot(malformed,&snapshot.trust_policy,&snapshot.provider_epoch_id).is_err());
             }
+            assert_eq!(current_a.expires_at_ms,current_b.expires_at_ms);
         }
     }
