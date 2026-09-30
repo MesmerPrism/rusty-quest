@@ -316,6 +316,12 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                     if (!value.matches("NONE|IDLE|LISTENER_BIND|CONNECT|ACCEPT|HEADER|DECODER_CONFIG|PACKET_READ|DECODE")) return false; break;
                 case "receiverFirstCause": case "receiverFinalCause":
                     if (!value.matches("NONE|CODEC|REFUSED|CONNECT_TIMEOUT|READ_TIMEOUT|EOF|HEADER_IO|IO|STATE|OTHER")) return false; break;
+                case "firstRenderReject":
+                    if (!value.matches("NONE|CODEC|STATE|PTS_MISSING|CONNECTION|NOT_READY|TIMESTAMP|AFTER_WITNESS")) return false; break;
+                case "firstRenderRejectPendingPtsUs":
+                    if (!"-1".equals(value) && !nonnegativeLong(value)) return false; break;
+                case "firstRenderRejectMediaTimeUs":
+                    if (!canonicalSignedLong(value)) return false; break;
                 case "schema": if (!attributed || !"rusty.quest.embedded_duplex.activation_failure.v1".equals(value)) return false; break;
                 case "wallMs": case "processStartedWallMs": case "processStartedElapsedNs":
                 case "processPid": case "recordSequence": case "executorGeneration":
@@ -324,7 +330,12 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                     if (!"-1".equals(value) && !nonnegativeLong(value)) return false; break;
                 case "elapsedMs": case "accepts": case "bytes": case "packetsRead": case "configPackets":
                 case "keyframePackets": case "preBootstrapDropped": case "inputs": case "outputs":
-                case "releasedForRender": case "renderCallbacks": case "renderSuperseded": case "lateCallbacks":
+                case "releasedForRender": case "renderCallbacks": case "rawRenderCallbacks":
+                case "renderRejectCodec": case "renderRejectState": case "renderRejectMissingPts":
+                case "renderRejectConnection": case "renderRejectNotReady": case "renderRejectTimestamp":
+                case "renderRejectAfterWitness":
+                case "firstRenderRejectPendingCount":
+                case "renderSuperseded": case "lateCallbacks":
                 case "renderHistoryEvicted": case "preRenderRejected": case "windowOverflows":
                 case "maxQueuedWindow": case "maxRenderWindow": case "queuedWindow": case "renderWindow":
                 case "renderHistory": case "windowBound":
@@ -344,6 +355,12 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     private static boolean nonnegativeLong(String value) {
         if (!value.matches("[0-9]{1,19}")) return false;
         try { return Long.parseLong(value) >= 0L; }
+        catch (NumberFormatException overflow) { return false; }
+    }
+
+    private static boolean canonicalSignedLong(String value) {
+        if (!value.matches("0|-?[1-9][0-9]{0,18}")) return false;
+        try { Long.parseLong(value); return true; }
         catch (NumberFormatException overflow) { return false; }
     }
 
