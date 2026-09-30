@@ -20,6 +20,29 @@ public final class EmbeddedDuplexActivationGateTest {
         assertEquals(1, target.activated);
     }
 
+    @Test public void missingAcquisitionOrGpuRetirementFailsAtItsExactStage() throws Exception {
+        FakeTarget noAcquisition = new FakeTarget();
+        noAcquisition.noAcquisition = true;
+        assertThrows(IllegalStateException.class, () -> armed(noAcquisition).activate(
+                "activation.no.image", authority().toString(), proof().toString()));
+        assertTrue(noAcquisition.failureRecord.contains("stage=FIRST_SURFACE_IMAGE"));
+        assertEquals(0, noAcquisition.activated);
+
+        FakeTarget noGpu = new FakeTarget();
+        noGpu.noGpu = true;
+        assertThrows(IllegalStateException.class, () -> armed(noGpu).activate(
+                "activation.no.gpu", authority().toString(), proof().toString()));
+        assertTrue(noGpu.failureRecord.contains("stage=NATIVE_EFFECTIVE"));
+        assertEquals(1, noGpu.activated);
+    }
+
+    @Test public void reorderedPtsStillAcceptsLaterExactGpuRetirement() throws Exception {
+        FakeTarget target = new FakeTarget();
+        target.reversePts = true;
+        assertTrue(new JSONObject(armed(target).activate("activation.reordered",
+                authority().toString(), proof().toString())).getBoolean("activated"));
+    }
+
     @Test public void wrongProofAndWrongArmLineageRejectBeforeGraph() throws Exception {
         FakeTarget target = new FakeTarget();
         EmbeddedDuplexActivationGate wrongArm = new EmbeddedDuplexActivationGate(target, () -> 1000L);
@@ -148,7 +171,9 @@ public final class EmbeddedDuplexActivationGateTest {
         int awaited;
         int activated;
         boolean failAwait;
+        boolean noAcquisition, noGpu, reversePts;
         boolean retained = true;
+        String failureRecord = "";
         Runnable onAwait;
 
         @Override public long generation() { return 7; }
@@ -162,6 +187,16 @@ public final class EmbeddedDuplexActivationGateTest {
             long[] words = new long[17]; words[0] = 7; words[2] = 41; words[3] = 42; words[4] = 43;
             return words;
         }
+        @Override public long[] currentIncomingAcquiredFrame(long maxAgeNs) {
+            if (noAcquisition) return new long[17];
+            return new long[] {2, 7, 1, 41, 42, 43, 1000, 6, 7, 8, 9, 10, 11, 12, 1,
+                    100, 110, 120, 20};
+        }
+        @Override public long[] currentIncomingEffectiveFrame(long maxAgeNs) {
+            return new long[] {2, 7, 1, 41, 42, 43, reversePts ? 500 : 1000,
+                    6, 7, 8, 9, 10, 11, 12, 1,
+                    100, 110, noGpu ? 0 : 125, 130, 30, 1};
+        }
         @Override public long routeGeneration() { return 41; }
         @Override public long decoderToken() { return 42; }
         @Override public long readerGeneration() { return 43; }
@@ -171,5 +206,6 @@ public final class EmbeddedDuplexActivationGateTest {
             words[3] = 42; words[4] = 43; words[9] = 100; words[11] = 1;
             return words;
         }
+        @Override public void recordActivationFailure(String record) { failureRecord = record; }
     }
 }

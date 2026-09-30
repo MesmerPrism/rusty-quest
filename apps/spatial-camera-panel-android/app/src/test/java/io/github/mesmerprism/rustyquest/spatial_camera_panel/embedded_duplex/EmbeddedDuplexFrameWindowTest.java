@@ -19,13 +19,16 @@ public final class EmbeddedDuplexFrameWindowTest {
         for (int i = 0; i <= 440; i++) window.sampleOnce();
         JSONObject receipt = new JSONObject(window.receipt(CHALLENGE));
         assertEquals("complete", receipt.getString("state"));
+        assertEquals("rusty.quest.embedded_duplex.frame_window_receipt.v2", receipt.getString("schema"));
         assertEquals("none", receipt.getString("sticky_failure_code"));
         assertEquals(110_000_000_000L, receipt.getLong("duration_ns"));
         assertEquals(441L, receipt.getLong("sample_count"));
         assertEquals(250_000_000L, receipt.getLong("max_observation_gap_ns"));
         assertEquals(10_000_000L, receipt.getLong("max_witness_age_ns"));
         assertEquals(440L, receipt.getLong("frame_advance_count"));
-        assertEquals(17, receipt.getJSONObject("last_native_frame").getJSONArray("words").length());
+        assertEquals(15, receipt.getJSONObject("last_native_frame").getJSONArray("words").length());
+        assertEquals(441L, receipt.getLong("matched_acquire_gpu_effect_count"));
+        assertEquals(441L, receipt.getJSONObject("last_native_frame").getLong("import_sequence"));
         assertEquals(64, receipt.getString("sample_digest_sha256").length());
         assertEquals(CHALLENGE, receipt.getString("challenge"));
         assertTrue(receipt.getBoolean("route_current_throughout"));
@@ -93,13 +96,16 @@ public final class EmbeddedDuplexFrameWindowTest {
                 new JSONObject(window.receipt(CHALLENGE)).getString("sticky_failure_code"));
     }
 
-    @Test public void changedIdentityWithNonadvancingPtsFails() throws Exception {
+    @Test public void reorderedPtsMayAdvanceOnlyWithNewGpuImport() throws Exception {
         FakeSource source = new FakeSource();
         EmbeddedDuplexFrameWindow window = window(source);
         window.sampleOnce();
-        source.ptsOverride = 33_333_333L;
+        source.ptsOverride = 1L;
         window.sampleOnce();
-        assertEquals("presentation_time_not_advancing",
+        assertEquals("pending", new JSONObject(window.receipt(CHALLENGE)).getString("state"));
+        source.importOverride = 1L;
+        window.sampleOnce();
+        assertEquals("gpu_import_sequence_not_advancing",
                 new JSONObject(window.receipt(CHALLENGE)).getString("sticky_failure_code"));
     }
 
@@ -112,6 +118,22 @@ public final class EmbeddedDuplexFrameWindowTest {
                 new JSONObject(window.receipt(CHALLENGE)).getString("sticky_failure_code"));
     }
 
+    @Test public void missingGpuRetirementAndLegacyTimedAbiCannotQualify() throws Exception {
+        FakeSource noGpu = new FakeSource();
+        noGpu.gpuRetired = false;
+        EmbeddedDuplexFrameWindow missing = window(noGpu);
+        missing.sampleOnce();
+        assertEquals("native_frame_stale_or_malformed",
+                new JSONObject(missing.receipt(CHALLENGE)).getString("sticky_failure_code"));
+
+        FakeSource old = new FakeSource();
+        old.legacyWords = true;
+        EmbeddedDuplexFrameWindow legacy = window(old);
+        legacy.sampleOnce();
+        assertEquals("native_frame_absent",
+                new JSONObject(legacy.receipt(CHALLENGE)).getString("sticky_failure_code"));
+    }
+
     private static EmbeddedDuplexFrameWindow window(FakeSource source) {
         return new EmbeddedDuplexFrameWindow(source, "a_to_b", ROUTE, EPOCH, REVISION);
     }
@@ -119,9 +141,10 @@ public final class EmbeddedDuplexFrameWindowTest {
     private static final class FakeSource implements EmbeddedDuplexFrameWindow.Source {
         int count;
         long stepNs = 250_000_000L, ageNs = 10_000_000L, connection = 1L;
-        boolean currentRoute = true, advance = true;
+        boolean currentRoute = true, advance = true, gpuRetired = true, legacyWords;
         long sensorTimestamp = 100L;
         long ptsOverride;
+        long importOverride;
 
         @Override public EmbeddedDuplexFrameWindow.Fence recheck() {
             return new EmbeddedDuplexFrameWindow.Fence(EPOCH, ROUTE, REVISION, currentRoute, true);
@@ -132,11 +155,13 @@ public final class EmbeddedDuplexFrameWindowTest {
             long frame = advance ? count + 1L : 1L;
             count++;
             long[] words = new long[] {
-                    1L, connection, 3L, 4L, 5L,
+                    2L, 1L, connection, 3L, 4L, 5L,
                     ptsOverride == 0L ? frame * 33_333_333L : ptsOverride,
                     6L, 7L, frame, frame, frame, sensorTimestamp, sensorTimestamp, 0L,
-                    at - ageNs, at - ageNs / 2L, at - ageNs / 4L, at, ageNs
+                    at - ageNs, at - ageNs / 2L, gpuRetired ? at - ageNs / 4L : 0L,
+                    at, ageNs, importOverride == 0L ? frame : importOverride
             };
+            if (legacyWords) words = java.util.Arrays.copyOfRange(words, 1, 20);
             EmbeddedDuplexFrameWindow.Fence fence = new EmbeddedDuplexFrameWindow.Fence(
                     EPOCH, ROUTE, REVISION, currentRoute, true);
             return new EmbeddedDuplexFrameWindow.Sample(fence, words, fence);

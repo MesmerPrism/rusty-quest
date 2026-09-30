@@ -19,8 +19,10 @@ public final class CompleteActivationCaller {
       readback=registry.execute(ticket.toString(),false);verified=registry.verifyAndReadEvidence(ticket.toString(),readback);if(verified==null)throw new AssertionError("real registry arm verification");
     }
     public long generation(){return 1;}public String incomingRuntimeSpecId(){return "runtime.fixture.a_to_b";}
-    public void awaitFirstRenderedFrame()throws Exception{receiver.awaitFirstRenderedFrame();}
+    public void awaitFirstRenderedFrame()throws Exception{receiver.awaitFirstSurfaceImage();}
     public long[] currentIncomingFrame(long age){if(atObservation!=null){Runnable action=atObservation;atObservation=null;action.run();}if(mode.equals("expiry"))now=2000;return receiver.currentFrame(age);}
+    public long[] currentIncomingAcquiredFrame(long age){if(atObservation!=null){Runnable action=atObservation;atObservation=null;action.run();}if(mode.equals("expiry"))now=2000;if(mode.equals("foreign-frame"))return new long[]{2,2,1,3,4,5,1000,1,1,1,1,1,1,1,0,100,110,120,20};return receiver.currentAcquiredFrameTimed(age);}
+    public long[] currentIncomingEffectiveFrame(long age){return receiver.currentEffectiveFrameTimed(age);}
     public String incomingDiagnostic(){return receiver.activationDiagnostic();}
     public long routeGeneration(){return receiver.routeGeneration();}public long decoderToken(){return receiver.decoderToken();}public long readerGeneration(){return receiver.readerGeneration();}
     public void activateIncomingProjection(){attached=true;}public long[] currentProjection(){long[] p=projection();if(mode.equals("pending-effective"))p[11]=0;return p;}

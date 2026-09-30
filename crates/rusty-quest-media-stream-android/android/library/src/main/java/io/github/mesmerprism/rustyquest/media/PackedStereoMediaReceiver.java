@@ -40,6 +40,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private final Bounds bounds;
     private final FrameListener listener;
     private final FrameLifecycleListener lifecycleListener;
+    private final SurfaceAcquisitionProbe acquisitionProbe;
     private final String handleId;
     private final AtomicLong revision = new AtomicLong();
     private final Map<Long, PendingFrame> pendingFrames = new LinkedHashMap<>();
@@ -58,6 +59,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private volatile HandlerThread renderThread;
     private volatile CountDownLatch ready;
     private long renderedFrames;
+    private long acquiredFrames, acquiredSuperseded, acquisitionFeedbackRejected;
+    private long lastAcquiredReleaseOrdinal;
     private long receivedPackets;
     private int reconnects;
     private volatile String transportStage = "IDLE";
@@ -99,6 +102,14 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
             Bounds bounds, FrameListener listener, FrameLifecycleListener lifecycleListener,
             String expectedSourceHost) {
+        this(surface, host, port, generation, bounds, listener, lifecycleListener,
+                expectedSourceHost, null);
+    }
+
+    /** Explicit opt-in: embedded hosts can prove Surface delivery by exact native acquisition. */
+    public PackedStereoMediaReceiver(Surface surface, String host, int port, long generation,
+            Bounds bounds, FrameListener listener, FrameLifecycleListener lifecycleListener,
+            String expectedSourceHost, SurfaceAcquisitionProbe acquisitionProbe) {
         if (surface == null || !surface.isValid()) throw new IllegalArgumentException("surface");
         if (host == null || host.trim().isEmpty() || host.length() > 1024
                 || port <= 0 || port > 65535 || generation <= 0L || bounds == null) {
@@ -112,6 +123,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         this.bounds = bounds;
         this.listener = listener;
         this.lifecycleListener = lifecycleListener;
+        this.acquisitionProbe = acquisitionProbe;
         this.handleId = "packed-receiver-" + NEXT_HANDLE.getAndIncrement() + ":g" + generation;
     }
 
@@ -149,7 +161,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         }
     }
 
-    /** Arms if needed, then waits for config, a keyframe, and one rendered exact frame. */
+    /** Arms if needed, then waits for an exact rendered callback or opt-in Surface acquisition. */
     public void start() throws Exception {
         requireNotMainThread("start");
         CountDownLatch startReady;
@@ -167,8 +179,24 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }
             startReady = ready;
         }
-        if (!startReady.await(bounds.startupTimeoutMs, TimeUnit.MILLISECONDS)
-                || !"receiving".equals(connectionState)) {
+        boolean witnessed;
+        if (acquisitionProbe == null) {
+            witnessed = startReady.await(bounds.startupTimeoutMs, TimeUnit.MILLISECONDS);
+        } else {
+            long deadline = SystemClock.elapsedRealtime() + bounds.startupTimeoutMs;
+            witnessed = false;
+            while (!stopRequested && SystemClock.elapsedRealtime() < deadline) {
+                if (startReady.await(5L, TimeUnit.MILLISECONDS)) {
+                    witnessed = true;
+                    break;
+                }
+                MediaCodec current = decoder;
+                long connection;
+                synchronized (lock) { connection = connectionGeneration; }
+                if (current != null && connection > 0L) pollSurfaceAcquisition(current, connection);
+            }
+        }
+        if (!witnessed || !"receiving".equals(connectionState)) {
             String reason = failure.isEmpty() ? "receiver startup timed out" : failure;
             stopAndVerify();
             throw new IOException(reason);
@@ -449,6 +477,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }
             queuePacket(codec, activeConnection, packet);
             drain(codec, activeConnection);
+            pollSurfaceAcquisition(codec, activeConnection);
         }
     }
 
@@ -469,6 +498,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         input.put(packet.payload);
         boolean config = (packet.flags & RmanvidPacketReader.FLAG_CODEC_CONFIG) != 0;
         if (!config) {
+            awaitIdentityCapacity(codec, activeConnection);
             synchronized (lock) {
                 if (pendingFrames.containsKey(packet.ptsUs) || retiredRenderFrames.containsKey(packet.ptsUs)) {
                     throw closed("IDENTITY_PTS_COLLISION", null);
@@ -488,6 +518,63 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         codec.queueInputBuffer(inputIndex, 0, packet.payload.length, packet.ptsUs,
                 codecInputFlags(packet.flags));
         synchronized (lock) { receivedPackets++; inputsQueued++; }
+    }
+
+    private void awaitIdentityCapacity(MediaCodec codec, long activeConnection) throws Exception {
+        if (acquisitionProbe == null) return;
+        long deadline = SystemClock.elapsedRealtime() + bounds.codecInputTimeoutMs;
+        while (!stopRequested) {
+            synchronized (lock) {
+                if (pendingFrames.size() < bounds.maxPendingFrames) return;
+            }
+            // The same worker drains codec output; waiting without draining
+            // would strand queued identities even when the decoder progressed.
+            drain(codec, activeConnection);
+            pollSurfaceAcquisition(codec, activeConnection);
+            synchronized (lock) {
+                if (pendingFrames.size() < bounds.maxPendingFrames) return;
+            }
+            if (SystemClock.elapsedRealtime() >= deadline) return;
+            Thread.sleep(1L);
+        }
+    }
+
+    private void pollSurfaceAcquisition(MediaCodec codec, long activeConnection) {
+        if (acquisitionProbe == null || stopRequested) return;
+        // JNI or the host's reader callback may reenter the process. Never hold
+        // the receiver lock while querying it.
+        AcquiredFrame acquired = acquisitionProbe.latestAcquired(generation, activeConnection);
+        if (acquired == null) return;
+        synchronized (lock) {
+            if (decoder != codec || stopRequested || acquired.receiverGeneration != generation
+                    || acquired.connectionGeneration != activeConnection
+                    || acquired.presentationTimeNs <= 0L
+                    || acquired.presentationTimeNs % 1_000L != 0L) {
+                acquisitionFeedbackRejected = saturatedIncrement(acquisitionFeedbackRejected);
+                return;
+            }
+            PendingFrame exact = pendingFrames.get(acquired.presentationTimeNs / 1_000L);
+            if (exact == null) exact = retiredRenderFrames.get(acquired.presentationTimeNs / 1_000L);
+            if (exact == null || !exact.readyForRender
+                    || exact.connectionGeneration != activeConnection
+                    || exact.presentationTimeNs != acquired.presentationTimeNs
+                    || !acquired.matches(exact.identity)) {
+                acquisitionFeedbackRejected = saturatedIncrement(acquisitionFeedbackRejected);
+                return;
+            }
+            if (exact.releaseOrdinal <= lastAcquiredReleaseOrdinal) return;
+            lastAcquiredReleaseOrdinal = exact.releaseOrdinal;
+            acquiredFrames = saturatedIncrement(acquiredFrames);
+            int superseded = retireEarlierReleasedLocked(activeConnection, exact.releaseOrdinal);
+            acquiredSuperseded += Math.min((long) superseded, Long.MAX_VALUE - acquiredSuperseded);
+            connectionState = "receiving";
+            if (liveRequested && "receiver_armed".equals(state)) {
+                state = "receiving";
+                revision.incrementAndGet();
+            }
+            CountDownLatch startReady = ready;
+            if (startReady != null) startReady.countDown();
+        }
     }
 
     private void drain(MediaCodec codec, long activeConnection) throws Exception {
@@ -580,6 +667,10 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 recordRenderRejectLocked("PTS_MISSING", ptsUs);
                 return;
             }
+            if (pending.callbackObserved) {
+                recordRenderRejectLocked("PTS_MISSING", ptsUs);
+                return;
+            }
             if (pending.connectionGeneration != callbackConnection) {
                 recordRenderRejectLocked("CONNECTION", ptsUs);
                 return;
@@ -592,8 +683,11 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 recordRenderRejectLocked("TIMESTAMP", ptsUs);
                 return;
             }
-            pendingFrames.remove(ptsUs);
-            retiredRenderFrames.remove(ptsUs);
+            pending.callbackObserved = true;
+            if (acquisitionProbe == null || late) {
+                pendingFrames.remove(ptsUs);
+                retiredRenderFrames.remove(ptsUs);
+            }
             renderCallbacks++;
             if (late) lateRenderCallbacks++;
             // Use surface-release order, not PTS order. Preserve exact identities
@@ -621,13 +715,15 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 return;
             }
             renderedFrames++;
-            connectionState = "receiving";
-            if (liveRequested && "receiver_armed".equals(state)) {
+            if (acquisitionProbe == null) connectionState = "receiving";
+            if (acquisitionProbe == null && liveRequested && "receiver_armed".equals(state)) {
                 state = "receiving";
                 revision.incrementAndGet();
             }
-            CountDownLatch startReady = ready;
-            if (startReady != null) startReady.countDown();
+            if (acquisitionProbe == null) {
+                CountDownLatch startReady = ready;
+                if (startReady != null) startReady.countDown();
+            }
         }
         if (listener != null) {
             try {
@@ -681,6 +777,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         synchronized (lock) {
             pendingFrames.clear();
             retiredRenderFrames.clear();
+            lastAcquiredReleaseOrdinal = 0L;
             if (connectionGeneration > retiredConnectionGeneration) {
                 retiredConnection = connectionGeneration;
                 retiredConnectionGeneration = connectionGeneration;
@@ -766,6 +863,46 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         void onConnectionRetired(long receiverGeneration, long connectionGeneration);
     }
 
+    /** An actual host-reader acquisition, not a codec callback or GPU-effect claim. */
+    public interface SurfaceAcquisitionProbe {
+        AcquiredFrame latestAcquired(long receiverGeneration, long connectionGeneration);
+    }
+
+    /** Exact native Surface image identity for the opt-in receiver path. */
+    public static final class AcquiredFrame {
+        public final long receiverGeneration, connectionGeneration, presentationTimeNs;
+        public final long sourceElapsedNs, sourceUnixNs, pairId;
+        public final long leftSourceFrame, rightSourceFrame;
+        public final long leftSensorTimestampNs, rightSensorTimestampNs, pairDeltaNs;
+
+        public AcquiredFrame(long receiverGeneration, long connectionGeneration,
+                long presentationTimeNs, long sourceElapsedNs, long sourceUnixNs,
+                long pairId, long leftSourceFrame, long rightSourceFrame,
+                long leftSensorTimestampNs, long rightSensorTimestampNs, long pairDeltaNs) {
+            this.receiverGeneration = receiverGeneration;
+            this.connectionGeneration = connectionGeneration;
+            this.presentationTimeNs = presentationTimeNs;
+            this.sourceElapsedNs = sourceElapsedNs;
+            this.sourceUnixNs = sourceUnixNs;
+            this.pairId = pairId;
+            this.leftSourceFrame = leftSourceFrame;
+            this.rightSourceFrame = rightSourceFrame;
+            this.leftSensorTimestampNs = leftSensorTimestampNs;
+            this.rightSensorTimestampNs = rightSensorTimestampNs;
+            this.pairDeltaNs = pairDeltaNs;
+        }
+
+        private boolean matches(FrameIdentity identity) {
+            return identity != null && sourceElapsedNs == identity.sourceElapsedNs
+                    && sourceUnixNs == identity.sourceUnixNs && pairId == identity.pairId
+                    && leftSourceFrame == identity.leftSourceFrame
+                    && rightSourceFrame == identity.rightSourceFrame
+                    && leftSensorTimestampNs == identity.leftSensorTimestampNs
+                    && rightSensorTimestampNs == identity.rightSensorTimestampNs
+                    && pairDeltaNs == identity.pairDeltaNs;
+        }
+    }
+
     /** Immutable exact source identity for one frame released to the host Surface. */
     public static final class FrameIdentity {
         public final long presentationTimeUs;
@@ -807,6 +944,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 + " keyframePackets=" + keyframePackets + " preBootstrapDropped=" + packetsBeforeBootstrap
                 + " decoder=" + decoderClass + " inputs=" + inputsQueued + " outputs=" + outputsDequeued
                 + " releasedForRender=" + outputsReleasedForRender + " renderCallbacks=" + renderCallbacks
+                + " acquiredFrames=" + acquiredFrames + " acquiredSuperseded=" + acquiredSuperseded
+                + " acquisitionFeedbackRejected=" + acquisitionFeedbackRejected
                 + " rawRenderCallbacks=" + rawRenderCallbacks
                 + " renderRejectCodec=" + renderRejectedCodec + " renderRejectState=" + renderRejectedState
                 + " renderRejectMissingPts=" + renderRejectedMissingPts
@@ -837,7 +976,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private int renderWindowLocked() { return pendingFrames.size() - queuedWindowLocked(); }
 
     /** Supersedes released predecessors; queued decode identities are never discarded by PTS. */
-    private void retireEarlierReleasedLocked(long connection, long releaseOrdinal) {
+    private int retireEarlierReleasedLocked(long connection, long releaseOrdinal) {
+        int superseded = 0;
         Iterator<Map.Entry<Long, PendingFrame>> it = pendingFrames.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<Long, PendingFrame> entry = it.next();
@@ -847,12 +987,14 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 retiredRenderFrames.put(entry.getKey(), frame);
                 it.remove();
                 renderCallbacksSuperseded++;
+                superseded++;
             }
         }
         while (retiredRenderFrames.size() > bounds.maxPendingFrames) {
             Iterator<Long> oldest = retiredRenderFrames.keySet().iterator();
             oldest.next(); oldest.remove(); renderHistoryEvicted++;
         }
+        return superseded;
     }
 
     private static int codecInputFlags(int rmanvidFlags) {
@@ -966,6 +1108,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         final FrameIdentity identity;
         long presentationTimeNs;
         boolean readyForRender;
+        boolean callbackObserved;
         long releaseOrdinal;
         PendingFrame(long connectionGeneration, FrameIdentity identity) {
             this.connectionGeneration = connectionGeneration;

@@ -22,6 +22,10 @@ final class EmbeddedDuplexActivationGate {
         String incomingRuntimeSpecId();
         void awaitFirstRenderedFrame() throws Exception;
         long[] currentIncomingFrame(long maxAgeNs);
+        /** New v2 Surface evidence. Defaults fail closed for older test adapters. */
+        default void awaitFirstSurfaceImage() throws Exception { awaitFirstRenderedFrame(); }
+        default long[] currentIncomingAcquiredFrame(long maxAgeNs) { return null; }
+        default long[] currentIncomingEffectiveFrame(long maxAgeNs) { return null; }
         long routeGeneration();
         long decoderToken();
         long readerGeneration();
@@ -101,7 +105,7 @@ final class EmbeddedDuplexActivationGate {
         } finally { lock.unlock(); }
     }
 
-    private enum ActivationStage { ARM_PROOF, FIRST_RENDER, NATIVE_ACQUISITION, GRAPH_ATTACH, NATIVE_EFFECTIVE }
+    private enum ActivationStage { ARM_PROOF, FIRST_SURFACE_IMAGE, GRAPH_ATTACH, NATIVE_EFFECTIVE }
     private static final class ActivationAttempt {
         ActivationStage stage = ActivationStage.ARM_PROOF;
         final long startedNs = System.nanoTime();
@@ -170,19 +174,22 @@ final class EmbeddedDuplexActivationGate {
         // Display and native callbacks can reenter the process. Keep the claim
         // uncertain until readback succeeds, without holding the state lock.
         long readinessDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
-        attempt.stage = ActivationStage.FIRST_RENDER;
-        target.awaitFirstRenderedFrame();
-        attempt.stage = ActivationStage.NATIVE_ACQUISITION;
-        long[] frame = awaitCurrentIncomingFrame(current, claimedRevision, readinessDeadline);
-        if (!currentFrame(frame) || clock.wallTimeMillis() >= current.expiresAtMs) {
+        attempt.stage = ActivationStage.FIRST_SURFACE_IMAGE;
+        target.awaitFirstSurfaceImage();
+        long[] frame = awaitCurrentIncomingFrame(current, claimedRevision, readinessDeadline,
+                false, 0L);
+        if (!acquiredFrame(frame) || clock.wallTimeMillis() >= current.expiresAtMs) {
             throw new IllegalStateException("fresh incoming frame unavailable");
         }
         requireCurrentClaim(current, claimedRevision);
         attempt.stage = ActivationStage.GRAPH_ATTACH;
         target.activateIncomingProjection();
         attempt.stage = ActivationStage.NATIVE_EFFECTIVE;
+        long[] effectiveFrame = awaitCurrentIncomingFrame(current, claimedRevision,
+                readinessDeadline, true, frame[17]);
         long[] projection = target.currentProjection();
-        if (!effectiveProjection(projection) || clock.wallTimeMillis() >= current.expiresAtMs) {
+        if (!effectiveFrame(effectiveFrame, frame) || !effectiveProjection(projection)
+                || clock.wallTimeMillis() >= current.expiresAtMs) {
             throw new IllegalStateException("native Peer projection not effective");
         }
 
@@ -203,17 +210,26 @@ final class EmbeddedDuplexActivationGate {
     }
 
     private long[] awaitCurrentIncomingFrame(ArmEvidence current, long claimedRevision,
-            long deadlineNs) throws Exception {
+            long deadlineNs, boolean effective, long minimumGpuRetiredNs) throws Exception {
         while (true) {
             requireCurrentClaim(current, claimedRevision);
             if (clock.wallTimeMillis() >= current.expiresAtMs) {
                 throw new IllegalStateException("fresh incoming frame unavailable");
             }
-            long[] frame = target.currentIncomingFrame(MAX_FRAME_AGE_NS);
-            // Native null can mean that the independent AImageReader acquisition
-            // callback has not joined the decoder render callback yet. A present
-            // identity mismatch remains an immediate rejection.
-            if (frame != null) return frame;
+            long[] frame = effective ? target.currentIncomingEffectiveFrame(MAX_FRAME_AGE_NS)
+                    : target.currentIncomingAcquiredFrame(MAX_FRAME_AGE_NS);
+            // Native null means the exact Surface/GPU witness has not appeared.
+            // A present malformed or foreign identity fails immediately below.
+            if (frame != null) {
+                // The GPU may still be retiring an older import. Require a real
+                // retirement after the first observed Surface acquisition;
+                // PTS remains an exact key, never an ordering promise.
+                if (!effective || frame.length != EmbeddedDuplexNative.EFFECTIVE_TIMED_OBSERVATION_WORDS
+                        || frame[0] != EmbeddedDuplexNative.FRAME_EVIDENCE_VERSION
+                        || frame[1] != target.generation() || frame[3] != target.routeGeneration()
+                        || frame[4] != target.decoderToken() || frame[5] != target.readerGeneration()
+                        || frame[17] <= 0L || frame[17] >= minimumGpuRetiredNs) return frame;
+            }
             if (System.nanoTime() >= deadlineNs) {
                 throw new IllegalStateException("fresh incoming frame unavailable");
             }
@@ -234,10 +250,33 @@ final class EmbeddedDuplexActivationGate {
         }
     }
 
-    private boolean currentFrame(long[] frame) {
-        return frame != null && frame.length == EmbeddedDuplexNative.FRAME_OBSERVATION_WORDS
-                && frame[0] == target.generation() && frame[2] == target.routeGeneration()
-                && frame[3] == target.decoderToken() && frame[4] == target.readerGeneration();
+    private boolean acquiredFrame(long[] frame) {
+        return frame != null && frame.length == EmbeddedDuplexNative.ACQUIRED_TIMED_OBSERVATION_WORDS
+                && frame[0] == EmbeddedDuplexNative.FRAME_EVIDENCE_VERSION
+                && frame[1] == target.generation() && frame[2] > 0L
+                && frame[3] == target.routeGeneration() && frame[4] == target.decoderToken()
+                && frame[5] == target.readerGeneration() && frame[6] > 0L
+                && frame[15] > 0L && frame[16] >= frame[15] && frame[17] >= frame[16]
+                && frame[18] >= 0L && frame[18] <= MAX_FRAME_AGE_NS
+                && frame[18] == frame[17] - frame[15];
+    }
+
+    private boolean effectiveFrame(long[] effective, long[] acquired) {
+        return effective != null
+                && effective.length == EmbeddedDuplexNative.EFFECTIVE_TIMED_OBSERVATION_WORDS
+                && effective[0] == EmbeddedDuplexNative.FRAME_EVIDENCE_VERSION
+                && effective[1] == target.generation() && effective[2] == acquired[2]
+                && effective[3] == target.routeGeneration()
+                && effective[4] == target.decoderToken()
+                && effective[5] == target.readerGeneration()
+                && effective[6] > 0L && effective[15] > 0L
+                && effective[16] >= effective[15]
+                && effective[17] >= effective[16]
+                && effective[17] >= acquired[17]
+                && effective[18] >= effective[17]
+                && effective[19] >= 0L && effective[19] <= MAX_FRAME_AGE_NS
+                && effective[19] == effective[18] - effective[15]
+                && effective[20] > 0L;
     }
 
     private boolean effectiveProjection(long[] words) {
