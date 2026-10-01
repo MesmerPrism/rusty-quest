@@ -64,6 +64,10 @@ public final class CaptureCloseTest {
         check(owner.pollStopped(),"late open close callback was not accounted for");cases++;
 
         manager=new CameraManager();manager.devices[0].failConfigure=true;owner=owner(manager);try{owner.start();}catch(Exception expected){}
+        check(owner.firstFailureOriginCode()==PackedStereoCaptureOwner.FAILURE_SESSION_REJECTED,
+                "startup catch replaced the earlier camera session failure");
+        check(owner.captureDiagnosticSnapshot().getLong("first_failure_elapsed_ns")>0L,
+                "first capture fault missing from retained diagnostic");
         check(manager.devices[0].closed,"already-closed failed configuration retained device");
         check(!owner.pollStopped(),"configure failure invented device close callback");
         manager.devices[0].completeDeviceClose();PackedStereoGlCompositor.nativePoolRetired=true;
@@ -72,6 +76,11 @@ public final class CaptureCloseTest {
         manager=new CameraManager();manager.deferOpen=true;owner=owner(manager);t=start(owner);
         final CameraManager errorOpening=manager;await(()->errorOpening.devices[0].callback!=null);
         manager.devices[0].callback.onError(manager.devices[0],1);t.join(2000);
+        check(owner.firstFailureOriginCode()==PackedStereoCaptureOwner.FAILURE_CAMERA_ERROR,
+                "camera callback first fault replaced by startup catch");
+        manager.devices[0].callback.onDisconnected(manager.devices[0]);
+        check(owner.firstFailureOriginCode()==PackedStereoCaptureOwner.FAILURE_CAMERA_ERROR,
+                "late disconnect replaced first fault");
         check(manager.devices[0].closed,"device error did not request immediate platform close");
         check(!owner.pollStopped(),"device error fabricated physical onClosed");
         manager.devices[0].completeDeviceClose();PackedStereoGlCompositor.nativePoolRetired=true;
@@ -81,6 +90,55 @@ public final class CaptureCloseTest {
         for(CameraDevice d:manager.devices){d.session.drain();d.completeDeviceClose();}
         PackedStereoGlCompositor.nativePoolRetired=true;
         check(!owner.pollStopped(),"device error with missing successful-session drain was falsely terminal");cases++;
+
+        manager=new CameraManager();owner=owner(manager);owner.start();
+        android.util.Log.firstFailure=null;
+        java.lang.reflect.Field compositorField=PackedStereoCaptureOwner.class.getDeclaredField("compositor");
+        compositorField.setAccessible(true);
+        PackedStereoGlCompositor gl=(PackedStereoGlCompositor)compositorField.get(owner);
+        gl.simulateFailure(new IllegalArgumentException("fixture private text"));
+        check(owner.firstFailureOriginCode()==PackedStereoCaptureOwner.FAILURE_COMPOSITOR
+                && owner.firstFailureCauseCode()==2,
+                "compositor first fault not classified before teardown");
+        JSONObject compositorFault=owner.captureDiagnosticSnapshot();
+        check(compositorFault.getLong("first_failure_origin_code")==PackedStereoCaptureOwner.FAILURE_COMPOSITOR
+                && compositorFault.getLong("first_failure_cause_code")==2,
+                "diagnostic does not retain exact first fault");
+        check(android.util.Log.firstFailure!=null
+                && android.util.Log.firstFailure.contains("originCode=1")
+                && !android.util.Log.firstFailure.contains("fixture private text"),
+                "first-fault event missing or leaked exception text");
+        manager.devices[0].callback.onError(manager.devices[0],1);
+        check(owner.firstFailureOriginCode()==PackedStereoCaptureOwner.FAILURE_COMPOSITOR,
+                "late camera error overwrote compositor first fault");cases++;
+
+        manager=new CameraManager();owner=owner(manager);owner.start();
+        compositorField.setAccessible(true);
+        gl=(PackedStereoGlCompositor)compositorField.get(owner);
+        owner.requestStop();
+        gl.simulateFailure(new IllegalStateException("late cleanup callback"));
+        check(owner.firstFailureOriginCode()==PackedStereoCaptureOwner.FAILURE_NONE
+                && owner.captureDiagnosticSnapshot().getLong("first_failure_elapsed_ns")==0L,
+                "post-stop callback invented a first runtime failure");cases++;
+
+        java.lang.reflect.Method classify=PackedStereoCaptureOwner.class
+                .getDeclaredMethod("detailCode",Throwable.class);
+        classify.setAccessible(true);
+        check(((Number)classify.invoke(null,new IllegalStateException("source publication Replay"))).intValue()
+                ==PackedStereoCaptureOwner.DETAIL_PUBLICATION_REPLAY,
+                "exact native Replay rejection not classified");
+        check(((Number)classify.invoke(null,new IllegalStateException("source publication RegressedClock"))).intValue()
+                ==PackedStereoCaptureOwner.DETAIL_PUBLICATION_REGRESSED_CLOCK,
+                "exact native clock rejection not classified");
+        check(((Number)classify.invoke(null,new IllegalStateException("source publication UnboundEpoch"))).intValue()
+                ==PackedStereoCaptureOwner.DETAIL_PUBLICATION_UNBOUND,
+                "exact native epoch rejection not classified");
+        check(((Number)classify.invoke(null,new IllegalStateException("source publication InvalidIdentity"))).intValue()
+                ==PackedStereoCaptureOwner.DETAIL_PUBLICATION_IDENTITY,
+                "exact native identity rejection not classified");
+        check(((Number)classify.invoke(null,new IllegalStateException("source publication Replay unknown"))).intValue()
+                ==PackedStereoCaptureOwner.DETAIL_OTHER,
+                "unrecognized native text must remain unclassified");cases++;
         System.out.println("CANDIDATE_PASS: "+cases+" complete close/callback/native-proof cases; source stubs, no Quest proof");
     }
 }

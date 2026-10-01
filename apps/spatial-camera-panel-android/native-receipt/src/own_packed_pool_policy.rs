@@ -16,6 +16,40 @@ pub(crate) struct WriteTicket { pub pool:u64,pub serial:u64,pub framebuffer:u32 
 }
 
 pub(crate) fn ticket_matches(ticket:WriteTicket,pool:u64,serial:u64,framebuffer:u32)->bool {ticket.pool==pool && ticket.serial==serial && ticket.framebuffer==framebuffer && serial>0 && framebuffer>0}
+
+// Producer fences can become observable in a different poll than their submission
+// order. Only a completed, newer image supersedes an older completed image. The
+// accepted frames from one poll share the latest clock sampled in that batch.
+// A backward clock value in a later poll still fails at source publication.
+#[derive(Default)]
+pub(crate) struct ReadyObservationOrder { last_pair:u64 }
+impl ReadyObservationOrder {
+ pub(crate) fn admit(&mut self,pair:u64,batch_observed_ns:u64)->Option<u64> {
+  if pair==0 || batch_observed_ns==0 || pair<=self.last_pair {return None;}
+  self.last_pair=pair;Some(batch_observed_ns)
+ }
+}
+#[cfg(test)] mod ready_order_tests {use super::*;
+ #[test] fn older_fence_becomes_ready_after_newer_publication_without_replay() {
+  let mut order=ReadyObservationOrder::default();
+  assert_eq!(order.admit(0,100),None);assert_eq!(order.admit(1,0),None);
+  // Poll 1 sees pair 102 ready; pair 101 is still physically Pending.
+  assert_eq!(order.admit(102,200),Some(200));
+  // Poll 2 sees pair 101 complete. Its content retires as superseded.
+  assert_eq!(order.admit(101,250),None);
+  assert_eq!(order.admit(102,251),None);
+  assert_eq!(order.admit(103,260),Some(260));
+ }
+ #[test] fn sorted_pair_batch_uses_its_latest_observed_clock_only() {
+  let mut order=ReadyObservationOrder::default();
+  // A later slot was polled first; the caller passes its actual batch maximum.
+  assert_eq!(order.admit(1,310),Some(310));
+  assert_eq!(order.admit(2,310),Some(310));
+  assert_eq!(order.admit(3,311),Some(311));
+  // A later poll's genuinely backward clock is not silently clamped.
+  assert_eq!(order.admit(4,300),Some(300));
+ }
+}
 #[cfg(test)] mod ticket_tests {use super::*;#[test] fn stale_generation_serial_and_fbo_are_rejected() {let t=WriteTicket{pool:9,serial:7,framebuffer:6};assert!(ticket_matches(t,9,7,6));assert!(!ticket_matches(t,8,7,6));assert!(!ticket_matches(t,9,8,6));assert!(!ticket_matches(t,9,7,8));}}
 
 #[derive(Clone,Copy,PartialEq,Eq)] pub(crate) enum PhysicalUsePhase {Prepared,Entered,Quarantined}

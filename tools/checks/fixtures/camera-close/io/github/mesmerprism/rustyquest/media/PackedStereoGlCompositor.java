@@ -42,4 +42,5 @@ public class PackedStereoGlCompositor {
     public boolean cleanupRejected() { return false; }
     public String cleanupBarrier() { return isTerminated() ? "TERMINAL" : "NATIVE_POOL_PENDING"; }
     public void requestStop() { }
+    void simulateFailure(Throwable error) { listener.onCompositorFailure(error); }
 }
