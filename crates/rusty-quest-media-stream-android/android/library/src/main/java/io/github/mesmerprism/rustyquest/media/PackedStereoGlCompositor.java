@@ -10,6 +10,8 @@ import android.opengl.EGLSurface;
 import android.opengl.GLES20;
 import android.os.SystemClock;
 import android.os.Looper;
+import android.os.Handler;
+import android.os.HandlerThread;
 import android.view.Surface;
 import org.json.JSONObject;
 
@@ -37,7 +39,7 @@ final class PackedStereoGlCompositor implements Closeable {
     private final Surface encoderInputSurface;
     private final PackedStereoPoolExecutor poolExecutor;
     private volatile boolean physicallyRetired;
-    enum CleanupBarrier { NOT_REQUESTED, STOP_REQUESTED, NATIVE_POOL_PENDING, CAMERA_CALLBACKS_PENDING, CAPTURE_CONTEXT_PENDING, TERMINAL }
+    enum CleanupBarrier { NOT_REQUESTED, STOP_REQUESTED, SURFACE_CALLBACKS_PENDING, NATIVE_POOL_PENDING, CAMERA_CALLBACKS_PENDING, CAPTURE_CONTEXT_PENDING, TERMINAL }
     private volatile CleanupBarrier cleanupBarrier = CleanupBarrier.NOT_REQUESTED;
     private volatile boolean cleanupRejected;
     String cleanupBarrier() { return cleanupBarrier.name(); }
@@ -53,6 +55,51 @@ final class PackedStereoGlCompositor implements Closeable {
     private final CaptureFrameTrace rightFrameTrace;
     private final CountDownLatch ready = new CountDownLatch(1);
     private final Thread thread;
+    private volatile SurfaceNotificationOwner surfaceNotifications;
+
+    /** Notifications only; SurfaceTexture texture operations remain with the capture GL owner. */
+    static final class SurfaceNotificationOwner implements Closeable {
+        private final HandlerThread thread = new HandlerThread("rq-capture-surface-notify");
+        private final Handler handler;
+        private SurfaceTexture left, right;
+        private volatile boolean detached;
+        SurfaceNotificationOwner() {
+            thread.start();
+            try { handler = new Handler(thread.getLooper()); }
+            catch (RuntimeException failure) { thread.quitSafely(); awaitThreadRetired(); throw failure; }
+        }
+        void left(SurfaceTexture texture, SurfaceTexture.OnFrameAvailableListener listener) {
+            left = texture;
+            texture.setOnFrameAvailableListener(listener, handler);
+        }
+        void right(SurfaceTexture texture, SurfaceTexture.OnFrameAvailableListener listener) {
+            right = texture;
+            texture.setOnFrameAvailableListener(listener, handler);
+        }
+        boolean retired() { return detached && !thread.isAlive(); }
+        @Override public void close() {
+            if (Thread.currentThread() == thread) throw new IllegalStateException("notification owner cannot join itself");
+            if (left != null) left.setOnFrameAvailableListener(null);
+            if (right != null) right.setOnFrameAvailableListener(null);
+            detached = true;
+            thread.quitSafely();
+            awaitThreadRetired();
+        }
+        private void awaitThreadRetired() {
+            while (thread.isAlive()) {
+                try { thread.join(50L); }
+                catch (InterruptedException ignored) { /* actual thread retirement owns this barrier */ }
+            }
+        }
+    }
+
+    private void stopSurfaceNotifications() {
+        SurfaceNotificationOwner retained = surfaceNotifications;
+        if (retained != null) {
+            cleanupBarrier = CleanupBarrier.SURFACE_CALLBACKS_PENDING;
+            retained.close();
+        }
+    }
 
     private volatile boolean stopRequested;
     private volatile Throwable startupFailure;
@@ -352,7 +399,10 @@ final class PackedStereoGlCompositor implements Closeable {
         synchronized (signal) { signal.notifyAll(); }
     }
 
-    boolean isTerminated() { return !thread.isAlive(); }
+    boolean isTerminated() {
+        SurfaceNotificationOwner retained = surfaceNotifications;
+        return !thread.isAlive() && (retained == null || retained.retired());
+    }
     boolean isPhysicallyRetired() { return physicallyRetired && isTerminated(); }
 
     private void run() {
@@ -368,9 +418,10 @@ final class PackedStereoGlCompositor implements Closeable {
                 if (pool == null) throw new IllegalStateException("native capture pool unavailable");
             }
             if (!synthetic) {
+                surfaceNotifications = new SurfaceNotificationOwner();
                 leftCameraSurface = gl.leftInput.cameraSurface;
                 rightCameraSurface = gl.rightInput.cameraSurface;
-                gl.leftInput.surfaceTexture.setOnFrameAvailableListener(
+                surfaceNotifications.left(gl.leftInput.surfaceTexture,
                         new SurfaceTexture.OnFrameAvailableListener() {
                             @Override
                             public void onFrameAvailable(SurfaceTexture texture) {
@@ -391,7 +442,7 @@ final class PackedStereoGlCompositor implements Closeable {
                                 }
                             }
                         });
-                gl.rightInput.surfaceTexture.setOnFrameAvailableListener(
+                surfaceNotifications.right(gl.rightInput.surfaceTexture,
                         new SurfaceTexture.OnFrameAvailableListener() {
                             @Override
                             public void onFrameAvailable(SurfaceTexture texture) {
@@ -422,6 +473,8 @@ final class PackedStereoGlCompositor implements Closeable {
         }
         if (startupFailure != null) {
             notifyFailure(startupFailure);
+            try { stopSurfaceNotifications(); }
+            catch (RuntimeException pending) { quarantinedGl = gl; cleanupRejected = true; notifyFailure(pending); return; }
             if (gl != null && !poolCreationAttempted) { gl.close(); physicallyRetired = true; }
             else if (gl != null) {
                 quarantinedGl = gl;
@@ -476,8 +529,13 @@ final class PackedStereoGlCompositor implements Closeable {
             notifyFailure(error);
         } finally {
             gpuCompositorActive = false;
-            if (pool == null) { gl.close(); physicallyRetired = true; }
-            else { quarantinedGl = gl; drainPoolOnCaptureContext(pool, gl); }
+            try {
+                stopSurfaceNotifications();
+                if (pool == null) { gl.close(); physicallyRetired = true; }
+                else { quarantinedGl = gl; drainPoolOnCaptureContext(pool, gl); }
+            } catch (RuntimeException pending) {
+                quarantinedGl = gl; cleanupRejected = true; notifyFailure(pending);
+            }
         }
     }
 
