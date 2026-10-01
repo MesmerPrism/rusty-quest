@@ -27,6 +27,14 @@ object StereoBankControls {
         require(words.size == 160 && words[0] == 1L && words[1] == 160L)
         return words
     }
+    /** Bounded observation only; this never supplies qualification words. */
+    fun concurrentDropoutObservation(challenge: String, armGeneration: Long): String {
+        require(armGeneration > 0)
+        val words = challengeWords(challenge)
+        val report = requireNotNull(nativeReadConcurrentStereoDropouts(words[0], words[1], armGeneration))
+        require(report.toByteArray(Charsets.UTF_8).size <= 6144)
+        return report
+    }
     fun requestConcurrentQualificationReadback(challenge: String, armGeneration: Long): Boolean {
         val words = challengeWords(challenge)
         return nativeRequestConcurrentStereoReadback(words[0], words[1], armGeneration)
@@ -65,6 +73,7 @@ object StereoBankControls {
     @JvmStatic private external fun nativeApply(policy: LongArray): Long
     @JvmStatic private external fun nativeArmConcurrentStereoQualification(hi: Long, lo: Long): Long
     @JvmStatic private external fun nativeReadConcurrentStereoQualification(): LongArray
+    @JvmStatic private external fun nativeReadConcurrentStereoDropouts(hi: Long, lo: Long, armGeneration: Long): String?
     @JvmStatic private external fun nativeRequestConcurrentStereoReadback(hi: Long, lo: Long, armGeneration: Long): Boolean
     @JvmStatic private external fun nativeDisarmConcurrentStereoQualification(hi: Long, lo: Long, armGeneration: Long): Boolean
 }
