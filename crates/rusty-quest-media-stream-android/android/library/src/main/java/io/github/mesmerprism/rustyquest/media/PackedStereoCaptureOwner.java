@@ -58,11 +58,67 @@ public final class PackedStereoCaptureOwner {
             this.detailCode = detailCode; this.elapsedNs = elapsedNs;
         }
     }
+    /** Camera2 callback cadence, including the exact results bracketing its worst arrival gap.
+     * This is diagnostic only: sensor timestamps and callback elapsed times stay in their
+     * separate clock domains, and no observation changes capture or source readiness. */
+    static final class CameraResultCadence {
+        private long count, lastNs, maxGapNs, lastIdentity;
+        private long lastFrameNumber, lastSensorNs;
+        private boolean lastSensorPresent, worstPresent;
+        private long worstFromNs, worstToNs, worstFromFrame, worstToFrame;
+        private long worstFromSensorNs, worstToSensorNs;
+        private boolean worstFromSensorPresent, worstToSensorPresent;
+
+        synchronized void observeAt(long elapsedNs, long sourceFrame,
+                long frameNumber, Long sensorTimestampNs) {
+            // Keep the legacy StageCadence validation and count semantics.
+            if (elapsedNs <= 0L || sourceFrame < 0L) return;
+            count++;
+            if (elapsedNs < lastNs) return;
+            boolean sensorPresent = sensorTimestampNs != null && sensorTimestampNs > 0L;
+            long sensorNs = sensorPresent ? sensorTimestampNs : 0L;
+            if (lastNs > 0L) {
+                long gapNs = elapsedNs - lastNs;
+                if (gapNs > maxGapNs) {
+                    maxGapNs = gapNs;
+                    worstPresent = true;
+                    worstFromNs = lastNs;
+                    worstToNs = elapsedNs;
+                    worstFromFrame = lastFrameNumber;
+                    worstToFrame = frameNumber;
+                    worstFromSensorPresent = lastSensorPresent;
+                    worstToSensorPresent = sensorPresent;
+                    worstFromSensorNs = lastSensorPresent ? lastSensorNs : 0L;
+                    worstToSensorNs = sensorNs;
+                }
+            }
+            lastNs = elapsedNs;
+            lastIdentity = sourceFrame;
+            lastFrameNumber = frameNumber;
+            lastSensorPresent = sensorPresent;
+            lastSensorNs = sensorNs;
+        }
+
+        synchronized JSONObject snapshot(long sampleNs) throws Exception {
+            long ageNs = lastNs == 0L || sampleNs < lastNs ? -1L : sampleNs - lastNs;
+            JSONObject worst = new JSONObject()
+                    .put("present", worstPresent)
+                    .put("from_callback_elapsed_ns", worstPresent ? worstFromNs : 0L)
+                    .put("to_callback_elapsed_ns", worstPresent ? worstToNs : 0L)
+                    .put("from_frame_number", worstPresent ? worstFromFrame : 0L)
+                    .put("to_frame_number", worstPresent ? worstToFrame : 0L)
+                    .put("from_sensor_timestamp_present", worstPresent && worstFromSensorPresent)
+                    .put("to_sensor_timestamp_present", worstPresent && worstToSensorPresent)
+                    .put("from_sensor_timestamp_ns", worstPresent ? worstFromSensorNs : 0L)
+                    .put("to_sensor_timestamp_ns", worstPresent ? worstToSensorNs : 0L);
+            return new JSONObject().put("count", count).put("last_elapsed_ns", lastNs)
+                    .put("max_gap_ns", maxGapNs).put("age_ns", ageNs)
+                    .put("last_identity", lastIdentity).put("worst_gap", worst);
+        }
+    }
     private volatile FirstFailure firstFailure;
-    private final PackedStereoGlCompositor.StageCadence leftCameraResults =
-            new PackedStereoGlCompositor.StageCadence();
-    private final PackedStereoGlCompositor.StageCadence rightCameraResults =
-            new PackedStereoGlCompositor.StageCadence();
+    private final CameraResultCadence leftCameraResults = new CameraResultCadence();
+    private final CameraResultCadence rightCameraResults = new CameraResultCadence();
     private final PackedStereoGlCompositor.StageCadence leftCameraMetadata =
             new PackedStereoGlCompositor.StageCadence();
     private final PackedStereoGlCompositor.StageCadence rightCameraMetadata =
@@ -381,11 +437,13 @@ public final class PackedStereoCaptureOwner {
             if (chosen != null) request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, chosen);
             session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
                 public void onCaptureCompleted(CameraCaptureSession active, CaptureRequest request, TotalCaptureResult result) {
-                    long sourceFrame = result.getFrameNumber() + 1L;
-                    PackedStereoGlCompositor.StageCadence raw =
-                            PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraResults : rightCameraResults;
-                    raw.observeAt(android.os.SystemClock.elapsedRealtimeNanos(), sourceFrame);
+                    long frameNumber = result.getFrameNumber();
+                    long sourceFrame = frameNumber + 1L;
                     Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
+                    long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
+                    CameraResultCadence raw =
+                            PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraResults : rightCameraResults;
+                    raw.observeAt(callbackElapsedNs, sourceFrame, frameNumber, timestamp);
                     if (!closeRequested && !stopRequested && timestamp != null && timestamp > 0) {
                         PackedStereoGlCompositor.StageCadence valid =
                                 PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraMetadata : rightCameraMetadata;
