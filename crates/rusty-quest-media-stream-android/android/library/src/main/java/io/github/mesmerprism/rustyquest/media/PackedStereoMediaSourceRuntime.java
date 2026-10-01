@@ -1019,7 +1019,6 @@ public final class PackedStereoMediaSourceRuntime {
         }
 
         boolean sourceFresh() {
-            long now=SystemClock.elapsedRealtime();
             if (sharedCapture != null) {
                 PackedStereoEncoderWorker worker = encoderWorker;
                 return state.startsWith("source_streaming_") && sharedCapture.fresh()
@@ -1028,12 +1027,12 @@ public final class PackedStereoMediaSourceRuntime {
             PackedStereoGlCompositor active = compositor;
             if (active == null || !state.startsWith("source_streaming_")) return false;
             if (synthetic) return active.syntheticFrames() >= 2L && active.composedFrames() >= 2L
-                    && active.compositionFresh(now);
+                    && active.compositionFreshNow();
             CameraEndpoint left = leftCamera;
             CameraEndpoint right = rightCamera;
             return left != null && right != null && left.hasChangingFrames() && right.hasChangingFrames()
-                    && left.fresh(now) && right.fresh(now) && active.composedFrames() >= 1L
-                    && active.compositionFresh(now);
+                    && left.freshNow() && right.freshNow() && active.composedFrames() >= 1L
+                    && active.compositionFreshNow();
         }
 
         boolean freshnessExpired() {
@@ -1333,6 +1332,9 @@ public final class PackedStereoMediaSourceRuntime {
         }
 
         boolean fresh(long nowElapsedMs) { return freshness.fresh(nowElapsedMs); }
+        boolean freshNow() {
+            return freshness.freshAtCurrentTime(SystemClock::elapsedRealtime);
+        }
 
         synchronized boolean hasChangingFrames() {
             return captureCount >= 2L && lastFrame > firstFrame

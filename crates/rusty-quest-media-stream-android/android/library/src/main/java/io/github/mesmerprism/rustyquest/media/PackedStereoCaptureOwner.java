@@ -121,7 +121,7 @@ public final class PackedStereoCaptureOwner {
     public boolean fresh() {
         PackedStereoGlCompositor current = compositor;
         return !stopRequested && failure == null && current != null
-                && current.compositionFresh(android.os.SystemClock.elapsedRealtime())
+                && current.compositionFreshNow()
                 && poolExecutor.ownImageFresh();
     }
 
@@ -132,7 +132,7 @@ public final class PackedStereoCaptureOwner {
         if (!stopRequested) mask |= 1;
         if (failure == null) mask |= 2;
         PackedStereoGlCompositor current = compositor;
-        if (current != null && current.compositionFresh(android.os.SystemClock.elapsedRealtime()))
+        if (current != null && current.compositionFreshNow())
             mask |= 4;
         try {
             if (poolExecutor.ownImageFresh()) mask |= 8;
