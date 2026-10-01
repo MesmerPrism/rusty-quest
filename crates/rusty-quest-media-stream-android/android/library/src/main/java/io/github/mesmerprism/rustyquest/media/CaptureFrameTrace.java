@@ -59,7 +59,7 @@ final class CaptureFrameTrace {
         boolean notificationMain;
         int notificationBatch;
         long handoffNs, consumeThreadId;
-        long pairId, pairedWithFrame;
+        long pairId, pairedWithFrame = -1L, pairedPeerArm = -1L;
         Frame(long number) { this.number = number; }
         JSONObject json() throws Exception {
             return new JSONObject().put("raw_frame_number", number)
@@ -81,7 +81,9 @@ final class CaptureFrameTrace {
                     .put("handoff_to_consume_ns", handoffNs > 0L && consumeEntryNs >= handoffNs
                             ? consumeEntryNs - handoffNs : -1L)
                     .put("consume_entry_ns", consumeEntryNs).put("consume_exit_ns", consumeExitNs)
-                    .put("pair_id", pairId).put("paired_with_raw_frame", pairedWithFrame);
+                    .put("pair_id", pairId).put("paired_with_raw_frame", pairedWithFrame)
+                    .put("paired_peer_arm_generation", pairedPeerArm)
+                    .put("paired_peer_epoch_join", pairedPeerArm > 0L ? "same_arm_exact_consumes" : "unavailable");
         }
     }
 
@@ -203,12 +205,30 @@ final class CaptureFrameTrace {
         if (token != epoch) { rejectedEpochEvents++; return; }
         approximateConsumes++; unmatchedConsumes++; handoffNotifications = 0;
     }
-    synchronized void paired(long token, long frame, long peerFrame, long pairId) {
-        if (token != epoch) { rejectedEpochEvents++; return; }
+    private Frame consumedFrame(long frame) {
         Frame record = find(frame);
-        if (record != null && record.consumeEntryNs > 0L && record.consumeEntryNs >= epochStartNs) {
-            record.pairId = pairId; record.pairedWithFrame = peerFrame;
-        }
+        return record != null && record.consumeEntryNs > 0L && record.consumeEntryNs >= epochStartNs
+                ? record : null;
+    }
+    // One fixed left-to-right lock order; reset cannot split the peer epoch check and write.
+    static void paired(CaptureFrameTrace left, long leftFrame, CaptureFrameTrace right,
+            long rightFrame, long pairId) {
+        if (left == null || right == null) return;
+        synchronized (left) { synchronized (right) {
+            Frame a = left.consumedFrame(leftFrame), b = right.consumedFrame(rightFrame);
+            boolean joined = a != null && b != null && left.armGeneration > 0L
+                    && left.armGeneration == right.armGeneration
+                    && left.appGeneration == right.appGeneration
+                    && left.processEpoch.equals(right.processEpoch);
+            if (a != null) {
+                a.pairId = pairId; a.pairedWithFrame = joined ? rightFrame : -1L;
+                a.pairedPeerArm = joined ? right.armGeneration : -1L;
+            }
+            if (b != null) {
+                b.pairId = pairId; b.pairedWithFrame = joined ? leftFrame : -1L;
+                b.pairedPeerArm = joined ? left.armGeneration : -1L;
+            }
+        } }
     }
     synchronized JSONObject snapshot() throws Exception {
         JSONArray retained = new JSONArray();

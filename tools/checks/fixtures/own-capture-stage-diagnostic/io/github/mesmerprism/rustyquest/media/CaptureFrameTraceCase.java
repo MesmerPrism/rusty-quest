@@ -15,6 +15,9 @@ public final class CaptureFrameTraceCase {
     }
     public static void main(String[] args) throws Exception {
         CaptureFrameTrace trace = new CaptureFrameTrace();
+        trace.arm("process-a", 7L, 4L, 1L);
+        CaptureFrameTrace peer = new CaptureFrameTrace();
+        peer.arm("process-a", 7L, 4L, 1L);
         trace.submission(100L, 110L, 8);
         for (int i = 0; i < 18; i++)
             complete(trace, i, 1_000_000_000L + i * 20_000_000L,
@@ -38,7 +41,10 @@ public final class CaptureFrameTraceCase {
         // A notification during update must belong to the next detached GL batch.
         trace.notified(trace.epoch(), late + 4L, 29L, true);
         trace.consumed(trace.epoch(), 18, late + 5L, late + 7L, 31L);
-        trace.paired(trace.epoch(), 18, 99, 73L);
+        complete(peer, 99L, late, 8_360_000_000L);
+        peer.handoff(late + 3L);
+        peer.consumed(peer.epoch(), 99L, late + 5L, late + 7L, 31L);
+        CaptureFrameTrace.paired(trace, 18L, peer, 99L, 73L);
         for (int i = 19; i < 23; i++)
             complete(trace, i, late + (i - 18) * 20_000_000L,
                     8_360_000_000L + (i - 18) * 20_000_000L);
@@ -104,7 +110,7 @@ public final class CaptureFrameTraceCase {
         approximate.notified(approximate.epoch(), 2_001L, 8L, false);
         approximate.handoff(2_002L);
         approximate.approximateConsume(approximate.epoch());
-        approximate.paired(approximate.epoch(), 3L, 4L, 5L);
+        CaptureFrameTrace.paired(approximate, 3L, peer, 99L, 5L);
         check(approximate.snapshot().getLong("approximate_surface_matches_without_frame_join") == 1L
                 && approximate.snapshot().getJSONArray("frames").getJSONObject(0).getLong("consume_entry_ns") == 0L
                 && approximate.snapshot().getJSONArray("frames").getJSONObject(0).getLong("pair_id") == 0L,
@@ -130,10 +136,10 @@ public final class CaptureFrameTraceCase {
         epoch.started(oldToken, 3L, 2_100_000_000L, 2_100_000_001L, 8L, false, 2_100_000_000L);
         epoch.notified(oldToken, 2_100_000_000L, 8L, false);
         epoch.consumed(oldToken, 3L, 2_100_000_000L, 2_100_000_001L, 9L);
-        epoch.paired(oldToken, 3L, 4L, 44L);
+        CaptureFrameTrace.paired(epoch, 3L, peer, 99L, 44L);
         JSONObject armed = epoch.snapshot();
         check(!armed.getBoolean("first_crossing_present") && armed.getJSONArray("frames").length() == 0
-                && armed.getLong("rejected_epoch_events") == 5L
+                && armed.getLong("rejected_epoch_events") == 4L
                 && armed.getString("process_epoch_id").equals("process-a")
                 && armed.getLong("app_generation") == 7L && armed.getLong("arm_generation") == 4L
                 && armed.getString("request_submission_epoch").equals("before_arm")
@@ -143,10 +149,20 @@ public final class CaptureFrameTraceCase {
         complete(epoch, 5L, 2_800_000_001L, 2_220_000_000L);
         check(epoch.snapshot().getLong("first_crossing_raw_frame") == 5L,
                 "current arm freezes its own first crossing");
+        peer.arm("process-a", 7L, 5L, late);
+        complete(peer, 99L, late + 20L, 8_360_000_020L);
+        peer.handoff(late + 30L);
+        peer.consumed(peer.epoch(), 99L, late + 40L, late + 50L, 31L);
+        CaptureFrameTrace.paired(trace, 18L, peer, 99L, 74L);
+        check(trace.snapshot().getJSONArray("frames").getJSONObject(3)
+                .getLong("paired_with_raw_frame") == -1L
+                && trace.snapshot().getJSONArray("frames").getJSONObject(3)
+                        .getString("paired_peer_epoch_join").equals("unavailable"),
+                "a foreign-arm exact consume cannot be labelled current-arm peer lineage");
         Thread writer = new Thread(() -> {
             for (int i = 0; i < 1_000; i++) {
                 trace.notified(trace.epoch(), i + 1L, 3L, false);
-                trace.paired(trace.epoch(), 18L, 99L, 73L);
+                CaptureFrameTrace.paired(trace, 18L, peer, 99L, 73L);
             }
         });
         writer.start();

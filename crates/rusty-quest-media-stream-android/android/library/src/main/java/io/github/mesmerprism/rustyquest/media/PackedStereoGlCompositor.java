@@ -615,10 +615,8 @@ final class PackedStereoGlCompositor implements Closeable {
     }
 
     private void recordAcceptedPair(PackedStereoFramePairer.Pair pair) {
-        if (leftFrameTrace != null) leftFrameTrace.paired(leftFrameTrace.epoch(), pair.left.sourceFrame - 1L,
-                pair.right.sourceFrame - 1L, pair.pairId);
-        if (rightFrameTrace != null) rightFrameTrace.paired(rightFrameTrace.epoch(), pair.right.sourceFrame - 1L,
-                pair.left.sourceFrame - 1L, pair.pairId);
+        CaptureFrameTrace.paired(leftFrameTrace, pair.left.sourceFrame - 1L,
+                rightFrameTrace, pair.right.sourceFrame - 1L, pair.pairId);
         lastPairLeftFrame = pair.left.sourceFrame;
         lastPairRightFrame = pair.right.sourceFrame;
         lastPairLeftSensorNs = pair.left.sensorTimestampNs;
