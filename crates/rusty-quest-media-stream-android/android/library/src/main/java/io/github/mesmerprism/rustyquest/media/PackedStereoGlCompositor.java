@@ -9,6 +9,7 @@ import android.opengl.EGLExt;
 import android.opengl.EGLSurface;
 import android.opengl.GLES20;
 import android.os.SystemClock;
+import android.os.Looper;
 import android.view.Surface;
 import org.json.JSONObject;
 
@@ -68,8 +69,10 @@ final class PackedStereoGlCompositor implements Closeable {
     private volatile long compositorTimeMaxNs;
     // Capture-owner observation only. Each stage has one writer; a status read is explicitly
     // non-atomic across stages and cannot confer frame or cleanup authority.
-    private final StageCadence leftSurfaceCallbacks = new StageCadence();
-    private final StageCadence rightSurfaceCallbacks = new StageCadence();
+    private final SurfaceCallbackCadence leftSurfaceCallbacks = new SurfaceCallbackCadence();
+    private final SurfaceCallbackCadence rightSurfaceCallbacks = new SurfaceCallbackCadence();
+    private final UpdateDurationPeak leftTextureUpdate = new UpdateDurationPeak();
+    private final UpdateDurationPeak rightTextureUpdate = new UpdateDurationPeak();
     private final StageCadence leftSurfaceConsumed = new StageCadence();
     private final StageCadence rightSurfaceConsumed = new StageCadence();
     private final StageCadence leftCorrelated = new StageCadence();
@@ -82,7 +85,7 @@ final class PackedStereoGlCompositor implements Closeable {
     private volatile long lastPairLeftSensorNs, lastPairRightSensorNs;
 
     /** One monotonic stage, with no gap asserted before its second real observation. */
-    static final class StageCadence {
+    static class StageCadence {
         private long count, lastNs, maxGapNs, lastIdentity;
 
         synchronized void observeAt(long elapsedNs, long identity) {
@@ -105,6 +108,71 @@ final class PackedStereoGlCompositor implements Closeable {
             return new JSONObject().put("count", count).put("last_elapsed_ns", lastNs)
                     .put("max_gap_ns", maxGapNs).put("age_ns", ageNs(sampleNs))
                     .put("last_identity", lastIdentity());
+        }
+    }
+
+    /** Exact callback-arrival bracket; dispatch thread is observed, not selected here. */
+    static final class SurfaceCallbackCadence extends StageCadence {
+        private long lastCallbackArrivalNs, maxCallbackGapNs;
+        private long lastThreadId, worstFromNs, worstToNs, worstFromThreadId, worstToThreadId;
+        private boolean lastMainLooper, worstPresent, worstFromMainLooper, worstToMainLooper;
+
+        synchronized void observeCallbackAt(long arrivalNs, long insideSignalNs,
+                long threadId, boolean onMainLooper) {
+            // Preserve the five existing StageCadence keys at their original in-lock point.
+            observeAt(insideSignalNs, 0L);
+            if (arrivalNs <= 0L || threadId <= 0L || arrivalNs < lastCallbackArrivalNs) return;
+            if (lastCallbackArrivalNs > 0L
+                    && arrivalNs - lastCallbackArrivalNs > maxCallbackGapNs) {
+                maxCallbackGapNs = arrivalNs - lastCallbackArrivalNs;
+                worstPresent = true;
+                worstFromNs = lastCallbackArrivalNs;
+                worstToNs = arrivalNs;
+                worstFromThreadId = lastThreadId;
+                worstToThreadId = threadId;
+                worstFromMainLooper = lastMainLooper;
+                worstToMainLooper = onMainLooper;
+            }
+            lastCallbackArrivalNs = arrivalNs;
+            lastThreadId = threadId;
+            lastMainLooper = onMainLooper;
+        }
+
+        @Override synchronized JSONObject snapshot(long sampleNs) throws Exception {
+            return super.snapshot(sampleNs)
+                    .put("last_callback_elapsed_ns", lastCallbackArrivalNs)
+                    .put("max_callback_gap_ns", maxCallbackGapNs)
+                    .put("last_thread_id", lastThreadId)
+                    .put("last_on_main_looper", lastMainLooper)
+                    .put("worst_gap", new JSONObject()
+                            .put("present", worstPresent)
+                            .put("from_callback_elapsed_ns", worstPresent ? worstFromNs : 0L)
+                            .put("to_callback_elapsed_ns", worstPresent ? worstToNs : 0L)
+                            .put("from_thread_id", worstPresent ? worstFromThreadId : 0L)
+                            .put("to_thread_id", worstPresent ? worstToThreadId : 0L)
+                            .put("from_on_main_looper", worstPresent && worstFromMainLooper)
+                            .put("to_on_main_looper", worstPresent && worstToMainLooper));
+        }
+    }
+
+    /** Successful updateTexImage wall duration in the Android elapsed clock. */
+    static final class UpdateDurationPeak {
+        private long count, maxDurationNs, maxEntryNs, maxExitNs;
+        synchronized void observeAt(long entryNs, long exitNs) {
+            if (entryNs <= 0L || exitNs < entryNs) return;
+            count++;
+            long durationNs = exitNs - entryNs;
+            if (durationNs > maxDurationNs) {
+                maxDurationNs = durationNs;
+                maxEntryNs = entryNs;
+                maxExitNs = exitNs;
+            }
+        }
+        synchronized JSONObject snapshot() throws Exception {
+            return new JSONObject().put("count", count)
+                    .put("max_duration_ns", maxDurationNs)
+                    .put("max_entry_elapsed_ns", maxEntryNs)
+                    .put("max_exit_elapsed_ns", maxExitNs);
         }
     }
 
@@ -228,6 +296,8 @@ final class PackedStereoGlCompositor implements Closeable {
         return new JSONObject()
                 .put("left_surface_callback", leftSurfaceCallbacks.snapshot(sampleNs))
                 .put("right_surface_callback", rightSurfaceCallbacks.snapshot(sampleNs))
+                .put("left_update_tex_image", leftTextureUpdate.snapshot())
+                .put("right_update_tex_image", rightTextureUpdate.snapshot())
                 .put("left_surface_consumed", leftSurfaceConsumed.snapshot(sampleNs))
                 .put("right_surface_consumed", rightSurfaceConsumed.snapshot(sampleNs))
                 .put("left_correlated", leftCorrelated.snapshot(sampleNs))
@@ -293,8 +363,15 @@ final class PackedStereoGlCompositor implements Closeable {
                         new SurfaceTexture.OnFrameAvailableListener() {
                             @Override
                             public void onFrameAvailable(SurfaceTexture texture) {
+                                long callbackElapsedNs = SystemClock.elapsedRealtimeNanos();
+                                long callbackThreadId = Thread.currentThread().getId();
+                                Looper callbackLooper = Looper.myLooper();
+                                boolean onMainLooper = callbackLooper != null
+                                        && callbackLooper == Looper.getMainLooper();
                                 synchronized (signal) {
-                                    leftSurfaceCallbacks.observeAt(SystemClock.elapsedRealtimeNanos(), 0L);
+                                    leftSurfaceCallbacks.observeCallbackAt(
+                                            callbackElapsedNs, SystemClock.elapsedRealtimeNanos(),
+                                            callbackThreadId, onMainLooper);
                                     leftPending++;
                                     signal.notifyAll();
                                 }
@@ -304,8 +381,15 @@ final class PackedStereoGlCompositor implements Closeable {
                         new SurfaceTexture.OnFrameAvailableListener() {
                             @Override
                             public void onFrameAvailable(SurfaceTexture texture) {
+                                long callbackElapsedNs = SystemClock.elapsedRealtimeNanos();
+                                long callbackThreadId = Thread.currentThread().getId();
+                                Looper callbackLooper = Looper.myLooper();
+                                boolean onMainLooper = callbackLooper != null
+                                        && callbackLooper == Looper.getMainLooper();
                                 synchronized (signal) {
-                                    rightSurfaceCallbacks.observeAt(SystemClock.elapsedRealtimeNanos(), 0L);
+                                    rightSurfaceCallbacks.observeCallbackAt(
+                                            callbackElapsedNs, SystemClock.elapsedRealtimeNanos(),
+                                            callbackThreadId, onMainLooper);
                                     rightPending++;
                                     signal.notifyAll();
                                 }
@@ -382,7 +466,11 @@ final class PackedStereoGlCompositor implements Closeable {
             CaptureCorrelation correlation,
             String eye) throws Exception {
         gl.makePbufferCurrent();
+        long updateEntryNs = SystemClock.elapsedRealtimeNanos();
         input.surfaceTexture.updateTexImage();
+        long updateExitNs = SystemClock.elapsedRealtimeNanos();
+        (PackedStereoFramePairer.LEFT.equals(eye) ? leftTextureUpdate : rightTextureUpdate)
+                .observeAt(updateEntryNs, updateExitNs);
         long timestampNs = input.surfaceTexture.getTimestamp();
         (PackedStereoFramePairer.LEFT.equals(eye) ? leftSurfaceConsumed : rightSurfaceConsumed)
                 .observeAt(SystemClock.elapsedRealtimeNanos(), Math.max(0L, timestampNs));

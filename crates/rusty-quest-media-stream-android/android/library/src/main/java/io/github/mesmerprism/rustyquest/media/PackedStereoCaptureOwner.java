@@ -8,6 +8,7 @@ import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
+import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.OutputConfiguration;
 import android.hardware.camera2.params.SessionConfiguration;
@@ -68,15 +69,63 @@ public final class PackedStereoCaptureOwner {
         private long worstFromNs, worstToNs, worstFromFrame, worstToFrame;
         private long worstFromSensorNs, worstToSensorNs;
         private boolean worstFromSensorPresent, worstToSensorPresent;
+        private boolean successorPending, successorPresent;
+        private long successorNs, successorFrame, successorSensorNs;
+        private boolean successorSensorPresent;
+        private boolean largestSensorGapPresent;
+        private long largestSensorGapNs, sensorGapFromNs, sensorGapToNs;
+        private long sensorGapFromFrame, sensorGapToFrame;
+        private long sensorGapFromTimestampNs, sensorGapToTimestampNs;
+        private long lastExposureNs, lastFrameDurationNs;
+        private long worstFromExposureNs, worstToExposureNs, successorExposureNs;
+        private long worstFromFrameDurationNs, worstToFrameDurationNs, successorFrameDurationNs;
+        private long sensorGapFromExposureNs, sensorGapToExposureNs;
+        private long sensorGapFromFrameDurationNs, sensorGapToFrameDurationNs;
 
         synchronized void observeAt(long elapsedNs, long sourceFrame,
                 long frameNumber, Long sensorTimestampNs) {
+            observeAt(elapsedNs, sourceFrame, frameNumber,
+                    sensorTimestampNs != null && sensorTimestampNs > 0L,
+                    sensorTimestampNs == null ? 0L : sensorTimestampNs.longValue(), 0L, 0L);
+        }
+
+        synchronized void observeAt(long elapsedNs, long sourceFrame,
+                long frameNumber, Long sensorTimestampNs, Long exposureTimeNs,
+                Long frameDurationNs) {
+            observeAt(elapsedNs, sourceFrame, frameNumber,
+                    sensorTimestampNs != null && sensorTimestampNs > 0L,
+                    sensorTimestampNs == null ? 0L : sensorTimestampNs.longValue(),
+                    exposureTimeNs == null ? 0L : exposureTimeNs.longValue(),
+                    frameDurationNs == null ? 0L : frameDurationNs.longValue());
+        }
+
+        synchronized void observeAt(long elapsedNs, long sourceFrame,
+                long frameNumber, long sensorTimestampNs) {
+            observeAt(elapsedNs, sourceFrame, frameNumber,
+                    sensorTimestampNs > 0L, sensorTimestampNs, 0L, 0L);
+        }
+
+        private void observeAt(long elapsedNs, long sourceFrame,
+                long frameNumber, boolean suppliedSensorPresent, long suppliedSensorNs,
+                long suppliedExposureNs, long suppliedFrameDurationNs) {
             // Keep the legacy StageCadence validation and count semantics.
             if (elapsedNs <= 0L || sourceFrame < 0L) return;
             count++;
             if (elapsedNs < lastNs) return;
-            boolean sensorPresent = sensorTimestampNs != null && sensorTimestampNs > 0L;
-            long sensorNs = sensorPresent ? sensorTimestampNs : 0L;
+            boolean sensorPresent = suppliedSensorPresent && suppliedSensorNs > 0L;
+            long sensorNs = sensorPresent ? suppliedSensorNs : 0L;
+            long exposureNs = Math.max(0L, suppliedExposureNs);
+            long frameDurationNs = Math.max(0L, suppliedFrameDurationNs);
+            if (successorPending) {
+                successorPending = false;
+                successorPresent = true;
+                successorNs = elapsedNs;
+                successorFrame = frameNumber;
+                successorSensorPresent = sensorPresent;
+                successorSensorNs = sensorNs;
+                successorExposureNs = exposureNs;
+                successorFrameDurationNs = frameDurationNs;
+            }
             if (lastNs > 0L) {
                 long gapNs = elapsedNs - lastNs;
                 if (gapNs > maxGapNs) {
@@ -90,6 +139,33 @@ public final class PackedStereoCaptureOwner {
                     worstToSensorPresent = sensorPresent;
                     worstFromSensorNs = lastSensorPresent ? lastSensorNs : 0L;
                     worstToSensorNs = sensorNs;
+                    worstFromExposureNs = lastExposureNs;
+                    worstToExposureNs = exposureNs;
+                    worstFromFrameDurationNs = lastFrameDurationNs;
+                    worstToFrameDurationNs = frameDurationNs;
+                    successorPending = true;
+                    successorPresent = false;
+                    successorNs = successorFrame = successorSensorNs = 0L;
+                    successorSensorPresent = false;
+                    successorExposureNs = successorFrameDurationNs = 0L;
+                }
+                if (lastSensorPresent && sensorPresent && frameNumber > lastFrameNumber
+                        && sensorNs > lastSensorNs) {
+                    long sensorGapNs = sensorNs - lastSensorNs;
+                    if (sensorGapNs > largestSensorGapNs) {
+                        largestSensorGapPresent = true;
+                        largestSensorGapNs = sensorGapNs;
+                        sensorGapFromNs = lastNs;
+                        sensorGapToNs = elapsedNs;
+                        sensorGapFromFrame = lastFrameNumber;
+                        sensorGapToFrame = frameNumber;
+                        sensorGapFromTimestampNs = lastSensorNs;
+                        sensorGapToTimestampNs = sensorNs;
+                        sensorGapFromExposureNs = lastExposureNs;
+                        sensorGapToExposureNs = exposureNs;
+                        sensorGapFromFrameDurationNs = lastFrameDurationNs;
+                        sensorGapToFrameDurationNs = frameDurationNs;
+                    }
                 }
             }
             lastNs = elapsedNs;
@@ -97,6 +173,8 @@ public final class PackedStereoCaptureOwner {
             lastFrameNumber = frameNumber;
             lastSensorPresent = sensorPresent;
             lastSensorNs = sensorNs;
+            lastExposureNs = exposureNs;
+            lastFrameDurationNs = frameDurationNs;
         }
 
         synchronized JSONObject snapshot(long sampleNs) throws Exception {
@@ -110,15 +188,74 @@ public final class PackedStereoCaptureOwner {
                     .put("from_sensor_timestamp_present", worstPresent && worstFromSensorPresent)
                     .put("to_sensor_timestamp_present", worstPresent && worstToSensorPresent)
                     .put("from_sensor_timestamp_ns", worstPresent ? worstFromSensorNs : 0L)
-                    .put("to_sensor_timestamp_ns", worstPresent ? worstToSensorNs : 0L);
+                    .put("to_sensor_timestamp_ns", worstPresent ? worstToSensorNs : 0L)
+                    .put("successor_present", worstPresent && successorPresent)
+                    .put("successor_callback_elapsed_ns", successorPresent ? successorNs : 0L)
+                    .put("successor_frame_number", successorPresent ? successorFrame : 0L)
+                    .put("successor_sensor_timestamp_present", successorPresent && successorSensorPresent)
+                    .put("successor_sensor_timestamp_ns", successorPresent ? successorSensorNs : 0L)
+                    .put("from_exposure_time_present", worstPresent && worstFromExposureNs > 0L)
+                    .put("from_exposure_time_ns", worstPresent ? worstFromExposureNs : 0L)
+                    .put("to_exposure_time_present", worstPresent && worstToExposureNs > 0L)
+                    .put("to_exposure_time_ns", worstPresent ? worstToExposureNs : 0L)
+                    .put("successor_exposure_time_present", successorPresent && successorExposureNs > 0L)
+                    .put("successor_exposure_time_ns", successorPresent ? successorExposureNs : 0L)
+                    .put("from_frame_duration_present", worstPresent && worstFromFrameDurationNs > 0L)
+                    .put("from_frame_duration_ns", worstPresent ? worstFromFrameDurationNs : 0L)
+                    .put("to_frame_duration_present", worstPresent && worstToFrameDurationNs > 0L)
+                    .put("to_frame_duration_ns", worstPresent ? worstToFrameDurationNs : 0L)
+                    .put("successor_frame_duration_present", successorPresent && successorFrameDurationNs > 0L)
+                    .put("successor_frame_duration_ns", successorPresent ? successorFrameDurationNs : 0L);
+            JSONObject sensorGap = new JSONObject()
+                    .put("present", largestSensorGapPresent)
+                    .put("gap_ns", largestSensorGapPresent ? largestSensorGapNs : 0L)
+                    .put("from_callback_elapsed_ns", largestSensorGapPresent ? sensorGapFromNs : 0L)
+                    .put("to_callback_elapsed_ns", largestSensorGapPresent ? sensorGapToNs : 0L)
+                    .put("from_frame_number", largestSensorGapPresent ? sensorGapFromFrame : 0L)
+                    .put("to_frame_number", largestSensorGapPresent ? sensorGapToFrame : 0L)
+                    .put("from_sensor_timestamp_ns", largestSensorGapPresent ? sensorGapFromTimestampNs : 0L)
+                    .put("to_sensor_timestamp_ns", largestSensorGapPresent ? sensorGapToTimestampNs : 0L)
+                    .put("from_exposure_time_present", largestSensorGapPresent && sensorGapFromExposureNs > 0L)
+                    .put("from_exposure_time_ns", largestSensorGapPresent ? sensorGapFromExposureNs : 0L)
+                    .put("to_exposure_time_present", largestSensorGapPresent && sensorGapToExposureNs > 0L)
+                    .put("to_exposure_time_ns", largestSensorGapPresent ? sensorGapToExposureNs : 0L)
+                    .put("from_frame_duration_present", largestSensorGapPresent && sensorGapFromFrameDurationNs > 0L)
+                    .put("from_frame_duration_ns", largestSensorGapPresent ? sensorGapFromFrameDurationNs : 0L)
+                    .put("to_frame_duration_present", largestSensorGapPresent && sensorGapToFrameDurationNs > 0L)
+                    .put("to_frame_duration_ns", largestSensorGapPresent ? sensorGapToFrameDurationNs : 0L);
             return new JSONObject().put("count", count).put("last_elapsed_ns", lastNs)
                     .put("max_gap_ns", maxGapNs).put("age_ns", ageNs)
-                    .put("last_identity", lastIdentity).put("worst_gap", worst);
+                    .put("last_identity", lastIdentity).put("worst_gap", worst)
+                    .put("max_adjacent_sensor_gap", sensorGap);
+        }
+    }
+    /** Camera2 failure callbacks are counted, never converted into capture-owner failure. */
+    static final class CameraFailureCadence {
+        private long count, lastElapsedNs, lastFrameNumber;
+        private int lastReason;
+        synchronized void observeAt(long elapsedNs, long frameNumber, int reason) {
+            count++;
+            if (elapsedNs > 0L && elapsedNs >= lastElapsedNs) {
+                lastElapsedNs = elapsedNs;
+                lastFrameNumber = frameNumber;
+                lastReason = reason;
+            }
+        }
+        synchronized JSONObject snapshot() throws Exception {
+            return new JSONObject().put("count", count).put("last_elapsed_ns", lastElapsedNs)
+                    .put("last_frame_number", lastFrameNumber).put("last_reason", lastReason);
         }
     }
     private volatile FirstFailure firstFailure;
     private final CameraResultCadence leftCameraResults = new CameraResultCadence();
     private final CameraResultCadence rightCameraResults = new CameraResultCadence();
+    private final CameraResultCadence leftCameraStarted = new CameraResultCadence();
+    private final CameraResultCadence rightCameraStarted = new CameraResultCadence();
+    private final CameraFailureCadence leftCameraFailed = new CameraFailureCadence();
+    private final CameraFailureCadence rightCameraFailed = new CameraFailureCadence();
+    private volatile int leftTimestampSource = -1, rightTimestampSource = -1;
+    private volatile boolean leftFpsRangePresent, rightFpsRangePresent;
+    private volatile int leftFpsLower, leftFpsUpper, rightFpsLower, rightFpsUpper;
     private final PackedStereoGlCompositor.StageCadence leftCameraMetadata =
             new PackedStereoGlCompositor.StageCadence();
     private final PackedStereoGlCompositor.StageCadence rightCameraMetadata =
@@ -282,6 +419,19 @@ public final class PackedStereoCaptureOwner {
                 .put("first_failure_elapsed_ns", first == null ? 0L : first.elapsedNs)
                 .put("left_camera_result", leftCameraResults.snapshot(sampleNs))
                 .put("right_camera_result", rightCameraResults.snapshot(sampleNs))
+                .put("left_camera_started", leftCameraStarted.snapshot(sampleNs))
+                .put("right_camera_started", rightCameraStarted.snapshot(sampleNs))
+                .put("left_camera_failed", leftCameraFailed.snapshot())
+                .put("right_camera_failed", rightCameraFailed.snapshot())
+                .put("left_camera_timestamp_source", leftTimestampSource)
+                .put("right_camera_timestamp_source", rightTimestampSource)
+                .put("requested_frame_rate", frameRate)
+                .put("left_ae_fps_range_present", leftFpsRangePresent)
+                .put("left_ae_fps_range_lower", leftFpsRangePresent ? leftFpsLower : 0)
+                .put("left_ae_fps_range_upper", leftFpsRangePresent ? leftFpsUpper : 0)
+                .put("right_ae_fps_range_present", rightFpsRangePresent)
+                .put("right_ae_fps_range_lower", rightFpsRangePresent ? rightFpsLower : 0)
+                .put("right_ae_fps_range_upper", rightFpsRangePresent ? rightFpsUpper : 0)
                 .put("left_camera_metadata", leftCameraMetadata.snapshot(sampleNs))
                 .put("right_camera_metadata", rightCameraMetadata.snapshot(sampleNs));
         if (current != null) result.put("compositor", current.captureDiagnosticSnapshot(sampleNs));
@@ -369,6 +519,18 @@ public final class PackedStereoCaptureOwner {
 
         void open(CameraManager manager, Surface surface, Handler handler) throws Exception {
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(id);
+            Integer rawTimestampSource = null;
+            try {
+                rawTimestampSource = characteristics.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE);
+            } catch (RuntimeException ignored) {
+                // Optional timing provenance cannot prevent opening a valid camera.
+            }
+            int timestampSource = rawTimestampSource == null ? -1
+                    : rawTimestampSource == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_UNKNOWN
+                        || rawTimestampSource == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME
+                        ? rawTimestampSource : -2;
+            if (PackedStereoFramePairer.LEFT.equals(eye)) leftTimestampSource = timestampSource;
+            else rightTimestampSource = timestampSource;
             StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             boolean exact = false;
             Size[] sizes = map == null ? null : map.getOutputSizes(SurfaceTexture.class);
@@ -434,22 +596,52 @@ public final class PackedStereoCaptureOwner {
             if (ranges != null) for (Range<Integer> range : ranges)
                 if (range.contains(frameRate) && (chosen == null
                         || range.getUpper() - range.getLower() < chosen.getUpper() - chosen.getLower())) chosen = range;
-            if (chosen != null) request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, chosen);
+            if (chosen != null) {
+                request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, chosen);
+                if (PackedStereoFramePairer.LEFT.equals(eye)) {
+                    leftFpsLower = chosen.getLower(); leftFpsUpper = chosen.getUpper();
+                    leftFpsRangePresent = true;
+                } else {
+                    rightFpsLower = chosen.getLower(); rightFpsUpper = chosen.getUpper();
+                    rightFpsRangePresent = true;
+                }
+            }
             session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
+                public void onCaptureStarted(CameraCaptureSession active, CaptureRequest request,
+                        long timestamp, long frameNumber) {
+                    long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
+                    CameraResultCadence raw = PackedStereoFramePairer.LEFT.equals(eye)
+                            ? leftCameraStarted : rightCameraStarted;
+                    raw.observeAt(callbackElapsedNs, frameNumber + 1L, frameNumber, timestamp);
+                }
                 public void onCaptureCompleted(CameraCaptureSession active, CaptureRequest request, TotalCaptureResult result) {
                     long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
                     long frameNumber = result.getFrameNumber();
                     long sourceFrame = frameNumber + 1L;
                     Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
+                    Long exposureTimeNs = null, frameDurationNs = null;
+                    try { exposureTimeNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME); }
+                    catch (RuntimeException ignored) { /* Optional diagnostic only. */ }
+                    try { frameDurationNs = result.get(CaptureResult.SENSOR_FRAME_DURATION); }
+                    catch (RuntimeException ignored) { /* Optional diagnostic only. */ }
                     CameraResultCadence raw =
                             PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraResults : rightCameraResults;
-                    raw.observeAt(callbackElapsedNs, sourceFrame, frameNumber, timestamp);
+                    raw.observeAt(callbackElapsedNs, sourceFrame, frameNumber,
+                            timestamp, exposureTimeNs, frameDurationNs);
                     if (!closeRequested && !stopRequested && timestamp != null && timestamp > 0) {
                         PackedStereoGlCompositor.StageCadence valid =
                                 PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraMetadata : rightCameraMetadata;
                         valid.observeAt(android.os.SystemClock.elapsedRealtimeNanos(), sourceFrame);
                         compositor.recordCapture(eye, sourceFrame, timestamp);
                     }
+                }
+                public void onCaptureFailed(CameraCaptureSession active, CaptureRequest request,
+                        CaptureFailure captureFailure) {
+                    long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
+                    CameraFailureCadence raw = PackedStereoFramePairer.LEFT.equals(eye)
+                            ? leftCameraFailed : rightCameraFailed;
+                    raw.observeAt(callbackElapsedNs,
+                            captureFailure.getFrameNumber(), captureFailure.getReason());
                 }
             }, handler);
         }
