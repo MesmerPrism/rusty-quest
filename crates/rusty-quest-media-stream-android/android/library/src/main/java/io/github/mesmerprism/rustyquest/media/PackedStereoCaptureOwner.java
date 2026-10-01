@@ -439,8 +439,8 @@ public final class PackedStereoCaptureOwner {
                 public void onCaptureCompleted(CameraCaptureSession active, CaptureRequest request, TotalCaptureResult result) {
                     long frameNumber = result.getFrameNumber();
                     long sourceFrame = frameNumber + 1L;
-                    Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
                     long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
+                    Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
                     CameraResultCadence raw =
                             PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraResults : rightCameraResults;
                     raw.observeAt(callbackElapsedNs, sourceFrame, frameNumber, timestamp);
