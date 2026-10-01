@@ -217,6 +217,63 @@ final class EmbeddedDuplexProcessHost {
     CompletableFuture<String> concurrentQualification(boolean arm, String challenge) {
         return concurrentQualificationOnLane(arm, challenge, false, null, null);
     }
+    /** Bounded debug-only observation; a current arm is checked twice across lane turns. */
+    CompletableFuture<String> ownCaptureDiagnostic(String challenge) {
+        return concurrentQualificationOnLane(false, challenge, false, null, null)
+                .thenCompose(firstReceipt -> submit(() -> {
+                    requireFreshProcess();
+                    Phase currentPhase = phase.get();
+                    EmbeddedDuplexResources retained = resources;
+                    if ((currentPhase != Phase.READY && currentPhase != Phase.FAILED)
+                            || localFixture || retained == null || !retained.ownAppCaptureEnabled()) {
+                        throw new IllegalStateException("Own capture diagnostic unavailable");
+                    }
+                    processFence.requireLive(processFence.generation());
+                    JSONObject first = new JSONObject(firstReceipt);
+                    String epoch = processFence.epochId();
+                    if (!challenge.equals(first.getString("challenge"))
+                            || !epoch.equals(first.getString("process_epoch_id"))
+                            || !runtimeConfigSha256.equals(first.getString("runtime_config_sha256"))
+                            || !ownFeatureLockSha256.equals(first.getString("feature_lock_sha256"))) {
+                        throw new IllegalStateException("Own capture diagnostic lineage changed");
+                    }
+                    JSONObject qualification = new JSONObject(ConcurrentStereoQualification.status(
+                            challenge, epoch, runtimeConfigSha256, ownFeatureLockSha256,
+                            first.getString("apk_sha256")));
+                    if (qualification.getLong("arm_generation") != first.getLong("arm_generation")
+                            || qualification.getLong("native_process_generation")
+                            != first.getLong("native_process_generation")) {
+                        throw new IllegalStateException("Own capture diagnostic native process or arm changed");
+                    }
+                    long sampleStartNs = android.os.SystemClock.elapsedRealtimeNanos();
+                    JSONObject source = retained.sourceSnapshot();
+                    long sampleEndNs = android.os.SystemClock.elapsedRealtimeNanos();
+                    if (!source.getBoolean("shared_app_capture")) {
+                        throw new IllegalStateException("Own capture diagnostic source differs");
+                    }
+                    JSONObject report = new JSONObject()
+                            .put("schema", "rusty.quest.embedded_duplex.own_capture_diagnostic.v1")
+                            .put("challenge", challenge)
+                            .put("process_epoch_id", epoch)
+                            .put("consistency", "sequential_non_atomic_observation")
+                            .put("java_clock", "android_elapsedRealtimeNanos")
+                            .put("native_clock", "CLOCK_MONOTONIC")
+                            .put("sample_start_elapsed_ns", sampleStartNs)
+                            .put("sample_end_elapsed_ns", sampleEndNs)
+                            .put("sample_wall_ms", System.currentTimeMillis())
+                            .put("qualification", qualification)
+                            .put("own_capture_stage", source.getJSONObject("own_capture_stage_diagnostic"))
+                            .put("codec_output_with_pair", source.getJSONObject("codec_output_with_pair"))
+                            .put("encoded_frames", source.getLong("encoded_frames"))
+                            .put("video_packet_count", source.getLong("video_packet_count"))
+                            .put("last_packet_age_ms", source.getLong("last_packet_age_ms"));
+                    String exact = report.toString();
+                    if (exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 32 * 1024) {
+                        throw new IllegalStateException("Own capture diagnostic bounds");
+                    }
+                    return exact;
+                }));
+    }
     CompletableFuture<String> concurrentPolicy(String challenge, long[] policy) {
         return concurrentQualificationOnLane(false, challenge, true, policy == null ? null : policy.clone(), null);
     }

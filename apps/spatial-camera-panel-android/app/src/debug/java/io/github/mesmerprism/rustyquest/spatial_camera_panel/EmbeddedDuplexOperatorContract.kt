@@ -12,6 +12,7 @@ internal object EmbeddedDuplexOperatorContract {
   const val METHOD_REVIEW = "review"
   const val METHOD_CONFIRM = "confirm"
   const val METHOD_RUNTIME_STATUS = "runtime_status"
+  const val METHOD_OWN_CAPTURE_DIAGNOSTIC = "own_capture_diagnostic"
   const val METHOD_BOOTSTRAP_REAL_PEER = "bootstrap_real_peer"
   const val METHOD_CLOSE_NO_MEDIA = "close_no_media"
   const val METHOD_PAIR_STATUS = "pair_status"
@@ -35,7 +36,7 @@ internal object EmbeddedDuplexOperatorContract {
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
   enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
-    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, POLICY_READ, POLICY_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
+    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWN_CAPTURE_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
   data class Request(
       val route: Route,
       val challenge: String,
@@ -59,6 +60,7 @@ internal object EmbeddedDuplexOperatorContract {
       METHOD_REVIEW -> Route.REVIEW
       METHOD_CONFIRM -> Route.CONFIRM
       METHOD_RUNTIME_STATUS -> Route.RUNTIME_STATUS
+      METHOD_OWN_CAPTURE_DIAGNOSTIC -> Route.OWN_CAPTURE_DIAGNOSTIC
       METHOD_BOOTSTRAP_REAL_PEER -> Route.BOOTSTRAP_REAL_PEER
       METHOD_CLOSE_NO_MEDIA -> Route.CLOSE_NO_MEDIA
       METHOD_PAIR_STATUS -> Route.PAIR_STATUS
@@ -81,7 +83,7 @@ internal object EmbeddedDuplexOperatorContract {
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
       Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.CLOSE_NO_MEDIA,
-      Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.POLICY_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
+      Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.OWN_CAPTURE_DIAGNOSTIC, Route.POLICY_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
       Route.POLICY_UPDATE -> setOf("center", "middle", "outer", "geometry", "brightness", "strength")
     }
     require(fields.keys == expected) { "operator-fields-invalid" }
@@ -95,6 +97,7 @@ internal object EmbeddedDuplexOperatorContract {
     }
     if (route in setOf(Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE)) return Request(route, argument)
     if (route == Route.POLICY_READ || route == Route.CONCURRENT_ARM || route == Route.CONCURRENT_STATUS ||
+        route == Route.OWN_CAPTURE_DIAGNOSTIC ||
         route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER ||
         route == Route.CLOSE_NO_MEDIA || route == Route.PAIR_STATUS ||
         route == Route.PAIR_SESSION || route == Route.START_PREFLIGHT)

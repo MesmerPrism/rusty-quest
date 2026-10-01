@@ -14,6 +14,11 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentQualification(false, challenge);
     }
 
+    /** Debug shell observation only; does not advance an owner or media readiness state. */
+    public static CompletableFuture<String> ownCaptureDiagnostic(Context context, String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).ownCaptureDiagnostic(challenge);
+    }
+
     public static CompletableFuture<String> concurrentPolicy(Context context, String challenge, long[] policy) {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentPolicy(challenge, policy);
     }
