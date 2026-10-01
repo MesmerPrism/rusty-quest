@@ -144,16 +144,11 @@ final class EmbeddedDuplexPlatform {
     // retained by native GlobalRef and is never exported through an Android component.
     enum OwnerStage { NONE, CALLBACK_FENCE, PROJECTION_BINDING, REGISTRY_BINDING,
         INCOMING_FENCE, LOCAL_QUIESCENCE, PROVIDER_EXECUTION, RECEIPT_VERIFICATION, INCOMING_ARM_VERIFICATION }
-    private volatile OwnerStage failedOwnerStage = OwnerStage.NONE;
-    private volatile String failedSinkStage = "NONE";
-    private volatile String failedOwnerAction = "NONE";
-    private volatile ProviderReason failedProviderReason = ProviderReason.NONE;
+    private final FailureState failureState = new FailureState();
     enum ProviderReason { NONE, TICKET_PARSE, STALE_GENERATION, UNDECLARED_BINDING,
         REGISTRY_CLOSED, PROVIDER_BUSY, CAPACITY, PREPARATION_ALREADY_ATTEMPTED,
         FOREIGN_READBACK, RECEIPT_COLLISION, DISPLAY_LOCAL_SHUTDOWN, DISPLAY_DISPATCH_FENCED, DISPLAY_TRANSITION_TIMEOUT, DISPLAY_ADMISSION_REJECTED, DISPLAY_NATIVE_ACTIVE_EPOCH, DISPLAY_NATIVE_ACTIVE_STATE, DISPLAY_NATIVE_BOUNDS, DISPLAY_NATIVE_CAPTURE, DISPLAY_NATIVE_CARRIER, DISPLAY_NATIVE_CLOCK, DISPLAY_NATIVE_FRAME_ABSENT, DISPLAY_NATIVE_FRAME_EPOCH, DISPLAY_NATIVE_FRAME_FUTURE, DISPLAY_NATIVE_FRAME_STALE, DISPLAY_NATIVE_INPUT, DISPLAY_NATIVE_LOCAL, DISPLAY_NATIVE_PROCESS_EPOCH, DISPLAY_NATIVE_SOURCE_STATE, DISPLAY_NATIVE_SUPERSEDED, DISPLAY_OWN_CAPTURE_STATE, DISPLAY_OWN_CAPTURE_FRESH, DISPLAY_OWN_CARRIER_SUPERSEDED, DISPLAY_NATIVE_SHAPE, DISPLAY_ROUTING_SUPERSEDED, OTHER }
     // Fixed owner-local categories only. Never return or log exception messages or ticket fields.
-    private volatile String failedOwnerKind = "NONE";
-    private volatile String failedCause = "NONE";
     static String failureCategory(Throwable failure) {
         boolean state = false;
         for (int depth = 0; failure != null && depth < 8; depth++, failure = failure.getCause()) {
@@ -211,11 +206,7 @@ final class EmbeddedDuplexPlatform {
         return ProviderReason.OTHER;
     }
     public String ownerFailureDiagnostic() throws Exception {
-        return new JSONObject().put("stage", failedOwnerStage.name())
-                .put("sink_stage", failedSinkStage).put("action", failedOwnerAction)
-                .put("provider_reason", failedProviderReason.name()).put("owner", failedOwnerKind)
-                .put("cause", failedCause).put("code", failedOwnerStage == OwnerStage.NONE
-                        ? "NONE" : "OWNER_EFFECT_REJECTED").toString();
+        return failureState.document();
     }
     public String executeAndVerify(String authorityJson, String ticketJson, boolean compensate) throws Exception {
         OwnerStage stage = OwnerStage.CALLBACK_FENCE;
@@ -265,30 +256,66 @@ final class EmbeddedDuplexPlatform {
         result.put("verified", new JSONObject(verified));
         return result.toString();
         } catch (Exception failure) {
-            // Retain the primary failure within this incarnation. Cleanup failures must not erase it.
-            synchronized (this) {
-                if (failedOwnerStage == OwnerStage.NONE) {
-                    EmbeddedDuplexResources currentResources = resources;
-                    failedSinkStage = ticket != null && "sink".equals(ticket.ownerKind())
-                            && currentResources != null ? currentResources.incoming().failedArmStage() : "NONE";
-                    String kind = ticket == null ? "NONE" : ticket.actionKind();
-                    failedOwnerAction = "arm_receiver".equals(kind) ? "ARM_RECEIVER"
-                            : "arm_cleanup".equals(kind) ? "ARM_CLEANUP" : "start".equals(kind) ? "START"
-                            : "stop".equals(kind) ? "STOP" : "cleanup".equals(kind) ? "CLEANUP" : "BEFORE_TICKET";
-                    failedProviderReason = stage == OwnerStage.PROVIDER_EXECUTION
-                            ? providerReason(failure) : ProviderReason.NONE;
-                    failedOwnerKind = ticket == null ? "NONE" : ticket.ownerKind();
-                    failedCause = stage == OwnerStage.PROVIDER_EXECUTION ? failureCategory(failure) : "NONE";
-                    failedOwnerStage = stage;
-                }
-            }
-            android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=owner-effect-rejected stage="
-                    + stage.name() + " primaryStage=" + failedOwnerStage.name() + " primaryAction=" + failedOwnerAction
-                    + " sinkStage=" + failedSinkStage + " providerReason=" + failedProviderReason.name()
-                    + " code=OWNER_EFFECT_REJECTED");
+            recordOwnerFailure(stage, ticket, failure);
             throw failure;
         }
     }
+
+    static final class FailureState {
+        private volatile OwnerStage failedOwnerStage = OwnerStage.NONE;
+        private volatile String failedSinkStage = "NONE";
+        private volatile String failedOwnerAction = "NONE";
+        private volatile ProviderReason failedProviderReason = ProviderReason.NONE;
+        private volatile String failedOwnerKind = "NONE";
+        private volatile String failedCause = "NONE";
+        synchronized String document() throws Exception {
+            return new JSONObject().put("stage", failedOwnerStage.name())
+                    .put("sink_stage", failedSinkStage).put("action", failedOwnerAction)
+                    .put("provider_reason", failedProviderReason.name()).put("owner", failedOwnerKind)
+                    .put("cause", failedCause).put("code", failedOwnerStage == OwnerStage.NONE
+                        ? "NONE" : "OWNER_EFFECT_REJECTED").toString();
+        }
+        // Actual callback failures only; this holder adds no completion or authority claim.
+        void record(OwnerStage stage, MediaOwnerAction ticket, String sinkStage, Exception failure) {
+            try {
+            synchronized (this) {
+                if (failedOwnerStage == OwnerStage.NONE) {
+                    String kind = ticket == null ? "NONE" : ticket.actionKind();
+                    String action = "arm_receiver".equals(kind) ? "ARM_RECEIVER"
+                            : "arm_cleanup".equals(kind) ? "ARM_CLEANUP" : "start".equals(kind) ? "START"
+                            : "stop".equals(kind) ? "STOP" : "cleanup".equals(kind) ? "CLEANUP" : "BEFORE_TICKET";
+                    ProviderReason reason = stage == OwnerStage.PROVIDER_EXECUTION
+                            ? providerReason(failure) : ProviderReason.NONE;
+                    String cause = stage == OwnerStage.PROVIDER_EXECUTION ? failureCategory(failure) : "NONE";
+                    failedSinkStage = sinkStage;
+                    failedOwnerAction = action;
+                    failedProviderReason = reason;
+                    failedOwnerKind = ticket == null ? "NONE" : ticket.ownerKind();
+                    failedCause = cause;
+                    failedOwnerStage = stage;
+                }
+            }
+            } catch (RuntimeException diagnosticFailure) {
+                // A diagnostic accessor cannot replace the original callback failure.
+            }
+        }
+    }
+
+    private void recordOwnerFailure(OwnerStage stage, MediaOwnerAction ticket, Exception failure) {
+        try {
+        EmbeddedDuplexResources currentResources = resources;
+        String sinkStage = ticket != null && "sink".equals(ticket.ownerKind())
+                && currentResources != null ? currentResources.incoming().failedArmStage() : "NONE";
+        failureState.record(stage, ticket, sinkStage, failure);
+        android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=owner-effect-rejected stage="
+                + stage.name() + " primaryStage=" + failureState.failedOwnerStage.name() + " primaryAction=" + failureState.failedOwnerAction
+                + " sinkStage=" + failureState.failedSinkStage + " providerReason=" + failureState.failedProviderReason.name()
+                + " code=OWNER_EFFECT_REJECTED");
+        } catch (RuntimeException diagnosticFailure) {
+            // Preserve the original callback exception even if diagnostics are unavailable.
+        }
+    }
+
 
     // Public visibility is required by the native ProductActivationRegistry callback.
     public String activateProduct(String activationId, String authorityJson, String proofJson)
@@ -332,9 +359,13 @@ final class EmbeddedDuplexPlatform {
     /** Fixed native v2 callback; target identity is preserved independently of requester. */
     public String executeRetainedCleanupAndVerify(String authorityJson, String ticketJson,
             boolean compensate) throws Exception {
+        OwnerStage stage = OwnerStage.CALLBACK_FENCE;
+        MediaOwnerAction ticket = null;
+        try {
         requireProcessCallback();
         JSONObject authority = new JSONObject(authorityJson);
-        MediaOwnerAction ticket = MediaOwnerAction.parse(ticketJson);
+        ticket = MediaOwnerAction.parse(ticketJson);
+        stage = OwnerStage.PROJECTION_BINDING;
         if (!"rusty.quest.android.media.retained_cleanup_projection.v2".equals(authority.getString("$schema"))
                 || !localPeerId.equals(authority.getString("executor_peer_id"))
                 || authority.getLong("expires_at_ms") <= System.currentTimeMillis()
@@ -351,16 +382,25 @@ final class EmbeddedDuplexPlatform {
                 && !ticket.leaseId().equals(authority.getString("requester_runtime_lease_id")))) {
             throw new IllegalStateException("retained cleanup requester binding rejected");
         }
+        stage = OwnerStage.REGISTRY_BINDING;
         PackagedAndroidMediaOwnerRegistry current = registry;
         if (current == null) throw new IllegalStateException("platform registry absent");
         EmbeddedDuplexActivationGate gate = activationGate;
+        stage = OwnerStage.INCOMING_FENCE;
         if (gate != null) gate.beforeOwnerEffect(authority, activationTicket(ticket), compensate);
+        stage = OwnerStage.CALLBACK_FENCE;
         requireProcessCallback();
+        stage = OwnerStage.PROVIDER_EXECUTION;
         String readback = current.execute(ticketJson, compensate);
+        stage = OwnerStage.RECEIPT_VERIFICATION;
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
         if (verified == null) throw new IllegalStateException("retained cleanup live evidence rejected");
         return new JSONObject().put("readback", new JSONObject(readback))
                 .put("readback_json", readback).put("verified", new JSONObject(verified)).toString();
+        } catch (Exception failure) {
+            recordOwnerFailure(stage, ticket, failure);
+            throw failure;
+        }
     }
 
     public synchronized void persistCleanupPreparations(String snapshotJson) throws Exception {
