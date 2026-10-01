@@ -17,6 +17,11 @@ public final class JSONObject {
         return this;
     }
 
+    public JSONObject put(String key, int value) {
+        values.put(key, value);
+        return this;
+    }
+
     public JSONObject put(String key, Object value) {
         values.put(key, value);
         return this;
