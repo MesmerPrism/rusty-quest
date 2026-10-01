@@ -149,6 +149,10 @@ final class PackedStereoGlCompositor implements Closeable {
         return compositionFreshness.fresh(nowElapsedMs);
     }
 
+    boolean compositionFreshNow() {
+        return compositionFreshness.freshAtCurrentTime(SystemClock::elapsedRealtime);
+    }
+
     long syntheticFrames() {
         return syntheticFrames;
     }
