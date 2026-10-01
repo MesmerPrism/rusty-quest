@@ -141,3 +141,107 @@ Compilation establishes only that this composition builds. A complete transport
 check uses separate source and sink roles from the assembled specification, then
 the app-owned device receipts must establish both directions, render switching,
 renewal, interruption/retry and physical cleanup.
+
+## Embedded diagnostic producer/consumer regression
+
+`tools/checks/Test-EmbeddedDuplexDiagnosticProducerConsumer.ps1` compiles the
+selected actual Java Platform, Registry, ticket, binding and readback sources,
+then feeds their full diagnostic getter payload into the extracted actual Rust
+closed parser. It also checks that the JNI string consumer delegates to that
+parser. Run this focused check when changing either side of this diagnostic
+seam; it is separate from the build and device routes above.
+
+Supply `-RepoRoot`, `-JavaHome`, `-CompiledOwnerClassPath`, `-HostJsonJar`,
+`-RustCompiler`, `-RustDependencyDirectory`, `-SerdeJsonLibrary` and a fresh
+`-OutputDirectory`. The classpath contains the selected app/SDK dependencies;
+the host JSON jar and serde_json library are existing host artifacts. Run in
+an environment with the selected Rust compiler's linker prerequisites. The
+check downloads nothing and records the selected source and artifact hashes.
+
+A parsed ticket reaches an actual Registry callback whose mock provider returns
+foreign readback; the actual classifier feeds the actual getter. Every compiled
+ProviderReason value follows the same getter, then the actual parser checks
+legacy compatibility, closed fields/values and the 256-byte bound. Reflection
+transfers diagnostic state into the getter to exclude constructor effects.
+This proves the exercised producer/parser seam, not complete Platform dispatch,
+JNI invocation, physical effects, Android compilation or streaming readiness.
+
+`tools/checks/Test-EmbeddedDuplexConcurrentPeerCaller.ps1` compiles the current
+Kotlin Display/Router and Java Receiver/Registry before exercising the complete
+concurrent Own-to-Peer preparation caller. Its happy case must preserve Own;
+non-live/stale Own, absent native actor proof, native local quiescence failure,
+and fenced dispatch must reject with the retained Receiver failure stage. The
+exclusive Local shutdown guard remains a separate rejection.
+
+Pass explicit JDK, Kotlin compiler classpath, compiled owner dependencies, host
+JSON jar, optional Kotlin friend paths, and a fresh output directory. The fixture
+uses actual capture freshness/deadline methods with injected pool freshness and
+mocked Own instance, Looper/clock and JNI observations. It proves no camera,
+renderer, network, physical cleanup or JNI execution. Timeout coverage checks
+the closed exception category, not a timed wait. This focused owner regression
+is callable independently; it is not a new APK or lifecycle prerequisite.
+
+`tools/checks/Test-EmbeddedDuplexAdmissionJniCaller.ps1` reuses the concurrent
+caller fixture and compiles current Kotlin/Java callers against an actual host
+JVM JNI library. The library extracts the owning admission/getter functions
+and uses the actual source/input-set and peer-route modules. It checks coherent
+clock/read interleaving, strict freshness/epoch/carrier rejection, and closed
+Java pre-JNI versus native first-failure reasons. Supply the existing Java/Kotlin
+dependencies, Python/Cargo executables, an absent run-owned native target path
+(short enough for the host linker), and an absent output directory. Cargo uses
+locked offline `jni` 0.21.1. Physical actors, clock and Looper remain fixtures;
+this proves no Android JNI supplier composition, physical device cause or duplex
+acceptance and adds no APK prerequisite. The host fixture explicitly exits after
+assertions because actual supplier executors have no fixture shutdown route.
+
+The same JNI caller check includes default Local initialization, stale polling
+and the extracted actual Activity Local stop branch. Local intent generation
+and its later native retirement generation remain separate: the concurrent
+proof binds both counters and exact native carrier words, then rechecks both
+before Peer reservation. A fresh JVM isolates that native source-owner case;
+prior-native-counter and substituted-word negatives retain the guards. The
+Activity carrier/Surface and physical actors are fixture suppliers; Pending
+Local retirement does not become terminal cleanup evidence.
+
+The same focused concurrent caller check accepts `-NativeSharedOwnerRegression`
+with an explicit Rust compiler and Python executable. This opt-in case retains
+default Local1, stale polling, native Disabled2 and released ingress binding,
+then joins the live Own source-set actor with the exact current native carrier
+for Peer3. It compiles the current Kotlin/Java caller and extracts the owning
+native selection, admission, bound-release, actor-stop and receipt-CAS bodies.
+Thirteen native owner cases and five rejection cases with no ingress binding
+check actor and predecessor receipt preservation. Capture/frame/clock/window
+observations and platform SDK effects are mocks; this proves no Android JNI
+invocation, camera, render, network or headset readiness. It is a focused owner
+regression, not a new qualification prerequisite.
+
+`Test-PackedStereoRasterOrientation.ps1 -ProcessorStartRegression` optionally
+compiles the current Java Registry, OwnerSet, shared-capture Pipeline/Runtime,
+EncoderWorker and capture subscription caller. Supply the existing JDK, compiled
+owner dependency classpath and host JSON library. It consumes retained actual
+ANGLE WebGL1 compiler results only for exact matching public shader strings;
+the prior reserved sampler fails and the current sampler links and attaches.
+Missing codec, stale subscription and rejected EGL config remain failures.
+Route/socket/codec effects, EGL/window and capture observations are mocked.
+This check needs no browser and proves no Android GLES, encoding, network,
+rendered frames or physical cleanup; it adds no universal prerequisite.
+
+`Test-EmbeddedDuplexConcurrentPeerCaller.ps1 -ActivationReadinessRegression`
+optionally runs the actual compiled Registry/Receiver/activation gate caller,
+including a temporary one-read historical counterexample and the bounded
+current acquisition join. Zero ingress, timeout, expiry, cancellation, foreign
+identity/proof, Pending Effective and reentry reject. Typed cause and closed
+receiver counts are checked without exposing failure detail. Codec, transport
+and native callbacks are mocks; no JNI or headset effect is established. The
+existing optional processor check also exercises the actual encoder failure
+listener's closed source diagnostic. Neither adds a universal prerequisite.
+
+`Test-EmbeddedDuplexConcurrentPeerCaller.ps1 -TransportDiagnosticRegression`
+optionally runs only the current compiled Registry/OwnerSet/Source socket and
+Receiver diagnostic cases over real loopback TCP, with a synthetic
+2560x1280 packed profile and bounded full-size packets. Refusal, header IO,
+EOF, mixed IO then decoder-config failure, and failed source header writing
+retain first/final closed observations before and after Stop. Android
+lifecycle and decoder configuration are mocked; this proves no H264 decode,
+JNI, headset LAN, rendered frames, physical cleanup or field failure cause.
+It uses explicit host dependencies and adds no universal prerequisite.

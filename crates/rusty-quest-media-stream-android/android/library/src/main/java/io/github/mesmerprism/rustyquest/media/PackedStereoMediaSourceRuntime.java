@@ -343,6 +343,10 @@ public final class PackedStereoMediaSourceRuntime {
         volatile PackedStereoCaptureOwner sharedCapture;
         volatile long captureConsumerGeneration;
         volatile PackedStereoEncoderWorker encoderWorker;
+        // Sole source-thread ownership; retain the exact acquired index if its
+        // release throws. No successor dequeue or EOS may guess it released.
+        int pendingEncoderOutput = -1;
+        String firstStopDrainFailure = "";
         volatile HandlerThread cameraThread;
         volatile CameraEndpoint leftCamera;
         volatile CameraEndpoint rightCamera;
@@ -473,13 +477,28 @@ public final class PackedStereoMediaSourceRuntime {
         }
 
         void startSource() {
-            sourceThread = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    sourceLoop();
-                }
-            }, "rusty-packed-source-runtime");
-            sourceThread.start();
+            synchronized (lifecycleLock) {
+                if (stopRequested || sourceThread != null) throw new IllegalStateException("source already started or stopping");
+                sourceThread = new Thread(new Runnable() {
+                    @Override public void run() { sourceLoop(); }
+                }, "rusty-packed-source-runtime");
+                sourceThread.start();
+            }
+        }
+
+        void ensureStopDrainOwner() {
+            synchronized (lifecycleLock) {
+                if (sourceThread != null && sourceThread.isAlive()) return;
+                PackedStereoEncoderWorker worker = encoderWorker;
+                if (pendingEncoderOutput < 0 && (worker == null || worker.isPhysicallyRetired())) return;
+                // A partial Start may attach encoder input before Source starts.
+                // Resume only physical cleanup, with one published codec owner;
+                // never reopen cameras or start a new product source here.
+                sourceThread = new Thread(new Runnable() {
+                    @Override public void run() { finishSourceStop(); }
+                }, "rusty-packed-source-runtime");
+                sourceThread.start();
+            }
         }
 
         @Override
@@ -611,14 +630,6 @@ public final class PackedStereoMediaSourceRuntime {
                     Thread.sleep(2L);
                 }
                 sourceLoopOperation = PackedSourceFailureCode.Operation.STOP_DRAIN;
-                fenceSharedEncoder();
-                PackedStereoEncoderWorker inputWorker = encoderWorker;
-                while (inputWorker != null && !inputWorker.isPhysicallyRetired()) Thread.sleep(10L);
-                try {
-                    encoder.signalEndOfInputStream();
-                    drainEncoder(true);
-                } catch (Exception ignored) {
-                }
                 if (!"failed".equals(state)) {
                     state = "stopped";
                     closeReason = closeReason.isEmpty() ? "stop_requested" : closeReason;
@@ -631,8 +642,74 @@ public final class PackedStereoMediaSourceRuntime {
                     state = "failed";
                 }
             } finally {
-                releaseLocalResources();
+                // This thread is the sole codec output consumer. Keep it alive
+                // through input retirement, including an interrupted/failed
+                // source loop: a full output queue can block the input worker's
+                // Surface submission. Stop callers may time out as Pending but
+                // must not remove the drain needed to reach the real barrier.
+                stopRequested = true;
+                fenceSharedEncoder();
+                finishSourceStop();
             }
+        }
+
+        void finishSourceStop() {
+            PackedStereoEncoderWorker worker = encoderWorker;
+            drainUntilEncoderInputRetired(worker);
+            if (worker != null && !worker.isPhysicallyRetired()) {
+                throw new IllegalStateException("encoder physical input remains Pending");
+            }
+            try {
+                if (encoder != null) {
+                    encoder.signalEndOfInputStream();
+                    drainEncoder(true);
+                }
+            } catch (Exception ignored) {
+                // Input is physically retired; codec release below still
+                // has its own positive cleanup barrier.
+            }
+            // EOS draining can also acquire an output whose release throws.
+            // Retire that exact index on this same owner before codec cleanup.
+            drainUntilEncoderInputRetired(worker);
+            releaseLocalResources();
+        }
+
+        void drainUntilEncoderInputRetired(PackedStereoEncoderWorker worker) {
+            while (pendingEncoderOutput >= 0 || (worker != null && !worker.isPhysicallyRetired())) {
+                try {
+                    // Release one available output per iteration. No transport,
+                    // payload copy or pair lookup is needed after Stop, and no
+                    // second thread may consume this codec's output.
+                    MediaCodec codec = encoder;
+                    if (codec != null) {
+                        if (pendingEncoderOutput >= 0) {
+                            releaseEncoderOutput(codec, pendingEncoderOutput);
+                        } else {
+                            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                            int status = codec.dequeueOutputBuffer(info, ENCODER_DRAIN_TIMEOUT_US);
+                            if (status >= 0) releaseEncoderOutput(codec, status);
+                        }
+                    }
+                } catch (Exception pending) {
+                    if (firstStopDrainFailure.isEmpty()) {
+                        firstStopDrainFailure = boundedStopDrainFailure("encoder output drain remains Pending: ", pending);
+                        if (!"failed".equals(state)) markStopFailure(firstStopDrainFailure);
+                    }
+                }
+                try { Thread.sleep(10L); }
+                catch (InterruptedException ignored) { /* interruption is not physical retirement */ }
+            }
+        }
+
+        void releaseEncoderOutput(MediaCodec codec, int index) {
+            pendingEncoderOutput = index;
+            codec.releaseOutputBuffer(index, false);
+            pendingEncoderOutput = -1;
+        }
+
+        String boundedStopDrainFailure(String prefix, Throwable failure) {
+            String message = safeMessage(failure);
+            return prefix + message.substring(0, Math.min(256, message.length()));
         }
 
         void onCameraTerminal() {
@@ -661,47 +738,66 @@ public final class PackedStereoMediaSourceRuntime {
                     continue;
                 }
                 sourceLoopOperation = PackedSourceFailureCode.Operation.ENCODER_GET_OUTPUT;
-                ByteBuffer buffer = encoder.getOutputBuffer(status);
-                if (buffer != null && info.size > 0) {
-                    byte[] payload = new byte[info.size];
-                    buffer.position(info.offset);
-                    buffer.limit(info.offset + info.size);
-                    buffer.get(payload);
-                    boolean codecConfig = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
-                    PackedStereoStreamMetadata.PairRecord pair = codecConfig
-                            ? PackedStereoStreamMetadata.PairRecord.CODEC_CONFIG
-                            : takePair(info.presentationTimeUs);
-                    if (pair == null) {
-                        encodedPacketsWithoutPair++;
-                    } else {
-                        sourceLoopOperation = PackedSourceFailureCode.Operation.PAIR_VALIDATE;
-                        pair.validate(codecConfig, layout.maxPairDeltaNs);
-                        if (!codecConfig) {
-                            // Codec output has an exact pair here; transport may still reject its offer.
-                            codecOutputsWithPair.observeAt(
-                                    SystemClock.elapsedRealtimeNanos(), pair.pairId);
-                        }
-                        if (codecConfig) {
-                            cachedCodecConfig = payload.clone();
-                            cachedCodecConfigPtsUs = info.presentationTimeUs;
-                            cachedCodecConfigFlags = info.flags;
-                        }
-                        sourceLoopOperation = PackedSourceFailureCode.Operation.PACKET_OFFER;
-                        writePacket(
-                                info.presentationTimeUs,
-                                info.flags,
-                                pair,
-                                payload,
-                                SystemClock.elapsedRealtimeNanos(),
-                                System.currentTimeMillis() * 1_000_000L);
-                        if (!codecConfig) {
-                            encodedFrames++;
+                boolean outputEos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                Throwable processingFailure = null;
+                PackedSourceFailureCode.Operation processingOperation = sourceLoopOperation;
+                try {
+                    ByteBuffer buffer = encoder.getOutputBuffer(status);
+                    if (buffer != null && info.size > 0) {
+                        byte[] payload = new byte[info.size];
+                        buffer.position(info.offset);
+                        buffer.limit(info.offset + info.size);
+                        buffer.get(payload);
+                        boolean codecConfig = (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
+                        PackedStereoStreamMetadata.PairRecord pair = codecConfig
+                                ? PackedStereoStreamMetadata.PairRecord.CODEC_CONFIG
+                                : takePair(info.presentationTimeUs);
+                        if (pair == null) {
+                            encodedPacketsWithoutPair++;
+                        } else {
+                            sourceLoopOperation = PackedSourceFailureCode.Operation.PAIR_VALIDATE;
+                            pair.validate(codecConfig, layout.maxPairDeltaNs);
+                            if (!codecConfig) {
+                                // Codec output has an exact pair here; transport may still reject its offer.
+                                codecOutputsWithPair.observeAt(
+                                        SystemClock.elapsedRealtimeNanos(), pair.pairId);
+                            }
+                            if (codecConfig) {
+                                cachedCodecConfig = payload.clone();
+                                cachedCodecConfigPtsUs = info.presentationTimeUs;
+                                cachedCodecConfigFlags = info.flags;
+                            }
+                            sourceLoopOperation = PackedSourceFailureCode.Operation.PACKET_OFFER;
+                            writePacket(
+                                    info.presentationTimeUs,
+                                    info.flags,
+                                    pair,
+                                    payload,
+                                    SystemClock.elapsedRealtimeNanos(),
+                                    System.currentTimeMillis() * 1_000_000L);
+                            if (!codecConfig) {
+                                encodedFrames++;
+                            }
                         }
                     }
+                } catch (Throwable failure) {
+                    processingFailure = failure;
+                    processingOperation = sourceLoopOperation;
+                    throw failure;
+                } finally {
+                    try {
+                        sourceLoopOperation = PackedSourceFailureCode.Operation.ENCODER_RELEASE;
+                        releaseEncoderOutput(encoder, status);
+                    } catch (Throwable releaseFailure) {
+                        if (processingFailure == null) throw releaseFailure;
+                        if (firstStopDrainFailure.isEmpty()) {
+                            firstStopDrainFailure = boundedStopDrainFailure("encoder output release remains Pending: ", releaseFailure);
+                        }
+                        processingFailure.addSuppressed(releaseFailure);
+                    } finally {
+                        if (processingFailure != null) sourceLoopOperation = processingOperation;
+                    }
                 }
-                boolean outputEos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
-                sourceLoopOperation = PackedSourceFailureCode.Operation.ENCODER_RELEASE;
-                encoder.releaseOutputBuffer(status, false);
                 if (outputEos) {
                     break;
                 }
@@ -1089,10 +1185,12 @@ public final class PackedStereoMediaSourceRuntime {
             retryUnresolvedConnection();
             requestCameraClose(leftCamera);
             requestCameraClose(rightCamera);
+            ensureStopDrainOwner();
             Thread source = sourceThread;
             Thread accept = acceptThread;
             HandlerThread camera = cameraThread;
-            if (source != null) source.interrupt();
+            // sourceLoop owns the codec drain through positive encoder input
+            // retirement. Interrupting it here can strand a blocked submission.
             if (accept != null) accept.interrupt();
             if (camera != null) camera.quitSafely();
             join(source);

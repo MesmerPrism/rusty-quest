@@ -219,6 +219,12 @@ final class EmbeddedDuplexProcessHost {
     }
     /** Bounded debug-only observation; a current arm is checked twice across lane turns. */
     CompletableFuture<String> ownCaptureDiagnostic(String challenge) {
+        return captureDiagnostic(challenge, false);
+    }
+    CompletableFuture<String> streamDropoutDiagnostic(String challenge) {
+        return captureDiagnostic(challenge, true);
+    }
+    private CompletableFuture<String> captureDiagnostic(String challenge, boolean dropoutOnly) {
         return concurrentQualificationOnLane(false, challenge, false, null, null)
                 .thenCompose(firstReceipt -> submit(() -> {
                     requireFreshProcess();
@@ -247,6 +253,29 @@ final class EmbeddedDuplexProcessHost {
                     }
                     long sampleStartNs = android.os.SystemClock.elapsedRealtimeNanos();
                     JSONObject armContext = new JSONObject(ConcurrentStereoQualification.diagnosticArmContext(challenge, epoch));
+                    if (dropoutOnly) {
+                        JSONObject nativeObservation = new JSONObject(ConcurrentStereoQualification.dropoutObservation(challenge, epoch));
+                        JSONObject javaObservation = retained.sourceDropoutSnapshot();
+                        EmbeddedDuplexDropoutLineage.requireCurrent(javaObservation, epoch,
+                                processFence.generation(), qualification.getLong("arm_generation"));
+                        JSONObject report = new JSONObject()
+                                .put("schema", "rusty.quest.embedded_duplex.stream_dropout_diagnostic.v1")
+                                .put("qualification_claimed", false)
+                                .put("challenge", challenge).put("process_epoch_id", epoch)
+                                .put("app_generation", processFence.generation())
+                                .put("arm_generation", qualification.getLong("arm_generation"))
+                                .put("consistency", "sequential_non_atomic_observation")
+                                .put("sample_start_elapsed_ns", sampleStartNs)
+                                .put("sample_end_elapsed_ns", android.os.SystemClock.elapsedRealtimeNanos())
+                                .put("qualification", qualification)
+                                .put("native_dropout_observation", nativeObservation)
+                                .put("java_dropout_observation", javaObservation);
+                        String exact = report.toString();
+                        if (exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 32 * 1024) {
+                            throw new IllegalStateException("Stream dropout diagnostic bounds");
+                        }
+                        return exact;
+                    }
                     JSONObject source = retained.sourceSnapshot();
                     long sampleEndNs = android.os.SystemClock.elapsedRealtimeNanos();
                     if (!source.getBoolean("shared_app_capture")) {
