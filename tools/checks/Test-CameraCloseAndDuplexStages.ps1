@@ -13,13 +13,14 @@ $suffix = if ($IsWindows) { '.exe' } else { '' }
 $java = Join-Path $JavaHome "bin/java$suffix"
 $javac = Join-Path $JavaHome "bin/javac$suffix"
 $camera = Join-Path $repo 'crates/rusty-quest-media-stream-android/android/library/src/main/java/io/github/mesmerprism/rustyquest/media/PackedStereoCaptureOwner.java'
+$trace = Join-Path $repo 'crates/rusty-quest-media-stream-android/android/library/src/main/java/io/github/mesmerprism/rustyquest/media/CaptureFrameTrace.java'
 $app = Join-Path $repo 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex'
 $receiver = Join-Path $app 'EmbeddedDuplexReceiver.java'
 $platform = Join-Path $app 'EmbeddedDuplexPlatform.java'
 $cameraFixtures = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'fixtures/camera-close') -Filter '*.java' -File -Recurse | ForEach-Object FullName)
 $cameraClasses = Join-Path $output 'camera-close-classes'
 $null = New-Item -ItemType Directory -Path $cameraClasses
-& $javac --release 8 '-Xlint:all' -Werror -d $cameraClasses @cameraFixtures $camera 1> (Join-Path $output 'camera-compile.stdout') 2> (Join-Path $output 'camera-compile.stderr')
+& $javac --release 8 '-Xlint:all' -Werror -d $cameraClasses @cameraFixtures $camera $trace 1> (Join-Path $output 'camera-compile.stdout') 2> (Join-Path $output 'camera-compile.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'camera callback fixture compilation failed' }
 & $java -cp $cameraClasses 'io.github.mesmerprism.rustyquest.media.CaptureCloseTest' 1> (Join-Path $output 'camera-test.stdout') 2> (Join-Path $output 'camera-test.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'camera callback fixture failed' }

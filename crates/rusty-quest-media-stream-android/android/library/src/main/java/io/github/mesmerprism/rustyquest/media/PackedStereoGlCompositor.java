@@ -49,6 +49,8 @@ final class PackedStereoGlCompositor implements Closeable {
     private final PackedStereoFramePairer pairer;
     private final CaptureCorrelation leftCorrelation = new CaptureCorrelation();
     private final CaptureCorrelation rightCorrelation = new CaptureCorrelation();
+    private final CaptureFrameTrace leftFrameTrace;
+    private final CaptureFrameTrace rightFrameTrace;
     private final CountDownLatch ready = new CountDownLatch(1);
     private final Thread thread;
 
@@ -186,22 +188,31 @@ final class PackedStereoGlCompositor implements Closeable {
             Surface encoderInputSurface,
             boolean synthetic,
             Listener listener) throws Exception {
-        this(layout, encoderInputSurface, synthetic, listener, null);
+        this(layout, encoderInputSurface, synthetic, listener, null, null, null);
     }
 
     PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
             PackedStereoPoolExecutor executor, Listener listener) throws Exception {
-        this(layout, null, false, listener, executor);
+        this(layout, null, false, listener, executor, null, null);
+    }
+
+    PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
+            PackedStereoPoolExecutor executor, Listener listener,
+            CaptureFrameTrace leftTrace, CaptureFrameTrace rightTrace) throws Exception {
+        this(layout, null, false, listener, executor, leftTrace, rightTrace);
     }
 
     private PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
             Surface encoderInputSurface, boolean synthetic, Listener listener,
-            PackedStereoPoolExecutor executor) throws Exception {
+            PackedStereoPoolExecutor executor, CaptureFrameTrace leftTrace,
+            CaptureFrameTrace rightTrace) throws Exception {
         this.layout = layout;
         this.poolExecutor = executor;
         this.encoderInputSurface = encoderInputSurface;
         this.synthetic = synthetic;
         this.listener = listener;
+        this.leftFrameTrace = leftTrace;
+        this.rightFrameTrace = rightTrace;
         this.pairer = new PackedStereoFramePairer(RING_SIZE - 2, layout.maxPairDeltaNs);
         this.thread = new Thread(new Runnable() {
             @Override
@@ -372,6 +383,8 @@ final class PackedStereoGlCompositor implements Closeable {
                                     leftSurfaceCallbacks.observeCallbackAt(
                                             callbackElapsedNs, SystemClock.elapsedRealtimeNanos(),
                                             callbackThreadId, onMainLooper);
+                                    if (leftFrameTrace != null) leftFrameTrace.notified(
+                                            callbackElapsedNs, callbackThreadId, onMainLooper);
                                     leftPending++;
                                     signal.notifyAll();
                                 }
@@ -390,6 +403,8 @@ final class PackedStereoGlCompositor implements Closeable {
                                     rightSurfaceCallbacks.observeCallbackAt(
                                             callbackElapsedNs, SystemClock.elapsedRealtimeNanos(),
                                             callbackThreadId, onMainLooper);
+                                    if (rightFrameTrace != null) rightFrameTrace.notified(
+                                            callbackElapsedNs, callbackThreadId, onMainLooper);
                                     rightPending++;
                                     signal.notifyAll();
                                 }
@@ -428,6 +443,9 @@ final class PackedStereoGlCompositor implements Closeable {
                     }
                     consumeLeft = leftPending;
                     consumeRight = rightPending;
+                    long handoffNs = SystemClock.elapsedRealtimeNanos();
+                    if (consumeLeft > 0 && leftFrameTrace != null) leftFrameTrace.handoff(handoffNs);
+                    if (consumeRight > 0 && rightFrameTrace != null) rightFrameTrace.handoff(handoffNs);
                     leftPending = 0;
                     rightPending = 0;
                     request = syntheticRequest;
@@ -481,6 +499,9 @@ final class PackedStereoGlCompositor implements Closeable {
         gl.snapshotExternal(input.externalTexture, transform, input.snapshotTextures[slot]);
         CaptureFrame capture = correlation.match(timestampNs, 20L);
         if (capture == null) {
+            CaptureFrameTrace missingTrace = PackedStereoFramePairer.LEFT.equals(eye)
+                    ? leftFrameTrace : rightFrameTrace;
+            if (missingTrace != null) missingTrace.unmatchedConsume();
             if (PackedStereoFramePairer.LEFT.equals(eye)) {
                 leftUncorrelatedFrames++;
             } else {
@@ -488,6 +509,10 @@ final class PackedStereoGlCompositor implements Closeable {
             }
             return;
         }
+        CaptureFrameTrace trace = PackedStereoFramePairer.LEFT.equals(eye)
+                ? leftFrameTrace : rightFrameTrace;
+        if (trace != null) trace.consumed(capture.sourceFrame - 1L,
+                updateEntryNs, updateExitNs, Thread.currentThread().getId());
         (PackedStereoFramePairer.LEFT.equals(eye) ? leftCorrelated : rightCorrelated)
                 .observeAt(SystemClock.elapsedRealtimeNanos(), capture.sourceFrame);
         PackedStereoFramePairer.Pair pair = pairer.add(
@@ -583,6 +608,10 @@ final class PackedStereoGlCompositor implements Closeable {
     }
 
     private void recordAcceptedPair(PackedStereoFramePairer.Pair pair) {
+        if (leftFrameTrace != null) leftFrameTrace.paired(pair.left.sourceFrame - 1L,
+                pair.right.sourceFrame - 1L, pair.pairId);
+        if (rightFrameTrace != null) rightFrameTrace.paired(pair.right.sourceFrame - 1L,
+                pair.left.sourceFrame - 1L, pair.pairId);
         lastPairLeftFrame = pair.left.sourceFrame;
         lastPairRightFrame = pair.right.sourceFrame;
         lastPairLeftSensorNs = pair.left.sensorTimestampNs;

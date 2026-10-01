@@ -6,8 +6,12 @@ public class CameraCaptureSession {
         public void onClosed(CameraCaptureSession value) { }
     }
     public abstract static class CaptureCallback {
+        public void onCaptureStarted(CameraCaptureSession session, CaptureRequest request,
+                long timestamp, long frameNumber) { }
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                 TotalCaptureResult result) { }
+        public void onCaptureFailed(CameraCaptureSession session, CaptureRequest request,
+                CaptureFailure failure) { }
     }
     public final CameraDevice device;
     public android.hardware.camera2.params.SessionConfiguration config;
@@ -15,8 +19,8 @@ public class CameraCaptureSession {
     public int closeCalls;
     private CaptureCallback captureCallback;
     public CameraCaptureSession(CameraDevice owner) { device = owner; }
-    public void setRepeatingRequest(CaptureRequest request, CaptureCallback callback,
-            android.os.Handler handler) { inflight = true; captureCallback = callback; }
+    public int setRepeatingRequest(CaptureRequest request, CaptureCallback callback,
+            android.os.Handler handler) { inflight = true; captureCallback = callback; return 1; }
     public void emitCapture(long frameNumber, Long sensorTimestampNs) {
         captureCallback.onCaptureCompleted(this, null,
                 new TotalCaptureResult(frameNumber, sensorTimestampNs));

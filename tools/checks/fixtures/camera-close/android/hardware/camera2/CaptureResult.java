@@ -1,1 +1,1 @@
-package android.hardware.camera2;public class CaptureResult {public static final Object SENSOR_TIMESTAMP=new Object();public Long get(Object k){return 1L;}}
+package android.hardware.camera2;public class CaptureResult {public static final Object SENSOR_TIMESTAMP=new Object();public static final Object SENSOR_EXPOSURE_TIME=new Object();public static final Object SENSOR_FRAME_DURATION=new Object();public Long get(Object k){return 1L;}}

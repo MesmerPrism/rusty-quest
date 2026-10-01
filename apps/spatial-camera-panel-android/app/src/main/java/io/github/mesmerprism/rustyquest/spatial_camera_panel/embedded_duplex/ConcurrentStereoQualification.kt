@@ -16,9 +16,12 @@ internal object ConcurrentStereoQualification {
     private var runtimeConfig: String? = null
     private var featureLock: String? = null
     private var installedApk: String? = null
+    private var armEntryElapsedNs: Long = 0
+    private var armExitElapsedNs: Long = 0
 
     @JvmStatic fun arm(challenge: String, processEpoch: String, runtimeSha: String,
         featureSha: String, apkSha: String): String {
+        val armEntry = android.os.SystemClock.elapsedRealtimeNanos()
         val next = StereoBankControls.armConcurrentQualification(challenge)
         require(next != 0L) { "qualification unavailable" }
         val snapshot = StereoBankControls.concurrentQualification()
@@ -32,6 +35,8 @@ internal object ConcurrentStereoQualification {
         this.runtimeConfig = runtimeSha
         this.featureLock = featureSha
         this.installedApk = apkSha
+        this.armEntryElapsedNs = armEntry
+        this.armExitElapsedNs = android.os.SystemClock.elapsedRealtimeNanos()
         return receipt("arm", challenge, processEpoch, runtimeSha, featureSha, apkSha, snapshot)
     }
 
@@ -87,6 +92,8 @@ internal object ConcurrentStereoQualification {
         snapshot.forEach { words.put(it) }
         return JSONObject().put("schema", "rusty.quest.stereo.concurrent_qualification_receipt.v1")
             .put("action", action).put("challenge", challenge).put("process_epoch_id", processEpoch)
+            .put("arm_entry_elapsed_ns", armEntryElapsedNs)
+            .put("arm_exit_elapsed_ns", armExitElapsedNs)
             .put("arm_generation", arm).put("native_process_generation", nativeProcess)
             .put("runtime_config_sha256", runtimeSha).put("feature_lock_sha256", featureSha)
             .put("apk_sha256", apkSha).put("native_snapshot", words).toString()

@@ -31,6 +31,9 @@ public class PackedStereoGlCompositor {
     private final Listener listener;
     public PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
             PackedStereoPoolExecutor pool, Listener observer) { listener = observer; }
+    public PackedStereoGlCompositor(PackedStereoStreamMetadata.Layout layout,
+            PackedStereoPoolExecutor pool, Listener observer,
+            CaptureFrameTrace leftTrace, CaptureFrameTrace rightTrace) { listener = observer; }
     public void awaitStarted() { }
     public android.view.Surface leftCameraSurface() { return new android.view.Surface(); }
     public android.view.Surface rightCameraSurface() { return new android.view.Surface(); }
