@@ -32,6 +32,12 @@ foreach ($case in @('CaptureFrameTraceCase', 'OwnCaptureStageCadenceCase', 'Surf
     & $java -cp "$hostClasses$([IO.Path]::PathSeparator)$classPath" "io.github.mesmerprism.rustyquest.media.$case" 1> (Join-Path $output "$case.stdout") 2> (Join-Path $output "$case.stderr")
     if ($LASTEXITCODE -ne 0) { throw "$case failed" }
 }
+$notificationFixtures = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'fixtures/surface-notification-handler') -Filter '*.java' -File -Recurse | ForEach-Object FullName)
+$notificationClasses = Join-Path $output 'notification-owner-classes'
+& $javac --release 8 '-Xlint:all' -Werror -cp $classPath -d $notificationClasses @notificationFixtures 1> (Join-Path $output 'notification-compile.stdout') 2> (Join-Path $output 'notification-compile.stderr')
+if ($LASTEXITCODE -ne 0) { throw 'notification owner fixture compilation failed' }
+& $java -cp "$notificationClasses$([IO.Path]::PathSeparator)$classPath" 'io.github.mesmerprism.rustyquest.media.SurfaceNotificationOwnerCase' 1> (Join-Path $output 'notification-test.stdout') 2> (Join-Path $output 'notification-test.stderr')
+if ($LASTEXITCODE -ne 0) { throw 'notification owner fixture failed' }
 [ordered]@{
     status='passed'; scope='actual media API33/API34 + bounded production trace/cadence/Surface fixtures'
     lint='all/Werror'; source_hashes=$sourceHashes
