@@ -514,8 +514,12 @@ final class PackedStereoGlCompositor implements Closeable {
         }
         CaptureFrameTrace trace = PackedStereoFramePairer.LEFT.equals(eye)
                 ? leftFrameTrace : rightFrameTrace;
-        if (trace != null) trace.consumed(traceEpoch, capture.sourceFrame - 1L,
-                updateEntryNs, updateExitNs, Thread.currentThread().getId());
+        if (trace != null) {
+            // Runtime tolerance is retained; an approximate match is not diagnostic frame identity.
+            if (timestampNs == capture.sensorTimestampNs) trace.consumed(traceEpoch, capture.sourceFrame - 1L,
+                    updateEntryNs, updateExitNs, Thread.currentThread().getId());
+            else trace.approximateConsume(traceEpoch);
+        }
         (PackedStereoFramePairer.LEFT.equals(eye) ? leftCorrelated : rightCorrelated)
                 .observeAt(SystemClock.elapsedRealtimeNanos(), capture.sourceFrame);
         PackedStereoFramePairer.Pair pair = pairer.add(

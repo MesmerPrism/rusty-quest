@@ -17,7 +17,7 @@ final class CaptureFrameTrace {
     private String crossingStage = "none";
     private long submissionEntryNs, submissionExitNs;
     private int requestSequenceId;
-    private long notifications, unmatchedConsumes, ambiguousNotifications, missingFrames;
+    private long notifications, unmatchedConsumes, approximateConsumes, ambiguousNotifications, missingFrames;
     private long lastMissingFrame = -1L;
     private long pendingNotificationNs, pendingNotificationThreadId;
     private boolean pendingNotificationMain;
@@ -36,7 +36,8 @@ final class CaptureFrameTrace {
         next = 0; size = 0; following = 0;
         lastStartedNs = 0L; lastCompletedNs = 0L; lastSensorNs = 0L; lastSensorFrame = -1L;
         crossed = false; crossingFrame = -1L; crossingGapNs = 0L; crossingStage = "none";
-        notifications = 0L; unmatchedConsumes = 0L; ambiguousNotifications = 0L; missingFrames = 0L;
+        notifications = 0L; unmatchedConsumes = 0L; approximateConsumes = 0L;
+        ambiguousNotifications = 0L; missingFrames = 0L;
         lastMissingFrame = -1L; lastNotificationNs = 0L;
         pendingNotifications = 0; handoffNotifications = 0;
         handoffNs = 0L; rejectedEpochEvents = 0L;
@@ -198,6 +199,10 @@ final class CaptureFrameTrace {
         if (token != epoch) { rejectedEpochEvents++; return; }
         unmatchedConsumes++; handoffNotifications = 0;
     }
+    synchronized void approximateConsume(long token) {
+        if (token != epoch) { rejectedEpochEvents++; return; }
+        approximateConsumes++; unmatchedConsumes++; handoffNotifications = 0;
+    }
     synchronized void paired(long token, long frame, long peerFrame, long pairId) {
         if (token != epoch) { rejectedEpochEvents++; return; }
         Frame record = find(frame);
@@ -218,6 +223,7 @@ final class CaptureFrameTrace {
                 .put("epoch_start_elapsed_ns", epochStartNs).put("rejected_epoch_events", rejectedEpochEvents)
                 .put("sensor_clock_join", "unavailable_unknown_or_unverified_source")
                 .put("native_adoption_join", "unavailable_no_frame_identity_in_native_receipt")
+                .put("consume_frame_join", "only_equal_surface_and_capture_sensor_timestamps")
                 .put("request_submission_entry_ns", submissionEntryNs)
                 .put("request_submission_exit_ns", submissionExitNs)
                 .put("request_sequence_id", requestSequenceId)
@@ -230,6 +236,7 @@ final class CaptureFrameTrace {
                 .put("notifications", notifications)
                 .put("ambiguous_notifications", ambiguousNotifications)
                 .put("unmatched_consumes", unmatchedConsumes)
+                .put("approximate_surface_matches_without_frame_join", approximateConsumes)
                 .put("missing_frozen_frames", missingFrames)
                 .put("frames", retained);
     }

@@ -99,6 +99,16 @@ public final class CaptureFrameTraceCase {
                 && surfaceGap.snapshot().getLong("first_crossing_raw_frame") == -1L
                 && surfaceGap.snapshot().getString("first_crossing_stage").equals("surface_notification"),
                 "first Surface gap has no invented raw frame identity");
+        CaptureFrameTrace approximate = new CaptureFrameTrace();
+        complete(approximate, 3L, 1_000L, 2_000L);
+        approximate.notified(approximate.epoch(), 2_001L, 8L, false);
+        approximate.handoff(2_002L);
+        approximate.approximateConsume(approximate.epoch());
+        approximate.paired(approximate.epoch(), 3L, 4L, 5L);
+        check(approximate.snapshot().getLong("approximate_surface_matches_without_frame_join") == 1L
+                && approximate.snapshot().getJSONArray("frames").getJSONObject(0).getLong("consume_entry_ns") == 0L
+                && approximate.snapshot().getJSONArray("frames").getJSONObject(0).getLong("pair_id") == 0L,
+                "approximate runtime Surface match cannot invent consume or pair frame lineage");
         CaptureFrameTrace regressed = new CaptureFrameTrace();
         regressed.completed(regressed.epoch(), 1L, 1_000_000_000L, 1_000_000_001L, 2L, false,
                 null, null, null);
