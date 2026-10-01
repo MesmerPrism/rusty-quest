@@ -1104,7 +1104,7 @@ fn complete_start(host: &Host, input: &str) -> Result<String, String> {
             provider
                 .get()
                 .complete_media_start_for_activation(&client, host.clock.now_ms()?)
-                .map_err(|_| "full product Start incomplete")?
+                .map_err(|error| crate::embedded_duplex::cleanup_failure::describe(crate::embedded_duplex::cleanup_failure::Stage::Start, &error))?
         }; // Provider restored before signing, transport or graph callbacks.
         sender.get().pending = Some(PendingActivation {
             client_id: request.client_id,

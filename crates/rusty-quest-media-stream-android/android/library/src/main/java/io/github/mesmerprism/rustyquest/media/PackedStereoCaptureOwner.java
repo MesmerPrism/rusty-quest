@@ -418,6 +418,18 @@ public final class PackedStereoCaptureOwner {
         return DETAIL_OTHER;
     }
 
+    /** Bounded observation only; no frame/native clock alignment or lifecycle authority. */
+    public JSONObject diagnosticDropoutSnapshot() throws Exception {
+        long sampleNs = android.os.SystemClock.elapsedRealtimeNanos();
+        return new JSONObject().put("clock", "android_elapsedRealtimeNanos")
+                .put("sample_elapsed_ns", sampleNs)
+                .put("consistency", "per_eye_non_atomic")
+                .put("capture_instance", captureInstance)
+                .put("stop_requested", stopRequested).put("startup_settled", startupSettled)
+                .put("left", leftFrameTrace.dropoutSnapshot(sampleNs))
+                .put("right", rightFrameTrace.dropoutSnapshot(sampleNs));
+    }
+
     /** Local diagnostic only. Each cadence is internally coherent; stages are sampled separately. */
     JSONObject captureDiagnosticSnapshot() throws Exception {
         long sampleNs = android.os.SystemClock.elapsedRealtimeNanos();

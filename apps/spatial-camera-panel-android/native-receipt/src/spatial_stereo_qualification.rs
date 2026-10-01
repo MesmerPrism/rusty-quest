@@ -1,6 +1,7 @@
 //! Bounded app-owned source-set observations. No flag or submit call is pixel proof.
 use std::sync::Mutex;
 use crate::stereo_input_set::StereoFrameIdentity;
+use crate::spatial_stereo_dropouts::{Key as ProgressKey, Progress};
 pub(crate) const WORD_COUNT:usize=160;
 const HISTORY:usize=64;
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
@@ -27,13 +28,15 @@ struct State {
     pending:Option<FrameFact>,last:Option<FrameFact>,history:[Option<FrameFact>;HISTORY],next:usize,
     pixel:Option<PixelFact>,pixel_count:u64,pixel_unavailable:u64,
     foreign_enabled:bool,capability_mask:u64,sdk_session:u64,readback_requested:bool,
+    dropout_progress:[Progress;3],
 }
 impl State {
     const fn empty()->Self {Self{process:0,challenge:[0;2],generation:0,armed:false,carrier_live:false,cleanup:0,
         armed_at:0,pending_since:0,first_recorded:0,last_recorded:0,recorded:0,entered:0,first_gpu:0,last_gpu:0,gpu:0,
         max_gap:0,first_both:0,last_both:0,both:0,max_both_gap:0,own_after_peer:0,peer_removed_at:0,peer_removed_count:0,
         origins:[OriginStats{first:0,last:0,distinct:0,max_gap:0,max_age:0,missing:0,transitions:0,removed_at:0,removals:0,last_identity:None};2],
-        pending:None,last:None,history:[None;HISTORY],next:0,pixel:None,pixel_count:0,pixel_unavailable:0,foreign_enabled:false,capability_mask:0,sdk_session:0,readback_requested:false}}
+        pending:None,last:None,history:[None;HISTORY],next:0,pixel:None,pixel_count:0,pixel_unavailable:0,foreign_enabled:false,capability_mask:0,sdk_session:0,readback_requested:false,
+        dropout_progress:[Progress::empty();3]}}
     fn arm(&mut self,process:u64,challenge:[u64;2],now:u64)->u64 {
         let Some(generation)=self.generation.checked_add(1) else{return 0};
         let (live,foreign,capabilities,session,cleanup)=(self.carrier_live,self.foreign_enabled,self.capability_mask,self.sdk_session,self.cleanup);
@@ -41,12 +44,15 @@ impl State {
         self.foreign_enabled=foreign;self.capability_mask=capabilities;self.sdk_session=session;
         self.challenge=challenge;self.armed=true;self.carrier_live=live;self.armed_at=now;
         self.cleanup=if cleanup==3{3}else if live{1}else{cleanup};
-        if live||cleanup==3{self.pending_since=now;}generation
+        if live||cleanup==3{self.pending_since=now;}
+        self.dropout_progress[0].demand(live,now);generation
     }
     fn record(&mut self,fact:FrameFact,now:u64) {
         if !self.armed||fact.arm_generation!=self.generation||fact.ordinal==0||fact.surface==0||now<self.armed_at||now<self.last_recorded{return;}
         if fact.sources.iter().flatten().any(|source|source.identity.epoch.process_generation!=self.process
             ||source.observed_at_ns>now||![1,3,4,6].contains(&source.prefix)){return;}
+        self.dropout_progress[0].demand(self.carrier_live,now);
+        for origin in 0..2 {self.dropout_progress[origin+1].demand(fact.demanded[origin]>0,now);}
         if self.cleanup!=3{self.cleanup=1;}if self.pending_since==0{self.pending_since=now;}
         self.first_recorded=if self.recorded==0{now}else{self.first_recorded};self.last_recorded=now;
         self.recorded=self.recorded.saturating_add(1);self.pending=Some(fact);
@@ -56,6 +62,7 @@ impl State {
         if fact.ordinal!=ordinal||fact.surface!=surface||now<self.last_recorded||now<self.last_gpu{return;}
         if !self.armed||fact.arm_generation!=self.generation{self.pending=None;return;}
         self.pending=None;self.first_gpu=if self.gpu==0{now}else{self.first_gpu};
+        self.dropout_progress[0].advance(ProgressKey{epoch:surface,sequence:ordinal},now);
         if self.last_gpu!=0{self.max_gap=self.max_gap.max(now.saturating_sub(self.last_gpu));}
         self.last_gpu=now;self.gpu=self.gpu.saturating_add(1);
         for origin in 0..2 {
@@ -63,6 +70,9 @@ impl State {
             let Some(source)=fact.sources[origin] else{stats.missing=stats.missing.saturating_add(1);continue};
             stats.max_age=stats.max_age.max(now.saturating_sub(source.observed_at_ns));
             if !fact.final_draw{continue;}
+            if fact.demanded[origin]>0 {let key=ProgressKey{epoch:source.identity.epoch.source_generation,sequence:source.identity.pair_sequence};
+                self.dropout_progress[origin+1].advance(key,now);
+                self.dropout_progress[origin+1].source_age_at_progress(key,now,source.observed_at_ns);}
             if stats.last_identity!=Some(source.identity) {
                 if let Some(previous)=stats.last_identity {
                     if previous.epoch!=source.identity.epoch{stats.transitions=stats.transitions.saturating_add(1);}
@@ -159,9 +169,9 @@ pub(crate) fn peer_removed(epoch:crate::stereo_input_set::SourceEpoch){if let So
     s.peer_removed_at=now;s.peer_removed_count=s.peer_removed_count.saturating_add(1);s.origins[1].removed_at=now;s.origins[1].removals=s.origins[1].removals.saturating_add(1);
 }}}}
 pub(crate) fn physical_cleanup_terminal()->bool {STATE.lock().map_or(false,|s|s.cleanup==2&&!s.carrier_live&&s.pending.is_none())}
-pub(crate) fn carrier_live(){if let Some(now)=now_ns(){if let Ok(mut s)=STATE.lock(){s.carrier_live=true;if s.armed{if s.cleanup!=3{s.cleanup=1;}s.pending_since=now;}}}}
+pub(crate) fn carrier_live(){if let Some(now)=now_ns(){if let Ok(mut s)=STATE.lock(){s.carrier_live=true;if s.armed{s.dropout_progress[0].demand(true,now);if s.cleanup!=3{s.cleanup=1;}s.pending_since=now;}}}}
 pub(crate) fn carrier_device(foreign_enabled:bool,capability_mask:u64,sdk_session:u64){if let Ok(mut s)=STATE.lock(){s.foreign_enabled=foreign_enabled;s.capability_mask=capability_mask;s.sdk_session=sdk_session;}}
-pub(crate) fn carrier_cleanup(terminal:bool){if let Ok(mut s)=STATE.lock(){s.carrier_live=false;if !terminal||s.cleanup==3{s.cleanup=3;}else{s.cleanup=2;}}}
+pub(crate) fn carrier_cleanup(terminal:bool){if let Ok(mut s)=STATE.lock(){s.carrier_live=false;if let Some(now)=now_ns(){for series in &mut s.dropout_progress{series.demand(false,now);}}if !terminal||s.cleanup==3{s.cleanup=3;}else{s.cleanup=2;}}}
 pub(crate) fn readback_complete(ordinal:u64,surface:u64,count:u64,hash:u64,format:u32,width:u32,height:u32,flags:u32,contract:u32){if let Some(now)=now_ns(){if let Ok(mut s)=STATE.lock(){s.pixel(ordinal,surface,now,count,hash,format,width,height,flags,contract);}}}
 pub(crate) fn readback_unavailable(){if let Ok(mut s)=STATE.lock(){if s.armed{s.pixel_unavailable=s.pixel_unavailable.saturating_add(1);}}}
 pub(crate) fn take_requested_readback()->bool {STATE.lock().map_or(false,|mut s|{let requested=s.armed&&s.readback_requested;s.readback_requested=false;requested})}
@@ -190,8 +200,35 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     let Ok(process)=crate::own_packed_pool_jni::process_generation() else{return 0};
     STATE.lock().map_or(0,|mut s|{
         if !s.armed||s.process!=process||s.challenge!=[hi as u64,lo as u64]||s.generation!=generation as u64{return 0;}
+        if let Some(now)=now_ns(){for series in &mut s.dropout_progress{series.demand(false,now);}}
         s.armed=false;1
     })
+}
+
+/// Debug report only. Existing 160 qualification words and their acceptance
+/// meaning are unchanged. Serial/app/challenge/arm checks precede export.
+#[cfg(target_os="android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_StereoBankControls_nativeReadConcurrentStereoDropouts(
+    mut env:jni::JNIEnv<'_>,_:jni::objects::JClass<'_>,hi:jni::sys::jlong,lo:jni::sys::jlong,generation:jni::sys::jlong)->jni::sys::jstring {
+    let (Ok(process),Some(now))=(crate::own_packed_pool_jni::process_generation(),now_ns()) else{return std::ptr::null_mut()};
+    let Ok(s)=STATE.lock() else{return std::ptr::null_mut()};
+    if !s.armed||s.process!=process||s.challenge!=[hi as u64,lo as u64]||s.generation!=generation as u64{return std::ptr::null_mut()}
+    let report=serde_json::json!({"schema":"rusty.quest.stereo.dropout_observation.v1",
+        "process_generation":s.process,"arm_generation":s.generation,"clock":"CLOCK_MONOTONIC",
+        "sample_ns":now,"bound_ns":crate::spatial_stereo_dropouts::BOUND_NS,
+        "series_order":["gpu_retirement","own_distinct_adoption","peer_distinct_adoption"],
+        "counter_columns":crate::spatial_stereo_dropouts::COUNTER_COLUMNS.as_slice(),
+        "bin_upper_ns":[500_000_000u64,1_000_000_000,2_000_000_000],
+        "sample_columns":["previous_ns","current_ns","gap_ns","previous_epoch","previous_sequence","epoch","sequence"],
+        "sample_retention":"first_two_and_latest_two; counters_complete",
+        "gap_scope":"within_demand_and_source_epoch; closed_once_on_progress; open_and_censored_separate; no_first_wait_gap",
+        "origin_demand_context_observed":s.recorded>0,
+        "camera_frame_join":"unavailable","qualification_claimed":false,
+        "series":s.dropout_progress.iter().map(|series|series.compact_snapshot(now)).collect::<Vec<_>>()});
+    drop(s);
+    let exact=report.to_string();if exact.len()>6144{return std::ptr::null_mut()}
+    env.new_string(exact).map_or(std::ptr::null_mut(),|value|value.into_raw())
 }
 #[cfg(target_os="android")]
 #[no_mangle]

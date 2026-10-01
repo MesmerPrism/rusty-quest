@@ -144,6 +144,12 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         }
         return snapshot;
     }
+    JSONObject sourceDropoutSnapshot() throws Exception {
+        io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner retained =
+                ownCapture == null ? null : ownCapture.retainedCapture();
+        if (retained == null) throw new IllegalStateException("Shared Own dropout observation unavailable");
+        return retained.diagnosticDropoutSnapshot();
+    }
     boolean ownAppCaptureEnabled() { return ownCapture != null; }
     void armOwnCaptureTrace(String processEpoch, long appGeneration, long armGeneration) {
         io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner retained =

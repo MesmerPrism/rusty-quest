@@ -86,9 +86,9 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         Path corrupt = Files.createTempDirectory("duplex-fence-corrupt");
         try (EmbeddedDuplexProcessFence unused = acquire(corrupt)) { }
         Path record = corrupt.resolve("process-fence.v1.lock");
-        Files.writeString(record, "corrupt", StandardCharsets.US_ASCII);
+        Files.write(record, "corrupt".getBytes(StandardCharsets.US_ASCII));
         rejects(() -> acquire(corrupt));
-        Files.writeString(record, "", StandardCharsets.US_ASCII);
+        Files.write(record, new byte[0]);
         rejects(() -> acquire(corrupt));
         Path missing = Files.createTempDirectory("duplex-fence-missing");
         try (EmbeddedDuplexProcessFence unused = acquire(missing)) { }

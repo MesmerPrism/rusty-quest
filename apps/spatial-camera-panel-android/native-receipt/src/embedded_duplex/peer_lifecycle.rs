@@ -307,7 +307,7 @@ fn stop(host: &Host, state: &mut State, revoke: bool) -> Result<(), String> {
         let client = serde_json::from_value(json!(state.client)).map_err(safe_decode)?;
         let completed = Checkout::take(host.provider.clone())?.get()
             .complete_media_stop_for_cleanup_typed(&client,host.clock.now_ms()?)
-            .map_err(|_| "concurrent physical media cleanup pending")?;
+            .map_err(|error| crate::embedded_duplex::cleanup_failure::describe(crate::embedded_duplex::cleanup_failure::Stage::Media, &error))?;
         state.stop_effect = completed.stop_effect_receipt.clone();
         state.stop_completion = Some(serde_json::to_value(completed).map_err(safe_decode)?);
     }
@@ -315,7 +315,7 @@ fn stop(host: &Host, state: &mut State, revoke: bool) -> Result<(), String> {
         let effect = state.stop_effect.as_ref().ok_or("verified seven-owner Stop effect absent")?;
         let route = Checkout::take(host.provider.clone())?.get()
             .complete_concurrent_peer_route_cleanup(effect,host.clock.now_ms()?,&entropy()?)
-            .map_err(|_| "concurrent retained route cleanup pending")?;
+            .map_err(|error| crate::embedded_duplex::cleanup_failure::describe(crate::embedded_duplex::cleanup_failure::Stage::Route, &error))?;
         state.route_cleanup = Some(serde_json::to_value(route).map_err(safe_decode)?);
     }
     Ok(())

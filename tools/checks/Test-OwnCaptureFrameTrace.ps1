@@ -28,7 +28,7 @@ $hostClasses = Join-Path $output 'host-classes'
 $classPath = "$HostJsonJar$([IO.Path]::PathSeparator)$(Join-Path $output 'api34-classes')"
 & $javac --release 8 '-Xlint:all' -Werror -cp $classPath -d $hostClasses @fixtures 1> (Join-Path $output 'host-compile.stdout') 2> (Join-Path $output 'host-compile.stderr')
 if ($LASTEXITCODE -ne 0) { throw 'actual diagnostic host fixture compilation failed' }
-foreach ($case in @('CaptureFrameTraceCase', 'OwnCaptureStageCadenceCase', 'SurfaceDispatchWitnessCase', 'CameraResultGapWitnessCase')) {
+foreach ($case in @('CaptureFrameTraceCase', 'CaptureDropoutCase', 'OwnCaptureStageCadenceCase', 'SurfaceDispatchWitnessCase', 'CameraResultGapWitnessCase')) {
     & $java -cp "$hostClasses$([IO.Path]::PathSeparator)$classPath" "io.github.mesmerprism.rustyquest.media.$case" 1> (Join-Path $output "$case.stdout") 2> (Join-Path $output "$case.stderr")
     if ($LASTEXITCODE -ne 0) { throw "$case failed" }
 }

@@ -62,6 +62,11 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
               .get(30, TimeUnit.SECONDS)
           Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
         }
+        EmbeddedDuplexOperatorContract.Route.STREAM_DROPOUT_DIAGNOSTIC -> {
+          val receipt = EmbeddedDuplexRuntimeService.streamDropoutDiagnostic(app, request.challenge)
+              .get(30, TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
+        }
         EmbeddedDuplexOperatorContract.Route.STATUS -> {
           val status = EmbeddedDuplexEnrollmentService.status(app, requireNotNull(request.roleId)).get()
           Bundle().apply {

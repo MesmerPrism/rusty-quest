@@ -18,6 +18,10 @@ public final class EmbeddedDuplexRuntimeService {
     public static CompletableFuture<String> ownCaptureDiagnostic(Context context, String challenge) {
         return EmbeddedDuplexProcessHost.forApplication(context).ownCaptureDiagnostic(challenge);
     }
+    /** Read-only bounded statistics; never admission, activation or cleanup proof. */
+    public static CompletableFuture<String> streamDropoutDiagnostic(Context context, String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).streamDropoutDiagnostic(challenge);
+    }
 
     public static CompletableFuture<String> concurrentPolicy(Context context, String challenge, long[] policy) {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentPolicy(challenge, policy);

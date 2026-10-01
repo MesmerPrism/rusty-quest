@@ -829,4 +829,5 @@ mod stereo_input_set;
 #[cfg(target_os="android")] mod own_packed_gpu_holds;
 #[cfg(target_os="android")] mod spatial_stereo_source_import;
 mod spatial_stereo_qualification;
+mod spatial_stereo_dropouts;
 #[cfg(target_os="android")] mod stereo_bank_control_jni;

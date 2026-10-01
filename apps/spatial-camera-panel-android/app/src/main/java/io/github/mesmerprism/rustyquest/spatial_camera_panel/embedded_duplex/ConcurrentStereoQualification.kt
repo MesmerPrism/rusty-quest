@@ -55,6 +55,14 @@ internal object ConcurrentStereoQualification {
             .put("arm_exit_elapsed_ns", armExitElapsedNs).toString()
     }
 
+    /** Fixed debug observation, independently checked against this actual arm. */
+    @JvmStatic fun dropoutObservation(challenge: String, processEpoch: String): String {
+        require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)
+        val report = JSONObject(StereoBankControls.concurrentDropoutObservation(challenge, arm))
+        require(report.getLong("process_generation") == nativeProcess && report.getLong("arm_generation") == arm)
+        return report.toString()
+    }
+
     @JvmStatic fun policy(challenge: String, processEpoch: String, runtimeSha: String,
         featureSha: String, apkSha: String, update: LongArray?): String {
         require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)
