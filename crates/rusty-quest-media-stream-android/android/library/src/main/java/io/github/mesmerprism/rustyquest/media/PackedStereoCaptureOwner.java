@@ -437,9 +437,9 @@ public final class PackedStereoCaptureOwner {
             if (chosen != null) request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, chosen);
             session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
                 public void onCaptureCompleted(CameraCaptureSession active, CaptureRequest request, TotalCaptureResult result) {
+                    long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
                     long frameNumber = result.getFrameNumber();
                     long sourceFrame = frameNumber + 1L;
-                    long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
                     Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
                     CameraResultCadence raw =
                             PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraResults : rightCameraResults;
