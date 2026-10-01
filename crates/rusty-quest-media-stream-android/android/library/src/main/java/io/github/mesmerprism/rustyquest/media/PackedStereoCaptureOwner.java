@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.RejectedExecutionException;
+import org.json.JSONObject;
 
 /** App-owned capture. Peer subscriptions never own these cameras or compositor. */
 public final class PackedStereoCaptureOwner {
@@ -38,6 +39,14 @@ public final class PackedStereoCaptureOwner {
     private volatile Endpoint left, right;
     private volatile boolean stopRequested, started, startupSettled;
     private volatile Throwable failure;
+    private final PackedStereoGlCompositor.StageCadence leftCameraResults =
+            new PackedStereoGlCompositor.StageCadence();
+    private final PackedStereoGlCompositor.StageCadence rightCameraResults =
+            new PackedStereoGlCompositor.StageCadence();
+    private final PackedStereoGlCompositor.StageCadence leftCameraMetadata =
+            new PackedStereoGlCompositor.StageCadence();
+    private final PackedStereoGlCompositor.StageCadence rightCameraMetadata =
+            new PackedStereoGlCompositor.StageCadence();
 
     public PackedStereoCaptureOwner(Context context, int eyeWidth, int eyeHeight,
             int frameRate, String leftId, String rightId, long maxPairDeltaNs,
@@ -149,6 +158,22 @@ public final class PackedStereoCaptureOwner {
                 && layout.maxPairDeltaNs == deltaNs;
     }
     public Throwable failure() { return failure; }
+
+    /** Local diagnostic only. Each cadence is internally coherent; stages are sampled separately. */
+    JSONObject captureDiagnosticSnapshot() throws Exception {
+        long sampleNs = android.os.SystemClock.elapsedRealtimeNanos();
+        PackedStereoGlCompositor current = compositor;
+        JSONObject result = new JSONObject()
+                .put("clock", "android_elapsedRealtimeNanos")
+                .put("sample_elapsed_ns", sampleNs)
+                .put("consistency", "per_stage_non_atomic")
+                .put("left_camera_result", leftCameraResults.snapshot(sampleNs))
+                .put("right_camera_result", rightCameraResults.snapshot(sampleNs))
+                .put("left_camera_metadata", leftCameraMetadata.snapshot(sampleNs))
+                .put("right_camera_metadata", rightCameraMetadata.snapshot(sampleNs));
+        if (current != null) result.put("compositor", current.captureDiagnosticSnapshot(sampleNs));
+        return result;
+    }
 
     /** Observation only. No callback flag, elapsed time or projection confers cleanup authority. */
     public static final class CleanupStatus {
@@ -275,9 +300,17 @@ public final class PackedStereoCaptureOwner {
             if (chosen != null) request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, chosen);
             session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
                 public void onCaptureCompleted(CameraCaptureSession active, CaptureRequest request, TotalCaptureResult result) {
+                    long sourceFrame = result.getFrameNumber() + 1L;
+                    PackedStereoGlCompositor.StageCadence raw =
+                            PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraResults : rightCameraResults;
+                    raw.observeAt(android.os.SystemClock.elapsedRealtimeNanos(), sourceFrame);
                     Long timestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
-                    if (!closeRequested && !stopRequested && timestamp != null && timestamp > 0)
-                        compositor.recordCapture(eye, result.getFrameNumber() + 1, timestamp);
+                    if (!closeRequested && !stopRequested && timestamp != null && timestamp > 0) {
+                        PackedStereoGlCompositor.StageCadence valid =
+                                PackedStereoFramePairer.LEFT.equals(eye) ? leftCameraMetadata : rightCameraMetadata;
+                        valid.observeAt(android.os.SystemClock.elapsedRealtimeNanos(), sourceFrame);
+                        compositor.recordCapture(eye, sourceFrame, timestamp);
+                    }
                 }
             }, handler);
         }
