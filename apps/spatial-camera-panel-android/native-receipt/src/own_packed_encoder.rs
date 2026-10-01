@@ -34,5 +34,8 @@ pub(crate) unsafe fn poll_retired(id:u64)->Result<bool,String> {INPUT.with(|i| {
  input.ext.require_current()?;if input.quarantined {return Ok(false);}let Some(fd)=&input.fence else{return Ok(false);};
  match gl::poll_producer_fence(fd) {Ok(false)=>return Ok(false),Err(e)=>{input.quarantined=true;return Err(e);},Ok(true)=>{}}
  if let Some(a)=input.allocation.take(){if let Err((e,a))=gl::destroy_idle_on_producer_thread(&input.ext,a) {input.allocation=Some(a);input.quarantined=true;return Err(e);}}
+ // The positive fence observation and completed GL teardown make this exact
+ // sync fd safe to close. Input::drop deliberately leaks uncertain fences.
+ drop(input.fence.take());
  i.remove(&id);if let Some(item)=offers().lock().map_err(|_|"encoder registry poisoned")?.remove(&id){crate::own_packed_gpu_holds::release_encoder(item.reservation)?;}Ok(true)
 })}
