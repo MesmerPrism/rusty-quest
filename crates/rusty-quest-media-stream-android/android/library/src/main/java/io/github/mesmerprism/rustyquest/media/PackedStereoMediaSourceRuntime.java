@@ -361,6 +361,8 @@ public final class PackedStereoMediaSourceRuntime {
         volatile long codecConfigPacketCount;
         volatile long keyframeCount;
         volatile long encodedFrames;
+        final PackedStereoGlCompositor.StageCadence codecOutputsWithPair =
+                new PackedStereoGlCompositor.StageCadence();
         volatile long encodedPacketsWithoutPair;
         volatile long pairMetadataWriteCount;
         volatile long firstPacketElapsedMs = -1L;
@@ -665,6 +667,11 @@ public final class PackedStereoMediaSourceRuntime {
                     } else {
                         sourceLoopOperation = PackedSourceFailureCode.Operation.PAIR_VALIDATE;
                         pair.validate(codecConfig, layout.maxPairDeltaNs);
+                        if (!codecConfig) {
+                            // Codec output has an exact pair here; transport may still reject its offer.
+                            codecOutputsWithPair.observeAt(
+                                    SystemClock.elapsedRealtimeNanos(), pair.pairId);
+                        }
                         if (codecConfig) {
                             cachedCodecConfig = payload.clone();
                             cachedCodecConfigPtsUs = info.presentationTimeUs;
@@ -1145,6 +1152,10 @@ public final class PackedStereoMediaSourceRuntime {
             json.put("cpu_pixel_copy", false);
             json.put("encoder_instance_count", encoder != null ? 1 : 0);
             json.put("encoded_frames", encodedFrames);
+            try {
+                json.put("codec_output_with_pair", codecOutputsWithPair.snapshot(
+                        SystemClock.elapsedRealtimeNanos()));
+            } catch (Exception ignored) { /* Optional telemetry cannot reject status. */ }
             json.put("video_packet_count", videoPacketCount);
             json.put("last_packet_age_ms", lastPacketElapsedMs < 0L
                     ? -1L
@@ -1182,6 +1193,12 @@ public final class PackedStereoMediaSourceRuntime {
                 json.put("right_uncorrelated_frames", compositor.rightUncorrelatedFrames());
                 json.put("compositor_time_average_ns", compositor.compositorTimeAverageNs());
                 json.put("compositor_time_max_ns", compositor.compositorTimeMaxNs());
+            }
+            if (sharedCapture != null) {
+                // Telemetry is never a prerequisite for the owner readback.
+                try {
+                    json.put("own_capture_stage_diagnostic", sharedCapture.captureDiagnosticSnapshot());
+                } catch (Exception ignored) { /* The existing source status remains authoritative. */ }
             }
             if (leftCamera != null) {
                 json.put("left_camera_capture", leftCamera.toJson());

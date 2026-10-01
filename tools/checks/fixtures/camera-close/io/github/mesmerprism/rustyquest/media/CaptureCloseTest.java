@@ -2,6 +2,7 @@ package io.github.mesmerprism.rustyquest.media;
 import android.content.Context;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
+import org.json.JSONObject;
 
 public final class CaptureCloseTest {
     private static int cases;
@@ -19,6 +20,16 @@ public final class CaptureCloseTest {
         boolean baseline=args.length!=0;
         CameraManager manager=new CameraManager();PackedStereoCaptureOwner owner=owner(manager);owner.start();
         check(manager.devices[0].session.inflight&&manager.devices[1].session.inflight,"actual repeating capture not installed");
+        JSONObject before = owner.captureDiagnosticSnapshot();
+        check(before.getJSONObject("left_camera_result").getLong("count") == 0L,
+                "unobserved camera callback invented progress");
+        manager.devices[0].session.emitCapture(7L, 123L);
+        manager.devices[0].session.emitCapture(8L, null);
+        JSONObject after = owner.captureDiagnosticSnapshot();
+        check(after.getJSONObject("left_camera_result").getLong("count") == 2L
+                && after.getJSONObject("left_camera_metadata").getLong("count") == 1L
+                && after.getJSONObject("right_camera_result").getLong("count") == 0L,
+                "raw camera callbacks, valid metadata, and eyes were conflated");
         owner.requestStop();owner.requestStop();
         check(!owner.pollStopped(),"close request falsely proved physical retirement");
         if(baseline){

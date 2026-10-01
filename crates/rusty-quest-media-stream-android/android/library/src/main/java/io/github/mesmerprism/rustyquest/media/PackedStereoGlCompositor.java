@@ -10,6 +10,7 @@ import android.opengl.EGLSurface;
 import android.opengl.GLES20;
 import android.os.SystemClock;
 import android.view.Surface;
+import org.json.JSONObject;
 
 import java.io.Closeable;
 import java.util.ArrayDeque;
@@ -65,6 +66,47 @@ final class PackedStereoGlCompositor implements Closeable {
     private volatile long rightUncorrelatedFrames;
     private volatile long compositorTimeTotalNs;
     private volatile long compositorTimeMaxNs;
+    // Capture-owner observation only. Each stage has one writer; a status read is explicitly
+    // non-atomic across stages and cannot confer frame or cleanup authority.
+    private final StageCadence leftSurfaceCallbacks = new StageCadence();
+    private final StageCadence rightSurfaceCallbacks = new StageCadence();
+    private final StageCadence leftSurfaceConsumed = new StageCadence();
+    private final StageCadence rightSurfaceConsumed = new StageCadence();
+    private final StageCadence leftCorrelated = new StageCadence();
+    private final StageCadence rightCorrelated = new StageCadence();
+    private final StageCadence pairsAccepted = new StageCadence();
+    private final StageCadence poolBeginAccepted = new StageCadence();
+    private final StageCadence poolBeginNoCapacity = new StageCadence();
+    private final StageCadence producerFenceSubmitted = new StageCadence();
+    private volatile long lastPairLeftFrame, lastPairRightFrame;
+    private volatile long lastPairLeftSensorNs, lastPairRightSensorNs;
+
+    /** One monotonic stage, with no gap asserted before its second real observation. */
+    static final class StageCadence {
+        private long count, lastNs, maxGapNs, lastIdentity;
+
+        synchronized void observeAt(long elapsedNs, long identity) {
+            if (elapsedNs <= 0L || identity < 0L) return;
+            count++;
+            if (elapsedNs < lastNs) return; // A regressed clock cannot create a gap.
+            if (lastNs > 0L) maxGapNs = Math.max(maxGapNs, elapsedNs - lastNs);
+            lastNs = elapsedNs;
+            lastIdentity = identity;
+        }
+
+        synchronized long count() { return count; }
+        synchronized long lastNs() { return lastNs; }
+        synchronized long maxGapNs() { return maxGapNs; }
+        synchronized long lastIdentity() { return lastIdentity; }
+        synchronized long ageNs(long sampleNs) {
+            return lastNs == 0L || sampleNs < lastNs ? -1L : sampleNs - lastNs;
+        }
+        synchronized JSONObject snapshot(long sampleNs) throws Exception {
+            return new JSONObject().put("count", count).put("last_elapsed_ns", lastNs)
+                    .put("max_gap_ns", maxGapNs).put("age_ns", ageNs(sampleNs))
+                    .put("last_identity", lastIdentity());
+        }
+    }
 
     private int leftPending;
     private int rightPending;
@@ -181,6 +223,36 @@ final class PackedStereoGlCompositor implements Closeable {
         return compositorTimeMaxNs;
     }
 
+    JSONObject captureDiagnosticSnapshot(long sampleNs) throws Exception {
+        PackedStereoFramePairer.Snapshot pairs = pairer.snapshot();
+        return new JSONObject()
+                .put("left_surface_callback", leftSurfaceCallbacks.snapshot(sampleNs))
+                .put("right_surface_callback", rightSurfaceCallbacks.snapshot(sampleNs))
+                .put("left_surface_consumed", leftSurfaceConsumed.snapshot(sampleNs))
+                .put("right_surface_consumed", rightSurfaceConsumed.snapshot(sampleNs))
+                .put("left_correlated", leftCorrelated.snapshot(sampleNs))
+                .put("right_correlated", rightCorrelated.snapshot(sampleNs))
+                .put("pair_accepted", pairsAccepted.snapshot(sampleNs))
+                .put("pool_begin_accepted", poolBeginAccepted.snapshot(sampleNs))
+                .put("pool_begin_no_capacity", poolBeginNoCapacity.snapshot(sampleNs))
+                .put("producer_fence_submitted", producerFenceSubmitted.snapshot(sampleNs))
+                .put("last_pair_left_frame", lastPairLeftFrame)
+                .put("last_pair_right_frame", lastPairRightFrame)
+                .put("last_pair_left_sensor_ns", lastPairLeftSensorNs)
+                .put("last_pair_right_sensor_ns", lastPairRightSensorNs)
+                .put("pairs_accepted_total", pairs.acceptedPairs)
+                .put("left_unmatched", pairs.leftFramesDroppedUnmatched)
+                .put("right_unmatched", pairs.rightFramesDroppedUnmatched)
+                .put("pair_skew_rejected", pairs.skewRejected)
+                .put("pair_queue_overflow_drops", pairs.queueOverflowDrops)
+                .put("pair_queue_depth_left", pairs.queueDepthLeft)
+                .put("pair_queue_depth_right", pairs.queueDepthRight)
+                .put("left_uncorrelated", leftUncorrelatedFrames)
+                .put("right_uncorrelated", rightUncorrelatedFrames)
+                .put("composed_frames", composedFrames)
+                .put("compositor_time_max_ns", compositorTimeMaxNs);
+    }
+
     @Override
     public void close() {
         requestStop();
@@ -222,6 +294,7 @@ final class PackedStereoGlCompositor implements Closeable {
                             @Override
                             public void onFrameAvailable(SurfaceTexture texture) {
                                 synchronized (signal) {
+                                    leftSurfaceCallbacks.observeAt(SystemClock.elapsedRealtimeNanos(), 0L);
                                     leftPending++;
                                     signal.notifyAll();
                                 }
@@ -232,6 +305,7 @@ final class PackedStereoGlCompositor implements Closeable {
                             @Override
                             public void onFrameAvailable(SurfaceTexture texture) {
                                 synchronized (signal) {
+                                    rightSurfaceCallbacks.observeAt(SystemClock.elapsedRealtimeNanos(), 0L);
                                     rightPending++;
                                     signal.notifyAll();
                                 }
@@ -310,6 +384,8 @@ final class PackedStereoGlCompositor implements Closeable {
         gl.makePbufferCurrent();
         input.surfaceTexture.updateTexImage();
         long timestampNs = input.surfaceTexture.getTimestamp();
+        (PackedStereoFramePairer.LEFT.equals(eye) ? leftSurfaceConsumed : rightSurfaceConsumed)
+                .observeAt(SystemClock.elapsedRealtimeNanos(), Math.max(0L, timestampNs));
         float[] transform = new float[16];
         input.surfaceTexture.getTransformMatrix(transform);
         int slot = input.nextSlot();
@@ -324,6 +400,8 @@ final class PackedStereoGlCompositor implements Closeable {
             }
             return;
         }
+        (PackedStereoFramePairer.LEFT.equals(eye) ? leftCorrelated : rightCorrelated)
+                .observeAt(SystemClock.elapsedRealtimeNanos(), capture.sourceFrame);
         PackedStereoFramePairer.Pair pair = pairer.add(
                 new PackedStereoFramePairer.Candidate(
                         eye,
@@ -333,6 +411,7 @@ final class PackedStereoGlCompositor implements Closeable {
                         SystemClock.elapsedRealtimeNanos()),
                 SystemClock.elapsedRealtimeNanos());
         if (pair != null) {
+            recordAcceptedPair(pair);
             composePair(gl, pair);
         }
     }
@@ -363,6 +442,7 @@ final class PackedStereoGlCompositor implements Closeable {
                         queuedNs),
                 SystemClock.elapsedRealtimeNanos());
         if (pair != null) {
+            recordAcceptedPair(pair);
             syntheticFrames++;
             composePair(gl, pair);
         }
@@ -373,7 +453,11 @@ final class PackedStereoGlCompositor implements Closeable {
     private boolean composePairIntoPool(GlState gl, PackedStereoFramePairer.Pair pair,
             PackedStereoPoolExecutor.Pool pool) throws Exception {
         PackedStereoPoolExecutor.Write write = pool.beginWrite();
-        if (write == null) return false;
+        if (write == null) {
+            poolBeginNoCapacity.observeAt(SystemClock.elapsedRealtimeNanos(), pair.pairId);
+            return false;
+        }
+        poolBeginAccepted.observeAt(SystemClock.elapsedRealtimeNanos(), pair.pairId);
         boolean pendingRegistered = false;
         try {
             gl.composeIntoFramebuffer(write.framebuffer,
@@ -382,6 +466,7 @@ final class PackedStereoGlCompositor implements Closeable {
             pool.finishWrite(write, new PackedStereoPoolExecutor.PairIdentity(pair.pairId,
                     pair.left.sourceFrame, pair.right.sourceFrame,
                     pair.left.sensorTimestampNs, pair.right.sensorTimestampNs));
+            producerFenceSubmitted.observeAt(SystemClock.elapsedRealtimeNanos(), pair.pairId);
             pendingRegistered = true;
             return true; // producer Pending registered, not frame ready/terminal
         } finally {
@@ -407,6 +492,14 @@ final class PackedStereoGlCompositor implements Closeable {
         compositorTimeTotalNs += elapsedNs;
         compositorTimeMaxNs = Math.max(compositorTimeMaxNs, elapsedNs);
         if (activePool == null) listener.onPairPresented(pair, presentationNs / 1_000L);
+    }
+
+    private void recordAcceptedPair(PackedStereoFramePairer.Pair pair) {
+        lastPairLeftFrame = pair.left.sourceFrame;
+        lastPairRightFrame = pair.right.sourceFrame;
+        lastPairLeftSensorNs = pair.left.sensorTimestampNs;
+        lastPairRightSensorNs = pair.right.sensorTimestampNs;
+        pairsAccepted.observeAt(SystemClock.elapsedRealtimeNanos(), pair.pairId);
     }
 
     private void drainPoolOnCaptureContext(PackedStereoPoolExecutor.Pool pool, GlState gl) {
