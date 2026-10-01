@@ -15,6 +15,7 @@ import android.hardware.camera2.params.SessionConfiguration;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.util.Range;
 import android.util.Size;
 import android.util.Log;
@@ -23,16 +24,29 @@ import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 import org.json.JSONObject;
 
 /** App-owned capture. Peer subscriptions never own these cameras or compositor. */
 public final class PackedStereoCaptureOwner {
+    private static final AtomicLong NEXT_CAPTURE_INSTANCE = new AtomicLong();
     public interface EncoderConsumer { void offer(PackedStereoEncoderInput frame); }
     private final Context context;
     private final PackedStereoStreamMetadata.Layout layout;
     private final String leftId, rightId;
     private final int frameRate;
     private final PackedStereoPoolExecutor poolExecutor;
+    private final long captureInstance = NEXT_CAPTURE_INSTANCE.incrementAndGet();
+    private final CaptureFrameTrace leftFrameTrace = new CaptureFrameTrace();
+    private final CaptureFrameTrace rightFrameTrace = new CaptureFrameTrace();
+    /** Observation-only epoch boundary; never changes camera requests or media state. */
+    public void armDiagnosticTrace(String processEpoch, long appGeneration, long armGeneration) {
+        if (processEpoch == null || processEpoch.isEmpty() || appGeneration <= 0L || armGeneration <= 0L)
+            throw new IllegalArgumentException("diagnostic epoch unavailable");
+        long boundary = android.os.SystemClock.elapsedRealtimeNanos();
+        leftFrameTrace.arm(processEpoch, appGeneration, armGeneration, boundary);
+        rightFrameTrace.arm(processEpoch, appGeneration, armGeneration, boundary);
+    }
     private final Object subscriptionLock = new Object();
     private EncoderConsumer encoderConsumer;
     private long encoderGeneration;
@@ -293,7 +307,7 @@ public final class PackedStereoCaptureOwner {
                             Endpoint a = left, b = right;
                             return startupSettled && (a == null || a.retired()) && (b == null || b.retired());
                         }
-                    });
+                    }, leftFrameTrace, rightFrameTrace);
             compositor.awaitStarted();
             poolExecutor.awaitCameraOwnership();
             if (stopRequested) throw new IllegalStateException("capture stopped during startup");
@@ -413,6 +427,9 @@ public final class PackedStereoCaptureOwner {
                 .put("clock", "android_elapsedRealtimeNanos")
                 .put("sample_elapsed_ns", sampleNs)
                 .put("consistency", "per_stage_non_atomic")
+                .put("capture_instance", captureInstance)
+                .put("left_frame_trace", leftFrameTrace.snapshot())
+                .put("right_frame_trace", rightFrameTrace.snapshot())
                 .put("first_failure_origin_code", first == null ? FAILURE_NONE : first.originCode)
                 .put("first_failure_cause_code", first == null ? 0 : first.causeCode)
                 .put("first_failure_detail_code", first == null ? DETAIL_OTHER : first.detailCode)
@@ -606,15 +623,24 @@ public final class PackedStereoCaptureOwner {
                     rightFpsRangePresent = true;
                 }
             }
-            session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
+            CaptureFrameTrace trace = PackedStereoFramePairer.LEFT.equals(eye)
+                    ? leftFrameTrace : rightFrameTrace;
+            long submissionEntryNs = android.os.SystemClock.elapsedRealtimeNanos();
+            int requestSequence = session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
                 public void onCaptureStarted(CameraCaptureSession active, CaptureRequest request,
                         long timestamp, long frameNumber) {
+                    long traceEpoch = trace.epoch();
                     long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
                     CameraResultCadence raw = PackedStereoFramePairer.LEFT.equals(eye)
                             ? leftCameraStarted : rightCameraStarted;
                     raw.observeAt(callbackElapsedNs, frameNumber + 1L, frameNumber, timestamp);
+                    Looper looper = Looper.myLooper();
+                    trace.started(traceEpoch, frameNumber, callbackElapsedNs,
+                            android.os.SystemClock.elapsedRealtimeNanos(), Thread.currentThread().getId(),
+                            looper != null && looper == Looper.getMainLooper(), timestamp);
                 }
                 public void onCaptureCompleted(CameraCaptureSession active, CaptureRequest request, TotalCaptureResult result) {
+                    long traceEpoch = trace.epoch();
                     long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
                     long frameNumber = result.getFrameNumber();
                     long sourceFrame = frameNumber + 1L;
@@ -634,6 +660,11 @@ public final class PackedStereoCaptureOwner {
                         valid.observeAt(android.os.SystemClock.elapsedRealtimeNanos(), sourceFrame);
                         compositor.recordCapture(eye, sourceFrame, timestamp);
                     }
+                    Looper looper = Looper.myLooper();
+                    trace.completed(traceEpoch, frameNumber, callbackElapsedNs,
+                            android.os.SystemClock.elapsedRealtimeNanos(), Thread.currentThread().getId(),
+                            looper != null && looper == Looper.getMainLooper(),
+                            timestamp, exposureTimeNs, frameDurationNs);
                 }
                 public void onCaptureFailed(CameraCaptureSession active, CaptureRequest request,
                         CaptureFailure captureFailure) {
@@ -644,6 +675,8 @@ public final class PackedStereoCaptureOwner {
                             captureFailure.getFrameNumber(), captureFailure.getReason());
                 }
             }, handler);
+            trace.submission(submissionEntryNs, android.os.SystemClock.elapsedRealtimeNanos(),
+                    requestSequence);
         }
         void failedDevice(CameraDevice value, String reason, int originCode) {
             device = value; openSettled = true; error = new IllegalStateException(reason);

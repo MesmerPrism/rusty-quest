@@ -16,9 +16,12 @@ internal object ConcurrentStereoQualification {
     private var runtimeConfig: String? = null
     private var featureLock: String? = null
     private var installedApk: String? = null
+    private var armEntryElapsedNs: Long = 0
+    private var armExitElapsedNs: Long = 0
 
     @JvmStatic fun arm(challenge: String, processEpoch: String, runtimeSha: String,
         featureSha: String, apkSha: String): String {
+        val armEntry = android.os.SystemClock.elapsedRealtimeNanos()
         val next = StereoBankControls.armConcurrentQualification(challenge)
         require(next != 0L) { "qualification unavailable" }
         val snapshot = StereoBankControls.concurrentQualification()
@@ -32,6 +35,8 @@ internal object ConcurrentStereoQualification {
         this.runtimeConfig = runtimeSha
         this.featureLock = featureSha
         this.installedApk = apkSha
+        this.armEntryElapsedNs = armEntry
+        this.armExitElapsedNs = android.os.SystemClock.elapsedRealtimeNanos()
         return receipt("arm", challenge, processEpoch, runtimeSha, featureSha, apkSha, snapshot)
     }
 
@@ -40,6 +45,14 @@ internal object ConcurrentStereoQualification {
         require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)
         return receipt("status", challenge, processEpoch, runtimeSha, featureSha, apkSha,
             StereoBankControls.concurrentQualification())
+    }
+
+    /** Internal diagnostic context; never extends the acceptance receipt schema. */
+    @JvmStatic fun diagnosticArmContext(challenge: String, processEpoch: String): String {
+        require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)
+        return JSONObject().put("arm_generation", arm)
+            .put("arm_entry_elapsed_ns", armEntryElapsedNs)
+            .put("arm_exit_elapsed_ns", armExitElapsedNs).toString()
     }
 
     @JvmStatic fun policy(challenge: String, processEpoch: String, runtimeSha: String,

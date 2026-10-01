@@ -246,6 +246,7 @@ final class EmbeddedDuplexProcessHost {
                         throw new IllegalStateException("Own capture diagnostic native process or arm changed");
                     }
                     long sampleStartNs = android.os.SystemClock.elapsedRealtimeNanos();
+                    JSONObject armContext = new JSONObject(ConcurrentStereoQualification.diagnosticArmContext(challenge, epoch));
                     JSONObject source = retained.sourceSnapshot();
                     long sampleEndNs = android.os.SystemClock.elapsedRealtimeNanos();
                     if (!source.getBoolean("shared_app_capture")) {
@@ -255,6 +256,10 @@ final class EmbeddedDuplexProcessHost {
                             .put("schema", "rusty.quest.embedded_duplex.own_capture_diagnostic.v1")
                             .put("challenge", challenge)
                             .put("process_epoch_id", epoch)
+                            .put("app_generation", processFence.generation())
+                            .put("arm_generation", qualification.getLong("arm_generation"))
+                            .put("arm_entry_elapsed_ns", armContext.getLong("arm_entry_elapsed_ns"))
+                            .put("arm_exit_elapsed_ns", armContext.getLong("arm_exit_elapsed_ns"))
                             .put("consistency", "sequential_non_atomic_observation")
                             .put("java_clock", "android_elapsedRealtimeNanos")
                             .put("native_clock", "CLOCK_MONOTONIC")
@@ -361,8 +366,16 @@ final class EmbeddedDuplexProcessHost {
                 return receipt;
             }
             if (policyAction) return ConcurrentStereoQualification.policy(challenge, epoch, receiptConfig, receiptFeature, apk.toString(), policy);
-            return arm ? ConcurrentStereoQualification.arm(challenge, epoch, receiptConfig, receiptFeature, apk.toString())
-                : ConcurrentStereoQualification.status(challenge, epoch, receiptConfig, receiptFeature, apk.toString());
+            if (arm) {
+                String receipt = ConcurrentStereoQualification.arm(challenge, epoch, receiptConfig, receiptFeature, apk.toString());
+                EmbeddedDuplexResources retained = resources;
+                if (retained != null && retained.ownAppCaptureEnabled()) {
+                    JSONObject context = new JSONObject(ConcurrentStereoQualification.diagnosticArmContext(challenge, epoch));
+                    retained.armOwnCaptureTrace(epoch, processFence.generation(), context.getLong("arm_generation"));
+                }
+                return receipt;
+            }
+            return ConcurrentStereoQualification.status(challenge, epoch, receiptConfig, receiptFeature, apk.toString());
         });
     }
 
