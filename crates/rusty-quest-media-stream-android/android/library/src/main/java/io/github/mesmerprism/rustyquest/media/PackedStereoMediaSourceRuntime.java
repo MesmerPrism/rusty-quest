@@ -511,10 +511,16 @@ public final class PackedStereoMediaSourceRuntime {
             PackedStereoEncoderWorker worker = encoderWorker;
             boolean captureFresh = false;
             int captureFreshMask = 0;
+            int captureFirstFailureOrigin = 0;
+            int captureFirstFailureCause = 0;
+            int captureFirstFailureDetail = 0;
             if (capture != null) {
                 try { captureFresh = capture.fresh(); }
                 catch (Throwable ignored) { /* Diagnostic sampling never masks the failure. */ }
                 captureFreshMask = capture.freshnessDiagnosticMask();
+                captureFirstFailureOrigin = capture.firstFailureOriginCode();
+                captureFirstFailureCause = capture.firstFailureCauseCode();
+                captureFirstFailureDetail = capture.firstFailureDetailCode();
             }
             android.util.Log.i("RQSpatialCameraPanel", "channel=packed-source status=source-failed stage="
                     + stage + " cause=" + PackedSourceFailureCode.cause(failure)
@@ -523,6 +529,9 @@ public final class PackedStereoMediaSourceRuntime {
                     + " sourceCurrent=" + state.startsWith("source_streaming_")
                     + " sharedCaptureFresh=" + captureFresh
                     + " sharedCaptureFreshMask=" + captureFreshMask
+                    + " captureFirstFailureOrigin=" + captureFirstFailureOrigin
+                    + " captureFirstFailureCause=" + captureFirstFailureCause
+                    + " captureFirstFailureDetail=" + captureFirstFailureDetail
                     + " encoderWorkerFailed=" + (worker != null && worker.failure() != null)
                     + " lastFreshAgeMs=" + PackedSourceFailureCode.ageMs(nowMs, lastSourceFreshElapsedMs)
                     + " lastPacketAgeMs=" + PackedSourceFailureCode.ageMs(nowMs, lastPacketElapsedMs)

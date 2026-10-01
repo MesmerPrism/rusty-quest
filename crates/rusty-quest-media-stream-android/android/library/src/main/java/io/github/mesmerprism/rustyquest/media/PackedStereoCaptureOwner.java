@@ -16,6 +16,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.util.Range;
 import android.util.Size;
+import android.util.Log;
 import android.view.Surface;
 import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
@@ -39,6 +40,25 @@ public final class PackedStereoCaptureOwner {
     private volatile Endpoint left, right;
     private volatile boolean stopRequested, started, startupSettled;
     private volatile Throwable failure;
+    // Closed first-fault observation, published before teardown. A late camera callback
+    // cannot replace the reason that first stopped the shared capture owner.
+    static final int FAILURE_NONE = 0, FAILURE_COMPOSITOR = 1,
+            FAILURE_CAMERA_DISCONNECTED = 2, FAILURE_CAMERA_ERROR = 3,
+            FAILURE_SESSION_REJECTED = 4, FAILURE_STARTUP = 5;
+    // Exact native source-publication vocabulary; zero means an unclassified
+    // failure and never grants permission to ignore it.
+    static final int DETAIL_OTHER = 0, DETAIL_PUBLICATION_REPLAY = 1,
+            DETAIL_PUBLICATION_REGRESSED_CLOCK = 2, DETAIL_PUBLICATION_UNBOUND = 3,
+            DETAIL_PUBLICATION_IDENTITY = 4;
+    private static final class FirstFailure {
+        final int originCode, causeCode, detailCode;
+        final long elapsedNs;
+        FirstFailure(int originCode, int causeCode, int detailCode, long elapsedNs) {
+            this.originCode = originCode; this.causeCode = causeCode;
+            this.detailCode = detailCode; this.elapsedNs = elapsedNs;
+        }
+    }
+    private volatile FirstFailure firstFailure;
     private final PackedStereoGlCompositor.StageCadence leftCameraResults =
             new PackedStereoGlCompositor.StageCadence();
     private final PackedStereoGlCompositor.StageCadence rightCameraResults =
@@ -75,7 +95,7 @@ public final class PackedStereoCaptureOwner {
                         public void onPairPresented(PackedStereoFramePairer.Pair pair, long ptsUs) {
                             throw new IllegalStateException("capture owner cannot publish encoder metadata");
                         }
-                        public void onCompositorFailure(Throwable error) { fail(error); }
+                        public void onCompositorFailure(Throwable error) { fail(error, FAILURE_COMPOSITOR); }
                         public boolean canRetireCaptureInputs() {
                             Endpoint a = left, b = right;
                             return startupSettled && (a == null || a.retired()) && (b == null || b.retired());
@@ -95,7 +115,7 @@ public final class PackedStereoCaptureOwner {
             right = new Endpoint(rightId, PackedStereoFramePairer.RIGHT);
             right.open(manager, compositor.rightCameraSurface(), handler);
         } catch (Exception error) {
-            fail(error);
+            fail(error, FAILURE_STARTUP);
             throw error;
         } finally { startupSettled = true; }
     }
@@ -158,15 +178,52 @@ public final class PackedStereoCaptureOwner {
                 && layout.maxPairDeltaNs == deltaNs;
     }
     public Throwable failure() { return failure; }
+    int firstFailureOriginCode() {
+        FirstFailure observed = firstFailure;
+        return observed == null ? FAILURE_NONE : observed.originCode;
+    }
+    int firstFailureCauseCode() {
+        FirstFailure observed = firstFailure;
+        return observed == null ? 0 : observed.causeCode;
+    }
+    int firstFailureDetailCode() {
+        FirstFailure observed = firstFailure;
+        return observed == null ? DETAIL_OTHER : observed.detailCode;
+    }
+
+    // Stable numeric classes only. Exception text and stack traces remain outside
+    // the bounded diagnostic and source-failure records.
+    private static int causeCode(Throwable error) {
+        if (error instanceof IllegalStateException) return 1;
+        if (error instanceof IllegalArgumentException) return 2;
+        if (error instanceof OutOfMemoryError) return 3;
+        if (error instanceof Error) return 4;
+        if (error instanceof RuntimeException) return 5;
+        return 6;
+    }
+    private static int detailCode(Throwable error) {
+        if (!(error instanceof IllegalStateException)) return DETAIL_OTHER;
+        String exact = error.getMessage();
+        if ("source publication Replay".equals(exact)) return DETAIL_PUBLICATION_REPLAY;
+        if ("source publication RegressedClock".equals(exact)) return DETAIL_PUBLICATION_REGRESSED_CLOCK;
+        if ("source publication UnboundEpoch".equals(exact)) return DETAIL_PUBLICATION_UNBOUND;
+        if ("source publication InvalidIdentity".equals(exact)) return DETAIL_PUBLICATION_IDENTITY;
+        return DETAIL_OTHER;
+    }
 
     /** Local diagnostic only. Each cadence is internally coherent; stages are sampled separately. */
     JSONObject captureDiagnosticSnapshot() throws Exception {
         long sampleNs = android.os.SystemClock.elapsedRealtimeNanos();
         PackedStereoGlCompositor current = compositor;
+        FirstFailure first = firstFailure;
         JSONObject result = new JSONObject()
                 .put("clock", "android_elapsedRealtimeNanos")
                 .put("sample_elapsed_ns", sampleNs)
                 .put("consistency", "per_stage_non_atomic")
+                .put("first_failure_origin_code", first == null ? FAILURE_NONE : first.originCode)
+                .put("first_failure_cause_code", first == null ? 0 : first.causeCode)
+                .put("first_failure_detail_code", first == null ? DETAIL_OTHER : first.detailCode)
+                .put("first_failure_elapsed_ns", first == null ? 0L : first.elapsedNs)
                 .put("left_camera_result", leftCameraResults.snapshot(sampleNs))
                 .put("right_camera_result", rightCameraResults.snapshot(sampleNs))
                 .put("left_camera_metadata", leftCameraMetadata.snapshot(sampleNs))
@@ -222,7 +279,27 @@ public final class PackedStereoCaptureOwner {
         return true;
     }
 
-    private void fail(Throwable error) { failure = error; requestStop(); }
+    private void fail(Throwable error, int originCode) {
+        synchronized (this) {
+            if (firstFailure == null && !stopRequested) {
+                FirstFailure observed = new FirstFailure(originCode, causeCode(error), detailCode(error),
+                        android.os.SystemClock.elapsedRealtimeNanos());
+                failure = error;
+                firstFailure = observed;
+                // The event is emitted under the first-fault ordering lock, before
+                // any competing callback can request capture teardown.
+                try {
+                    Log.i("RQSpatialCameraPanel", "channel=packed-capture status=owner-first-failure"
+                            + " originCode=" + observed.originCode + " causeCode=" + observed.causeCode
+                            + " detailCode=" + observed.detailCode
+                            + " elapsedNs=" + observed.elapsedNs);
+                } catch (RuntimeException ignored) {
+                    // A logging failure cannot prevent physical cleanup.
+                }
+            }
+        }
+        requestStop();
+    }
 
     private final class Endpoint {
         final String id, eye;
@@ -250,8 +327,12 @@ public final class PackedStereoCaptureOwner {
                         device = value; openSettled = true; opened.countDown();
                         if (closeRequested || stopRequested) requestClose();
                     }
-                    public void onDisconnected(CameraDevice value) { failedDevice(value, "camera disconnected"); }
-                    public void onError(CameraDevice value, int code) { failedDevice(value, "camera error " + code); }
+                    public void onDisconnected(CameraDevice value) {
+                        failedDevice(value, "camera disconnected", FAILURE_CAMERA_DISCONNECTED);
+                    }
+                    public void onError(CameraDevice value, int code) {
+                        failedDevice(value, "camera error " + code, FAILURE_CAMERA_ERROR);
+                    }
                     public void onClosed(CameraDevice value) { deviceClosed = true; }
                 }, handler);
             } catch (Exception failure) { openSettled = true; throw failure; }
@@ -277,7 +358,7 @@ public final class PackedStereoCaptureOwner {
                         // it need not subsequently deliver onClosed.
                         session = value; sessionConfigurationFailed = true; sessionSettled = true;
                         error = new IllegalStateException("camera session rejected");
-                        configured.countDown(); fail(error);
+                        fail(error, FAILURE_SESSION_REJECTED); configured.countDown();
                     }
                     public void onClosed(CameraCaptureSession value) {
                         sessionClosed = true;
@@ -314,9 +395,10 @@ public final class PackedStereoCaptureOwner {
                 }
             }, handler);
         }
-        void failedDevice(CameraDevice value, String reason) {
+        void failedDevice(CameraDevice value, String reason, int originCode) {
             device = value; openSettled = true; error = new IllegalStateException(reason);
-            value.close(); opened.countDown(); fail(error);
+            fail(error, originCode); opened.countDown();
+            value.close();
         }
         void requestClose() {
             closeRequested = true;

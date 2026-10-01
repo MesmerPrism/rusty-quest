@@ -9,14 +9,15 @@ pub(crate) type PackedLease = PinnedPackedLease<Ahb,PairIdentity>;
 enum State { Free, Writing(u64), Pending(u64,PairIdentity,OwnedFd), Ready(ContentOwner<Ahb,PairIdentity>), Quarantined, FailedProducer(OwnedFd) }
 struct Slot { allocation:Option<gl::GlAllocation>, state:State }
 pub(crate) struct OwnPackedPool { ext:gl::Extensions, slots:Vec<Slot>, limits:HoldLimits,
- pub generation:u64,pub epoch:SourceEpoch, accepting:bool, last_pair:u64, pub initialization_error:Option<String>,
+ pub generation:u64,pub epoch:SourceEpoch, accepting:bool, last_pair:u64,
+ ready_order:ReadyObservationOrder, pub initialization_error:Option<String>,
  // Failed export physical handles stay retained, including failed sync destruction.
  failures:Vec<gl::FenceExportError> }
 impl OwnPackedPool {
  pub(crate) unsafe fn create(w:u32,h:u32,limits:HoldLimits,process_generation:u64)->Result<Self,String> {
   limits.validate(w,h)?; if process_generation==0 {return Err("missing accepted process owner".into());}
   let ext=gl::Extensions::load_current()?; let generation=serial()?;
-  let mut pool=Self {ext,slots:Vec::new(),limits,generation,epoch:SourceEpoch {process_generation,source_generation:serial()?},accepting:true,last_pair:0,initialization_error:None,failures:Vec::new()};
+  let mut pool=Self {ext,slots:Vec::new(),limits,generation,epoch:SourceEpoch {process_generation,source_generation:serial()?},accepting:true,last_pair:0,ready_order:ReadyObservationOrder::default(),initialization_error:None,failures:Vec::new()};
   crate::own_packed_gpu_holds::install_pool(generation,pool.epoch,limits.gpu_uses)?;
   let mut allocated_bytes=0u64;
   for _ in 0..limits.slots { match gl::allocate_current(&pool.ext,w,h) { Ok(allocation)=>{
@@ -62,7 +63,14 @@ impl OwnPackedPool {
     frames.push(RetainedStereoFrame { identity:StereoFrameIdentity {epoch:self.epoch,pair_sequence:pair.pair_id,left_timestamp_ns:pair.left_ns,right_timestamp_ns:pair.right_ns,packed_pts_ns:pair.pts(),calibration_revision:None}, lease:owner.retain(),observed_at_ns:observed_at_ns });
     slot.state=State::Ready(owner);
    }
-  } frames.sort_by_key(|f|f.identity.pair_sequence); frames
+  }
+  frames.sort_by_key(|f|f.identity.pair_sequence);
+  let batch_observed_ns=frames.iter().map(|f|f.observed_at_ns).max().unwrap_or(0);
+  frames.into_iter().filter_map(|mut frame| {
+   let ordered_ns=self.ready_order.admit(frame.identity.pair_sequence,batch_observed_ns)?;
+   frame.observed_at_ns=ordered_ns;
+   Some(frame)
+  }).collect()
  }
  pub(crate) fn quarantine_content(&mut self,serial:u64) {for s in &mut self.slots {let matching=match &mut s.state {State::Ready(o)=>o.retain().contents().version.slot_serial==serial,_=>false};if matching{s.state=State::Quarantined;}}}
  pub(crate) fn accepting(&self)->bool {self.accepting}
