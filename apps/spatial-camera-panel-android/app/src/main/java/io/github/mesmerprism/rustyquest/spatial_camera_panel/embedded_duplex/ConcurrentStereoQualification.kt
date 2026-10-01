@@ -47,6 +47,14 @@ internal object ConcurrentStereoQualification {
             StereoBankControls.concurrentQualification())
     }
 
+    /** Internal diagnostic context; never extends the acceptance receipt schema. */
+    @JvmStatic fun diagnosticArmContext(challenge: String, processEpoch: String): String {
+        require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)
+        return JSONObject().put("arm_generation", arm)
+            .put("arm_entry_elapsed_ns", armEntryElapsedNs)
+            .put("arm_exit_elapsed_ns", armExitElapsedNs).toString()
+    }
+
     @JvmStatic fun policy(challenge: String, processEpoch: String, runtimeSha: String,
         featureSha: String, apkSha: String, update: LongArray?): String {
         require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)
@@ -92,8 +100,6 @@ internal object ConcurrentStereoQualification {
         snapshot.forEach { words.put(it) }
         return JSONObject().put("schema", "rusty.quest.stereo.concurrent_qualification_receipt.v1")
             .put("action", action).put("challenge", challenge).put("process_epoch_id", processEpoch)
-            .put("arm_entry_elapsed_ns", armEntryElapsedNs)
-            .put("arm_exit_elapsed_ns", armExitElapsedNs)
             .put("arm_generation", arm).put("native_process_generation", nativeProcess)
             .put("runtime_config_sha256", runtimeSha).put("feature_lock_sha256", featureSha)
             .put("apk_sha256", apkSha).put("native_snapshot", words).toString()

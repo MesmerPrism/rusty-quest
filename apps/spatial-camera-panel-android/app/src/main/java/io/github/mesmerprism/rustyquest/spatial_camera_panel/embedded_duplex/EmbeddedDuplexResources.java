@@ -145,6 +145,11 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         return snapshot;
     }
     boolean ownAppCaptureEnabled() { return ownCapture != null; }
+    void armOwnCaptureTrace(String processEpoch, long appGeneration, long armGeneration) {
+        io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner retained =
+                ownCapture == null ? null : ownCapture.retainedCapture();
+        if (retained != null) retained.armDiagnosticTrace(processEpoch, appGeneration, armGeneration);
+    }
     String ownAppCaptureState() { return ownCapture == null ? "disabled" : ownCapture.phase().name(); }
 
     @Override public String incomingDiagnostic() { return incoming.activationDiagnostic(); }

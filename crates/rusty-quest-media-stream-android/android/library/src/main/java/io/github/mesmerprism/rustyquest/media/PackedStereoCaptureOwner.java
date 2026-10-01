@@ -39,6 +39,14 @@ public final class PackedStereoCaptureOwner {
     private final long captureInstance = NEXT_CAPTURE_INSTANCE.incrementAndGet();
     private final CaptureFrameTrace leftFrameTrace = new CaptureFrameTrace();
     private final CaptureFrameTrace rightFrameTrace = new CaptureFrameTrace();
+    /** Observation-only epoch boundary; never changes camera requests or media state. */
+    public void armDiagnosticTrace(String processEpoch, long appGeneration, long armGeneration) {
+        if (processEpoch == null || processEpoch.isEmpty() || appGeneration <= 0L || armGeneration <= 0L)
+            throw new IllegalArgumentException("diagnostic epoch unavailable");
+        long boundary = android.os.SystemClock.elapsedRealtimeNanos();
+        leftFrameTrace.arm(processEpoch, appGeneration, armGeneration, boundary);
+        rightFrameTrace.arm(processEpoch, appGeneration, armGeneration, boundary);
+    }
     private final Object subscriptionLock = new Object();
     private EncoderConsumer encoderConsumer;
     private long encoderGeneration;
@@ -621,16 +629,18 @@ public final class PackedStereoCaptureOwner {
             int requestSequence = session.setRepeatingRequest(request.build(), new CameraCaptureSession.CaptureCallback() {
                 public void onCaptureStarted(CameraCaptureSession active, CaptureRequest request,
                         long timestamp, long frameNumber) {
+                    long traceEpoch = trace.epoch();
                     long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
                     CameraResultCadence raw = PackedStereoFramePairer.LEFT.equals(eye)
                             ? leftCameraStarted : rightCameraStarted;
                     raw.observeAt(callbackElapsedNs, frameNumber + 1L, frameNumber, timestamp);
                     Looper looper = Looper.myLooper();
-                    trace.started(frameNumber, callbackElapsedNs,
+                    trace.started(traceEpoch, frameNumber, callbackElapsedNs,
                             android.os.SystemClock.elapsedRealtimeNanos(), Thread.currentThread().getId(),
                             looper != null && looper == Looper.getMainLooper(), timestamp);
                 }
                 public void onCaptureCompleted(CameraCaptureSession active, CaptureRequest request, TotalCaptureResult result) {
+                    long traceEpoch = trace.epoch();
                     long callbackElapsedNs = android.os.SystemClock.elapsedRealtimeNanos();
                     long frameNumber = result.getFrameNumber();
                     long sourceFrame = frameNumber + 1L;
@@ -651,7 +661,7 @@ public final class PackedStereoCaptureOwner {
                         compositor.recordCapture(eye, sourceFrame, timestamp);
                     }
                     Looper looper = Looper.myLooper();
-                    trace.completed(frameNumber, callbackElapsedNs,
+                    trace.completed(traceEpoch, frameNumber, callbackElapsedNs,
                             android.os.SystemClock.elapsedRealtimeNanos(), Thread.currentThread().getId(),
                             looper != null && looper == Looper.getMainLooper(),
                             timestamp, exposureTimeNs, frameDurationNs);

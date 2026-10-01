@@ -30,6 +30,12 @@ public final class CaptureCloseTest {
                 && after.getJSONObject("left_camera_metadata").getLong("count") == 1L
                 && after.getJSONObject("right_camera_result").getLong("count") == 0L,
                 "raw camera callbacks, valid metadata, and eyes were conflated");
+        owner.armDiagnosticTrace("fixture-process", 5L, 6L);
+        JSONObject armedTrace = owner.captureDiagnosticSnapshot().getJSONObject("left_frame_trace");
+        check(armedTrace.getLong("arm_generation") == 6L
+                && armedTrace.getLong("app_generation") == 5L
+                && armedTrace.getJSONArray("frames").length() == 0,
+                "actual retained capture arm failed to reset the observation ring");
         owner.requestStop();owner.requestStop();
         check(!owner.pollStopped(),"close request falsely proved physical retirement");
         if(baseline){

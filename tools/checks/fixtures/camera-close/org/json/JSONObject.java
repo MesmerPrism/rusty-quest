@@ -8,5 +8,6 @@ public final class JSONObject {
     public JSONObject put(String key, Object value) { values.put(key, value); return this; }
     public Object get(String key) { return values.get(key); }
     public JSONObject getJSONObject(String key) { return (JSONObject) values.get(key); }
+    public JSONArray getJSONArray(String key) { return (JSONArray) values.get(key); }
     public long getLong(String key) { return ((Number) values.get(key)).longValue(); }
 }
