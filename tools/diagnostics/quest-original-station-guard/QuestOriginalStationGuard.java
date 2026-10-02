@@ -17,6 +17,61 @@ import java.util.concurrent.*;
 public final class QuestOriginalStationGuard {
   enum Phase { arguments, uid, config_load, config_contract, config_path, host_identity, main_looper, activity_thread, shell_context, binder_services, wifi_manager, connectivity_manager, callback_thread, p2p_service, p2p_channel, dispatch, snapshot_host, configured_networks, profile_projection, snapshot_join }
   static Phase diagnosticPhase=Phase.arguments;
+  static final class DeviceInventoryConfig {
+    final String run,serial,boot; final long deadline;
+    DeviceInventoryConfig(Properties p,long now) {
+      if(!p.stringPropertyNames().equals(new HashSet<>(Arrays.asList("run_token","serial","boot_id","deadline_elapsed_realtime_ms"))))throw new IllegalArgumentException("inventory_keys");
+      run=p.getProperty("run_token");serial=p.getProperty("serial");boot=p.getProperty("boot_id");deadline=Long.parseLong(p.getProperty("deadline_elapsed_realtime_ms"));
+      if(!run.matches("[0-9a-f]{32}")||!serial.matches("[A-Za-z0-9]{8,32}")||!boot.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}"))throw new IllegalArgumentException("inventory_identity");
+      fresh(now);
+    }
+    void fresh(long now){if(now<0||deadline<=now||deadline-now>30000)throw new SecurityException("inventory_deadline");}
+    void host(String actualSerial,String actualBoot){if(!serial.equals(actualSerial)||!boot.equals(actualBoot))throw new SecurityException("inventory_host");}
+  }
+  static String inventoryMac(String first,String second) {
+    if(first==null||second==null||!first.matches("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")||!first.equalsIgnoreCase(second))throw new SecurityException("inventory_mac_unavailable");
+    String mac=first.toLowerCase(Locale.ROOT);
+    if(mac.equals("02:00:00:00:00:00")||mac.equals("00:00:00:00:00:00")||mac.equals("ff:ff:ff:ff:ff:ff")||(Integer.parseInt(mac.substring(0,2),16)&1)!=0)throw new SecurityException("inventory_mac_redacted_or_invalid");
+    return mac;
+  }
+  static void deviceInfoInventory(String path)throws Exception {
+    diagnosticPhase=Phase.uid;if(android.os.Process.myUid()!=2000)throw new SecurityException("uid2000_required");
+    DeviceInventoryConfig cfg=new DeviceInventoryConfig(load(new File(path)),SystemClock.elapsedRealtime());
+    if(!path.equals("/data/local/tmp/rqpi-"+cfg.run+".properties"))throw new SecurityException("config_path");
+    String configSha=shaBytes(Files.readAllBytes(new File(path).toPath()));
+    String serial=(String)Class.forName("android.os.SystemProperties").getMethod("get",String.class).invoke(null,"ro.serialno");
+    String boot=new String(Files.readAllBytes(new File("/proc/sys/kernel/random/boot_id").toPath()),StandardCharsets.UTF_8).trim();cfg.host(serial,boot);
+    diagnosticPhase=Phase.main_looper;if(Looper.getMainLooper()==null)Looper.prepareMainLooper();
+    // Exact existing shell attribution/bootstrap; initialization may change P2P
+    // service state, which the parent must observe before/after, not infer away.
+    diagnosticPhase=Phase.activity_thread;Class<?> at=Class.forName("android.app.ActivityThread");Object thread=at.getMethod("systemMain").invoke(null);Context sys=(Context)at.getMethod("getSystemContext").invoke(thread);
+    diagnosticPhase=Phase.shell_context;Context base=sys.createPackageContext("com.android.shell",0);Context shell=new ContextWrapper(base){public String getPackageName(){return "com.android.shell";}public String getOpPackageName(){return "com.android.shell";}public AttributionSource getAttributionSource(){return new AttributionSource.Builder(2000).setPackageName("com.android.shell").build();}};
+    WifiManager wifi=(WifiManager)shell.getSystemService(Context.WIFI_SERVICE);WifiP2pManager p2p=(WifiP2pManager)shell.getSystemService(Context.WIFI_P2P_SERVICE);
+    if(wifi==null||p2p==null)throw new IllegalStateException("p2p_service");
+    int wifiBefore=wifi.getWifiState();HandlerThread callbacks=new HandlerThread("rqpi-callbacks");callbacks.start();WifiP2pManager.Channel channel=null;
+    String mac=null;Integer[] state=new Integer[2];boolean channelClosed=false;Exception failure=null;
+    try {
+      channel=p2p.initialize(shell,callbacks.getLooper(),null);if(channel==null)throw new IllegalStateException("p2p_channel");
+      for(int i=0;i<2;i++){
+        cfg.fresh(SystemClock.elapsedRealtime());final int index=i;CountDownLatch states=new CountDownLatch(1);
+        p2p.requestP2pState(channel,value->{state[index]=value;states.countDown();});await(states);
+        CountDownLatch absent=new CountDownLatch(1);final boolean[] groupPresent={true};p2p.requestGroupInfo(channel,value->{groupPresent[0]=value!=null;absent.countDown();});await(absent);
+        if(groupPresent[0])throw new SecurityException("inventory_preexisting_group");
+        CountDownLatch stopped=new CountDownLatch(1);final boolean[] idle={false};p2p.requestDiscoveryState(channel,value->{idle[0]=value==WifiP2pManager.WIFI_P2P_DISCOVERY_STOPPED;stopped.countDown();});await(stopped);
+        if(!idle[0])throw new SecurityException("inventory_discovery_active");
+        CountDownLatch device=new CountDownLatch(1);final String[] address={null};p2p.requestDeviceInfo(channel,value->{address[0]=value==null?null:value.deviceAddress;device.countDown();});await(device);
+        if(i==0)mac=address[0];else mac=inventoryMac(mac,address[0]);
+      }
+      cfg.fresh(SystemClock.elapsedRealtime());
+      cfg.host((String)Class.forName("android.os.SystemProperties").getMethod("get",String.class).invoke(null,"ro.serialno"),new String(Files.readAllBytes(new File("/proc/sys/kernel/random/boot_id").toPath()),StandardCharsets.UTF_8).trim());
+      if(!configSha.equals(shaBytes(Files.readAllBytes(new File(path).toPath()))))throw new SecurityException("inventory_config_changed");
+    }catch(Exception e){failure=e;}finally{
+      try{if(channel!=null){channel.close();channelClosed=true;}}finally{callbacks.quitSafely();callbacks.join(3000);}
+    }
+    int wifiAfter=wifi.getWifiState();
+    System.out.println("{\"schema\":\"rusty.quest.p2p_device_inventory.v1\",\"mode\":\"device-info\",\"run_token\":\""+cfg.run+"\",\"serial\":\""+serial+"\",\"boot_id\":\""+boot+"\",\"config_sha256\":\""+configSha+"\",\"wifi_state_before\":"+wifiBefore+",\"wifi_state_after\":"+wifiAfter+",\"p2p_state_after_initialize\":"+state[0]+",\"p2p_state_before_close\":"+state[1]+",\"channel_closed\":"+channelClosed+",\"callback_thread_stopped\":"+!callbacks.isAlive()+",\"p2p_mac\":"+(failure==null?"\""+mac+"\"":"null")+",\"group_or_radio_mutation_requested\":false,\"initialization_effects_require_outer_observation\":true}");
+    if(failure!=null)throw failure;if(wifiBefore!=wifiAfter||!channelClosed||callbacks.isAlive())throw new SecurityException("inventory_cleanup_or_wifi_baseline");
+  }
   enum SecurityField { none, allowedKeyManagement, allowedProtocols, allowedAuthAlgorithms, allowedPairwiseCiphers, allowedGroupCiphers, allowedGroupManagementCiphers, allowedSuiteBCiphers, requirePmf }
   static SecurityField diagnosticField=SecurityField.none;
   static final Set<SecurityField> missingSecurityFields=EnumSet.noneOf(SecurityField.class);
@@ -213,6 +268,7 @@ public final class QuestOriginalStationGuard {
     restore();
   }
   public static void main(String[] a){QuestOriginalStationGuard h=null;String mode="invalid";try{
+    if(a.length==2&&a[0].equals("device-info")){deviceInfoInventory(a[1]);return;}
     if(a.length!=2||!Arrays.asList("snapshot","arm","guard","restore").contains(a[0]))throw new IllegalArgumentException("mode");mode=a[0];h=new QuestOriginalStationGuard(a[1]);
     diagnosticPhase=Phase.dispatch;if(mode.equals("snapshot")){String[] s=h.snapshot();System.out.println("{\"schema\":\"rusty.quest.original_station_guard.v1\",\"mode\":\"snapshot\",\"profiles_sha256\":\""+s[0]+"\",\"original_sha256\":\""+s[1]+"\"}");}
     else {if(mode.equals("arm"))h.arm();else if(mode.equals("guard"))h.guard();else h.restore();System.out.println("{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":true}");}

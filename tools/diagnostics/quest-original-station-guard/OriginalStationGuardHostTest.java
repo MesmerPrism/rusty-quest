@@ -12,6 +12,18 @@ public final class OriginalStationGuardHostTest {
   interface Work {void run()throws Exception;}
   static void rejects(Work w)throws Exception{boolean bad=false;try{w.run();}catch(IllegalArgumentException|SecurityException e){bad=true;}check(bad);}
   public static void main(String[] a)throws Exception {
+    Properties inventory=new Properties();inventory.setProperty("run_token","0123456789abcdef0123456789abcdef");inventory.setProperty("serial","TESTQUEST00001AB");inventory.setProperty("boot_id","01234567-89ab-cdef-0123-456789abcdef");inventory.setProperty("deadline_elapsed_realtime_ms","31000");
+    QuestOriginalStationGuard.DeviceInventoryConfig inv=new QuestOriginalStationGuard.DeviceInventoryConfig(inventory,1000);
+    inv.host("TESTQUEST00001AB","01234567-89ab-cdef-0123-456789abcdef");check(true);
+    rejects(()->inv.host("TESTQUEST00002AB",inv.boot));rejects(()->inv.fresh(31000));
+    Properties unknown=(Properties)inventory.clone();unknown.setProperty("owner_address","02:11:22:33:44:55");rejects(()->new QuestOriginalStationGuard.DeviceInventoryConfig(unknown,1000));
+    Properties inventoryMissing=(Properties)inventory.clone();inventoryMissing.remove("serial");rejects(()->new QuestOriginalStationGuard.DeviceInventoryConfig(inventoryMissing,1000));
+    rejects(()->new QuestOriginalStationGuard.DeviceInventoryConfig(inventory,999));
+    check(QuestOriginalStationGuard.inventoryMac("02:11:22:33:44:55","02:11:22:33:44:55").equals("02:11:22:33:44:55"));
+    for(String bad:new String[]{"02:00:00:00:00:00","00:00:00:00:00:00","ff:ff:ff:ff:ff:ff","03:11:22:33:44:55","invalid"})rejects(()->QuestOriginalStationGuard.inventoryMac(bad,bad));
+    rejects(()->QuestOriginalStationGuard.inventoryMac("02:11:22:33:44:55","02:22:33:44:55:66"));
+    rejects(()->QuestOriginalStationGuard.inventoryMac(null,null));
+    if(a.length==1&&a[0].equals("--device-info-only")){System.out.println("p2p_device_inventory_host=pass cases="+cases+" device_calls=0");return;}
     OriginalStationGuardContract c=new OriginalStationGuardContract(fixture(),1000);
     check(c.network.equals("DIRECT-rp-0123456789abcdef0123")&&c.network.length()<=32);
     check(c.owned(c.network,"02:11:22:33:44:55",true));

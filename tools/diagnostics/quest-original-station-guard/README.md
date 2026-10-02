@@ -48,3 +48,26 @@ separate required slice. Existing immutable fixed-IP watchdogs must be
 suspended via their owned stop/PID-birth contract before topology change;
 keep-awake intent remains indefinite. Restore serial-verified endpoint mappings
 and resume 300-second/no-end watchdogs only after both stations are restored.
+
+## Closed shell-UID device inventory
+
+`device-info` is a separate inventory entrypoint, not guardian arm or formation.
+Its exact four config keys are `run_token`, `serial`, `boot_id`, and
+`deadline_elapsed_realtime_ms`, with a future deadline at most30seconds away.
+The path is exactly `/data/local/tmp/rqpi-<run_token>.properties`; no configured
+owner MAC, network or role is accepted. UID2000 and the actual canonical serial,
+boot and unchanged raw config are required.
+
+It reuses the existing shell attribution/channel bootstrap, reads P2P state,
+absent group/idle discovery and actual device info twice, and rejects redacted,
+invalid or changed addresses. It requests no group, discovery, connect, Wi-Fi
+radio change or profile mutation. The owned channel is closed and callback
+thread stopped in finally; Wi-Fi state before initialization/after close is
+retained and must match. Null observation fields remain unavailable.
+
+Opening a framework channel can itself enable/initialize P2P service state.
+Do not label that as a proven effect-free read. The parent must retain actual
+raw service/station snapshots before initialization and after owned channel
+cleanup, classify any state transition faithfully and reconcile it without
+generic radio/group clearing. This inventory proves only an observed MAC;
+owner authorization, group readiness and restoration qualification are separate.
