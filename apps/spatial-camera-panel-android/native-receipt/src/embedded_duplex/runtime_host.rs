@@ -47,6 +47,8 @@ mod pair_ceremony;
 mod peer_lifecycle;
 #[path = "retained_cleanup_host.rs"]
 mod retained_cleanup_host;
+#[path = "inbound_cleanup.rs"]
+mod inbound_cleanup;
 
 type DispatchServer = OwnerDispatchServer<
     QuestOwnerDispatchAuthorityVerifier,
@@ -706,7 +708,8 @@ fn build_host(
     let cleanup_replay = serde_json::from_str(&callbacks.load_retained_cleanup_replay()?)
         .map_err(|_| "retained cleanup replay decode")?;
     let cleanup_server = retained_cleanup_host::Server::restore(bootstrap.local_peer_id.clone(),
-        callbacks.key_id().to_owned(),cleanup.clone(),callbacks.clone(),callbacks.clone(),clock.clone(),
+        callbacks.key_id().to_owned(),cleanup.clone(),
+        retained_cleanup_host::RetainingRegistry {cleanup:cleanup.clone(),callbacks:callbacks.clone()},callbacks.clone(),clock.clone(),
         cleanup_replay,callbacks.clone())?;
     let remote = RemoteOwnerDispatchExecutor::new(
         callbacks.clone(),

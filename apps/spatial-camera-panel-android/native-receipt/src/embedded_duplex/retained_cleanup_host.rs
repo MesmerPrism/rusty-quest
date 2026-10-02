@@ -5,6 +5,7 @@ use rusty_quest_media_stream_android::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::io::Read;
+use super::inbound_cleanup::Original;
 pub(super) const PREPARE_MAGIC: &[u8] = b"RQCP1\0";
 const DOMAIN: &[u8] = b"rusty.quest.android.media.retained_cleanup_prepare.v1\0";
 #[derive(Clone, Serialize, Deserialize)]
@@ -20,11 +21,6 @@ struct Prepare {
     issued_at_ms: u64,
     signer_key_id: String,
     signature_base64: String,
-}
-#[derive(Clone, Serialize, Deserialize)]
-struct Original {
-    ticket: AndroidMediaExecutionTicket,
-    effect: Option<AuthenticatedOwnerEffect>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -87,6 +83,22 @@ fn same_owner(a: &AndroidMediaExecutionTicket, b: &AndroidMediaExecutionTicket) 
         && a.resource_id == b.resource_id
 }
 impl Cleanup {
+    pub(super) fn incoming_terminal(&self) -> Result<Value, String> {
+        self.require_state()?;
+        let state = self.state.lock().map_err(|_| "cleanup state poisoned")?;
+        let stops = inbound_cleanup::terminal_owners(state.originals.values(), self.generation)?;
+        Ok(json!({"scope":"incoming_owners_only", "executor_generation":self.generation,
+            "owner_count":stops.len(), "owners":stops}))
+    }
+    fn retain_stop(&self, ticket: &AndroidMediaExecutionTicket, effect: &AuthenticatedOwnerEffect) -> Result<(), String> {
+        let mut next = self.state.lock().map_err(|_| "cleanup state poisoned")?.clone();
+        // A partial Start may never have reached this owner. Preserve its
+        // existing successful Stop; it creates no incoming-target evidence.
+        if !inbound_cleanup::retain_completed_stop(next.originals.get_mut(&key(ticket)), ticket, effect, self.generation)? {
+            return Ok(());
+        }
+        self.persist(next)
+    }
     pub(super) fn new(
         authority: QuestEmbeddedDuplexAuthority,
         callbacks: JavaOwnerCallbacks,
@@ -337,6 +349,7 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
                 Original {
                     ticket: ticket.clone(),
                     effect: None,
+                    completed_stop: None,
                 },
             );
             self.cleanup.persist(next)?;
@@ -359,13 +372,25 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
                 .ok_or("retained original lost")?
                 .effect = Some(effect.clone());
             self.cleanup.persist(next)?;
+        } else if ticket.operation == MediaStreamPlatformOperation::Stop {
+            self.cleanup.retain_stop(ticket, &effect)?;
         }
+        Ok(effect)
+    }
+}
+impl RetainedCleanupRegistry for RetainingRegistry {
+    fn execute_and_verify(&mut self, authority: &RetainedCleanupAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket, mode: AndroidMediaExecutionMode) -> Result<AuthenticatedOwnerEffect, String> {
+        self.cleanup.require_state()?;
+        let _mutation = Checkout::take(self.cleanup.serial.clone())?;
+        let effect = RetainedCleanupRegistry::execute_and_verify(&mut self.callbacks, authority, ticket, mode)?;
+        self.cleanup.retain_stop(ticket, &effect)?;
         Ok(effect)
     }
 }
 pub(super) type Server = RetainedCleanupDispatchServer<
     Cleanup,
-    JavaOwnerCallbacks,
+    RetainingRegistry,
     JavaOwnerCallbacks,
     AuthorityClock,
     JavaOwnerCallbacks,

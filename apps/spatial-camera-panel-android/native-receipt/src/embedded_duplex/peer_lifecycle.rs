@@ -24,6 +24,7 @@ pub(super) struct State {
     renewal_pending: bool,
     last_failure: Option<String>,
     last_failure_action: Option<&'static str>,
+    incoming_cleanup: Option<Value>,
 }
 
 fn entropy() -> Result<String, String> {
@@ -79,8 +80,10 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
     let current = projection(host).ok();
     let broker = json_value(&Checkout::take(host.provider.clone())?.get().evidence_json()
         .map_err(|_| "concurrent lifecycle evidence unavailable")?)?;
-    let physically_stopped = media_stop_effect(state).is_some_and(|v| !v.is_null())
-        && state.route_cleanup.is_some();
+    let incoming_terminal = state.incoming_cleanup.as_ref().is_some_and(|prior|
+        incoming_cleanup_receipt(host).is_ok_and(|current| &current == prior));
+    let physically_stopped = (media_stop_effect(state).is_some_and(|v| !v.is_null())
+        && state.route_cleanup.is_some()) || incoming_terminal;
     let active = !state.renewal_pending && state.stop_mutation.is_none() && state.last_failure.is_none()
         && state.activation.as_ref().is_some_and(|v|
         v.pointer("/activation/status").and_then(Value::as_str) == Some("completed"))
@@ -94,6 +97,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "start_mutation":state.start_mutation,"stop_mutation":state.stop_mutation,
         "route_receipt":state.route_receipt,"route_termination":state.route_termination,"route_cleanup":state.route_cleanup,
         "termination_action":state.termination_action,"revoker_adoption":state.revoker_adoption,
+        "incoming_owner_cleanup":state.incoming_cleanup,
         "media_completion":state.stop_completion,"media_stop_effect_receipt":media_stop_effect(state),
         "owner_failure_diagnostic":host.callbacks.owner_failure_diagnostic().ok(),
         "native_owner_dispatch_failure":*host.owner_dispatch_failure.lock().map_err(|_| "owner diagnostic state unavailable")?,
@@ -321,6 +325,21 @@ fn stop(host: &Host, state: &mut State, revoke: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn incoming_cleanup_receipt(host: &Host) -> Result<Value, String> {
+    // Both servers commit before returning provider completion. An uncertain
+    // dispatch cannot be upgraded using a detached renderer or absent client.
+    let ordinary = Checkout::take(host.server.clone())?.get().replay_snapshot();
+    let retained = Checkout::take(host.cleanup_server.clone())?.get().replay_snapshot();
+    inbound_cleanup::require_quiet_replay(&ordinary, &retained)?;
+    host.cleanup.incoming_terminal()
+}
+
+fn close_incoming(host: &Host, state: &mut State) -> Result<(), String> {
+    state.incoming_cleanup = None;
+    state.incoming_cleanup = Some(incoming_cleanup_receipt(host)?);
+    Ok(())
+}
+
 fn actual_java_cleanup(env:&mut JNIEnv<'_>)->Result<bool,String> {
     use jni::objects::JLongArray;
     let resources=env.call_static_method(
@@ -405,6 +424,7 @@ pub(super) fn operate(env:&mut JNIEnv<'_>,word:i32)->Result<String,String> {
     let operation = match word {
         1=>start(&host,state),
         2=>renew(&host,state),
+        6 if state.client.is_none()=>close_incoming(&host,state),
         3|6=>stop(&host,state,false),4=>stop(&host,state,true),5=>Ok(()),_=>unreachable!(),
     };
     // Errors after an admitted mutation retain every native credential and
