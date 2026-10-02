@@ -72,7 +72,7 @@ final class EmbeddedDuplexProcessHost {
     private EmbeddedDuplexEnrollmentReview pendingReview;
     // A preflight intent binds the current signed session to this process and
     // display. It is never sufficient to issue a route or invoke Start.
-    private volatile EmbeddedDuplexStartPreflight pendingStartPreflight;
+    private final EmbeddedDuplexStartIntentSlot startIntent = new EmbeddedDuplexStartIntentSlot();
 
     private EmbeddedDuplexProcessHost(Context applicationContext) {
         this.applicationContext = applicationContext;
@@ -356,7 +356,8 @@ final class EmbeddedDuplexProcessHost {
                 // Check the retained process/challenge/arm before any authority mutation.
                 ConcurrentStereoQualification.status(challenge, epoch, receiptConfig,
                         receiptFeature, apk.toString());
-                if (peerAction == EmbeddedDuplexPeerAction.START && !preflightLive(pendingStartPreflight))
+                EmbeddedDuplexStartPreflight starting = startIntent.pending();
+                if (peerAction == EmbeddedDuplexPeerAction.START && !preflightLive(starting))
                     throw new IllegalStateException("current paired Start intent unavailable");
                 if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE) {
                     OwnStereoCaptureRuntime own = OwnStereoCaptureRuntime.currentForApplication();
@@ -374,6 +375,7 @@ final class EmbeddedDuplexProcessHost {
                         display.requestWholeProjectionStop();
                     }
                 }
+                if (peerAction == EmbeddedDuplexPeerAction.START) startIntent.dispatch(starting);
                 String nativeReceipt = noMediaFallback ? noMediaWholeProof(receiptConfig)
                         : retainedWholeNativeReceipt != null && peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
                             ? retainedWholeNativeReceipt : EmbeddedDuplexNative.peerLifecycle(peerAction.word);
@@ -388,6 +390,7 @@ final class EmbeddedDuplexProcessHost {
                     nativeReceipt = physical.toString();
                 }
                 String receipt = ConcurrentStereoQualification.lifecycle(peerAction.action, challenge, epoch, receiptConfig, receiptFeature, apk.toString(), nativeReceipt);
+                if (peerAction == EmbeddedDuplexPeerAction.START) startIntent.acknowledge(starting, nativeReceipt);
                 if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
                         && "terminal".equals(new JSONObject(nativeReceipt).optString("whole_app_physical_cleanup"))) {
                     terminalWholeReceipt = receipt; terminalWholeChallenge = challenge;
@@ -556,11 +559,7 @@ final class EmbeddedDuplexProcessHost {
                     EmbeddedDuplexNative.runtimeCommand("pair_status", "{}"));
             EmbeddedDuplexStartPreflight next = EmbeddedDuplexStartPreflight.prepare(pair,
                     runtimeConfigSha256, enrollmentRecordSha256, expectedGeneration);
-            if (pendingStartPreflight != null && !pendingStartPreflight.sameLineage(next)) {
-                throw new IllegalStateException("pre-Start lineage changed");
-            }
-            pendingStartPreflight = next;
-            return next;
+            return startIntent.prepare(next);
         });
     }
 
@@ -571,7 +570,7 @@ final class EmbeddedDuplexProcessHost {
                 processFence.requireLive(processFence.generation());
             } catch (IllegalStateException stale) { return false; }
             return !processFence.recoveryOnly()
-                    && observed != null && pendingStartPreflight == observed
+                    && observed != null && startIntent.pending() == observed
                     && phase.get() == Phase.READY && !localFixture && !displayDetaching
                     && !closeInFlight && attachmentGeneration == observed.displayGeneration
                     && observed.matches(runtimeConfigSha256, enrollmentRecordSha256,
@@ -899,7 +898,7 @@ final class EmbeddedDuplexProcessHost {
                 nativeExecutorGeneration = 0L;
                 nativeAppRecordSha256 = null;
                 enrollmentRecordSha256 = null;
-                pendingStartPreflight = null;
+                startIntent.afterVerifiedCleanup();
                 localFixture = false;
                 synchronized (attachmentGate) {
                     attachmentGeneration = 0L;
@@ -977,7 +976,7 @@ final class EmbeddedDuplexProcessHost {
         processFence.afterVerifiedWholeProductCleanup(checkpointSnapshot(), evidenceSnapshot(), joinedDigest);
         proof.put("app_process_fence_cleanup", "terminal").put("whole_app_physical_cleanup", "terminal").put("status", "terminal");
         platform = null; resources = null; runtimeConfigSha256 = null; nativeExecutorGeneration = 0L;
-        nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; pendingStartPreflight = null;
+        nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; startIntent.afterVerifiedCleanup();
         ownNoMediaStopTarget = null;
         synchronized (attachmentGate) { attachmentGeneration = 0L; displayDetaching = false; phase.set(Phase.NEW); }
     }

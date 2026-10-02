@@ -34,6 +34,23 @@ registry and stale callback suppression cannot prove old provider teardown.
 
 ## Validation boundaries
 
+### Process-held Start intent consumption
+
+The app consumes its exact preflight object before native Start dispatch. A
+throwing or Pending Start retains a process cleanup obligation and cannot
+replace or replay the consumed intent. An active native Start acknowledgement,
+joined to the same configuration and validated qualification receipt, releases
+only that intent slot. A later Start still requires a newly observed signed
+pair, current expiry, enrollment, display and process guards. Pending preflight
+lineage continues to bind the exact session expiry; renewal never rewrites an
+unconsumed object. Verified whole-product or no-media cleanup clears the slot
+through the existing cleanup owner.
+
+`tools/checks/Test-EmbeddedDuplexStartIntentHost.ps1` executes the production
+Java slot and preflight classes with a modeled native boundary and checks the
+host's dispatch/receipt/cleanup integration. It provides no Android API, APK,
+device, signed-pair or physical-cleanup qualification.
+
 ### Peer source retirement after decoder shutdown
 
 Concurrent Peer teardown stops the decoder and releases its native reader before
