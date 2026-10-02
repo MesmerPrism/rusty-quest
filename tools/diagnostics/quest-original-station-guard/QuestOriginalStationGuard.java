@@ -17,16 +17,35 @@ import java.util.concurrent.*;
 public final class QuestOriginalStationGuard {
   enum Phase { arguments, uid, config_load, config_contract, config_path, host_identity, main_looper, activity_thread, shell_context, binder_services, wifi_manager, connectivity_manager, callback_thread, p2p_service, p2p_channel, dispatch, snapshot_host, configured_networks, profile_projection, snapshot_join }
   static Phase diagnosticPhase=Phase.arguments;
+  static String sharedProfileIdentity(String[] fields)throws Exception {
+    if(fields.length!=13)throw new SecurityException("profile_diagnostic_shape");
+    return sha(String.join("\n",fields[0],fields[1],fields[2],fields[3],fields[9],fields[12]));
+  }
+  static String securityShape(int[] types,boolean[] enabled,boolean[] upgrade){
+    if(types.length<1||types.length>8||types.length!=enabled.length||types.length!=upgrade.length)throw new SecurityException("profile_diagnostic_shape");
+    Set<Integer> seen=new HashSet<>();ArrayList<String> rows=new ArrayList<>();for(int i=0;i<types.length;i++){
+      if(types[i]<0||types[i]>32||!seen.add(types[i]))throw new SecurityException("profile_diagnostic_shape");
+      rows.add("{\"type\":"+types[i]+",\"enabled\":"+enabled[i]+",\"auto_upgrade\":"+upgrade[i]+"}");
+    }return "["+String.join(",",rows)+"]";
+  }
+  static String securityShape(WifiConfiguration c)throws Exception {
+    Object raw=c.getClass().getMethod("getSecurityParamsList").invoke(c);if(!(raw instanceof List))throw new SecurityException("profile_diagnostic_shape");
+    List<?> xs=(List<?>)raw;if(xs.size()<1||xs.size()>8)throw new SecurityException("profile_diagnostic_shape");
+    int[] types=new int[xs.size()];boolean[] enabled=new boolean[xs.size()],upgrade=new boolean[xs.size()];
+    for(int i=0;i<xs.size();i++){Object x=xs.get(i);types[i]=(Integer)x.getClass().getMethod("getSecurityType").invoke(x);enabled[i]=(Boolean)x.getClass().getMethod("isEnabled").invoke(x);upgrade[i]=(Boolean)x.getClass().getMethod("isAddedByAutoUpgrade").invoke(x);}
+    return securityShape(types,enabled,upgrade);
+  }
   static final class ProfileCandidate {
-    final String full,immutable;final int status,reason;
+    final String full,immutable;final int status,reason;String shared,security;
     ProfileCandidate(String full,String immutable,int status,int reason){
       if(!full.matches("[0-9a-f]{64}")||!immutable.matches("[0-9a-f]{64}"))throw new SecurityException("profile_diagnostic_shape");
-      this.full=full;this.immutable=immutable;this.status=status;this.reason=reason;
+      this.full=full;this.immutable=immutable;this.status=status;this.reason=reason;this.shared=full;this.security="[]";
     }
-    String json(){return "{\"profile_sha256\":\""+full+"\",\"static_sha256\":\""+immutable+"\",\"selection_status\":"+status+",\"disable_reason\":"+reason+"}";}
+    String json(){return "{\"profile_sha256\":\""+full+"\",\"static_sha256\":\""+immutable+"\",\"shared_identity_sha256\":\""+shared+"\",\"security_params\":"+security+",\"selection_status\":"+status+",\"disable_reason\":"+reason+"}";}
   }
   static final class OriginalProfileAmbiguity extends SecurityException {
     final String projection;
+    int currentSecurityType=-1,currentNetworkId=-1;
     OriginalProfileAmbiguity(int profiles,int distinct,List<ProfileCandidate> candidates){
       super("duplicate_original");ArrayList<String> rows=new ArrayList<>();for(ProfileCandidate c:candidates)rows.add(c.json());
       projection="{\"profile_count\":"+profiles+",\"distinct_network_id_count\":"+distinct+",\"original_candidate_count\":"+candidates.size()+",\"original_candidates\":["+String.join(",",rows)+"]}";
@@ -42,7 +61,7 @@ public final class QuestOriginalStationGuard {
     Throwable cause=e;for(int i=0;i<8 && cause.getCause()!=null && cause.getCause()!=cause;i++)cause=cause.getCause();
     String message=cause.getMessage();
     String code=message!=null && Arrays.asList("uid2000_required","config_path","file_bound","p2p_service","p2p_channel","profiles_missing","duplicate_original","original_missing","profiles_bound","profile_diagnostic_shape").contains(message)?message:"unclassified";
-    String projection=cause instanceof OriginalProfileAmbiguity?",\"profile_projection\":"+((OriginalProfileAmbiguity)cause).projection:"";
+    String projection="";if(cause instanceof OriginalProfileAmbiguity){OriginalProfileAmbiguity a=(OriginalProfileAmbiguity)cause;projection=",\"current_security_type\":"+a.currentSecurityType+",\"current_network_id\":"+a.currentNetworkId+",\"profile_projection\":"+a.projection;}
     return "{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":false,\"outcome\":\"unknown\",\"phase\":\""+diagnosticPhase.name()+"\",\"error_type\":\""+errorType(e)+"\",\"cause_type\":\""+errorType(cause)+"\",\"error_code\":\""+code+"\""+projection+"}";
   }
   final OriginalStationGuardContract cfg; final String path; final WifiManager wifi; final ConnectivityManager connectivity;
@@ -87,9 +106,9 @@ public final class QuestOriginalStationGuard {
     diagnosticPhase=Phase.snapshot_host;host();diagnosticPhase=Phase.configured_networks; List<WifiConfiguration> xs=wifi.getConfiguredNetworks();if(xs==null||xs.isEmpty())throw new IllegalStateException("profiles_missing");
     if(xs.size()>128)throw new SecurityException("profiles_bound");
     ArrayList<String> rows=new ArrayList<>(),unrelated=new ArrayList<>();ArrayList<ProfileCandidate> candidates=new ArrayList<>();Set<Integer> ids=new HashSet<>();String original=null,originalStatic=null,selectionStatus=null,selectionReason=null;
-    diagnosticPhase=Phase.profile_projection;for(WifiConfiguration c:xs){ids.add(c.networkId);String[] fields=profileFields(c);String h=sha(OriginalStationGuardContract.profile(fields,false));rows.add(h);if(c.networkId==cfg.original){String immutable=sha(OriginalStationGuardContract.profile(fields,true));candidates.add(new ProfileCandidate(h,immutable,Integer.parseInt(fields[10]),Integer.parseInt(fields[11])));if(candidates.size()>16)throw new SecurityException("profiles_bound");if(original==null){original=h;originalStatic=immutable;selectionStatus=fields[10];selectionReason=fields[11];}}else unrelated.add(h);}
+    diagnosticPhase=Phase.profile_projection;for(WifiConfiguration c:xs){ids.add(c.networkId);String[] fields=profileFields(c);String h=sha(OriginalStationGuardContract.profile(fields,false));rows.add(h);if(c.networkId==cfg.original){String immutable=sha(OriginalStationGuardContract.profile(fields,true));ProfileCandidate candidate=new ProfileCandidate(h,immutable,Integer.parseInt(fields[10]),Integer.parseInt(fields[11]));candidate.shared=sharedProfileIdentity(fields);candidate.security=securityShape(c);candidates.add(candidate);if(candidates.size()>16)throw new SecurityException("profiles_bound");if(original==null){original=h;originalStatic=immutable;selectionStatus=fields[10];selectionReason=fields[11];}}else unrelated.add(h);}
     diagnosticPhase=Phase.snapshot_join;
-    requireUniqueOriginal(xs.size(),ids.size(),candidates);
+    try{requireUniqueOriginal(xs.size(),ids.size(),candidates);}catch(OriginalProfileAmbiguity ambiguity){WifiInfo info=wifi.getConnectionInfo();if(info==null)throw new SecurityException("connection_info_missing");ambiguity.currentNetworkId=info.getNetworkId();ambiguity.currentSecurityType=info.getCurrentSecurityType();throw ambiguity;}
     Collections.sort(rows);if(original==null)throw new SecurityException("original_missing");Collections.sort(unrelated);return new String[]{sha(String.join("\n",rows)),original,sha(String.join("\n",unrelated)),originalStatic,selectionStatus,selectionReason};
   }
   void create(File f,String text)throws Exception {

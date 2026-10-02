@@ -75,7 +75,18 @@ public final class OriginalStationGuardHostTest {
     rejects(()->QuestOriginalStationGuard.requireUniqueOriginal(2,3,Arrays.asList(one)));
     rejects(()->QuestOriginalStationGuard.requireUniqueOriginal(17,1,Collections.nCopies(17,one)));
     String bounded=QuestOriginalStationGuard.failureJson(new QuestOriginalStationGuard.OriginalProfileAmbiguity(16,1,Collections.nCopies(16,one)));
-    check(bounded.length()<4096 && !bounded.contains("SSID") && !bounded.contains("BSSID") && !bounded.contains("credential"));
+    check(bounded.length()<8192 && !bounded.contains("SSID") && !bounded.contains("BSSID") && !bounded.contains("credential"));
+    String[] identity=fields.clone();String base=QuestOriginalStationGuard.sharedProfileIdentity(identity);
+    for(int index:new int[]{4,5,6,7,8,10,11}){String[] variant=identity.clone();variant[index]+="security or state";check(base.equals(QuestOriginalStationGuard.sharedProfileIdentity(variant)));}
+    for(int index:new int[]{0,1,2,3,9,12}){String[] conflict=identity.clone();conflict[index]+="different";check(!base.equals(QuestOriginalStationGuard.sharedProfileIdentity(conflict)));}
+    String security=QuestOriginalStationGuard.securityShape(new int[]{2,4},new boolean[]{true,true},new boolean[]{false,true});
+    check(security.contains("\"type\":2")&&security.contains("\"type\":4")&&security.contains("\"auto_upgrade\":true"));
+    rejects(()->QuestOriginalStationGuard.securityShape(new int[]{2,2},new boolean[]{true,true},new boolean[]{false,false}));
+    rejects(()->QuestOriginalStationGuard.securityShape(new int[]{33},new boolean[]{true},new boolean[]{false}));
+    rejects(()->QuestOriginalStationGuard.securityShape(new int[]{2},new boolean[]{},new boolean[]{false}));
+    rejects(()->QuestOriginalStationGuard.securityShape(new int[]{},new boolean[]{},new boolean[]{}));
+    QuestOriginalStationGuard.OriginalProfileAmbiguity projected=new QuestOriginalStationGuard.OriginalProfileAmbiguity(2,1,Arrays.asList(one,one));projected.currentNetworkId=0;projected.currentSecurityType=4;
+    check(QuestOriginalStationGuard.failureJson(projected).contains("\"current_security_type\":4"));
     System.out.println("original_station_guard_contract=pass cases="+cases+" device_calls=0");
   }
 }
