@@ -4,7 +4,8 @@ use rusty_manifold_model::DottedId;
 use rusty_manifold_peer::{rendezvous_signing_bytes, ManifoldSignedRendezvousEvidence};
 use rusty_quest_device_link::BleRendezvousPairReceipt;
 use rusty_quest_peer_session_adapter::{
-    review_peer_owner_journal, QuestPeerOwnerPolicy, QuestPeerOwnerStep,
+    review_peer_owner_journal, review_peer_owner_journal_with_fact_nonces, QuestPeerOwnerPolicy,
+    QuestPeerOwnerStep,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -45,6 +46,22 @@ struct Facts {
     identities: [IdentityPin; 2],
     /// Exact reviewed source/provenance facts, never boolean authority flags.
     source_facts: Vec<Pin>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FactLineage {
+    prior_facts: Vec<Pin>,
+    current_facts: Pin,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LineageStep {
+    facts_sha256: String,
+    /// Explicit requested-max TTL semantics for new sessions only; legacy history stays false.
+    bound_session_ttl: bool,
+    step: QuestPeerOwnerStep,
 }
 
 #[derive(Deserialize)]
@@ -107,6 +124,9 @@ fn run() -> Result<(), String> {
         println!("{}", digest(&bytes));
         return Ok(());
     }
+    if args.get(1).map(String::as_str) == Some("review-lineage") && args.len() == 10 {
+        return review_lineage(&args);
+    }
     if args.get(1).map(String::as_str) != Some("review") || args.len() != 10 {
         return Err("usage: produce_peer_authority prepare-signing-bytes <evidence-json> <sha256> <out-bin> | review <policy-json> <policy-sha256> <journal-json> <journal-sha256> <facts-json> <facts-sha256> <now-ms> <new-out-json>".into());
     }
@@ -125,6 +145,165 @@ fn run() -> Result<(), String> {
     let policy: QuestPeerOwnerPolicy = json(&read_pin(&policy_pin)?)?;
     let steps: Vec<QuestPeerOwnerStep> = json(&read_pin(&journal_pin)?)?;
     let facts: Facts = json(&read_pin(&facts_pin)?)?;
+    let pair = validate_facts(&policy, &steps, &facts)?;
+    let now_ms: u64 = args[8]
+        .parse()
+        .map_err(|_| "now-ms must be explicit Unix milliseconds")?;
+    let trace = review_peer_owner_journal(
+        &pair,
+        &policy,
+        &steps,
+        &facts_pin.sha256,
+        &facts.session_id,
+        now_ms,
+    )?;
+    // Re-read every raw input after owner evaluation; no effect occurs inside this CLI.
+    for pin in [&policy_pin, &journal_pin, &facts_pin, &facts.pair] {
+        read_pin(pin)?;
+    }
+    for identity in &facts.identities {
+        read_pin(&identity.receipt)?;
+        read_pin(&identity.inventory)?;
+    }
+    for pin in &facts.source_facts {
+        read_pin(pin)?;
+    }
+    if Path::new(&args[9]).exists() {
+        return Err("output already exists; historical evidence is immutable".into());
+    }
+    let output = serde_json::json!({ "schema": "rusty.quest.peer_owner_production_review.v1", "policy_sha256": policy_pin.sha256, "journal_sha256": journal_pin.sha256, "facts_sha256": facts_pin.sha256, "reviewed_at_ms": now_ms, "trace": trace });
+    create(
+        &args[9],
+        &serde_json::to_vec_pretty(&output).map_err(|e| e.to_string())?,
+    )
+}
+
+fn review_lineage(args: &[String]) -> Result<(), String> {
+    let policy_pin = Pin {
+        path: args[2].clone(),
+        sha256: args[3].clone(),
+    };
+    let journal_pin = Pin {
+        path: args[4].clone(),
+        sha256: args[5].clone(),
+    };
+    let lineage_pin = Pin {
+        path: args[6].clone(),
+        sha256: args[7].clone(),
+    };
+    let policy: QuestPeerOwnerPolicy = json(&read_pin(&policy_pin)?)?;
+    let journal: Vec<LineageStep> = json(&read_pin(&journal_pin)?)?;
+    let lineage: FactLineage = json(&read_pin(&lineage_pin)?)?;
+    if lineage.prior_facts.len() > 31 {
+        return Err("fact lineage must contain 1..=32 frames".into());
+    }
+    let pins: Vec<&Pin> = lineage
+        .prior_facts
+        .iter()
+        .chain([&lineage.current_facts])
+        .collect();
+    let mut frames: Vec<Facts> = Vec::new();
+    for (index, pin) in pins.iter().enumerate() {
+        if pins[..index]
+            .iter()
+            .any(|p| p.sha256 == pin.sha256 || p.path == pin.path)
+        {
+            return Err("fact frames must have unique raw digests and paths".into());
+        }
+        frames.push(json(&read_pin(pin)?)?);
+    }
+    let steps: Vec<QuestPeerOwnerStep> = journal.iter().map(|row| row.step.clone()).collect();
+    let mut frame_indices = Vec::new();
+    for row in &journal {
+        if row.bound_session_ttl
+            && !matches!(
+                row.step.request,
+                rusty_quest_peer_session_adapter::QuestPeerOwnerRequest::Session(_)
+            )
+        {
+            return Err("bounded session TTL mode belongs only to a session request".into());
+        }
+        let index = pins
+            .iter()
+            .position(|p| p.sha256 == row.facts_sha256)
+            .ok_or("request fact digest has no pinned lineage frame")?;
+        if frame_indices.last().is_some_and(|prior| *prior > index) {
+            return Err("request fact lineage moves backwards".into());
+        }
+        frame_indices.push(index);
+    }
+    if frame_indices.last() != Some(&(pins.len() - 1)) {
+        return Err("final request must use current fact frame".into());
+    }
+    if (0..pins.len()).any(|index| !frame_indices.contains(&index)) {
+        return Err("every declared fact frame must belong to retained requests".into());
+    }
+    let current = frames.last().ok_or("current fact frame absent")?;
+    let pair = validate_facts(&policy, &steps, current)?;
+    for frame in &frames {
+        validate_facts(&policy, &steps, frame)?;
+        if frame.pair.sha256 != current.pair.sha256
+            || frame.session_id != current.session_id
+            || frame
+                .identities
+                .iter()
+                .zip(&current.identities)
+                .any(|(old, new)| {
+                    old.serial != new.serial
+                        || old.endpoint != new.endpoint
+                        || old.peer_id != new.peer_id
+                        || old.key_id != new.key_id
+                        || old.receipt.sha256 != new.receipt.sha256
+                })
+        {
+            return Err("renewal lineage changes BLE/session/canonical public identity".into());
+        }
+    }
+    let nonces: Vec<String> = journal.iter().map(|row| row.facts_sha256.clone()).collect();
+    let bounds: Vec<bool> = journal.iter().map(|row| row.bound_session_ttl).collect();
+    let now_ms = args[8]
+        .parse()
+        .map_err(|_| "now-ms must be explicit Unix milliseconds")?;
+    let trace = review_peer_owner_journal_with_fact_nonces(
+        &pair,
+        &policy,
+        &steps,
+        &nonces,
+        &bounds,
+        &current.session_id,
+        now_ms,
+    )?;
+    // Authenticate every historical and current closure again before emitting an immutable result.
+    for pin in [&policy_pin, &journal_pin, &lineage_pin] {
+        read_pin(pin)?;
+    }
+    for (pin, frame) in pins.iter().zip(&frames) {
+        read_pin(pin)?;
+        read_pin(&frame.pair)?;
+        for identity in &frame.identities {
+            read_pin(&identity.receipt)?;
+            read_pin(&identity.inventory)?;
+        }
+        for source in &frame.source_facts {
+            read_pin(source)?;
+        }
+    }
+    let output = serde_json::json!({
+        "schema":"rusty.quest.peer_owner_lineage_review.v1", "policy_sha256":policy_pin.sha256,
+        "journal_sha256":journal_pin.sha256, "lineage_sha256":lineage_pin.sha256,
+        "current_facts_sha256":lineage.current_facts.sha256, "reviewed_at_ms":now_ms, "trace":trace,
+    });
+    create(
+        &args[9],
+        &serde_json::to_vec_pretty(&output).map_err(|e| e.to_string())?,
+    )
+}
+
+fn validate_facts(
+    policy: &QuestPeerOwnerPolicy,
+    steps: &[QuestPeerOwnerStep],
+    facts: &Facts,
+) -> Result<BleRendezvousPairReceipt, String> {
     if facts.source_facts.is_empty() || facts.source_facts.len() > 32 {
         return Err("require 1..=32 source provenance fact files".into());
     }
@@ -226,7 +405,7 @@ fn run() -> Result<(), String> {
     for pin in &facts.source_facts {
         read_pin(pin)?;
     }
-    for step in &steps {
+    for step in steps {
         match &step.request {
             rusty_quest_peer_session_adapter::QuestPeerOwnerRequest::Rendezvous(request) => {
                 for evidence in [&request.first, &request.second] {
@@ -250,36 +429,7 @@ fn run() -> Result<(), String> {
             _ => {}
         }
     }
-    let now_ms: u64 = args[8]
-        .parse()
-        .map_err(|_| "now-ms must be explicit Unix milliseconds")?;
-    let trace = review_peer_owner_journal(
-        &pair,
-        &policy,
-        &steps,
-        &facts_pin.sha256,
-        &facts.session_id,
-        now_ms,
-    )?;
-    // Re-read every raw input after owner evaluation; no effect occurs inside this CLI.
-    for pin in [&policy_pin, &journal_pin, &facts_pin, &facts.pair] {
-        read_pin(pin)?;
-    }
-    for identity in &facts.identities {
-        read_pin(&identity.receipt)?;
-        read_pin(&identity.inventory)?;
-    }
-    for pin in &facts.source_facts {
-        read_pin(pin)?;
-    }
-    if Path::new(&args[9]).exists() {
-        return Err("output already exists; historical evidence is immutable".into());
-    }
-    let output = serde_json::json!({ "schema": "rusty.quest.peer_owner_production_review.v1", "policy_sha256": policy_pin.sha256, "journal_sha256": journal_pin.sha256, "facts_sha256": facts_pin.sha256, "reviewed_at_ms": now_ms, "trace": trace });
-    create(
-        &args[9],
-        &serde_json::to_vec_pretty(&output).map_err(|e| e.to_string())?,
-    )
+    Ok(pair)
 }
 
 fn decode_public_key(text: &str) -> Result<Vec<u8>, String> {

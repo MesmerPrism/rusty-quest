@@ -191,6 +191,228 @@ fn real_owner_chain_retains_all_decisions_and_signed_envelope() {
     );
     assert!(!trace.decisions[5][1]["rendezvous_receipt_id"].is_null());
 }
+
+#[test]
+fn lineage_bounds_new_session_without_rewriting_prior_overshoot_rejection() {
+    let (policy, mut steps) = setup();
+    steps[5].now_ms = NOW + 1_567;
+    if let QuestPeerOwnerRequest::Session(config) = &mut steps[5].request {
+        config.now_ms = NOW + 1_567;
+    }
+    let prior = review_peer_owner_journal(
+        &pair(),
+        &policy,
+        &steps,
+        &"ab".repeat(32),
+        &id("session.peer.pair-fixture-001"),
+        NOW + 1_567,
+    )
+    .unwrap();
+    assert_eq!(
+        prior.decisions[5][0]["rejection_reason"],
+        "signed_rendezvous_mismatch"
+    );
+    assert!(prior.sessions.sessions.is_empty());
+    let mut repair = steps[5].clone();
+    repair.now_ms = NOW + 2_000;
+    if let QuestPeerOwnerRequest::Session(config) = &mut repair.request {
+        config.now_ms = repair.now_ms;
+    }
+    steps.push(repair);
+    let mut bounds = vec![false; steps.len()];
+    bounds[6] = true;
+    let repaired = review_peer_owner_journal_with_fact_nonces(
+        &pair(),
+        &policy,
+        &steps,
+        &vec!["ab".repeat(32); steps.len()],
+        &bounds,
+        &id("session.peer.pair-fixture-001"),
+        NOW + 2_000,
+    )
+    .unwrap();
+    assert_eq!(repaired.decisions[5], prior.decisions[5]);
+    assert_eq!(
+        repaired.decisions[6][1]["topology_authorization"]["authorized"],
+        true
+    );
+    assert_eq!(
+        repaired.sessions.sessions[0].proposal.expires_at_ms,
+        NOW + 60_000
+    );
+    let mut wrong_bounds = bounds.clone();
+    wrong_bounds[0] = true;
+    assert!(review_peer_owner_journal_with_fact_nonces(
+        &pair(),
+        &policy,
+        &steps,
+        &vec!["ab".repeat(32); steps.len()],
+        &wrong_bounds,
+        &id("session.peer.pair-fixture-001"),
+        NOW + 2_000
+    )
+    .is_err());
+    let mut short_credentials = steps.clone();
+    for entry in &mut short_credentials[2..4] {
+        if let QuestPeerOwnerRequest::Enrollment(request) = &mut entry.request {
+            if let ManifoldPeerEnrollmentAction::Enroll { credential } = &mut request.action {
+                credential.expires_at_ms = NOW + 3_000;
+            }
+        }
+    }
+    let short = review_peer_owner_journal_with_fact_nonces(
+        &pair(),
+        &policy,
+        &short_credentials,
+        &vec!["ab".repeat(32); steps.len()],
+        &bounds,
+        &id("session.peer.pair-fixture-001"),
+        NOW + 2_000,
+    )
+    .unwrap();
+    assert_eq!(
+        short.sessions.sessions[0].proposal.expires_at_ms,
+        NOW + 3_000
+    );
+    let mut expired = steps;
+    expired[6].now_ms = NOW + 59_001;
+    if let QuestPeerOwnerRequest::Session(config) = &mut expired[6].request {
+        config.now_ms = NOW + 59_001;
+    }
+    assert!(review_peer_owner_journal_with_fact_nonces(
+        &pair(),
+        &policy,
+        &expired,
+        &vec!["ab".repeat(32); expired.len()],
+        &bounds,
+        &id("session.peer.pair-fixture-001"),
+        NOW + 59_001
+    )
+    .unwrap_err()
+    .contains("below 1000ms"));
+}
+
+#[test]
+fn lineage_authenticates_fresh_nonce_preserves_history_and_keeps_replay_denials() {
+    let (policy, mut steps) = setup();
+    steps[5].now_ms = NOW + 1_567;
+    if let QuestPeerOwnerRequest::Session(config) = &mut steps[5].request {
+        config.now_ms = NOW + 1_567;
+    }
+    let original = steps.clone();
+    let renew_time = NOW + 65_000;
+    for index in 0..2 {
+        let mut renewal = steps[index].clone();
+        renewal.now_ms = renew_time;
+        if let QuestPeerOwnerRequest::Peer(proposal) = &mut renewal.request {
+            proposal.proposal_id = id(&format!("proposal.peer.renew.{index}"));
+            proposal.expected_authority_revision = rev(3 + index as u64);
+            proposal.status.status_revision = rev(2);
+            proposal.status.observed_at_ms = renew_time;
+            proposal.status.expires_at_ms = renew_time + 60_000;
+        }
+        steps.push(renewal);
+    }
+    let keys = [
+        SigningKey::from_bytes(&[7; 32]),
+        SigningKey::from_bytes(&[11; 32]),
+    ];
+    let mut renewal = original[4].clone();
+    renewal.now_ms = renew_time;
+    if let QuestPeerOwnerRequest::Rendezvous(request) = &mut renewal.request {
+        // Lexically earlier id tests selection by authenticated nonce, not sorted receipt .last().
+        request.request_id = id("request.rendezvous.0renew");
+        request.expected_authority_revision = rev(2);
+        for (index, evidence) in [&mut request.first, &mut request.second]
+            .into_iter()
+            .enumerate()
+        {
+            evidence.evidence_id = id(&format!("evidence.renew.{index}"));
+            evidence.nonce_hex = "cd".repeat(32);
+            evidence.issued_at_ms = renew_time;
+            evidence.expires_at_ms = renew_time + 60_000;
+            evidence.signature_hex = hex(&keys[index]
+                .sign(&rendezvous_signing_bytes(evidence))
+                .to_bytes());
+        }
+    }
+    steps.push(renewal.clone());
+    let mut session = original[5].clone();
+    session.now_ms = renew_time + 1_567;
+    if let QuestPeerOwnerRequest::Session(config) = &mut session.request {
+        config.now_ms = session.now_ms;
+    }
+    steps.push(session);
+    let nonces: Vec<_> = (0..steps.len())
+        .map(|i| {
+            if i < original.len() {
+                "ab".repeat(32)
+            } else {
+                "cd".repeat(32)
+            }
+        })
+        .collect();
+    let mut bounds = vec![false; steps.len()];
+    *bounds.last_mut().unwrap() = true;
+    let trace = review_peer_owner_journal_with_fact_nonces(
+        &pair(),
+        &policy,
+        &steps,
+        &nonces,
+        &bounds,
+        &id("session.peer.pair-fixture-001"),
+        renew_time + 1_567,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&steps[..original.len()]).unwrap(),
+        serde_json::to_value(&original).unwrap()
+    );
+    assert_eq!(trace.rendezvous.accepted_receipts.len(), 2);
+    assert_eq!(
+        trace.decisions.last().unwrap()[1]["topology_authorization"]["authorized"],
+        true
+    );
+    assert_eq!(
+        trace.sessions.sessions[0].proposal.expires_at_ms,
+        renew_time + 60_000
+    );
+    let mut wrong = nonces.clone();
+    *wrong.last_mut().unwrap() = "ef".repeat(32);
+    assert!(review_peer_owner_journal_with_fact_nonces(
+        &pair(),
+        &policy,
+        &steps,
+        &wrong,
+        &bounds,
+        &id("session.peer.pair-fixture-001"),
+        renew_time + 1_567
+    )
+    .is_err());
+    renewal.now_ms = renew_time + 1_568;
+    if let QuestPeerOwnerRequest::Rendezvous(request) = &mut renewal.request {
+        request.expected_authority_revision = rev(3);
+    }
+    steps.push(renewal);
+    let mut replay_nonces = nonces;
+    replay_nonces.push("cd".repeat(32));
+    bounds.push(false);
+    let replay = review_peer_owner_journal_with_fact_nonces(
+        &pair(),
+        &policy,
+        &steps,
+        &replay_nonces,
+        &bounds,
+        &id("session.peer.pair-fixture-001"),
+        renew_time + 1_568,
+    )
+    .unwrap();
+    assert_eq!(replay.decisions.last().unwrap()["accepted"], false);
+    assert_eq!(
+        replay.decisions.last().unwrap()["rejection_reason"],
+        "replay"
+    );
+}
 #[test]
 fn unsigned_or_altered_domain_bytes_never_accept_rendezvous() {
     for alter in 0..3 {
@@ -608,11 +830,11 @@ fn run_actual_cli_case(use_ip: bool) {
     let args = vec![
         "review".into(),
         path("policy.json"),
-        policy_hash,
+        policy_hash.clone(),
         path("journal.json"),
         journal_hash,
         path("facts.json"),
-        facts_hash,
+        facts_hash.clone(),
         NOW.to_string(),
         path("review.json"),
     ];
@@ -628,6 +850,160 @@ fn run_actual_cli_case(use_ip: bool) {
         trace["trace"]["decisions"][5][1]["topology_authorization"]["authorized"],
         true
     );
+
+    if use_ip {
+        let old_facts: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path("facts.json")).unwrap()).unwrap();
+        let mut current_facts = old_facts.clone();
+        let challenge_sha = write_json(
+            &root.join("renewal-challenge.json"),
+            &serde_json::json!({"purpose":"host-only renewal challenge", "generation":2}),
+        );
+        current_facts["source_facts"].as_array_mut().unwrap().push(
+            serde_json::json!({"path":path("renewal-challenge.json"),"sha256":challenge_sha}),
+        );
+        let current_sha = write_json(&root.join("current-facts.json"), &current_facts);
+        let lineage_value = serde_json::json!({"prior_facts":[{"path":path("facts.json"),"sha256":facts_hash}],"current_facts":{"path":path("current-facts.json"),"sha256":current_sha}});
+        let lineage_sha = write_json(&root.join("lineage.json"), &lineage_value);
+        let mut renewal = steps[4].clone();
+        renewal.now_ms = NOW + 2_000;
+        if let QuestPeerOwnerRequest::Rendezvous(request) = &mut renewal.request {
+            request.request_id = id("request.rendezvous.0renew");
+            request.expected_authority_revision = rev(2);
+            for (index, evidence) in [&mut request.first, &mut request.second]
+                .into_iter()
+                .enumerate()
+            {
+                evidence.evidence_id = id(&format!("evidence.cli.renew.{index}"));
+                evidence.nonce_hex = current_sha.clone();
+                evidence.issued_at_ms = NOW + 2_000;
+                evidence.expires_at_ms = NOW + 62_000;
+                let key = SigningKey::from_bytes(&[if index == 0 { 7 } else { 11 }; 32]);
+                evidence.signature_hex =
+                    hex(&key.sign(&rendezvous_signing_bytes(evidence)).to_bytes());
+            }
+        }
+        let mut lineage_steps:Vec<_>=steps.iter().map(|step|serde_json::json!({"facts_sha256":facts_hash,"bound_session_ttl":false,"step":step})).collect();
+        lineage_steps.push(serde_json::json!({"facts_sha256":current_sha,"bound_session_ttl":false,"step":renewal}));
+        let lineage_journal_sha = write_json(&root.join("lineage-journal.json"), &lineage_steps);
+        let lineage_args = vec![
+            "review-lineage".into(),
+            path("policy.json"),
+            policy_hash.clone(),
+            path("lineage-journal.json"),
+            lineage_journal_sha,
+            path("lineage.json"),
+            lineage_sha,
+            (NOW + 2_000).to_string(),
+            path("lineage-review.json"),
+        ];
+        let result = cli(env!("CARGO_BIN_EXE_produce_peer_authority"), &lineage_args);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let renewed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path("lineage-review.json")).unwrap()).unwrap();
+        assert_eq!(
+            renewed["trace"]["rendezvous"]["accepted_receipts"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            renewed["trace"]["decisions"][5],
+            trace["trace"]["decisions"][5]
+        );
+        let mut delayed = steps.clone();
+        delayed[5].now_ms = NOW + 1_567;
+        if let QuestPeerOwnerRequest::Session(config) = &mut delayed[5].request {
+            config.now_ms = NOW + 1_567;
+        }
+        let mut repair = delayed[5].clone();
+        repair.now_ms = NOW + 2_000;
+        if let QuestPeerOwnerRequest::Session(config) = &mut repair.request {
+            config.now_ms = NOW + 2_000;
+        }
+        delayed.push(repair);
+        let bounded_rows:Vec<_>=delayed.iter().enumerate().map(|(index,step)|serde_json::json!({"facts_sha256":facts_hash,"bound_session_ttl":index==6,"step":step})).collect();
+        let mut bounded_args = lineage_args.clone();
+        bounded_args[3] = path("bounded-journal.json");
+        bounded_args[4] = write_json(std::path::Path::new(&bounded_args[3]), &bounded_rows);
+        bounded_args[5] = path("bounded-lineage.json");
+        bounded_args[6] = write_json(
+            std::path::Path::new(&bounded_args[5]),
+            &serde_json::json!({"prior_facts":[],"current_facts":{"path":path("facts.json"),"sha256":facts_hash}}),
+        );
+        bounded_args[8] = path("bounded-review.json");
+        let bounded = cli(env!("CARGO_BIN_EXE_produce_peer_authority"), &bounded_args);
+        assert!(
+            bounded.status.success(),
+            "{}",
+            String::from_utf8_lossy(&bounded.stderr)
+        );
+        let bounded: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&bounded_args[8]).unwrap()).unwrap();
+        assert_eq!(
+            bounded["trace"]["decisions"][5][0]["rejection_reason"],
+            "signed_rendezvous_mismatch"
+        );
+        assert_eq!(
+            bounded["trace"]["decisions"][6][1]["topology_authorization"]["authorized"],
+            true
+        );
+        assert_eq!(
+            bounded["trace"]["sessions"]["sessions"][0]["proposal"]["expires_at_ms"],
+            NOW + 60_000
+        );
+        for damage in [
+            "missing-frame",
+            "backward",
+            "wrong-current",
+            "bound-nonsession",
+            "duplicate-frame",
+            "unknown-field",
+            "changed-public-identity",
+        ] {
+            let mut damaged_steps = lineage_steps.clone();
+            let mut damaged_lineage = lineage_value.clone();
+            match damage {
+                "missing-frame" => {
+                    damaged_steps[6]["facts_sha256"] = serde_json::json!("00".repeat(32))
+                }
+                "backward" => {
+                    damaged_steps[0]["facts_sha256"] = serde_json::json!(current_sha);
+                }
+                "wrong-current" => damaged_steps[6]["facts_sha256"] = serde_json::json!(facts_hash),
+                "bound-nonsession" => {
+                    damaged_steps[0]["bound_session_ttl"] = serde_json::json!(true)
+                }
+                "duplicate-frame" => {
+                    damaged_lineage["prior_facts"][0] = damaged_lineage["current_facts"].clone()
+                }
+                "unknown-field" => damaged_steps[0]["accepted"] = serde_json::json!(true),
+                _ => {
+                    let mut altered = current_facts.clone();
+                    altered["identities"][0]["serial"] = serde_json::json!("TESTQUESTCHANGED");
+                    let altered_sha =
+                        write_json(&root.join("damaged-current-facts.json"), &altered);
+                    damaged_lineage["current_facts"] = serde_json::json!({"path":path("damaged-current-facts.json"),"sha256":altered_sha});
+                    damaged_steps[6]["facts_sha256"] = serde_json::json!(altered_sha);
+                }
+            }
+            let mut bad = lineage_args.clone();
+            bad[3] = path(&format!("{damage}-journal.json"));
+            bad[4] = write_json(std::path::Path::new(&bad[3]), &damaged_steps);
+            bad[5] = path(&format!("{damage}-lineage.json"));
+            bad[6] = write_json(std::path::Path::new(&bad[5]), &damaged_lineage);
+            bad[8] = path(&format!("{damage}-review.json"));
+            assert!(!cli(env!("CARGO_BIN_EXE_produce_peer_authority"), &bad)
+                .status
+                .success());
+            assert!(!std::path::Path::new(&bad[8]).exists());
+        }
+    }
     // Existing outputs cannot be overwritten, even for an identical reviewed journal.
     assert!(!cli(env!("CARGO_BIN_EXE_produce_peer_authority"), &args)
         .status
@@ -677,6 +1053,31 @@ fn run_actual_cli_case(use_ip: bool) {
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("raw file pin mismatch"));
     assert!(!root.join("changed-source-review.json").exists());
+    if use_ip {
+        let damaged = cli(
+            env!("CARGO_BIN_EXE_produce_peer_authority"),
+            &[
+                "review-lineage".into(),
+                path("policy.json"),
+                policy_hash,
+                path("lineage-journal.json"),
+                format!(
+                    "{:x}",
+                    Sha256::digest(std::fs::read(path("lineage-journal.json")).unwrap())
+                ),
+                path("lineage.json"),
+                format!(
+                    "{:x}",
+                    Sha256::digest(std::fs::read(path("lineage.json")).unwrap())
+                ),
+                (NOW + 2_000).to_string(),
+                path("changed-source-lineage-review.json"),
+            ],
+        );
+        assert!(!damaged.status.success());
+        assert!(String::from_utf8_lossy(&damaged.stderr).contains("raw file pin mismatch"));
+        assert!(!root.join("changed-source-lineage-review.json").exists());
+    }
     // Task-owned fixture only; no public source or device evidence is removed.
     std::fs::remove_dir_all(root).unwrap();
 }

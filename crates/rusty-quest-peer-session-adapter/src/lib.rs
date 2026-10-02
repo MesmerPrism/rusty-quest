@@ -471,6 +471,55 @@ pub fn review_peer_owner_journal(
     session_id: &DottedId,
     now_ms: u64,
 ) -> Result<QuestPeerOwnerTrace, String> {
+    if steps.is_empty() || steps.len() > 256 {
+        return Err("journal must have 1..=256 requests and a fresh final review time".into());
+    }
+    review_peer_owner_journal_impl(
+        pair,
+        policy,
+        steps,
+        &vec![nonce_hex.to_owned(); steps.len()],
+        &vec![false; steps.len()],
+        session_id,
+        now_ms,
+    )
+}
+
+/// Reviews the unchanged owner requests with one authenticated raw fact nonce per step.
+/// File/identity/lineage authentication belongs to the host input producer. Historical
+/// steps keep their original digest and review time; current signed session uses the
+/// nonce of its actual retained rendezvous receipt. This grants no lifetime extension.
+/// `bound_session_steps` marks only explicit new session requests whose TTL is a
+/// requested maximum. Imported historical requests keep false and original semantics.
+pub fn review_peer_owner_journal_with_fact_nonces(
+    pair: &BleRendezvousPairReceipt,
+    policy: &QuestPeerOwnerPolicy,
+    steps: &[QuestPeerOwnerStep],
+    fact_nonces: &[String],
+    bound_session_steps: &[bool],
+    session_id: &DottedId,
+    now_ms: u64,
+) -> Result<QuestPeerOwnerTrace, String> {
+    review_peer_owner_journal_impl(
+        pair,
+        policy,
+        steps,
+        fact_nonces,
+        bound_session_steps,
+        session_id,
+        now_ms,
+    )
+}
+
+fn review_peer_owner_journal_impl(
+    pair: &BleRendezvousPairReceipt,
+    policy: &QuestPeerOwnerPolicy,
+    steps: &[QuestPeerOwnerStep],
+    fact_nonces: &[String],
+    bound_session_steps: &[bool],
+    session_id: &DottedId,
+    now_ms: u64,
+) -> Result<QuestPeerOwnerTrace, String> {
     use rusty_manifold_peer::{
         review_and_apply_peer_enrollment, review_and_apply_peer_proposal,
         review_and_apply_signed_rendezvous, ManifoldPeerDecisionOutcome, ManifoldPeerReviewCase,
@@ -479,10 +528,14 @@ pub fn review_peer_owner_journal(
     if steps.is_empty() || steps.len() > 256 || steps.last().map(|s| s.now_ms) != Some(now_ms) {
         return Err("journal must have 1..=256 requests and a fresh final review time".into());
     }
-    if nonce_hex.len() != 64
-        || !nonce_hex
-            .bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    if fact_nonces.len() != steps.len()
+        || bound_session_steps.len() != steps.len()
+        || fact_nonces.iter().any(|nonce_hex| {
+            nonce_hex.len() != 64
+                || !nonce_hex
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
     {
         return Err("fact closure nonce must be canonical 32-byte lowercase hex".into());
     }
@@ -506,7 +559,12 @@ pub fn review_peer_owner_journal(
         decisions: vec![],
     };
     let mut prior_time = 0;
-    for step in steps {
+    for ((step, nonce_hex), bound_session_ttl) in
+        steps.iter().zip(fact_nonces).zip(bound_session_steps)
+    {
+        if *bound_session_ttl && !matches!(step.request, QuestPeerOwnerRequest::Session(_)) {
+            return Err("bounded session TTL mode belongs only to a session request".into());
+        }
         if step.now_ms < prior_time || step.now_ms > now_ms {
             return Err("journal review times must be monotonic and not future".into());
         }
@@ -563,7 +621,7 @@ pub fn review_peer_owner_journal(
                 serde_json::to_value(receipt)
             }
             QuestPeerOwnerRequest::Rendezvous(request) => {
-                if request.first.nonce_hex != nonce_hex || request.second.nonce_hex != nonce_hex {
+                if request.first.nonce_hex != *nonce_hex || request.second.nonce_hex != *nonce_hex {
                     return Err("signed rendezvous differs from the current fact closure".into());
                 }
                 let (state, receipt) = review_and_apply_signed_rendezvous(
@@ -579,16 +637,55 @@ pub fn review_peer_owner_journal(
                 if config.now_ms != step.now_ms {
                     return Err("session projection review time mismatch".into());
                 }
-                let proposal = project_observed_ble_peer_session(pair, config)?;
+                let mut proposal = project_observed_ble_peer_session(pair, config)?;
                 if &proposal.session_id != session_id {
                     return Err("session differs from fact closure".into());
                 }
+                let nonce_bytes = (0..64)
+                    .step_by(2)
+                    .map(|index| u8::from_str_radix(&nonce_hex[index..index + 2], 16))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
+                let nonce_digest = format!("sha256:{:x}", Sha256::digest(nonce_bytes));
                 let receipt = trace
                     .rendezvous
                     .accepted_receipts
-                    .last()
+                    .iter()
+                    .find(|receipt| receipt.nonce_sha256 == nonce_digest)
                     .ok_or("no owner-accepted signed rendezvous receipt")?
                     .clone();
+                if *bound_session_ttl {
+                    let mut expiry = receipt.expires_at_ms;
+                    for peer_id in [&config.group_owner_peer_id, &config.client_peer_id] {
+                        let peer = trace
+                            .peers
+                            .peers
+                            .iter()
+                            .find(|p| &p.identity.peer_id == peer_id)
+                            .ok_or("session has no accepted current peer")?;
+                        expiry = expiry.min(peer.status.expires_at_ms);
+                    }
+                    for key_id in &receipt.signer_key_ids {
+                        let key = trace
+                            .enrollment
+                            .credentials
+                            .iter()
+                            .find(|k| &k.key_id == key_id)
+                            .ok_or("session has no retained signing credential")?;
+                        expiry = expiry.min(key.expires_at_ms);
+                    }
+                    let ttl = expiry
+                        .saturating_sub(step.now_ms)
+                        .min(config.authorization_ttl_ms);
+                    if ttl < 1_000 {
+                        return Err(
+                            "current signed/peer/credential session lifetime below 1000ms".into(),
+                        );
+                    }
+                    let mut bounded = config.clone();
+                    bounded.authorization_ttl_ms = ttl;
+                    proposal = project_observed_ble_peer_session(pair, &bounded)?;
+                }
                 let (decision, authorization) =
                     review_and_apply_signed_peer_session(&ManifoldSignedPeerSessionReviewCase {
                         schema_id: schema(SIGNED_PEER_SESSION_REVIEW_SCHEMA),
