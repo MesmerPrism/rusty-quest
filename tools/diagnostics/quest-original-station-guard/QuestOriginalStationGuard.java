@@ -17,12 +17,33 @@ import java.util.concurrent.*;
 public final class QuestOriginalStationGuard {
   enum Phase { arguments, uid, config_load, config_contract, config_path, host_identity, main_looper, activity_thread, shell_context, binder_services, wifi_manager, connectivity_manager, callback_thread, p2p_service, p2p_channel, dispatch, snapshot_host, configured_networks, profile_projection, snapshot_join }
   static Phase diagnosticPhase=Phase.arguments;
+  static final class ProfileCandidate {
+    final String full,immutable;final int status,reason;
+    ProfileCandidate(String full,String immutable,int status,int reason){
+      if(!full.matches("[0-9a-f]{64}")||!immutable.matches("[0-9a-f]{64}"))throw new SecurityException("profile_diagnostic_shape");
+      this.full=full;this.immutable=immutable;this.status=status;this.reason=reason;
+    }
+    String json(){return "{\"profile_sha256\":\""+full+"\",\"static_sha256\":\""+immutable+"\",\"selection_status\":"+status+",\"disable_reason\":"+reason+"}";}
+  }
+  static final class OriginalProfileAmbiguity extends SecurityException {
+    final String projection;
+    OriginalProfileAmbiguity(int profiles,int distinct,List<ProfileCandidate> candidates){
+      super("duplicate_original");ArrayList<String> rows=new ArrayList<>();for(ProfileCandidate c:candidates)rows.add(c.json());
+      projection="{\"profile_count\":"+profiles+",\"distinct_network_id_count\":"+distinct+",\"original_candidate_count\":"+candidates.size()+",\"original_candidates\":["+String.join(",",rows)+"]}";
+    }
+  }
+  static void requireUniqueOriginal(int profiles,int distinct,List<ProfileCandidate> candidates){
+    if(profiles<1||profiles>128||distinct<1||distinct>profiles||candidates.size()>16||candidates.size()>profiles)throw new SecurityException("profiles_bound");
+    if(candidates.isEmpty())throw new SecurityException("original_missing");
+    if(candidates.size()!=1)throw new OriginalProfileAmbiguity(profiles,distinct,candidates);
+  }
   static String errorType(Throwable e){String n=e.getClass().getSimpleName();return n.matches("[A-Za-z][A-Za-z0-9]{0,63}")?n:"Throwable";}
   static String failureJson(Throwable e){
     Throwable cause=e;for(int i=0;i<8 && cause.getCause()!=null && cause.getCause()!=cause;i++)cause=cause.getCause();
     String message=cause.getMessage();
-    String code=message!=null && Arrays.asList("uid2000_required","config_path","file_bound","p2p_service","p2p_channel","profiles_missing","duplicate_original","original_missing").contains(message)?message:"unclassified";
-    return "{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":false,\"outcome\":\"unknown\",\"phase\":\""+diagnosticPhase.name()+"\",\"error_type\":\""+errorType(e)+"\",\"cause_type\":\""+errorType(cause)+"\",\"error_code\":\""+code+"\"}";
+    String code=message!=null && Arrays.asList("uid2000_required","config_path","file_bound","p2p_service","p2p_channel","profiles_missing","duplicate_original","original_missing","profiles_bound","profile_diagnostic_shape").contains(message)?message:"unclassified";
+    String projection=cause instanceof OriginalProfileAmbiguity?",\"profile_projection\":"+((OriginalProfileAmbiguity)cause).projection:"";
+    return "{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":false,\"outcome\":\"unknown\",\"phase\":\""+diagnosticPhase.name()+"\",\"error_type\":\""+errorType(e)+"\",\"cause_type\":\""+errorType(cause)+"\",\"error_code\":\""+code+"\""+projection+"}";
   }
   final OriginalStationGuardContract cfg; final String path; final WifiManager wifi; final ConnectivityManager connectivity;
   final WifiP2pManager p2p; final WifiP2pManager.Channel channel; final HandlerThread callbacks;
@@ -64,9 +85,11 @@ public final class QuestOriginalStationGuard {
 
   String[] snapshot()throws Exception {
     diagnosticPhase=Phase.snapshot_host;host();diagnosticPhase=Phase.configured_networks; List<WifiConfiguration> xs=wifi.getConfiguredNetworks();if(xs==null||xs.isEmpty())throw new IllegalStateException("profiles_missing");
-    ArrayList<String> rows=new ArrayList<>(),unrelated=new ArrayList<>();String original=null,originalStatic=null,selectionStatus=null,selectionReason=null;
-    diagnosticPhase=Phase.profile_projection;for(WifiConfiguration c:xs){String[] fields=profileFields(c);String h=sha(OriginalStationGuardContract.profile(fields,false));rows.add(h);if(c.networkId==cfg.original){if(original!=null)throw new SecurityException("duplicate_original");original=h;originalStatic=sha(OriginalStationGuardContract.profile(fields,true));selectionStatus=fields[10];selectionReason=fields[11];}else unrelated.add(h);}
+    if(xs.size()>128)throw new SecurityException("profiles_bound");
+    ArrayList<String> rows=new ArrayList<>(),unrelated=new ArrayList<>();ArrayList<ProfileCandidate> candidates=new ArrayList<>();Set<Integer> ids=new HashSet<>();String original=null,originalStatic=null,selectionStatus=null,selectionReason=null;
+    diagnosticPhase=Phase.profile_projection;for(WifiConfiguration c:xs){ids.add(c.networkId);String[] fields=profileFields(c);String h=sha(OriginalStationGuardContract.profile(fields,false));rows.add(h);if(c.networkId==cfg.original){String immutable=sha(OriginalStationGuardContract.profile(fields,true));candidates.add(new ProfileCandidate(h,immutable,Integer.parseInt(fields[10]),Integer.parseInt(fields[11])));if(candidates.size()>16)throw new SecurityException("profiles_bound");if(original==null){original=h;originalStatic=immutable;selectionStatus=fields[10];selectionReason=fields[11];}}else unrelated.add(h);}
     diagnosticPhase=Phase.snapshot_join;
+    requireUniqueOriginal(xs.size(),ids.size(),candidates);
     Collections.sort(rows);if(original==null)throw new SecurityException("original_missing");Collections.sort(unrelated);return new String[]{sha(String.join("\n",rows)),original,sha(String.join("\n",unrelated)),originalStatic,selectionStatus,selectionReason};
   }
   void create(File f,String text)throws Exception {

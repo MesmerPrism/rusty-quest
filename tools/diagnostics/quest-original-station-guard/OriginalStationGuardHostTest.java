@@ -57,6 +57,25 @@ public final class OriginalStationGuardHostTest {
     check(failure.contains("\"error_code\":\"p2p_service\""));
     check(!QuestOriginalStationGuard.failureJson(new SecurityException("profiles_missing\" injected")).contains("injected"));
     check(QuestOriginalStationGuard.failureJson(new SecurityException()).contains("\"error_code\":\"unclassified\""));
+    String hash=String.join("",Collections.nCopies(64,"a")),otherHash=String.join("",Collections.nCopies(64,"b"));
+    QuestOriginalStationGuard.ProfileCandidate one=new QuestOriginalStationGuard.ProfileCandidate(hash,hash,0,0);
+    QuestOriginalStationGuard.requireUniqueOriginal(2,2,Arrays.asList(one));check(true);
+    rejects(()->QuestOriginalStationGuard.requireUniqueOriginal(2,2,Collections.emptyList()));
+    for(QuestOriginalStationGuard.ProfileCandidate second:new QuestOriginalStationGuard.ProfileCandidate[]{one,new QuestOriginalStationGuard.ProfileCandidate(otherHash,otherHash,1,2)}){
+      boolean denied=false;try{QuestOriginalStationGuard.requireUniqueOriginal(3,2,Arrays.asList(one,second));}catch(QuestOriginalStationGuard.OriginalProfileAmbiguity e){
+        denied=true;String json=QuestOriginalStationGuard.failureJson(e);
+        check(json.contains("\"profile_count\":3")&&json.contains("\"distinct_network_id_count\":2")&&json.contains("\"original_candidate_count\":2"));
+        check(json.contains("\"error_code\":\"duplicate_original\"")&&json.contains("\"profile_sha256\":\""+second.full+"\""));
+        check(json.contains("\"selection_status\":"+second.status)&&json.contains("\"disable_reason\":"+second.reason));
+      }check(denied);
+    }
+    rejects(()->new QuestOriginalStationGuard.ProfileCandidate("SSID secret",hash,0,0));
+    rejects(()->new QuestOriginalStationGuard.ProfileCandidate(hash,"quoted\" injected",0,0));
+    rejects(()->QuestOriginalStationGuard.requireUniqueOriginal(129,1,Arrays.asList(one)));
+    rejects(()->QuestOriginalStationGuard.requireUniqueOriginal(2,3,Arrays.asList(one)));
+    rejects(()->QuestOriginalStationGuard.requireUniqueOriginal(17,1,Collections.nCopies(17,one)));
+    String bounded=QuestOriginalStationGuard.failureJson(new QuestOriginalStationGuard.OriginalProfileAmbiguity(16,1,Collections.nCopies(16,one)));
+    check(bounded.length()<4096 && !bounded.contains("SSID") && !bounded.contains("BSSID") && !bounded.contains("credential"));
     System.out.println("original_station_guard_contract=pass cases="+cases+" device_calls=0");
   }
 }
