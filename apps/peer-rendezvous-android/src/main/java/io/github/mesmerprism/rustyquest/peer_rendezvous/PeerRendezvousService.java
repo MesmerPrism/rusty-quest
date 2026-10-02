@@ -27,6 +27,7 @@ public final class PeerRendezvousService extends Service {
     private BleRendezvousConfig config;
     private BleRendezvousEvidence evidence;
     private BleRendezvousGattServer server;
+    private BleWifiObservation wifiObserver;
     private boolean finished = true;
 
     @Override
@@ -58,11 +59,28 @@ public final class PeerRendezvousService extends Service {
         startForegroundCompat(buildNotification());
         evidence = new BleRendezvousEvidence(config);
         finished = false;
+        if(config.observedCoordination) {
+            try {
+                wifiObserver=new BleWifiObservation(getApplicationContext(),handler,config);
+                wifiObserver.start();
+                handler.postDelayed(() -> {
+                    if(finished)return;
+                    if(config.observation==null){evidence.issue("wifi_observation_unavailable");finishRun("blocked");}
+                    else startBle();
+                },1_000);
+            } catch(Exception error){evidence.issue("wifi_observation_unavailable");finishRun("blocked");}
+            return START_NOT_STICKY;
+        }
+        startBle();
+        return START_NOT_STICKY;
+    }
+
+    private void startBle() {
         if (BleRendezvousConfig.MODE_SERVER.equals(config.mode)) {
             server = new BleRendezvousGattServer(getApplicationContext(), config, evidence);
             if (!server.start()) {
                 finishRun(preflightBlocked() ? "blocked" : "fail");
-                return START_NOT_STICKY;
+                return;
             }
             handler.postDelayed(new Runnable() {
                 @Override
@@ -88,7 +106,7 @@ public final class PeerRendezvousService extends Service {
                     });
             client.start();
         }
-        return START_NOT_STICKY;
+        return;
     }
 
     private synchronized void finishRun(String requestedStatus) {
@@ -100,6 +118,7 @@ public final class PeerRendezvousService extends Service {
                 + " requestedStatus=" + requestedStatus);
         finished = true;
         handler.removeCallbacksAndMessages(null);
+
         if (server != null) {
             server.stop();
             server = null;
@@ -141,6 +160,7 @@ public final class PeerRendezvousService extends Service {
                     : "blocked";
         }
         evidence.write(getApplicationContext(), status);
+        if(wifiObserver!=null){wifiObserver.close();wifiObserver=null;}
         stopForeground(true);
         stopSelf();
     }

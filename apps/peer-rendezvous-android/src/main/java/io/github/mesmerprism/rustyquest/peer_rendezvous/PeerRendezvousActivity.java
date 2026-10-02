@@ -71,7 +71,7 @@ public final class PeerRendezvousActivity extends Activity {
             statusView.setText("Blocked");
             return;
         }
-        String[] missing = BleRendezvousPermissions.missing(this, config.mode);
+        String[] missing = BleRendezvousPermissions.missing(this, config);
         if (missing.length > 0) {
             pendingStart = new Intent(intent);
             requestPermissions(missing, PERMISSION_REQUEST);
@@ -109,7 +109,7 @@ public final class PeerRendezvousActivity extends Activity {
         pendingStart = null;
         try {
             BleRendezvousConfig config = BleRendezvousConfig.fromIntent(next);
-            if (BleRendezvousPermissions.granted(this, config.mode)) {
+            if (BleRendezvousPermissions.missing(this, config).length == 0) {
                 startSidecar(next);
                 return;
             }

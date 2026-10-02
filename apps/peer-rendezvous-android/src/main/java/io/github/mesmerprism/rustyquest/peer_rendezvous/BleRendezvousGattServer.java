@@ -36,6 +36,7 @@ final class BleRendezvousGattServer {
     private byte[] offerMessage;
     private byte[] statusMessage;
     private int authenticatedProposalCount;
+    private final java.util.Map<BluetoothDevice,Integer> peerMtus=new java.util.HashMap<>();
 
     BleRendezvousGattServer(
             Context context,
@@ -60,6 +61,7 @@ final class BleRendezvousGattServer {
             return false;
         }
         try {
+            if(config.observedCoordination)config.challenge="";
             offerMessage = BleRendezvousProtocol.buildMessage(config, "offer", 1);
             statusMessage = BleRendezvousProtocol.buildMessage(config, "status", 1);
             gattServer = manager.openGattServer(context, callback);
@@ -172,6 +174,14 @@ final class BleRendezvousGattServer {
             }
             return;
         }
+        if(config.observedCoordination) {
+            try {
+                BleRendezvousProtocol.requireCurrentLocalMessage(config,message);
+                BleRoleReadiness.requirePayload(message.length,peerMtus.getOrDefault(device,23));
+                if(offset!=0)throw new IllegalArgumentException("v2_fragmented_read_forbidden");
+            } catch(Exception denied){evidence.issue("v2_read_observation_or_mtu_denied");
+                gattServer.sendResponse(device,requestId,BluetoothGatt.GATT_FAILURE,offset,null);return;}
+        }
         byte[] response = Arrays.copyOfRange(message, offset, message.length);
         gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, response);
         if (offset == 0) {
@@ -181,6 +191,7 @@ final class BleRendezvousGattServer {
 
     private boolean refreshOfferMessage() {
         try {
+            if(config.observedCoordination)config.challenge="";
             offerMessage = BleRendezvousProtocol.buildMessage(config, "offer", 1);
             if (offerCharacteristic != null) {
                 offerCharacteristic.setValue(offerMessage);
@@ -193,6 +204,7 @@ final class BleRendezvousGattServer {
     }
 
     private final BluetoothGattServerCallback callback = new BluetoothGattServerCallback() {
+        @Override public void onMtuChanged(BluetoothDevice device,int mtu){peerMtus.put(device,mtu);evidence.negotiatedMtu=mtu;}
         @Override
         public void onServiceAdded(int status, BluetoothGattService service) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
@@ -218,6 +230,7 @@ final class BleRendezvousGattServer {
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 evidence.disconnected = true;
                 connectedDevices.remove(device);
+                peerMtus.remove(device);
             }
         }
 
@@ -273,16 +286,27 @@ final class BleRendezvousGattServer {
                             value,
                             config.sharedSecret,
                             config.sessionTag);
+                    if(config.observedCoordination)BleRoleReadiness.requirePayload(value.length,peerMtus.getOrDefault(device,23));
                     String proposalNonce = proposal.optString("n");
                     if (!"proposal".equals(proposal.optString("k"))
-                            || proposal.optInt("e", 0) != config.epoch
+                            || proposal.optLong("e", 0) != BleRendezvousProtocol.epoch(config)
                             || proposal.optInt("q", 0) != 2
                             || config.peerTag.equals(proposal.optString("pid"))) {
                         throw new IllegalArgumentException("proposal_identity_invalid");
                     }
-                    if (!acceptedProposalNonces.add(proposalNonce)) {
+                    if (acceptedProposalNonces.contains(proposalNonce)) {
                         throw new IllegalArgumentException("proposal_replay_detected");
                     }
+                    if(config.observedCoordination) {
+                        if(!config.expectedPeerTag.equals(proposal.optString("pid")))
+                            throw new IllegalArgumentException("v2_peer_identity_invalid");
+                        String challenge=BleRendezvousProtocol.verify(offerMessage,config.sharedSecret,config.sessionTag).optString("n");
+                        BleRoleReadiness.requireChallenge(challenge,proposal.optString("x"));
+                    }
+                    BleRendezvousProtocol.requireObservedPeer(config,proposal);
+                    acceptedProposalNonces.add(proposalNonce);
+                    if(config.observedCoordination)config.challenge=proposalNonce;
+                    if(config.observedCoordination)config.authenticatedObservedPeer=new JSONObject(proposal.toString());
                     evidence.authenticatedMessages += 1;
                     authenticatedProposalCount += 1;
                     if (authenticatedProposalCount > 1) {

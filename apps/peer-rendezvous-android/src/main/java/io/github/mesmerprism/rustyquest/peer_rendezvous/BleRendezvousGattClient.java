@@ -96,7 +96,7 @@ final class BleRendezvousGattClient implements Runnable {
                 evidence.issue("peer_connect_or_discovery_failed");
                 return;
             }
-            if (evidence.negotiatedMtu < BleRendezvousProtocol.MAX_WIRE_BYTES + 3) {
+            if (evidence.negotiatedMtu < BleRendezvousProtocol.maximumBytes(config) + 3) {
                 evidence.issue("negotiated_mtu_too_small");
                 return;
             }
@@ -113,7 +113,7 @@ final class BleRendezvousGattClient implements Runnable {
                 evidence.issue("peer_reconnect_or_discovery_failed");
                 return;
             }
-            if (evidence.negotiatedMtu < BleRendezvousProtocol.MAX_WIRE_BYTES + 3) {
+            if (evidence.negotiatedMtu < BleRendezvousProtocol.maximumBytes(config) + 3) {
                 evidence.issue("reconnect_negotiated_mtu_too_small");
                 return;
             }
@@ -137,6 +137,7 @@ final class BleRendezvousGattClient implements Runnable {
         if (offer == null) {
             return false;
         }
+        if(config.observedCoordination)config.challenge=offer.optString("n");
         byte[] proposal = BleRendezvousProtocol.buildMessage(config, "proposal", 2);
         if (!write(proposal)) {
             evidence.issue(postReconnect
@@ -144,6 +145,7 @@ final class BleRendezvousGattClient implements Runnable {
                     : "proposal_write_failed");
             return false;
         }
+        if(config.observedCoordination)config.challenge=BleRendezvousProtocol.verify(proposal,config.sharedSecret,config.sessionTag).optString("n");
         byte[] acceptBytes = read(statusCharacteristic, false);
         JSONObject accept = verifyPeerMessage(acceptBytes, "accept", 3);
         if (accept == null) {
@@ -218,6 +220,7 @@ final class BleRendezvousGattClient implements Runnable {
     }
 
     private boolean write(byte[] payload) throws InterruptedException {
+        if(config.observedCoordination)BleRoleReadiness.requirePayload(payload.length,evidence.negotiatedMtu);
         writeLatch = new CountDownLatch(1);
         lastWriteStatus = Integer.MIN_VALUE;
         controlCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
@@ -241,15 +244,22 @@ final class BleRendezvousGattClient implements Runnable {
             String peerTag = message.optString("pid");
             String nonce = message.optString("n");
             if (!expectedKind.equals(message.optString("k"))
-                    || message.optInt("e", 0) != config.epoch
+                    || message.optLong("e", 0) != BleRendezvousProtocol.epoch(config)
                     || message.optInt("q", 0) != expectedSequence
                     || config.peerTag.equals(peerTag)
                     || (remotePeerTag != null && !remotePeerTag.equals(peerTag))) {
                 throw new IllegalArgumentException("peer_message_identity_invalid");
             }
-            if (!peerNonces.add(nonce)) {
+            if (peerNonces.contains(nonce)) {
                 throw new IllegalArgumentException("peer_message_replay_detected");
             }
+            if(config.observedCoordination) {
+                if(!config.expectedPeerTag.equals(peerTag))throw new IllegalArgumentException("v2_peer_identity_invalid");
+                if(!"offer".equals(expectedKind))BleRoleReadiness.requireChallenge(config.challenge,message.optString("x"));
+            }
+            BleRendezvousProtocol.requireObservedPeer(config,message);
+            peerNonces.add(nonce);
+            if(config.observedCoordination)config.authenticatedObservedPeer=new JSONObject(message.toString());
             remotePeerTag = peerTag;
             evidence.authenticatedMessages += 1;
             return message;

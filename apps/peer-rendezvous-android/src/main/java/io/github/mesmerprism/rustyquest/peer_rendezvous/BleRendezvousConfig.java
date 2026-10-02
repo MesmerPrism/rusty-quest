@@ -7,6 +7,15 @@ final class BleRendezvousConfig {
     static final String MODE_SERVER = "server";
     static final String MODE_CLIENT = "client";
 
+    long coordinationEpoch;
+    boolean observedCoordination;
+    String expectedPeerTag;
+    volatile String observationBoot;
+    volatile BleRoleReadiness.Observation observation;
+    BleRoleReadiness readiness;
+    String challenge = "";
+    String coordinatedPeer, remoteConfiguredRole, resolvedRole;
+    volatile org.json.JSONObject authenticatedObservedPeer;
     final String mode;
     final String runId;
     final String sessionTag;
@@ -108,7 +117,7 @@ final class BleRendezvousConfig {
                     || brokerPort > 65535)) {
             throw new IllegalArgumentException("ready_endpoint_hint_invalid");
         }
-        return new BleRendezvousConfig(
+        BleRendezvousConfig result = new BleRendezvousConfig(
                 mode,
                 runId,
                 sessionTag,
@@ -122,6 +131,18 @@ final class BleRendezvousConfig {
                 wifiState,
                 p2pIpv4,
                 brokerPort);
+        result.observedCoordination=intent.getBooleanExtra("observed_coordination_v2",false);
+        if(result.observedCoordination) {
+            result.expectedPeerTag=safeTag(intent,"expected_peer_tag");
+            result.coordinationEpoch=intent.getLongExtra("coordination_epoch",epoch);
+            if(result.coordinationEpoch<=0||result.expectedPeerTag.equals(peerTag)
+                    ||!sessionTag.matches("[A-Za-z0-9_.-]{4,32}")
+                    ||!peerTag.matches("[A-Za-z0-9_.-]{4,32}")
+                    ||!result.expectedPeerTag.matches("[A-Za-z0-9_.-]{4,32}")||"either".equals(role)
+                    ||!"idle".equals(wifiState)||!p2pIpv4.isEmpty()||brokerPort!=0)
+                throw new IllegalArgumentException("v2_explicit_role_and_no_configured_readiness_required");
+        }
+        return result;
     }
 
     private static String safeTag(Intent intent, String name) {

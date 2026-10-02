@@ -29,6 +29,14 @@ final class BleRendezvousPermissions {
         return missing.toArray(new String[0]);
     }
 
+    static String[] missing(Context context, BleRendezvousConfig config) {
+        List<String> result=new ArrayList<>(java.util.Arrays.asList(missing(context,config.mode)));
+        if(config.observedCoordination) {
+            addIfMissing(context,result,Build.VERSION.SDK_INT>=33
+                    ?Manifest.permission.NEARBY_WIFI_DEVICES:Manifest.permission.ACCESS_FINE_LOCATION);
+        }
+        return result.toArray(new String[0]);
+    }
     static boolean granted(Context context, String mode) {
         return missing(context, mode).length == 0;
     }

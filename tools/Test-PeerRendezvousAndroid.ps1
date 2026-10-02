@@ -1,4 +1,4 @@
-param([string]$RepoRoot = "")
+param([string]$RepoRoot = "", [string]$JavaHome="", [string]$AndroidJar="", [string]$JsonJar="", [string]$HostOutDir="")
 
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -55,8 +55,8 @@ foreach ($permission in @("BLUETOOTH_SCAN", "BLUETOOTH_CONNECT", "BLUETOOTH_ADVE
 }
 Assert-Match $manifest 'android\.hardware\.bluetooth_le' "Manifest must require BLE hardware."
 Assert-Match $manifest 'android:foregroundServiceType="connectedDevice"' "Sidecar service must use connectedDevice foreground type."
-if ($manifest -match 'android\.permission\.(INTERNET|NEARBY_WIFI_DEVICES|CAMERA)') {
-    throw "BLE sidecar must not declare network, Wi-Fi mutation, or camera permissions."
+if ($manifest -match 'android\.permission\.(INTERNET|CAMERA)') {
+    throw "BLE sidecar must not declare sockets or camera permissions."
 }
 
 Assert-Match $service 'START_NOT_STICKY' "Sidecar must be bounded and non-sticky."
@@ -131,7 +131,6 @@ Assert-Match $service 'RUSTY_QUEST_BLE_RENDEZVOUS_SERVICE_FINISH' "Service must 
 
 foreach ($forbidden in @(
     'getAddress\(',
-    'WifiP2pManager',
     'WifiManager',
     'MediaCodec',
     'CameraManager',
@@ -146,3 +145,54 @@ foreach ($forbidden in @(
 }
 
 Write-Output "Rusty Quest peer rendezvous Android static validation passed"
+
+# v1 has no Wi-Fi request call; the sole separate v2 sampler is read-only.
+$observer=Get-Content -Raw -LiteralPath (Join-Path $sourceRoot 'BleWifiObservation.java')
+Assert-Match $config 'observed_coordination_v2",false' 'Observed coordination must be explicit and default off.'
+foreach($permission in @('ACCESS_WIFI_STATE','NEARBY_WIFI_DEVICES')) {
+    Assert-Match $manifest $permission "Missing opted observation permission $permission."
+}
+foreach($method in @('requestConnectionInfo','requestGroupInfo')) {
+    Assert-Match $observer $method "Missing real read-only observation $method."
+}
+if($observer -match '\.(createGroup|connect|discoverPeers|removeGroup|setWifiEnabled|addLocalService)\s*\(') {
+    throw 'Read-only observer contains a Wi-Fi mutation.'
+}
+Assert-Match $client 'requireObservedPeer\(config,message\)' 'Actual client must enforce observed peer guard.'
+Assert-Match $server 'requireObservedPeer\(config,proposal\)' 'Actual server must enforce observed peer guard.'
+if(@($JavaHome,$AndroidJar,$JsonJar,$HostOutDir|Where-Object {-not [string]::IsNullOrWhiteSpace($_)}).Count -gt 0) {
+    foreach($required in @($JavaHome,$AndroidJar,$JsonJar,$HostOutDir)) {
+        if([string]::IsNullOrWhiteSpace($required)){throw 'All four focused host inputs are required.'}
+    }
+    if(Test-Path -LiteralPath $HostOutDir){throw 'HostOutDir must be create-new.'}
+    $hostRoot=[IO.Path]::GetFullPath($HostOutDir)
+    $androidClasses=Join-Path $hostRoot 'android-classes'
+    $hostClasses=Join-Path $hostRoot 'host-classes'
+    $stubs=Join-Path $hostRoot 'stubs'
+    New-Item -ItemType Directory -Path $androidClasses,$hostClasses,(Join-Path $stubs 'android/os'),(Join-Path $stubs 'android/content')|Out-Null
+    $utf8=[Text.UTF8Encoding]::new($false)
+    [IO.File]::WriteAllText((Join-Path $stubs 'android/os/SystemClock.java'), 'package android.os; public final class SystemClock { public static long elapsedRealtime(){return 101;} }',$utf8)
+    [IO.File]::WriteAllText((Join-Path $stubs 'android/content/Intent.java'), 'package android.content; public final class Intent { private final String action;private final java.util.Map<String,Object> data=new java.util.HashMap<>(); public Intent(String action){this.action=action;}public String getAction(){return action;} public Intent putExtra(String k,String v){data.put(k,v);return this;} public Intent putExtra(String k,boolean v){data.put(k,v);return this;} public Intent putExtra(String k,long v){data.put(k,v);return this;} public long getLongExtra(String k,long fallback){return data.containsKey(k)?((Number)data.get(k)).longValue():fallback;} public String getStringExtra(String k){return (String)data.get(k);} public boolean getBooleanExtra(String k,boolean fallback){return data.containsKey(k)?(Boolean)data.get(k):fallback;} public int getIntExtra(String k,int fallback){return data.containsKey(k)?(Integer)data.get(k):fallback;} }',$utf8)
+    $javac=Join-Path $JavaHome 'bin/javac.exe';$java=Join-Path $JavaHome 'bin/java.exe'
+    foreach($required in @($javac,$java,$AndroidJar,$JsonJar)){if(-not(Test-Path -LiteralPath $required)){throw 'Missing pinned host input.'}}
+    $allSources=@(Get-ChildItem -LiteralPath (Join-Path $appRoot 'src/main/java') -Recurse -Filter '*.java'|ForEach-Object FullName)
+    & $javac -source 17 -target 17 -classpath $AndroidJar -d $androidClasses @allSources
+    if($LASTEXITCODE -ne 0){throw "Real Android Java compilation failed: $LASTEXITCODE"}
+    # Compile verbatim actual validation bodies, with only Android transport/evidence fixtures.
+    $clientBody=[regex]::Match($client,'(?s)    private JSONObject verifyPeerMessage.*?(?=    private boolean disconnectForReconnect)').Value
+    if(-not $clientBody){throw 'Actual client validation body not located.'}
+    $clientBody=$clientBody.Replace('private JSONObject verifyPeerMessage','public JSONObject verifyPeerMessage')
+    $serverBody=[regex]::Match($server,'(?s)                    JSONObject proposal = BleRendezvousProtocol.verify\(.*?statusCharacteristic.setValue\(statusMessage\);').Value
+    if(-not $serverBody){throw 'Actual server validation body not located.'}
+    $harness='package io.github.mesmerprism.rustyquest.peer_rendezvous; import org.json.JSONObject; import java.util.*; final class BleCallsiteHarness { static class E { int messagesReceived,authenticatedMessages,authenticationFailures,reconnectsCompleted; boolean postReconnectMessageAuthenticated; void issue(String code){} } static class Client { final BleRendezvousConfig config; final E evidence=new E();final Set<String> peerNonces=new HashSet<>();String remotePeerTag; Client(BleRendezvousConfig c){config=c;} '+$clientBody+' } static class Server { final BleRendezvousConfig config; final E evidence=new E();final Set<String> acceptedProposalNonces=new HashSet<>();int authenticatedProposalCount;byte[] offerMessage,statusMessage; final Object device=new Object(); final Map<Object,Integer> peerMtus=new HashMap<>(); final C statusCharacteristic=new C();static class C{void setValue(byte[] value){}} Server(BleRendezvousConfig c)throws Exception{config=c;offerMessage=BleRendezvousProtocol.buildMessage(c,"offer",1);peerMtus.put(device,247);} boolean proposal(byte[] value){try{'+$serverBody+' return true;}catch(Exception denied){return false;}} } }'
+    $harnessPath=Join-Path $stubs 'BleCallsiteHarness.java'
+    [IO.File]::WriteAllText($harnessPath,$harness,$utf8)
+    $hostSources=@($harnessPath,(Join-Path $stubs 'android/os/SystemClock.java'),(Join-Path $stubs 'android/content/Intent.java'),
+        (Join-Path $sourceRoot 'BleRoleReadiness.java'),(Join-Path $sourceRoot 'BleRendezvousConfig.java'),
+        (Join-Path $sourceRoot 'BleRendezvousProtocol.java'),
+        (Join-Path $appRoot 'tests/java/io/github/mesmerprism/rustyquest/peer_rendezvous/BleRoleReadinessTest.java'))
+    & $javac -source 17 -target 17 -classpath "$JsonJar;$AndroidJar;$androidClasses" -d $hostClasses @hostSources
+    if($LASTEXITCODE -ne 0){throw "Focused host compilation failed: $LASTEXITCODE"}
+    & $java -classpath "$hostClasses;$JsonJar;$AndroidJar;$androidClasses" io.github.mesmerprism.rustyquest.peer_rendezvous.BleRoleReadinessTest
+    if($LASTEXITCODE -ne 0){throw "Focused host production predicates failed: $LASTEXITCODE"}
+}

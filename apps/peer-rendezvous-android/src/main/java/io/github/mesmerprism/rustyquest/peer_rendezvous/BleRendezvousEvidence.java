@@ -36,6 +36,7 @@ final class BleRendezvousEvidence {
     int reconnectsCompleted;
     boolean postReconnectMessageAuthenticated;
     boolean cleanupComplete;
+    boolean coordinationFailed;
     int negotiatedMtu;
 
     BleRendezvousEvidence(BleRendezvousConfig config) {
@@ -43,6 +44,7 @@ final class BleRendezvousEvidence {
     }
 
     synchronized void issue(String issueCode) {
+        if(config.observedCoordination)coordinationFailed=true;
         if (BleRendezvousProtocol.isSafeTag(issueCode, 1, 96)) {
             issueCodes.add(issueCode);
         } else {
@@ -52,8 +54,24 @@ final class BleRendezvousEvidence {
 
     synchronized void write(Context context, String status) {
         try {
+            if(config.observedCoordination&&coordinationFailed&&"pass".equals(status))status="fail";
             JSONObject receipt = new JSONObject();
-            receipt.put("schema", SCHEMA);
+            receipt.put("schema", config.observedCoordination?"rusty.quest.ble_role_readiness_receipt.v2":SCHEMA);
+            if(config.observedCoordination) {
+                receipt.put("broker_ready",false);
+                receipt.put("broker_ready_status","unavailable_no_owner_proof");
+                receipt.put("configured_role",config.rolePreference);
+                receipt.put("coordination_epoch",config.coordinationEpoch);
+                receipt.put("expected_peer_tag",config.expectedPeerTag);
+                receipt.put("authenticated_observed_peer",config.authenticatedObservedPeer);
+                BleRoleReadiness.Observation o=config.observation;
+                receipt.put("local_wifi_observation_available",o!=null);
+                if(o!=null){receipt.put("boot_tag",o.boot);receipt.put("group_tag",o.group);
+                    receipt.put("observed_role",o.role);receipt.put("observed_owner_ipv4",o.ownerIp);
+                    receipt.put("observed_local_ipv4",o.localIp);receipt.put("observed_elapsed_ms",o.observedAt);}
+                receipt.put("observation_max_age_ms",BleRoleReadiness.MAX_AGE_MS);
+                receipt.put("wifi_ready_claimed",false);
+            }
             receipt.put("run_id", config.runId);
             receipt.put("session_tag", config.sessionTag);
             receipt.put("peer_tag", config.peerTag);
