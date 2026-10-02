@@ -31,7 +31,7 @@ final class BleWifiObservation {
         config.readiness=new BleRoleReadiness(config.observationBoot);
         manager=context.getSystemService(WifiP2pManager.class);
         if(manager==null)throw new IllegalArgumentException("wifi_observer_unavailable");
-        channel=manager.initialize(context,handler.getLooper(),()->{closed=true;generation++;config.observation=null;});
+        channel=manager.initialize(context,handler.getLooper(),new WifiP2pManager.ChannelListener(){public void onChannelDisconnected(){closed=true;generation++;config.observation=null;}});
         if(channel==null)throw new IllegalArgumentException("wifi_observer_channel_unavailable");
     }
     void start(){sample();}
@@ -42,8 +42,8 @@ final class BleWifiObservation {
         final long requested=SystemClock.elapsedRealtime();
         config.observation=null;
         try {
-            requestInfo(g,info -> requestGroup(g,group ->
-                requestInfo(g,confirmInfo -> requestGroup(g,confirmGroup -> {
+            requestInfo(g,new InfoNext(){public void accept(final WifiP2pInfo info){ requestGroup(g,new GroupNext(){public void accept(final WifiP2pGroup group){
+                requestInfo(g,new InfoNext(){public void accept(final WifiP2pInfo confirmInfo){ requestGroup(g,new GroupNext(){public void accept(final WifiP2pGroup confirmGroup){
                 if(closed||g!=generation)return;
                 try {
                     long now=SystemClock.elapsedRealtime();
@@ -74,24 +74,26 @@ final class BleWifiObservation {
                     BleRoleReadiness.requireFresh(observation,config.observationBoot,config.rolePreference,now);
                     config.observation=observation;
                 } catch(Exception ignored){config.observation=null;}
-            }))));
+            }}); }}); }}); }});
         } catch(RuntimeException denied){config.observation=null;}
-        handler.postDelayed(this::sample,2_000);
+        handler.postDelayed(new Runnable(){public void run(){sample();}},2_000);
     }
     private boolean current(int g){return !closed&&g==generation;}
-    private void requestInfo(int g,java.util.function.Consumer<WifiP2pInfo> next) {
+    private interface InfoNext { void accept(WifiP2pInfo value); }
+    private interface GroupNext { void accept(WifiP2pGroup value); }
+    private void requestInfo(final int g,final InfoNext next) {
         if(!current(g))return;
-        try {manager.requestConnectionInfo(channel,value -> {
+        try {manager.requestConnectionInfo(channel,new WifiP2pManager.ConnectionInfoListener(){public void onConnectionInfoAvailable(WifiP2pInfo value){
             if(!current(g))return;
             try {next.accept(value);}catch(RuntimeException unavailable){config.observation=null;}
-        });}catch(RuntimeException unavailable){if(current(g))config.observation=null;}
+        }});}catch(RuntimeException unavailable){if(current(g))config.observation=null;}
     }
-    private void requestGroup(int g,java.util.function.Consumer<WifiP2pGroup> next) {
+    private void requestGroup(final int g,final GroupNext next) {
         if(!current(g))return;
-        try {manager.requestGroupInfo(channel,value -> {
+        try {manager.requestGroupInfo(channel,new WifiP2pManager.GroupInfoListener(){public void onGroupInfoAvailable(WifiP2pGroup value){
             if(!current(g))return;
             try {next.accept(value);}catch(RuntimeException unavailable){config.observation=null;}
-        });}catch(RuntimeException unavailable){if(current(g))config.observation=null;}
+        }});}catch(RuntimeException unavailable){if(current(g))config.observation=null;}
     }
     private static boolean sameGroup(WifiP2pGroup a,WifiP2pGroup b) {
         return a!=null&&b!=null&&a.getOwner()!=null&&b.getOwner()!=null

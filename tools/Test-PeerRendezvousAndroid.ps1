@@ -1,4 +1,4 @@
-param([string]$RepoRoot = "", [string]$JavaHome="", [string]$AndroidJar="", [string]$JsonJar="", [string]$HostOutDir="")
+param([string]$RepoRoot = "", [string]$JavaHome="", [string]$AndroidJar="", [string]$JsonJar="", [string]$HostOutDir="",[switch]$ProductionCompileOnly)
 
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -160,7 +160,7 @@ if($observer -match '\.(createGroup|connect|discoverPeers|removeGroup|setWifiEna
 }
 Assert-Match $client 'requireObservedPeer\(config,message\)' 'Actual client must enforce observed peer guard.'
 Assert-Match $server 'requireObservedPeer\(config,proposal\)' 'Actual server must enforce observed peer guard.'
-if(@($JavaHome,$AndroidJar,$JsonJar,$HostOutDir|Where-Object {-not [string]::IsNullOrWhiteSpace($_)}).Count -gt 0) {
+if($ProductionCompileOnly-or@($JavaHome,$AndroidJar,$JsonJar,$HostOutDir|Where-Object {-not [string]::IsNullOrWhiteSpace($_)}).Count -gt 0) {
     foreach($required in @($JavaHome,$AndroidJar,$JsonJar,$HostOutDir)) {
         if([string]::IsNullOrWhiteSpace($required)){throw 'All four focused host inputs are required.'}
     }
@@ -176,8 +176,51 @@ if(@($JavaHome,$AndroidJar,$JsonJar,$HostOutDir|Where-Object {-not [string]::IsN
     $javac=Join-Path $JavaHome 'bin/javac.exe';$java=Join-Path $JavaHome 'bin/java.exe'
     foreach($required in @($javac,$java,$AndroidJar,$JsonJar)){if(-not(Test-Path -LiteralPath $required)){throw 'Missing pinned host input.'}}
     $allSources=@(Get-ChildItem -LiteralPath (Join-Path $appRoot 'src/main/java') -Recurse -Filter '*.java'|ForEach-Object FullName)
-    & $javac -source 17 -target 17 -classpath $AndroidJar -d $androidClasses @allSources
+    & $javac -encoding UTF-8 -source 1.8 -target 1.8 -bootclasspath $AndroidJar -d $androidClasses @allSources
     if($LASTEXITCODE -ne 0){throw "Real Android Java compilation failed: $LASTEXITCODE"}
+    if($ProductionCompileOnly){
+        # Execute the actual converted callback guards with a modeled callback queue.
+        # Full production sources above compile with the exact APK-builder flags.
+        $callbacks=[regex]::Match($observer,'(?s)    private boolean current.*?(?=    private static boolean sameGroup)').Value
+        $disconnect=[regex]::Match($observer,'public void onChannelDisconnected\(\)\{([^}]+)\}').Groups[1].Value
+        if(-not$callbacks-or-not$disconnect){throw 'Actual callback guards absent'}
+        $fixture=@'
+public class BleCallbackHost {
+ static class WifiP2pInfo {} static class WifiP2pGroup {}
+ static class WifiP2pManager {
+  interface ConnectionInfoListener {void onConnectionInfoAvailable(WifiP2pInfo v);}
+  interface GroupInfoListener {void onGroupInfoAvailable(WifiP2pGroup v);}
+  ConnectionInfoListener info;GroupInfoListener group;boolean denied;
+  void requestConnectionInfo(Object c,ConnectionInfoListener n){if(denied)throw new SecurityException();info=n;}
+  void requestGroupInfo(Object c,GroupInfoListener n){if(denied)throw new SecurityException();group=n;}
+ }
+ static class Config {Object observation=new Object();}
+ final WifiP2pManager manager=new WifiP2pManager();final Object channel=new Object();final Config config=new Config();
+ boolean closed;int generation=1;int accepted;
+ CALLBACKS
+ void disconnect(){DISCONNECT}
+ void info(){requestInfo(1,new InfoNext(){public void accept(WifiP2pInfo v){accepted++;}});}
+ void group(){requestGroup(1,new GroupNext(){public void accept(WifiP2pGroup v){accepted++;}});}
+ static void check(boolean ok){if(!ok)throw new AssertionError();}
+ public static void main(String[] unused){
+  BleCallbackHost a=new BleCallbackHost();a.info();a.manager.info.onConnectionInfoAvailable(new WifiP2pInfo());check(a.accepted==1);
+  a=new BleCallbackHost();a.info();a.disconnect();a.manager.info.onConnectionInfoAvailable(new WifiP2pInfo());check(a.accepted==0&&a.closed&&a.generation==2&&a.config.observation==null);
+  a=new BleCallbackHost();a.group();a.disconnect();a.manager.group.onGroupInfoAvailable(new WifiP2pGroup());check(a.accepted==0&&a.config.observation==null);
+  a=new BleCallbackHost();a.info();a.generation++;a.manager.info.onConnectionInfoAvailable(new WifiP2pInfo());check(a.accepted==0);
+  a=new BleCallbackHost();a.manager.denied=true;a.info();check(a.config.observation==null);
+  a=new BleCallbackHost();a.requestGroup(1,new GroupNext(){public void accept(WifiP2pGroup v){throw new IllegalStateException();}});a.manager.group.onGroupInfoAvailable(new WifiP2pGroup());check(a.config.observation==null);
+  System.out.println("PASS actual callback guard fixtures=6; modeled queue, no device qualification");
+ }
+}
+'@
+        $callbackPath=Join-Path $hostRoot 'BleCallbackHost.java'
+        [IO.File]::WriteAllText($callbackPath,$fixture.Replace('CALLBACKS',$callbacks).Replace('DISCONNECT',$disconnect),$utf8)
+        & $javac -source 1.8 -target 1.8 -d $hostClasses $callbackPath
+        if($LASTEXITCODE-ne0){throw 'Actual callback fixture compilation failed'}
+        & $java -cp $hostClasses BleCallbackHost
+        if($LASTEXITCODE-ne0){throw 'Actual callback fixture failed'}
+        Write-Output 'PASS actual production Java8 Android bootclasspath compile';return
+    }
     # Compile verbatim actual validation bodies, with only Android transport/evidence fixtures.
     $clientBody=[regex]::Match($client,'(?s)    private JSONObject verifyPeerMessage.*?(?=    private boolean disconnectForReconnect)').Value
     if(-not $clientBody){throw 'Actual client validation body not located.'}

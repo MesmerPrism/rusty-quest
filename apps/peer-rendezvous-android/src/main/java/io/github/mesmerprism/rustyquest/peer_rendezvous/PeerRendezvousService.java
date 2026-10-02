@@ -63,11 +63,11 @@ public final class PeerRendezvousService extends Service {
             try {
                 wifiObserver=new BleWifiObservation(getApplicationContext(),handler,config);
                 wifiObserver.start();
-                handler.postDelayed(() -> {
+                handler.postDelayed(new Runnable(){public void run(){
                     if(finished)return;
                     if(config.observation==null){evidence.issue("wifi_observation_unavailable");finishRun("blocked");}
                     else startBle();
-                },1_000);
+                }},1_000);
             } catch(Exception error){evidence.issue("wifi_observation_unavailable");finishRun("blocked");}
             return START_NOT_STICKY;
         }
