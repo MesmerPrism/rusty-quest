@@ -31,7 +31,7 @@ import java.nio.charset.StandardCharsets;
 public final class DirectP2pProviderActivity extends Activity {
     private static final String TAG = "RustyDirectP2p";
     private static final String MARKER = "RUSTY_DIRECT_P2P_PROVIDER";
-    private static final String PRODUCT_NETWORK_NAME = "DIRECT-rp-RustyP2P";
+    private String productNetworkName;
     private static final String PRODUCT_PASSPHRASE = "RustyProductP2P";
     private final Handler main = new Handler(Looper.getMainLooper());
     private WifiP2pManager manager;
@@ -72,6 +72,8 @@ public final class DirectP2pProviderActivity extends Activity {
         if (!authorizeTopology(intent)) {
             return;
         }
+        try { productNetworkName = DirectP2pLifecycle.networkForGuardToken(intent.getStringExtra("guard_run_token")); }
+        catch (IllegalArgumentException error) { fail("guard_run_token_required"); return; }
         manager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
         if (manager == null) {
             fail("wifi_p2p_manager_unavailable");
@@ -153,7 +155,7 @@ public final class DirectP2pProviderActivity extends Activity {
                     String address = device == null ? "" : device.deviceAddress;
                     if (!address.matches("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) { fail("device_identity_unavailable"); return; }
                     try {
-                        lifecycle = new DirectP2pLifecycle(startedAt, PRODUCT_NETWORK_NAME,
+                        lifecycle = new DirectP2pLifecycle(startedAt, productNetworkName,
                                 "group_owner".equals(role) ? address : targetDeviceAddress, "group_owner".equals(role));
                     } catch (IllegalArgumentException error) { fail("lifecycle_identity_invalid"); return; }
                     Log.i(TAG, MARKER + " phase=device_identity status=pass role=" + role + " device_address=" + address + " run_id=" + runId);
@@ -211,7 +213,7 @@ public final class DirectP2pProviderActivity extends Activity {
     private void createGroupAfterFreshBaseline() {
         if (failureRequested || lifecycle == null || !lifecycle.request(SystemClock.elapsedRealtime())) { fail("create_not_admitted"); return; }
         WifiP2pConfig config = new WifiP2pConfig.Builder()
-                .setNetworkName(PRODUCT_NETWORK_NAME)
+                .setNetworkName(productNetworkName)
                 .setPassphrase(PRODUCT_PASSPHRASE)
                 .enablePersistentMode(false)
                 .build();
@@ -305,7 +307,7 @@ public final class DirectP2pProviderActivity extends Activity {
     private void connectToTargetAfterFreshBaseline(WifiP2pDevice peer) {
         if (failureRequested || cleanupStarted || !lifecycle.request(SystemClock.elapsedRealtime())) return;
         WifiP2pConfig config = new WifiP2pConfig.Builder()
-                .setNetworkName(PRODUCT_NETWORK_NAME)
+                .setNetworkName(productNetworkName)
                 .setPassphrase(PRODUCT_PASSPHRASE)
                 .setDeviceAddress(MacAddress.fromString(peer.deviceAddress))
                 .enablePersistentMode(false)

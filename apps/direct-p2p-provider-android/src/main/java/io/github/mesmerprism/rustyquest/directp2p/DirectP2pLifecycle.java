@@ -38,6 +38,11 @@ final class DirectP2pLifecycle {
         expectedLocalOwner = localOwner;
     }
 
+    static String networkForGuardToken(String token) {
+        if (token == null || !token.matches("[0-9a-f]{32}")) throw new IllegalArgumentException("guard_run_token");
+        return "DIRECT-rp-" + token.substring(0, 20);
+    }
+
     static int selectTargetPeer(String target, String[] addresses) {
         if (target == null || !target.matches("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}") || addresses == null) return -1;
         int selected = -1;

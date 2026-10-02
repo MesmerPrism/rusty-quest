@@ -119,6 +119,12 @@ public final class DirectP2pLifecycleHostTest {
         long older = c.requestGroupReadback(); long newest = c.requestGroupReadback();
         c.groupReadback(newest, false); c.groupReadback(older, true); c.discoveryReadback(c.requestDiscoveryReadback(), true);
         check(!c.cleanupConfirmed(), "out-of-order old absence cannot override newer presence");
+        check(DirectP2pLifecycle.networkForGuardToken("0123456789abcdef0123456789abcdef").equals("DIRECT-rp-0123456789abcdef0123"), "closed fresh group name");
+        for (String token : new String[] { null, "", "0123456789abcdef0123456789abcdeF", "DIRECT-foreign" }) {
+            boolean rejected = false;
+            try { DirectP2pLifecycle.networkForGuardToken(token); } catch (IllegalArgumentException expected) { rejected = true; }
+            check(rejected, "invalid or absent guardian token has zero topology effects");
+        }
         System.out.println("direct_p2p_lifecycle_host=pass cases=" + passed + " device_calls=0");
     }
 }
