@@ -48,6 +48,15 @@ public final class OriginalStationGuardHostTest {
     OriginalStationGuardContract.baseline(unchanged,unchanged,unchanged,QuestOriginalStationGuard.sha(full));check(true);
     byte[] raw={(byte)0xe9,0x0d,0x0a};
     check(QuestOriginalStationGuard.shaBytes(raw).equals("d6b90899293be61f8d944dbc8b68a0ef60bde6ae0f1482044ce7287f3070dfcd"));
+    QuestOriginalStationGuard.diagnosticPhase=QuestOriginalStationGuard.Phase.p2p_channel;
+    String failure=QuestOriginalStationGuard.failureJson(new SecurityException("SSID private secret"));
+    check(failure.contains("\"phase\":\"p2p_channel\"") && failure.contains("\"cause_type\":\"SecurityException\""));
+    check(failure.contains("\"error_code\":\"unclassified\"") && !failure.contains("SSID") && !failure.contains("secret"));
+    failure=QuestOriginalStationGuard.failureJson(new java.lang.reflect.InvocationTargetException(new SecurityException("p2p_service")));
+    check(failure.contains("\"error_type\":\"InvocationTargetException\"") && failure.contains("\"cause_type\":\"SecurityException\""));
+    check(failure.contains("\"error_code\":\"p2p_service\""));
+    check(!QuestOriginalStationGuard.failureJson(new SecurityException("profiles_missing\" injected")).contains("injected"));
+    check(QuestOriginalStationGuard.failureJson(new SecurityException()).contains("\"error_code\":\"unclassified\""));
     System.out.println("original_station_guard_contract=pass cases="+cases+" device_calls=0");
   }
 }

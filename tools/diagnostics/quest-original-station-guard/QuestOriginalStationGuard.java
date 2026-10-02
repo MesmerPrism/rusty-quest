@@ -15,18 +15,29 @@ import java.util.concurrent.*;
 
 /** Original-only station compensation. No temporary profile or credential input. */
 public final class QuestOriginalStationGuard {
+  enum Phase { arguments, uid, config_load, config_contract, config_path, host_identity, main_looper, activity_thread, shell_context, binder_services, wifi_manager, connectivity_manager, callback_thread, p2p_service, p2p_channel, dispatch, snapshot_host, configured_networks, profile_projection, snapshot_join }
+  static Phase diagnosticPhase=Phase.arguments;
+  static String errorType(Throwable e){String n=e.getClass().getSimpleName();return n.matches("[A-Za-z][A-Za-z0-9]{0,63}")?n:"Throwable";}
+  static String failureJson(Throwable e){
+    Throwable cause=e;for(int i=0;i<8 && cause.getCause()!=null && cause.getCause()!=cause;i++)cause=cause.getCause();
+    String message=cause.getMessage();
+    String code=message!=null && Arrays.asList("uid2000_required","config_path","file_bound","p2p_service","p2p_channel","profiles_missing","duplicate_original","original_missing").contains(message)?message:"unclassified";
+    return "{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":false,\"outcome\":\"unknown\",\"phase\":\""+diagnosticPhase.name()+"\",\"error_type\":\""+errorType(e)+"\",\"cause_type\":\""+errorType(cause)+"\",\"error_code\":\""+code+"\"}";
+  }
   final OriginalStationGuardContract cfg; final String path; final WifiManager wifi; final ConnectivityManager connectivity;
   final WifiP2pManager p2p; final WifiP2pManager.Channel channel; final HandlerThread callbacks;
   QuestOriginalStationGuard(String path)throws Exception {
-    if(android.os.Process.myUid()!=2000)throw new SecurityException("uid2000_required");
-    Properties p=load(new File(path)); cfg=new OriginalStationGuardContract(p,SystemClock.elapsedRealtime()); this.path=path;
+    diagnosticPhase=Phase.uid;if(android.os.Process.myUid()!=2000)throw new SecurityException("uid2000_required");
+    diagnosticPhase=Phase.config_load;Properties p=load(new File(path)); diagnosticPhase=Phase.config_contract;cfg=new OriginalStationGuardContract(p,SystemClock.elapsedRealtime()); this.path=path;
+    diagnosticPhase=Phase.config_path;
     if(!path.equals("/data/local/tmp/rqosg-"+cfg.run+".properties"))throw new SecurityException("config_path");
-    host(); if(Looper.getMainLooper()==null)Looper.prepareMainLooper();
-     Class<?> at=Class.forName("android.app.ActivityThread"); Object thread=at.getMethod("systemMain").invoke(null); Context sys=(Context)at.getMethod("getSystemContext").invoke(thread); Context base=sys.createPackageContext("com.android.shell",0); Context shell=new ContextWrapper(base){public String getPackageName(){return "com.android.shell";} public String getOpPackageName(){return "com.android.shell";} public AttributionSource getAttributionSource(){return new AttributionSource.Builder(2000).setPackageName("com.android.shell").build();}}; Class<?> sm=Class.forName("android.os.ServiceManager"), iw=Class.forName("android.net.wifi.IWifiManager"), ic=Class.forName("android.net.IConnectivityManager"); Object service=Class.forName("android.net.wifi.IWifiManager$Stub").getMethod("asInterface",IBinder.class).invoke(null,sm.getMethod("getService",String.class).invoke(null,"wifi")); Object cs=Class.forName("android.net.IConnectivityManager$Stub").getMethod("asInterface",IBinder.class).invoke(null,sm.getMethod("getService",String.class).invoke(null,"connectivity")); wifi=(WifiManager)WifiManager.class.getConstructor(Context.class,iw,Looper.class).newInstance(shell,service,Looper.getMainLooper()); connectivity=(ConnectivityManager)ConnectivityManager.class.getConstructor(Context.class,ic).newInstance(shell,cs);
-    callbacks=new HandlerThread("rqosg-callbacks"); callbacks.start();
+    diagnosticPhase=Phase.host_identity;host(); diagnosticPhase=Phase.main_looper;if(Looper.getMainLooper()==null)Looper.prepareMainLooper();
+     diagnosticPhase=Phase.activity_thread;Class<?> at=Class.forName("android.app.ActivityThread"); Object thread=at.getMethod("systemMain").invoke(null); Context sys=(Context)at.getMethod("getSystemContext").invoke(thread); diagnosticPhase=Phase.shell_context;Context base=sys.createPackageContext("com.android.shell",0); Context shell=new ContextWrapper(base){public String getPackageName(){return "com.android.shell";} public String getOpPackageName(){return "com.android.shell";} public AttributionSource getAttributionSource(){return new AttributionSource.Builder(2000).setPackageName("com.android.shell").build();}}; diagnosticPhase=Phase.binder_services;Class<?> sm=Class.forName("android.os.ServiceManager"), iw=Class.forName("android.net.wifi.IWifiManager"), ic=Class.forName("android.net.IConnectivityManager"); Object service=Class.forName("android.net.wifi.IWifiManager$Stub").getMethod("asInterface",IBinder.class).invoke(null,sm.getMethod("getService",String.class).invoke(null,"wifi")); Object cs=Class.forName("android.net.IConnectivityManager$Stub").getMethod("asInterface",IBinder.class).invoke(null,sm.getMethod("getService",String.class).invoke(null,"connectivity")); diagnosticPhase=Phase.wifi_manager;wifi=(WifiManager)WifiManager.class.getConstructor(Context.class,iw,Looper.class).newInstance(shell,service,Looper.getMainLooper()); diagnosticPhase=Phase.connectivity_manager;connectivity=(ConnectivityManager)ConnectivityManager.class.getConstructor(Context.class,ic).newInstance(shell,cs);
+    diagnosticPhase=Phase.callback_thread;callbacks=new HandlerThread("rqosg-callbacks"); callbacks.start();
+    diagnosticPhase=Phase.p2p_service;
     p2p=(WifiP2pManager)shell.getSystemService(Context.WIFI_P2P_SERVICE);
     if(p2p==null)throw new IllegalStateException("p2p_service");
-    channel=p2p.initialize(shell,callbacks.getLooper(),null);
+    diagnosticPhase=Phase.p2p_channel;channel=p2p.initialize(shell,callbacks.getLooper(),null);
     if(channel==null)throw new IllegalStateException("p2p_channel");
   }
   void host()throws Exception {
@@ -52,9 +63,10 @@ public final class QuestOriginalStationGuard {
 
 
   String[] snapshot()throws Exception {
-    host(); List<WifiConfiguration> xs=wifi.getConfiguredNetworks();if(xs==null||xs.isEmpty())throw new IllegalStateException("profiles_missing");
+    diagnosticPhase=Phase.snapshot_host;host();diagnosticPhase=Phase.configured_networks; List<WifiConfiguration> xs=wifi.getConfiguredNetworks();if(xs==null||xs.isEmpty())throw new IllegalStateException("profiles_missing");
     ArrayList<String> rows=new ArrayList<>(),unrelated=new ArrayList<>();String original=null,originalStatic=null,selectionStatus=null,selectionReason=null;
-    for(WifiConfiguration c:xs){String[] fields=profileFields(c);String h=sha(OriginalStationGuardContract.profile(fields,false));rows.add(h);if(c.networkId==cfg.original){if(original!=null)throw new SecurityException("duplicate_original");original=h;originalStatic=sha(OriginalStationGuardContract.profile(fields,true));selectionStatus=fields[10];selectionReason=fields[11];}else unrelated.add(h);}
+    diagnosticPhase=Phase.profile_projection;for(WifiConfiguration c:xs){String[] fields=profileFields(c);String h=sha(OriginalStationGuardContract.profile(fields,false));rows.add(h);if(c.networkId==cfg.original){if(original!=null)throw new SecurityException("duplicate_original");original=h;originalStatic=sha(OriginalStationGuardContract.profile(fields,true));selectionStatus=fields[10];selectionReason=fields[11];}else unrelated.add(h);}
+    diagnosticPhase=Phase.snapshot_join;
     Collections.sort(rows);if(original==null)throw new SecurityException("original_missing");Collections.sort(unrelated);return new String[]{sha(String.join("\n",rows)),original,sha(String.join("\n",unrelated)),originalStatic,selectionStatus,selectionReason};
   }
   void create(File f,String text)throws Exception {
@@ -129,7 +141,7 @@ public final class QuestOriginalStationGuard {
   }
   public static void main(String[] a){QuestOriginalStationGuard h=null;String mode="invalid";try{
     if(a.length!=2||!Arrays.asList("snapshot","arm","guard","restore").contains(a[0]))throw new IllegalArgumentException("mode");mode=a[0];h=new QuestOriginalStationGuard(a[1]);
-    if(mode.equals("snapshot")){String[] s=h.snapshot();System.out.println("{\"schema\":\"rusty.quest.original_station_guard.v1\",\"mode\":\"snapshot\",\"profiles_sha256\":\""+s[0]+"\",\"original_sha256\":\""+s[1]+"\"}");}
+    diagnosticPhase=Phase.dispatch;if(mode.equals("snapshot")){String[] s=h.snapshot();System.out.println("{\"schema\":\"rusty.quest.original_station_guard.v1\",\"mode\":\"snapshot\",\"profiles_sha256\":\""+s[0]+"\",\"original_sha256\":\""+s[1]+"\"}");}
     else {if(mode.equals("arm"))h.arm();else if(mode.equals("guard"))h.guard();else h.restore();System.out.println("{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":true}");}
-  }catch(Throwable e){System.out.println("{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":false,\"outcome\":\"unknown\",\"error_type\":\""+e.getClass().getSimpleName()+"\"}");System.exit(1);}finally{if(h!=null)h.callbacks.quitSafely();}}
+  }catch(Throwable e){System.out.println(failureJson(e));System.exit(1);}finally{if(h!=null)h.callbacks.quitSafely();}}
 }
