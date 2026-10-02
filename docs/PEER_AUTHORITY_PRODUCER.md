@@ -16,6 +16,15 @@ nonce. Both signatures consequently cover the same source, identity, BLE and
 session closure through the existing owner domain bytes. Fact files are evidence
 inputs; a matching file hash does not by itself accept its provenance claims.
 
+Each identity fact has a canonical hardware `serial`, exact BLE carrier `endpoint`,
+public identity `receipt` pin and raw `inventory` pin. Inventory is an array of
+closed native call records (`arguments`, `exit_code`, `stdout`, `stderr`). Exactly
+one record must be `-s ENDPOINT shell getprop ro.serialno`, exit zero, empty stderr,
+and stdout equal to the canonical serial apart from trailing CR/LF. Pair primary
+and secondary serial fields join the endpoints exactly; no endpoint normalization
+or historical receipt rewriting is permitted. Device key identity uses the canonical
+serial. The unchanged legacy identity helper accepts that safe canonical serial.
+
 Prepare each `ManifoldSignedRendezvousEvidence` with this nonce, reciprocal peers,
 roles, current key IDs and explicit Unix-millisecond issue/expiry times. The owner
 requires a lifetime at most 60 seconds. Run:

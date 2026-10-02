@@ -21,9 +21,20 @@ struct Pin {
 #[serde(deny_unknown_fields)]
 struct IdentityPin {
     serial: String,
+    endpoint: String,
     peer_id: DottedId,
     key_id: DottedId,
     receipt: Pin,
+    inventory: Pin,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InventoryCall {
+    arguments: Vec<String>,
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -118,18 +129,50 @@ fn run() -> Result<(), String> {
         return Err("require 1..=32 source provenance fact files".into());
     }
     if facts.identities[0].serial == facts.identities[1].serial
+        || facts.identities[0].endpoint == facts.identities[1].endpoint
         || facts.identities[0].peer_id == facts.identities[1].peer_id
         || facts.identities[0].key_id == facts.identities[1].key_id
     {
         return Err("identities must be two distinct serial/peer/key tuples".into());
     }
     let pair: BleRendezvousPairReceipt = json(&read_pin(&facts.pair)?)?;
-    if pair.primary_serial != facts.identities[0].serial
-        || pair.secondary_serial != facts.identities[1].serial
+    if pair.primary_serial != facts.identities[0].endpoint
+        || pair.secondary_serial != facts.identities[1].endpoint
     {
         return Err("BLE pair serials differ from identity facts".into());
     }
     for identity in &facts.identities {
+        if identity.serial.is_empty()
+            || identity.serial.len() > 64
+            || !identity
+                .serial
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+        {
+            return Err("canonical hardware serial has an invalid shape".into());
+        }
+        let calls: Vec<InventoryCall> = json(&read_pin(&identity.inventory)?)?;
+        if calls.is_empty() || calls.len() > 16 {
+            return Err("inventory must retain 1..=16 actual native call records".into());
+        }
+        let expected = [
+            "-s",
+            identity.endpoint.as_str(),
+            "shell",
+            "getprop",
+            "ro.serialno",
+        ];
+        let serial_calls: Vec<_> = calls
+            .iter()
+            .filter(|call| call.arguments.iter().map(String::as_str).eq(expected))
+            .collect();
+        if serial_calls.len() != 1
+            || serial_calls[0].exit_code != 0
+            || !serial_calls[0].stderr.is_empty()
+            || serial_calls[0].stdout.trim_end_matches(['\r', '\n']) != identity.serial
+        {
+            return Err("actual endpoint/canonical serial inventory join failed".into());
+        }
         let receipt: IdentityReceipt = json(&read_pin(&identity.receipt)?)?;
         if receipt.schema != "rusty.quest.peer_authority_identity.v1"
             || receipt.generation != "on-device"
@@ -224,6 +267,7 @@ fn run() -> Result<(), String> {
     }
     for identity in &facts.identities {
         read_pin(&identity.receipt)?;
+        read_pin(&identity.inventory)?;
     }
     for pin in &facts.source_facts {
         read_pin(pin)?;

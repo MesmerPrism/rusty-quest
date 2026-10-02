@@ -464,6 +464,15 @@ fn cli(binary: &str, args: &[String]) -> std::process::Output {
 
 #[test]
 fn actual_cli_and_binary_helper_join_raw_inputs_and_reject_pin_changes() {
+    run_actual_cli_case(false);
+}
+
+#[test]
+fn actual_cli_joins_ip_carriers_to_canonical_hardware_and_rejects_wrong_inventory() {
+    run_actual_cli_case(true);
+}
+
+fn run_actual_cli_case(use_ip: bool) {
     // Host-only fixture identity tags model the receipt shape, never on-device evidence.
     let root = std::env::temp_dir().join(format!(
         "quest-owner-chain-{}-{}",
@@ -477,7 +486,39 @@ fn actual_cli_and_binary_helper_join_raw_inputs_and_reject_pin_changes() {
     let path = |name: &str| root.join(name).to_str().unwrap().to_owned();
     let (policy, mut steps) = setup();
     let policy_hash = write_json(&root.join("policy.json"), &policy);
-    let pair_hash = write_json(&root.join("pair.json"), &pair());
+    let endpoints = if use_ip {
+        ["192.0.2.73:5555", "192.0.2.78:5555"]
+    } else {
+        ["quest-alpha", "quest-beta"]
+    };
+    let serials = if use_ip {
+        ["TESTQUEST0000001A", "TESTQUEST0000002B"]
+    } else {
+        ["quest-alpha", "quest-beta"]
+    };
+    fn replace_serials(value: &mut serde_json::Value, endpoints: &[&str; 2]) {
+        match value {
+            serde_json::Value::String(text) => match text.as_str() {
+                "quest-alpha" => *text = endpoints[0].into(),
+                "quest-beta" => *text = endpoints[1].into(),
+                _ => {}
+            },
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    replace_serials(value, endpoints);
+                }
+            }
+            serde_json::Value::Object(values) => {
+                for value in values.values_mut() {
+                    replace_serials(value, endpoints);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut pair_value = serde_json::to_value(pair()).unwrap();
+    replace_serials(&mut pair_value, &endpoints);
+    let pair_hash = write_json(&root.join("pair.json"), &pair_value);
     let source_hash = write_json(
         &root.join("source.json"),
         &serde_json::json!({ "fixture_source": "host-only-exact-byte-fixture" }),
@@ -488,11 +529,7 @@ fn actual_cli_and_binary_helper_join_raw_inputs_and_reject_pin_changes() {
             .verifying_key()
             .to_bytes();
         std::fs::write(path(&format!("key{index}")), [seed; 32]).unwrap();
-        let serial = if index == 0 {
-            "quest-alpha"
-        } else {
-            "quest-beta"
-        };
+        let serial = serials[index];
         let peer = if index == 0 {
             "peer.alpha"
         } else {
@@ -503,7 +540,11 @@ fn actual_cli_and_binary_helper_join_raw_inputs_and_reject_pin_changes() {
             &root.join(format!("identity{index}.json")),
             &serde_json::json!({ "schema": "rusty.quest.peer_authority_identity.v1", "generation": "on-device", "run_id": "host-fixture", "serial": serial, "peer_id": peer, "key_id": key, "algorithm": "Ed25519", "public_key_ed25519_base64": base64(&public), "public_key_sha256": format!("sha256:{:x}", Sha256::digest(public)), "private_key_exported_to_host": false }),
         );
-        identities.push(serde_json::json!({ "serial": serial, "peer_id": peer, "key_id": key, "receipt": { "path": path(&format!("identity{index}.json")), "sha256": receipt_hash } }));
+        let inventory_hash = write_json(
+            &root.join(format!("inventory{index}.json")),
+            &serde_json::json!([{ "arguments": ["-s", endpoints[index], "shell", "getprop", "ro.serialno"], "exit_code": 0, "stdout": format!("{serial}\r\n"), "stderr": "" }]),
+        );
+        identities.push(serde_json::json!({ "serial": serial, "endpoint": endpoints[index], "peer_id": peer, "key_id": key, "receipt": { "path": path(&format!("identity{index}.json")), "sha256": receipt_hash }, "inventory": { "path": path(&format!("inventory{index}.json")), "sha256": inventory_hash } }));
     }
     let facts_hash = write_json(
         &root.join("facts.json"),
@@ -591,6 +632,44 @@ fn actual_cli_and_binary_helper_join_raw_inputs_and_reject_pin_changes() {
     assert!(!cli(env!("CARGO_BIN_EXE_produce_peer_authority"), &args)
         .status
         .success());
+    let original_inventory: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path("inventory0.json")).unwrap()).unwrap();
+    let original_facts: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path("facts.json")).unwrap()).unwrap();
+    for alteration in [
+        "swapped-endpoint",
+        "wrong-hardware",
+        "native-failure",
+        "stderr-failure",
+        "duplicate-call",
+    ] {
+        let mut inventory = original_inventory.clone();
+        match alteration {
+            "swapped-endpoint" => inventory[0]["arguments"][1] = serde_json::json!(endpoints[1]),
+            "wrong-hardware" => {
+                inventory[0]["stdout"] = serde_json::json!(format!("{}\r\n", serials[1]))
+            }
+            "native-failure" => inventory[0]["exit_code"] = serde_json::json!(1),
+            "stderr-failure" => inventory[0]["stderr"] = serde_json::json!("actual native failure"),
+            _ => inventory
+                .as_array_mut()
+                .unwrap()
+                .push(original_inventory[0].clone()),
+        }
+        let inventory_hash = write_json(&root.join("inventory0.json"), &inventory);
+        let mut facts = original_facts.clone();
+        facts["identities"][0]["inventory"]["sha256"] = serde_json::json!(inventory_hash);
+        let mut denied_args = args.clone();
+        denied_args[6] = write_json(&root.join("facts.json"), &facts);
+        denied_args[8] = path(&format!("denied-{alteration}.json"));
+        let denied = cli(env!("CARGO_BIN_EXE_produce_peer_authority"), &denied_args);
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr)
+            .contains("actual endpoint/canonical serial inventory join failed"));
+        assert!(!std::path::Path::new(&denied_args[8]).exists());
+    }
+    write_json(&root.join("inventory0.json"), &original_inventory);
+    write_json(&root.join("facts.json"), &original_facts);
     std::fs::write(path("source.json"), b"altered source fact").unwrap();
     let mut changed = args.clone();
     changed[8] = path("changed-source-review.json");
