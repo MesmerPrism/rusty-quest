@@ -2,6 +2,25 @@ package io.github.mesmerprism.rustyquest.directp2p;
 
 /** One diagnostic's topology ownership and effective cleanup joins. No platform effects. */
 final class DirectP2pLifecycle {
+    /** Receipt-derived wall/monotonic window. It never grants owner authority. */
+    static final class AuthorizationWindow {
+        final long wallStart, elapsedStart, expires, echoTimeout;
+        AuthorizationWindow(long wall, long elapsed, long expiry, long echo) {
+            if (wall < 0 || elapsed < 0 || expiry <= wall || expiry - wall > 60_000L
+                    || echo < 1 || echo > 20_000L) throw new IllegalArgumentException("authorization_window");
+            wallStart=wall; elapsedStart=elapsed; expires=expiry; echoTimeout=echo;
+        }
+        long remaining(long wall, long elapsed) {
+            if (wall < wallStart || elapsed < elapsedStart || wall >= expires) return 0;
+            long monotonicUsed=elapsed-elapsedStart;
+            long originalRemaining=expires-wallStart;
+            if (monotonicUsed >= originalRemaining) return 0;
+            return Math.min(expires-wall, originalRemaining-monotonicUsed);
+        }
+        boolean permits(long wall, long elapsed, long required) {
+            return required >= 0 && remaining(wall,elapsed) > required;
+        }
+    }
     enum Phase { BASELINE, FORMING, EXCHANGING, CLEANING, TERMINAL }
     private final long formationDeadline;
     private final long runDeadline;

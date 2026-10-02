@@ -2,7 +2,7 @@
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
@@ -13,6 +13,243 @@ use rusty_manifold_peer::{
 };
 
 const MAX_PAYLOAD_BYTES: usize = 4096;
+
+fn wall_ms() -> Result<u64, String> {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_millis(),
+    )
+    .map_err(|_| "wall clock overflow".to_owned())
+}
+
+struct SocketAuthorization<'a> {
+    receipt: &'a str,
+    peer: &'a str,
+    role: &'a str,
+    revision: u64,
+    start_wall: u64,
+    started: Instant,
+    maximum_ms: u64,
+}
+impl<'a> SocketAuthorization<'a> {
+    fn new(
+        receipt: &'a str,
+        peer: &'a str,
+        role: &'a str,
+        revision: u64,
+        timeout: u64,
+    ) -> Result<Self, String> {
+        Self::at(receipt, peer, role, revision, timeout, wall_ms()?)
+    }
+    fn at(
+        receipt: &'a str,
+        peer: &'a str,
+        role: &'a str,
+        revision: u64,
+        timeout: u64,
+        now: u64,
+    ) -> Result<Self, String> {
+        if timeout == 0 || timeout > 20_000 || receipt.len() > 4096 {
+            return Err("closed guarded echo cap".into());
+        }
+        let r: ManifoldPeerTopologyAuthorization =
+            serde_json::from_str(receipt).map_err(|e| e.to_string())?;
+        if r.expires_at_ms
+            .checked_sub(r.valid_from_ms)
+            .filter(|x| *x <= 60_000)
+            .is_none()
+            || r.expires_at_ms
+                .checked_sub(now)
+                .filter(|x| *x > timeout + 10_000)
+                .is_none()
+        {
+            return Err("insufficient signed window including cleanup reserve".into());
+        }
+        let guard = Self {
+            receipt,
+            peer,
+            role,
+            revision,
+            start_wall: now,
+            started: Instant::now(),
+            maximum_ms: timeout,
+        };
+        guard.check_at(now, 0)?;
+        Ok(guard)
+    }
+    fn check_at(&self, now: u64, elapsed: u64) -> Result<(), String> {
+        if now < self.start_wall || elapsed >= self.maximum_ms {
+            return Err("guarded monotonic/wall deadline".into());
+        }
+        let value: serde_json::Value = serde_json::from_str(&validate_topology_authorization(
+            self.receipt,
+            self.peer,
+            self.role,
+            self.revision,
+            now,
+        ))
+        .map_err(|e| e.to_string())?;
+        if value["status"] != "accepted" {
+            return Err("current signed topology authorization denied".into());
+        }
+        let expiry = value["expires_at_ms"]
+            .as_u64()
+            .ok_or("missing signed expiry")?;
+        if expiry.checked_sub(now).filter(|x| *x > 10_000).is_none() {
+            return Err("signed cleanup reserve reached".into());
+        }
+        Ok(())
+    }
+    fn check(&self) -> Result<(), String> {
+        self.check_at(
+            wall_ms()?,
+            u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        )
+    }
+}
+
+/// Exact-role signed diagnostic echo, max20s including all native I/O. Cleanup is separate.
+pub fn run_guarded(
+    local_host: &str,
+    peer_host: &str,
+    port: u16,
+    run_id: &str,
+    network_handle: u64,
+    timeout_ms: u64,
+    receipt: &str,
+    local_peer: &str,
+    role: &str,
+    revision: u64,
+) -> String {
+    let local = match parse_ipv4(local_host) {
+        Ok(v) => v,
+        Err(e) => return json!({"status":"fail","error":e}).to_string(),
+    };
+    let peer = match parse_ipv4(peer_host) {
+        Ok(v) => v,
+        Err(e) => return json!({"status":"fail","error":e}).to_string(),
+    };
+    let mut sent = 0;
+    let mut received = 0;
+    let mut observed_peer = peer;
+    let result = (|| -> Result<(), String> {
+        let auth = SocketAuthorization::new(receipt, local_peer, role, revision, timeout_ms)?;
+        auth.check()?;
+        let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
+            .map_err(|e| e.to_string())?;
+        socket.set_reuse_address(true).map_err(|e| e.to_string())?;
+        socket.set_nonblocking(true).map_err(|e| e.to_string())?;
+        auth.check()?;
+        socket
+            .bind(&SockAddr::from(SocketAddrV4::new(
+                local,
+                if role == "group_owner" { port } else { 0 },
+            )))
+            .map_err(|e| e.to_string())?;
+        let stream = if role == "group_owner" {
+            auth.check()?;
+            socket.listen(1).map_err(|e| e.to_string())?;
+            loop {
+                auth.check()?;
+                match socket.accept() {
+                    Ok((s, address)) => {
+                        observed_peer = match address.as_socket() {
+                            Some(SocketAddr::V4(v)) => *v.ip(),
+                            _ => return Err("guarded peer was not IPv4".into()),
+                        };
+                        break s;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10))
+                    }
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+        } else {
+            auth.check()?;
+            match socket.connect(&SockAddr::from(SocketAddrV4::new(peer, port))) {
+                Ok(()) => {}
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || matches!(e.raw_os_error(), Some(115 | 10035 | 10036)) => {}
+                Err(e) => return Err(e.to_string()),
+            }
+            loop {
+                auth.check()?;
+                if let Some(e) = socket.take_error().map_err(|e| e.to_string())? {
+                    return Err(e.to_string());
+                }
+                if socket.peer_addr().is_ok() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            socket
+        };
+        stream.set_nonblocking(true).map_err(|e| e.to_string())?;
+        let mut stream: std::net::TcpStream = stream.into();
+        let payload = format!("RUSTY_DIRECT_P2P_CONTROL:{run_id}");
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            return Err("payload too large".into());
+        }
+        let mut buffer = vec![0u8; MAX_PAYLOAD_BYTES];
+        if role == "client" {
+            while sent < payload.len() {
+                auth.check()?;
+                match stream.write(&payload.as_bytes()[sent..]) {
+                    Ok(0) => return Err("socket write closed".into()),
+                    Ok(n) => sent += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10))
+                    }
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+        }
+        let expected = payload.len();
+        while received < expected {
+            auth.check()?;
+            match stream.read(&mut buffer[received..expected]) {
+                Ok(0) => return Err("socket read closed".into()),
+                Ok(n) => received += n,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10))
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        if buffer[..received] != *payload.as_bytes() {
+            return Err("guarded echo payload mismatch".into());
+        }
+        if role == "group_owner" {
+            while sent < received {
+                auth.check()?;
+                match stream.write(&buffer[sent..received]) {
+                    Ok(0) => return Err("socket write closed".into()),
+                    Ok(n) => sent += n,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(10))
+                    }
+                    Err(e) => return Err(e.to_string()),
+                }
+            }
+        }
+        auth.check()?;
+        Ok(())
+    })();
+    socket_receipt(
+        if result.is_ok() { "pass" } else { "fail" },
+        local,
+        observed_peer,
+        port,
+        network_handle,
+        sent,
+        received,
+        &result.err().unwrap_or_default(),
+    )
+}
 
 /// Validate a fresh Manifold topology authorization for one local role.
 pub fn validate_topology_authorization(
@@ -261,6 +498,51 @@ pub fn run_client(
 
 #[cfg(target_os = "android")]
 #[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_directp2p_RustDirectSocketProvider_nativeRunGuarded(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    local_host: jni::objects::JString,
+    peer_host: jni::objects::JString,
+    port: jni::sys::jint,
+    run_id: jni::objects::JString,
+    network: jni::sys::jlong,
+    timeout: jni::sys::jlong,
+    receipt: jni::objects::JString,
+    local_peer: jni::objects::JString,
+    role: jni::objects::JString,
+    revision: jni::sys::jlong,
+) -> jni::sys::jstring {
+    match env
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let local = local_host.try_to_string(env)?;
+            let peer = peer_host.try_to_string(env)?;
+            let run = run_id.try_to_string(env)?;
+            let signed = receipt.try_to_string(env)?;
+            let identity = local_peer.try_to_string(env)?;
+            let local_role = role.try_to_string(env)?;
+            let response = run_guarded(
+                &local,
+                &peer,
+                port as u16,
+                &run,
+                network as u64,
+                timeout as u64,
+                &signed,
+                &identity,
+                &local_role,
+                revision as u64,
+            );
+            env.new_string(response).map(|v| v.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(v) => v,
+        jni::Outcome::Err(_) | jni::Outcome::Panic(_) => std::ptr::null_mut(),
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_directp2p_RustDirectSocketProvider_nativeRunServer(
     mut env: jni::EnvUnowned,
     _class: jni::objects::JClass,
@@ -356,6 +638,135 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_directp2p_RustDirec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn signed_window(now: u64) -> String {
+        let mut r: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/peer-session/topology-authorization.pass.json"
+        ))
+        .unwrap();
+        r["valid_from_ms"] = json!(now);
+        r["expires_at_ms"] = json!(now + 60_000);
+        r.to_string()
+    }
+    #[test]
+    fn guarded_window_checks_current_role_revision_wall_and_monotonic_before_io() {
+        let receipt = signed_window(10_000);
+        let g = SocketAuthorization::at(&receipt, "peer.alpha", "group_owner", 2, 20_000, 10_000)
+            .unwrap();
+        assert!(g.check_at(10_001, 1).is_ok());
+        assert!(g.check_at(9_999, 1).is_err());
+        assert!(g.check_at(10_001, 20_000).is_err());
+        assert!(g.check_at(60_000, 1).is_err()); // cleanup reserve boundary
+        assert!(
+            SocketAuthorization::at(&receipt, "peer.beta", "group_owner", 2, 20_000, 10_000)
+                .is_err()
+        );
+        assert!(
+            SocketAuthorization::at(&receipt, "peer.alpha", "group_owner", 3, 20_000, 10_000)
+                .is_err()
+        );
+        assert!(
+            SocketAuthorization::at(&receipt, "peer.alpha", "group_owner", 2, 20_001, 10_000)
+                .is_err()
+        );
+        assert!(
+            SocketAuthorization::at(&receipt, "peer.alpha", "group_owner", 2, 0, 10_000).is_err()
+        );
+        assert!(
+            SocketAuthorization::at(&receipt, "peer.alpha", "group_owner", 2, 20_000, 40_000)
+                .is_err()
+        );
+    }
+    #[test]
+    fn guarded_real_loopback_echo_and_expired_no_bind() {
+        let now = wall_ms().unwrap();
+        let receipt = signed_window(now);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let server_receipt = receipt.clone();
+        let server = std::thread::spawn(move || {
+            run_guarded(
+                "127.0.0.1",
+                "127.0.0.1",
+                port,
+                "guard-test",
+                1,
+                2_000,
+                &server_receipt,
+                "peer.alpha",
+                "group_owner",
+                2,
+            )
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let client = run_guarded(
+            "127.0.0.1",
+            "127.0.0.1",
+            port,
+            "guard-test",
+            1,
+            2_000,
+            &receipt,
+            "peer.beta",
+            "client",
+            2,
+        );
+        assert!(client.contains("\"status\":\"pass\""), "{client}");
+        let server = server.join().unwrap();
+        assert!(server.contains("\"status\":\"pass\""), "{server}");
+        // A fresh unused port proves the expired route performs no bind, without
+        // attributing a prior TCP TIME_WAIT lifecycle to that rejected request.
+        let available = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = available.local_addr().unwrap().port();
+        drop(available);
+        let stale = signed_window(1);
+        let denied = run_guarded(
+            "127.0.0.1",
+            "127.0.0.1",
+            port,
+            "expired",
+            1,
+            2_000,
+            &stale,
+            "peer.alpha",
+            "group_owner",
+            2,
+        );
+        assert!(denied.contains("\"status\":\"fail\""));
+        let _available = std::net::TcpListener::bind(("127.0.0.1", port)).unwrap();
+    }
+
+    #[test]
+    fn guarded_deadline_during_partial_real_read_preserves_actual_counts() {
+        let receipt = signed_window(wall_ms().unwrap());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let server = std::thread::spawn(move || {
+            run_guarded(
+                "127.0.0.1",
+                "127.0.0.1",
+                port,
+                "partial",
+                1,
+                250,
+                &receipt,
+                "peer.alpha",
+                "group_owner",
+                2,
+            )
+        });
+        std::thread::sleep(Duration::from_millis(75));
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        client.write_all(b"RU").unwrap();
+        let result = server.join().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(value["status"], "fail");
+        assert_eq!(value["exchange"]["bytes_received"], 2);
+        assert_eq!(value["exchange"]["bytes_sent"], 0);
+        assert!(result.contains("guarded monotonic/wall deadline"));
+    }
 
     #[test]
     fn invalid_client_address_fails_without_opening_a_socket() {

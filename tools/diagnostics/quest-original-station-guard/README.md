@@ -48,3 +48,31 @@ separate required slice. Existing immutable fixed-IP watchdogs must be
 suspended via their owned stop/PID-birth contract before topology change;
 keep-awake intent remains indefinite. Restore serial-verified endpoint mappings
 and resume 300-second/no-end watchdogs only after both stations are restored.
+
+## Explicit signed short-echo mode
+
+The Pair app's `require_peer_session_authorization=true` mode consumes the actual
+owner topology receipt, local peer, complementary role and exact revision. It
+rechecks that tuple and both wall/elapsed expiry at formation/discovery/connect
+admission, callback continuation and native dispatch. `guarded_echo_timeout_ms`
+is closed to1..20000; omitted means20000. Startup requires strictly more than
+20seconds formation + selected echo timeout +10seconds cleanup in the actual
+remaining signed window. These are conservative budgets, not measured proof
+that device formation will finish. Owner receipts over60seconds are rejected in
+this narrower diagnostic mode; no caller extends their expiry.
+
+Guarded native sockets are nonblocking, revalidate the exact role/revision and
+signed expiry before every accept/connect/read/write attempt, and cap the whole
+native exchange at the smaller echo/remaining wall-and-monotonic budget while
+reserving10seconds for cleanup. Partial failure byte counts are retained. This
+is one no-media echo, not a DirectLaneLease or continuous90second authorization.
+Legacy diagnostic entrypoints retain their ABI and make no signed-owner claim.
+
+Owned cleanup and original-only station compensation are independent of expired
+authorization: expiry denies new topology/socket traffic, not exact-owned group
+removal/restoration. Platform callback uncertainty, foreign groups and dropped
+transport still require retained read-only reconciliation; no automatic retry or
+generic group clearing is permitted. Actual hardware MAC/readiness, guardian
+markers, source/binary provenance and genuine operator enrollment/signatures
+must be obtained before a physical trial. This source change alone proves none
+of those device prerequisites.

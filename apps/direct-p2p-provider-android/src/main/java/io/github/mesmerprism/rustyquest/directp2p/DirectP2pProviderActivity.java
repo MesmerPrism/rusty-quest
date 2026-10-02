@@ -54,6 +54,10 @@ public final class DirectP2pProviderActivity extends Activity {
     private AndroidNetworkBindingProvider.Selection completedSelection;
     private JSONObject completedNative;
     private volatile boolean failureRequested;
+    private boolean guardedAuthorization;
+    private String authorizationReceipt, authorizationPeer;
+    private long authorizationRevision;
+    private DirectP2pLifecycle.AuthorizationWindow authorizationWindow;
     private final long startedAt = SystemClock.elapsedRealtime();
 
     @Override
@@ -124,6 +128,8 @@ public final class DirectP2pProviderActivity extends Activity {
             return false;
         }
         try {
+            long echoTimeout = intent.getLongExtra("guarded_echo_timeout_ms", 20_000L);
+            if (echoTimeout < 1L || echoTimeout > 20_000L) throw new IllegalArgumentException("closed_echo_cap");
             String receipt = new String(Base64.decode(encoded, Base64.NO_WRAP), StandardCharsets.UTF_8);
             String result = RustDirectSocketProvider.validateTopologyAuthorization(
                     receipt, localPeerId, role, expectedRevision, System.currentTimeMillis());
@@ -135,11 +141,31 @@ public final class DirectP2pProviderActivity extends Activity {
                     + " reason=" + reason + " local_peer_id=" + localPeerId
                     + " expected_revision=" + expectedRevision + " actual_revision=" + actualRevision
                     + " run_id=" + runId);
-            return "accepted".equals(gateStatus);
+            if (!"accepted".equals(gateStatus)) return false;
+            authorizationWindow = new DirectP2pLifecycle.AuthorizationWindow(System.currentTimeMillis(),
+                    SystemClock.elapsedRealtime(), parsed.getLong("expires_at_ms"), echoTimeout);
+            // Conservative supported budgets, not a measured formation-success claim.
+            if (!authorizationWindow.permits(System.currentTimeMillis(), SystemClock.elapsedRealtime(),
+                    20_000L + echoTimeout + 10_000L)) return false;
+            authorizationReceipt=receipt; authorizationPeer=localPeerId;
+            authorizationRevision=expectedRevision; guardedAuthorization=true;
+            return true;
         } catch (Exception error) {
             Log.w(TAG, MARKER + " phase=topology_gate status=blocked reason=" + safe(error) + " run_id=" + runId);
             return false;
         }
+    }
+
+    private boolean freshAuthorization(long requiredRemaining) {
+        if (!guardedAuthorization) return true; // Legacy diagnostic makes no owner-authority claim.
+        try {
+            String gate=RustDirectSocketProvider.validateTopologyAuthorization(authorizationReceipt,
+                    authorizationPeer,role,authorizationRevision,System.currentTimeMillis());
+            if ("accepted".equals(new JSONObject(gate).optString("status"))
+                    && authorizationWindow.permits(System.currentTimeMillis(),SystemClock.elapsedRealtime(),requiredRemaining)) return true;
+        } catch (Exception ignored) { }
+        fail("authorization_expired_or_insufficient_remaining");
+        return false;
     }
 
     private boolean hasNearbyPermission() {
@@ -171,6 +197,7 @@ public final class DirectP2pProviderActivity extends Activity {
         main.postDelayed(new Runnable() {
             @Override public void run() {
                 if (lifecycle != null && lifecycle.active()) {
+                    if (!freshAuthorization(10_000L)) return;
                     if (lifecycle.expired(SystemClock.elapsedRealtime())) fail("topology_or_run_deadline");
                     else main.postDelayed(this, 100L);
                 }
@@ -211,6 +238,7 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void createGroupAfterFreshBaseline() {
+        if (!freshAuthorization(authorizationWindow == null ? 0L : authorizationWindow.echoTimeout + 10_000L)) return;
         if (failureRequested || lifecycle == null || !lifecycle.request(SystemClock.elapsedRealtime())) { fail("create_not_admitted"); return; }
         WifiP2pConfig config = new WifiP2pConfig.Builder()
                 .setNetworkName(productNetworkName)
@@ -224,6 +252,7 @@ public final class DirectP2pProviderActivity extends Activity {
             @Override public void onSuccess() {
                 lifecycle.requestAcknowledged(true);
                 if (cleanupStarted) { checkCleanupReadback(); return; }
+                if (!freshAuthorization(10_000L)) return;
                 Log.i(TAG, MARKER + " phase=topology_request status=accepted role=group_owner run_id=" + runId);
                 pollConnectionInfo();
             }
@@ -237,13 +266,15 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void discoverThenConnect() {
+        if (!freshAuthorization(authorizationWindow == null ? 0L : authorizationWindow.echoTimeout + 10_000L)) return;
         if (failureRequested || lifecycle == null || !lifecycle.active() || lifecycle.expired(SystemClock.elapsedRealtime())) return;
         discoveryAttempts++;
         lifecycle.discoveryStarted();
         try {
         manager.discoverPeers(channel, new WifiP2pManager.ActionListener() {
-            @Override public void onSuccess() { postRequestPeers(1500L); }
+            @Override public void onSuccess() { if (freshAuthorization(10_000L)) postRequestPeers(1500L); }
             @Override public void onFailure(int reason) {
+                if (!freshAuthorization(10_000L)) return;
                 Log.w(TAG, MARKER + " phase=peer_discovery status=degraded reason=" + reason + " run_id=" + runId);
                 postRequestPeers(500L);
             }
@@ -264,10 +295,12 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void requestPeers() {
+        if (!freshAuthorization(10_000L)) return;
         if (failureRequested || cleanupStarted || lifecycle == null || !lifecycle.active() || connectStarted || !"client".equals(role) || targetDeviceAddress == null) return;
         try {
         manager.requestPeers(channel, new WifiP2pManager.PeerListListener() {
             @Override public void onPeersAvailable(WifiP2pDeviceList list) {
+                if (!freshAuthorization(10_000L)) return;
                 if (failureRequested || cleanupStarted || !lifecycle.active()) return;
                 WifiP2pDevice[] peers = list == null ? new WifiP2pDevice[0]
                         : list.getDeviceList().toArray(new WifiP2pDevice[0]);
@@ -305,6 +338,7 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void connectToTargetAfterFreshBaseline(WifiP2pDevice peer) {
+        if (!freshAuthorization(authorizationWindow == null ? 0L : authorizationWindow.echoTimeout + 10_000L)) return;
         if (failureRequested || cleanupStarted || !lifecycle.request(SystemClock.elapsedRealtime())) return;
         WifiP2pConfig config = new WifiP2pConfig.Builder()
                 .setNetworkName(productNetworkName)
@@ -319,6 +353,7 @@ public final class DirectP2pProviderActivity extends Activity {
             @Override public void onSuccess() {
                 lifecycle.requestAcknowledged(true);
                 if (cleanupStarted) { checkCleanupReadback(); return; }
+                if (!freshAuthorization(10_000L)) return;
                 Log.i(TAG, MARKER + " phase=topology_request status=accepted role=client target=" + targetDeviceAddress + " run_id=" + runId);
                 pollConnectionInfo();
             }
@@ -353,6 +388,7 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private synchronized void handleConnectionInfo(WifiP2pInfo info) {
+        if (!freshAuthorization(10_000L)) return;
         if (failureRequested || cleanupStarted || lifecycle == null || !lifecycle.active() || socketStarted
                 || info == null || !info.groupFormed || info.groupOwnerAddress == null) return;
         boolean owner = info.isGroupOwner;
@@ -365,6 +401,7 @@ public final class DirectP2pProviderActivity extends Activity {
         manager.requestGroupInfo(channel, new WifiP2pManager.GroupInfoListener() {
             @Override public void onGroupInfoAvailable(WifiP2pGroup group) {
                 if (failureRequested || cleanupStarted || socketStarted || group == null || group.getOwner() == null || lifecycle.requestPending()) return;
+                if (!freshAuthorization(10_000L)) return;
                 if (!lifecycle.exchange(group.getNetworkName(), group.getOwner().deviceAddress,
                         group.isGroupOwner(), SystemClock.elapsedRealtime())) { fail("group_identity_or_request_not_admitted"); return; }
                 socketStarted = true;
@@ -382,6 +419,7 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void runBoundedExchange(InetAddress groupOwnerAddress) {
+        if (!freshAuthorization(authorizationWindow == null ? 0L : authorizationWindow.echoTimeout + 10_000L)) { cleanup(null,null); return; }
         AndroidNetworkBindingProvider.Selection selection =
                 new AndroidNetworkBindingProvider(this).awaitSelection(groupOwnerAddress, 5_000L);
         if (selection == null) {
@@ -395,7 +433,14 @@ public final class DirectP2pProviderActivity extends Activity {
                 + " route_matches_group_owner=true socket_creation_claimed=false run_id=" + runId);
         String nativeReceipt;
         try {
-            if ("group_owner".equals(role)) {
+            if (guardedAuthorization) {
+                if (!freshAuthorization(authorizationWindow.echoTimeout + 10_000L)) { cleanup(selection,null); return; }
+                nativeReceipt=RustDirectSocketProvider.runGuarded(selection.localHost,
+                        groupOwnerAddress.getHostAddress(),port,runId,selection.networkHandle,
+                        Math.min(authorizationWindow.echoTimeout,authorizationWindow.remaining(
+                                System.currentTimeMillis(),SystemClock.elapsedRealtime())-10_000L),
+                        authorizationReceipt,authorizationPeer,role,authorizationRevision);
+            } else if ("group_owner".equals(role)) {
                 nativeReceipt = RustDirectSocketProvider.runServer(selection.localHost, port, selection.networkHandle, 60_000L);
             } else {
                 try { Thread.sleep(500L); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }

@@ -23,6 +23,17 @@ public final class DirectP2pLifecycleHostTest {
         c.discoveryAcknowledged(true); c.discoveryReadback(c.requestDiscoveryReadback(), true); c.groupReadback(c.requestGroupReadback(), true);
     }
     public static void main(String[] args) {
+        DirectP2pLifecycle.AuthorizationWindow window=new DirectP2pLifecycle.AuthorizationWindow(1000,100,61000,20000);
+        check(window.permits(1001,101,50000), "signed total budgets initially fit");
+        check(!window.permits(11000,101,50000), "actual wall remaining checked");
+        check(!window.permits(1001,60100,0), "monotonic expiry despite slow wall");
+        check(!window.permits(999,101,0), "wall rollback denied");
+        check(!window.permits(1001,99,0), "elapsed rollback denied");
+        check(!window.permits(61000,101,0), "hard expiry denied");
+        for(long cap:new long[]{0,20001}) {
+            boolean rejected=false;try{new DirectP2pLifecycle.AuthorizationWindow(1000,100,61000,cap);}catch(IllegalArgumentException expected){rejected=true;}
+            check(rejected,"closed echo cap");
+        }
         DirectP2pLifecycle c = new DirectP2pLifecycle(100, NETWORK, OWNER, true);
         check(!c.request(101), "no effect before baseline");
         check(!c.baseline(true, 101), "foreign baseline rejected");

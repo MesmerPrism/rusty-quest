@@ -7,6 +7,13 @@ final class RustDirectSocketProvider {
 
     private RustDirectSocketProvider() {}
 
+    static String runGuarded(String local, String peer, int port, String runId, long network,
+            long timeout, String receipt, String localPeer, String role, long revision) {
+        return nativeRunGuarded(local,peer,port,runId,network,timeout,receipt,localPeer,role,revision);
+    }
+    private static native String nativeRunGuarded(String local, String peer, int port, String runId,
+            long network, long timeout, String receipt, String localPeer, String role, long revision);
+
     static String runServer(String localHost, int port, long networkHandle, long timeoutMs) {
         return nativeRunServer(localHost, port, networkHandle, timeoutMs);
     }
