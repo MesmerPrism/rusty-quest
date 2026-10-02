@@ -1,5 +1,11 @@
 import java.util.*;
 public final class OriginalStationGuardHostTest {
+  public static class SevenSecurityFields {
+    public BitSet allowedKeyManagement=new BitSet(),allowedProtocols=new BitSet(),allowedAuthAlgorithms=new BitSet(),allowedPairwiseCiphers=new BitSet(),allowedGroupCiphers=new BitSet(),allowedGroupManagementCiphers=new BitSet(),allowedSuiteBCiphers=new BitSet();
+  }
+  public static final class ActualPmfField extends SevenSecurityFields {public boolean requirePmf;}
+  public static final class WrongCasePmfField extends SevenSecurityFields {public boolean requirePMF;}
+  public static final class WrongTypePmfField extends SevenSecurityFields {public String requirePmf="true";}
   static int cases;
   static Properties fixture(){Properties p=new Properties();p.setProperty("run_token","0123456789abcdef0123456789abcdef");p.setProperty("serial","3487C10H3M017Q");p.setProperty("boot_id","01234567-89ab-cdef-0123-456789abcdef");p.setProperty("original_network_id","1");p.setProperty("owner_address","02:11:22:33:44:55");p.setProperty("local_owner","true");p.setProperty("deadline_elapsed_realtime_ms","151000");return p;}
   static void check(boolean b){if(!b)throw new AssertionError("case "+cases);cases++;}
@@ -123,6 +129,12 @@ public final class OriginalStationGuardHostTest {
     String allMissing=QuestOriginalStationGuard.failureJson(new NoSuchFieldException("private class detail"));
     check(allMissing.contains("\"missing_security_fields\":[\"allowedGroupManagementCiphers\",\"allowedSuiteBCiphers\"]")&&!allMissing.contains("private class detail"));
     QuestOriginalStationGuard.missingSecurityFields.clear();QuestOriginalStationGuard.diagnosticField=QuestOriginalStationGuard.SecurityField.none;
+    ActualPmfField projection=new ActualPmfField();String noPmf=QuestOriginalStationGuard.legacySecurity(projection);projection.requirePmf=true;String pmf=QuestOriginalStationGuard.legacySecurity(projection);check(!noPmf.equals(pmf)&&pmf.endsWith("|true"));
+    for(BitSet bits:new BitSet[]{projection.allowedKeyManagement,projection.allowedProtocols,projection.allowedAuthAlgorithms,projection.allowedPairwiseCiphers,projection.allowedGroupCiphers,projection.allowedGroupManagementCiphers,projection.allowedSuiteBCiphers}){bits.set(1);check(!pmf.equals(QuestOriginalStationGuard.legacySecurity(projection)));bits.clear();}
+    boolean missing=false;try{QuestOriginalStationGuard.legacySecurity(new WrongCasePmfField());}catch(NoSuchFieldException expected){missing=true;String diagnostic=QuestOriginalStationGuard.failureJson(expected);check(diagnostic.contains("field_missing_requirePmf")&&diagnostic.contains("\"missing_security_fields\":[\"requirePmf\"]"));}check(missing);
+    rejects(()->QuestOriginalStationGuard.legacySecurity(new WrongTypePmfField()));
+    check(pmf.equals(QuestOriginalStationGuard.legacySecurity(projection)));
+    QuestOriginalStationGuard.diagnosticField=QuestOriginalStationGuard.SecurityField.none;QuestOriginalStationGuard.missingSecurityFields.clear();
     System.out.println("original_station_guard_contract=pass cases="+cases+" device_calls=0");
   }
 }

@@ -17,14 +17,14 @@ import java.util.concurrent.*;
 public final class QuestOriginalStationGuard {
   enum Phase { arguments, uid, config_load, config_contract, config_path, host_identity, main_looper, activity_thread, shell_context, binder_services, wifi_manager, connectivity_manager, callback_thread, p2p_service, p2p_channel, dispatch, snapshot_host, configured_networks, profile_projection, snapshot_join }
   static Phase diagnosticPhase=Phase.arguments;
-  enum SecurityField { none, allowedKeyManagement, allowedProtocols, allowedAuthAlgorithms, allowedPairwiseCiphers, allowedGroupCiphers, allowedGroupManagementCiphers, allowedSuiteBCiphers, requirePMF }
+  enum SecurityField { none, allowedKeyManagement, allowedProtocols, allowedAuthAlgorithms, allowedPairwiseCiphers, allowedGroupCiphers, allowedGroupManagementCiphers, allowedSuiteBCiphers, requirePmf }
   static SecurityField diagnosticField=SecurityField.none;
   static final Set<SecurityField> missingSecurityFields=EnumSet.noneOf(SecurityField.class);
   // SecurityParams.updateLegacyWifiConfiguration writes exactly these fields.
-  static String legacySecurity(WifiConfiguration c)throws Exception {
+  static String legacySecurity(Object c)throws Exception {
     missingSecurityFields.clear();for(SecurityField field:SecurityField.values()){if(field==SecurityField.none)continue;try{c.getClass().getField(field.name());}catch(NoSuchFieldException unavailable){missingSecurityFields.add(field);}}
     if(!missingSecurityFields.isEmpty()){diagnosticField=missingSecurityFields.iterator().next();throw new NoSuchFieldException("security_fields_unavailable");}
-    ArrayList<String> fields=new ArrayList<>();for(SecurityField field:SecurityField.values()){if(field==SecurityField.none)continue;diagnosticField=field;fields.add(String.valueOf(c.getClass().getField(field.name()).get(c)));}diagnosticField=SecurityField.none;
+    ArrayList<String> fields=new ArrayList<>();for(SecurityField field:SecurityField.values()){if(field==SecurityField.none)continue;diagnosticField=field;Object value=c.getClass().getField(field.name()).get(c);if(field==SecurityField.requirePmf?!(value instanceof Boolean):!(value instanceof BitSet))throw new SecurityException("security_field_shape");fields.add(String.valueOf(value));}diagnosticField=SecurityField.none;
     return String.join("|",fields);
   }
   static void attachSecurity(ProfileCandidate candidate,WifiConfiguration c)throws Exception {
