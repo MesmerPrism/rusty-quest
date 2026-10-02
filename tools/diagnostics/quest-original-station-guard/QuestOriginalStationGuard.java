@@ -17,9 +17,14 @@ import java.util.concurrent.*;
 public final class QuestOriginalStationGuard {
   enum Phase { arguments, uid, config_load, config_contract, config_path, host_identity, main_looper, activity_thread, shell_context, binder_services, wifi_manager, connectivity_manager, callback_thread, p2p_service, p2p_channel, dispatch, snapshot_host, configured_networks, profile_projection, snapshot_join }
   static Phase diagnosticPhase=Phase.arguments;
+  enum SecurityField { none, allowedKeyManagement, allowedProtocols, allowedAuthAlgorithms, allowedPairwiseCiphers, allowedGroupCiphers, allowedGroupManagementCiphers, allowedSuiteBCiphers, requirePMF }
+  static SecurityField diagnosticField=SecurityField.none;
+  static final Set<SecurityField> missingSecurityFields=EnumSet.noneOf(SecurityField.class);
   // SecurityParams.updateLegacyWifiConfiguration writes exactly these fields.
   static String legacySecurity(WifiConfiguration c)throws Exception {
-    ArrayList<String> fields=new ArrayList<>();for(String name:new String[]{"allowedKeyManagement","allowedProtocols","allowedAuthAlgorithms","allowedPairwiseCiphers","allowedGroupCiphers","allowedGroupManagementCiphers","allowedSuiteBCiphers","requirePMF"})fields.add(String.valueOf(c.getClass().getField(name).get(c)));
+    missingSecurityFields.clear();for(SecurityField field:SecurityField.values()){if(field==SecurityField.none)continue;try{c.getClass().getField(field.name());}catch(NoSuchFieldException unavailable){missingSecurityFields.add(field);}}
+    if(!missingSecurityFields.isEmpty()){diagnosticField=missingSecurityFields.iterator().next();throw new NoSuchFieldException("security_fields_unavailable");}
+    ArrayList<String> fields=new ArrayList<>();for(SecurityField field:SecurityField.values()){if(field==SecurityField.none)continue;diagnosticField=field;fields.add(String.valueOf(c.getClass().getField(field.name()).get(c)));}diagnosticField=SecurityField.none;
     return String.join("|",fields);
   }
   static void attachSecurity(ProfileCandidate candidate,WifiConfiguration c)throws Exception {
@@ -89,8 +94,9 @@ public final class QuestOriginalStationGuard {
     Throwable cause=e;for(int i=0;i<8 && cause.getCause()!=null && cause.getCause()!=cause;i++)cause=cause.getCause();
     String message=cause.getMessage();
     String code=message!=null && Arrays.asList("uid2000_required","config_path","file_bound","p2p_service","p2p_channel","profiles_missing","duplicate_original","original_missing","profiles_bound","profile_diagnostic_shape").contains(message)?message:"unclassified";
+    String fieldProjection="";if(cause instanceof NoSuchFieldException && diagnosticField!=SecurityField.none){code="field_missing_"+diagnosticField.name();ArrayList<String> missing=new ArrayList<>();for(SecurityField field:missingSecurityFields)missing.add("\""+field.name()+"\"");fieldProjection=",\"field_access\":\""+diagnosticField.name()+"\",\"missing_security_fields\":["+String.join(",",missing)+"]";}
     String projection="";if(cause instanceof OriginalProfileAmbiguity){OriginalProfileAmbiguity a=(OriginalProfileAmbiguity)cause;projection=",\"current_security_type\":"+a.currentSecurityType+",\"current_network_id\":"+a.currentNetworkId+",\"profile_projection\":"+a.projection;}
-    return "{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":false,\"outcome\":\"unknown\",\"phase\":\""+diagnosticPhase.name()+"\",\"error_type\":\""+errorType(e)+"\",\"cause_type\":\""+errorType(cause)+"\",\"error_code\":\""+code+"\""+projection+"}";
+    return "{\"schema\":\"rusty.quest.original_station_guard.v1\",\"ok\":false,\"outcome\":\"unknown\",\"phase\":\""+diagnosticPhase.name()+"\",\"error_type\":\""+errorType(e)+"\",\"cause_type\":\""+errorType(cause)+"\",\"error_code\":\""+code+"\""+fieldProjection+projection+"}";
   }
   final OriginalStationGuardContract cfg; final String path; final WifiManager wifi; final ConnectivityManager connectivity;
   final WifiP2pManager p2p; final WifiP2pManager.Channel channel; final HandlerThread callbacks;

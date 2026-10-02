@@ -112,6 +112,17 @@ public final class OriginalStationGuardHostTest {
     for(int[] state:new int[][]{{-1,0},{3,1},{0,2},{1,0},{1,-1},{2,32}}){QuestOriginalStationGuard.ProfileCandidate malformed=new QuestOriginalStationGuard.ProfileCandidate(otherHash,otherHash,state[0],state[1]);malformed.shared=base;malformed.type=4;malformed.enabled=true;malformed.upgrade=true;malformed.canonical=true;rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(malformed),false));}
     psk.upgrade=true;rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,sae),false));psk.upgrade=false;
     String[] restored=QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,sae),true);check(Arrays.equals(group,restored));
+    for(QuestOriginalStationGuard.SecurityField field:QuestOriginalStationGuard.SecurityField.values()){
+      QuestOriginalStationGuard.diagnosticField=field;String diagnostic=QuestOriginalStationGuard.failureJson(new java.lang.reflect.InvocationTargetException(new NoSuchFieldException("SSID private details")));
+      check(!diagnostic.contains("SSID")&&!diagnostic.contains("private details"));
+      check(field==QuestOriginalStationGuard.SecurityField.none?!diagnostic.contains("field_access"):diagnostic.contains("\"error_code\":\"field_missing_"+field.name()+"\"")&&diagnostic.contains("\"field_access\":\""+field.name()+"\""));
+    }
+    QuestOriginalStationGuard.diagnosticField=QuestOriginalStationGuard.SecurityField.none;
+    QuestOriginalStationGuard.diagnosticField=QuestOriginalStationGuard.SecurityField.allowedGroupManagementCiphers;
+    QuestOriginalStationGuard.missingSecurityFields.add(QuestOriginalStationGuard.SecurityField.allowedGroupManagementCiphers);QuestOriginalStationGuard.missingSecurityFields.add(QuestOriginalStationGuard.SecurityField.allowedSuiteBCiphers);
+    String allMissing=QuestOriginalStationGuard.failureJson(new NoSuchFieldException("private class detail"));
+    check(allMissing.contains("\"missing_security_fields\":[\"allowedGroupManagementCiphers\",\"allowedSuiteBCiphers\"]")&&!allMissing.contains("private class detail"));
+    QuestOriginalStationGuard.missingSecurityFields.clear();QuestOriginalStationGuard.diagnosticField=QuestOriginalStationGuard.SecurityField.none;
     System.out.println("original_station_guard_contract=pass cases="+cases+" device_calls=0");
   }
 }
