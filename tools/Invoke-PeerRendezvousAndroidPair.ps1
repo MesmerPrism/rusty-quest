@@ -207,7 +207,8 @@ $roleJob = {
         $RolePreference,
         $Apk,
         $ChildOutDir,
-        $SkipInstallValue
+        $SkipInstallValue,
+        $Adb
     )
     Set-Location $RepoRoot
     $params = @{
@@ -222,6 +223,7 @@ $roleJob = {
         RolePreference = $RolePreference
         ApkPath = $Apk
         OutDir = $ChildOutDir
+        Adb = $Adb
     }
     if ($CoordinationMode -eq "agent_board_leased") {
         $params["QuestLeaseId"] = $LeaseId
@@ -260,13 +262,13 @@ function Invoke-PairPhase {
             $repoRoot, $smokePath, $ServerSerial, $ServerLeaseId, $CoordinationMode, "server",
             $serverRunId, $sessionTag, $ServerPeerTag, $SharedSecret,
             $ServerDurationSeconds, $ServerRolePreference, $ApkPath, $serverDir,
-            $SkipPhaseInstall)
+            $SkipPhaseInstall, $Adb)
         Start-Sleep -Seconds 4
         $clientJob = Start-Job -ScriptBlock $roleJob -ArgumentList @(
             $repoRoot, $smokePath, $ClientSerial, $ClientLeaseId, $CoordinationMode, "client",
             $clientRunId, $sessionTag, $ClientPeerTag, $SharedSecret,
             $ClientDurationSeconds, $ClientRolePreference, $ApkPath, $clientDir,
-            $SkipPhaseInstall)
+            $SkipPhaseInstall, $Adb)
         Wait-Job -Job @($serverJob, $clientJob) -Timeout ($ServerDurationSeconds + 70) | Out-Null
         $serverOutput = Receive-Job -Job $serverJob -Keep 2>&1 | Out-String
         $clientOutput = Receive-Job -Job $clientJob -Keep 2>&1 | Out-String
