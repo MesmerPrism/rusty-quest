@@ -13,10 +13,12 @@ import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
 import android.net.wifi.p2p.WifiP2pInfo;
+import android.net.wifi.p2p.WifiP2pGroup;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Base64;
 import android.util.Log;
 import android.widget.TextView;
@@ -42,6 +44,17 @@ public final class DirectP2pProviderActivity extends Activity {
     private boolean socketStarted;
     private boolean connectStarted;
     private int discoveryAttempts;
+    private DirectP2pLifecycle lifecycle;
+    private boolean topologyStarted;
+    private boolean cleanupStarted;
+    private boolean groupReadbackPending;
+    private boolean discoveryReadbackPending;
+    private boolean removalPending;
+    private long cleanupDeadline;
+    private AndroidNetworkBindingProvider.Selection completedSelection;
+    private JSONObject completedNative;
+    private volatile boolean failureRequested;
+    private final long startedAt = SystemClock.elapsedRealtime();
 
     @Override
     protected void onCreate(Bundle state) {
@@ -81,18 +94,18 @@ public final class DirectP2pProviderActivity extends Activity {
         filter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
         filter.addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION);
         registerReceiver(receiver, filter);
-        requestDeviceIdentity();
         if (!hasNearbyPermission()) {
             fail("nearby_wifi_devices_permission_missing");
             return;
         }
-        if ("group_owner".equals(role)) {
-            removeStaleGroupThenCreate();
-        } else if ("client".equals(role) && targetDeviceAddress != null && !targetDeviceAddress.isEmpty()) {
-            removeStaleGroupThenDiscover();
-        } else {
+        if (!"group_owner".equals(role) && !("client".equals(role) && targetDeviceAddress != null && !targetDeviceAddress.isEmpty())) {
             fail("invalid_role_or_missing_target");
+            return;
         }
+        main.postDelayed(new Runnable() {
+            @Override public void run() { if (!topologyStarted && !failureRequested) fail("identity_or_baseline_deadline"); }
+        }, 20_000L);
+        requestDeviceIdentity();
     }
 
     private boolean authorizeTopology(Intent intent) {
@@ -136,23 +149,67 @@ public final class DirectP2pProviderActivity extends Activity {
         try {
             manager.requestDeviceInfo(channel, new WifiP2pManager.DeviceInfoListener() {
                 @Override public void onDeviceInfoAvailable(android.net.wifi.p2p.WifiP2pDevice device) {
+                    if (failureRequested) return;
                     String address = device == null ? "" : device.deviceAddress;
+                    if (!address.matches("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) { fail("device_identity_unavailable"); return; }
+                    try {
+                        lifecycle = new DirectP2pLifecycle(startedAt, PRODUCT_NETWORK_NAME,
+                                "group_owner".equals(role) ? address : targetDeviceAddress, "group_owner".equals(role));
+                    } catch (IllegalArgumentException error) { fail("lifecycle_identity_invalid"); return; }
                     Log.i(TAG, MARKER + " phase=device_identity status=pass role=" + role + " device_address=" + address + " run_id=" + runId);
+                    checkIdleGroupThenStart();
                 }
             });
         } catch (Exception error) {
-            Log.w(TAG, MARKER + " phase=device_identity status=fail reason=" + safe(error));
+            fail("device_identity_" + safe(error));
         }
     }
 
-    private void removeStaleGroupThenCreate() {
-        manager.removeGroup(channel, new WifiP2pManager.ActionListener() {
-            @Override public void onSuccess() { postCreateGroup(); }
-            @Override public void onFailure(int reason) { postCreateGroup(); }
-        });
+    private void checkIdleGroupThenStart() {
+        main.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (lifecycle != null && lifecycle.active()) {
+                    if (lifecycle.expired(SystemClock.elapsedRealtime())) fail("topology_or_run_deadline");
+                    else main.postDelayed(this, 100L);
+                }
+            }
+        }, 100L);
+        try {
+            manager.requestGroupInfo(channel, new WifiP2pManager.GroupInfoListener() {
+                @Override public void onGroupInfoAvailable(WifiP2pGroup group) {
+                    if (failureRequested || cleanupStarted || !lifecycle.active()) return;
+                    if (!lifecycle.baseline(group != null, SystemClock.elapsedRealtime())
+                            || !lifecycle.beginFormation(SystemClock.elapsedRealtime())) { fail("preexisting_group_or_expired_baseline"); return; }
+                    try {
+                        manager.requestDiscoveryState(channel, new WifiP2pManager.DiscoveryStateListener() {
+                            @Override public void onDiscoveryStateAvailable(int state) {
+                                if (failureRequested || cleanupStarted || !lifecycle.active()) return;
+                                if (state != WifiP2pManager.WIFI_P2P_DISCOVERY_STOPPED) { fail("preexisting_discovery"); return; }
+                                topologyStarted = true;
+                                if ("group_owner".equals(role)) postCreateGroup(); else postDiscover(0L);
+                            }
+                        });
+                    } catch (Exception error) { fail("requestDiscoveryState_exception_" + safe(error)); }
+                }
+            });
+        } catch (Exception error) { fail("requestGroupInfo_exception_" + safe(error)); }
     }
 
     private void createGroup() {
+        if (failureRequested || lifecycle == null || !lifecycle.active()) return;
+        try {
+        manager.requestGroupInfo(channel, new WifiP2pManager.GroupInfoListener() {
+            @Override public void onGroupInfoAvailable(WifiP2pGroup group) {
+                if (failureRequested || cleanupStarted) return;
+                if (group != null) { fail("group_changed_before_create"); return; }
+                createGroupAfterFreshBaseline();
+            }
+        });
+        } catch (Exception error) { fail("requestGroupInfo_exception_" + safe(error)); }
+    }
+
+    private void createGroupAfterFreshBaseline() {
+        if (failureRequested || lifecycle == null || !lifecycle.request(SystemClock.elapsedRealtime())) { fail("create_not_admitted"); return; }
         WifiP2pConfig config = new WifiP2pConfig.Builder()
                 .setNetworkName(PRODUCT_NETWORK_NAME)
                 .setPassphrase(PRODUCT_PASSPHRASE)
@@ -160,27 +217,28 @@ public final class DirectP2pProviderActivity extends Activity {
                 .build();
         config.groupOwnerIntent = WifiP2pConfig.GROUP_OWNER_INTENT_MAX;
         config.wps.setup = WpsInfo.PBC;
+        try {
         manager.createGroup(channel, config, new WifiP2pManager.ActionListener() {
             @Override public void onSuccess() {
+                lifecycle.requestAcknowledged(true);
+                if (cleanupStarted) { checkCleanupReadback(); return; }
                 Log.i(TAG, MARKER + " phase=topology_request status=accepted role=group_owner run_id=" + runId);
                 pollConnectionInfo();
             }
             @Override public void onFailure(int reason) {
-                Log.w(TAG, MARKER + " phase=topology_request status=retry reason=" + reason + " run_id=" + runId);
-                pollConnectionInfo();
+                lifecycle.requestAcknowledged(false);
+                fail("create_group_rejected_" + reason);
+                if (cleanupStarted) checkCleanupReadback();
             }
         });
-    }
-
-    private void removeStaleGroupThenDiscover() {
-        manager.removeGroup(channel, new WifiP2pManager.ActionListener() {
-            @Override public void onSuccess() { postDiscover(500L); }
-            @Override public void onFailure(int reason) { postDiscover(500L); }
-        });
+        } catch (Exception error) { fail("createGroup_exception_" + safe(error)); }
     }
 
     private void discoverThenConnect() {
+        if (failureRequested || lifecycle == null || !lifecycle.active() || lifecycle.expired(SystemClock.elapsedRealtime())) return;
         discoveryAttempts++;
+        lifecycle.discoveryStarted();
+        try {
         manager.discoverPeers(channel, new WifiP2pManager.ActionListener() {
             @Override public void onSuccess() { postRequestPeers(1500L); }
             @Override public void onFailure(int reason) {
@@ -188,6 +246,7 @@ public final class DirectP2pProviderActivity extends Activity {
                 postRequestPeers(500L);
             }
         });
+        } catch (Exception error) { fail("discoverPeers_exception_" + safe(error)); }
     }
 
     private void postCreateGroup() {
@@ -203,17 +262,19 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void requestPeers() {
-        if (connectStarted || !"client".equals(role) || targetDeviceAddress == null) return;
+        if (failureRequested || cleanupStarted || lifecycle == null || !lifecycle.active() || connectStarted || !"client".equals(role) || targetDeviceAddress == null) return;
+        try {
         manager.requestPeers(channel, new WifiP2pManager.PeerListListener() {
             @Override public void onPeersAvailable(WifiP2pDeviceList list) {
-                WifiP2pDevice selected = null;
-                for (WifiP2pDevice device : list.getDeviceList()) {
-                    if (selected == null) selected = device;
-                    if (targetDeviceAddress.equalsIgnoreCase(device.deviceAddress)) {
-                        selected = device;
-                        break;
-                    }
+                if (failureRequested || cleanupStarted || !lifecycle.active()) return;
+                WifiP2pDevice[] peers = list == null ? new WifiP2pDevice[0]
+                        : list.getDeviceList().toArray(new WifiP2pDevice[0]);
+                String[] addresses = new String[peers.length];
+                for (int index = 0; index < peers.length; index++) {
+                    addresses[index] = peers[index] == null ? null : peers[index].deviceAddress;
                 }
+                int selectedIndex = DirectP2pLifecycle.selectTargetPeer(targetDeviceAddress, addresses);
+                WifiP2pDevice selected = selectedIndex < 0 ? null : peers[selectedIndex];
                 if (selected != null) {
                     connectToTarget(selected);
                 } else if (discoveryAttempts < 12) {
@@ -223,11 +284,26 @@ public final class DirectP2pProviderActivity extends Activity {
                 }
             }
         });
+        } catch (Exception error) { fail("requestPeers_exception_" + safe(error)); }
     }
 
     private void connectToTarget(WifiP2pDevice peer) {
-        if (connectStarted) return;
+        if (failureRequested || cleanupStarted || connectStarted || lifecycle == null || !lifecycle.active()) return;
+        if (peer == null || !targetDeviceAddress.equalsIgnoreCase(peer.deviceAddress)) { fail("foreign_peer_not_admitted"); return; }
         connectStarted = true;
+        try {
+        manager.requestGroupInfo(channel, new WifiP2pManager.GroupInfoListener() {
+            @Override public void onGroupInfoAvailable(WifiP2pGroup group) {
+                if (failureRequested || cleanupStarted) return;
+                if (group != null) { fail("group_changed_before_connect"); return; }
+                connectToTargetAfterFreshBaseline(peer);
+            }
+        });
+        } catch (Exception error) { fail("requestGroupInfo_exception_" + safe(error)); }
+    }
+
+    private void connectToTargetAfterFreshBaseline(WifiP2pDevice peer) {
+        if (failureRequested || cleanupStarted || !lifecycle.request(SystemClock.elapsedRealtime())) return;
         WifiP2pConfig config = new WifiP2pConfig.Builder()
                 .setNetworkName(PRODUCT_NETWORK_NAME)
                 .setPassphrase(PRODUCT_PASSPHRASE)
@@ -236,23 +312,27 @@ public final class DirectP2pProviderActivity extends Activity {
                 .build();
         config.wps.setup = WpsInfo.PBC;
         config.groupOwnerIntent = 0;
+        try {
         manager.connect(channel, config, new WifiP2pManager.ActionListener() {
             @Override public void onSuccess() {
+                lifecycle.requestAcknowledged(true);
+                if (cleanupStarted) { checkCleanupReadback(); return; }
                 Log.i(TAG, MARKER + " phase=topology_request status=accepted role=client target=" + targetDeviceAddress + " run_id=" + runId);
                 pollConnectionInfo();
             }
             @Override public void onFailure(int reason) {
-                connectStarted = false;
+                lifecycle.requestAcknowledged(false);
                 fail("connect_failed_" + reason);
-                if (discoveryAttempts < 12) postDiscover(1500L);
+                if (cleanupStarted) checkCleanupReadback();
             }
         });
+        } catch (Exception error) { fail("connect_exception_" + safe(error)); }
     }
 
     private void pollConnectionInfo() {
         main.postDelayed(new Runnable() {
             @Override public void run() {
-                if (socketStarted) return;
+                if (socketStarted || cleanupStarted || lifecycle == null || !lifecycle.active()) return;
                 requestConnectionInfo();
                 if (!socketStarted) main.postDelayed(this, 500L);
             }
@@ -260,6 +340,7 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void requestConnectionInfo() {
+        if (failureRequested || cleanupStarted || lifecycle == null || !lifecycle.active()) return;
         try {
             manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
                 @Override public void onConnectionInfoAvailable(WifiP2pInfo info) { handleConnectionInfo(info); }
@@ -270,19 +351,32 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private synchronized void handleConnectionInfo(WifiP2pInfo info) {
-        if (socketStarted || info == null || !info.groupFormed || info.groupOwnerAddress == null) return;
+        if (failureRequested || cleanupStarted || lifecycle == null || !lifecycle.active() || socketStarted
+                || info == null || !info.groupFormed || info.groupOwnerAddress == null) return;
         boolean owner = info.isGroupOwner;
         if (owner != "group_owner".equals(role)) {
             fail("platform_role_mismatch");
             return;
         }
-        socketStarted = true;
-        Log.i(TAG, MARKER + " phase=topology status=pass authority=android_wifi_direct_topology_provider role=" + role
-                + " group_owner_host=" + info.groupOwnerAddress.getHostAddress() + " socket_creation_claimed=false run_id=" + runId);
         final InetAddress ownerAddress = info.groupOwnerAddress;
-        new Thread(new Runnable() {
-            @Override public void run() { runBoundedExchange(ownerAddress); }
-        }, "rusty-direct-p2p-exchange").start();
+        try {
+        manager.requestGroupInfo(channel, new WifiP2pManager.GroupInfoListener() {
+            @Override public void onGroupInfoAvailable(WifiP2pGroup group) {
+                if (failureRequested || cleanupStarted || socketStarted || group == null || group.getOwner() == null || lifecycle.requestPending()) return;
+                if (!lifecycle.exchange(group.getNetworkName(), group.getOwner().deviceAddress,
+                        group.isGroupOwner(), SystemClock.elapsedRealtime())) { fail("group_identity_or_request_not_admitted"); return; }
+                socketStarted = true;
+                Log.i(TAG, MARKER + " phase=topology status=pass authority=android_wifi_direct_topology_provider role=" + role
+                        + " group_owner_host=" + ownerAddress.getHostAddress() + " socket_creation_claimed=false run_id=" + runId);
+                new Thread(new Runnable() {
+                    @Override public void run() {
+                        try { runBoundedExchange(ownerAddress); }
+                        catch (Exception error) { fail("exchange_thread_" + safe(error)); cleanup(null, null); }
+                    }
+                }, "rusty-direct-p2p-exchange").start();
+            }
+        });
+        } catch (Exception error) { fail("requestGroupInfo_exception_" + safe(error)); }
     }
 
     private void runBoundedExchange(InetAddress groupOwnerAddress) {
@@ -320,24 +414,96 @@ public final class DirectP2pProviderActivity extends Activity {
     private void cleanup(AndroidNetworkBindingProvider.Selection selection, JSONObject nativeJson) {
         main.post(new Runnable() {
             @Override public void run() {
-                manager.stopPeerDiscovery(channel, new WifiP2pManager.ActionListener() {
-                    @Override public void onSuccess() { removeGroupAndPublish(selection, nativeJson); }
-                    @Override public void onFailure(int reason) { removeGroupAndPublish(selection, nativeJson); }
-                });
+                completedSelection = selection;
+                completedNative = nativeJson;
+                if (lifecycle != null) lifecycle.nativeComplete();
+                beginOwnedCleanup();
+                if (cleanupStarted) checkCleanupReadback();
             }
         });
     }
 
-    private void removeGroupAndPublish(AndroidNetworkBindingProvider.Selection selection, JSONObject nativeJson) {
-        manager.removeGroup(channel, new WifiP2pManager.ActionListener() {
-            @Override public void onSuccess() { publishFinal(selection, nativeJson); }
-            @Override public void onFailure(int reason) { publishFinal(selection, nativeJson); }
-        });
+    private void beginOwnedCleanup() {
+        if (lifecycle == null || cleanupStarted || !topologyStarted || !lifecycle.beginCleanup()) return;
+        cleanupStarted = true;
+        main.removeCallbacksAndMessages(null);
+        cleanupDeadline = SystemClock.elapsedRealtime() + 10_000L;
+        if (lifecycle.discoveryOwned()) try {
+            manager.stopPeerDiscovery(channel, new WifiP2pManager.ActionListener() {
+                @Override public void onSuccess() { lifecycle.discoveryAcknowledged(true); checkCleanupReadback(); }
+                @Override public void onFailure(int reason) { lifecycle.discoveryAcknowledged(false); checkCleanupReadback(); }
+            });
+        } catch (Exception error) {
+            lifecycle.discoveryAcknowledged(false);
+            Log.e(TAG, MARKER + " phase=cleanup status=outcome_unknown reason=stop_discovery_exception run_id=" + runId);
+        }
+        checkCleanupReadback();
+        main.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (lifecycle.cleanupConfirmed()) { completeCleanup(); return; }
+                if (SystemClock.elapsedRealtime() >= cleanupDeadline) {
+                    Log.e(TAG, MARKER + " phase=cleanup status=outcome_unknown reason=cleanup_unconfirmed run_id=" + runId);
+                    return;
+                }
+                checkCleanupReadback();
+                main.postDelayed(this, 100L);
+            }
+        }, 100L);
+    }
+
+    private void checkCleanupReadback() {
+        if (!cleanupStarted || SystemClock.elapsedRealtime() >= cleanupDeadline) return;
+        if (!discoveryReadbackPending) {
+            discoveryReadbackPending = true;
+            final long observation = lifecycle.requestDiscoveryReadback();
+            try {
+                manager.requestDiscoveryState(channel, new WifiP2pManager.DiscoveryStateListener() {
+                    @Override public void onDiscoveryStateAvailable(int state) {
+                        discoveryReadbackPending = false;
+                        lifecycle.discoveryReadback(observation, state == WifiP2pManager.WIFI_P2P_DISCOVERY_STOPPED);
+                    }
+                });
+            } catch (Exception error) { discoveryReadbackPending = false; lifecycle.readbackFailed(); }
+        }
+        if (!groupReadbackPending) {
+            groupReadbackPending = true;
+            final long observation = lifecycle.requestGroupReadback();
+            try {
+                manager.requestGroupInfo(channel, new WifiP2pManager.GroupInfoListener() {
+                    @Override public void onGroupInfoAvailable(WifiP2pGroup group) {
+                        groupReadbackPending = false;
+                        if (!lifecycle.groupReadback(observation, group == null)) return;
+                        if (group != null && !removalPending) {
+                            if (group.getOwner() == null || !lifecycle.mayRemove(group.getNetworkName(),
+                                    group.getOwner().deviceAddress, group.isGroupOwner())) return;
+                            removalPending = true;
+                            try {
+                                manager.removeGroup(channel, new WifiP2pManager.ActionListener() {
+                                    @Override public void onSuccess() { lifecycle.removalAcknowledged(true); checkCleanupReadback(); }
+                                    @Override public void onFailure(int reason) { lifecycle.removalAcknowledged(false); checkCleanupReadback(); }
+                                });
+                            } catch (Exception error) {
+                                lifecycle.removalAcknowledged(false);
+                                Log.e(TAG, MARKER + " phase=cleanup status=outcome_unknown reason=remove_group_exception run_id=" + runId);
+                            }
+                        }
+                    }
+                });
+            } catch (Exception error) { groupReadbackPending = false; lifecycle.readbackFailed(); }
+        }
+    }
+
+    private void completeCleanup() {
+        if (!lifecycle.finish()) return;
+        main.removeCallbacksAndMessages(null);
+        Log.i(TAG, MARKER + " phase=cleanup status=confirmed run_id=" + runId);
+        publishFinal(completedSelection, completedNative);
     }
 
     private void publishFinal(AndroidNetworkBindingProvider.Selection selection, JSONObject nativeJson) {
         try {
-            if (selection == null || nativeJson == null || !"pass".equals(nativeJson.optString("status"))) {
+            if (lifecycle == null || lifecycle.failure() != null || !lifecycle.ownedGroupObserved()
+                    || selection == null || nativeJson == null || !"pass".equals(nativeJson.optString("status"))) {
                 Log.e(TAG, MARKER + " phase=complete status=fail run_id=" + runId);
                 return;
             }
@@ -365,9 +531,9 @@ public final class DirectP2pProviderActivity extends Activity {
             receipt.put("socket", nativeJson.getJSONObject("socket"));
             receipt.put("exchange", nativeJson.getJSONObject("exchange"));
             JSONObject cleanup = new JSONObject();
-            cleanup.put("discovery_stopped", true);
-            cleanup.put("group_removed", true);
-            cleanup.put("socket_closed", true);
+            cleanup.put("discovery_stopped", lifecycle.discoveryStopped());
+            cleanup.put("group_removed", lifecycle.groupRemoved());
+            cleanup.put("socket_closed", lifecycle.socketClosed());
             receipt.put("cleanup", cleanup);
             Log.i(TAG, MARKER + " phase=complete status=pass receipt=" + receipt);
         } catch (Exception error) {
@@ -376,7 +542,14 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void fail(String reason) {
+        failureRequested = true;
         Log.e(TAG, MARKER + " phase=failure status=fail reason=" + reason + " role=" + role + " run_id=" + runId);
+        main.post(new Runnable() {
+            @Override public void run() {
+                if (lifecycle != null) lifecycle.fail(reason);
+                beginOwnedCleanup();
+            }
+        });
     }
 
     private static String safe(Throwable error) {
@@ -385,6 +558,9 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        failureRequested = true;
+        if (lifecycle != null && lifecycle.active()) lifecycle.fail("activity_destroyed");
+        beginOwnedCleanup();
         if (receiver != null) {
             try { unregisterReceiver(receiver); } catch (Exception ignored) {}
         }
