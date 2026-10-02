@@ -311,11 +311,17 @@ final class EmbeddedDuplexProcessHost {
     CompletableFuture<String> concurrentPolicy(String challenge, long[] policy) {
         return concurrentQualificationOnLane(false, challenge, true, policy == null ? null : policy.clone(), null);
     }
+    CompletableFuture<String> concurrentMask(String challenge, long[] mask) {
+        return concurrentQualificationOnLane(false,challenge,true,mask == null ? null : mask.clone(),null,true);
+    }
     CompletableFuture<String> peerLifecycle(EmbeddedDuplexPeerAction action, String challenge) {
         if (action == null) return failed(new IllegalArgumentException("peer action required"));
         return concurrentQualificationOnLane(false, challenge, false, null, action);
     }
     private CompletableFuture<String> concurrentQualificationOnLane(boolean arm, String challenge, boolean policyAction, long[] policy, EmbeddedDuplexPeerAction peerAction) {
+        return concurrentQualificationOnLane(arm,challenge,policyAction,policy,peerAction,false);
+    }
+    private CompletableFuture<String> concurrentQualificationOnLane(boolean arm, String challenge, boolean policyAction, long[] policy, EmbeddedDuplexPeerAction peerAction, boolean maskAction) {
         return submit(() -> {
             requireFreshProcess();
             if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE && terminalWholeReceipt != null) {
@@ -397,6 +403,7 @@ final class EmbeddedDuplexProcessHost {
                 }
                 return receipt;
             }
+            if (maskAction) return ConcurrentStereoQualification.mask(challenge,epoch,receiptConfig,receiptFeature,apk.toString(),policy);
             if (policyAction) return ConcurrentStereoQualification.policy(challenge, epoch, receiptConfig, receiptFeature, apk.toString(), policy);
             if (arm) {
                 String receipt = ConcurrentStereoQualification.arm(challenge, epoch, receiptConfig, receiptFeature, apk.toString());

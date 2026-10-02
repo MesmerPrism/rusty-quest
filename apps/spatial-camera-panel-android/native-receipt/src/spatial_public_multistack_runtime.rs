@@ -423,7 +423,7 @@ impl ProjectionZoneCompositorPrepareStatus {
 #[path = "spatial_stereo_banks.rs"]
 mod stereo_banks;
 pub(crate) use stereo_banks::{StereoRecordingInputs, StereoRecordingSource, StereoGuideKey,
-    source_banks_enabled, read_control_policy, update_control_policy};
+    source_banks_enabled, read_control_policy, update_control_policy, read_mask_policy, update_mask_policy};
 pub(crate) struct SpatialPublicGuideTargets {
     stereo_banks: Option<Box<stereo_banks::StereoBankResources>>,
     targets: Vec<SpatialPublicGuideTarget>,
@@ -1507,6 +1507,18 @@ impl SpatialPublicGuideTargets {
                 0,
                 0,
             );
+        }
+        // One diagnostic-only5x1 draw after both normal eyes, inside this same
+        // render pass/submission. Exact source leases and UBO are still held.
+        if let Some((stereo,plan))=stereo.and_then(|s|s.mask_diagnostic_plan(extent).map(|p|(s,p))) {
+            device.cmd_set_viewport(command_buffer,0,&[vk::Viewport{x:0.0,y:0.0,width:plan.extent[0] as f32,height:plan.extent[1] as f32,min_depth:0.0,max_depth:1.0}]);
+            device.cmd_set_scissor(command_buffer,0,&[vk::Rect2D{offset:vk::Offset2D{x:plan.scissor[0] as i32,y:plan.scissor[1] as i32},extent:vk::Extent2D{width:plan.scissor[2],height:plan.scissor[3]}}]);
+            device.cmd_bind_pipeline(command_buffer,vk::PipelineBindPoint::GRAPHICS,stereo.pipeline);
+            stereo.bind(device,command_buffer,self.depth_resources.current_binding().descriptor_set,self.rgb_channel_transform_uniform.descriptor_set,video_descriptor_set);
+            let mut push=OpaqueProjectionPush::for_packed_eye(0,elapsed_seconds,strength_cycle_phase_turns,self.depth_resources.current_binding(),footprint_scale,layer_override);
+            push.params0[1]=-1.0; // explicitly opted neutral diagnostic raster selection
+            push_projection_constants(device,command_buffer,stereo.pipeline_layout,&push);
+            device.cmd_draw(command_buffer,plan.vertices,1,0,0);
         }
         Ok(true)
     }

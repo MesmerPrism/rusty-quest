@@ -11,7 +11,7 @@ pub(crate) struct SourceFact {
 }
 #[derive(Clone,Copy,Debug)]
 pub(crate) struct FrameFact {
-    pub arm_generation:u64,pub ordinal:u64,pub surface:u64,pub revision:u64,pub policies:[u32;6],
+    pub arm_generation:u64,pub ordinal:u64,pub surface:u64,pub revision:u64,pub policies:[u32;6],pub mask:[u32;3],
     pub sources:[Option<SourceFact>;2],pub demanded:[usize;2],pub final_draw:bool,pub geometry_sampled:bool,
     pub available:[bool;2],
 }
@@ -26,7 +26,7 @@ struct State {
     first_gpu:u64,last_gpu:u64,gpu:u64,max_gap:u64,first_both:u64,last_both:u64,both:u64,max_both_gap:u64,
     own_after_peer:u64,peer_removed_at:u64,peer_removed_count:u64,origins:[OriginStats;2],
     pending:Option<FrameFact>,last:Option<FrameFact>,history:[Option<FrameFact>;HISTORY],next:usize,
-    pixel:Option<PixelFact>,pixel_count:u64,pixel_unavailable:u64,
+    pixel:Option<PixelFact>,blend_strip:Option<(u64,u64,[[u8;4];5])>,pixel_count:u64,pixel_unavailable:u64,
     foreign_enabled:bool,capability_mask:u64,sdk_session:u64,readback_requested:bool,
     dropout_progress:[Progress;3],
 }
@@ -35,7 +35,7 @@ impl State {
         armed_at:0,pending_since:0,first_recorded:0,last_recorded:0,recorded:0,entered:0,first_gpu:0,last_gpu:0,gpu:0,
         max_gap:0,first_both:0,last_both:0,both:0,max_both_gap:0,own_after_peer:0,peer_removed_at:0,peer_removed_count:0,
         origins:[OriginStats{first:0,last:0,distinct:0,max_gap:0,max_age:0,missing:0,transitions:0,removed_at:0,removals:0,last_identity:None};2],
-        pending:None,last:None,history:[None;HISTORY],next:0,pixel:None,pixel_count:0,pixel_unavailable:0,foreign_enabled:false,capability_mask:0,sdk_session:0,readback_requested:false,
+        pending:None,last:None,history:[None;HISTORY],next:0,pixel:None,blend_strip:None,pixel_count:0,pixel_unavailable:0,foreign_enabled:false,capability_mask:0,sdk_session:0,readback_requested:false,
         dropout_progress:[Progress::empty();3]}}
     fn arm(&mut self,process:u64,challenge:[u64;2],now:u64)->u64 {
         let Some(generation)=self.generation.checked_add(1) else{return 0};
@@ -96,6 +96,33 @@ impl State {
         let Some(frame)=self.history.iter().flatten().find(|f|f.arm_generation==self.generation&&f.ordinal==ordinal&&f.surface==surface&&f.final_draw).copied() else{return};
         self.pixel_count=self.pixel_count.saturating_add(1);
         self.pixel=Some(PixelFact{frame,now,count,hash,format,width,height,flags,contract});
+    }
+    fn blend_pixels(&mut self,ordinal:u64,surface:u64,samples:[[u8;4];5]) {
+        let Some(pixel)=self.pixel else{return};
+        if pixel.frame.ordinal!=ordinal||pixel.frame.surface!=surface
+            ||pixel.frame.mask[0]&0xc0000000!=0xc0000000
+            ||!pixel.frame.final_draw||pixel.frame.demanded!=[6,6]
+            ||pixel.frame.sources.iter().any(|s|s.is_none_or(|s|s.prefix<6))
+            ||crate::stereo_bank_mask_v1::validate(pixel.frame.mask)!=Ok(true)
+            ||![0,255].contains(&samples[2][2])||samples[4]!=[77,66,1,255]||samples.iter().any(|p|p[3]!=255){return;}
+        self.blend_strip=Some((ordinal,surface,samples));
+    }
+    fn blend_json(&self)->String {
+        fn frame(f:FrameFact)->serde_json::Value {serde_json::json!({"ordinal":f.ordinal,"surface_generation":f.surface,
+            "arm_generation":f.arm_generation,"control_revision":f.revision,"policy":f.policies,"mask_words":f.mask,
+            "final_draw_retired":f.final_draw,"effective_mask_state":if f.mask==[0;3]{"disabled"}else if f.final_draw&&f.sources.iter().all(|s|s.is_some_and(|s|s.prefix>=6)){"retired-both-current-banks"}else{"closed-missing-bank"},"banks":f.sources.map(|source|source.map(|s|serde_json::json!({
+                "process_generation":s.identity.epoch.process_generation,"source_generation":s.identity.epoch.source_generation,
+                "pair_sequence":s.identity.pair_sequence,"packed_pts_ns":s.identity.packed_pts_ns,"config_revision":s.config_revision,
+                "content_serial":s.content_serial,"prefix":s.prefix})))})}
+        let samples=self.pixel.and_then(|p|self.blend_strip.filter(|(o,s,_)|*o==p.frame.ordinal&&*s==p.frame.surface));
+        serde_json::json!({"schema":"rusty.quest.stereo.neutral_mask_readback.v1","version":1,
+            "process_generation":self.process,"challenge_words":self.challenge,"arm_generation":self.generation,"armed":self.armed,
+            "retired_frame":self.last.map(frame),"pixel_frame":self.pixel.map(|p|frame(p.frame)),
+            "sample_status":if samples.is_some(){"available"}else{"unavailable"},
+            "sample_rgba8":samples.map(|(_,_,p)|p),"pixel_format":self.pixel.map(|p|p.format),
+            "sample_contract":"diagnostic-input-layer-same-submission-row0-Own-Peer-signal-mask-packing-output-marker-unorm-v1",
+            "sample_uv_contract":"signal-blue255=bank-eye0-packed-uv0.25,0.5;blue0=mono-uv0.5,0.5",
+            "scope":"camera-input-layer-not-final-stack-or-photons"}).to_string()
     }
     fn words(&self,now:Option<u64>,selected:bool,pipeline:bool,capture_claimed:bool)->[i64;WORD_COUNT] {
         let mut w=[0i64;WORD_COUNT];
@@ -172,6 +199,19 @@ pub(crate) fn physical_cleanup_terminal()->bool {STATE.lock().map_or(false,|s|s.
 pub(crate) fn carrier_live(){if let Some(now)=now_ns(){if let Ok(mut s)=STATE.lock(){s.carrier_live=true;if s.armed{s.dropout_progress[0].demand(true,now);if s.cleanup!=3{s.cleanup=1;}s.pending_since=now;}}}}
 pub(crate) fn carrier_device(foreign_enabled:bool,capability_mask:u64,sdk_session:u64){if let Ok(mut s)=STATE.lock(){s.foreign_enabled=foreign_enabled;s.capability_mask=capability_mask;s.sdk_session=sdk_session;}}
 pub(crate) fn carrier_cleanup(terminal:bool){if let Ok(mut s)=STATE.lock(){s.carrier_live=false;if let Some(now)=now_ns(){for series in &mut s.dropout_progress{series.demand(false,now);}}if !terminal||s.cleanup==3{s.cleanup=3;}else{s.cleanup=2;}}}
+pub(crate) fn blend_oracle_requested(ordinal:u64,surface:u64)->bool {
+    STATE.lock().is_ok_and(|s|s.pending.is_some_and(|f|f.ordinal==ordinal&&f.surface==surface&&f.mask[0]&0xc0000000==0xc0000000))
+}
+pub(crate) fn blend_readback_complete(ordinal:u64,surface:u64,samples:[[u8;4];5]) {
+    if let Ok(mut s)=STATE.lock(){s.blend_pixels(ordinal,surface,samples);}
+}
+#[cfg(target_os="android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_StereoBankControls_nativeReadMaskReadback(
+    env:jni::JNIEnv<'_>,_:jni::objects::JClass<'_>)->jni::sys::jstring {
+    let Ok(s)=STATE.lock()else{return std::ptr::null_mut()};
+    match env.new_string(s.blend_json()){Ok(v)=>v.into_raw(),Err(_)=>std::ptr::null_mut()}
+}
 pub(crate) fn readback_complete(ordinal:u64,surface:u64,count:u64,hash:u64,format:u32,width:u32,height:u32,flags:u32,contract:u32){if let Some(now)=now_ns(){if let Ok(mut s)=STATE.lock(){s.pixel(ordinal,surface,now,count,hash,format,width,height,flags,contract);}}}
 pub(crate) fn readback_unavailable(){if let Ok(mut s)=STATE.lock(){if s.armed{s.pixel_unavailable=s.pixel_unavailable.saturating_add(1);}}}
 pub(crate) fn take_requested_readback()->bool {STATE.lock().map_or(false,|mut s|{let requested=s.armed&&s.readback_requested;s.readback_requested=false;requested})}
@@ -253,8 +293,22 @@ mod tests {
     fn source(epoch:u64,sequence:u64)->SourceFact {SourceFact{identity:StereoFrameIdentity{epoch:SourceEpoch{process_generation:7,source_generation:epoch},pair_sequence:sequence,
         left_timestamp_ns:sequence as i64*10,right_timestamp_ns:sequence as i64*10+1,packed_pts_ns:sequence as i64*20,calibration_revision:None},geometry_revision:None,
         config_revision:3,prefix:6,observed_at_ns:10,content_serial:sequence,processing_codes:[0;4]}}
-    fn frame(generation:u64,ordinal:u64,peer:Option<SourceFact>)->FrameFact {FrameFact{arm_generation:generation,ordinal,surface:8,revision:3,policies:[0,1,0,0,2,2],
+    fn frame(generation:u64,ordinal:u64,peer:Option<SourceFact>)->FrameFact {FrameFact{arm_generation:generation,ordinal,surface:8,revision:3,policies:[0,1,0,0,2,2],mask:[0;3],
         sources:[Some(source(1,ordinal)),peer],demanded:[6,6],final_draw:true,geometry_sampled:false,available:[true,peer.is_some()]}}
+    #[test]fn mask_strip_requires_actual_retired_frame_pixel_identity_and_exact_marker(){
+        let mut s=State::empty();let a=s.arm(7,[1,2],10);let mut f=frame(a,1,Some(source(2,1)));
+        f.mask=crate::stereo_bank_mask_v1::pack(true,0.5,0.1,1.0,false,true).unwrap();
+        let samples=[[255,255,255,255],[0,0,0,255],[255,255,0,255],[0,0,0,255],[77,66,1,255]];
+        s.record(f,20);s.blend_pixels(1,8,samples);assert!(s.blend_strip.is_none());
+        s.retire(1,8,30);s.blend_pixels(1,8,samples);assert!(s.blend_strip.is_none());
+        s.pixel(1,8,31,5,123,1,16,16,0,1);s.blend_pixels(2,8,samples);assert!(s.blend_strip.is_none());
+        let mut damaged=samples;damaged[4][2]=2;s.blend_pixels(1,8,damaged);assert!(s.blend_strip.is_none());
+        s.blend_pixels(1,8,samples);let j:serde_json::Value=serde_json::from_str(&s.blend_json()).unwrap();
+        assert_eq!(j["sample_status"],"available");assert_eq!(j["pixel_frame"]["mask_words"][0],f.mask[0]);
+        assert_eq!(j["pixel_frame"]["banks"][1]["source_generation"],2);assert_eq!(s.words(Some(40),true,true,true).len(),160);
+        s.arm(7,[3,4],41);assert!(s.blend_strip.is_none());assert_eq!(serde_json::from_str::<serde_json::Value>(&s.blend_json()).unwrap()["sample_status"],"unavailable");
+    }
+    #[test]fn partial_mask_banks_do_not_claim_sample_proof(){let mut s=State::empty();let a=s.arm(7,[1,2],10);let mut f=frame(a,1,None);f.mask=crate::stereo_bank_mask_v1::pack(true,0.5,0.1,1.0,false,true).unwrap();s.record(f,20);s.retire(1,8,30);s.pixel(1,8,31,5,123,1,16,16,0,1);s.blend_pixels(1,8,[[77,66,1,255];5]);assert!(s.blend_strip.is_none());}
     #[test]fn submit_and_recording_do_not_create_gpu_or_pixel_evidence(){let mut s=State::empty();let a=s.arm(7,[1,2],10);s.record(frame(a,1,Some(source(2,1))),20);
         let w=s.words(Some(30),true,true,true);assert_eq!(w[12],1);assert_eq!(w[16],0);assert_eq!(w[18],0);assert_eq!(w[9],1);}
     #[test]fn exact_retirement_and_readback_identity_are_required(){let mut s=State::empty();let a=s.arm(7,[1,2],10);s.record(frame(a,1,Some(source(2,1))),20);

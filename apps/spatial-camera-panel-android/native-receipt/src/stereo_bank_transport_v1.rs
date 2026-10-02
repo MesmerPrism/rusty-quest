@@ -17,8 +17,8 @@ pub(crate) enum GuideOrigin { Own = 0, Peer = 1, FollowRegion = 2 }
 #[repr(C, align(16))]
 pub(crate) struct StereoBankPolicyUniformV1 {
     pub region_origins: [u32; 4], // Center, Middle, Outer, vertex geometry driver
-    pub guide_origins: [u32; 4], // brightness, strength, reserved0, reserved0
-    pub source_state: [u32; 4], // Own completed-prefix, Peer completed-prefix, ABI, reserved0
+    pub guide_origins: [u32; 4], // brightness, strength, explicit neutral-mask-v1 word0/word1 (default0)
+    pub source_state: [u32; 4], // Own completed-prefix, Peer completed-prefix, ABI, explicit neutral-mask-v1 word2 (default0)
 }
 
 impl StereoBankPolicyUniformV1 {

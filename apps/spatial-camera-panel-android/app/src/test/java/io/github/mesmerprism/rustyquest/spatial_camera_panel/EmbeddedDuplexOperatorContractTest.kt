@@ -21,6 +21,24 @@ class EmbeddedDuplexOperatorContractTest {
       "admission_authority_id" to "admission.authority",
       "max_token_ttl_ms" to 60_000L)
 
+  @Test fun neutralMaskIsExplicitVersionedTypedAndClosed() {
+    val selected = mapOf<String,Any?>("version" to 1,"enabled" to true,"threshold" to 0.5f,
+        "softness" to 0.1f,"amount" to 1f,"invert" to false,"diagnostic" to true)
+    val accepted=EmbeddedDuplexOperatorContract.parseFields("blend_update",nonce,selected)
+    assertEquals(EmbeddedDuplexOperatorContract.Route.BLEND_UPDATE,accepted.route)
+    assertTrue(accepted.mask!!.contentEquals(NeutralMaskPolicy(enabled=true,amount=1f,diagnostic=true).words()))
+    assertEquals(EmbeddedDuplexOperatorContract.Route.BLEND_READ,
+        EmbeddedDuplexOperatorContract.parseFields("blend_read",nonce,emptyMap()).route)
+    for(bad in listOf(selected+("version" to 2),selected+("threshold" to Float.NaN),
+        selected+("threshold" to -0.0f),selected+("softness" to 0f),selected+("amount" to 2f),
+        selected+("enabled" to 1),selected+("threshold" to 0.5),selected+("source" to "peer"),
+        selected-"diagnostic",selected+("enabled" to false))) {
+      assertThrows(IllegalArgumentException::class.java){EmbeddedDuplexOperatorContract.parseFields("blend_update",nonce,bad)}
+    }
+    assertThrows(IllegalArgumentException::class.java){EmbeddedDuplexOperatorContract.parseFields("blend_read",nonce,selected)}
+    assertTrue(NeutralMaskPolicy().words().contentEquals(longArrayOf(1,0,0.5f.toRawBits().toLong(),0.1f.toRawBits().toLong(),0,0,0)))
+  }
+
   @Test fun exactTypedReviewAndConfirmShapes() {
     val review = EmbeddedDuplexOperatorContract.parseFields("review", nonce, fields)
     assertEquals(EmbeddedDuplexOperatorContract.Route.REVIEW, review.route)

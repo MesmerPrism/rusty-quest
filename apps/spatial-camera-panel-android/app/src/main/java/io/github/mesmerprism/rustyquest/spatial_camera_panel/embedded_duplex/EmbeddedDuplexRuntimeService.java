@@ -23,6 +23,9 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context).streamDropoutDiagnostic(challenge);
     }
 
+    public static CompletableFuture<String> concurrentMask(Context context, String challenge, long[] mask) {
+        return EmbeddedDuplexProcessHost.forApplication(context).concurrentMask(challenge,mask);
+    }
     public static CompletableFuture<String> concurrentPolicy(Context context, String challenge, long[] policy) {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentPolicy(challenge, policy);
     }

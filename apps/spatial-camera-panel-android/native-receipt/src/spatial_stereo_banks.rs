@@ -4,10 +4,10 @@ use crate::stereo_bank_transport_v1::{self as abi, StereoBankPolicyUniformV1};
 use crate::stereo_input_set::StereoFrameIdentity;
 use std::any::Any;
 static SOURCE_BANKS_ACTIVE:AtomicBool=AtomicBool::new(false);
-static CONTROL_POLICY:Mutex<([u32;6],u64)>=Mutex::new(([0,0,0,0,2,2],1));
+static CONTROL_POLICY:Mutex<([u32;6],u64,[u32;3])>=Mutex::new(([0,0,0,0,2,2],1,[0;3]));
 pub(crate) fn source_banks_enabled()->bool {SOURCE_BANKS_ACTIVE.load(Ordering::Acquire)}
 pub(crate) fn read_control_policy()->([u32;6],u64) {
-    *CONTROL_POLICY.lock().unwrap_or_else(|poison|poison.into_inner())
+    let p=CONTROL_POLICY.lock().unwrap_or_else(|poison|poison.into_inner());(p.0,p.1)
 }
 pub(crate) fn update_control_policy(values:[u32;6])->Result<u64,String> {
     if !source_banks_enabled(){return Err("source-banks-disabled".into());}
@@ -15,9 +15,18 @@ pub(crate) fn update_control_policy(values:[u32;6])->Result<u64,String> {
     let mut policy=CONTROL_POLICY.lock().map_err(|_|"source-bank-policy-poisoned")?;
     if policy.0==values{return Ok(policy.1);}
     let revision=policy.1.checked_add(1).ok_or("source-bank-policy-revision-exhausted")?;
-    *policy=(values,revision);Ok(revision)
+    policy.0=values;policy.1=revision;Ok(revision)
 }
 
+pub(crate) fn read_mask_policy()->([u32;6],u64,[u32;3]) {*CONTROL_POLICY.lock().unwrap_or_else(|p|p.into_inner())}
+pub(crate) fn update_mask_policy(words:[u32;3])->Result<u64,String> {
+    if !source_banks_enabled(){return Err("source-banks-disabled".into());}
+    crate::stereo_bank_mask_v1::validate(words).map_err(str::to_owned)?;
+    let mut p=CONTROL_POLICY.lock().map_err(|_|"source-bank-policy-poisoned")?;
+    if p.2==words{return Ok(p.1);}
+    let revision=p.1.checked_add(1).ok_or("source-bank-policy-revision-exhausted")?;
+    p.2=words;p.1=revision;Ok(revision)
+}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StereoGuideKey {
     pub origin: usize,
@@ -116,6 +125,7 @@ pub(crate) struct StereoBankResources {
     submission_entered:bool,
     sdk_submission:Option<(u64,u64)>,
     receipt_frame:Option<(u64,u64)>,
+    recorded_mask:[u32;3],recorded_prefixes:[u32;2],
 }
 impl Drop for StereoBankResources {
     fn drop(&mut self) {
@@ -147,7 +157,7 @@ impl SpatialPublicGuideTargets {
             policy_buffer:vk::Buffer::null(),policy_memory:vk::DeviceMemory::null(),
             pipeline_layout:vk::PipelineLayout::null(),pipeline:vk::Pipeline::null(),
             displacement_pipeline:vk::Pipeline::null(),video_layout,vertex_spirv:vertex_spirv.to_vec(),fragment_spirv:fragment_spirv.to_vec(),pending_fence:None,
-            retained:[None,None],recorded_keys:[None,None],vk_hold_tokens:[None,None],submission_entered:false,sdk_submission:None,receipt_frame:None };
+            retained:[None,None],recorded_keys:[None,None],vk_hold_tokens:[None,None],submission_entered:false,sdk_submission:None,receipt_frame:None,recorded_mask:[0;3],recorded_prefixes:[0;2] };
         let result=(|| {
             state.peer=Some(ScalarProducerBank::create(self,device,memory)?);
             state.guides_layout=device.create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default()
@@ -284,7 +294,7 @@ impl SpatialPublicGuideTargets {
         let mut receipt=crate::spatial_stereo_qualification::FrameFact{arm_generation:crate::spatial_stereo_qualification::arm_generation(),
             ordinal:inputs.frame_ordinal,surface:inputs.surface_generation,revision:inputs.control_revision,
             policies:[inputs.policy.region_origins[0],inputs.policy.region_origins[1],inputs.policy.region_origins[2],inputs.policy.region_origins[3],
-                inputs.policy.guide_origins[0],inputs.policy.guide_origins[1]],sources:[None,None],demanded:inputs.demanded_prefixes,final_draw:false,geometry_sampled:false,
+                inputs.policy.guide_origins[0],inputs.policy.guide_origins[1]],mask:[inputs.policy.guide_origins[2],inputs.policy.guide_origins[3],inputs.policy.source_state[3]],sources:[None,None],demanded:inputs.demanded_prefixes,final_draw:false,geometry_sampled:false,
             available:[inputs.sources[0].is_some(),inputs.sources[1].is_some()]};
         let result=crate::spatial_guide_processing::with_source_bank_processing_policy(inputs.processing_policy,|| {
             // Reserve every sampled Own content hold before any native command
@@ -357,10 +367,11 @@ impl SpatialPublicGuideTargets {
                 device.update_descriptor_sets(&[vk::WriteDescriptorSet::default().dst_set(state.guides).dst_binding(abi::GUIDE_BINDINGS[index])
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).image_info(&images)],&[]);
             }
-            inputs.policy.source_state=[completed[0],completed[1],1,0];
+            inputs.policy.source_state=[completed[0],completed[1],1,inputs.policy.source_state[3]];
             let mapped=device.map_memory(state.policy_memory,0,48,vk::MemoryMapFlags::empty()).map_err(|e|format!("stereo-policy-map-{e:?}"))?;
             std::ptr::copy_nonoverlapping((&inputs.policy as *const StereoBankPolicyUniformV1).cast::<u8>(),mapped.cast::<u8>(),48);
             device.unmap_memory(state.policy_memory);
+            state.recorded_mask=receipt.mask;state.recorded_prefixes=completed;
             state.receipt_frame=Some((receipt.ordinal,receipt.surface));
             crate::spatial_stereo_qualification::record_frame(receipt);
             Ok(aggregate)
@@ -401,7 +412,9 @@ unsafe fn record_foreign_source_ownership(device:&ash::Device,command:vk::Comman
 fn validate_recording_inputs(inputs:&StereoRecordingInputs<'_>)->Result<(),String> {
     if inputs.retirement_fence==vk::Fence::null(){return Err("stereo-retirement-fence-missing".into());}
     if inputs.policy.region_origins.iter().any(|&v|v>1) || inputs.policy.guide_origins[..2].iter().any(|&v|v>2)
-        || inputs.policy.guide_origins[2..]!=[0,0] {return Err("stereo-policy-invalid".into());}
+        || crate::stereo_bank_mask_v1::validate([inputs.policy.guide_origins[2],inputs.policy.guide_origins[3],inputs.policy.source_state[3]]).is_err() {return Err("stereo-policy-invalid".into());}
+    if crate::stereo_bank_mask_v1::validate([inputs.policy.guide_origins[2],inputs.policy.guide_origins[3],inputs.policy.source_state[3]])==Ok(true)
+        && inputs.demanded_prefixes!=[6,6] {return Err("mask-current-bank-demand-required".into());}
     for origin in 0..2 {
         if ![0,1,3,4,6].contains(&inputs.demanded_prefixes[origin]){return Err("stereo-prefix-invalid".into());}
         if let Some(source)=&inputs.sources[origin] {
@@ -413,6 +426,10 @@ fn validate_recording_inputs(inputs:&StereoRecordingInputs<'_>)->Result<(),Strin
     Ok(())
 }
 impl StereoBankResources {
+    pub(super) fn mask_diagnostic_plan(&self,extent:vk::Extent2D)->Option<crate::stereo_bank_mask_v1::DiagnosticDrawPlan> {
+        if self.pending_fence.is_none()||self.recorded_keys.iter().any(Option::is_none){return None;}
+        crate::stereo_bank_mask_v1::DiagnosticDrawPlan::for_frame(self.recorded_mask,self.recorded_prefixes,[extent.width,extent.height])
+    }
     pub(super) unsafe fn bind(&self,device:&ash::Device,command:vk::CommandBuffer,
         depth:vk::DescriptorSet,rgb:vk::DescriptorSet,video:vk::DescriptorSet) {
         device.cmd_bind_descriptor_sets(command,vk::PipelineBindPoint::GRAPHICS,self.pipeline_layout,1,

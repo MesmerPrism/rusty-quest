@@ -37,7 +37,7 @@ internal object EmbeddedDuplexOperatorContract {
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
   enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
-    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
+    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
   data class Request(
       val route: Route,
       val challenge: String,
@@ -45,6 +45,7 @@ internal object EmbeddedDuplexOperatorContract {
       val draft: EmbeddedDuplexEnrollmentDraft? = null,
       val reviewSha256: String? = null,
       val policy: LongArray? = null,
+      val mask: LongArray? = null,
   )
 
   fun callerIsShell(uid: Int): Boolean = uid == Process.SHELL_UID
@@ -72,6 +73,8 @@ internal object EmbeddedDuplexOperatorContract {
       "concurrent_status" -> Route.CONCURRENT_STATUS
       "policy_read" -> Route.POLICY_READ
       "policy_update" -> Route.POLICY_UPDATE
+      "blend_read" -> Route.BLEND_READ
+      "blend_update" -> Route.BLEND_UPDATE
       "start" -> Route.START
       "renew_authority" -> Route.RENEW_AUTHORITY
       "peer_stop" -> Route.PEER_STOP
@@ -85,10 +88,18 @@ internal object EmbeddedDuplexOperatorContract {
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
       Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.CLOSE_NO_MEDIA,
-      Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.OWN_CAPTURE_DIAGNOSTIC, Route.STREAM_DROPOUT_DIAGNOSTIC, Route.POLICY_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
+      Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.OWN_CAPTURE_DIAGNOSTIC, Route.STREAM_DROPOUT_DIAGNOSTIC, Route.POLICY_READ, Route.BLEND_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
+      Route.BLEND_UPDATE -> setOf("version","enabled","threshold","softness","amount","invert","diagnostic")
       Route.POLICY_UPDATE -> setOf("center", "middle", "outer", "geometry", "brightness", "strength")
     }
     require(fields.keys == expected) { "operator-fields-invalid" }
+    if (route == Route.BLEND_UPDATE) {
+      fun flag(name: String) = fields[name] as? Boolean ?: throw IllegalArgumentException("mask flag type")
+      fun value(name: String) = fields[name] as? Float ?: throw IllegalArgumentException("mask float type")
+      val version = fields["version"] as? Int ?: throw IllegalArgumentException("mask version type")
+      val policy = NeutralMaskPolicy(version,flag("enabled"),value("threshold"),value("softness"),value("amount"),flag("invert"),flag("diagnostic"))
+      return Request(route,argument,mask=policy.words())
+    }
     if (route == Route.POLICY_UPDATE) {
       val words = arrayOf("center", "middle", "outer", "geometry", "brightness", "strength").mapIndexed { index, name ->
         val value = fields[name] as? Int ?: throw IllegalArgumentException("policy type")
@@ -98,7 +109,7 @@ internal object EmbeddedDuplexOperatorContract {
       return Request(route, argument, policy = words)
     }
     if (route in setOf(Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE)) return Request(route, argument)
-    if (route == Route.POLICY_READ || route == Route.CONCURRENT_ARM || route == Route.CONCURRENT_STATUS ||
+    if (route == Route.POLICY_READ || route == Route.BLEND_READ || route == Route.CONCURRENT_ARM || route == Route.CONCURRENT_STATUS ||
         route == Route.OWN_CAPTURE_DIAGNOSTIC || route == Route.STREAM_DROPOUT_DIAGNOSTIC ||
         route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER ||
         route == Route.CLOSE_NO_MEDIA || route == Route.PAIR_STATUS ||

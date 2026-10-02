@@ -16,7 +16,26 @@ data class StereoBankControlPolicy(
 }
 data class StereoBankControlSnapshot(val enabled: Boolean, val policy: StereoBankControlPolicy, val revision: Long)
 
+/** Explicit neutral v1 test selection; no luminance formula is owned here. */
+data class NeutralMaskPolicy(val version: Int = 1, val enabled: Boolean = false,
+    val threshold: Float = 0.5f, val softness: Float = 0.1f, val amount: Float = 0f,
+    val invert: Boolean = false, val diagnostic: Boolean = false) {
+    fun words(): LongArray {
+        require(version == 1)
+        require(listOf(threshold, softness, amount).all { it.isFinite() && it.toRawBits() >= 0 })
+        require(threshold in 0f..1f && softness in 0.001f..0.5f && amount in 0f..1f)
+        require(enabled || (threshold == 0.5f && softness == 0.1f && amount == 0f && !invert && !diagnostic))
+        return longArrayOf(1, if(enabled) 1 else 0, threshold.toRawBits().toLong(), softness.toRawBits().toLong(),
+            amount.toRawBits().toLong(), if(invert) 1 else 0, if(diagnostic) 1 else 0)
+    }
+}
 object StereoBankControls {
+    fun updateMask(policy: NeutralMaskPolicy): Long = nativeApplyMask(policy.words()).also { require(it > 0) }
+    fun maskSnapshot(): LongArray = nativeReadMask().also { require(it.size == 12 && it[0] == 1L && it[1] == 1L && it[2] > 0) }
+    fun maskReadback(): String = requireNotNull(nativeReadMaskReadback()).also { require(it.toByteArray(Charsets.UTF_8).size <= 8192) }
+    @JvmStatic private external fun nativeReadMask(): LongArray
+    @JvmStatic private external fun nativeApplyMask(policy: LongArray): Long
+    @JvmStatic private external fun nativeReadMaskReadback(): String?
     /** Opaque native epoch; arming does not establish frame or pixel adoption. */
     fun armConcurrentQualification(challenge: String): Long {
         val words = challengeWords(challenge)

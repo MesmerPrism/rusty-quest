@@ -47,6 +47,10 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
           val receipt = EmbeddedDuplexRuntimeService.peerLifecycle(app, action, request.challenge).get(120, TimeUnit.SECONDS)
           Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
         }
+        EmbeddedDuplexOperatorContract.Route.BLEND_READ, EmbeddedDuplexOperatorContract.Route.BLEND_UPDATE -> {
+          val receipt = EmbeddedDuplexRuntimeService.concurrentMask(app,request.challenge,request.mask).get(30,TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge",request.challenge); putString("receipt",receipt) }
+        }
         EmbeddedDuplexOperatorContract.Route.POLICY_READ, EmbeddedDuplexOperatorContract.Route.POLICY_UPDATE -> {
           val receipt = EmbeddedDuplexRuntimeService.concurrentPolicy(app, request.challenge, request.policy).get(30, TimeUnit.SECONDS)
           Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }

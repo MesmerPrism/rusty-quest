@@ -817,6 +817,7 @@ fn append_native_marker_file(message: &str) {
 }
 
 mod stereo_bank_transport_v1;
+mod stereo_bank_mask_v1;
 mod stereo_input_set;
 #[cfg(target_os="android")] mod pinned_packed_contents;
 #[cfg(target_os="android")] mod packed_ahb_gl_primitives;

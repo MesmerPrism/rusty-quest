@@ -86,6 +86,36 @@ internal object ConcurrentStereoQualification {
             .put("policy_configuration_scope", "configuration_only").toString()
     }
 
+    @JvmStatic fun mask(challenge: String, processEpoch: String, runtimeSha: String,
+        featureSha: String, apkSha: String, update: LongArray?): String {
+        require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)
+        status(challenge, processEpoch, runtimeSha, featureSha, apkSha)
+        if(update != null) {
+            require(update.size == 7 && update[0] == 1L && listOf(update[1],update[5],update[6]).all { it in 0L..1L }
+                && update.slice(2..4).all { it in 0L..0xffffffffL })
+            StereoBankControls.updateMask(io.github.mesmerprism.rustyquest.spatial_camera_panel.NeutralMaskPolicy(
+                1,update[1]==1L,Float.fromBits(update[2].toInt()),Float.fromBits(update[3].toInt()),Float.fromBits(update[4].toInt()),update[5]==1L,update[6]==1L))
+        }
+        val configured=StereoBankControls.maskSnapshot()
+        val requested=update != null && StereoBankControls.requestConcurrentQualificationReadback(challenge,arm)
+        val report=JSONObject(StereoBankControls.maskReadback())
+        val bits=StereoBankControls.challengeWords(challenge)
+        val observed=report.getJSONArray("challenge_words")
+        require(report.getString("schema")=="rusty.quest.stereo.neutral_mask_readback.v1" && report.getInt("version")==1
+            && report.getLong("process_generation")==nativeProcess && report.getLong("arm_generation")==arm
+            && report.getBoolean("armed") && observed.length()==2 && observed.getLong(0)==bits[0] && observed.getLong(1)==bits[1])
+        val pixel=report.optJSONObject("pixel_frame")
+        val matches=pixel != null && pixel.getLong("arm_generation")==arm && pixel.getLong("control_revision")==configured[2]
+            && (0..2).all { pixel.getJSONArray("mask_words").getLong(it)==configured[3+it] }
+            && (0..5).all { pixel.getJSONArray("policy").getLong(it)==configured[6+it] }
+        return JSONObject().put("schema","rusty.quest.stereo.neutral_mask_receipt.v1")
+            .put("action",if(update==null) "blend_read" else "blend_update").put("challenge",challenge)
+            .put("process_epoch_id",processEpoch).put("runtime_config_sha256",runtimeSha)
+            .put("feature_lock_sha256",featureSha).put("installed_apk_sha256",apkSha)
+            .put("configured_mask",JSONArray(configured.take(6))).put("configured_policy",JSONArray(configured.drop(6))).put("configuration_scope","configuration_only")
+            .put("readback_request_accepted",requested).put("pixel_frame_matches_current_configuration",matches).put("gpu_readback",report).toString()
+    }
+
     @JvmStatic fun lifecycle(action: String, challenge: String, processEpoch: String,
         runtimeSha: String, featureSha: String, apkSha: String, nativeResult: String): String {
         require(action in setOf("start", "renew_authority", "peer_stop", "peer_revoke", "peer_status", "whole_app_close"))

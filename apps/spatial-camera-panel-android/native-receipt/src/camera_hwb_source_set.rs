@@ -250,15 +250,16 @@ unsafe fn render_source_set_common_graph(
             let video_settings = spatial_video_projection_settings();
             let latest_video_frame=if video_settings.active(){latest_spatial_video_projection_frame()}else{None};
             let mut stereo_inputs=if let Some(imports)=stereo_source_imports.as_mut() {
-                let (words,revision)=crate::spatial_public_multistack_runtime::read_control_policy();
+                let (words,revision,mask)=crate::spatial_public_multistack_runtime::read_mask_policy();
                 let policy=crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
                     region_origins:[words[0],words[1],words[2],words[3]],
-                    guide_origins:[words[4],words[5],0,0],source_state:[0,0,1,0] };
+                    guide_origins:[words[4],words[5],mask[0],mask[1]],source_state:[0,0,1,mask[2]] };
                 // Conservative neutral demand covers every selected guide stage;
                 // private effect demand may later reduce this prefix explicitly.
                 let mut prefixes=[0usize;2];
                 for &origin in &words[..4]{prefixes[origin as usize]=6;}
                 for &origin in &words[4..]{if origin<2{prefixes[origin as usize]=6;}}
+                if crate::stereo_bank_mask_v1::validate(mask)? {prefixes=[6,6];}
                 Some(imports.recording_inputs(policy,revision,prefixes,frame_fence,u64::from(frames_presented)+1,surface_generation)?)
             } else {None};
             if let Some(inputs) = stereo_inputs.as_mut() {

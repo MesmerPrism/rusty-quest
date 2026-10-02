@@ -6,7 +6,6 @@
 
 #[cfg(target_os = "android")]
 use super::ProjectionZoneCompositorSettings;
-use super::PROJECTION_COMPOSITION_READBACK_CAPTURE;
 
 #[cfg(target_os = "android")]
 use ash::vk;
@@ -14,7 +13,7 @@ use ash::vk;
 #[cfg(target_os = "android")]
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 
-pub(crate) const PROJECTION_READBACK_TOGGLE: u32 = PROJECTION_COMPOSITION_READBACK_CAPTURE;
+pub(crate) const PROJECTION_READBACK_TOGGLE: u32 = super::PROJECTION_COMPOSITION_READBACK_CAPTURE;
 const SAMPLE_RADIUS_PIXELS: i32 = 64;
 const SAMPLE_COUNT_PER_STRIP: usize = (SAMPLE_RADIUS_PIXELS as usize * 2) + 1;
 const TILE_CENTER_COUNT_PER_EYE: usize = 25;
@@ -109,6 +108,7 @@ enum SampleKind {
     RightEdgeNormal,
     LeftCornerSdfNormal,
     TileCenter,
+    BlendOracle,
 }
 
 impl SampleKind {
@@ -120,6 +120,7 @@ impl SampleKind {
             Self::RightEdgeNormal => "right-edge-normal",
             Self::LeftCornerSdfNormal => "left-corner-sdf-normal",
             Self::TileCenter => "tile-center",
+            Self::BlendOracle => "neutral-mask-oracle",
         }
     }
 }
@@ -465,12 +466,15 @@ impl ProjectionReadback {
             self.log_unavailable(identity, "prior-capture-awaits-natural-frame-fence");
             return;
         }
-        let plan = SamplePlan::from_target_rects(
+        let mut plan = SamplePlan::from_target_rects(
             self.width,
             self.height,
             core_rects,
             settings.center_corner_radius_uv,
         );
+        if self.width>=5 && crate::spatial_stereo_qualification::blend_oracle_requested(identity.frame_id,identity.surface_generation) {
+            for x in 0..5{plan.points.push(SamplePoint{x,y:0,kind:SampleKind::BlendOracle});}
+        }
         if plan.bytes() == 0 || plan.bytes() > MAX_STAGING_BYTES {
             self.log_unavailable(identity, "sample-plan-outside-staging-bound");
             return;
@@ -632,6 +636,9 @@ impl ProjectionReadback {
         crate::spatial_stereo_qualification::readback_complete(identity.frame_id,identity.surface_generation,
             plan.points.len() as u64,hash,match format{StoredPixelFormat::Rgba8=>1,StoredPixelFormat::Bgra8=>2},
             self.width,self.height,identity.recorded_flags,identity.region_contract_version);
+        if let Some(samples)=extract_mask_strip(&plan,bytes,format) {
+            crate::spatial_stereo_qualification::blend_readback_complete(identity.frame_id,identity.surface_generation,samples);
+        }
         emit_samples(
             identity,
             &plan,
@@ -772,6 +779,22 @@ fn find_memory_type(
 // the probe at construction. Keep allocation logic below the pure planning and
 // decoding code so its bounds are host-testable.
 
+/// Exact five diagnostic coordinates and format-decoded transferred bytes.
+fn extract_mask_strip(plan:&SamplePlan,bytes:&[u8],format:StoredPixelFormat)->Option<[[u8;4];5]> {
+    let entries:Vec<_>=plan.points.iter().enumerate().filter(|(_,p)|p.kind==SampleKind::BlendOracle).collect();
+    if entries.len()!=5{return None;}
+    let mut samples=[[0;4];5];
+    for (slot,(i,p)) in entries.into_iter().enumerate(){
+        if p.x!=slot as u32||p.y!=0{return None;}
+        let raw=bytes.get(i.checked_mul(4)?..i.checked_mul(4)?.checked_add(4)?)?;
+        samples[slot]=format.decode(raw.try_into().ok()?);
+    }
+    Some(samples)
+}
+#[cfg(test)]mod mask_readback_tests{use super::*;
+ #[test]fn actual_copy_plan_extracts_five_coordinates_and_preserves_unorm_format(){let mut plan=SamplePlan{points:(0..5).map(|x|SamplePoint{x,y:0,kind:SampleKind::BlendOracle}).collect()};let bytes:Vec<_>=(0..5).flat_map(|_|[1,2,3,255]).collect();assert_eq!(extract_mask_strip(&plan,&bytes,StoredPixelFormat::Rgba8),Some([[1,2,3,255];5]));assert_eq!(extract_mask_strip(&plan,&bytes,StoredPixelFormat::Bgra8),Some([[3,2,1,255];5]));assert!(extract_mask_strip(&plan,&bytes[..19],StoredPixelFormat::Rgba8).is_none());plan.points[1].x=0;assert!(extract_mask_strip(&plan,&bytes,StoredPixelFormat::Rgba8).is_none());plan.points.pop();assert!(extract_mask_strip(&plan,&bytes,StoredPixelFormat::Rgba8).is_none());}
+}
+
 #[cfg(target_os = "android")]
 fn emit_samples(
     identity: CaptureIdentity,
@@ -784,6 +807,7 @@ fn emit_samples(
     composite_alpha: vk::CompositeAlphaFlagsKHR,
 ) {
     let mut groups = [
+        Vec::new(),
         Vec::new(),
         Vec::new(),
         Vec::new(),
@@ -808,6 +832,7 @@ fn emit_samples(
             SampleKind::RightEdgeNormal => 3,
             SampleKind::LeftCornerSdfNormal => 4,
             SampleKind::TileCenter => 5,
+            SampleKind::BlendOracle => 6,
         };
         groups[group].push(entry);
     }
@@ -824,7 +849,8 @@ fn emit_samples(
                 2 => SampleKind::RightTopNormal,
                 3 => SampleKind::RightEdgeNormal,
                 4 => SampleKind::LeftCornerSdfNormal,
-                _ => SampleKind::TileCenter,
+                5 => SampleKind::TileCenter,
+                _ => SampleKind::BlendOracle,
             };
             log_marker(format_sample_chunk_line(
                 identity.serial,
