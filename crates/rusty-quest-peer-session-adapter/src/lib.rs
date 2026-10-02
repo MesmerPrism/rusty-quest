@@ -252,6 +252,377 @@ fn proposal(
     })
 }
 
+/// Project a validated BLE observation without inventing accepted peers or state.
+/// The returned proposal remains non-authoritative until Manifold reviews it.
+pub fn project_observed_ble_peer_session(
+    pair: &BleRendezvousPairReceipt,
+    config: &QuestPeerSessionProjectionConfig,
+) -> Result<ManifoldPeerSessionProposal, String> {
+    validate_ble_rendezvous_pair_receipt(pair).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|error| error.message)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
+    if !(1_000..=60_000).contains(&config.authorization_ttl_ms) {
+        return Err("signed rendezvous lifetime must be 1000..=60000 ms".into());
+    }
+    proposal(pair, config)
+}
+
+/// Explicit operator trust input, pinned separately from untrusted requests.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestPeerOwnerPolicy {
+    /// Operator-authorized enrollment routes.
+    pub trusted_operator_ids: Vec<DottedId>,
+    /// Operator-reviewed public-key fingerprint identities.
+    pub trusted_key_fingerprints: Vec<DottedId>,
+    /// Accepted BLE projection adapter routes.
+    pub trusted_adapter_ids: Vec<DottedId>,
+}
+
+/// One retained request with its original review time. No accepted state input.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestPeerOwnerStep {
+    /// Original owner review time, retained during journal replay.
+    pub now_ms: u64,
+    /// Actual typed owner request.
+    pub request: QuestPeerOwnerRequest,
+}
+
+/// Decode raw owner inputs while rejecting duplicate JSON fields at every depth.
+/// This check precedes typed decoding, including the closed enrollment adapter.
+pub fn parse_peer_owner_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    struct Unique;
+    impl<'de> Deserialize<'de> for Unique {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Unique;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("JSON without duplicate object fields")
+                }
+                fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_str<E: serde::de::Error>(self, _: &str) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_unit<E: serde::de::Error>(self) -> Result<Unique, E> {
+                    Ok(Unique)
+                }
+                fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                    self,
+                    mut sequence: A,
+                ) -> Result<Unique, A::Error> {
+                    while sequence.next_element::<Unique>()?.is_some() {}
+                    Ok(Unique)
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<Unique, A::Error> {
+                    use serde::de::Error;
+                    let mut keys = std::collections::BTreeSet::new();
+                    while let Some(key) = map.next_key::<String>()? {
+                        if !keys.insert(key.clone()) {
+                            return Err(A::Error::custom(format!("duplicate JSON field: {key}")));
+                        }
+                        map.next_value::<Unique>()?;
+                    }
+                    Ok(Unique)
+                }
+            }
+            deserializer.deserialize_any(Visitor)
+        }
+    }
+    let mut parser = serde_json::Deserializer::from_slice(bytes);
+    Unique::deserialize(&mut parser).map_err(|e| e.to_string())?;
+    parser.end().map_err(|e| e.to_string())?;
+    serde_json::from_slice(bytes).map_err(|e| e.to_string())
+}
+
+/// Supported owner requests; every decision is computed by Manifold.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(
+    tag = "operation",
+    content = "request",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum QuestPeerOwnerRequest {
+    /// Apply advisory peer status through the peer owner.
+    Peer(rusty_manifold_peer::ManifoldPeerStatusProposal),
+    /// Enroll, rotate or revoke a credential through the enrollment owner.
+    Enrollment(
+        #[serde(with = "owner_enrollment_wire")] rusty_manifold_peer::ManifoldPeerEnrollmentRequest,
+    ),
+    /// Review reciprocal signatures and consume their nonce through the owner.
+    Rendezvous(rusty_manifold_peer::ManifoldRendezvousReviewRequest),
+    /// Review the validated observation against retained current authority.
+    Session(QuestPeerSessionProjectionConfig),
+    /// Explicit session revocation through the owner.
+    Revoke(ManifoldPeerSessionRevocation),
+}
+
+// The owner's flattened action plus deny_unknown_fields cannot round-trip via
+// derive. Decode the same closed wire fields separately, preserving the actual
+// typed owner request and rejecting all extra fields in either component.
+mod owner_enrollment_wire {
+    use super::*;
+    use rusty_manifold_peer::{ManifoldPeerEnrollmentAction, ManifoldPeerEnrollmentRequest};
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Header {
+        #[serde(rename = "$schema")]
+        schema_id: SchemaId,
+        request_id: DottedId,
+        expected_authority_revision: Revision,
+        operator_id: DottedId,
+        issued_at_ms: u64,
+    }
+    pub fn serialize<S: serde::Serializer>(
+        request: &ManifoldPeerEnrollmentRequest,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        request.serialize(serializer)
+    }
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<ManifoldPeerEnrollmentRequest, D::Error> {
+        use serde::de::Error;
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let mut header = value
+            .as_object()
+            .cloned()
+            .ok_or_else(|| D::Error::custom("enrollment request must be an object"))?;
+        let action = header
+            .remove("action")
+            .ok_or_else(|| D::Error::custom("missing enrollment action"))?;
+        let fields: &[&str] = match action.as_str() {
+            Some("enroll") => &["credential"],
+            Some("rotate") => &["prior_key_id", "credential"],
+            Some("revoke") => &["key_id", "reason_id"],
+            _ => return Err(D::Error::custom("unknown enrollment action")),
+        };
+        let mut payload = serde_json::Map::new();
+        payload.insert("action".into(), action);
+        for field in fields {
+            payload.insert(
+                (*field).into(),
+                header
+                    .remove(*field)
+                    .ok_or_else(|| D::Error::custom(format!("missing enrollment {field}")))?,
+            );
+        }
+        let header: Header =
+            serde_json::from_value(serde_json::Value::Object(header)).map_err(D::Error::custom)?;
+        let action: ManifoldPeerEnrollmentAction =
+            serde_json::from_value(serde_json::Value::Object(payload)).map_err(D::Error::custom)?;
+        Ok(ManifoldPeerEnrollmentRequest {
+            schema_id: header.schema_id,
+            request_id: header.request_id,
+            expected_authority_revision: header.expected_authority_revision,
+            operator_id: header.operator_id,
+            issued_at_ms: header.issued_at_ms,
+            action,
+        })
+    }
+}
+
+/// Recomputed owner states and exact decisions for a retained request journal.
+#[derive(Clone, Debug, Serialize)]
+pub struct QuestPeerOwnerTrace {
+    /// Trace schema; this is an adapter projection, not a new owner schema.
+    pub schema: String,
+    /// Actual peer owner result.
+    pub peers: ManifoldAcceptedPeerState,
+    /// Actual enrollment owner result.
+    pub enrollment: ManifoldPeerEnrollmentState,
+    /// Actual signed rendezvous owner result.
+    pub rendezvous: ManifoldRendezvousAuthorityState,
+    /// Actual session owner result.
+    pub sessions: ManifoldPeerSessionState,
+    /// Exact owner decision and receipt tuples, including rejected attempts.
+    pub decisions: Vec<serde_json::Value>,
+}
+
+/// Replay a pinned journal from empty owner states, then review its final request.
+/// `nonce_hex` is the digest of the independently re-read pinned fact closure.
+/// Callers must retain the journal and CAS its raw digest before any append;
+/// resetting or truncating a journal cannot establish durable replay protection.
+pub fn review_peer_owner_journal(
+    pair: &BleRendezvousPairReceipt,
+    policy: &QuestPeerOwnerPolicy,
+    steps: &[QuestPeerOwnerStep],
+    nonce_hex: &str,
+    session_id: &DottedId,
+    now_ms: u64,
+) -> Result<QuestPeerOwnerTrace, String> {
+    use rusty_manifold_peer::{
+        review_and_apply_peer_enrollment, review_and_apply_peer_proposal,
+        review_and_apply_signed_rendezvous, ManifoldPeerDecisionOutcome, ManifoldPeerReviewCase,
+        PEER_REVIEW_CASE_SCHEMA,
+    };
+    if steps.is_empty() || steps.len() > 256 || steps.last().map(|s| s.now_ms) != Some(now_ms) {
+        return Err("journal must have 1..=256 requests and a fresh final review time".into());
+    }
+    if nonce_hex.len() != 64
+        || !nonce_hex
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("fact closure nonce must be canonical 32-byte lowercase hex".into());
+    }
+    let mut trace = QuestPeerOwnerTrace {
+        schema: "rusty.quest.peer_owner_trace.v1".into(),
+        peers: ManifoldAcceptedPeerState {
+            schema_id: schema(PEER_SNAPSHOT_SCHEMA),
+            authority_revision: Revision::INITIAL,
+            peers: vec![],
+            applied_proposal_ids: vec![],
+        },
+        enrollment: ManifoldPeerEnrollmentState::empty(),
+        rendezvous: ManifoldRendezvousAuthorityState::empty(),
+        sessions: ManifoldPeerSessionState {
+            schema_id: schema(PEER_SESSION_SNAPSHOT_SCHEMA),
+            authority_revision: Revision::INITIAL,
+            sessions: vec![],
+            applied_proposal_ids: vec![],
+            revoked_session_ids: vec![],
+        },
+        decisions: vec![],
+    };
+    let mut prior_time = 0;
+    for step in steps {
+        if step.now_ms < prior_time || step.now_ms > now_ms {
+            return Err("journal review times must be monotonic and not future".into());
+        }
+        prior_time = step.now_ms;
+        let decision = match &step.request {
+            QuestPeerOwnerRequest::Peer(request) => {
+                let (decision, receipt) = review_and_apply_peer_proposal(&ManifoldPeerReviewCase {
+                    schema_id: schema(PEER_REVIEW_CASE_SCHEMA),
+                    case_id: request.proposal_id.clone(),
+                    current_state: trace.peers.clone(),
+                    proposal: request.clone(),
+                    trusted_key_fingerprints: policy.trusted_key_fingerprints.clone(),
+                    now_ms: step.now_ms,
+                    expected_outcome: ManifoldPeerDecisionOutcome::Accepted,
+                });
+                if let Some(state) = &decision.accepted_state {
+                    trace.peers = state.clone();
+                }
+                serde_json::to_value((decision, receipt))
+            }
+            QuestPeerOwnerRequest::Enrollment(request) => {
+                // A credential cannot substitute for a missing accepted peer proposal.
+                match &request.action {
+                    rusty_manifold_peer::ManifoldPeerEnrollmentAction::Enroll { credential }
+                    | rusty_manifold_peer::ManifoldPeerEnrollmentAction::Rotate {
+                        credential,
+                        ..
+                    } => {
+                        let peer = trace
+                            .peers
+                            .peers
+                            .iter()
+                            .find(|p| p.identity.peer_id == credential.peer_id)
+                            .ok_or("credential peer has no accepted peer proposal")?;
+                        if peer.identity.trust_domain != credential.trust_domain
+                            || peer.identity.key_fingerprint.as_str()
+                                != format!(
+                                    "sha256.{}",
+                                    credential.public_key_sha256.trim_start_matches("sha256:")
+                                )
+                        {
+                            return Err("credential differs from accepted public identity".into());
+                        }
+                    }
+                    rusty_manifold_peer::ManifoldPeerEnrollmentAction::Revoke { .. } => {}
+                }
+                let (state, receipt) = review_and_apply_peer_enrollment(
+                    &trace.enrollment,
+                    request,
+                    &policy.trusted_operator_ids,
+                    step.now_ms,
+                );
+                trace.enrollment = state;
+                serde_json::to_value(receipt)
+            }
+            QuestPeerOwnerRequest::Rendezvous(request) => {
+                if request.first.nonce_hex != nonce_hex || request.second.nonce_hex != nonce_hex {
+                    return Err("signed rendezvous differs from the current fact closure".into());
+                }
+                let (state, receipt) = review_and_apply_signed_rendezvous(
+                    &trace.rendezvous,
+                    &trace.enrollment,
+                    request,
+                    step.now_ms,
+                );
+                trace.rendezvous = state;
+                serde_json::to_value(receipt)
+            }
+            QuestPeerOwnerRequest::Session(config) => {
+                if config.now_ms != step.now_ms {
+                    return Err("session projection review time mismatch".into());
+                }
+                let proposal = project_observed_ble_peer_session(pair, config)?;
+                if &proposal.session_id != session_id {
+                    return Err("session differs from fact closure".into());
+                }
+                let receipt = trace
+                    .rendezvous
+                    .accepted_receipts
+                    .last()
+                    .ok_or("no owner-accepted signed rendezvous receipt")?
+                    .clone();
+                let (decision, authorization) =
+                    review_and_apply_signed_peer_session(&ManifoldSignedPeerSessionReviewCase {
+                        schema_id: schema(SIGNED_PEER_SESSION_REVIEW_SCHEMA),
+                        session_review: ManifoldPeerSessionReviewCase {
+                            schema_id: schema(PEER_SESSION_REVIEW_SCHEMA),
+                            accepted_peers: trace.peers.clone(),
+                            current_state: trace.sessions.clone(),
+                            proposal,
+                            trusted_adapter_ids: policy.trusted_adapter_ids.clone(),
+                            now_ms: step.now_ms,
+                        },
+                        rendezvous_receipt: receipt,
+                        current_enrollment: trace.enrollment.clone(),
+                        current_rendezvous_state: trace.rendezvous.clone(),
+                    });
+                if let Some(state) = &decision.accepted_state {
+                    trace.sessions = state.clone();
+                }
+                // Retain the signed authority envelope, not only its inner projection.
+                serde_json::to_value((decision, authorization))
+            }
+            QuestPeerOwnerRequest::Revoke(request) => {
+                let (state, authorization) =
+                    revoke_peer_session(&trace.sessions, request, step.now_ms)?;
+                trace.sessions = state;
+                serde_json::to_value(authorization)
+            }
+        }
+        .map_err(|error| error.to_string())?;
+        trace.decisions.push(decision);
+    }
+    Ok(trace)
+}
+
 fn review(
     accepted_peers: ManifoldAcceptedPeerState,
     current_state: ManifoldPeerSessionState,

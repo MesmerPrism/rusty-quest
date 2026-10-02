@@ -1,7 +1,7 @@
 //! On-device helper for NET-017 peer-authority evidence.
 
 use ed25519_dalek::{Signer, SigningKey};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     env, fs,
@@ -10,15 +10,16 @@ use std::{
     process::ExitCode,
 };
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct IdentityReceipt {
-    schema: &'static str,
-    generation: &'static str,
+    schema: String,
+    generation: String,
     run_id: String,
     serial: String,
     peer_id: String,
     key_id: String,
-    algorithm: &'static str,
+    algorithm: String,
     public_key_ed25519_base64: String,
     public_key_sha256: String,
     private_key_exported_to_host: bool,
@@ -53,6 +54,7 @@ fn run() -> Result<String, String> {
     match args.get(1).map(String::as_str) {
         Some("identity") => identity(&args[2..]),
         Some("sign") => sign(&args[2..]),
+        Some("sign-owner-bytes") => sign_owner_bytes(&args[2..]),
         _ => Err(
             "usage: peer_authority_device_helper identity <run-id> <serial> <peer-id> <key-path> <out-json> | sign <run-id> <peer-id> <peer-serial> <key-path> <context-json> <out-json>"
                 .to_string(),
@@ -78,13 +80,13 @@ fn identity(args: &[String]) -> Result<String, String> {
     let signing_key = SigningKey::from_bytes(&seed);
     let public = signing_key.verifying_key().to_bytes();
     let receipt = IdentityReceipt {
-        schema: "rusty.quest.peer_authority_identity.v1",
-        generation: "on-device",
+        schema: "rusty.quest.peer_authority_identity.v1".into(),
+        generation: "on-device".into(),
         run_id: run_id.clone(),
         serial,
         peer_id: peer_id.clone(),
         key_id: format!("key.{peer_id}.{run_id}"),
-        algorithm: "Ed25519",
+        algorithm: "Ed25519".into(),
         public_key_ed25519_base64: base64(&public),
         public_key_sha256: format!("sha256:{}", hex(&Sha256::digest(public))),
         private_key_exported_to_host: false,
@@ -124,6 +126,60 @@ fn sign(args: &[String]) -> Result<String, String> {
     };
     write_json(out, &receipt)?;
     Ok(out.clone())
+}
+
+/// Signs exactly the owner's binary domain preimage, never context JSON.
+fn sign_owner_bytes(args: &[String]) -> Result<String, String> {
+    if args.len() != 6 {
+        return Err("sign-owner-bytes requires <session-id> <identity-json> <key-path> <owner-bytes> <sha256> <new-out-json>".into());
+    }
+    let session_id = rusty_manifold_model::DottedId::new(&args[0]).map_err(|e| e.to_string())?;
+    let identity: IdentityReceipt =
+        serde_json::from_slice(&fs::read(&args[1]).map_err(|e| e.to_string())?)
+            .map_err(|e| e.to_string())?;
+    let seed: [u8; 32] = fs::read(&args[2])
+        .map_err(|e| e.to_string())?
+        .try_into()
+        .map_err(|_| "stored Ed25519 seed is not 32 bytes")?;
+    let bytes = fs::read(&args[3]).map_err(|e| e.to_string())?;
+    let sha256 = hex(&Sha256::digest(&bytes));
+    if sha256 != args[4]
+        || !bytes.starts_with(b"rusty.manifold.peer.signed_rendezvous_evidence.v1\0")
+    {
+        return Err("owner signing byte domain or exact hash mismatch".into());
+    }
+    let key = SigningKey::from_bytes(&seed);
+    let public = key.verifying_key().to_bytes();
+    if identity.schema != "rusty.quest.peer_authority_identity.v1"
+        || identity.generation != "on-device"
+        || identity.algorithm != "Ed25519"
+        || identity.private_key_exported_to_host
+        || identity.public_key_ed25519_base64 != base64(&public)
+        || identity.public_key_sha256 != format!("sha256:{}", hex(&Sha256::digest(public)))
+    {
+        return Err("identity receipt differs from the retained device key".into());
+    }
+    let signature = key.sign(&bytes).to_bytes();
+    let receipt = serde_json::json!({
+        "schema": "rusty.quest.peer_owner_binary_signature.v1",
+        "session_id": session_id, "run_id": identity.run_id, "serial": identity.serial,
+        "peer_id": identity.peer_id, "key_id": identity.key_id, "algorithm": "Ed25519",
+        "public_key_sha256": identity.public_key_sha256,
+        "signed_bytes_sha256": format!("sha256:{sha256}"),
+        "signature_hex": hex(&signature), "signature_base64": base64(&signature),
+    });
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&args[5])
+        .map_err(|e| e.to_string())?;
+    file.write_all(
+        serde_json::to_vec_pretty(&receipt)
+            .map_err(|e| e.to_string())?
+            .as_slice(),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(args[5].clone())
 }
 
 fn write_json<T: Serialize>(path: &str, value: &T) -> Result<(), String> {
