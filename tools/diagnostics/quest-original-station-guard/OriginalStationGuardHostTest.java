@@ -3,8 +3,8 @@ public final class OriginalStationGuardHostTest {
   static int cases;
   static Properties fixture(){Properties p=new Properties();p.setProperty("run_token","0123456789abcdef0123456789abcdef");p.setProperty("serial","3487C10H3M017Q");p.setProperty("boot_id","01234567-89ab-cdef-0123-456789abcdef");p.setProperty("original_network_id","1");p.setProperty("owner_address","02:11:22:33:44:55");p.setProperty("local_owner","true");p.setProperty("deadline_elapsed_realtime_ms","151000");return p;}
   static void check(boolean b){if(!b)throw new AssertionError("case "+cases);cases++;}
-  interface Work {void run();}
-  static void rejects(Work w){boolean bad=false;try{w.run();}catch(IllegalArgumentException|SecurityException e){bad=true;}check(bad);}
+  interface Work {void run()throws Exception;}
+  static void rejects(Work w)throws Exception{boolean bad=false;try{w.run();}catch(IllegalArgumentException|SecurityException e){bad=true;}check(bad);}
   public static void main(String[] a)throws Exception {
     OriginalStationGuardContract c=new OriginalStationGuardContract(fixture(),1000);
     check(c.network.equals("DIRECT-rp-0123456789abcdef0123")&&c.network.length()<=32);
@@ -87,6 +87,31 @@ public final class OriginalStationGuardHostTest {
     rejects(()->QuestOriginalStationGuard.securityShape(new int[]{},new boolean[]{},new boolean[]{}));
     QuestOriginalStationGuard.OriginalProfileAmbiguity projected=new QuestOriginalStationGuard.OriginalProfileAmbiguity(2,1,Arrays.asList(one,one));projected.currentNetworkId=0;projected.currentSecurityType=4;
     check(QuestOriginalStationGuard.failureJson(projected).contains("\"current_security_type\":4"));
+    QuestOriginalStationGuard.ProfileCandidate psk=new QuestOriginalStationGuard.ProfileCandidate(hash,hash,0,0),sae=new QuestOriginalStationGuard.ProfileCandidate(otherHash,otherHash,0,0);
+    psk.shared=base;psk.type=2;psk.enabled=true;psk.canonical=true;sae.shared=base;sae.type=4;sae.enabled=true;sae.upgrade=true;sae.canonical=true;
+    String[] group=QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,sae),true);
+    check(Arrays.equals(group,QuestOriginalStationGuard.groupedOriginal(Arrays.asList(sae,psk),true)));
+    check(group[0].equals(QuestOriginalStationGuard.sha(String.join("\n",hash,otherHash))));
+    check(!group[0].equals(hash)&&!group[0].equals(otherHash));
+    rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,psk),true));
+    rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,sae,sae),true));
+    rejects(()->QuestOriginalStationGuard.groupedOriginal(Collections.emptyList(),false));
+    for(int fault=0;fault<6;fault++){int selected=fault;QuestOriginalStationGuard.ProfileCandidate broken=new QuestOriginalStationGuard.ProfileCandidate(otherHash,otherHash,0,0);broken.shared=base;broken.type=4;broken.enabled=true;broken.upgrade=true;broken.canonical=true;
+      if(selected==0)broken.shared=hash;if(selected==1)broken.type=3;if(selected==2)broken.enabled=false;if(selected==3)broken.upgrade=false;if(selected==4)broken.canonical=false;if(selected==5)broken.type=2;
+      rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,broken),true));
+    }
+    QuestOriginalStationGuard.ProfileCandidate disabledPsk=new QuestOriginalStationGuard.ProfileCandidate(hash,hash,1,2),disabledSae=new QuestOriginalStationGuard.ProfileCandidate(otherHash,otherHash,1,2);
+    disabledPsk.shared=base;disabledPsk.type=2;disabledPsk.enabled=true;disabledPsk.canonical=true;disabledSae.shared=base;disabledSae.type=4;disabledSae.enabled=true;disabledSae.upgrade=true;disabledSae.canonical=true;
+    check(QuestOriginalStationGuard.groupedOriginal(Arrays.asList(disabledPsk,disabledSae),false)[2].equals("1"));
+    rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(disabledPsk,disabledSae),true));
+    rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,disabledSae),false));
+    OriginalStationGuardContract.baseline(group[0],group[1],group[0],group[1]);check(true);
+    rejects(()->OriginalStationGuardContract.baseline(group[0],group[1],hash,group[1]));
+    QuestOriginalStationGuard.currentSecurityJoin(0,0,4,"2,4");check(true);QuestOriginalStationGuard.currentSecurityJoin(0,0,2,"2,4");check(true);
+    rejects(()->QuestOriginalStationGuard.currentSecurityJoin(0,-1,4,"2,4"));rejects(()->QuestOriginalStationGuard.currentSecurityJoin(0,1,4,"2,4"));rejects(()->QuestOriginalStationGuard.currentSecurityJoin(0,0,3,"2,4"));
+    for(int[] state:new int[][]{{-1,0},{3,1},{0,2},{1,0},{1,-1},{2,32}}){QuestOriginalStationGuard.ProfileCandidate malformed=new QuestOriginalStationGuard.ProfileCandidate(otherHash,otherHash,state[0],state[1]);malformed.shared=base;malformed.type=4;malformed.enabled=true;malformed.upgrade=true;malformed.canonical=true;rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(malformed),false));}
+    psk.upgrade=true;rejects(()->QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,sae),false));psk.upgrade=false;
+    String[] restored=QuestOriginalStationGuard.groupedOriginal(Arrays.asList(psk,sae),true);check(Arrays.equals(group,restored));
     System.out.println("original_station_guard_contract=pass cases="+cases+" device_calls=0");
   }
 }
