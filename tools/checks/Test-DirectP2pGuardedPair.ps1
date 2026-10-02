@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$OutputRoot)
+param([Parameter(Mandatory)][string]$OutputRoot,[switch]$CompilerInputJoinsOnly,[string]$RetainedPlanPath)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if(Test-Path -LiteralPath $OutputRoot){throw 'New output required'}
@@ -9,6 +9,39 @@ $builder=Join-Path $repo 'tools/diagnostics/quest-original-station-guard/Build.p
 $tokens=$null;$parseErrors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile($builder,[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count-ne0){throw ($parseErrors|Out-String)}
 foreach($function in $ast.FindAll({param($node)$node-is[Management.Automation.Language.FunctionDefinitionAst]},$false)){. ([scriptblock]::Create($function.Extent.Text))}
+if($CompilerInputJoinsOnly){
+ $script:joinCases=0;$script:compilerCalls=0
+ function CheckJoin([bool]$Value){if(-not$Value){throw 'Compiler input join case failed'};$script:joinCases++}
+ function RejectJoin([scriptblock]$Work){$denied=$false;try{&$Work}catch{$denied=$true};CheckJoin $denied}
+ function Invoke-CompilerSeam($Paths,$Pins){Assert-GuardCompilerInputClosure $Paths $Pins;$script:compilerCalls++}
+ $lock=Join-Path $OutputRoot 'Cargo.lock';[IO.File]::WriteAllText($lock,"actual fixture lock`n",[Text.UTF8Encoding]::new($false))
+ $pin=@{path=$lock;sha256=(Get-GuardHash $lock)}
+ Invoke-CompilerSeam @($lock) @($pin.Clone());CheckJoin ($script:compilerCalls-eq1)
+ $pair=@($pin.Clone(),$pin.Clone());Invoke-CompilerSeam @($lock) $pair;CheckJoin ($script:compilerCalls-eq2-and$pair.Count-eq2)
+ $alias=@{path=(Join-Path $OutputRoot './Cargo.lock');sha256=$pin.sha256};Invoke-CompilerSeam @($lock) @($pin.Clone(),$alias);CheckJoin ($script:compilerCalls-eq3)
+ $script:compilerCalls=0
+ $bad=$pin.Clone();$bad.sha256='0'*64;RejectJoin {Invoke-CompilerSeam @($lock) @($pin.Clone(),$bad)}
+ $bad=$pin.Clone();$bad.sha256='';RejectJoin {Invoke-CompilerSeam @($lock) @($pin.Clone(),$bad)}
+ $bad=$pin.Clone();$bad.sha256=$pin.sha256.ToUpperInvariant();RejectJoin {Invoke-CompilerSeam @($lock) @($pin.Clone(),$bad)}
+ RejectJoin {Invoke-CompilerSeam @($lock) @()}
+ $foreign=Join-Path $OutputRoot 'other.lock';[IO.File]::WriteAllText($foreign,"actual fixture lock`n",[Text.UTF8Encoding]::new($false));RejectJoin {Invoke-CompilerSeam @($lock) @(@{path=$foreign;sha256=$pin.sha256})}
+ [IO.File]::WriteAllText($lock,'drift');RejectJoin {Invoke-CompilerSeam @($lock) $pair}
+ CheckJoin ($script:compilerCalls-eq0)
+ if($RetainedPlanPath){
+  $plan=Get-Content -LiteralPath $RetainedPlanPath -Raw|ConvertFrom-Json -Depth 30
+  $native=Get-Content -LiteralPath $plan.native_dependency_closure.path -Raw|ConvertFrom-Json -Depth 30
+  Assert-GuardPin $plan.native_dependency_closure
+  $actualLock=Join-Path $plan.sources[0].root 'Cargo.lock'
+  $sourcePins=@($plan.sources[0].files|Where-Object{[IO.Path]::GetFullPath($_.path)-ceq[IO.Path]::GetFullPath($actualLock)})
+  CheckJoin ($sourcePins.Count-eq1)
+  $actualJoins=@($sourcePins)+@($native.lock);Assert-GuardCompilerInputClosure @($actualLock) $actualJoins
+  CheckJoin ($actualJoins.Count-eq2-and$actualJoins[0].sha256-ceq$actualJoins[1].sha256)
+  $wrong=@{path=$native.lock.path;sha256='0'*64};RejectJoin {Assert-GuardCompilerInputClosure @($actualLock) (@($sourcePins)+@($wrong))}
+ }
+ Write-GuardNew (Join-Path $OutputRoot 'RESULT.json') @{schema='rusty.quest.compiler_input_join_host_tests.v1';status='pass';cases=$script:joinCases;device_calls=0;compiler_calls=0;old_suite_replayed=$false;builder_sha256=(Get-GuardHash $builder)}
+ Write-Output "compiler_input_joins=pass cases=$script:joinCases device_calls=0 compiler_calls=0"
+ exit 0
+}
 $fixture=Join-Path $OutputRoot 'source';New-Item -ItemType Directory -Path $fixture|Out-Null
 &git -C $fixture init -b main|Out-Null;if($LASTEXITCODE-ne0){throw 'Git fixture init failed'}
 [IO.File]::WriteAllText((Join-Path $fixture 'source space ü.txt'),'reviewed',[Text.UTF8Encoding]::new($false))

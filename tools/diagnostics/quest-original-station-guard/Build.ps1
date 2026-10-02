@@ -91,6 +91,15 @@ function Get-GuardBuildIdentity($Plan){
  $rows+=@{path=$Plan.task_override.path;sha256=$Plan.task_override.sha256};$rows+=@{path=$Plan.authorization_evidence.path;sha256=$Plan.authorization_evidence.sha256}
  return @($rows)
 }
+function Assert-GuardCompilerInputClosure([string[]]$Paths,$Identity){
+ foreach($path in $Paths){
+  $normalized=[IO.Path]::GetFullPath($path)
+  $pins=@($Identity|Where-Object{[IO.Path]::GetFullPath($_.path).Equals($normalized,[StringComparison]::OrdinalIgnoreCase)})
+  if($pins.Count-lt1){throw 'Actual compiler input missing from declared pin closure'}
+  $observed=Get-GuardHash $path
+  foreach($pin in $pins){if($pin.sha256-cnotmatch'^[0-9a-f]{64}$'-or$pin.sha256-cne$observed){throw 'Actual compiler input has conflicting or stale declared provenance'}}
+ }
+}
 function Write-GuardNew([string]$Path,$Body){$bytes=[Text.UTF8Encoding]::new($false).GetBytes(($Body|ConvertTo-Json -Depth 30));$stream=[IO.File]::Open($Path,[IO.FileMode]::CreateNew);try{$stream.Write($bytes)}finally{$stream.Dispose()}}
 function Invoke-GuardBuildTool([string]$Path,[string[]]$Arguments,[string]$Log){$result=&$Path @Arguments 2>&1;$code=$LASTEXITCODE;[IO.File]::WriteAllLines($Log,@($result|ForEach-Object ToString),[Text.UTF8Encoding]::new($false));if($code-ne0){throw "Build step failed: $([IO.Path]::GetFileName($Log)) exit=$code"}}
 if((Get-GuardHash $PlanPath)-cne$PlanSha256){throw 'Build plan hash differs'}
@@ -107,7 +116,7 @@ $guardSources=@('OriginalStationGuardContract.java','QuestOriginalStationGuard.j
 $appRoot=Join-Path $repo 'apps/direct-p2p-provider-android'
 $appSources=@(Get-ChildItem -LiteralPath (Join-Path $appRoot 'src/main/java/io/github/mesmerprism/rustyquest/directp2p') -Filter '*.java' -File|Where-Object Name -CNotLike '*HostTest.java'|ForEach-Object FullName)
 $compileInputs=@($guardSources);if($plan.artifact_set-ceq'Pair'){$compileInputs+=@($appSources)+@((Join-Path $appRoot 'AndroidManifest.xml'),(Join-Path $repo 'Cargo.lock'))}
-foreach($path in $compileInputs){if(@($identity|Where-Object path -CEQ $path).Count-ne1){throw 'Actual compiler input missing from declared pin closure'}}
+Assert-GuardCompilerInputClosure $compileInputs $identity
 if($plan.artifact_set-ceq'Pair'){
  $derived=[IO.Path]::GetFullPath((Join-Path $appRoot 'native/../../../../rusty-manifold'))
  $actualHead=(&git -C $derived rev-parse HEAD)-join'';$actualTree=(&git -C $derived rev-parse 'HEAD^{tree}')-join''
