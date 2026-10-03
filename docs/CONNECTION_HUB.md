@@ -194,3 +194,28 @@ Device acceptance separately requires an exact Hub product lock, shared signer
 for Broker/providers, wearer pairing, app-to-app surface add/remove, reconnect
 epoch replacement, replay/revoke negatives, effective app state, zero bounded
 fatals, and exact cleanup. Host tests claim no device acceptance.
+# Opted concurrent stereo provider
+
+The package builder retains its existing grants unless
+`-EnableConcurrentStereoProvider` is selected. This explicit selection requires
+`-ConcurrentStereoPackageName`, `-ConcurrentStereoClientSpecPath`, and the exact
+lowercase SHA256 in `-ExpectedConcurrentStereoClientSpecSha256`. The package must
+match the authenticated source client spec. Client ID, feature lock ID and marker
+are inherited; the specialized Hub client lock contains only
+`capability.connection_hub.provider.register`, with no media, topology or
+lifecycle authority. Duplicate package/signer admission subjects fail closed.
+
+The fixed neutral surface contract permits only empty-parameter Own and Peer
+commands. Its descriptor SHA is derived from the same v1 canonical bytes used
+by `ConcurrentStereoHubContract`; a changed field, command or digest rejects the
+build. Existing sample, locked-playlist and spatial-video grants are retained.
+This is a package/runtime-config build option, not a new browser or BLE grant.
+The existing native controller/session/Binder checks and current app-owned
+pair/process/arm/config/retired-GPU effect checks still decide each command.
+
+Updating an installed Hub uses the same package and signer without clear-data
+or uninstall. Android application storage remains installed, but a changed
+packaged Hub policy intentionally invalidates the previous restart envelope,
+stops the listener and discards its obsolete controller projections. New wearer
+start/pairing and native admission remain required; installation or a GATT ACK
+does not establish them. The fixed BLE helper is a separate inert installation.

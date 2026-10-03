@@ -1,0 +1,11 @@
+{
+  "schema":"rusty.quest.broker_client_spec.v1",
+  "client_id":"client.quest.concurrent-stereo",
+  "package_name":"io.github.mesmerprism.rustyquest.spatial_camera_panel",
+  "feature_lock_id":"lock.broker-client.concurrent-stereo.v1",
+  "marker_namespace":"RUSTY_QUEST_CONCURRENT_STEREO",
+  "contract_families":[],
+  "capabilities":["capability.connection_hub.provider.register"],
+  "adapter_permissions":["io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"],
+  "runtime_properties":[],"application_defaults":[]
+}

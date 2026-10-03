@@ -17,6 +17,12 @@ param(
     [ValidatePattern('^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$')]
     [string]$SpatialCameraPanelPackageName = "",
     [switch]$EnableConnectionHubDebugOperator,
+    [switch]$EnableConcurrentStereoProvider,
+    [ValidatePattern('^(?:[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)?$')]
+    [string]$ConcurrentStereoPackageName = "",
+    [string]$ConcurrentStereoClientSpecPath = "",
+    [ValidatePattern('^(?:[0-9a-f]{64})?$')]
+    [string]$ExpectedConcurrentStereoClientSpecSha256 = "",
     [switch]$EnableRemoteCameraDebugOperator,
     [switch]$RequireSharedMorphovisionSigner,
     [switch]$PrepareOnly,
@@ -288,6 +294,68 @@ function Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract {
     }
 }
 
+function Read-ConcurrentStereoHubContract {
+    param([Parameter(Mandatory=$true)][string]$RepoRoot)
+    $path = Join-Path $RepoRoot 'apps/manifold-broker-android/contracts/concurrent-stereo-surface.v1.json'
+    $c = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    $keys = @('$schema','provider_id','surface_id','display_label','description','runtime_surface_contract_sha256','commands')
+    if ((@($c.PSObject.Properties.Name | Sort-Object) -join "`n") -cne (($keys | Sort-Object) -join "`n") -or
+        $c.'$schema' -cne 'rusty.quest.connection_hub.concurrent_stereo_surface_contract.v1' -or
+        $c.provider_id -cne 'provider.quest.concurrent-stereo' -or $c.surface_id -cne 'surface.concurrent_stereo.controls' -or
+        $c.display_label -cne 'Current stereo source' -or $c.description -cne 'Select Own or Peer on this headset; two headset outcomes remain independent.' -or @($c.commands).Count -ne 2) { throw 'Concurrent stereo contract identity/fields changed.' }
+    $canonical = "v1`n$($c.surface_id)`n$($c.display_label)`n$($c.description)`n"
+    $commands = @()
+    foreach ($index in 0..1) {
+        $suffix = @('own','peer')[$index]; $label = @('Own','Peer')[$index]; $row = @($c.commands)[$index]
+        if ((@($row.PSObject.Properties.Name | Sort-Object) -join "`n") -cne "command`ndisplay_label`nrequired_controller_capability" -or
+            $row.command -cne "command.concurrent_stereo.$suffix" -or $row.display_label -cne $label -or
+            $row.required_controller_capability -cne "capability.concurrent_stereo.$suffix") { throw 'Concurrent stereo commands changed.' }
+        $canonical += "$($row.command)|$($row.display_label)|$($row.required_controller_capability)`n"
+        $commands += [ordered]@{command_id=[string]$row.command;typed_params_schema_id='rusty.manifold.connection_hub.typed_params.empty.v1';typed_params_schema_sha256='sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51';required_controller_capability=[string]$row.required_controller_capability}
+    }
+    $digest = 'sha256:' + (Get-TextSha256Hex $canonical)
+    if ($digest -cne 'sha256:f2b08d2e1424b501f411a57bb47cbb5ea933016a31e8a2a39885238e4cdedfa3' -or $c.runtime_surface_contract_sha256 -cne $digest) { throw 'Concurrent stereo canonical descriptor drift.' }
+    return [pscustomobject]@{provider_id=[string]$c.provider_id;runtime_sha256=$digest;commands=$commands;path=$path;sha256=Get-FileSha256Hex $path}
+}
+
+function New-ConcurrentStereoClientInput {
+    param([Parameter(Mandatory=$true)][string]$RepoRoot,[Parameter(Mandatory=$true)][string]$PackageName,[Parameter(Mandatory=$true)][string]$SourcePath,[Parameter(Mandatory=$true)][string]$ExpectedSha256)
+    if ($PackageName -cnotmatch '^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$' -or $ExpectedSha256 -cnotmatch '^[0-9a-f]{64}$' -or (Get-FileSha256Hex $SourcePath) -cne $ExpectedSha256) { throw 'Concurrent stereo exact client source/package pin required.' }
+    $input = Read-ValidatedClientLock $SourcePath; $s = $input.lock
+    $document = [System.Text.Json.JsonDocument]::Parse([string]$input.json)
+    try {
+        $names = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($property in $document.RootElement.EnumerateObject()) {
+            if (-not $names.Add($property.Name)) { throw 'Duplicate concurrent stereo source fields.' }
+            $arrayField = $property.Name -cin @('contract_families','capabilities','adapter_permissions','runtime_properties','application_defaults')
+            if (($arrayField -and $property.Value.ValueKind -ne [System.Text.Json.JsonValueKind]::Array) -or (-not $arrayField -and $property.Value.ValueKind -ne [System.Text.Json.JsonValueKind]::String)) { throw 'Concurrent stereo client field type changed.' }
+            if ($arrayField) { foreach ($item in $property.Value.EnumerateArray()) { if ($item.ValueKind -ne [System.Text.Json.JsonValueKind]::String) { throw 'Concurrent stereo client array item type changed.' } } }
+        }
+    } finally { $document.Dispose() }
+    $keys = @('schema','client_id','package_name','feature_lock_id','marker_namespace','contract_families','capabilities','adapter_permissions','runtime_properties','application_defaults')
+    $allowed = @('capability.command.media.session.start','capability.command.media.session.stop','capability.command.peer.status.get','capability.command.session.list','capability.connection_hub.provider.register','capability.manifold.control_lease.renew','capability.media.session.observe','capability.peer.session.observe','capability.sink.spatial-sdk','capability.sink.spatial-sdk-packed-stereo')
+    if ((@($s.PSObject.Properties.Name | Sort-Object) -join "`n") -cne (($keys | Sort-Object) -join "`n") -or $s.package_name -cne $PackageName -or
+        $s.client_id -cnotmatch '^client\.[a-z0-9._-]{1,160}$' -or $s.feature_lock_id -cnotmatch '^lock\.broker-client\.[a-z0-9._-]{1,160}$' -or $s.marker_namespace -cnotmatch '^[A-Z][A-Z0-9_]{0,127}$' -or
+        @($s.capabilities).Count -eq 0 -or @($s.capabilities | Where-Object { $_ -cnotin $allowed }).Count -ne 0 -or
+        @($s.contract_families | Where-Object { $_ -cnotin @('rusty.manifold.media.session_descriptor.v1','rusty.manifold.peer.session_descriptor.v1') }).Count -ne 0) { throw 'Concurrent stereo client identity or source field/capability boundary changed.' }
+    $fixture = Read-ValidatedClientLock (Join-Path $RepoRoot 'fixtures/broker-clients/concurrent-stereo.client.json'); $lock = $fixture.lock
+    if ((@($lock.PSObject.Properties.Name | Sort-Object) -join "`n") -cne (($keys | Sort-Object) -join "`n") -or $lock.client_id -cne 'client.quest.concurrent-stereo' -or $lock.feature_lock_id -cne 'lock.broker-client.concurrent-stereo.v1' -or $lock.package_name -cne 'io.github.mesmerprism.rustyquest.spatial_camera_panel' -or $lock.marker_namespace -cne 'RUSTY_QUEST_CONCURRENT_STEREO') { throw 'Neutral concurrent stereo client identity changed.' }
+    # Only identity is inherited; the Hub authority receives no source media/topology capabilities.
+    $lock.client_id=[string]$s.client_id; $lock.package_name=$PackageName; $lock.feature_lock_id=[string]$s.feature_lock_id; $lock.marker_namespace=[string]$s.marker_namespace
+    if (($lock.capabilities -join "`n") -cne 'capability.connection_hub.provider.register' -or @($lock.contract_families).Count -ne 0 -or @($lock.runtime_properties).Count -ne 0 -or @($lock.application_defaults).Count -ne 0 -or ($lock.adapter_permissions -join "`n") -cne 'io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION') { throw 'Concurrent stereo neutral client fixture widened.' }
+    $json = $lock | ConvertTo-Json -Depth 20 -Compress
+    return [pscustomobject]@{path=$SourcePath;source_sha256=$ExpectedSha256;json=$json;lock=$lock;sha256=Get-TextSha256Hex $json;specialized=$true}
+}
+
+function Add-ConcurrentStereoHubPolicy {
+    param([Parameter(Mandatory=$true)]$Policy,[bool]$Enabled=$false,$ClientInput,$Contract)
+    if (-not $Enabled) { return $Policy }
+    if ($null -eq $ClientInput -or $null -eq $Contract -or ($ClientInput.lock.capabilities -join "`n") -cne 'capability.connection_hub.provider.register') { throw 'Exact opted concurrent stereo inputs required.' }
+    $Policy.allowed_controller_capabilities = @($Policy.allowed_controller_capabilities) + @($Contract.commands | ForEach-Object { $_.required_controller_capability })
+    $Policy.provider_grants = @($Policy.provider_grants) + @([ordered]@{provider_id=$Contract.provider_id;client_id=[string]$ClientInput.lock.client_id;client_lock_id=[string]$ClientInput.lock.feature_lock_id;client_lock_sha256="sha256:$($ClientInput.sha256)";surface_contract_sha256=$Contract.runtime_sha256;allowed_commands=$Contract.commands})
+    return $Policy
+}
+
 function Resolve-ProductInputPath {
     param(
         [Parameter(Mandatory=$true)][string]$Path,
@@ -518,6 +586,9 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path $targetRoot "manifold-broker-android"
 }
 $keystoreWasExplicit = -not [string]::IsNullOrWhiteSpace($Keystore)
+if ($EnableConcurrentStereoProvider) {
+    if ($PrepareOnly -or -not $ConcurrentStereoPackageName -or -not $ConcurrentStereoClientSpecPath -or -not $ExpectedConcurrentStereoClientSpecSha256) { throw 'Concurrent stereo runtime route requires complete explicit package/client source pins.' }
+} elseif ($ConcurrentStereoPackageName -or $ConcurrentStereoClientSpecPath -or $ExpectedConcurrentStereoClientSpecSha256) { throw 'Concurrent stereo inputs require explicit opt-in.' }
 if ($RequireSharedMorphovisionSigner -and -not $keystoreWasExplicit) {
     throw "Shared Morphovision package builds require an explicit local -Keystore binding."
 }
@@ -551,7 +622,7 @@ if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringCo
     throw "OutDir must be under the repo target directory: $resolvedOutFull"
 }
 $retainedBuildInputs = @(
-    $ProductSpecPath, $ProductLockPath, $ManifoldSourceRoot, $Keystore, $MediaStreamAarPath) +
+    $ProductSpecPath, $ProductLockPath, $ManifoldSourceRoot, $Keystore, $MediaStreamAarPath, $ConcurrentStereoClientSpecPath) +
     @(Expand-InputPaths -Path $MediaSessionBindingPath)
 if (-not [string]::IsNullOrWhiteSpace($MediaStreamAarPath)) {
     if ($ExpectedMediaStreamAarSha256 -cnotmatch '^[0-9a-f]{64}$' -or
@@ -785,6 +856,13 @@ $acceptedProductSpecJson = [System.IO.File]::ReadAllText($canonicalProductSpecPa
 $acceptedProductLock = $acceptedProductLockJson | ConvertFrom-Json
 $mediaSelected = @($acceptedProductLock.features | ForEach-Object { [string]$_ }) -contains "media_session"
 $connectionHubSelected = @($acceptedProductLock.features | ForEach-Object { [string]$_ }) -contains "connection_hub"
+$concurrentStereoClient = $null
+$concurrentStereoContract = $null
+if ($EnableConcurrentStereoProvider) {
+    if (-not $connectionHubSelected -or $PrepareOnly) { throw 'Concurrent stereo requires the Connection Hub runtime-config/build route.' }
+    $concurrentStereoClient = New-ConcurrentStereoClientInput -RepoRoot $repoRoot -PackageName $ConcurrentStereoPackageName -SourcePath $ConcurrentStereoClientSpecPath -ExpectedSha256 $ExpectedConcurrentStereoClientSpecSha256
+    $concurrentStereoContract = Read-ConcurrentStereoHubContract -RepoRoot $repoRoot
+} elseif ($ConcurrentStereoPackageName -or $ConcurrentStereoClientSpecPath -or $ExpectedConcurrentStereoClientSpecSha256) { throw 'Concurrent stereo inputs require explicit opt-in.' }
 if ($connectionHubSelected) {
     $manifoldSourceCandidate = if ([string]::IsNullOrWhiteSpace($ManifoldSourceRoot)) {
         Join-Path $repoRoot "..\rusty-manifold"
@@ -906,6 +984,9 @@ if ($connectionHubSelected) {
         grant_id = "grant.quest.connection-hub-sample"
         input = Read-ValidatedClientLock -Path (Join-Path $repoRoot "fixtures\broker-clients\connection-hub-sample.client.json")
     }
+}
+if ($EnableConcurrentStereoProvider) {
+    $clientLockInputs += [ordered]@{grant_id='grant.quest.concurrent-stereo';input=$concurrentStereoClient}
 }
 Assert-UniqueAndroidAdmissionSubjects `
     -ClientLockInputs $clientLockInputs `
@@ -1060,6 +1141,10 @@ if ($connectionHubSelected) {
         }
     }
 }
+$connectionHubNativeConfig = if ($connectionHubSelected) {
+    $connectionHubNativeConfig.policy = Add-ConcurrentStereoHubPolicy -Policy $connectionHubNativeConfig.policy -Enabled ([bool]$EnableConcurrentStereoProvider) -ClientInput $concurrentStereoClient -Contract $concurrentStereoContract
+    $connectionHubNativeConfig
+} else { $null }
 $runtimeConfig = [ordered]@{
     '$schema' = "rusty.quest.broker.runtime_config.v2"
     bridge_kind = "standalone_process_jni"
@@ -1531,6 +1616,9 @@ $manifest = [ordered]@{
         packaged_assets_validated = $true
     }
     live_stream_events_synthesized = $false
+}
+if ($EnableConcurrentStereoProvider) {
+    $manifest['concurrent_stereo_provider'] = [ordered]@{enabled=$true;client_source_sha256=$concurrentStereoClient.source_sha256;client_lock_sha256=$concurrentStereoClient.sha256;contract_sha256=$concurrentStereoContract.sha256;surface_contract_sha256=$concurrentStereoContract.runtime_sha256;package_name=$ConcurrentStereoPackageName}
 }
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $manifestPath

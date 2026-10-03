@@ -1,7 +1,69 @@
-param([string]$RepoRoot)
+param([string]$RepoRoot,[switch]$ConcurrentStereoGrantOnly,[string]$ConcurrentStereoClientSpecPath="",[string]$ExpectedConcurrentStereoClientSpecSha256="",[string]$ConcurrentStereoPackageName="")
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..") }
 $RepoRoot = (Resolve-Path $RepoRoot).Path
+$builderPath = Join-Path $RepoRoot 'tools/Build-ManifoldBrokerAndroid.ps1'
+$ast = [Management.Automation.Language.Parser]::ParseFile($builderPath,[ref]$null,[ref]$null)
+foreach ($name in @('Get-FileSha256Hex','Get-TextSha256Hex','Read-ValidatedClientLock','New-ConcurrentStereoClientInput','Read-ConcurrentStereoHubContract','Add-ConcurrentStereoHubPolicy','Assert-UniqueAndroidAdmissionSubjects')) {
+    $definition = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
+    if ($definition.Count -ne 1) { throw "Missing/ambiguous actual production function $name" }
+    . ([scriptblock]::Create($definition[0].Extent.Text))
+}
+$focused = Join-Path $RepoRoot ('target/concurrent-stereo-grant-' + [guid]::NewGuid().ToString('N'))
+[void][IO.Directory]::CreateDirectory($focused)
+$cases = 0
+function Test-GrantDeny([scriptblock]$Action) { $denied=$false;try { & $Action | Out-Null } catch {$denied=$true};if(-not $denied){throw 'Damaged grant input accepted'};$script:cases++ }
+$fixture = Join-Path $RepoRoot 'fixtures/broker-clients/concurrent-stereo.client.json'
+$input = New-ConcurrentStereoClientInput $RepoRoot 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $fixture (Get-FileSha256Hex $fixture)
+$contract = Read-ConcurrentStereoHubContract $RepoRoot
+if ($contract.runtime_sha256 -cne 'sha256:f2b08d2e1424b501f411a57bb47cbb5ea933016a31e8a2a39885238e4cdedfa3' -or ($input.lock.capabilities -join ',') -cne 'capability.connection_hub.provider.register') {throw 'Actual closed contract/client production constructor failed'};$cases++
+$baseline = [ordered]@{allowed_controller_capabilities=@('existing.capability');provider_grants=@([ordered]@{provider_id='existing';allowed_commands=@('existing.command')})}
+$before = $baseline | ConvertTo-Json -Depth 20 -Compress
+$disabled = Add-ConcurrentStereoHubPolicy $baseline $false $null $null
+if (($disabled | ConvertTo-Json -Depth 20 -Compress) -cne $before) {throw 'Disabled policy changed'};$cases++
+$enabled = Add-ConcurrentStereoHubPolicy ($before | ConvertFrom-Json) $true $input $contract
+$grant=@($enabled.provider_grants)[1]
+if (@($enabled.provider_grants).Count -ne 2 -or (@($enabled.allowed_controller_capabilities) -join ',') -cne 'existing.capability,capability.concurrent_stereo.own,capability.concurrent_stereo.peer' -or $grant.client_lock_sha256 -cne "sha256:$($input.sha256)" -or @($grant.allowed_commands).Count -ne 2 -or (@($enabled.provider_grants)[0]|ConvertTo-Json -Depth 20 -Compress) -cne (@($baseline.provider_grants)[0]|ConvertTo-Json -Depth 20 -Compress)) {throw 'Production opted policy/grant boundaries changed'};$cases++
+Test-GrantDeny {New-ConcurrentStereoClientInput $RepoRoot 'foreign.package' $fixture (Get-FileSha256Hex $fixture)}
+Test-GrantDeny {New-ConcurrentStereoClientInput $RepoRoot 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $fixture ('0'*64)}
+Test-GrantDeny {New-ConcurrentStereoClientInput $RepoRoot 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $fixture ''}
+$selectionGuard = @($ast.FindAll({param($node)$node -is [Management.Automation.Language.IfStatementAst] -and $node.Clauses[0].Item1.Extent.Text -ceq '$EnableConcurrentStereoProvider' -and $node.Extent.Text -like '*complete explicit package/client source pins*'},$true))
+if($selectionGuard.Count -ne 1){throw 'Actual opted selection preflight missing'}
+$selection = [scriptblock]::Create($selectionGuard[0].Extent.Text)
+$ConcurrentStereoPackageNameSaved=$ConcurrentStereoPackageName;$EnableConcurrentStereoProvider=$false;$PrepareOnly=$false;$ConcurrentStereoPackageName='';$ConcurrentStereoClientSpecPathSaved=$ConcurrentStereoClientSpecPath;$ConcurrentStereoClientSpecPath='';$ExpectedConcurrentStereoClientSpecSha256Saved=$ExpectedConcurrentStereoClientSpecSha256;$ExpectedConcurrentStereoClientSpecSha256=''
+. $selection;$cases++
+$ConcurrentStereoPackageName='foreign.package';Test-GrantDeny {. $selection}
+$EnableConcurrentStereoProvider=$true;Test-GrantDeny {. $selection}
+$ConcurrentStereoClientSpecPath=$fixture;$ExpectedConcurrentStereoClientSpecSha256=Get-FileSha256Hex $fixture;$PrepareOnly=$true;Test-GrantDeny {. $selection}
+$PrepareOnly=$false;. $selection;$cases++
+$ConcurrentStereoPackageName=$ConcurrentStereoPackageNameSaved;$ConcurrentStereoClientSpecPath=$ConcurrentStereoClientSpecPathSaved;$ExpectedConcurrentStereoClientSpecSha256=$ExpectedConcurrentStereoClientSpecSha256Saved
+foreach ($damage in @('extra','missing','unknown-capability','bad-identity','field-type','family-type','permission')) {
+    $s = Get-Content -LiteralPath $fixture -Raw | ConvertFrom-Json
+    switch($damage){'extra'{$s|Add-Member extra 'x'};'missing'{$s.PSObject.Properties.Remove('marker_namespace')};'unknown-capability'{$s.capabilities=@('capability.topology.mutate')};'bad-identity'{$s.client_id='bad'};'field-type'{$s.marker_namespace=42};'family-type'{$s.contract_families='rusty.manifold.media.session_descriptor.v1'};'permission'{$s.adapter_permissions=@('arbitrary.permission')}}
+    $path=Join-Path $focused ($damage+'.json');[IO.File]::WriteAllText($path,($s|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+    Test-GrantDeny {New-ConcurrentStereoClientInput $RepoRoot 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $path (Get-FileSha256Hex $path)}
+}
+Test-GrantDeny {Assert-UniqueAndroidAdmissionSubjects @(@{input=$input},@{input=$input}) ('sha256:'+'1'*64)}
+$duplicate = Join-Path $focused 'duplicate.json'
+[IO.File]::WriteAllText($duplicate,([IO.File]::ReadAllText($fixture).Replace('"schema":','"schema":"rusty.quest.broker_client_spec.v1","schema":')),[Text.UTF8Encoding]::new($false))
+Test-GrantDeny {New-ConcurrentStereoClientInput $RepoRoot 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $duplicate (Get-FileSha256Hex $duplicate)}
+foreach ($damage in @('contract-extra','contract-command','contract-digest','fixture-capability')) {
+    $shadow=Join-Path $focused $damage
+    $contractDir=Join-Path $shadow 'apps/manifold-broker-android/contracts';$fixtureDir=Join-Path $shadow 'fixtures/broker-clients'
+    [void][IO.Directory]::CreateDirectory($contractDir);[void][IO.Directory]::CreateDirectory($fixtureDir)
+    $c=Get-Content -LiteralPath $contract.path -Raw|ConvertFrom-Json;$f=Get-Content -LiteralPath $fixture -Raw|ConvertFrom-Json
+    switch($damage){'contract-extra'{$c|Add-Member extra 'x'};'contract-command'{$c.commands[0].command='command.topology.start'};'contract-digest'{$c.runtime_surface_contract_sha256='sha256:'+('0'*64)};'fixture-capability'{$f.capabilities=@('capability.command.media.session.start')}}
+    [IO.File]::WriteAllText((Join-Path $contractDir 'concurrent-stereo-surface.v1.json'),($c|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $fixtureDir 'concurrent-stereo.client.json'),($f|ConvertTo-Json -Depth 20),[Text.UTF8Encoding]::new($false))
+    if($damage -eq 'fixture-capability'){Test-GrantDeny {New-ConcurrentStereoClientInput $shadow 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $fixture (Get-FileSha256Hex $fixture)}}else{Test-GrantDeny {Read-ConcurrentStereoHubContract $shadow}}
+}
+if ($ConcurrentStereoClientSpecPath) {
+    $actual = New-ConcurrentStereoClientInput $RepoRoot $ConcurrentStereoPackageName $ConcurrentStereoClientSpecPath $ExpectedConcurrentStereoClientSpecSha256
+    $source = Get-Content -LiteralPath $ConcurrentStereoClientSpecPath -Raw | ConvertFrom-Json
+    if ($actual.lock.client_id -cne $source.client_id -or $actual.lock.feature_lock_id -cne $source.feature_lock_id -or $actual.lock.marker_namespace -cne $source.marker_namespace -or ($actual.lock.capabilities -join ',') -cne 'capability.connection_hub.provider.register' -or @($actual.lock.contract_families).Count -ne 0) {throw 'Actual retained client identity/narrowing failed'};$cases++
+}
+Write-Output "Concurrent stereo production grant cases PASS: $cases; no APK/device/native authority effects."
+if ($ConcurrentStereoGrantOnly) {return}
 $app = Join-Path $RepoRoot "apps\manifold-broker-android"
 $javaRoot = Join-Path $app "src\main\java\io\github\mesmerprism\rustymanifold\broker"
 $sharedTransportRoot = Join-Path $RepoRoot "crates\rusty-quest-broker-transport\android"
