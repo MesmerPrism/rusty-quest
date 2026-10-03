@@ -112,7 +112,7 @@ $out=[IO.Path]::GetFullPath($OutputRoot)
 if(-not$out.StartsWith($target,[StringComparison]::OrdinalIgnoreCase)-or(Test-Path -LiteralPath $out)){throw 'New task output under selected source target required'}
 $drive=[IO.DriveInfo]::new([IO.Path]::GetPathRoot($out));if($drive.AvailableFreeSpace-lt$plan.minimum_free_bytes){throw 'Peak build free-space guard failed'}
 $tools=$plan.tools
-$guardSources=@('OriginalStationGuardContract.java','QuestOriginalStationGuard.java'|ForEach-Object{Join-Path $PSScriptRoot $_})
+$guardSources=@('OriginalStationGuardContract.java','OriginalStationFormationAdmission.java','QuestOriginalStationGuard.java'|ForEach-Object{Join-Path $PSScriptRoot $_})
 $appRoot=Join-Path $repo 'apps/direct-p2p-provider-android'
 $appSources=@(Get-ChildItem -LiteralPath (Join-Path $appRoot 'src/main/java/io/github/mesmerprism/rustyquest/directp2p') -Filter '*.java' -File|Where-Object Name -CNotLike '*HostTest.java'|ForEach-Object FullName)
 $compileInputs=@($guardSources);if($plan.artifact_set-ceq'Pair'){$compileInputs+=@($appSources)+@((Join-Path $appRoot 'AndroidManifest.xml'),(Join-Path $repo 'Cargo.lock'))}
