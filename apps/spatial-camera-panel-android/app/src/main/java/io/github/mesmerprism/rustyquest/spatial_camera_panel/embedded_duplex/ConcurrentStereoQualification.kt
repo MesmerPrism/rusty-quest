@@ -19,6 +19,35 @@ internal object ConcurrentStereoQualification {
     private var armEntryElapsedNs: Long = 0
     private var armExitElapsedNs: Long = 0
 
+    @JvmStatic fun currentHubChallenge(processEpoch: String, runtimeSha: String, featureSha: String): String {
+        require(arm != 0L && this.processEpoch == processEpoch && runtimeConfig == runtimeSha && featureLock == featureSha)
+        return requireNotNull(challenge)
+    }
+
+    @JvmStatic fun hubSnapshot(processEpoch: String, runtimeSha: String, featureSha: String, lifecycle: String, pair: EmbeddedDuplexPairStatus): String {
+        val current = currentHubChallenge(processEpoch, runtimeSha, featureSha)
+        val snapshot = JSONObject(status(current,processEpoch,runtimeSha,featureSha,requireNotNull(installedApk))).getJSONArray("native_snapshot")
+        val configured = StereoBankControls.snapshot()
+        val maskEnabled = StereoBankControls.maskSnapshot()[3] != 0L
+        val life = JSONObject(lifecycle)
+        require(life.getString("\$schema") == "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1" && life.getString("action") == "peer_status")
+        require(life.getString("config_sha256") == runtimeSha && life.getString("status") == "active" && !life.getBoolean("renewal_pending"))
+        val projection = life.getJSONObject("authority_projection")
+        val observed = life.getLong("observed_at_ms")
+        val expiry = minOf(projection.getLong("expires_at_ms"),pair.localSessionExpiresAtMs)
+        require(pair.localSessionCurrent && pair.sessionId == projection.getString("peer_session_id") && expiry > observed+5000L)
+        val policy = configured.policy.words()
+        val pixelCurrent = io.github.mesmerprism.rustyquest.spatial_camera_panel.ConcurrentStereoHubContract.currentPolicyPixels(
+            LongArray(snapshot.length()) { snapshot.getLong(it) }, policy, configured.revision, nativeProcess, arm, maskEnabled)
+        require(listOf(expiry,configured.revision,snapshot.getLong(39),snapshot.getLong(55),snapshot.getLong(56)).all { it in 0L..9_007_199_254_740_991L }) { "Hub scalar exceeds exact browser integer range" }
+        val token = if(policy.all { it==0L }) "own" else if(policy.all { it==1L }) "peer" else "mixed"
+        return JSONObject().put("running",true).put("pair_current",true).put("expires_at_ms",expiry)
+            .put("process_epoch",processEpoch).put("runtime_config",runtimeSha).put("arm",arm.toString()).put("native_process",nativeProcess.toString())
+            .put("revision",configured.revision).put("policy",token).put("policy_pixel_current",pixelCurrent)
+            .put("gpu_frame",snapshot.getLong(39)).put("own_adoptions",snapshot.getLong(55)).put("peer_adoptions",snapshot.getLong(56))
+            .put("mask_enabled",maskEnabled).put("sample_elapsed_ms",android.os.SystemClock.elapsedRealtime()).put("observation_status","current_owner_observation").toString()
+    }
+
     @JvmStatic fun arm(challenge: String, processEpoch: String, runtimeSha: String,
         featureSha: String, apkSha: String): String {
         val armEntry = android.os.SystemClock.elapsedRealtimeNanos()

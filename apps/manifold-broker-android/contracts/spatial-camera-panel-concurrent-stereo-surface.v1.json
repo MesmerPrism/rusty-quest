@@ -1,0 +1,25 @@
+{
+  "$schema": "rusty.quest.connection_hub.concurrent_stereo_surface_contract.v1",
+  "schema_version": 1,
+  "provider_id": "provider.quest.concurrent-stereo",
+  "surface_id": "surface.concurrent_stereo.controls",
+  "display_label": "Current stereo source",
+  "description": "Select Own or Peer on this headset; two headset outcomes remain independent.",
+  "typed_params_schema": "rusty.manifold.connection_hub.typed_params.empty.v1",
+  "availability": "current_signed_pair_and_native_arm",
+  "lifecycle": "unregister_when_unavailable",
+  "effect": "current_retired_gpu_policy_revision",
+  "commands": [
+    {
+      "command": "command.concurrent_stereo.own",
+      "display_label": "Own",
+      "required_controller_capability": "capability.concurrent_stereo.own"
+    },
+    {
+      "command": "command.concurrent_stereo.peer",
+      "display_label": "Peer",
+      "required_controller_capability": "capability.concurrent_stereo.peer"
+    }
+  ],
+  "runtime_surface_contract_sha256": "sha256:f2b08d2e1424b501f411a57bb47cbb5ea933016a31e8a2a39885238e4cdedfa3"
+}
