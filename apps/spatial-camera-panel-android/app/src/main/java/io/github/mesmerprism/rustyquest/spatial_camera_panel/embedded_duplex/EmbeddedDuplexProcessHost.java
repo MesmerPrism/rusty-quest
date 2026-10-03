@@ -308,6 +308,35 @@ final class EmbeddedDuplexProcessHost {
                     return exact;
                 }));
     }
+    private void requireCurrentHubAttachment() {
+        synchronized (attachmentGate) {
+            if (phase.get()!=Phase.READY || localFixture || attachmentGeneration==0L || displayDetaching || closeInFlight || display.cleanupPending())
+                throw new IllegalStateException("current duplex display unavailable");
+        }
+    }
+    CompletableFuture<String> concurrentHubObservation() {
+        return submit(() -> {
+            requireFreshProcess();
+            if (phase.get()!=Phase.READY || localFixture || processFence==null || runtimeConfigSha256==null || ownFeatureLockSha256==null)
+                throw new IllegalStateException("current duplex surface unavailable");
+            processFence.requireLive(processFence.generation());
+            requireCurrentHubAttachment();
+            String life=EmbeddedDuplexNative.peerLifecycle(EmbeddedDuplexPeerAction.STATUS.word);
+            JSONObject identity=new JSONObject(life);
+            if(identity.getLong("native_executor_generation")!=nativeExecutorGeneration || identity.getLong("app_process_generation")!=processFence.generation())
+                throw new IllegalStateException("current duplex owner generation differs");
+            EmbeddedDuplexPairStatus pair=EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand("pair_status","{}"));
+            return ConcurrentStereoQualification.hubSnapshot(processFence.epochId(),runtimeConfigSha256,ownFeatureLockSha256,life,pair);
+        });
+    }
+    CompletableFuture<String> concurrentHubPolicy(long[] policy, java.util.concurrent.atomic.AtomicBoolean cancelled) {
+        return submit(() -> {
+            requireFreshProcess();
+            if(phase.get()!=Phase.READY || localFixture || processFence==null)throw new IllegalStateException("current duplex surface unavailable");
+            return ConcurrentStereoQualification.currentHubChallenge(processFence.epochId(),runtimeConfigSha256,ownFeatureLockSha256);
+        }).thenCompose(challenge -> concurrentQualificationOnLane(false,challenge,true,policy.clone(),null,false,true,cancelled));
+    }
+
     CompletableFuture<String> concurrentPolicy(String challenge, long[] policy) {
         return concurrentQualificationOnLane(false, challenge, true, policy == null ? null : policy.clone(), null);
     }
@@ -322,6 +351,9 @@ final class EmbeddedDuplexProcessHost {
         return concurrentQualificationOnLane(arm,challenge,policyAction,policy,peerAction,false);
     }
     private CompletableFuture<String> concurrentQualificationOnLane(boolean arm, String challenge, boolean policyAction, long[] policy, EmbeddedDuplexPeerAction peerAction, boolean maskAction) {
+        return concurrentQualificationOnLane(arm,challenge,policyAction,policy,peerAction,maskAction,false,null);
+    }
+    private CompletableFuture<String> concurrentQualificationOnLane(boolean arm, String challenge, boolean policyAction, long[] policy, EmbeddedDuplexPeerAction peerAction, boolean maskAction, boolean hubAction, java.util.concurrent.atomic.AtomicBoolean cancelled) {
         return submit(() -> {
             requireFreshProcess();
             if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE && terminalWholeReceipt != null) {
@@ -402,6 +434,18 @@ final class EmbeddedDuplexProcessHost {
                     terminalWholeReceipt = receipt; terminalWholeChallenge = challenge;
                 }
                 return receipt;
+            }
+            if (hubAction) {
+                if (cancelled == null || cancelled.get()) throw new IllegalStateException("current duplex command cancelled");
+                requireCurrentHubAttachment();
+                if (io.github.mesmerprism.rustyquest.spatial_camera_panel.StereoBankControls.INSTANCE.maskSnapshot()[3] != 0L)
+                    throw new IllegalStateException("current duplex source command unavailable while mask enabled");
+                String life=EmbeddedDuplexNative.peerLifecycle(EmbeddedDuplexPeerAction.STATUS.word);
+                JSONObject owner=new JSONObject(life);
+                if(owner.getLong("native_executor_generation")!=nativeExecutorGeneration || owner.getLong("app_process_generation")!=processFence.generation())
+                    throw new IllegalStateException("current duplex owner generation differs");
+                EmbeddedDuplexPairStatus pair=EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand("pair_status","{}"));
+                ConcurrentStereoQualification.hubSnapshot(epoch,receiptConfig,receiptFeature,life,pair);
             }
             if (maskAction) return ConcurrentStereoQualification.mask(challenge,epoch,receiptConfig,receiptFeature,apk.toString(),policy);
             if (policyAction) return ConcurrentStereoQualification.policy(challenge, epoch, receiptConfig, receiptFeature, apk.toString(), policy);

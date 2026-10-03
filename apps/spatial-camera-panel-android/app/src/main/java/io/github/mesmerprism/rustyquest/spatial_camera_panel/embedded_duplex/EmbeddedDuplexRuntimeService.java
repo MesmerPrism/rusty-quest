@@ -23,6 +23,12 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context).streamDropoutDiagnostic(challenge);
     }
 
+    public static CompletableFuture<String> concurrentHubObservation(Context context) {
+        return EmbeddedDuplexProcessHost.forApplication(context).concurrentHubObservation();
+    }
+    public static CompletableFuture<String> concurrentHubPolicy(Context context, long[] policy, java.util.concurrent.atomic.AtomicBoolean cancelled) {
+        return EmbeddedDuplexProcessHost.forApplication(context).concurrentHubPolicy(policy,cancelled);
+    }
     public static CompletableFuture<String> concurrentMask(Context context, String challenge, long[] mask) {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentMask(challenge,mask);
     }

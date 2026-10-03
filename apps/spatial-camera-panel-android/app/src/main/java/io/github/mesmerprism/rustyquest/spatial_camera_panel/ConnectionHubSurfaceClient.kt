@@ -36,6 +36,7 @@ internal class ConnectionHubSurfaceClient(
     context: Context,
     private val target: ConnectionHubSurfaceTarget,
 ) : Closeable {
+  private val profile = target.hubSurfaceProfile
   private data class AuthorizedSurfaceCommand(
       val requestId: String,
       val surfaceId: String,
@@ -67,6 +68,7 @@ internal class ConnectionHubSurfaceClient(
   private var registrationId = ""
   private var registrationJson = ""
   private val started = AtomicBoolean(false)
+  private val commandLifetimes = ConnectionHubCommandLifetimes()
   private var lastPublishedStateJson = ""
   private val deadlines = mutableMapOf<String, Runnable>()
   private val surfaceChangeObserver: () -> Unit = {
@@ -89,7 +91,7 @@ internal class ConnectionHubSurfaceClient(
           }
           val state = target.hubSurfaceState()
           sendSurfaceStateIfChanged(state)
-          connectionHubSurfaceStatePublishDelayMs(surfaceAvailable = true, state)?.let { delayMs ->
+          profile.publishDelay(state)?.let { delayMs ->
             handler.postDelayed(this, delayMs)
           }
         }
@@ -125,6 +127,7 @@ internal class ConnectionHubSurfaceClient(
 
   override fun close() {
     if (!started.compareAndSet(true, false)) return
+    commandLifetimes.close()
     target.setHubSurfaceChangeObserver(null)
     handler.post {
       marker("client_stopping")
@@ -141,6 +144,7 @@ internal class ConnectionHubSurfaceClient(
     var binder: IBinder? = null
     val deathRecipient =
         IBinder.DeathRecipient {
+          commandLifetimes.retireBinding(generation)
           handler.post {
             dispatch(Event.binderDied(generation, SystemClock.uptimeMillis()))
           }
@@ -156,6 +160,7 @@ internal class ConnectionHubSurfaceClient(
     }
 
     override fun onServiceDisconnected(name: ComponentName) {
+      commandLifetimes.retireBinding(generation)
       handler.post {
         if (!started.get()) return@post
         broker = null
@@ -164,6 +169,7 @@ internal class ConnectionHubSurfaceClient(
     }
 
     override fun onBindingDied(name: ComponentName) {
+      commandLifetimes.retireBinding(generation)
       handler.post {
         if (!started.get()) return@post
         broker = null
@@ -172,6 +178,7 @@ internal class ConnectionHubSurfaceClient(
     }
 
     override fun onNullBinding(name: ComponentName) {
+      commandLifetimes.retireBinding(generation)
       handler.post {
         if (!started.get()) return@post
         broker = null
@@ -184,6 +191,7 @@ internal class ConnectionHubSurfaceClient(
     check(Looper.myLooper() === handler.looper) { "hub-worker-thread-required" }
     val wasRegistered = sessionState.isRegistered
     val result = ConnectionHubAdmissionSessionReducer.reduce(sessionState, event)
+    commandLifetimes.transition(sessionState, result.state)
     sessionState = result.state
     result.effects.forEach(::execute)
     if (!wasRegistered && sessionState.isRegistered) {
@@ -341,7 +349,7 @@ internal class ConnectionHubSurfaceClient(
         Bundle().apply {
           putString("correlation_id", "cleanup.s${effect.sessionGeneration}")
           putLong("session_generation", effect.sessionGeneration)
-          putString("surface_id", SURFACE_ID)
+          putString("surface_id", profile.surfaceId)
         }
     sendRaw(MESSAGE_UNREGISTER_SURFACE, data)
   }
@@ -463,7 +471,7 @@ internal class ConnectionHubSurfaceClient(
           ?: response.optString("status", "operation_rejected")
 
   private fun surfaceRegistration() =
-      connectionHubSurfaceRegistration(target.hubSurfaceState())
+      profile.registration(target.hubSurfaceState())
 
   private fun sendSurfaceStateIfChanged(state: JSONObject, force: Boolean = false) {
     val stateJson = state.toString()
@@ -472,7 +480,7 @@ internal class ConnectionHubSurfaceClient(
         Bundle().apply {
           putString("correlation_id", randomToken("state"))
           putLong("session_generation", sessionState.sessionGeneration)
-          putString("surface_id", SURFACE_ID)
+          putString("surface_id", profile.surfaceId)
           putString("state_json", stateJson)
         }
     if (sendRaw(MESSAGE_UPDATE_SURFACE_STATE, data)) {
@@ -497,48 +505,37 @@ internal class ConnectionHubSurfaceClient(
           val command = message.data.getString("command", "")
           val args = JSONObject(message.data.getString("args_json", "{}"))
           val receipt = JSONObject(message.data.getString("authority_receipt_json", "{}"))
-          requireConnectionHubCommandAuthorization(
+          requireConnectionHubProfileCommandAuthorization(
               requestId,
               surfaceId,
               command,
               args,
               receipt,
+              profile,
           )
           AuthorizedSurfaceCommand(requestId, surfaceId, command, args, receipt)
         }
         .onSuccess { command ->
+          val generation = sessionState.sessionGeneration
+          val cancelled = commandLifetimes.issue(sessionState.bindingGeneration)
           mainHandler.post {
-            val application =
-                runCatching {
-                  check(target.hubSurfaceAvailable()) { "surface_unavailable" }
-                  val expectedRevision =
-                      target.applyHubAuthorizedCommand(
-                          command.requestId,
-                          command.surfaceId,
-                          command.command,
-                          command.args,
-                          command.authorityReceipt,
-                      )
-                  AppliedSurfaceCommand(
-                      command = command.command,
-                      expectedRevision = expectedRevision,
-                      stateJson = target.hubSurfaceState().toString(),
-                  )
-                }
-            handler.post {
-              if (!started.get()) return@post
-              application
-                  .onSuccess { applied ->
-                    completeSurfaceCommand(effectReplyTo, effectBinding, applied)
-                  }
-                  .onFailure { error ->
-                    rejectSurfaceCommand(
-                        effectReplyTo,
-                        effectBinding,
-                        commandMarker,
-                        error,
-                    )
-                  }
+            val future = runCatching {
+              check(target.hubSurfaceAvailable()) { "surface_unavailable" }
+              target.applyHubAuthorizedCommandAsync(command.requestId, command.surfaceId, command.command, command.args, command.authorityReceipt, cancelled)
+            }.getOrElse { error ->
+              commandLifetimes.release(cancelled)
+              handler.post { rejectSurfaceCommand(effectReplyTo, effectBinding, commandMarker, error) }
+              return@post
+            }
+            future.whenComplete { revision, error ->
+              commandLifetimes.release(cancelled)
+              val applied = if (error == null) runCatching { AppliedSurfaceCommand(command.command, revision, target.hubSurfaceState().toString()) } else null
+              handler.post effectCompletion@ {
+                if (!started.get() || sessionState.sessionGeneration != generation || !sessionState.isRegistered) return@effectCompletion
+                if (error != null) rejectSurfaceCommand(effectReplyTo, effectBinding, commandMarker, error)
+                else if (applied?.isSuccess == true) completeSurfaceCommand(effectReplyTo, effectBinding, applied.getOrThrow())
+                else rejectSurfaceCommand(effectReplyTo, effectBinding, commandMarker, applied?.exceptionOrNull() ?: IllegalStateException("effect snapshot unavailable"))
+              }
             }
           }
         }
@@ -554,7 +551,7 @@ internal class ConnectionHubSurfaceClient(
   ) {
     val state = JSONObject(applied.stateJson)
     val observed =
-        connectionHubCommandEffectObserved(applied.command, applied.expectedRevision, state)
+        profile.effectObserved(applied.command, applied.expectedRevision, state)
     val ambiguous =
         !observed &&
             ConnectionHubAdmissionSessionReducer.commandRetryPolicy(applied.command) ==
@@ -591,7 +588,7 @@ internal class ConnectionHubSurfaceClient(
     if (observed && sessionState.isRegistered) {
       handler.removeCallbacks(statePublisher)
       sendSurfaceStateIfChanged(state, force = true)
-      connectionHubSurfaceStatePublishDelayMs(surfaceAvailable = true, state)?.let { delayMs ->
+      profile.publishDelay(state)?.let { delayMs ->
         handler.postDelayed(statePublisher, delayMs)
       }
     }
@@ -603,12 +600,13 @@ internal class ConnectionHubSurfaceClient(
       commandMarker: String,
       error: Throwable,
   ) {
+    val uncertain = error is ConnectionHubOutcomeUnknownException || error.cause is ConnectionHubOutcomeUnknownException
     marker("command_rejected_${error.javaClass.simpleName}_$commandMarker")
     val result = Bundle()
     result.putString("effect_binding_json", effectBinding)
     result.putBoolean("provider_applied", false)
-    result.putString("status", "provider_rejected_${error.javaClass.simpleName}")
-    result.putString("effect_status", "rejected")
+    result.putString("status", if (uncertain) "provider_effect_outcome_unknown" else "provider_rejected_${error.javaClass.simpleName}")
+    result.putString("effect_status", if (uncertain) "outcome_unknown" else "rejected")
     result.putString("state_json", "{}")
     sendEffectResponse(effectReplyTo, result)
   }
@@ -651,7 +649,7 @@ internal class ConnectionHubSurfaceClient(
   private fun marker(status: String) {
     Log.i(
         TAG,
-        "channel=rusty-connection-hub surfaceId=$SURFACE_ID" +
+        "channel=rusty-connection-hub surfaceId=${profile.surfaceId}" +
             " processGeneration=${sessionState.processGeneration}" +
             " bindingGeneration=${sessionState.bindingGeneration}" +
             " sessionGeneration=${sessionState.sessionGeneration}" +
