@@ -517,12 +517,56 @@ fn parse_owner_failure_diagnostic(text: &str) -> Result<serde_json::Value, Strin
             return Err("java_bridge.owner_diagnostic_closed_values".into());
         }
     }
-    if reason.is_some_and(|r| !matches!(r,"NONE"|"TICKET_PARSE"|"STALE_GENERATION"|"UNDECLARED_BINDING"|"REGISTRY_CLOSED"|"PROVIDER_BUSY"|"CAPACITY"|"PREPARATION_ALREADY_ATTEMPTED"|"FOREIGN_READBACK"|"RECEIPT_COLLISION"|"DISPLAY_LOCAL_SHUTDOWN"|"DISPLAY_DISPATCH_FENCED"|"DISPLAY_TRANSITION_TIMEOUT"|"DISPLAY_ADMISSION_REJECTED"|"DISPLAY_NATIVE_ACTIVE_EPOCH"|"DISPLAY_NATIVE_ACTIVE_STATE"|"DISPLAY_NATIVE_BOUNDS"|"DISPLAY_NATIVE_CAPTURE"|"DISPLAY_NATIVE_CARRIER"|"DISPLAY_NATIVE_CLOCK"|"DISPLAY_NATIVE_FRAME_ABSENT"|"DISPLAY_NATIVE_FRAME_EPOCH"|"DISPLAY_NATIVE_FRAME_FUTURE"|"DISPLAY_NATIVE_FRAME_STALE"|"DISPLAY_NATIVE_INPUT"|"DISPLAY_NATIVE_LOCAL"|"DISPLAY_NATIVE_PROCESS_EPOCH"|"DISPLAY_NATIVE_SOURCE_STATE"|"DISPLAY_NATIVE_SUPERSEDED"|"DISPLAY_OWN_CAPTURE_STATE"|"DISPLAY_OWN_CAPTURE_FRESH"|"DISPLAY_OWN_CARRIER_SUPERSEDED"|"DISPLAY_NATIVE_SHAPE"|"DISPLAY_ROUTING_SUPERSEDED"|"OTHER")
-        || (stage != "PROVIDER_EXECUTION" && r != "NONE")) { return Err("java_bridge.owner_diagnostic_closed_values".into()); }
+    if reason.is_some_and(|r| {
+        let incoming = matches!(r,"INCOMING_ARM_ORDER"|"INCOMING_ARM_PROJECTION"|"INCOMING_ARM_EVIDENCE"|"INCOMING_ARM_UNAVAILABLE");
+        if incoming { return stage != "INCOMING_ARM_VERIFICATION" || fields.len() != 7
+            || action != "ARM_RECEIVER" || value.get("owner").and_then(|v|v.as_str()) != Some("sink"); }
+        !matches!(r,"NONE"|"TICKET_PARSE"|"STALE_GENERATION"|"UNDECLARED_BINDING"|"REGISTRY_CLOSED"|"PROVIDER_BUSY"|"CAPACITY"|"PREPARATION_ALREADY_ATTEMPTED"|"FOREIGN_READBACK"|"RECEIPT_COLLISION"|"DISPLAY_LOCAL_SHUTDOWN"|"DISPLAY_DISPATCH_FENCED"|"DISPLAY_TRANSITION_TIMEOUT"|"DISPLAY_ADMISSION_REJECTED"|"DISPLAY_NATIVE_ACTIVE_EPOCH"|"DISPLAY_NATIVE_ACTIVE_STATE"|"DISPLAY_NATIVE_BOUNDS"|"DISPLAY_NATIVE_CAPTURE"|"DISPLAY_NATIVE_CARRIER"|"DISPLAY_NATIVE_CLOCK"|"DISPLAY_NATIVE_FRAME_ABSENT"|"DISPLAY_NATIVE_FRAME_EPOCH"|"DISPLAY_NATIVE_FRAME_FUTURE"|"DISPLAY_NATIVE_FRAME_STALE"|"DISPLAY_NATIVE_INPUT"|"DISPLAY_NATIVE_LOCAL"|"DISPLAY_NATIVE_PROCESS_EPOCH"|"DISPLAY_NATIVE_SOURCE_STATE"|"DISPLAY_NATIVE_SUPERSEDED"|"DISPLAY_OWN_CAPTURE_STATE"|"DISPLAY_OWN_CAPTURE_FRESH"|"DISPLAY_OWN_CARRIER_SUPERSEDED"|"DISPLAY_NATIVE_SHAPE"|"DISPLAY_ROUTING_SUPERSEDED"|"OTHER")
+        || (stage != "PROVIDER_EXECUTION" && r != "NONE") }) { return Err("java_bridge.owner_diagnostic_closed_values".into()); }
     if !matches!(stage,"NONE"|"CALLBACK_FENCE"|"PROJECTION_BINDING"|"REGISTRY_BINDING"|"INCOMING_FENCE"|"LOCAL_QUIESCENCE"|"PROVIDER_EXECUTION"|"RECEIPT_VERIFICATION"|"INCOMING_ARM_VERIFICATION")
         || !matches!(sink,"NONE"|"PEER_PROJECTION"|"READER_STAGE"|"READER_IDENTITY"|"RECEIVER_CREATE"|"PROVIDER_GETTER"|"PEER_BIND"|"RECEIVER_EFFECT")
         || !matches!(action,"NONE"|"ARM_RECEIVER"|"ARM_CLEANUP"|"START"|"STOP"|"CLEANUP"|"BEFORE_TICKET")
         || !matches!(code,"NONE"|"OWNER_EFFECT_REJECTED")
         || (stage=="NONE") != (code=="NONE") {return Err("java_bridge.owner_diagnostic_closed_values".into());}
     Ok(value)
+}
+
+#[cfg(test)]
+mod owner_diagnostic_tests {
+    use super::parse_owner_failure_diagnostic;
+    fn receipt(reason: &str) -> serde_json::Value {
+        serde_json::json!({"stage":"INCOMING_ARM_VERIFICATION","sink_stage":"NONE",
+            "action":"ARM_RECEIVER","code":"OWNER_EFFECT_REJECTED","provider_reason":reason,
+            "owner":"sink","cause":"NONE"})
+    }
+    #[test]
+    fn incoming_arm_exact_reasons_are_diagnostic_only() {
+        for reason in ["INCOMING_ARM_ORDER","INCOMING_ARM_PROJECTION","INCOMING_ARM_EVIDENCE","INCOMING_ARM_UNAVAILABLE"] {
+            let value=receipt(reason);
+            assert_eq!(parse_owner_failure_diagnostic(&value.to_string()).unwrap(),value);
+        }
+    }
+    #[test]
+    fn incoming_arm_reasons_cannot_masquerade_as_other_boundaries() {
+        for (key,value) in [("stage","PROVIDER_EXECUTION"),("owner","source"),
+            ("action","START"),("cause","STATE"),("provider_reason","INCOMING_ARM_ORDER;secret") ] {
+            let mut damaged=receipt("INCOMING_ARM_ORDER"); damaged[key]=value.into();
+            assert!(parse_owner_failure_diagnostic(&damaged.to_string()).is_err());
+        }
+        let mut damaged=receipt("INCOMING_ARM_ORDER");
+        damaged.as_object_mut().unwrap().remove("owner");
+        damaged.as_object_mut().unwrap().remove("cause");
+        assert!(parse_owner_failure_diagnostic(&damaged.to_string()).is_err());
+    }
+    #[test]
+    fn retained_four_five_seven_field_diagnostics_stay_compatible() {
+        let mut value=receipt("NONE");
+        assert!(parse_owner_failure_diagnostic(&value.to_string()).is_ok());
+        value.as_object_mut().unwrap().remove("owner"); value.as_object_mut().unwrap().remove("cause");
+        assert!(parse_owner_failure_diagnostic(&value.to_string()).is_ok());
+        value.as_object_mut().unwrap().remove("provider_reason");
+        assert!(parse_owner_failure_diagnostic(&value.to_string()).is_ok());
+        value["secret"]="must not pass".into();
+        assert!(parse_owner_failure_diagnostic(&value.to_string()).is_err());
+    }
 }

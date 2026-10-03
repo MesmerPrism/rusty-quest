@@ -47,6 +47,10 @@ final class EmbeddedDuplexActivationGate {
     private final Clock clock;
     private ArmEvidence armed;
     private boolean cleanupStarted;
+    private MediaTicket pendingTerminal;
+    private MediaTicket pendingFreshArm;
+    private ArmEvidence terminalArm;
+    private long terminalProviderRevision;
     private boolean activationUncertain;
     private boolean activated;
     private long stateRevision;
@@ -70,6 +74,14 @@ final class EmbeddedDuplexActivationGate {
         try {
             if (compensate || ticket.terminal()) {
                 cleanupStarted = true;
+                pendingTerminal = compensate ? null : ticket;
+                terminalArm = null;
+                pendingFreshArm = null;
+                stateRevision++;
+            } else if (ticket.armReceiver() && cleanupStarted) {
+                if (pendingFreshArm != null) throw new IllegalStateException("incoming Sink activation order");
+                requireFreshArm(authority, ticket);
+                pendingFreshArm = ticket;
                 stateRevision++;
             }
         } finally { lock.unlock(); }
@@ -80,8 +92,12 @@ final class EmbeddedDuplexActivationGate {
         if (!ticket.incomingSink()) return;
         lock.lock();
         try {
-            if (compensate || ticket.terminal()) return;
-            if (!ticket.armReceiver() || cleanupStarted || activationUncertain) {
+            if (compensate) return;
+            if (ticket.terminal()) {
+                recordVerifiedTerminal(authority, ticket, readback, verified);
+                return;
+            }
+            if (!ticket.armReceiver() || (!cleanupStarted && activationUncertain)) {
                 throw new IllegalStateException("incoming Sink activation order");
             }
             requireProjection(authority);
@@ -96,13 +112,88 @@ final class EmbeddedDuplexActivationGate {
                     || !"receiver_armed".equals(verified.getString("observed_state"))) {
                 throw new IllegalStateException("incoming Sink arm evidence");
             }
-            armed = new ArmEvidence(ticket, authority, verified.getString("receipt_id"));
+            ArmEvidence next = new ArmEvidence(ticket, authority, verified);
+            if (cleanupStarted) {
+                if (pendingFreshArm != ticket) throw new IllegalStateException("incoming Sink activation order");
+                requireFreshArm(authority, ticket);
+                if (next.providerHandleId.equals(terminalArm.providerHandleId)
+                        || next.routeGeneration == terminalArm.routeGeneration
+                        || next.decoderToken == terminalArm.decoderToken
+                        || next.readerGeneration == terminalArm.readerGeneration) {
+                    throw new IllegalStateException("incoming Sink arm evidence");
+                }
+                cleanupStarted = false;
+                activationUncertain = false;
+                activated = false;
+                pendingTerminal = null;
+                pendingFreshArm = null;
+                terminalArm = null;
+            }
+            armed = next;
             stateRevision++;
         } catch (Exception invalid) {
             throw invalid instanceof IllegalStateException
                     ? (IllegalStateException) invalid
                     : new IllegalStateException("incoming Sink arm evidence", invalid);
         } finally { lock.unlock(); }
+    }
+
+    // The same callback's verified terminal effect is the only reopening fence.
+    // A pending/failed/compensating Stop cannot manufacture a fresh arm scope.
+    private void recordVerifiedTerminal(JSONObject authority, MediaTicket ticket,
+            JSONObject readback, JSONObject verified) throws Exception {
+        if (armed == null) return; // A valid unarmed cleanup never grants a restart scope.
+        if (!cleanupStarted || pendingTerminal != ticket
+                || !"stop".equals(ticket.operation) || !"stop".equals(ticket.actionKind)
+                || ticket.generation != target.generation()
+                || !ticket.authorityEpochId.equals(armed.providerEpochId)
+                || !ticket.clientId.equals(armed.clientId) || !ticket.leaseId.equals(armed.leaseId)) {
+            return; // Verified physical cleanup is not a grant to reopen this arm lineage.
+        }
+        boolean retained = "rusty.quest.android.media.retained_cleanup_projection.v2".equals(
+                authority.getString("$schema"));
+        String epoch = authority.getString(retained ? "provider_epoch_id" : "authority_provider_epoch_id");
+        String client = authority.getString(retained ? "target_client_id" : "authority_client_id");
+        String lease = authority.getString(retained ? "target_runtime_lease_id" : "authority_runtime_lease_id");
+        if (!retained) requireProjection(authority);
+        requireExactFields(verified, "$schema", "receipt_id", "readback_sha256",
+                "executor_generation", "provider_state_revision", "observed_state", "terminal",
+                "provider_handle_id", "detail_sha256");
+        if (!epoch.equals(armed.providerEpochId) || !client.equals(armed.clientId)
+                || !lease.equals(armed.leaseId)
+                || !target.incomingRuntimeSpecId().equals(authority.getString("platform_runtime_spec_id"))
+                || authority.getLong("expires_at_ms") <= clock.wallTimeMillis()
+                || !"rusty.quest.android.media.verified_owner_effect.v1".equals(verified.getString("$schema"))
+                || verified.getLong("executor_generation") != target.generation()
+                || !verified.getBoolean("terminal") || !"stopped".equals(verified.getString("observed_state"))
+                || !verified.getString("receipt_id").equals(readback.getString("receipt_id"))
+                || !verified.getString("provider_handle_id").equals(armed.providerHandleId)
+                || verified.getLong("provider_state_revision") <= armed.providerStateRevision) {
+            return; // Leave the cleanup fence closed; do not veto registry-verified cleanup.
+        }
+        terminalArm = armed;
+        terminalProviderRevision = verified.getLong("provider_state_revision");
+        stateRevision++;
+    }
+
+    private void requireFreshArm(JSONObject authority, MediaTicket ticket) {
+        try {
+            requireProjection(authority);
+            if (terminalArm == null || terminalProviderRevision <= terminalArm.providerStateRevision
+                    || ticket.generation != target.generation()
+                    || empty(ticket.actionId) || ticket.actionId.equals(terminalArm.actionId)
+                    || !ticket.authorityEpochId.equals(terminalArm.providerEpochId)
+                    || !ticket.authorityEpochId.equals(authority.getString("authority_provider_epoch_id"))
+                    || !ticket.clientId.equals(authority.getString("authority_client_id"))
+                    || !ticket.leaseId.equals(authority.getString("authority_runtime_lease_id"))
+                    || !target.incomingRuntimeSpecId().equals(authority.getString("platform_runtime_spec_id"))
+                    || authority.getLong("expires_at_ms") <= clock.wallTimeMillis()
+                    || terminalArm.routeGrantId.equals(authority.getString("route_grant_id"))) {
+                throw new IllegalStateException("incoming Sink activation order");
+            }
+        } catch (Exception invalid) {
+            throw new IllegalStateException("incoming Sink activation order", invalid);
+        }
     }
 
     private enum ActivationStage { ARM_PROOF, FIRST_SURFACE_IMAGE, GRAPH_ATTACH, NATIVE_EFFECTIVE }
@@ -313,9 +404,11 @@ final class EmbeddedDuplexActivationGate {
     private final class ArmEvidence {
         final String actionId, providerEpochId, clientId, leaseId, runtimeSpecId;
         final String routeGrantId, routeConfigurationSha256, receiptId;
-        final long expectedRuntimeRevision, expiresAtMs;
+        final long expectedRuntimeRevision, expiresAtMs, providerStateRevision;
+        final long routeGeneration, decoderToken, readerGeneration;
+        final String providerHandleId;
 
-        ArmEvidence(MediaTicket ticket, JSONObject authority, String receiptId) throws Exception {
+        ArmEvidence(MediaTicket ticket, JSONObject authority, JSONObject verified) throws Exception {
             if (ticket.generation != target.generation()
                     || !ticket.authorityEpochId.equals(authority.getString("authority_provider_epoch_id"))
                     || !ticket.clientId.equals(authority.getString("authority_client_id"))
@@ -333,7 +426,17 @@ final class EmbeddedDuplexActivationGate {
             routeGrantId = authority.getString("route_grant_id");
             routeConfigurationSha256 = authority.getString("route_configuration_sha256");
             expiresAtMs = authority.getLong("expires_at_ms");
-            this.receiptId = receiptId;
+            receiptId = verified.getString("receipt_id");
+            providerHandleId = verified.getString("provider_handle_id");
+            providerStateRevision = verified.getLong("provider_state_revision");
+            routeGeneration = target.routeGeneration();
+            decoderToken = target.decoderToken();
+            readerGeneration = target.readerGeneration();
+            if (expiresAtMs <= clock.wallTimeMillis() || empty(providerHandleId)
+                    || providerStateRevision <= 0L || routeGeneration <= 0L
+                    || decoderToken <= 0L || readerGeneration <= 0L) {
+                throw new IllegalStateException("incoming Sink arm evidence");
+            }
         }
 
         boolean matches(JSONObject authority, JSONObject proof, long now) throws Exception {
