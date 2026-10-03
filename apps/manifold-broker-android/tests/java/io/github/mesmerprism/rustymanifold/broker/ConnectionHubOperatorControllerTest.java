@@ -7,6 +7,8 @@ import org.json.JSONObject;
 public final class ConnectionHubOperatorControllerTest {
     private static final String SESSION = repeat("s", 43);
     public static void main(String[] args) {
+        testRestoreRejectionCannotConfirmMutations();
+        testActualRejectedRuntimeStopSeam();
         testLifecycleAndStatusConfirmation();
         testPairAndRevokeRedactCredentials();
         testTypedArgumentsFailClosed();
@@ -14,6 +16,72 @@ public final class ConnectionHubOperatorControllerTest {
         testAmbiguousMutationIsNotRetriedOrClaimed();
         testEffectiveReadbackCanConfirmAfterTransportFailure();
         System.out.println("Connection Hub operator controller tests passed");
+    }
+
+    private static void testRestoreRejectionCannotConfirmMutations() {
+        for (String status : new String[] {"manifold_state_restore_rejected",
+                "manifold_state_restore_rejected_recovery_required"}) {
+            for (boolean throwsAfterStatus : new boolean[] {false, true}) {
+                for (String action : new String[] {"start", "stop", "pair", "revoke", "forget"}) {
+                    FakePort port = new FakePort();
+                    port.reportedStatus = status;
+                    port.rejectActions = throwsAfterStatus;
+                    JSONObject args = new JSONObject();
+                    if (action.equals("pair")) args.put("pairing_code", "123456")
+                            .put("controller_identity_sha256", repeat("a", 64));
+                    if (action.equals("revoke")) args.put("session", SESSION);
+                    ConnectionHubOperatorController.Result result = controller(port).execute(action, args);
+                    require(!result.receipt.getBoolean("applied"), "Restore rejection confirmed " + action);
+                    require(result.credential == null, "Rejected mutation returned a credential");
+                    require("manifold_state_restore_rejected_recovery_required".equals(
+                            result.receipt.getString("status")), "Typed recovery status lost");
+                    require(port.mutationCalls == 1, "Rejected action was retried");
+                    requireTransitions(result.receipt, "sent", "pending",
+                            throwsAfterStatus ? "outcome_unknown" : "rejected");
+                }
+            }
+            FakePort port = new FakePort();
+            port.reportedStatus = status;
+            JSONObject observed = controller(port).execute("status", new JSONObject()).receipt;
+            require(observed.getBoolean("applied") && port.mutationCalls == 0,
+                    "Safe restore-rejected status observation was blocked");
+        }
+    }
+
+    private static void testActualRejectedRuntimeStopSeam() {
+        final ConnectionHubStateStore.State retained = new ConnectionHubStateStore.State(
+                false, "rejected-retained-envelope", java.util.Collections.emptyMap(),
+                17, "retained_pending");
+        ConnectionHubStateStore store = new ConnectionHubStateStore() {
+            @Override public State load() { return retained; }
+            @Override public void save(State state) { throw new AssertionError("Rejected store overwritten"); }
+            @Override public void clear() { throw new AssertionError("Rejected store cleared"); }
+        };
+        ConnectionHubAuthorityPort authority = (ConnectionHubAuthorityPort) java.lang.reflect.Proxy.newProxyInstance(
+                ConnectionHubAuthorityPort.class.getClassLoader(),
+                new Class<?>[] {ConnectionHubAuthorityPort.class}, (proxy, method, values) -> {
+                    if (method.getName().equals("restoreOpaqueState")) {
+                        return ConnectionHubAuthorityPort.Receipt.rejected("modeled_restore_denial");
+                    }
+                    throw new AssertionError("Rejected runtime reached native authority");
+                });
+        final ConnectionHubRuntime runtime = new ConnectionHubRuntime(
+                authority, store, new HubSurfaceRegistry(), new java.security.SecureRandom());
+        ConnectionHubOperatorController.Port port =
+                (ConnectionHubOperatorController.Port) java.lang.reflect.Proxy.newProxyInstance(
+                        ConnectionHubOperatorController.Port.class.getClassLoader(),
+                        new Class<?>[] {ConnectionHubOperatorController.Port.class},
+                        (proxy, method, values) -> {
+                            if (method.getName().equals("status")) return runtime.status();
+                            if (method.getName().equals("stop")) { runtime.stopRequested(); return null; }
+                            throw new AssertionError("Unexpected integrated operator call");
+                        });
+        JSONObject receipt = new ConnectionHubOperatorController(port, () -> "operator.real-runtime-denial")
+                .execute("stop", new JSONObject()).receipt;
+        require(!receipt.getBoolean("applied"), "Already-stopped posture falsely confirmed denied cleanup");
+        require("manifold_state_restore_rejected_recovery_required".equals(receipt.getString("status")),
+                "Actual Runtime denial lost recovery status");
+        requireTransitions(receipt, "sent", "pending", "outcome_unknown");
     }
 
     private static void testLifecycleAndStatusConfirmation() {
@@ -139,6 +207,13 @@ public final class ConnectionHubOperatorControllerTest {
     }
 
     private static final class FakePort implements ConnectionHubOperatorController.Port {
+        String reportedStatus;
+        boolean rejectActions;
+        int mutationCalls;
+        private void mutation() {
+            mutationCalls += 1;
+            if (rejectActions) throw new IllegalStateException("manifold_state_restore_rejected_recovery_required");
+        }
         boolean running;
         boolean startThrowsBeforeState;
         boolean startThrowsAfterState;
@@ -152,13 +227,14 @@ public final class ConnectionHubOperatorControllerTest {
                     .put("listener_enabled", running)
                     .put("desired_connection_state", running ? "running" : "stopped")
                     .put("pairing_available", running)
-                    .put("status", running ? "running" : "stopped")
+                    .put("status", reportedStatus != null ? reportedStatus : running ? "running" : "stopped")
                     .put("transport_classification", "trusted_lan_experimental")
                     .put("confidentiality", "none")
                     .put("production_eligible", false);
         }
 
         @Override public void start() throws Exception {
+            mutation();
             startCalls += 1;
             if (startThrowsBeforeState) throw new Exception("before-state");
             if (startLeavesStopped) return;
@@ -167,10 +243,12 @@ public final class ConnectionHubOperatorControllerTest {
         }
 
         @Override public void stop() {
+            mutation();
             running = false;
         }
 
         @Override public JSONObject pair(String code, String identity) {
+            mutation();
             return new JSONObject()
                     .put("accepted", true)
                     .put("status", "paired")
@@ -178,10 +256,12 @@ public final class ConnectionHubOperatorControllerTest {
         }
 
         @Override public JSONObject revoke(String session, String reason) {
+            mutation();
             return new JSONObject().put("applied", true).put("status", "applied");
         }
 
         @Override public JSONObject forget() {
+            mutation();
             forgetCalls += 1;
             return new JSONObject().put("applied", true).put("status", "applied");
         }
