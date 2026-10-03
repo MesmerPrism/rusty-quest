@@ -829,6 +829,40 @@ impl QuestBrokerRuntimeProvider {
         Ok(response)
     }
 
+    /// Reads an actual retained failed-Start obligation without granting an effect.
+    pub fn has_retained_media_start_abort(
+        &self, client_id: &DottedId,
+    ) -> Result<bool, QuestBrokerRuntimeError> {
+        let runtime = self.runtime.as_ref().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        Ok(runtime.media_sessions.get(client_id)
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?.has_retained_start_abort())
+    }
+
+    /// Continues only the original failed Start under independently current
+    /// trusted Revoke evidence. Completed reverse effects remain skipped.
+    pub fn resume_revoked_media_start_abort_for_cleanup(
+        &mut self, client_id: &DottedId,
+        evidence: &rusty_quest_media_stream::MediaStreamTrustedRevokerCleanupEvidence,
+        now_ms: u64,
+    ) -> Result<Option<String>, QuestBrokerRuntimeError> {
+        let runtime = self.runtime.as_ref().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        let media = runtime.media_sessions.get(client_id)
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let peer = runtime.peer_runtime_host.as_ref()
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+            .read().map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let target = media.authorize_retained_start_abort(&peer, evidence, now_ms)
+            .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+        if target.client_id != client_id.as_str() {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+        }
+        let pending = media.pending_abort_action().is_some();
+        drop(peer);
+        if pending {
+            self.resume_media_start_abort_for_cleanup(client_id, &target.lease_id).map(Some)
+        } else { Ok(None) }
+    }
+
     /// Continues an already retained failed-Start abort at its next owner.
     /// This never prepares a second abort or replays verified cleanup effects.
     /// The caller must first validate current cleanup authority; this method

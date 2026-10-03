@@ -79,12 +79,24 @@
 
 #[test]
 fn concurrent_actual_22_coupled_cycles_preserve_two_live_resource_graphs() {
-    struct FailStopOnce {inner:DeterministicAndroidMediaOwnerExecutor,failed:bool}
+    run_coupled_owner_graph(false);
+}
+
+#[test]
+fn retained_failed_start_uses_live_revoker_and_original_target_stop() {
+    run_coupled_owner_graph(true);
+}
+
+fn run_coupled_owner_graph(retained_abort: bool) {
+    struct FailStopOnce {inner:DeterministicAndroidMediaOwnerExecutor,failed:bool,retained_abort:bool,start_failed:bool,abort_failed:bool}
     impl AndroidMediaOwnerExecutor for FailStopOnce {
         fn executor_generation(&self)->u64{self.inner.executor_generation()}
         fn execute(&mut self,ticket:&AndroidMediaExecutionTicket,mode:AndroidMediaExecutionMode)->Result<AndroidMediaOwnerReadback,String>{
+            if self.retained_abort && ticket.action_id.ends_with(".abort") && ticket.sequence==2 && !self.abort_failed {self.abort_failed=true;return Err("actual uncertain reverse owner readback".to_owned());}
             let readback=self.inner.execute(ticket,mode)?;
-            if ticket.operation==MediaStreamPlatformOperation::Stop && ticket.sequence==3 && mode==AndroidMediaExecutionMode::Execute && !self.failed {self.failed=true;return Err("actual owner side effect with uncertain Stop readback".to_owned());}Ok(readback)
+            if self.retained_abort && ticket.operation==MediaStreamPlatformOperation::Start && ticket.sequence==4 && !self.start_failed {self.start_failed=true;return Err("actual failed Start after owner side effect".to_owned());}
+
+            if !self.retained_abort && ticket.operation==MediaStreamPlatformOperation::Stop && ticket.sequence==3 && mode==AndroidMediaExecutionMode::Execute && !self.failed {self.failed=true;return Err("actual owner side effect with uncertain Stop readback".to_owned());}Ok(readback)
         }
         fn verify(&self,ticket:&AndroidMediaExecutionTicket,readback:&AndroidMediaOwnerReadback)->bool{self.inner.verify(ticket,readback)}
     }
@@ -280,9 +292,58 @@ fn concurrent_actual_22_coupled_cycles_preserve_two_live_resource_graphs() {
         for (index,provider) in [&mut provider_a,&mut provider_b].into_iter().enumerate() {
             let accepted=provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,c.sending_uid,&c.package_name,&c.signing_certificate_sha256,4000,&"81".repeat(32)).unwrap();assert!(accepted.mutation.accepted);
             assert!(provider.issue_concurrent_peer_route(&id("session.peer.quest-a-b"),4050,&"82".repeat(32)).is_ok());
-            if index==0 {provider.install_media_owner_executor(Box::new(DeterministicAndroidMediaOwnerExecutor::new(9).unwrap())).unwrap();}else{provider.install_media_owner_executor(Box::new(FailStopOnce{inner:DeterministicAndroidMediaOwnerExecutor::new(9).unwrap(),failed:false})).unwrap();}
-            provider.runtime.as_mut().unwrap().complete_media_session_action(&QuestBrokerMediaCompletionRequest{client_id:identity().client_id},4100,
-                provider.media_owner_executor.as_mut().unwrap().as_mut(),&mut provider.next_media_execution_nonce).unwrap();
+            if index==0 {provider.install_media_owner_executor(Box::new(DeterministicAndroidMediaOwnerExecutor::new(9).unwrap())).unwrap();}else{provider.install_media_owner_executor(Box::new(FailStopOnce{inner:DeterministicAndroidMediaOwnerExecutor::new(9).unwrap(),failed:false,retained_abort,start_failed:false,abort_failed:false})).unwrap();}
+            let completed = provider.runtime.as_mut().unwrap().complete_media_session_action(&QuestBrokerMediaCompletionRequest{client_id:identity().client_id},4100,
+                provider.media_owner_executor.as_mut().unwrap().as_mut(),&mut provider.next_media_execution_nonce);
+            if retained_abort && index == 1 { assert!(matches!(completed, Err(QuestBrokerRuntimeError::MediaStartAbortFailed{..})), "actual Start result: {completed:?}"); }
+            else { completed.unwrap(); }
+        }
+        if retained_abort {
+            let provider = &mut provider_b;
+            let client = identity().client_id;
+            let original = provider.runtime.as_ref().unwrap().media_sessions[&client].pending_action().unwrap().clone();
+            assert_eq!(provider.runtime.as_ref().unwrap().media_sessions[&client].pending_abort_completed_count(), Some(1));
+            assert!(provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Stop,c.sending_uid,&c.package_name,&c.signing_certificate_sha256,4200,&"91".repeat(32)).is_err());
+            let late = 400_000;
+            let mut clock=provider.runtime.as_ref().unwrap().runtime.read().unwrap().control_lease_authority_snapshot().clock_snapshot.clone();
+            clock.sequence+=1; clock.wall_unix_ms=late as i64; clock.monotonic_elapsed_ns=1_000_000_000+(late-1000)*1_000_000;
+            let adoption=provider.adopt_concurrent_peer_revoker(&clock,late,&"92".repeat(32)).unwrap();
+            assert!(provider.prepare_concurrent_peer_revoker_cleanup(&client,&adoption,late,&"93".repeat(32)).is_err(), "pending Start cannot become Stop");
+            let reviewed=provider.review_concurrent_peer_revoker_cleanup(&client,&adoption,late,&"94".repeat(32)).unwrap();
+            assert!(reviewed.termination.applied);
+            assert!(provider.terminate_concurrent_peer_route(true,late+10,&"95".repeat(32)).unwrap().applied);
+            let mut damaged=reviewed.clone(); damaged.request.session_id=id("session.other");
+            assert!(provider.resume_revoked_media_start_abort_for_cleanup(&client,&damaged,late+20).is_err());
+            assert_eq!(provider.runtime.as_ref().unwrap().media_sessions[&client].pending_abort_completed_count(),Some(1));
+            assert!(provider.resume_revoked_media_start_abort_for_cleanup(&client,&reviewed,adoption.lease.expires_at_ms).is_err(),"expired requester cannot resume");
+            let result=provider.resume_revoked_media_start_abort_for_cleanup(&client,&reviewed,late+20).unwrap().unwrap();
+            let receipt:serde_json::Value=serde_json::from_str(&result).unwrap();
+            assert_eq!(receipt["rollback_receipts"].as_array().unwrap().len(),4);
+            let snapshot=provider.runtime.as_ref().unwrap().media_sessions[&client].recovery_snapshot().unwrap();
+            assert_eq!(snapshot.schema_id,rusty_quest_media_stream::MEDIA_STREAM_PRODUCT_ABORT_RECOVERY_SCHEMA);
+            assert!(snapshot.active_client_authority.is_none()); assert!(snapshot.active_start_action.is_none());
+            assert_eq!(snapshot.lifecycle.phase,rusty_quest_media_stream::MediaStreamRuntimePhase::Planned);
+            let record=snapshot.completed_start_abort.as_ref().unwrap(); assert_eq!(record.original_action,original);
+            assert_eq!(record.rollback_receipts.len(),4);
+            assert!(provider.resume_revoked_media_start_abort_for_cleanup(&client,&reviewed,late+21).unwrap().is_none(),"completed rollback must not replay");
+            let prepared=provider.prepare_concurrent_peer_revoker_cleanup(&client,&adoption,late+25,&"96".repeat(32)).unwrap();
+            assert_eq!(prepared.action.client_authority,original.client_authority); assert_eq!(prepared.action.owner_actions.len(),7);
+            // The modeled registry's ordinary Stop denies owners with no prior
+            // active handle. Actual retained compensation must prove absence;
+            // neither the partial Start cursor nor a missing handle is proof.
+            let mut completed = None;
+            for attempt in 0..8 {
+                match provider.complete_media_stop_for_cleanup_typed(&client,late+30+attempt) {
+                    Ok(value) => { completed=Some(value); break; }
+                    Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_)) => {}
+                    Err(error) => panic!("unexpected actual Stop error: {error:?}"),
+                }
+            }
+            let completed=completed.expect("all seven actual Stop/compensation readbacks");
+            let effect=completed.stop_effect_receipt.unwrap(); assert_eq!(effect.owner_receipt_ids.len(),7);
+            assert_eq!(provider.complete_concurrent_peer_route_cleanup(&effect,late+35,&"97".repeat(32)).unwrap().len(),1);
+            println!("ACTUAL_091_FAILED_START_CLEANUP: original target retained; independent live Revoke; verified reverse cursor then seven owner Stop readbacks");
+            return;
         }
         let active_a=provider_a.runtime.as_ref().unwrap().media_sessions[&identity().client_id].recovery_snapshot().unwrap();
         let active_b=provider_b.runtime.as_ref().unwrap().media_sessions[&identity().client_id].recovery_snapshot().unwrap();

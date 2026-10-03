@@ -1215,6 +1215,38 @@ mod tests {
             assert_eq!(receipt.resulting_runtime_revision, 1);
             assert_eq!(receipt.rollback_receipts.len(), boundary);
             assert!(runtime.pending_action().is_none());
+            let snapshot = runtime.recovery_snapshot().expect("completed rollback journal");
+            assert_eq!(snapshot.schema_id, MEDIA_STREAM_PRODUCT_ABORT_RECOVERY_SCHEMA);
+            assert_eq!(snapshot.completed_start_abort.as_ref().unwrap().original_action, action);
+            let restore = |candidate| MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+                product_binding(), candidate, runtime.current_acceptance().clone(), 2_000);
+            let mut restored = restore(snapshot.clone()).expect("completed rollback restores cleanup only");
+            restored.revalidate_recovered_receipts(&TrustedRecoveryReceipts).expect("independent retained receipts");
+            assert!(matches!(restored.prepare("action.new-start".into(), MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start), 2_000),
+                Err(MediaStreamProductRuntimeError::RecoveryStartForbidden)));
+            let mut legacy = snapshot.clone(); legacy.schema_id = MEDIA_STREAM_PRODUCT_RECOVERY_SCHEMA.into();
+            assert!(restore(legacy).is_err(), "v1 cannot reinterpret a v2 rollback record");
+            let mut foreign = snapshot.clone();
+            foreign.completed_start_abort.as_mut().unwrap().original_action.client_authority.lease_id = "lease.foreign".into();
+            assert!(restore(foreign).is_err(), "original lease remains exact");
+            let mut relabeled = snapshot.clone();
+            relabeled.completed_start_abort.as_mut().unwrap().rollback_action.action_id = "action.foreign.abort".into();
+            assert!(restore(relabeled).is_err(), "rollback must derive from original action");
+            if boundary > 0 {
+                let mut missing = snapshot.clone(); missing.completed_start_abort.as_mut().unwrap().rollback_receipts.pop();
+                assert!(restore(missing).is_err(), "every retained effect needs terminal readback");
+                let mut stale = snapshot.clone();
+                let record = stale.completed_start_abort.as_mut().unwrap();
+                record.rollback_receipts[0].provider_state_revision = record.started_receipts.last().unwrap().provider_state_revision;
+                assert!(restore(stale).is_err(), "rollback cannot reuse pre-cleanup revision");
+            }
+            let mut terminal = snapshot.clone();
+            terminal.lifecycle.phase = MediaStreamRuntimePhase::Stopped;
+            terminal.lifecycle.runtime_revision = 2;
+            terminal.lifecycle.applied_request_ids = vec!["action.fake.cleanup".into()];
+            terminal.applied_action_ids = vec!["action.fake".into()];
+            assert!(restore(terminal).is_err(), "lifecycle label cannot establish restored terminal effects");
             assert!(matches!(
                 runtime.prepare(
                     action_id,
@@ -1225,6 +1257,26 @@ mod tests {
                 Err(MediaStreamProductRuntimeError::ReplayedAction)
             ));
         }
+    }
+
+    #[test]
+    fn completed_start_abort_journal_ambiguity_never_authorizes_stop() {
+        let mut runtime = MediaStreamSessionProductRuntime::new_for_test(
+            product_binding(), product_acceptance("epoch.abort.journal", "abort-journal"),
+            "epoch.abort.journal".into()).unwrap();
+        let journal = std::sync::Arc::new(AmbiguousRecoveryJournal::new());
+        runtime.install_recovery_journal(journal.clone()).unwrap();
+        runtime.prepare("action.abort.journal".into(), MediaStreamPlatformOperation::Start,
+            client_authority(MediaStreamPlatformOperation::Start), 2_000).unwrap();
+        runtime.begin_partial_start_abort().unwrap();
+        journal.fail_after_write.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(runtime.finalize_partial_start_abort(),
+            Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)));
+        let recorded = journal.latest.lock().unwrap().clone().unwrap();
+        assert!(recorded.completed_start_abort.is_some(), "ambiguous durable record retained");
+        assert!(matches!(runtime.prepare("action.stop.after.ambiguous".into(),
+            MediaStreamPlatformOperation::Stop, client_authority(MediaStreamPlatformOperation::Stop), 2_000),
+            Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)));
     }
 
     #[test]

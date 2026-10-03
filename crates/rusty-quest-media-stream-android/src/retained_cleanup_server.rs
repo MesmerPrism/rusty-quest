@@ -705,6 +705,13 @@ mod tests {
     }
     #[test]
     fn independent_target_stop_nested_proof_preserves_actual_raw_effect() {
+        independent_target_stop_nested_proof(false);
+    }
+    #[test]
+    fn retained_abort_v2_nested_proof_preserves_actual_stop_and_v1_rejects() {
+        independent_target_stop_nested_proof(true);
+    }
+    fn independent_target_stop_nested_proof(retained_abort: bool) {
         use crate::{
             retained_cleanup_prepared_signing_bytes, RemoteRetainedCleanupEffect,
             RetainedCleanupPreparedStop,
@@ -718,8 +725,14 @@ mod tests {
         source_ticket.executor_generation = 21;
         source_ticket.expected_runtime_revision = 19;
         source_ticket.media_acceptance_authority_revision = 23;
+        if retained_abort {
+            source_ticket.operation=MediaStreamPlatformOperation::Start;
+            source_ticket.action_id="source.action.abort".into();
+            assert!(crate::is_retained_start_abort_ticket(&source_ticket));
+        }
         let mut prepared = RetainedCleanupPreparedStop {
-            schema_id: "rusty.quest.android.media.retained_cleanup_prepared_stop.v1".into(),
+            schema_id: if retained_abort {"rusty.quest.android.media.retained_abort_prepared_stop.v2"}
+                else {"rusty.quest.android.media.retained_cleanup_prepared_stop.v1"}.into(),
             prepare_request_sha256: format!("sha256:{}", "a".repeat(64)),
             dispatch_id: request.dispatch_id.clone(),
             target_preparation_revision: 2,
@@ -752,13 +765,21 @@ mod tests {
         .unwrap();
         let response_bytes = server.handle(&request).unwrap();
         let proof = RemoteRetainedCleanupEffect {
-            schema_id: "rusty.quest.android.media.remote_retained_cleanup_effect.v1".into(),
+            schema_id: if retained_abort {"rusty.quest.android.media.remote_retained_abort_effect.v2"}
+                else {"rusty.quest.android.media.remote_retained_cleanup_effect.v1"}.into(),
             prepared,
             commit: request,
             response_bytes: response_bytes.clone(),
             enrolled_target_key: key,
         };
         let actual = proof.verify(&source_ticket, "key.peer.b.1", &key).unwrap();
+        if retained_abort {
+            assert_eq!(actual.readback.operation,MediaStreamPlatformOperation::Stop);
+            let mut old_schema=proof.clone(); old_schema.schema_id="rusty.quest.android.media.remote_retained_cleanup_effect.v1".into();
+            assert!(old_schema.verify(&source_ticket,"key.peer.b.1",&key).is_err());
+            let mut normal_start=source_ticket.clone(); normal_start.action_id="source.action".into();
+            assert!(proof.verify(&normal_start,"key.peer.b.1",&key).is_err());
+        }
         let raw = actual.readback_json.clone();
         let wrapper = proof
             .clone()
@@ -830,5 +851,24 @@ mod tests {
         assert!(crate::derive_retained_target_stop(&stop, 71, &"c".repeat(32)).is_err());
         assert!(crate::derive_retained_target_stop(&original, 0, &"c".repeat(32)).is_err());
         assert!(crate::derive_retained_target_stop(&original, 71, "caller-pointer").is_err());
+    }
+    #[test]
+    fn retained_local_abort_projection_requires_actual_terminal_effect() {
+        let (_, _, projection, mut target)=fixture();
+        target.action_id="source.action.abort".into();
+        let mut source=target.clone(); source.operation=MediaStreamPlatformOperation::Start;
+        let mut registry=SuccessRegistry(Arc::new(AtomicUsize::new(0)));
+        let effect=registry.execute_and_verify(&projection,&target,AndroidMediaExecutionMode::CompensateUncertain).unwrap();
+        let projected=crate::retained_local_source_readback(&source,&target,effect.clone()).unwrap();
+        assert_eq!(projected.operation,MediaStreamPlatformOperation::Start);
+        crate::validate_readback(&source,&projected).unwrap();
+        let mut damaged=effect.clone(); damaged.verified.terminal=false;
+        assert!(crate::retained_local_source_readback(&source,&target,damaged).is_err());
+        let mut damaged=effect.clone(); damaged.readback.provider_handle_id="foreign".into();
+        assert!(crate::retained_local_source_readback(&source,&target,damaged).is_err());
+        let mut wrong=target.clone(); wrong.executor_generation+=1;
+        assert!(crate::retained_local_source_readback(&source,&wrong,effect.clone()).is_err());
+        source.action_kind=MediaStreamOwnerActionKind::Start;
+        assert!(crate::retained_local_source_readback(&source,&target,effect).is_err());
     }
 }

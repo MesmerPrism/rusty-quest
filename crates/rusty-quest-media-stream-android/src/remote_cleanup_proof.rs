@@ -5,6 +5,35 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 const PREPARE_DOMAIN: &[u8] = b"rusty.quest.android.media.retained_cleanup_prepare.v1\0";
+const ABORT_PREPARE_DOMAIN: &[u8] = b"rusty.quest.android.media.retained_abort_prepare.v2\0";
+
+/// Closed original-Start rollback carrier. This is never a new Start.
+pub fn is_retained_start_abort_ticket(ticket: &AndroidMediaExecutionTicket) -> bool {
+    use rusty_quest_media_stream::{MediaStreamOwnerActionKind, MediaStreamPlatformOperation};
+    ticket.operation == MediaStreamPlatformOperation::Start
+        && ticket.action_id.ends_with(".abort")
+        && matches!(ticket.action_kind, MediaStreamOwnerActionKind::Stop | MediaStreamOwnerActionKind::Cleanup)
+}
+
+/// Projects a locally verified target Stop onto its original rollback carrier.
+/// Target bytes/verification are checked first; this creates no target effect.
+pub fn retained_local_source_readback(
+    source: &AndroidMediaExecutionTicket,
+    target: &AndroidMediaExecutionTicket,
+    effect: AuthenticatedOwnerEffect,
+) -> Result<AndroidMediaOwnerReadback, String> {
+    use rusty_quest_media_stream::MediaStreamPlatformOperation;
+    let mut expected=source.clone(); expected.operation=MediaStreamPlatformOperation::Stop;
+    if !(source.operation == MediaStreamPlatformOperation::Stop || is_retained_start_abort_ticket(source))
+        || target != &expected {
+        return Err("retained local original/target differs".into());
+    }
+    crate::owner_dispatch::validate_effect(target, AndroidMediaExecutionMode::Execute, &effect)?;
+    if !effect.verified.terminal { return Err("retained local Stop remains nonterminal".into()); }
+    let mut readback=effect.readback;
+    readback.operation=source.operation;
+    Ok(readback)
+}
 /// Target-authored fixed preparation response. No caller target ticket is accepted.
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -49,7 +78,11 @@ pub fn retained_cleanup_prepared_signing_bytes(
 ) -> Result<Vec<u8>, String> {
     let mut value = value.clone();
     value.signature_base64.clear();
-    let mut bytes = PREPARE_DOMAIN.to_vec();
+    let mut bytes = match value.schema_id.as_str() {
+        "rusty.quest.android.media.retained_cleanup_prepared_stop.v1" => PREPARE_DOMAIN,
+        "rusty.quest.android.media.retained_abort_prepared_stop.v2" => ABORT_PREPARE_DOMAIN,
+        _ => return Err("unknown cleanup preparation schema".into()),
+    }.to_vec();
     bytes.extend(serde_json::to_vec(&value).map_err(|_| "prepare encode")?);
     Ok(bytes)
 }
@@ -62,14 +95,18 @@ pub fn verify_retained_cleanup_prepared(
     key: &[u8; 32],
 ) -> Result<(), String> {
     use rusty_quest_media_stream::MediaStreamPlatformOperation;
-    if value.schema_id != "rusty.quest.android.media.retained_cleanup_prepared_stop.v1"
+    let source_allowed = match value.schema_id.as_str() {
+        "rusty.quest.android.media.retained_cleanup_prepared_stop.v1" => source.operation == MediaStreamPlatformOperation::Stop,
+        "rusty.quest.android.media.retained_abort_prepared_stop.v2" => is_retained_start_abort_ticket(source),
+        _ => false,
+    };
+    if !source_allowed
         || &value.source_ticket != source
         || value.authority.executor_peer_id != target_peer
         || value.signer_key_id != key_id
         || value.dispatch_id.is_empty()
         || value.target_preparation_revision == 0
         || value.prepare_request_sha256.len() != 71
-        || source.operation != MediaStreamPlatformOperation::Stop
         || value.target_ticket.operation != MediaStreamPlatformOperation::Stop
         || value.target_ticket.capability == source.capability
         || value.target_ticket.action_id == source.action_id
@@ -100,7 +137,12 @@ impl RemoteRetainedCleanupEffect {
         key_id: &str,
         key: &[u8; 32],
     ) -> Result<AuthenticatedOwnerEffect, String> {
-        if self.schema_id != "rusty.quest.android.media.remote_retained_cleanup_effect.v1"
+        let schema_allowed = match self.schema_id.as_str() {
+            "rusty.quest.android.media.remote_retained_cleanup_effect.v1" => self.prepared.schema_id == "rusty.quest.android.media.retained_cleanup_prepared_stop.v1",
+            "rusty.quest.android.media.remote_retained_abort_effect.v2" => self.prepared.schema_id == "rusty.quest.android.media.retained_abort_prepared_stop.v2" && is_retained_start_abort_ticket(source),
+            _ => false,
+        };
+        if !schema_allowed
             || &self.enrolled_target_key != key
             || self.response_bytes.len() > 128 * 1024
             || self.commit.dispatch_id != self.prepared.dispatch_id

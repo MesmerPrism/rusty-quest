@@ -7,6 +7,15 @@ use std::collections::BTreeMap;
 use std::io::Read;
 pub(super) const PREPARE_MAGIC: &[u8] = b"RQCP1\0";
 const DOMAIN: &[u8] = b"rusty.quest.android.media.retained_cleanup_prepare.v1\0";
+const ABORT_DOMAIN: &[u8] = b"rusty.quest.android.media.retained_abort_prepare.v2\0";
+
+fn prepare_domain(schema: &str) -> Result<&'static [u8], String> {
+    match schema {
+        "rusty.quest.android.media.retained_cleanup_prepare_request.v1" => Ok(DOMAIN),
+        "rusty.quest.android.media.retained_abort_prepare_request.v2" => Ok(ABORT_DOMAIN),
+        _ => Err("unknown cleanup prepare schema".into()),
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Prepare {
@@ -162,18 +171,20 @@ impl Cleanup {
         let request: Prepare = serde_json::from_slice(&bytes[PREPARE_MAGIC.len()..])
             .map_err(|_| "cleanup prepare decode")?;
         let now = self.clock.now_ms()?;
-        if request.schema_id != "rusty.quest.android.media.retained_cleanup_prepare_request.v1"
+        let retained_abort = request.schema_id == "rusty.quest.android.media.retained_abort_prepare_request.v2"
+            && is_retained_start_abort_ticket(&request.source_ticket);
+        if !(retained_abort || (request.schema_id == "rusty.quest.android.media.retained_cleanup_prepare_request.v1"
+            && request.source_ticket.operation == MediaStreamPlatformOperation::Stop))
             || request.sequence == 0
             || request.signer_key_id != self.remote_key_id
             || request.issued_at_ms > now.saturating_add(2000)
             || now.saturating_sub(request.issued_at_ms) > 30000
-            || request.source_ticket.operation != MediaStreamPlatformOperation::Stop
         {
             return Err("cleanup prepare identity/freshness".into());
         }
         let mut unsigned = request.clone();
         unsigned.signature_base64.clear();
-        let mut signing = DOMAIN.to_vec();
+        let mut signing = prepare_domain(&request.schema_id)?.to_vec();
         signing.extend(encode(&unsigned)?);
         let sig = decode_signature_base64(&request.signature_base64)?;
         VerifyingKey::from_bytes(&self.remote_key)
@@ -211,6 +222,7 @@ impl Cleanup {
             .cloned()
             .ok_or("retained original owner absent")?;
         if !same_owner(&original.ticket, &request.source_ticket)
+            || (retained_abort && request.source_ticket.action_id != format!("{}.abort", original.ticket.action_id))
             || authority.target_client_id != original.ticket.client_id
             || authority.target_runtime_lease_id != original.ticket.lease_id
             || authority.provider_epoch_id != original.ticket.authority_epoch_id
@@ -238,7 +250,8 @@ impl Cleanup {
             .checked_add(1)
             .ok_or("cleanup preparation revision exhausted")?;
         let mut prepared = RetainedCleanupPreparedStop {
-            schema_id: "rusty.quest.android.media.retained_cleanup_prepared_stop.v1".into(),
+            schema_id: if retained_abort {"rusty.quest.android.media.retained_abort_prepared_stop.v2"}
+                else {"rusty.quest.android.media.retained_cleanup_prepared_stop.v1"}.into(),
             prepare_request_sha256: hash,
             dispatch_id: request.dispatch_id,
             target_preparation_revision: preparation_revision,
@@ -424,7 +437,7 @@ impl AndroidMediaOwnerExecutor for Executor {
             .map_err(|_| "cleanup requester poisoned")?
             .clone();
         let Some(requester) =
-            requester.filter(|_| ticket.operation == MediaStreamPlatformOperation::Stop)
+            requester.filter(|_| ticket.operation == MediaStreamPlatformOperation::Stop || is_retained_start_abort_ticket(ticket))
         else {
             return self.ordinary.execute(ticket, mode);
         };
@@ -453,13 +466,18 @@ impl AndroidMediaOwnerExecutor for Executor {
                     &serde_json::from_value(json!(self.cleanup.local)).map_err(safe_decode)?,
                     now,
                 )?;
-                RetainedCleanupRegistry::execute_and_verify(
+                // Original rollback remains a Start-operation carrier. The
+                // actual target callback receives only a Stop, and its live
+                // effect is verified before projecting original action fields.
+                let mut target=ticket.clone();
+                target.operation=MediaStreamPlatformOperation::Stop;
+                let effect=RetainedCleanupRegistry::execute_and_verify(
                     &mut self.cleanup.callbacks,
                     &projection,
-                    ticket,
+                    &target,
                     mode,
-                )?
-                .readback
+                )?;
+                retained_local_source_readback(ticket,&target,effect)?
             }
             AndroidMediaOwnerPlacementTarget::Remote { peer_id } => {
                 if peer_id != &self.cleanup.remote {
@@ -498,8 +516,8 @@ impl AndroidMediaOwnerExecutor for Executor {
                         .checked_add(1)
                         .ok_or("cleanup sequence exhausted")?;
                     let mut request = Prepare {
-                        schema_id: "rusty.quest.android.media.retained_cleanup_prepare_request.v1"
-                            .into(),
+                        schema_id: if is_retained_start_abort_ticket(ticket) {"rusty.quest.android.media.retained_abort_prepare_request.v2"}
+                            else {"rusty.quest.android.media.retained_cleanup_prepare_request.v1"}.into(),
                         dispatch_id: format!("cleanup.dispatch.{}", fresh()?),
                         source_ticket: ticket.clone(),
                         requester_id: requester.id,
@@ -510,7 +528,7 @@ impl AndroidMediaOwnerExecutor for Executor {
                         signer_key_id: self.cleanup.callbacks.key_id().into(),
                         signature_base64: String::new(),
                     };
-                    let mut bytes = DOMAIN.to_vec();
+                    let mut bytes = prepare_domain(&request.schema_id)?.to_vec();
                     bytes.extend(encode(&request)?);
                     request.signature_base64 =
                         encode_signature_base64(&self.cleanup.callbacks.sign(&bytes)?);
@@ -601,7 +619,8 @@ impl AndroidMediaOwnerExecutor for Executor {
                     );
                 }
                 let proof = RemoteRetainedCleanupEffect {
-                    schema_id: "rusty.quest.android.media.remote_retained_cleanup_effect.v1".into(),
+                    schema_id: if is_retained_start_abort_ticket(ticket) {"rusty.quest.android.media.remote_retained_abort_effect.v2"}
+                        else {"rusty.quest.android.media.remote_retained_cleanup_effect.v1"}.into(),
                     prepared,
                     commit,
                     response_bytes: pending.response.clone().ok_or("cleanup response absent")?,

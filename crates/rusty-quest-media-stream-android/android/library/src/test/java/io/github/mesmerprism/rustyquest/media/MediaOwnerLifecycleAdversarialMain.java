@@ -12,6 +12,7 @@ public final class MediaOwnerLifecycleAdversarialMain {
         incomingBarrierBlocksRecreate();
         actualPipelineRecreatesDistinctRuntime();
         actualCaptureSubscriptionRejectsStaleOrLiveIncarnation();
+        neverEnteredOwnerStillCleansIndependentResources();
         System.out.println("rusty.quest.android.media.owner-lifecycle.v1:pass");
     }
 
@@ -144,15 +145,40 @@ public final class MediaOwnerLifecycleAdversarialMain {
         }catch(RuntimeException failure){throw failure;}catch(Exception failure){throw new IllegalStateException(failure);}
     }
 
+    private static void neverEnteredOwnerStillCleansIndependentResources() {
+        FakePipeline pipeline = new FakePipeline(); // independent graph already owns live resources
+        PackedStereoMediaOwnerSet owners = new PackedStereoMediaOwnerSet(61, pipeline);
+        MediaOwnerProvider source = owners.provider("source");
+        MediaProductBinding binding = new MediaProductBinding.Builder("product.lifecycle")
+                .bind("source", "owner.lifecycle", "provider.lifecycle", "resource.lifecycle", source).build();
+        PackagedAndroidMediaOwnerRegistry registry = new PackagedAndroidMediaOwnerRegistry(61, binding);
+        String ticket = actionJson(61, "source", "stop");
+        pipeline.pendingStop = true;
+        expectFailure(() -> registry.execute(ticket, false));
+        require(!pipeline.closed, "undispatched owner inferred absence despite live resources");
+        require(registry.verifyAndReadEvidence(ticket, "{}") == null, "uncertain callback became terminal");
+        pipeline.pendingStop = false;
+        String raw = registry.execute(ticket, false);
+        require(pipeline.closed && pipeline.stopCalls == 2, "actual independent graph was not stopped");
+        require(registry.verifyAndReadEvidence(ticket, raw) != null, "current terminal registry proof absent");
+        require(registry.verifyAndReadEvidence(actionJson(60, "source", "stop"), raw) == null,
+                "foreign generation accepted terminal effect");
+        registry.close();
+        require(registry.verifyAndReadEvidence(ticket, raw) == null, "retired registry accepted old effect");
+    }
+
     private static MediaOwnerAction action(long generation, String kind, String actionKind) {
-        return MediaOwnerAction.parse("{\"$schema\":\"rusty.quest.android.media.execution-ticket.v1\","
+        return MediaOwnerAction.parse(actionJson(generation, kind, actionKind));
+    }
+    private static String actionJson(long generation, String kind, String actionKind) {
+        return "{\"$schema\":\"rusty.quest.android.media.execution-ticket.v1\","
                 + "\"capability\":\"cap.lifecycle\",\"executor_generation\":"+generation+","
                 + "\"action_id\":\"action.lifecycle\",\"authority_epoch_id\":\"epoch.lifecycle\","
                 + "\"media_acceptance_authority_revision\":1,\"expected_runtime_revision\":1,"
                 + "\"client_id\":\"client.lifecycle\",\"lease_id\":\"lease.lifecycle\","
                 + "\"sequence\":1,\"operation\":\""+("stop".equals(actionKind)||"cleanup".equals(actionKind)?"stop":"start")+"\",\"owner_kind\":\""+kind+"\","
                 + "\"action_kind\":\""+actionKind+"\",\"owner_id\":\"owner.lifecycle\","
-                + "\"provider_kind\":\"provider.lifecycle\",\"resource_id\":\"resource.lifecycle\"}");
+                + "\"provider_kind\":\"provider.lifecycle\",\"resource_id\":\"resource.lifecycle\"}";
     }
 
     private static MediaProviderReadback execute(MediaOwnerProvider provider, MediaOwnerAction action,
