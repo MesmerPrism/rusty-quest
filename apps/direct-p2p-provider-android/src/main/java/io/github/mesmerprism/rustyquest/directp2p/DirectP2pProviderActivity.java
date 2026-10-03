@@ -39,6 +39,7 @@ public final class DirectP2pProviderActivity extends Activity {
     private BroadcastReceiver receiver;
     private String role;
     private String targetDeviceAddress;
+    private String observedDeviceAddress;
     private String runId;
     private int port;
     private boolean socketStarted;
@@ -55,6 +56,10 @@ public final class DirectP2pProviderActivity extends Activity {
     private JSONObject completedNative;
     private volatile boolean failureRequested;
     private boolean guardedAuthorization;
+    private boolean bleBarrier;
+    private long formedElapsed;
+    private String bleRun,bleSession,blePeer,bleExpected,bleRemoteBoot;
+    private long bleEpoch;
     private String authorizationReceipt, authorizationPeer;
     private long authorizationRevision;
     private DirectP2pLifecycle.AuthorizationWindow authorizationWindow;
@@ -73,6 +78,8 @@ public final class DirectP2pProviderActivity extends Activity {
         port = intent.getIntExtra("port", 9079);
         if (role == null) role = "group_owner";
         if (runId == null || runId.isEmpty()) runId = "product-run";
+        bleBarrier=intent.getBooleanExtra("require_live_ble_observation",false);
+        if(bleBarrier&&!intent.getBooleanExtra("require_peer_session_authorization",false)){fail("ble_barrier_requires_owner_authorization");return;}
         if (!authorizeTopology(intent)) {
             return;
         }
@@ -129,6 +136,7 @@ public final class DirectP2pProviderActivity extends Activity {
         }
         try {
             long echoTimeout = intent.getLongExtra("guarded_echo_timeout_ms", 20_000L);
+            if (bleBarrier&&echoTimeout!=5_000L)throw new IllegalArgumentException("live_barrier_echo_requires_5000_ms");
             if (echoTimeout < 1L || echoTimeout > 20_000L) throw new IllegalArgumentException("closed_echo_cap");
             String receipt = new String(Base64.decode(encoded, Base64.NO_WRAP), StandardCharsets.UTF_8);
             String result = RustDirectSocketProvider.validateTopologyAuthorization(
@@ -144,9 +152,17 @@ public final class DirectP2pProviderActivity extends Activity {
             if (!"accepted".equals(gateStatus)) return false;
             authorizationWindow = new DirectP2pLifecycle.AuthorizationWindow(System.currentTimeMillis(),
                     SystemClock.elapsedRealtime(), parsed.getLong("expires_at_ms"), echoTimeout);
+            if(bleBarrier){
+                bleRun=intent.getStringExtra("ble_run_id");bleSession=intent.getStringExtra("guard_run_token");
+                blePeer=intent.getStringExtra("ble_local_peer_tag");bleExpected=intent.getStringExtra("ble_expected_peer_tag");
+                bleRemoteBoot=intent.getStringExtra("ble_expected_remote_boot_tag");bleEpoch=intent.getLongExtra("ble_coordination_epoch",-1L);
+                if(bleRun==null||!bleRun.matches("[A-Za-z0-9_.-]{4,32}")||bleSession==null||!bleSession.matches("[0-9a-f]{32}")
+                        ||blePeer==null||!blePeer.matches("[A-Za-z0-9_.-]{4,32}")||bleExpected==null||!bleExpected.matches("[A-Za-z0-9_.-]{4,32}")
+                        ||blePeer.equals(bleExpected)||bleRemoteBoot==null||!bleRemoteBoot.matches("[0-9a-f]{16}")||bleEpoch<=0)throw new IllegalArgumentException("closed_ble_barrier_identity");
+            }
             // Conservative supported budgets, not a measured formation-success claim.
             if (!authorizationWindow.permits(System.currentTimeMillis(), SystemClock.elapsedRealtime(),
-                    20_000L + echoTimeout + 10_000L)) return false;
+                    BleObservationBarrier.launchReserve(bleBarrier,echoTimeout))) return false;
             authorizationReceipt=receipt; authorizationPeer=localPeerId;
             authorizationRevision=expectedRevision; guardedAuthorization=true;
             return true;
@@ -181,7 +197,8 @@ public final class DirectP2pProviderActivity extends Activity {
                     String address = device == null ? "" : device.deviceAddress;
                     if (!address.matches("(?i)[0-9a-f]{2}(:[0-9a-f]{2}){5}")) { fail("device_identity_unavailable"); return; }
                     try {
-                        lifecycle = new DirectP2pLifecycle(startedAt, productNetworkName,
+                        observedDeviceAddress=address;
+                lifecycle = new DirectP2pLifecycle(startedAt, productNetworkName,
                                 "group_owner".equals(role) ? address : targetDeviceAddress, "group_owner".equals(role));
                     } catch (IllegalArgumentException error) { fail("lifecycle_identity_invalid"); return; }
                     Log.i(TAG, MARKER + " phase=device_identity status=pass role=" + role + " device_address=" + address + " run_id=" + runId);
@@ -404,6 +421,7 @@ public final class DirectP2pProviderActivity extends Activity {
                 if (!freshAuthorization(10_000L)) return;
                 if (!lifecycle.exchange(group.getNetworkName(), group.getOwner().deviceAddress,
                         group.isGroupOwner(), SystemClock.elapsedRealtime())) { fail("group_identity_or_request_not_admitted"); return; }
+                formedElapsed=SystemClock.elapsedRealtime();
                 socketStarted = true;
                 Log.i(TAG, MARKER + " phase=topology status=pass authority=android_wifi_direct_topology_provider role=" + role
                         + " group_owner_host=" + ownerAddress.getHostAddress() + " socket_creation_claimed=false run_id=" + runId);
@@ -416,6 +434,68 @@ public final class DirectP2pProviderActivity extends Activity {
             }
         });
         } catch (Exception error) { fail("requestGroupInfo_exception_" + safe(error)); }
+    }
+
+    private static String shortHash(String text) throws Exception {
+        byte[] hash=java.security.MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8));
+        StringBuilder s=new StringBuilder();for(int i=0;i<8;i++)s.append(String.format(java.util.Locale.US,"%02x",hash[i]&255));return s.toString();
+    }
+    private boolean currentOwnedGroup(final InetAddress owner) throws InterruptedException {
+        final java.util.concurrent.CountDownLatch latch=new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicBoolean valid=new java.util.concurrent.atomic.AtomicBoolean(false);
+        main.post(new Runnable(){public void run(){
+            if(cleanupStarted||failureRequested||!freshAuthorization(authorizationWindow.echoTimeout+10_000L)){latch.countDown();return;}
+            try{manager.requestConnectionInfo(channel,new WifiP2pManager.ConnectionInfoListener(){public void onConnectionInfoAvailable(final WifiP2pInfo info){
+                try{manager.requestGroupInfo(channel,new WifiP2pManager.GroupInfoListener(){public void onGroupInfoAvailable(WifiP2pGroup group){
+                    valid.set(!cleanupStarted&&!failureRequested&&info!=null&&info.groupFormed&&owner.equals(info.groupOwnerAddress)
+                        &&info.isGroupOwner=="group_owner".equals(role)&&group!=null&&group.getOwner()!=null
+                        &&lifecycle.owned(group.getNetworkName(),group.getOwner().deviceAddress,group.isGroupOwner())
+                        &&freshAuthorization(authorizationWindow.echoTimeout+10_000L));latch.countDown();
+                }});}catch(RuntimeException denied){latch.countDown();}
+            }});}catch(RuntimeException denied){latch.countDown();}
+        }});
+        long budget=Math.min(2_000L,BleObservationBarrier.remaining(formedElapsed,SystemClock.elapsedRealtime()));
+        return budget>0&&latch.await(budget,java.util.concurrent.TimeUnit.MILLISECONDS)&&valid.get();
+    }
+    private boolean readLiveBle(final AndroidNetworkBindingProvider.Selection selection,final InetAddress owner) {
+        java.util.concurrent.FutureTask<Boolean> task=new java.util.concurrent.FutureTask<Boolean>(new java.util.concurrent.Callable<Boolean>(){
+            public Boolean call(){return readLiveBleCurrent(selection,owner);}
+        });
+        long budget=Math.min(2_000L,BleObservationBarrier.remaining(formedElapsed,SystemClock.elapsedRealtime()));
+        if(budget<=0)throw new IllegalStateException("live_ble_barrier_deadline");
+        Thread worker=new Thread(task,"rusty-live-ble-read");worker.setDaemon(true);worker.start();
+        try{return task.get(budget,java.util.concurrent.TimeUnit.MILLISECONDS);}
+        catch(Exception unknown){task.cancel(true);throw new IllegalStateException("live_ble_provider_timeout_or_unknown",unknown);}
+    }
+    private boolean readLiveBleCurrent(AndroidNetworkBindingProvider.Selection selection,InetAddress owner) {
+        try {
+            android.content.pm.ProviderInfo provider=getPackageManager().resolveContentProvider("io.github.mesmerprism.rustyquest.peer_rendezvous.live-observation",0);
+            if(provider==null||!"io.github.mesmerprism.rustyquest.peer_rendezvous".equals(provider.packageName)
+                    ||getPackageManager().checkSignatures(getPackageName(),provider.packageName)!=PackageManager.SIGNATURE_MATCH)return false;
+            Bundle request=new Bundle();request.putString("run_id",bleRun);request.putString("session_tag",bleSession);
+            request.putLong("coordination_epoch",bleEpoch);request.putString("peer_tag",blePeer);request.putString("expected_peer_tag",bleExpected);
+            Bundle response=getContentResolver().call(android.net.Uri.parse("content://io.github.mesmerprism.rustyquest.peer_rendezvous.live-observation"),"read-current",null,request);
+            if(response==null||response.size()!=1)return false;String raw=response.getString("observation");if(raw==null||raw.length()>4_096)return false;
+            JSONObject o=new JSONObject(raw);if(o.length()!=15||!"rusty.quest.live_ble_observation.v1".equals(o.getString("schema")))return false;
+            String[] keys={"run_id","session_tag","coordination_epoch","peer_tag","expected_peer_tag","boot_tag","group_tag","observed_role","owner_ipv4","local_ipv4","remote_boot_tag","remote_role","authenticated_elapsed_ms","observed_elapsed_ms"};
+            String[] proof=new String[keys.length];for(int i=0;i<keys.length;i++)proof[i]=o.getString(keys[i]);
+            String boot=new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("/proc/sys/kernel/random/boot_id")),StandardCharsets.US_ASCII).trim();
+            if(!boot.matches("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"))return false;
+            String expectedOwner="group_owner".equals(role)?observedDeviceAddress:targetDeviceAddress;
+            String group=shortHash(bleSession+"|"+productNetworkName+"|"+owner.getHostAddress()+"|"+expectedOwner.toLowerCase(java.util.Locale.US));
+            BleObservationBarrier.require(proof,bleRun,bleSession,bleEpoch,blePeer,bleExpected,shortHash(boot),bleRemoteBoot,group,role,owner.getHostAddress(),selection.localHost,SystemClock.elapsedRealtime());return true;
+        }catch(Exception unavailable){return false;}
+    }
+    private boolean awaitLiveBle(AndroidNetworkBindingProvider.Selection selection,InetAddress owner) throws InterruptedException {
+        if(!bleBarrier)return true;
+        while(BleObservationBarrier.waiting(formedElapsed,SystemClock.elapsedRealtime())&&!failureRequested&&!cleanupStarted) {
+            if(!freshAuthorization(authorizationWindow.echoTimeout+10_000L))return false;
+            if(readLiveBle(selection,owner)&&currentOwnedGroup(owner)&&readLiveBle(selection,owner)
+                    &&BleObservationBarrier.waiting(formedElapsed,SystemClock.elapsedRealtime())
+                    &&freshAuthorization(authorizationWindow.echoTimeout+10_000L))return true;
+            Thread.sleep(100L);
+        }
+        return false;
     }
 
     private void runBoundedExchange(InetAddress groupOwnerAddress) {
@@ -431,6 +511,8 @@ public final class DirectP2pProviderActivity extends Activity {
                 + selection.networkAvailable + " network_handle="
                 + selection.networkHandle + " interface=" + selection.interfaceName + " local_host=" + selection.localHost
                 + " route_matches_group_owner=true socket_creation_claimed=false run_id=" + runId);
+        if(bleBarrier)try{if(!awaitLiveBle(selection,groupOwnerAddress)){fail("live_ble_barrier_unavailable_or_expired");cleanup(selection,null);return;}}
+        catch(InterruptedException interrupted){Thread.currentThread().interrupt();fail("live_ble_barrier_interrupted");cleanup(selection,null);return;}
         String nativeReceipt;
         try {
             if (guardedAuthorization) {

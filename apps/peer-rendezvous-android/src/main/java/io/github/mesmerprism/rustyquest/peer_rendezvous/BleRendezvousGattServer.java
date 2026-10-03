@@ -221,6 +221,7 @@ final class BleRendezvousGattServer {
 
         @Override
         public void onConnectionStateChange(BluetoothDevice device, int status, int newState) {
+            if(config.liveState!=null&&!config.liveState.connectionFrom(device,status==BluetoothGatt.GATT_SUCCESS&&newState==BluetoothProfile.STATE_CONNECTED))return;
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 evidence.connected = true;
                 if (!connectedDevices.contains(device)) {
@@ -282,6 +283,7 @@ final class BleRendezvousGattServer {
             } else {
                 evidence.messagesReceived += 1;
                 try {
+                    if(config.liveState!=null)config.liveState.requireConnectedPeer(device);
                     JSONObject proposal = BleRendezvousProtocol.verify(
                             value,
                             config.sharedSecret,
@@ -318,6 +320,7 @@ final class BleRendezvousGattServer {
                             "accept",
                             3);
                     statusCharacteristic.setValue(statusMessage);
+                    if(config.liveState!=null)config.liveState.authenticatedFrom(device,config.observation,proposal.optString("b"),proposal.optString("r"),android.os.SystemClock.elapsedRealtime());
                 } catch (SecurityException error) {
                     evidence.authenticationFailures += 1;
                     evidence.issue("proposal_authentication_failed");

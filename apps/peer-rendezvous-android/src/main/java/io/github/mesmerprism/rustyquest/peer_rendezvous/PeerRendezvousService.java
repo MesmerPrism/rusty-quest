@@ -62,6 +62,7 @@ public final class PeerRendezvousService extends Service {
         if(config.observedCoordination) {
             try {
                 wifiObserver=new BleWifiObservation(getApplicationContext(),handler,config);
+                if(config.liveObservationProvider){config.liveStarted=android.os.SystemClock.elapsedRealtime();config.liveState=new LiveBleObservationState(config.runId,config.sessionTag,config.coordinationEpoch,config.peerTag,config.expectedPeerTag,config.rolePreference,config.liveStarted,config.durationMs);LiveBleObservationProvider.bind(config,evidence);}
                 wifiObserver.start();
                 handler.postDelayed(new Runnable(){public void run(){
                     if(finished)return;
@@ -87,7 +88,7 @@ public final class PeerRendezvousService extends Service {
                 public void run() {
                     finishRun("auto");
                 }
-            }, config.durationMs);
+            }, config.liveObservationProvider?LiveBleObservationState.remaining(config.liveStarted,android.os.SystemClock.elapsedRealtime(),config.durationMs):config.durationMs);
         } else {
             BleRendezvousGattClient client = new BleRendezvousGattClient(
                     getApplicationContext(),
@@ -117,6 +118,7 @@ public final class PeerRendezvousService extends Service {
                 + (config == null ? "none" : config.runId)
                 + " requestedStatus=" + requestedStatus);
         finished = true;
+        LiveBleObservationProvider.unbind();
         handler.removeCallbacksAndMessages(null);
 
         if (server != null) {

@@ -104,6 +104,10 @@ final class BleRendezvousGattClient implements Runnable {
             if (!exchange(false)) {
                 return;
             }
+            if(config.liveObservationProvider){
+                while(operationTimeout()>0){Thread.sleep(Math.min(100L,operationTimeout()));}
+                status="pass";return;
+            }
             if (!disconnectForReconnect()) {
                 evidence.issue("peer_disconnect_for_reconnect_failed");
                 return;
@@ -157,6 +161,8 @@ final class BleRendezvousGattClient implements Runnable {
         return true;
     }
 
+    private long operationTimeout(){return config.liveObservationProvider?Math.min(OPERATION_TIMEOUT_MS,LiveBleObservationState.remaining(config.liveStarted,android.os.SystemClock.elapsedRealtime(),config.durationMs)):OPERATION_TIMEOUT_MS;}
+
     private boolean scanForPeer() throws InterruptedException {
         scanLatch = new CountDownLatch(1);
         scanCallback = new ScanCallback() {
@@ -180,9 +186,10 @@ final class BleRendezvousGattClient implements Runnable {
         ScanSettings settings = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
+        if(operationTimeout()<=0)return false;
         scanner.startScan(Collections.singletonList(filter), settings, scanCallback);
         evidence.scanStarted = true;
-        boolean signaled = scanLatch.await(OPERATION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        boolean signaled = scanLatch.await(operationTimeout(), TimeUnit.MILLISECONDS);
         stopScan();
         return signaled && foundDevice.get() != null;
     }
@@ -193,12 +200,13 @@ final class BleRendezvousGattClient implements Runnable {
         statusCharacteristic = null;
         evidence.negotiatedMtu = 23;
         serviceLatch = new CountDownLatch(1);
+        if(operationTimeout()<=0)return false;
         gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE);
         if (gatt == null) {
             return false;
         }
         evidence.gattOpened = true;
-        return serviceLatch.await(OPERATION_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        return serviceLatch.await(operationTimeout(), TimeUnit.MILLISECONDS)
                 && offerCharacteristic != null
                 && controlCharacteristic != null
                 && statusCharacteristic != null;
@@ -210,8 +218,9 @@ final class BleRendezvousGattClient implements Runnable {
         lastReadValue = null;
         lastReadStatus = Integer.MIN_VALUE;
         readingOffer = offer;
+        if(operationTimeout()<=0)return null;
         if (!gatt.readCharacteristic(characteristic)
-                || !readLatch.await(OPERATION_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                || !readLatch.await(operationTimeout(), TimeUnit.MILLISECONDS)
                 || lastReadStatus != BluetoothGatt.GATT_SUCCESS) {
             evidence.issue(offer ? "offer_read_failed" : "accept_read_failed");
             return null;
@@ -225,8 +234,9 @@ final class BleRendezvousGattClient implements Runnable {
         lastWriteStatus = Integer.MIN_VALUE;
         controlCharacteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
         controlCharacteristic.setValue(payload);
+        if(operationTimeout()<=0)return false;
         if (!gatt.writeCharacteristic(controlCharacteristic)
-                || !writeLatch.await(OPERATION_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                || !writeLatch.await(operationTimeout(), TimeUnit.MILLISECONDS)
                 || lastWriteStatus != BluetoothGatt.GATT_SUCCESS) {
             return false;
         }
@@ -260,6 +270,7 @@ final class BleRendezvousGattClient implements Runnable {
             BleRendezvousProtocol.requireObservedPeer(config,message);
             peerNonces.add(nonce);
             if(config.observedCoordination)config.authenticatedObservedPeer=new JSONObject(message.toString());
+            if(config.liveState!=null&&!"offer".equals(expectedKind))config.liveState.authenticated(config.observation,message.optString("b"),message.optString("r"),android.os.SystemClock.elapsedRealtime());
             remotePeerTag = peerTag;
             evidence.authenticatedMessages += 1;
             return message;
@@ -287,7 +298,7 @@ final class BleRendezvousGattClient implements Runnable {
         } catch (RuntimeException error) {
             return false;
         }
-        boolean disconnected = disconnectLatch.await(OPERATION_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        boolean disconnected = disconnectLatch.await(operationTimeout(), TimeUnit.MILLISECONDS);
         try {
             current.close();
         } catch (RuntimeException ignored) {
@@ -339,10 +350,18 @@ final class BleRendezvousGattClient implements Runnable {
         }
     }
 
+    static boolean acceptCurrentConnectionCallback(Object callbackGatt,Object currentGatt,
+            LiveBleObservationState state,boolean connected) {
+        if(currentGatt==null||callbackGatt!=currentGatt)return false;
+        if(state!=null)state.connection(connected);
+        return true;
+    }
+
     private final BluetoothGattCallback callback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(BluetoothGatt callbackGatt, int status, int newState) {
-            if (callbackGatt != gatt) {
+            if (!acceptCurrentConnectionCallback(callbackGatt,gatt,config.liveState,
+                    status==BluetoothGatt.GATT_SUCCESS&&newState==BluetoothProfile.STATE_CONNECTED)) {
                 return;
             }
             if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {

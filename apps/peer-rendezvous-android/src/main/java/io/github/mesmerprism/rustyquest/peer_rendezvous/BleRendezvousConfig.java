@@ -16,6 +16,9 @@ final class BleRendezvousConfig {
     String challenge = "";
     String coordinatedPeer, remoteConfiguredRole, resolvedRole;
     volatile org.json.JSONObject authenticatedObservedPeer;
+    boolean liveObservationProvider;
+    volatile LiveBleObservationState liveState;
+    long liveStarted;
     final String mode;
     final String runId;
     final String sessionTag;
@@ -132,6 +135,9 @@ final class BleRendezvousConfig {
                 p2pIpv4,
                 brokerPort);
         result.observedCoordination=intent.getBooleanExtra("observed_coordination_v2",false);
+        result.liveObservationProvider=intent.getBooleanExtra("live_observation_provider",false);
+        if(result.liveObservationProvider&&(!result.observedCoordination||durationMs>10_000))
+            throw new IllegalArgumentException("closed_live_observation_mode");
         if(result.observedCoordination) {
             result.expectedPeerTag=safeTag(intent,"expected_peer_tag");
             result.coordinationEpoch=intent.getLongExtra("coordination_epoch",epoch);
