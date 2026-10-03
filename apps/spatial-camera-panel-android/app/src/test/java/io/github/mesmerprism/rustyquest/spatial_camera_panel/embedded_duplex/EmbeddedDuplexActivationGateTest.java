@@ -88,6 +88,81 @@ public final class EmbeddedDuplexActivationGateTest {
         assertEquals(0, target.activated);
     }
 
+    @Test public void actualIncomingGateRejectionsRetainClosedReasons() throws Exception {
+        String[] expected = {"INCOMING_ARM_ORDER", "INCOMING_ARM_PROJECTION",
+                "INCOMING_ARM_EVIDENCE", "INCOMING_ARM_EVIDENCE"};
+        for (int i = 0; i < expected.length; i++) {
+            FakeTarget target = new FakeTarget();
+            EmbeddedDuplexActivationGate gate = new EmbeddedDuplexActivationGate(target, () -> 1000L);
+            JSONObject authority = authority(), verified = verified();
+            if (i == 0) gate.beforeOwnerEffect(authority, new EmbeddedDuplexActivationGate.MediaTicket(
+                    7, 9, "stop.1", "epoch.provider.1", "client.1", "lease.1", "stop", "sink", "stop"), false);
+            if (i == 1) authority.put("authorization_kind", "foreign");
+            if (i == 2) verified.put("extra", "secret");
+            if (i == 3) verified.put("observed_state", "stopped");
+            final JSONObject currentAuthority = authority, currentVerified = verified;
+            Exception original = assertThrows(IllegalStateException.class, () ->
+                    gate.afterVerifiedOwnerEffect(currentAuthority, ticket(), readback(), currentVerified, false));
+            EmbeddedDuplexPlatform platform = diagnosticOnlyPlatform();
+            platform.recordOwnerFailure(EmbeddedDuplexPlatform.OwnerStage.INCOMING_ARM_VERIFICATION,
+                    parsedTicket(), original);
+            JSONObject diagnostic = new JSONObject(platform.ownerFailureDiagnostic());
+            assertEquals(expected[i], diagnostic.getString("provider_reason"));
+            assertEquals("INCOMING_ARM_VERIFICATION", diagnostic.getString("stage"));
+            assertEquals("ARM_RECEIVER", diagnostic.getString("action"));
+            assertEquals("sink", diagnostic.getString("owner"));
+            assertEquals("NONE", diagnostic.getString("cause"));
+            assertEquals(7, diagnostic.length());
+            assertEquals(0, target.activated);
+            platform.recordOwnerFailure(EmbeddedDuplexPlatform.OwnerStage.PROVIDER_EXECUTION,
+                    parsedTicket(), new IllegalStateException("secret cleanup error"));
+            assertEquals(diagnostic.toString(), platform.ownerFailureDiagnostic());
+        }
+    }
+
+    @Test public void unknownIncomingGateMessagesStayClosedAndUnchanged() throws Exception {
+        for (String message : new String[] {"secret", "incoming Sink arm evidence;secret",
+                " incoming Sink activation order", "incoming Sink arm evidence\nsecret"}) {
+            Exception original = new IllegalStateException(message);
+            EmbeddedDuplexPlatform platform = diagnosticOnlyPlatform();
+            platform.recordOwnerFailure(EmbeddedDuplexPlatform.OwnerStage.INCOMING_ARM_VERIFICATION,
+                    parsedTicket(), original);
+            String diagnostic = platform.ownerFailureDiagnostic();
+            assertEquals("INCOMING_ARM_UNAVAILABLE", new JSONObject(diagnostic).getString("provider_reason"));
+            assertTrue(!diagnostic.contains("secret"));
+            assertEquals(message, original.getMessage());
+        }
+    }
+
+    // Host-only diagnostic fixture: no Android constructor, process capability, registry or effects.
+    // The production recorder itself is exercised after a real production Gate rejection.
+    private static EmbeddedDuplexPlatform diagnosticOnlyPlatform() throws Exception {
+        Class<?> type = Class.forName("sun.misc.Unsafe");
+        java.lang.reflect.Field singleton = type.getDeclaredField("theUnsafe");
+        singleton.setAccessible(true);
+        EmbeddedDuplexPlatform platform = (EmbeddedDuplexPlatform) type.getMethod("allocateInstance", Class.class)
+                .invoke(singleton.get(null), EmbeddedDuplexPlatform.class);
+        for (String name : new String[] {"failedOwnerAction", "failedSinkStage", "failedOwnerKind", "failedCause"}) {
+            java.lang.reflect.Field field = EmbeddedDuplexPlatform.class.getDeclaredField(name);
+            field.setAccessible(true); field.set(platform, "NONE");
+        }
+        java.lang.reflect.Field stage = EmbeddedDuplexPlatform.class.getDeclaredField("failedOwnerStage");
+        stage.setAccessible(true); stage.set(platform, EmbeddedDuplexPlatform.OwnerStage.NONE);
+        java.lang.reflect.Field reason = EmbeddedDuplexPlatform.class.getDeclaredField("failedProviderReason");
+        reason.setAccessible(true); reason.set(platform, EmbeddedDuplexPlatform.ProviderReason.NONE);
+        return platform;
+    }
+
+    private static io.github.mesmerprism.rustyquest.media.MediaOwnerAction parsedTicket() throws Exception {
+        JSONObject value = new JSONObject().put("$schema", "rusty.quest.android.media.execution-ticket.v1")
+                .put("capability", "modeled.capability").put("executor_generation", 7)
+                .put("action_id", "action.start.1").put("authority_epoch_id", "epoch.provider.1")
+                .put("media_acceptance_authority_revision", 3).put("expected_runtime_revision", 9)
+                .put("client_id", "client.1").put("lease_id", "lease.1").put("sequence", 0)
+                .put("operation", "start").put("owner_kind", "sink").put("action_kind", "arm_receiver")
+                .put("owner_id", "owner.sink").put("provider_kind", "provider.sink").put("resource_id", "sink.1");
+        return io.github.mesmerprism.rustyquest.media.MediaOwnerAction.parse(value.toString());
+    }
     private static EmbeddedDuplexActivationGate armed(FakeTarget target) throws Exception {
         EmbeddedDuplexActivationGate gate = new EmbeddedDuplexActivationGate(target, () -> 1000L);
         gate.afterVerifiedOwnerEffect(authority(), ticket(), readback(), verified(), false);
