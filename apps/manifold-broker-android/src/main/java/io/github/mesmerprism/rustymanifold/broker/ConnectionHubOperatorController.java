@@ -83,12 +83,15 @@ public final class ConnectionHubOperatorController {
                     break;
             }
             JSONObject effective = port.status();
-            applied = ACTION_PAIR.equals(action)
+            boolean recoveryRequired = requiresRecovery(effective) && !ACTION_STATUS.equals(action);
+            applied = !recoveryRequired && (ACTION_PAIR.equals(action)
                     ? result.optBoolean("accepted", false) && credential != null
-                    : effectConfirmed(action, result, effective);
+                    : effectConfirmed(action, result, effective));
+            if (recoveryRequired) credential = null;
             effectStatus = applied ? "confirmed" : "rejected";
             operationStatus = result.optString(
                     "status", applied ? "effective_state_confirmed" : "effective_state_rejected");
+            if (recoveryRequired) operationStatus = "manifold_state_restore_rejected_recovery_required";
             transitions.put(transition(effectStatus));
             return new Result(
                     receipt(requestId, action, applied, effectStatus, operationStatus,
@@ -101,6 +104,9 @@ public final class ConnectionHubOperatorController {
                     ACTION_STATUS.equals(action) ? "rejected" : "outcome_unknown";
             operationStatus = applied ? "effective_state_confirmed_after_error" :
                     "operator_" + effectStatus;
+            if (requiresRecovery(effective) && !ACTION_STATUS.equals(action)) {
+                operationStatus = "manifold_state_restore_rejected_recovery_required";
+            }
             transitions.put(transition(effectStatus));
             return new Result(
                     receipt(requestId, action, applied, effectStatus, operationStatus,
@@ -124,6 +130,7 @@ public final class ConnectionHubOperatorController {
             String action,
             JSONObject result,
             JSONObject effective) {
+        if (!ACTION_STATUS.equals(action) && requiresRecovery(effective)) return false;
         if (ACTION_START.equals(action)) {
             return "running".equals(effective.optString("desired_connection_state"));
         }
@@ -138,6 +145,12 @@ public final class ConnectionHubOperatorController {
             return result.optBoolean("applied", false);
         }
         return ConnectionHubProtocol.STATUS_SCHEMA.equals(effective.optString("$schema"));
+    }
+
+    private static boolean requiresRecovery(JSONObject effective) {
+        String status = effective.optString("status", "");
+        return "manifold_state_restore_rejected".equals(status)
+                || "manifold_state_restore_rejected_recovery_required".equals(status);
     }
 
     private static JSONObject receipt(
