@@ -40,6 +40,10 @@ pub(super) fn describe(stage: Stage, error: &QuestBrokerRuntimeError) -> String 
 fn bounded_detail(detail: &str) -> String { detail.chars().take(192).collect() }
 
 fn safe_media_cause(cause: &str) -> &'static str {
+    // Failed-Start compensation retains the Broker error's Display, which
+    // wraps the static media-runtime message once. Unwrap only that exact
+    // owner prefix; the closed allowlist below still rejects arbitrary text.
+    let cause = cause.strip_prefix("Quest media runtime failed: ").unwrap_or(cause);
     match cause {
         "media owner provider execution/readback failed" => "media owner provider execution/readback failed",
         "media owner provider readback mismatch" => "media owner provider readback mismatch",
@@ -92,6 +96,50 @@ mod tests {
         assert!(start.starts_with("full product Start incomplete: media_start_abort_retained:"));
         assert!(start.contains("owner=media owner provider readback mismatch;abort=cause_unavailable"));
         assert!(!start.contains("owner_input"));
+    }
+
+    #[test]
+    fn actual_broker_abort_display_preserves_closed_media_cause() {
+        use rusty_quest_media_stream::MediaStreamProductRuntimeError;
+        for cause in [MediaStreamProductRuntimeError::OwnerProviderFailed,
+            MediaStreamProductRuntimeError::OwnerReadbackMismatch] {
+            // This is the same production Broker Display used by
+            // compensate_failed_start, not an invented receipt string.
+            let abort_error = QuestBrokerRuntimeError::MediaRuntime(cause).to_string();
+            assert!(abort_error.starts_with("Quest media runtime failed: "));
+            let retained = QuestBrokerRuntimeError::MediaStartAbortFailed {
+                owner_error: "media owner provider execution/readback failed".to_owned(),
+                abort_error: abort_error.clone(),
+            };
+            let diagnostic = describe(Stage::Start, &retained);
+            assert!(!diagnostic.contains("cause_unavailable"));
+            assert!(diagnostic.contains(&format!(";abort={}",
+                abort_error.strip_prefix("Quest media runtime failed: ").unwrap())));
+            assert!(matches!(retained, QuestBrokerRuntimeError::MediaStartAbortFailed {
+                abort_error: ref original, .. } if original == &abort_error));
+            assert!(diagnostic.len() < 256);
+        }
+    }
+
+    #[test]
+    fn broker_wrapper_does_not_widen_public_error_text() {
+        for cause in [
+            "Quest media runtime failed: secret_owner_data",
+            "Quest media runtime failed: Quest media runtime failed: media owner provider execution/readback failed",
+            "Quest media runtime failed: media owner provider execution/readback failed;token=secret",
+            "Quest media runtime failed: media owner provider execution/readback failed\nsecret",
+            " Quest media runtime failed: media owner provider execution/readback failed",
+        ] {
+            let retained = QuestBrokerRuntimeError::MediaStartAbortFailed {
+                owner_error: "media owner provider readback mismatch".to_owned(),
+                abort_error: cause.to_owned(),
+            };
+            let diagnostic = describe(Stage::Start, &retained);
+            assert!(diagnostic.ends_with(";abort=cause_unavailable"));
+            assert!(!diagnostic.contains("secret"));
+            assert!(matches!(retained, QuestBrokerRuntimeError::MediaStartAbortFailed {
+                abort_error: ref original, .. } if original == cause));
+        }
     }
 
     #[test]
