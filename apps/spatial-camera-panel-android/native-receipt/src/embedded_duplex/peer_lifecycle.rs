@@ -258,7 +258,10 @@ fn stop(host: &Host, state: &mut State, revoke: bool) -> Result<(), String> {
     let expired=Checkout::take(host.provider.clone())?.get()
         .concurrent_peer_requires_revoker_cleanup(&client,host.clock.now_ms()?)
         .map_err(|_|"actual Peer holder expiry readback unavailable")?;
-    let trusted_cleanup=revoke||expired;
+    let retained_abort=Checkout::take(host.provider.clone())?.get()
+        .has_retained_media_start_abort(&client)
+        .map_err(|_|"retained failed Start observation unavailable")?;
+    let trusted_cleanup=revoke||expired||retained_abort;
     if trusted_cleanup {
         // Read both real OS clocks. The capability epoch and sequence come
         // from the retained native authority, never an operator timestamp.
@@ -276,6 +279,25 @@ fn stop(host: &Host, state: &mut State, revoke: bool) -> Result<(), String> {
             u64::try_from(wall).map_err(|_|"OS authority wall clock negative")?,&entropy()?)
             .map_err(|_|"authenticated current revoker lease adoption pending")?;
         state.revoker_adoption=Some(serde_json::to_value(adopted).map_err(safe_decode)?);
+    }
+    if retained_abort && state.stop_mutation.is_none() {
+        let adoption=serde_json::from_value(state.revoker_adoption.clone()
+            .ok_or("actual failed Start cleanup requester absent")?).map_err(safe_decode)?;
+        let reviewed=Checkout::take(host.provider.clone())?.get()
+            .review_concurrent_peer_revoker_cleanup(&client,&adoption,host.clock.now_ms()?,&entropy()?)
+            .map_err(|_|"actual retained failed Start Revoke review pending")?;
+        if state.route_termination.is_none() {
+            let route=Checkout::take(host.provider.clone())?.get()
+                .terminate_concurrent_peer_route(true,host.clock.now_ms()?,&entropy()?)
+                .map_err(|_|"retained failed Start route termination pending")?;
+            state.route_termination=Some(serde_json::to_value(route).map_err(safe_decode)?);
+            state.termination_action=Some("revoke");
+        }
+        let requester=reviewed.cleanup_requester_adoption.as_ref().unwrap_or(&reviewed.adoption);
+        install_retained_cleanup_requester(host,requester.revoker_id.as_str(),requester.lease.lease_id.as_str())?;
+        Checkout::take(host.provider.clone())?.get()
+            .resume_revoked_media_start_abort_for_cleanup(&client,&reviewed,host.clock.now_ms()?)
+            .map_err(|error|crate::embedded_duplex::cleanup_failure::describe(crate::embedded_duplex::cleanup_failure::Stage::Media,&error))?;
     }
     if state.stop_mutation.is_none() {
         let mutation = if trusted_cleanup {

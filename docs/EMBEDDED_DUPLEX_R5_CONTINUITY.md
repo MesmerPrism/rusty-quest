@@ -82,3 +82,28 @@ Physical owner cleanup, durable cleanup-only restoration, signed terminal
 cross-owner completion, frame continuity and a renewable duplex soak require
 their own integrated executor and device evidence. The typed operator provider
 and panel retain the same app handlers and do not gain Start from this document.
+
+### Retained failed-Start cleanup
+
+A completed reverse Start rollback can retain a cleanup obligation without an
+active Start holder. The explicit recovery v2 journal preserves the exact
+original action, forward prefix, uncertain owner and verified reverse receipts.
+Recovery v1 does not accept this record. Ordinary Start and Stop remain denied;
+cleanup requires a separately authenticated current trusted revoker and the
+original accepted client, lease, provider epoch, product spec and rollback cursor.
+An ambiguous durable write blocks further effects. A terminal lifecycle label
+does not restore terminal authority without independent current terminal proof.
+
+Fresh requester transport can execute the original rollback's Stop/Cleanup
+owners through distinct signed retained-abort v2 preparation/effect domains.
+The actual target ticket remains Stop and its registry readback is verified
+before projection onto the original Start rollback carrier. Existing retained
+cleanup v1 remains Stop-only. Missing remote original state stays Pending.
+No owner is absent merely because Start never reached its ticket: local cleanup
+must enter the exact packaged registry, stop any independent resources and
+verify its current terminal snapshot. Unknown or stale snapshots remain Pending.
+
+`tools/checks/Test-RetainedStartAbortCleanup.py` accepts an explicit pinned,
+modeled supplier graph and checks the real owner continuation, recovery damage,
+registry resources, neutral consumer and Android native type boundary. It
+neither admits that graph nor builds an APK or proves physical terminal cleanup.
