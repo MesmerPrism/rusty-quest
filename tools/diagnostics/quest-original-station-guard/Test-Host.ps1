@@ -3,7 +3,7 @@ param([Parameter(Mandatory)][string]$JavaHome,[Parameter(Mandatory)][string]$And
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if(Test-Path -LiteralPath $OutputRoot){throw 'Create-new output required'}
-$files=@('OriginalStationGuardContract.java','QuestOriginalStationGuard.java','OriginalStationGuardHostTest.java'|ForEach-Object{Join-Path $PSScriptRoot $_})
+$files=@('OriginalStationGuardContract.java','OriginalStationFormationAdmission.java','QuestOriginalStationGuard.java','OriginalStationGuardHostTest.java'|ForEach-Object{Join-Path $PSScriptRoot $_})
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 $app=Join-Path $repo 'apps/direct-p2p-provider-android/src/main/java/io/github/mesmerprism/rustyquest/directp2p'
 $files+=@(Get-ChildItem -LiteralPath $app -Filter '*.java' -File|ForEach-Object FullName)
@@ -16,6 +16,8 @@ if($LASTEXITCODE-ne0){throw 'Actual contract cases failed'}
 & (Join-Path $JavaHome 'bin/java.exe') -cp $OutputRoot io.github.mesmerprism.rustyquest.directp2p.DirectP2pLifecycleHostTest
 if($LASTEXITCODE-ne0){throw 'Actual app nonce/lifecycle cases failed'}
 foreach($row in $inputs){if((Get-FileHash -LiteralPath $row.path).Hash.ToLowerInvariant()-cne$row.sha256){throw 'Input drift'}}
-$adapter=Get-Content -LiteralPath $files[1] -Raw
+& (Join-Path $JavaHome 'bin/java.exe') -cp $OutputRoot io.github.mesmerprism.rustyquest.directp2p.FormationObservationHostTest
+if($LASTEXITCODE-ne0){throw 'Actual formation observation cases failed'}
+$adapter=Get-Content -LiteralPath $files[2] -Raw
 foreach($forbidden in @('addNetwork(','removeNetwork(','preSharedKey','temporary_ssid')){if($adapter.Contains($forbidden)){throw "Forbidden effect $forbidden"}}
 [IO.File]::WriteAllText((Join-Path $OutputRoot 'RESULT.json'),(@{schema='rusty.quest.original_station_guard_host.v1';status='pass';inputs=$inputs;device_calls=0;apk_built=$false;device_verified=$false}|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))

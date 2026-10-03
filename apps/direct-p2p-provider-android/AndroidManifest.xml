@@ -10,6 +10,7 @@
     <queries><provider android:authorities="io.github.mesmerprism.rustyquest.peer_rendezvous.live-observation" /></queries>
     <uses-feature android:name="android.hardware.wifi.direct" android:required="true" />
     <application android:label="Rusty Direct P2P Provider" android:allowBackup="false" android:usesCleartextTraffic="true">
+        <provider android:name=".FormationObservationProvider" android:authorities="io.github.mesmerprism.rustyquest.directp2p.formation-observation" android:exported="true" android:permission="android.permission.DUMP" />
         <activity android:name=".DirectP2pProviderActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

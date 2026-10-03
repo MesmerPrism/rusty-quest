@@ -76,3 +76,73 @@ generic group clearing is permitted. Actual hardware MAC/readiness, guardian
 markers, source/binary provenance and genuine operator enrollment/signatures
 must be obtained before a physical trial. This source change alone proves none
 of those device prerequisites.
+
+## Closed shell-UID device inventory
+
+`device-info` is a separate inventory entrypoint, not guardian arm or formation.
+Its exact four config keys are `run_token`, `serial`, `boot_id`, and
+`deadline_elapsed_realtime_ms`, with a future deadline at most30seconds away.
+The path is exactly `/data/local/tmp/rqpi-<run_token>.properties`; no configured
+owner MAC, network or role is accepted. UID2000 and the actual canonical serial,
+boot and unchanged raw config are required.
+
+It reuses the existing shell attribution/channel bootstrap, reads P2P state,
+absent group/idle discovery and actual device info twice, and rejects redacted,
+invalid or changed addresses. It requests no group, discovery, connect, Wi-Fi
+radio change or profile mutation. The owned channel is closed and callback
+thread stopped in finally; Wi-Fi state before initialization/after close is
+retained and must match. Null observation fields remain unavailable.
+
+Opening a framework channel can itself enable/initialize P2P service state.
+Do not label that as a proven effect-free read. The parent must retain actual
+raw service/station snapshots before initialization and after owned channel
+cleanup, classify any state transition faithfully and reconcile it without
+generic radio/group clearing. This inventory proves only an observed MAC;
+owner authorization, group readiness and restoration qualification are separate.
+
+## Opt-in actual formation cleanup admission
+
+The unchanged armed configuration still records its inventory owner address.
+Absent a formation receipt, restoration retains that exact original MAC guard.
+A caller may use `admit-formation` to create a separate, immutable
+`<config>.formation` cleanup receipt for a newly randomized actual GO address.
+It does not rewrite the configuration or authorize formation, sockets, media,
+or a DirectLaneLease. Unknown, malformed or mixed receipts deny restoration.
+
+The closed `<config>.formation-input` keys are `run_id`, `run_token`, `serial`,
+`boot_id`, `pair_apk_sha256`, `guardian_dex_sha256`, `source_revision`,
+`source_tree`, `pid`, `pid_start_ticks`, `go_serial`, `go_boot_id`, and
+`go_receipt_sha256`. All these temporary files require shell ownership, mode0600,
+fixed run-derived paths and create-new staging. Source revision/tree are
+caller-bound publication provenance, not an on-device Git verification claim.
+The caller must authenticate their exact source/APK/DEX build closure before
+staging; the helper checks actual installed APK and its own DEX bytes.
+
+The Pair `formation-observation` provider accepts only shell UID2000 with DUMP,
+`current-formation`, no argument, and exactly `run_id`/`run_token` extras.
+It invokes the current in-process activity callback, rereads the Android group,
+and reports its admitted lifecycle group, actual boot, PID/kernel birth and
+monotonic observation. No last receipt is cached or restored after process
+restart. Failure, cleanup, destruction or lost/mismatched group clears or denies
+observation. Guarded owner authorization must still have remaining validity.
+Provider reads perform no formation/discovery/profile/radio writes.
+
+Guardian joins the exact provider package/APK, live source run/token/role,
+current process cmdline/birth, same boot, actual current group and locked
+baseline. It rereads the provider and group after profile checks before writing
+the receipt. A local GO can admit its cleanup immediately without waiting for
+a client, allowing partial-start compensation. A client additionally requires
+`<config>.formation-go`, the exact GO receipt carried and authenticated by the
+caller from the canonical GO device. Its raw SHA must equal the declared
+`go_receipt_sha256`; run, boot/serial, source/APK/DEX and actual complementary
+owner/network must join. This is a caller-authenticated device carrier, not a
+new cross-device cryptographic signature or a topology authorization boolean.
+
+Restoration can consume that receipt after authority expiry solely to compensate
+the exact same group; config/state/DEX raw hashes, serial/boot/run/network/role
+and observed owner MAC remain locked. No receipt allows arbitrary first-group
+learning. All original profile, prefix and callback acknowledgement/absence
+checks remain in force. The caller must archive and remove these extra exact
+owned members only after actual restoration; missing or changed members remain
+unknown. Host tests and JVM compilation against Android35 API classes do not
+prove Android DEX/desugaring or device runtime qualification.

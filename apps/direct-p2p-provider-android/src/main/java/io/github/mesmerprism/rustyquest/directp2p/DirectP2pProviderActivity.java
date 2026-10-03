@@ -405,6 +405,7 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private synchronized void handleConnectionInfo(WifiP2pInfo info) {
+        if(info==null||!info.groupFormed||info.isGroupOwner!="group_owner".equals(role))FormationObservationState.clear(this);
         if (!freshAuthorization(10_000L)) return;
         if (failureRequested || cleanupStarted || lifecycle == null || !lifecycle.active() || socketStarted
                 || info == null || !info.groupFormed || info.groupOwnerAddress == null) return;
@@ -422,6 +423,7 @@ public final class DirectP2pProviderActivity extends Activity {
                 if (!lifecycle.exchange(group.getNetworkName(), group.getOwner().deviceAddress,
                         group.isGroupOwner(), SystemClock.elapsedRealtime())) { fail("group_identity_or_request_not_admitted"); return; }
                 formedElapsed=SystemClock.elapsedRealtime();
+                if(guardedAuthorization)FormationObservationState.publish(DirectP2pProviderActivity.this,()->readCurrentFormation());
                 socketStarted = true;
                 Log.i(TAG, MARKER + " phase=topology status=pass authority=android_wifi_direct_topology_provider role=" + role
                         + " group_owner_host=" + ownerAddress.getHostAddress() + " socket_creation_claimed=false run_id=" + runId);
@@ -434,6 +436,23 @@ public final class DirectP2pProviderActivity extends Activity {
             }
         });
         } catch (Exception error) { fail("requestGroupInfo_exception_" + safe(error)); }
+    }
+
+    private java.util.Map<String,String> readCurrentFormation() throws Exception {
+        if(Looper.myLooper()==Looper.getMainLooper())throw new SecurityException("formation_main_thread");
+        final java.util.concurrent.CountDownLatch latch=new java.util.concurrent.CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicReference<java.util.Map<String,String>> result=new java.util.concurrent.atomic.AtomicReference<>();
+        main.post(()->{
+            if(failureRequested||cleanupStarted||!guardedAuthorization||lifecycle==null||!lifecycle.active()||authorizationWindow==null||!authorizationWindow.permits(System.currentTimeMillis(),SystemClock.elapsedRealtime(),1)){latch.countDown();return;}
+            try{manager.requestGroupInfo(channel,g->{
+                try{if(failureRequested||cleanupStarted||!guardedAuthorization||!authorizationWindow.permits(System.currentTimeMillis(),SystemClock.elapsedRealtime(),1)||g==null||g.getOwner()==null||!lifecycle.owned(g.getNetworkName(),g.getOwner().deviceAddress,g.isGroupOwner()))return;
+                    String boot=new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("/proc/sys/kernel/random/boot_id")),StandardCharsets.UTF_8).trim();
+                    String stat=new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("/proc/self/stat")),StandardCharsets.UTF_8);int end=stat.lastIndexOf(')');if(end<0)throw new SecurityException("formation_process");String birth=stat.substring(end+2).trim().split(" +")[19];
+                    java.util.Map<String,String> v=new java.util.HashMap<>();v.put("run_id",runId);v.put("run_token",getIntent().getStringExtra("guard_run_token"));v.put("boot_id",boot);v.put("pid",String.valueOf(android.os.Process.myPid()));v.put("pid_start_ticks",birth);v.put("network",g.getNetworkName());v.put("owner_mac",g.getOwner().deviceAddress.toLowerCase(java.util.Locale.US));v.put("local_owner",String.valueOf(g.isGroupOwner()));v.put("observed_elapsed_ms",String.valueOf(SystemClock.elapsedRealtime()));result.set(v);
+                }catch(Exception unavailable){}finally{latch.countDown();}
+            });}catch(Exception unavailable){latch.countDown();}
+        });
+        if(!latch.await(2,java.util.concurrent.TimeUnit.SECONDS)||result.get()==null)throw new SecurityException("formation_callback_unavailable");return result.get();
     }
 
     private static String shortHash(String text) throws Exception {
@@ -554,6 +573,7 @@ public final class DirectP2pProviderActivity extends Activity {
 
     private void beginOwnedCleanup() {
         if (lifecycle == null || cleanupStarted || !topologyStarted || !lifecycle.beginCleanup()) return;
+        FormationObservationState.clear(this);
         cleanupStarted = true;
         main.removeCallbacksAndMessages(null);
         cleanupDeadline = SystemClock.elapsedRealtime() + 10_000L;
@@ -671,6 +691,7 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     private void fail(String reason) {
+        FormationObservationState.clear(this);
         failureRequested = true;
         Log.e(TAG, MARKER + " phase=failure status=fail reason=" + reason + " role=" + role + " run_id=" + runId);
         main.post(new Runnable() {
@@ -687,6 +708,7 @@ public final class DirectP2pProviderActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        FormationObservationState.clear(this);
         failureRequested = true;
         if (lifecycle != null && lifecycle.active()) lifecycle.fail("activity_destroyed");
         beginOwnedCleanup();

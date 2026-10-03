@@ -12,6 +12,18 @@ public final class OriginalStationGuardHostTest {
   interface Work {void run()throws Exception;}
   static void rejects(Work w)throws Exception{boolean bad=false;try{w.run();}catch(IllegalArgumentException|SecurityException e){bad=true;}check(bad);}
   public static void main(String[] a)throws Exception {
+    Properties inventory=new Properties();inventory.setProperty("run_token","0123456789abcdef0123456789abcdef");inventory.setProperty("serial","TESTQUEST00001AB");inventory.setProperty("boot_id","01234567-89ab-cdef-0123-456789abcdef");inventory.setProperty("deadline_elapsed_realtime_ms","31000");
+    QuestOriginalStationGuard.DeviceInventoryConfig inv=new QuestOriginalStationGuard.DeviceInventoryConfig(inventory,1000);
+    inv.host("TESTQUEST00001AB","01234567-89ab-cdef-0123-456789abcdef");check(true);
+    rejects(()->inv.host("TESTQUEST00002AB",inv.boot));rejects(()->inv.fresh(31000));
+    Properties unknown=(Properties)inventory.clone();unknown.setProperty("owner_address","02:11:22:33:44:55");rejects(()->new QuestOriginalStationGuard.DeviceInventoryConfig(unknown,1000));
+    Properties inventoryMissing=(Properties)inventory.clone();inventoryMissing.remove("serial");rejects(()->new QuestOriginalStationGuard.DeviceInventoryConfig(inventoryMissing,1000));
+    rejects(()->new QuestOriginalStationGuard.DeviceInventoryConfig(inventory,999));
+    check(QuestOriginalStationGuard.inventoryMac("02:11:22:33:44:55","02:11:22:33:44:55").equals("02:11:22:33:44:55"));
+    for(String bad:new String[]{"02:00:00:00:00:00","00:00:00:00:00:00","ff:ff:ff:ff:ff:ff","03:11:22:33:44:55","invalid"})rejects(()->QuestOriginalStationGuard.inventoryMac(bad,bad));
+    rejects(()->QuestOriginalStationGuard.inventoryMac("02:11:22:33:44:55","02:22:33:44:55:66"));
+    rejects(()->QuestOriginalStationGuard.inventoryMac(null,null));
+    if(a.length==1&&a[0].equals("--device-info-only")){System.out.println("p2p_device_inventory_host=pass cases="+cases+" device_calls=0");return;}
     OriginalStationGuardContract c=new OriginalStationGuardContract(fixture(),1000);
     check(c.network.equals("DIRECT-rp-0123456789abcdef0123")&&c.network.length()<=32);
     check(c.owned(c.network,"02:11:22:33:44:55",true));
@@ -135,6 +147,20 @@ public final class OriginalStationGuardHostTest {
     rejects(()->QuestOriginalStationGuard.legacySecurity(new WrongTypePmfField()));
     check(pmf.equals(QuestOriginalStationGuard.legacySecurity(projection)));
     QuestOriginalStationGuard.diagnosticField=QuestOriginalStationGuard.SecurityField.none;QuestOriginalStationGuard.missingSecurityFields.clear();
+    String pairCommand="io.github.mesmerprism.rustyquest.directp2p";OriginalStationFormationAdmission.processCommand(pairCommand+String.join("",Collections.nCopies(57,"\0")),pairCommand);check(true);OriginalStationFormationAdmission.processCommand(pairCommand+"\0",pairCommand);check(true);rejects(()->OriginalStationFormationAdmission.processCommand(pairCommand,pairCommand));rejects(()->OriginalStationFormationAdmission.processCommand(pairCommand+"\0foreign\0",pairCommand));rejects(()->OriginalStationFormationAdmission.processCommand(pairCommand+":foreign\0",pairCommand));
+    Properties formationInput=new Properties();formationInput.setProperty("run_id","test-run");formationInput.setProperty("run_token",c.run);formationInput.setProperty("serial",c.serial);formationInput.setProperty("boot_id",c.boot);formationInput.setProperty("pair_apk_sha256",hash);formationInput.setProperty("guardian_dex_sha256",hash);formationInput.setProperty("source_revision",String.join("",Collections.nCopies(40,"a")));formationInput.setProperty("source_tree",String.join("",Collections.nCopies(40,"b")));formationInput.setProperty("pid","1234");formationInput.setProperty("pid_start_ticks","4567");formationInput.setProperty("go_serial",c.serial);formationInput.setProperty("go_boot_id",c.boot);formationInput.setProperty("go_receipt_sha256","none");
+    OriginalStationFormationAdmission.input(formationInput,c);check(true);
+    Map<String,String> live=new HashMap<>();for(String key:Arrays.asList("run_id","run_token","boot_id","pid","pid_start_ticks"))live.put(key,formationInput.getProperty(key));live.put("network",c.network);live.put("owner_mac","02:12:34:56:78:9a");live.put("local_owner","true");live.put("observed_elapsed_ms","1000");OriginalStationFormationAdmission.live(formationInput,c,live,1001);check(true);
+    for(String key:Arrays.asList("run_id","run_token","boot_id","pid","pid_start_ticks","network","owner_mac","local_owner")){Map<String,String> changed=new HashMap<>(live);changed.put(key,"foreign");rejects(()->OriginalStationFormationAdmission.live(formationInput,c,changed,1001));}
+    rejects(()->OriginalStationFormationAdmission.live(formationInput,c,live,3001));rejects(()->OriginalStationFormationAdmission.live(formationInput,c,live,999));
+    Properties admitted=new Properties();for(String key:OriginalStationFormationAdmission.RECEIPT_KEYS)admitted.setProperty(key,formationInput.getProperty(key,live.getOrDefault(key,hash)));admitted.setProperty("config_sha256",hash);admitted.setProperty("state_sha256",hash);
+    OriginalStationFormationAdmission.cleanup(admitted,c,hash,hash,hash,c.network,live.get("owner_mac"),true);check(true);check(!c.owned(c.network,live.get("owner_mac"),true));
+    for(String key:Arrays.asList("run_token","serial","boot_id","local_owner","network","owner_mac","config_sha256","state_sha256","guardian_dex_sha256")){Properties changed=new Properties();changed.putAll(admitted);changed.setProperty(key,"foreign");rejects(()->OriginalStationFormationAdmission.cleanup(changed,c,hash,hash,hash,c.network,live.get("owner_mac"),true));}
+    Properties clientConfig=fixture();clientConfig.setProperty("serial","TESTPEER02");clientConfig.setProperty("boot_id","22345678-1234-1234-1234-123456789012");clientConfig.setProperty("local_owner","false");OriginalStationGuardContract client=new OriginalStationGuardContract(clientConfig,1000);
+    Properties clientInput=new Properties();clientInput.putAll(formationInput);clientInput.setProperty("serial",client.serial);clientInput.setProperty("boot_id",client.boot);clientInput.setProperty("go_receipt_sha256",hash);OriginalStationFormationAdmission.input(clientInput,client);OriginalStationFormationAdmission.peer(clientInput,admitted,live.get("owner_mac"));check(true);
+    for(String key:Arrays.asList("run_id","run_token","serial","boot_id","local_owner","network","owner_mac","pair_apk_sha256","guardian_dex_sha256","source_revision","source_tree")){Properties changed=new Properties();changed.putAll(admitted);changed.setProperty(key,"foreign");rejects(()->OriginalStationFormationAdmission.peer(clientInput,changed,live.get("owner_mac")));}
+    Properties clientReceipt=new Properties();clientReceipt.putAll(admitted);clientReceipt.setProperty("serial",client.serial);clientReceipt.setProperty("boot_id",client.boot);clientReceipt.setProperty("local_owner","false");clientReceipt.setProperty("go_receipt_sha256",hash);OriginalStationFormationAdmission.cleanup(clientReceipt,client,hash,hash,hash,client.network,live.get("owner_mac"),false);check(true);rejects(()->OriginalStationFormationAdmission.cleanup(clientReceipt,client,hash,hash,hash,client.network,live.get("owner_mac"),true));
+    String serialized=OriginalStationFormationAdmission.text(admitted);check(OriginalStationFormationAdmission.strict(serialized,OriginalStationFormationAdmission.RECEIPT_KEYS).equals(admitted));rejects(()->OriginalStationFormationAdmission.strict(serialized+"run_token="+c.run+"\n",OriginalStationFormationAdmission.RECEIPT_KEYS));rejects(()->OriginalStationFormationAdmission.strict(serialized+"unknown=true\n",OriginalStationFormationAdmission.RECEIPT_KEYS));
     System.out.println("original_station_guard_contract=pass cases="+cases+" device_calls=0");
   }
 }
