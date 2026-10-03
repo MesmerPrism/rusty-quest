@@ -341,7 +341,9 @@ public final class EmbeddedDuplexActivationGateTest {
         final io.github.mesmerprism.rustyquest.media.PackagedAndroidMediaOwnerRegistry registry;
         final String action;
         final EmbeddedDuplexActivationGate.MediaTicket ticket;
-        int providerCalls;
+        int providerCalls, compensationCalls;
+        RuntimeException failure;
+        boolean staleSnapshot, allowCompensation;
         CleanupFixture(String lease, String handle, long revision, String kind) throws Exception {
             io.github.mesmerprism.rustyquest.media.MediaOwnerProvider provider =
                     new io.github.mesmerprism.rustyquest.media.MediaOwnerProvider() {
@@ -349,17 +351,22 @@ public final class EmbeddedDuplexActivationGateTest {
                         io.github.mesmerprism.rustyquest.media.MediaOwnerAction action,
                         io.github.mesmerprism.rustyquest.media.CancellationHandle cancellation) {
                     providerCalls++;
+                    if (failure != null) throw failure;
                     return new io.github.mesmerprism.rustyquest.media.MediaProviderReadback(
                             action, handle, revision, "stopped", "receipt.cleanup.fixture");
                 }
                 @Override public io.github.mesmerprism.rustyquest.media.MediaProviderReadback compensate(
                         io.github.mesmerprism.rustyquest.media.MediaOwnerAction action,
                         io.github.mesmerprism.rustyquest.media.CancellationHandle cancellation) {
-                    throw new AssertionError("unexpected compensation");
+                    if (!allowCompensation) throw new AssertionError("unexpected compensation");
+                    compensationCalls++;
+                    return new io.github.mesmerprism.rustyquest.media.MediaProviderReadback(
+                            action, handle, revision, "stopped", "receipt.cleanup.fixture");
                 }
                 @Override public io.github.mesmerprism.rustyquest.media.MediaRuntimeSnapshot snapshot() {
                     return new io.github.mesmerprism.rustyquest.media.MediaRuntimeSnapshot(
-                            7, revision, "stopped", true, "modeled cleanup provider", handle);
+                            7, staleSnapshot ? revision + 1 : revision, "stopped", true,
+                            "modeled cleanup provider", handle);
                 }
             };
             registry = new io.github.mesmerprism.rustyquest.media.PackagedAndroidMediaOwnerRegistry(7,
@@ -471,6 +478,151 @@ public final class EmbeddedDuplexActivationGateTest {
             assertTrue(!diagnostic.contains("secret"));
             assertEquals(message, original.getMessage());
         }
+    }
+
+    @Test public void retainedCallbackStopAndCleanupReturnActualConsumedRegistryReceipts() throws Exception {
+        for (String kind : new String[] {"stop", "cleanup"}) {
+            try (RetainedCallbackFixture f = new RetainedCallbackFixture(kind)) {
+                String result = f.invoke(false);
+                JSONObject receipt = new JSONObject(result);
+                assertEquals(3, receipt.length());
+                assertEquals(receipt.getJSONObject("readback").toString(),
+                        new JSONObject(receipt.getString("readback_json")).toString());
+                assertTrue(receipt.getJSONObject("verified").getBoolean("terminal"));
+                assertEquals(1, f.cleanup.providerCalls);
+                assertTrue(f.cleanup.registry.verifyAndReadEvidence(f.cleanup.action,
+                        receipt.getString("readback_json")) == null);
+                assertEquals("NONE", new JSONObject(f.platform.ownerFailureDiagnostic()).getString("stage"));
+                f.target.nextReceiver();
+                if ("stop".equals(kind)) {
+                    dispatchArm(f.gate, f.target, freshAuthority(), freshTicket(), freshVerified());
+                    assertEquals(1, f.target.providerCalls);
+                } else {
+                    assertThrows(IllegalStateException.class, () -> dispatchArm(f.gate, f.target,
+                            freshAuthority(), freshTicket(), freshVerified()));
+                    assertEquals(0, f.target.providerCalls);
+                }
+            }
+        }
+    }
+
+    @Test public void retainedCallbackProviderFailureKeepsOriginalClosedCategoryAndFirstFailure() throws Exception {
+        for (String kind : new String[] {"stop", "cleanup"}) {
+            for (String message : new String[] {"ProviderBusy", "secret ticket/key/request"}) {
+                try (RetainedCallbackFixture f = new RetainedCallbackFixture(kind)) {
+                    IllegalStateException original = new IllegalStateException(message,
+                            new java.io.IOException("private cause"));
+                    f.cleanup.failure = original;
+                    assertTrue(original == assertThrows(IllegalStateException.class, () -> f.invoke(false)));
+                    String raw = f.platform.ownerFailureDiagnostic();
+                    JSONObject d = new JSONObject(raw);
+                    assertEquals(7, d.length());
+                    assertEquals("PROVIDER_EXECUTION", d.getString("stage"));
+                    assertEquals(kind.toUpperCase(java.util.Locale.ROOT), d.getString("action"));
+                    assertEquals("sink", d.getString("owner"));
+                    assertEquals("IO", d.getString("cause"));
+                    assertEquals("ProviderBusy".equals(message) ? "PROVIDER_BUSY" : "OTHER",
+                            d.getString("provider_reason"));
+                    assertTrue(!raw.contains("secret") && !raw.contains("private") && !raw.contains("client.1"));
+                    f.platform.retireProcessCallbacks();
+                    assertThrows(IllegalStateException.class, () -> f.invoke(true));
+                    assertEquals(raw, f.platform.ownerFailureDiagnostic());
+                    assertEquals(1, f.cleanup.providerCalls);
+                    assertEquals(message, original.getMessage());
+                }
+            }
+        }
+    }
+
+    @Test public void retainedCallbackAdmissionProjectionAndRegistryFailuresNeverEnterProvider() throws Exception {
+        for (int damage = 0; damage < 6; damage++) {
+            try (RetainedCallbackFixture f = new RetainedCallbackFixture("stop")) {
+                if (damage == 0) f.platform.retireProcessCallbacks();
+                if (damage == 1) f.authority.put("requester_expires_at_ms", 0);
+                if (damage == 2) f.authority.put("expires_at_ms", 0);
+                if (damage == 3) f.authority.put("requester_id", "client.1");
+                if (damage == 4) f.authority.put("target_runtime_lease_id", "foreign.lease");
+                if (damage == 5) setPlatformField(f.platform, "registry", null);
+                assertThrows(IllegalStateException.class, () -> f.invoke(false));
+                JSONObject d = new JSONObject(f.platform.ownerFailureDiagnostic());
+                assertEquals(damage == 0 ? "CALLBACK_FENCE" : damage == 5 ? "REGISTRY_BINDING"
+                        : "PROJECTION_BINDING", d.getString("stage"));
+                assertEquals(damage == 0 ? "BEFORE_TICKET" : "STOP", d.getString("action"));
+                assertEquals("NONE", d.getString("provider_reason"));
+                assertEquals("NONE", d.getString("cause"));
+                assertEquals(0, f.cleanup.providerCalls);
+            }
+        }
+    }
+
+    @Test public void retainedCallbackRejectsUnverifiedReceiptAtReceiptStageAndForwardsCompensation() throws Exception {
+        try (RetainedCallbackFixture f = new RetainedCallbackFixture("stop")) {
+            f.cleanup.staleSnapshot = true;
+            assertThrows(IllegalStateException.class, () -> f.invoke(false));
+            JSONObject d = new JSONObject(f.platform.ownerFailureDiagnostic());
+            assertEquals("RECEIPT_VERIFICATION", d.getString("stage"));
+            assertEquals("STOP", d.getString("action"));
+            assertEquals("NONE", d.getString("provider_reason"));
+            assertEquals("NONE", d.getString("cause"));
+            assertEquals(1, f.cleanup.providerCalls);
+        }
+        try (RetainedCallbackFixture f = new RetainedCallbackFixture("stop")) {
+            f.authority.remove("platform_runtime_spec_id");
+            assertThrows(IllegalStateException.class, () -> f.invoke(false));
+            JSONObject d = new JSONObject(f.platform.ownerFailureDiagnostic());
+            assertEquals("RECEIPT_VERIFICATION", d.getString("stage"));
+            assertEquals("STOP", d.getString("action"));
+            assertEquals("NONE", d.getString("provider_reason"));
+            assertEquals("NONE", d.getString("cause"));
+            assertEquals(1, f.cleanup.providerCalls);
+        }
+        try (RetainedCallbackFixture f = new RetainedCallbackFixture("cleanup")) {
+            f.cleanup.allowCompensation = true;
+            assertTrue(new JSONObject(f.invoke(true)).getJSONObject("verified").getBoolean("terminal"));
+            assertEquals(1, f.cleanup.compensationCalls);
+            assertEquals(0, f.cleanup.providerCalls);
+            f.target.nextReceiver();
+            assertThrows(IllegalStateException.class, () -> dispatchArm(f.gate, f.target,
+                    freshAuthority(), freshTicket(), freshVerified()));
+        }
+    }
+
+    // Full Java callback/registry/Gate fixture. Native two-principal admission is modeled:
+    // the exact projection is supplied directly, so this proves neither JNI authentication
+    // nor native process-fence admission. The Java CallbackGuard uses a real host file fence.
+    private static final class RetainedCallbackFixture implements AutoCloseable {
+        final EmbeddedDuplexPlatform platform = diagnosticOnlyPlatform();
+        final FakeTarget target = new FakeTarget();
+        final EmbeddedDuplexActivationGate gate = armed(target);
+        final CleanupFixture cleanup;
+        final JSONObject authority;
+        final EmbeddedDuplexProcessFence fence;
+        RetainedCallbackFixture(String kind) throws Exception {
+            cleanup = new CleanupFixture("lease.1", "receiver.7", 3, kind);
+            java.io.File dir = java.nio.file.Files.createTempDirectory("retained-callback-fence-").toFile();
+            fence = EmbeddedDuplexProcessFence.acquire(dir, null, null, () -> { });
+            platform.bindProcessFence(fence);
+            setPlatformField(platform, "localPeerId", "peer.b");
+            setPlatformField(platform, "registry", cleanup.registry);
+            setPlatformField(platform, "activationGate", gate);
+            authority = new JSONObject()
+                    .put("$schema", "rusty.quest.android.media.retained_cleanup_projection.v2")
+                    .put("executor_peer_id", "peer.b").put("platform_runtime_spec_id", "runtime.incoming.1")
+                    .put("provider_epoch_id", "epoch.provider.1")
+                    .put("target_client_id", "client.1").put("target_runtime_lease_id", "lease.1")
+                    .put("requester_id", "revoker.1").put("requester_runtime_lease_id", "revoker.lease")
+                    .put("trusted_revoker", true).put("expires_at_ms", Long.MAX_VALUE)
+                    .put("requester_expires_at_ms", Long.MAX_VALUE);
+        }
+        String invoke(boolean compensate) throws Exception {
+            return platform.executeRetainedCleanupAndVerify(authority.toString(), cleanup.action, compensate);
+        }
+        @Override public void close() throws Exception { cleanup.close(); fence.close(); }
+    }
+    private static void setPlatformField(EmbeddedDuplexPlatform platform, String name, Object value)
+            throws Exception {
+        java.lang.reflect.Field field = EmbeddedDuplexPlatform.class.getDeclaredField(name);
+        field.setAccessible(true); field.set(platform, value);
     }
 
     // Host-only diagnostic fixture: no Android constructor, process capability, registry or effects.

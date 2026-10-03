@@ -347,9 +347,13 @@ final class EmbeddedDuplexPlatform {
     /** Fixed native v2 callback; target identity is preserved independently of requester. */
     public String executeRetainedCleanupAndVerify(String authorityJson, String ticketJson,
             boolean compensate) throws Exception {
+        OwnerStage stage = OwnerStage.CALLBACK_FENCE;
+        MediaOwnerAction ticket = null;
+        try {
         requireProcessCallback();
+        stage = OwnerStage.PROJECTION_BINDING;
         JSONObject authority = new JSONObject(authorityJson);
-        MediaOwnerAction ticket = MediaOwnerAction.parse(ticketJson);
+        ticket = MediaOwnerAction.parse(ticketJson);
         if (!"rusty.quest.android.media.retained_cleanup_projection.v2".equals(authority.getString("$schema"))
                 || !localPeerId.equals(authority.getString("executor_peer_id"))
                 || authority.getLong("expires_at_ms") <= System.currentTimeMillis()
@@ -366,19 +370,28 @@ final class EmbeddedDuplexPlatform {
                 && !ticket.leaseId().equals(authority.getString("requester_runtime_lease_id")))) {
             throw new IllegalStateException("retained cleanup requester binding rejected");
         }
+        stage = OwnerStage.REGISTRY_BINDING;
         PackagedAndroidMediaOwnerRegistry current = registry;
         if (current == null) throw new IllegalStateException("platform registry absent");
         EmbeddedDuplexActivationGate gate = activationGate;
         EmbeddedDuplexActivationGate.MediaTicket activationTicket = activationTicket(ticket);
+        stage = OwnerStage.INCOMING_FENCE;
         if (gate != null) gate.beforeOwnerEffect(authority, activationTicket, compensate);
         requireProcessCallback();
+        stage = OwnerStage.PROVIDER_EXECUTION;
         String readback = current.execute(ticketJson, compensate);
+        stage = OwnerStage.RECEIPT_VERIFICATION;
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
         if (verified == null) throw new IllegalStateException("retained cleanup live evidence rejected");
+        // Terminal eligibility remains receipt verification, never an incoming Arm effect.
         if (gate != null) gate.afterVerifiedOwnerEffect(authority, activationTicket,
                 new JSONObject(readback), new JSONObject(verified), compensate);
         return new JSONObject().put("readback", new JSONObject(readback))
                 .put("readback_json", readback).put("verified", new JSONObject(verified)).toString();
+        } catch (Exception failure) {
+            recordOwnerFailure(stage, ticket, failure);
+            throw failure;
+        }
     }
 
     public synchronized void persistCleanupPreparations(String snapshotJson) throws Exception {
