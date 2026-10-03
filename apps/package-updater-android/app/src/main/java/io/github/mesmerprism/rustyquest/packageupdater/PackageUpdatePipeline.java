@@ -50,6 +50,12 @@ final class PackageUpdatePipeline {
 
     Result checkAndStage(Cancellation cancellation, Progress progress)
             throws Exception {
+        return UpdateOperationCoordinator.run(
+                () -> checkAndStageOwned(cancellation, progress));
+    }
+
+    private Result checkAndStageOwned(Cancellation cancellation, Progress progress)
+            throws Exception {
         if (!context.getPackageManager().canRequestPackageInstalls()) {
             throw new IllegalStateException("install_permission_required");
         }

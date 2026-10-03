@@ -532,11 +532,13 @@ foreach ($token in @(
     Assert-Match $receipt $token "Persisted install receipt is missing token: $token"
 }
 foreach ($token in @(
-    'receiptStore.matchesCallback\(intent\)',
+    'receiptStore.captureCallback\(intent\)',
+    'JSONObject receipt = captured\.receipt',
+    'receiptStore.updateCallbackState\(captured,',
     'PackageInstaller.STATUS_PENDING_USER_ACTION',
     'InstallReceiptStore\.isCancellationPending',
     'intent.getParcelableExtra\(Intent.EXTRA_INTENT, Intent.class\)',
-    'pending_user_confirmation',
+    'receiptStore.dispatchPendingConfirmation\(captured,',
     'Intent.FLAG_ACTIVITY_NEW_TASK',
     'PackageInstaller.STATUS_SUCCESS',
     'verifyInstalledReadback',
@@ -552,6 +554,15 @@ Assert-Match $callback 'PackageInstaller\.STATUS_FAILURE_ABORTED' `
     "Package Installer wearer cancellation must be a distinct terminal state."
 Assert-Match $callback 'cleanupTerminalArtifacts' `
     "Package Installer terminal callbacks must remove private staged APKs."
+Assert-Match $receipt 'synchronized \(RECEIPT_LOCK\)' `
+    "All receipt instances must share the process-owned critical section."
+Assert-Match $receipt 'CALLBACK_OWNERS\.contains\(captured\.owner\)' `
+    "Callback writes must retain the exact live owner reservation."
+Assert-Match $receipt 'install_receipt_callback_active' `
+    "A new receipt must not replace one whose callback still owns effects."
+if ($callback -match 'receiptStore\.read\(' -or $callback -match 'receiptStore\.updateState\(') {
+    throw "Callback receipt reads and mutations must use the atomically captured owner."
+}
 Assert-Match $postInstallPolicy `
     'observedAtMs >= 0L && observedAtMs < manifestExpiresAtMs' `
     "Post-install expiry boundary must match Rust's exclusive expiry."
@@ -791,6 +802,8 @@ foreach ($token in @(
     Assert-Match $readme $token "Package Updater guide is missing boundary token: $token"
 }
 
+& (Join-Path $appRoot "host-tests/Test-InstallReceiptRaces.ps1") -RepoRoot $RepoRoot
+
 $javac = (Get-Command "javac" -ErrorAction Stop).Source
 $java = (Get-Command "java" -ErrorAction Stop).Source
 $temporaryRoot = [System.IO.Path]::GetFullPath(
@@ -806,9 +819,18 @@ try {
         $paths.canonicalizer `
         $paths.host_vector `
         $paths.post_install_policy `
-        $paths.host_post_install_policy
+        $paths.host_post_install_policy `
+        (Join-Path $javaRoot "UpdateOperationCoordinator.java") `
+        (Join-Path $appRoot "host-tests/io/github/mesmerprism/rustyquest/packageupdater/UpdateOperationCoordinatorTest.java")
     if ($LASTEXITCODE -ne 0) {
         throw "Package Updater Java/Rust canonical vector did not compile."
+    }
+    Assert-Match $pipeline 'return UpdateOperationCoordinator\.run\(\s*\(\) -> checkAndStageOwned\(cancellation, progress\)\);' `
+        "Both updater entry paths must reserve the shared pipeline before preparation."
+    $coordinationOutput = & $java -cp $temporaryRoot `
+        "io.github.mesmerprism.rustyquest.packageupdater.UpdateOperationCoordinatorTest"
+    if ($LASTEXITCODE -ne 0 -or ($coordinationOutput -join "`n") -notmatch "Update operation coordination passed") {
+        throw "Package Updater process-owned preparation coordination failed."
     }
     $vectorOutput = & $java -cp $temporaryRoot `
         "io.github.mesmerprism.rustyquest.packageupdater.PackageUpdaterCanonicalVectorTest"
