@@ -19,6 +19,7 @@ connection-hub-native = []
 [dependencies]
 rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-authority" }
 rusty-quest-broker-admission = { path = "../../../crates/rusty-quest-broker-admission" }
+rusty-quest-media-stream-android = { path = "../../../crates/rusty-quest-media-stream-android" }
 rusty-manifold-admission = { path = "../../../../rusty-manifold/crates/rusty-manifold-admission" }
 rusty-manifold-broker-product = { path = "../../../../rusty-manifold/crates/rusty-manifold-broker-product" }
 rusty-manifold-connection-hub = { path = "../../../../rusty-manifold/crates/rusty-manifold-connection-hub" }

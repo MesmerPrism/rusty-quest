@@ -294,6 +294,7 @@ dependencies = [
 name = "rusty-manifold-broker-adapter"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "rusty-manifold-admission",
  "rusty-manifold-broker-product",
  "rusty-manifold-model",
@@ -310,6 +311,7 @@ dependencies = [
  "rusty-manifold-model",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -434,6 +436,7 @@ dependencies = [
  "rusty-manifold-model",
  "rusty-quest-broker-admission",
  "rusty-quest-broker-authority",
+ "rusty-quest-media-stream-android",
  "serde",
  "serde_json",
 ]

@@ -1,4 +1,4 @@
-param([string]$RepoRoot,[switch]$ConcurrentStereoGrantOnly,[string]$ConcurrentStereoClientSpecPath="",[string]$ExpectedConcurrentStereoClientSpecSha256="",[string]$ConcurrentStereoPackageName="")
+param([string]$RepoRoot,[switch]$ConcurrentStereoGrantOnly,[string]$ConcurrentStereoClientSpecPath="",[string]$ExpectedConcurrentStereoClientSpecSha256="",[string]$ConcurrentStereoPackageName="",[switch]$ConcurrentStereoSourcePinOnly,[string]$ConcurrentStereoManifoldSourceRoot="",[string]$RejectedManifoldSourceRoot="")
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..") }
 $RepoRoot = (Resolve-Path $RepoRoot).Path
@@ -8,6 +8,34 @@ foreach ($name in @('Get-FileSha256Hex','Get-TextSha256Hex','Read-ValidatedClien
     $definition = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
     if ($definition.Count -ne 1) { throw "Missing/ambiguous actual production function $name" }
     . ([scriptblock]::Create($definition[0].Extent.Text))
+}
+if($ConcurrentStereoSourcePinOnly){
+    if(-not$ConcurrentStereoManifoldSourceRoot-or-not$RejectedManifoldSourceRoot){throw 'Explicit current and rejected supplier roots required'}
+    $selection=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.IfStatementAst]-and$node.Clauses[0].Item1.Extent.Text-ceq'$connectionHubSelected'-and$node.Extent.Text-like'*Connection Hub Manifold source does not match the exact clean native pin*'},$true))
+    if($selection.Count-ne1){throw 'Actual native source admission block missing/ambiguous'}
+    $guard=[scriptblock]::Create($selection[0].Extent.Text)
+    $connectionHubSelected=$true;$appRoot=Join-Path $RepoRoot 'apps/manifold-broker-android';$repoRoot=$RepoRoot;$ManifoldSourceRoot=$ConcurrentStereoManifoldSourceRoot
+    . $guard
+    $lock=Get-Content -LiteralPath (Join-Path $appRoot 'native/manifold-source.lock.json') -Raw|ConvertFrom-Json
+    $native=Get-Content -LiteralPath (Join-Path $appRoot 'connection-hub-native/src/connection_hub_jni.rs') -Raw
+    if($native-notmatch ('const EXPECTED_MANIFOLD_REVISION: &str = "'+[regex]::Escape($lock.revision)+'";')-or$native-notmatch ('const EXPECTED_MANIFOLD_TREE: &str = "'+[regex]::Escape($lock.tree)+'";')){throw 'Builder and actual JNI initialize source tuple disagree'}
+    $pinCases=2
+    function DenyPin([scriptblock]$Action){$denied=$false;try{&$Action|Out-Null}catch{$denied=$true};if(-not$denied){throw 'Changed native supplier admitted'};$script:pinCases++}
+    $ManifoldSourceRoot=$RejectedManifoldSourceRoot;DenyPin {. $guard}
+    $ManifoldSourceRoot=Join-Path $RepoRoot 'target/absent-native-supplier';DenyPin {. $guard}
+    $ManifoldSourceRoot=$ConcurrentStereoManifoldSourceRoot
+    $shadow=Join-Path $RepoRoot ('target/native-source-pin-'+[guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory((Join-Path $shadow 'native'));[void][IO.Directory]::CreateDirectory((Join-Path $shadow 'contracts'))
+    foreach($name in @('connection-hub-protocol-v1.json','connection-hub-protocol-v2.json')){[IO.File]::Copy((Join-Path $appRoot "contracts/$name"),(Join-Path $shadow "contracts/$name"),$false)}
+    $originalAppRoot=$appRoot
+    foreach($field in @('revision','tree')){
+        $bad=$lock|ConvertTo-Json|ConvertFrom-Json;$bad.$field='0'*40
+        [IO.File]::WriteAllText((Join-Path $shadow 'native/manifold-source.lock.json'),($bad|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        $appRoot=$shadow;DenyPin {. $guard}
+    }
+    $appRoot=$originalAppRoot;$ManifoldSourceRoot=$ConcurrentStereoManifoldSourceRoot;. $guard;$pinCases++
+    Write-Output "Connection Hub actual source admission PASS: $pinCases; exact current supplier, JNI tuple, old/absent/damaged tuple denial; no APK/device calls."
+    return
 }
 $focused = Join-Path $RepoRoot ('target/concurrent-stereo-grant-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($focused)
