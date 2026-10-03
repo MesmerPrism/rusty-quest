@@ -353,6 +353,13 @@ function Add-ConcurrentStereoHubPolicy {
     if ($null -eq $ClientInput -or $null -eq $Contract -or ($ClientInput.lock.capabilities -join "`n") -cne 'capability.connection_hub.provider.register') { throw 'Exact opted concurrent stereo inputs required.' }
     $Policy.allowed_controller_capabilities = @($Policy.allowed_controller_capabilities) + @($Contract.commands | ForEach-Object { $_.required_controller_capability })
     $Policy.provider_grants = @($Policy.provider_grants) + @([ordered]@{provider_id=$Contract.provider_id;client_id=[string]$ClientInput.lock.client_id;client_lock_id=[string]$ClientInput.lock.feature_lock_id;client_lock_sha256="sha256:$($ClientInput.sha256)";surface_contract_sha256=$Contract.runtime_sha256;allowed_commands=$Contract.commands})
+    [string[]]$capabilities = @($Policy.allowed_controller_capabilities)
+    [Array]::Sort($capabilities,[StringComparer]::Ordinal)
+    $Policy.allowed_controller_capabilities = $capabilities
+    [object[]]$grants = @($Policy.provider_grants)
+    [string[]]$providerIds = @($grants | ForEach-Object { $_.provider_id })
+    [Array]::Sort($providerIds,$grants,[StringComparer]::Ordinal)
+    $Policy.provider_grants = $grants
     return $Policy
 }
 

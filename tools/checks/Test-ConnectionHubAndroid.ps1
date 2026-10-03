@@ -45,13 +45,13 @@ $fixture = Join-Path $RepoRoot 'fixtures/broker-clients/concurrent-stereo.client
 $input = New-ConcurrentStereoClientInput $RepoRoot 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $fixture (Get-FileSha256Hex $fixture)
 $contract = Read-ConcurrentStereoHubContract $RepoRoot
 if ($contract.runtime_sha256 -cne 'sha256:f2b08d2e1424b501f411a57bb47cbb5ea933016a31e8a2a39885238e4cdedfa3' -or ($input.lock.capabilities -join ',') -cne 'capability.connection_hub.provider.register') {throw 'Actual closed contract/client production constructor failed'};$cases++
-$baseline = [ordered]@{allowed_controller_capabilities=@('existing.capability');provider_grants=@([ordered]@{provider_id='existing';allowed_commands=@('existing.command')})}
+$baseline = [ordered]@{allowed_controller_capabilities=@('capability.connection_hub_sample.toggle');provider_grants=@([ordered]@{provider_id='provider.quest.connection-hub-sample';allowed_commands=@('existing.command')})}
 $before = $baseline | ConvertTo-Json -Depth 20 -Compress
 $disabled = Add-ConcurrentStereoHubPolicy $baseline $false $null $null
 if (($disabled | ConvertTo-Json -Depth 20 -Compress) -cne $before) {throw 'Disabled policy changed'};$cases++
 $enabled = Add-ConcurrentStereoHubPolicy ($before | ConvertFrom-Json) $true $input $contract
-$grant=@($enabled.provider_grants)[1]
-if (@($enabled.provider_grants).Count -ne 2 -or (@($enabled.allowed_controller_capabilities) -join ',') -cne 'existing.capability,capability.concurrent_stereo.own,capability.concurrent_stereo.peer' -or $grant.client_lock_sha256 -cne "sha256:$($input.sha256)" -or @($grant.allowed_commands).Count -ne 2 -or (@($enabled.provider_grants)[0]|ConvertTo-Json -Depth 20 -Compress) -cne (@($baseline.provider_grants)[0]|ConvertTo-Json -Depth 20 -Compress)) {throw 'Production opted policy/grant boundaries changed'};$cases++
+$grant=@($enabled.provider_grants | Where-Object provider_id -CEQ $contract.provider_id)[0]
+if (@($enabled.provider_grants).Count -ne 2 -or (@($enabled.allowed_controller_capabilities) -join ',') -cne 'capability.concurrent_stereo.own,capability.concurrent_stereo.peer,capability.connection_hub_sample.toggle' -or (@($enabled.provider_grants).provider_id -join ',') -cne 'provider.quest.concurrent-stereo,provider.quest.connection-hub-sample' -or $grant.client_lock_sha256 -cne "sha256:$($input.sha256)" -or @($grant.allowed_commands).Count -ne 2 -or (@($enabled.provider_grants)[1]|ConvertTo-Json -Depth 20 -Compress) -cne (@($baseline.provider_grants)[0]|ConvertTo-Json -Depth 20 -Compress)) {throw 'Production opted canonical policy/grant boundaries changed'};$cases++
 Test-GrantDeny {New-ConcurrentStereoClientInput $RepoRoot 'foreign.package' $fixture (Get-FileSha256Hex $fixture)}
 Test-GrantDeny {New-ConcurrentStereoClientInput $RepoRoot 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $fixture ('0'*64)}
 Test-GrantDeny {New-ConcurrentStereoClientInput $RepoRoot 'io.github.mesmerprism.rustyquest.spatial_camera_panel' $fixture ''}
