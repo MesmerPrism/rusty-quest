@@ -339,6 +339,23 @@ internal class SpatialVideoSourceRoutingCoordinator(
     SpatialConcurrentPeerAdmissionRequest(state.generation, lastNativeGeneration)
   }
 
+  /** Negative-only Java reservation retirement after exact native Peer source removal.
+   * No native Disabled request or Inactive readback is manufactured: Own remains independent.
+   */
+  fun retireEmbeddedConcurrentProjectionPeerRequest(generation: Long) = synchronized(stateLock) {
+    check(generation > 0L && state.generation == generation && lastNativeGeneration == generation &&
+        embeddedPeerGeneration == generation && state.requested == SpatialVideoSource.Peer) {
+      "concurrent Peer retirement superseded"
+    }
+    peerSettings = null
+    expectedRequest = null
+    admittedGeneration = null
+    embeddedPeerGeneration = null
+    state = state.copy(requested = SpatialVideoSource.Disabled, pending = null,
+        effective = SpatialVideoSource.Disabled, ownedAcquisition = null, ownedAcquisitionGeneration = 0L,
+        sourceOwnerDemand = false, failed = null, failureReason = SpatialVideoSourceReason.None,
+        pendingSinceNs = 0L, readback = null)
+  }
   /** Separate concurrent source-set reservation; the exclusive Local shutdown guard is unchanged. */
   fun beginEmbeddedConcurrentProjectionPeerRequest(proof: SpatialConcurrentPeerAdmission): SpatialVideoSourceRoutingState = synchronized(stateLock) {
     check(state.generation == proof.routingGeneration && lastNativeGeneration == proof.nativeGeneration &&

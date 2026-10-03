@@ -133,6 +133,12 @@ internal class EmbeddedDuplexDisplayCoordinator(
           "exact Peer source retirement remains Pending"
         }
       }
+      if (ownedPeerGeneration != 0L) {
+        check(ownedDecoderToken != 0L && ownedReaderGeneration != 0L) {
+          "exact Peer source retirement identity unavailable"
+        }
+        routing.retireEmbeddedConcurrentProjectionPeerRequest(ownedPeerGeneration)
+      }
       // Removal is source-only. Incoming decoder and submitted GPU fences own terminal proof.
       ownedPeerGeneration = 0L; ownedDecoderToken = 0L; ownedReaderGeneration = 0L
       retirementGeneration = 0L
