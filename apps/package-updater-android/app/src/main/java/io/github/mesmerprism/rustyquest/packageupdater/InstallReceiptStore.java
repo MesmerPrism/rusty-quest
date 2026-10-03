@@ -20,6 +20,9 @@ final class InstallReceiptStore {
     static final String CALLBACK_SCHEME = "rusty-package-updater";
     static final String CALLBACK_AUTHORITY = "install";
     private static final int MAX_RECEIPT_BYTES = 32 * 1024;
+    private static final Object RECEIPT_LOCK = new Object();
+    private static final java.util.Set<Object> CALLBACK_OWNERS =
+            new java.util.HashSet<>();
 
     private final AtomicFile receiptFile;
 
@@ -32,7 +35,87 @@ final class InstallReceiptStore {
         receiptFile = new AtomicFile(new File(directory, "install-receipt.json"));
     }
 
-    synchronized void begin(
+    void begin(int sessionId, String token, VerifiedUpdatePlan plan, File staged)
+            throws Exception {
+        synchronized (RECEIPT_LOCK) {
+            if (!CALLBACK_OWNERS.isEmpty()) {
+                throw new IllegalStateException("install_receipt_callback_active");
+            }
+            beginUnlocked(sessionId, token, plan, staged);
+        }
+    }
+
+    JSONObject read() throws Exception {
+        synchronized (RECEIPT_LOCK) { return readUnlocked(); }
+    }
+
+    boolean matchesCallback(Intent intent) throws Exception {
+        synchronized (RECEIPT_LOCK) { return matchesCallbackUnlocked(intent); }
+    }
+
+    void updateState(int sessionId, String state, Integer code, String message)
+            throws Exception {
+        synchronized (RECEIPT_LOCK) { updateStateUnlocked(sessionId, state, code, message); }
+    }
+
+    boolean compareAndSetState(int sessionId, String expected, String state,
+            Integer code, String message) throws Exception {
+        synchronized (RECEIPT_LOCK) {
+            return compareAndSetStateUnlocked(sessionId, expected, state, code, message);
+        }
+    }
+
+    static final class CallbackReceipt implements AutoCloseable {
+        final JSONObject receipt;
+        private final Object owner = new Object();
+        private CallbackReceipt(JSONObject receipt) { this.receipt = receipt; }
+        @Override public void close() {
+            synchronized (RECEIPT_LOCK) { CALLBACK_OWNERS.remove(owner); }
+        }
+    }
+
+    CallbackReceipt captureCallback(Intent intent) throws Exception {
+        synchronized (RECEIPT_LOCK) {
+            if (!matchesCallbackUnlocked(intent)) { return null; }
+            JSONObject receipt = readUnlocked();
+            if (receipt == null || isTerminal(receipt.optString("state"))) { return null; }
+            CallbackReceipt captured = new CallbackReceipt(receipt);
+            CALLBACK_OWNERS.add(captured.owner);
+            return captured;
+        }
+    }
+
+    void updateCallbackState(CallbackReceipt captured, int sessionId,
+            String state, Integer code, String message) throws Exception {
+        synchronized (RECEIPT_LOCK) {
+            JSONObject current = readUnlocked();
+            if (!CALLBACK_OWNERS.contains(captured.owner) || current == null
+                    || sessionId != captured.receipt.getInt("session_id")
+                    || sessionId != current.getInt("session_id")
+                    || !captured.receipt.getString("callback_token").equals(
+                            current.getString("callback_token"))) {
+                throw new IllegalStateException("install_receipt_callback_mismatch");
+            }
+            updateStateUnlocked(sessionId, state, code, message);
+        }
+    }
+
+    void dispatchPendingConfirmation(CallbackReceipt captured, int sessionId,
+            int status, String message, Runnable dispatch) throws Exception {
+        // Only this one synchronous confirmation dispatch is serialized with
+        // receipt cancellation. Download/readback/checkpoint work stays outside.
+        synchronized (RECEIPT_LOCK) {
+            updateCallbackState(captured, sessionId,
+                    "pending_user_confirmation", status, message);
+            JSONObject current = readUnlocked();
+            if (!"pending_user_confirmation".equals(current.optString("state"))) {
+                return;
+            }
+            dispatch.run();
+        }
+    }
+
+    private void beginUnlocked(
             int sessionId,
             String callbackToken,
             VerifiedUpdatePlan plan,
@@ -66,7 +149,7 @@ final class InstallReceiptStore {
         write(receipt);
     }
 
-    synchronized JSONObject read() throws Exception {
+    private JSONObject readUnlocked() throws Exception {
         if (!receiptFile.getBaseFile().isFile()) {
             return null;
         }
@@ -83,7 +166,7 @@ final class InstallReceiptStore {
         }
     }
 
-    synchronized boolean matchesCallback(Intent intent) throws Exception {
+    private boolean matchesCallbackUnlocked(Intent intent) throws Exception {
         if (intent == null || !CALLBACK_ACTION.equals(intent.getAction())) {
             return false;
         }
@@ -111,7 +194,7 @@ final class InstallReceiptStore {
                 && callbackToken.equals(receipt.getString("callback_token"));
     }
 
-    synchronized void updateState(
+    private void updateStateUnlocked(
             int sessionId, String state, Integer statusCode, String statusMessage)
             throws Exception {
         JSONObject receipt = read();
@@ -134,7 +217,7 @@ final class InstallReceiptStore {
         writeState(receipt, state, statusCode, statusMessage);
     }
 
-    synchronized boolean compareAndSetState(
+    private boolean compareAndSetStateUnlocked(
             int sessionId,
             String expectedState,
             String state,
