@@ -29,7 +29,13 @@ public final class ConnectionHubCoreTest {
             repeat("ab", 32));
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 1 && "rejected-restore-only".equals(args[0])) {
+            testRejectedRestorePreservesStore();
+            System.out.println("Rejected restore production cases PASS: retained stopped/running postures; no device/native grant.");
+            return;
+        }
         if (args.length != 1) throw new IllegalArgumentException("protocol vector path required");
+        testRejectedRestorePreservesStore();
         ConnectionHubProtocolVectorsTest vectors = ConnectionHubProtocolVectorsTest.load(args[0]);
         InMemoryStore store = new InMemoryStore();
         FakeAuthority authority = new FakeAuthority();
@@ -656,10 +662,90 @@ public final class ConnectionHubCoreTest {
         @Override public void onReceipt(JSONObject receipt) { value = receipt; }
     }
 
+    private static void testRejectedRestorePreservesStore() throws Exception {
+        for (boolean desired : new boolean[] {false, true}) {
+            final InMemoryStore store = new InMemoryStore();
+            Map<String, ConnectionHubStateStore.SessionProjection> retainedSessions =
+                    new LinkedHashMap<>();
+            retainedSessions.put(repeat("x", 43), new ConnectionHubStateStore.SessionProjection(
+                    "session.retained", 7, Long.MAX_VALUE, 4));
+            // Use the actual writer interface; the retained snapshot is not a reset request.
+            store.save(new ConnectionHubStateStore.State(desired,
+                    "rejected-retained-envelope", retainedSessions, 19, "retained_pending"));
+            final ConnectionHubStateStore.State retained = store.state;
+            final FakeAuthority authority = new FakeAuthority();
+            final HubSurfaceRegistry registry = new HubSurfaceRegistry();
+            final ConnectionHubRuntime runtime = new ConnectionHubRuntime(
+                    authority, store, registry, seededRandom());
+            final int[] cleanupNotifications = {0};
+            runtime.addEventSink(new ConnectionHubRuntime.EventSink() {
+                @Override public void broadcast(JSONObject event) {}
+                @Override public void closeLogicalSession(String session, String reason) {
+                    cleanupNotifications[0] += 1;
+                }
+                @Override public void closeAllSessions(String reason) {
+                    cleanupNotifications[0] += 1;
+                }
+            });
+            assertEquals(1, store.saves);
+            assertTrue(store.state == retained, "Rejected constructor rewrote retained state");
+            assertTrue(!runtime.desiredRunning() && !runtime.listenerEnabled()
+                    && runtime.activeSessionCount() == 0 && runtime.pairingCodeForWearer() == null
+                    && runtime.transportEpoch().isEmpty(), "Rejected restore has live posture");
+            assertEquals("manifold_state_restore_rejected", runtime.status().getString("status"));
+            expectRecoveryRequired(() -> runtime.startRequested());
+            expectRecoveryRequired(() -> runtime.noteListenerStarted());
+            expectRecoveryRequired(() -> runtime.stopRequested());
+            expectRecoveryRequired(() -> runtime.forgetRequested());
+            expectRecoveryRequired(() -> runtime.expireNow());
+            expectRecoveryRequired(() -> runtime.forceHistoryRolloverForDebug());
+            expectRecoveryRequired(() -> runtime.replaceTransport(repeat("x", 43)));
+            expectRecoveryRequired(() -> runtime.unregisterProvider(
+                    PROVIDER, "provider.instance.rejected", "background_death"));
+            expectRecoveryRequired(() -> runtime.unregisterSurface(
+                    PROVIDER, "surface.rejected", "background_death"));
+            expectRecoveryRequired(() -> runtime.updateSurfaceState(
+                    PROVIDER, "surface.rejected", new JSONObject()));
+            try {
+                runtime.registerSurface(PROVIDER, "provider.instance.rejected",
+                        "admission.rejected", registration(), immediateEndpoint());
+                throw new AssertionError("Rejected restore registered provider");
+            } catch (IllegalStateException expected) {
+                assertEquals("manifold_state_restore_rejected_recovery_required", expected.getMessage());
+            }
+            runtime.noteListenerFailure("late_callback");
+            assertEquals("manifold_state_restore_rejected", runtime.status().getString("status"));
+            assertTrue(store.state == retained && store.saves == 1
+                    && store.state.generation == 19
+                    && store.state.pendingOperation.equals("retained_pending")
+                    && store.state.authorityEnvelope.equals("rejected-retained-envelope")
+                    && store.state.sessionProjections.equals(retainedSessions),
+                    "Rejected lifecycle/cleanup overwrote owner evidence");
+            assertEquals(0, authority.exportCalls);
+            assertEquals(0, authority.reconcileCalls);
+            assertEquals(1L, authority.revision);
+            assertTrue(authority.activeProviders.isEmpty() && authority.consumed.isEmpty()
+                    && !authority.sessionActive, "Rejected restore reached authority mutation");
+            assertEquals(0, cleanupNotifications[0]);
+            assertEquals(0, registry.snapshot().size());
+            new ConnectionHubRuntime(authority, store, new HubSurfaceRegistry(), seededRandom());
+            assertTrue(store.state == retained && store.saves == 1,
+                    "Repeated rejected constructor silently initialized fresh epoch");
+        }
+    }
+
+    private static void expectRecoveryRequired(Runnable action) {
+        try { action.run(); throw new AssertionError("Rejected restore mutation accepted"); }
+        catch (IllegalStateException expected) {
+            assertEquals("manifold_state_restore_rejected_recovery_required", expected.getMessage());
+        }
+    }
+
     private static final class InMemoryStore implements ConnectionHubStateStore {
         State state = State.stopped();
+        int saves;
         @Override public State load() { return state; }
-        @Override public void save(State state) { this.state = state; }
+        @Override public void save(State state) { this.state = state; saves += 1; }
         @Override public void clear() { state = State.stopped(); }
     }
 
@@ -679,6 +765,7 @@ public final class ConnectionHubCoreTest {
     }
 
     private static final class FakeAuthority implements ConnectionHubAuthorityPort {
+        int exportCalls;
         long revision = 1;
         long transportEpoch = 1;
         long nextExternalRequestSequence = 1;
@@ -796,7 +883,7 @@ public final class ConnectionHubCoreTest {
             revision += 1;
             return applied("history_rollover", requestId, null, 0, null, null, null);
         }
-        @Override public String exportOpaqueState() { return "fake-authority-state-v1"; }
+        @Override public String exportOpaqueState() { exportCalls += 1; return "fake-authority-state-v1"; }
         @Override public Receipt restoreOpaqueState(String state, long now) {
             return "fake-authority-state-v1".equals(state)
                     ? applied("restore", "restore.test", null, 0, null, null, null)

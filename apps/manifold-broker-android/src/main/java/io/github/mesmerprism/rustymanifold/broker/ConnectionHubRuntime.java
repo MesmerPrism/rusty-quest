@@ -49,6 +49,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     private long durableGeneration;
     private boolean mutationPrepared;
     private boolean durabilityFailed;
+    private boolean restoreRejected;
 
     public ConnectionHubRuntime(
             ConnectionHubAuthorityPort authority,
@@ -88,6 +89,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
 
     /** Explicit wearer action. Merely launching a provider cannot call this. */
     public synchronized void startRequested() {
+        requireRestoredAuthority();
         desiredRunning = true;
         listenerEnabled = false;
         transportEpoch = randomHex(16);
@@ -97,6 +99,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     public synchronized void noteListenerStarted() {
+        requireRestoredAuthority();
         if (!desiredRunning) {
             throw new IllegalStateException("listener cannot start without desired running state");
         }
@@ -105,12 +108,14 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     public synchronized void noteListenerFailure(String status) {
+        if (restoreRejected) return;
         listenerEnabled = false;
         lastStatus = status;
     }
 
     /** Stop preserves trusted controllers/session authority; Forget clears them. */
     public synchronized void stopRequested() {
+        requireRestoredAuthority();
         closeAllSessions("wearer_stop");
         desiredRunning = false;
         listenerEnabled = false;
@@ -248,6 +253,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     public synchronized ConnectionHubStateStore.SessionProjection requireSession(String cookie) {
+        requireRestoredAuthority();
         ConnectionHubStateStore.SessionProjection projection = sessions.get(cookie);
         if (projection == null || projection.expiresAtMs <= clock.nowMs()) {
             throw new SecurityException("session_invalid_or_expired");
@@ -304,6 +310,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
 
     /** Trusted-clock expiry reconciliation; safe to call periodically. */
     public synchronized void expireNow() {
+        requireRestoredAuthority();
         long now = clock.nowMs();
         List<String> expiredCookies = new ArrayList<>();
         List<String> expiredLogicalSessions = new ArrayList<>();
@@ -338,6 +345,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             String admissionUseRequestId,
             JSONObject registration,
             HubSurfaceRegistry.Endpoint endpoint) throws Exception {
+        requireRestoredAuthority();
         requireSchema(registration, ConnectionHubProtocol.SURFACE_REGISTRATION_SCHEMA);
         HubSurfaceDescriptor descriptor = parseDescriptor(registration, identity);
         prepareMutation("register_provider_and_surface");
@@ -424,6 +432,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             HubProviderIdentity identity,
             String surfaceId,
             String reason) {
+        requireRestoredAuthority();
         HubSurfaceRegistry.Entry owned = registry.requireOwnedEntry(identity, surfaceId);
         prepareMutation("unregister_surface");
         ConnectionHubAuthorityPort.Receipt receipt = authority.unregisterSurface(
@@ -441,6 +450,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             HubProviderIdentity identity,
             String providerInstanceId,
             String reason) {
+        requireRestoredAuthority();
         int removed = 0;
         List<HubSurfaceRegistry.Entry> snapshot = registry.snapshot();
         for (HubSurfaceRegistry.Entry entry : snapshot) {
@@ -469,6 +479,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             HubProviderIdentity identity,
             String surfaceId,
             JSONObject state) {
+        requireRestoredAuthority();
         requireBoundedFlatObject(state, "state");
         String nextStateJson = state.toString();
         if (registry.requireOwnedEntry(identity, surfaceId).stateJson.equals(nextStateJson)) {
@@ -955,10 +966,15 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
                     state.authorityEnvelope,
                     clock.nowMs());
             if (!restored.applied) {
+                // A rejected envelope is owner evidence, not a fresh-state request.
+                // Keep its durable bytes, generation and pending operation intact.
+                restoreRejected = true;
                 desiredRunning = false;
+                listenerEnabled = false;
                 sessions.clear();
+                pairingCode = null;
+                transportEpoch = "";
                 lastStatus = "manifold_state_restore_rejected";
-                persist();
                 return;
             }
             prepareMutation("restart_reconcile");
@@ -1011,6 +1027,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     private synchronized void prepareMutation(String operation) {
+        requireRestoredAuthority();
         if (durabilityFailed) throw new IllegalStateException("durability_fail_stop");
         if (mutationPrepared) throw new IllegalStateException("nested_authority_mutation");
         durableGeneration += 1;
@@ -1033,6 +1050,7 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
     }
 
     private synchronized void persist() {
+        requireRestoredAuthority();
         if (durabilityFailed) throw new IllegalStateException("durability_fail_stop");
         if (!mutationPrepared) durableGeneration += 1;
         try {
@@ -1050,6 +1068,12 @@ public final class ConnectionHubRuntime implements HubSurfaceRegistry.Listener {
             lastStatus = "durability_commit_failed_fail_stop";
             closeAllSessions("durability_commit_failed");
             throw new IllegalStateException("durability_commit_failed_fail_stop", failure);
+        }
+    }
+
+    private void requireRestoredAuthority() {
+        if (restoreRejected) {
+            throw new IllegalStateException("manifold_state_restore_rejected_recovery_required");
         }
     }
 
