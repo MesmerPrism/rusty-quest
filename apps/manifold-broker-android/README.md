@@ -200,3 +200,41 @@ days, and a surface lease at 24 hours. Manifold remains the sole authority for
 renewal, transport replacement, replay fencing, expiry, revocation, and history
 rollover; Android persists only its opaque authority envelope and the minimum
 typed session projection required to reconnect.
+
+## Carrier receipt and deadline discipline
+
+Compare clients against the current `ConnectionHubRuntime` receipt producer as
+well as protocol examples. The actual command receipt reports
+`provider_effect_observed` for an accepted, observed provider effect. A queued
+callback, authorization or BLE/write acknowledgement is not that outcome.
+Require both `accepted` and `provider_applied`; contradictory outcomes deny.
+This reports the provider's effect receipt, not independent GPU output proof.
+
+Every command outcome joins the sent request id, sequence, command and surface
+to the current listener instance, authenticated transport epoch and
+nonregressed surface revision. Accepted requests advance the next sequence by
+one. An authentic denied request may retain it or advance it by one according
+to the native outcome. Neither outcome grants an implicit retry. Projections
+also bind that epoch and the actual `trusted_lan_experimental`,
+`confidentiality=none`, `production_eligible=false` classification.
+
+The native `authority_receipt.session` is a typed public Manifold session, not
+the socket's opaque authentication cookie. Do not reject it merely because its
+field is named `session`; validate the selected public schema and distinguish
+it from credentials. Never retain cookies, pairing codes or secret echoes.
+Native authorization ids can differ from external request ids: join the
+external wire digest/sequence and native audit/authorization ids, rather than
+replacing them or inventing identity equality.
+
+Bound a diagnostic carrier's entire connect/read/write/teardown operation with
+one monotonic deadline. A 45-second diagnostic profile can reserve 42 seconds
+for actions and 3 seconds for disconnect, without refreshing the budget on each
+read. A negative-only 15-second host send cap must also deny advertised expiry
+or host wall-clock rollback; it is not clock synchronization or a substitute
+for native expiry. Preserve observed effects if teardown fails and report the
+cleanup failure without retrying.
+
+A helper's 900-second foreground lifetime does not renew the opted debug
+operator's 60-second controller or 15-second session policy. A connection,
+listener or same-signer helper does not create those grants. The default
+non-debug product and wearer/operator authorization paths remain unchanged.
