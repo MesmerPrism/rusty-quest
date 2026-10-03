@@ -34,3 +34,20 @@ JSON runtime. The builder requires a create-new output and existing keystore;
 it never creates a key or alters a shared SDK. Passwords are passed only through
 named process environment entries. A separate root-owned APK build and actual
 Android/BLE/browser/native grant qualification remain required.
+
+The same app-owned controller handles visible Enable/Stop, notification Stop,
+and the diagnostic-only local shell calls `enable`, `disable`, `status` at
+`content://io.github.mesmerprism.rustyquest.connection_hub_ble_bridge.ble-carrier-control`.
+The provider requires Android DUMP and runtime shell UID2000, with no argument
+or extras. It cannot grant Bluetooth permissions, start the Hub, pair a controller,
+change Wi-Fi, or send media commands. Missing current Hub readiness or permissions
+denies Enable. Repeated Enable never renews an existing or unknown dispatch scope.
+
+Its typed `rusty.quest.hub_ble_carrier_control_receipt.v1` separates accepted
+requests from actual service/advertising callbacks. Service destruction and stale
+callbacks are generation-bound. `carrier_ready_now` additionally obeys the
+original monotonic deadline; it proves neither controller authority nor radio
+cleanup. Stop request success does not prove effective service or GATT absence;
+read Status plus independent platform readback. An unknown start/stop outcome
+remains unknown. Nothing exposes pairing codes, opaque sessions, credentials,
+caller-selected components or arbitrary provider operations.

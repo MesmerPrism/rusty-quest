@@ -13,6 +13,9 @@ import org.json.JSONObject;
 
 /** Explicit foreground, one-controller GATT carrier. No discovery, group formation or authority API. */
 final class HubGattBridge implements Closeable {
+    interface Observer { void advertising(); void failed(String code); }
+    private static final Observer SILENT = new Observer(){public void advertising(){}public void failed(String code){}};
+    private final Observer observer;
     private final Context context;private final HubReadiness readiness;private final long deadline;
     private final Object gate=new Object();private final Map<BluetoothDevice,Peer> peers=new HashMap<>();
     private final ExecutorService worker=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<Runnable>(4));private BluetoothGattServer gatt;private BluetoothLeAdvertiser advertiser;
@@ -23,7 +26,8 @@ final class HubGattBridge implements Closeable {
         final void clear(){Arrays.fill(held,(byte)0);}
     }
     private final UUID service=UUID.fromString(HubBleFrames.SERVICE),write=UUID.fromString(HubBleFrames.WRITE),read=UUID.fromString(HubBleFrames.READ),status=UUID.fromString(HubBleFrames.STATUS);
-    HubGattBridge(Context context,long deadline) {this.context=context.getApplicationContext();this.readiness=new HubReadiness(context);this.deadline=deadline;}
+    HubGattBridge(Context context,long deadline) {this(context,deadline,SILENT);}
+    HubGattBridge(Context context,long deadline,Observer observer) {this.context=context.getApplicationContext();this.readiness=new HubReadiness(context);this.deadline=deadline;this.observer=observer;}
     void start() throws Exception {
         requireBudget();readiness.requireCurrent();BluetoothManager manager=context.getSystemService(BluetoothManager.class);
         if(manager==null||manager.getAdapter()==null||!manager.getAdapter().isEnabled())throw new IOException("Bluetooth unavailable");
@@ -35,12 +39,15 @@ final class HubGattBridge implements Closeable {
         definition.addCharacteristic(new BluetoothGattCharacteristic(status,BluetoothGattCharacteristic.PROPERTY_READ,BluetoothGattCharacteristic.PERMISSION_READ));
         if(!gatt.addService(definition))throw new IOException("GATT service unavailable");
     }
-    private final AdvertiseCallback advertisement=new AdvertiseCallback(){@Override public void onStartFailure(int error){close();}};
+    private final AdvertiseCallback advertisement=new AdvertiseCallback(){
+        @Override public void onStartSuccess(AdvertiseSettings settings){if(closed)return;try{requireBudget();observer.advertising();}catch(Exception denied){observer.failed("advertising_deadline_expired");close();}}
+        @Override public void onStartFailure(int error){if(closed)return;observer.failed("advertising_failed");close();}
+    };
     private final BluetoothGattServerCallback callback=new BluetoothGattServerCallback(){
         @Override public void onServiceAdded(int result,BluetoothGattService definition){
             if(closed||!service.equals(definition.getUuid()))return;
-            if(result!=BluetoothGatt.GATT_SUCCESS){close();return;}
-            try{requireBudget();readiness.requireCurrent();advertiser.startAdvertising(new AdvertiseSettings.Builder().setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).setConnectable(true).setTimeout(0).build(),new AdvertiseData.Builder().addServiceUuid(new ParcelUuid(service)).build(),advertisement);}catch(Exception denied){close();}
+            if(result!=BluetoothGatt.GATT_SUCCESS){observer.failed("gatt_service_failed");close();return;}
+            try{requireBudget();readiness.requireCurrent();advertiser.startAdvertising(new AdvertiseSettings.Builder().setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).setConnectable(true).setTimeout(0).build(),new AdvertiseData.Builder().addServiceUuid(new ParcelUuid(service)).build(),advertisement);}catch(Exception denied){observer.failed("advertising_start_failed");close();}
         }
         @Override public void onConnectionStateChange(BluetoothDevice device,int result,int state){
             Peer retired=null;
