@@ -354,11 +354,14 @@ final class EmbeddedDuplexPlatform {
         PackagedAndroidMediaOwnerRegistry current = registry;
         if (current == null) throw new IllegalStateException("platform registry absent");
         EmbeddedDuplexActivationGate gate = activationGate;
-        if (gate != null) gate.beforeOwnerEffect(authority, activationTicket(ticket), compensate);
+        EmbeddedDuplexActivationGate.MediaTicket activationTicket = activationTicket(ticket);
+        if (gate != null) gate.beforeOwnerEffect(authority, activationTicket, compensate);
         requireProcessCallback();
         String readback = current.execute(ticketJson, compensate);
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
         if (verified == null) throw new IllegalStateException("retained cleanup live evidence rejected");
+        if (gate != null) gate.afterVerifiedOwnerEffect(authority, activationTicket,
+                new JSONObject(readback), new JSONObject(verified), compensate);
         return new JSONObject().put("readback", new JSONObject(readback))
                 .put("readback_json", readback).put("verified", new JSONObject(verified)).toString();
     }
