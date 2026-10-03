@@ -116,7 +116,7 @@ impl State {
                 "content_serial":s.content_serial,"prefix":s.prefix})))})}
         let samples=self.pixel.and_then(|p|self.blend_strip.filter(|(o,s,_)|*o==p.frame.ordinal&&*s==p.frame.surface));
         serde_json::json!({"schema":"rusty.quest.stereo.neutral_mask_readback.v1","version":1,
-            "process_generation":self.process,"challenge_words":self.challenge,"arm_generation":self.generation,"armed":self.armed,
+            "process_generation":self.process,"challenge_words":self.challenge.map(|word|word as i64),"arm_generation":self.generation,"armed":self.armed,
             "retired_frame":self.last.map(frame),"pixel_frame":self.pixel.map(|p|frame(p.frame)),
             "sample_status":if samples.is_some(){"available"}else{"unavailable"},
             "sample_rgba8":samples.map(|(_,_,p)|p),"pixel_format":self.pixel.map(|p|p.format),
@@ -290,6 +290,27 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 #[cfg(test)]
 mod tests {
     use super::*;use crate::stereo_input_set::SourceEpoch;
+    #[test]fn mask_challenge_json_preserves_signed_jni_words_and_all_nonce_bits(){
+        // Challenges are two raw JNI long bit words, not nonnegative counters.
+        // Android JSON parses integers outside Long's range through Double.
+        let cases=[[0,1],[0,u64::MAX],[u64::MAX,0],[u64::MAX,u64::MAX],
+            [i64::MAX as u64,1u64<<63],[1u64<<63,i64::MAX as u64],
+            [0x75c4476021caf74e,0xd946dd73d62a05cc]];
+        for challenge in cases {
+            let mut s=State::empty();s.arm(7,challenge,10);
+            let raw=s.blend_json();let report:serde_json::Value=serde_json::from_str(&raw).unwrap();
+            let words=s.words(Some(20),true,true,true);
+            for index in 0..2 {
+                let signed=report["challenge_words"][index].as_i64().unwrap();
+                assert_eq!(signed,words[3+index]);assert_eq!(signed as u64,challenge[index]);
+                assert_ne!((signed^1) as u64,challenge[index]);
+            }
+            assert_eq!(s.challenge,challenge);assert_eq!(report["process_generation"],7);
+            assert_eq!(report["arm_generation"],1);assert_eq!(report["sample_status"],"unavailable");
+            // Actual producer bytes consumed by the independent Android JSON test.
+            println!("MASK_CHALLENGE_WIRE_CASE {}",serde_json::json!({"expected":challenge.map(|word|word as i64),"report":report}));
+        }
+    }
     fn source(epoch:u64,sequence:u64)->SourceFact {SourceFact{identity:StereoFrameIdentity{epoch:SourceEpoch{process_generation:7,source_generation:epoch},pair_sequence:sequence,
         left_timestamp_ns:sequence as i64*10,right_timestamp_ns:sequence as i64*10+1,packed_pts_ns:sequence as i64*20,calibration_revision:None},geometry_revision:None,
         config_revision:3,prefix:6,observed_at_ns:10,content_serial:sequence,processing_codes:[0;4]}}
