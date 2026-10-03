@@ -128,7 +128,9 @@ public final class PackedStereoMediaSourceRuntime {
 
     /** Staged ownership surface over one connected packed stereo pipeline. */
     public static final class Pipeline implements PackedStereoPipeline {
-        private final Runtime runtime;
+        private volatile Runtime runtime;
+        private String routeBindHost,routeSinkHost;
+        private int routeSinkPort;
         private Pipeline(Runtime runtime) { this.runtime=runtime; }
         /** Explicit source-local to accepted sink placement; compatibility remains local-only. */
         public void configureAcceptedLanRoute(String localBindHost, String sinkHost, int sinkPort) {
@@ -136,6 +138,7 @@ public final class PackedStereoMediaSourceRuntime {
                 if (runtime.lanTransport != null || runtime.serverSocket != null || runtime.stopRequested) {
                     throw new IllegalStateException("accepted LAN route already installed or active");
                 }
+                routeBindHost=localBindHost;routeSinkHost=sinkHost;routeSinkPort=sinkPort;
                 runtime.lanTransport = new PackedStereoLanTransport(runtime.sourceHost,
                         runtime.profile.port, localBindHost, sinkHost, sinkPort);
             }
@@ -194,6 +197,27 @@ public final class PackedStereoMediaSourceRuntime {
         public void finishCleanup() {
             requireStopped();
             synchronized (LOCK) { RUNTIMES.remove(runtime.key,runtime); }
+        }
+        @Override public synchronized void recreateAfterVerifiedCleanup() {
+            Runtime prior=runtime;
+            requireStopped();
+            if(!prior.stopRequested || !prior.terminal)
+                throw new IllegalStateException("prior pipeline was not retired");
+            Runtime next=new Runtime(prior.key,prior.sessionId,prior.sourceKind,prior.context,
+                    prior.sourceHost,prior.profile,prior.layout,prior.leftCameraId,prior.rightCameraId,prior.synthetic);
+            if(prior.sharedCapture!=null) {
+                if(!prior.sharedCapture.fresh())throw new IllegalStateException("shared app capture unavailable");
+                next.sharedCapture=prior.sharedCapture;
+                next.captureConsumerGeneration=prior.sharedCapture.reserveEncoderGenerationAfterRetirement(
+                        prior.captureConsumerGeneration);
+            }
+            if(routeBindHost!=null)next.lanTransport=new PackedStereoLanTransport(next.sourceHost,
+                    next.profile.port,routeBindHost,routeSinkHost,routeSinkPort);
+            synchronized(LOCK) {
+                if(RUNTIMES.containsKey(prior.key))throw new IllegalStateException("prior pipeline registry still owned");
+                RUNTIMES.put(next.key,next);
+                runtime=next;
+            }
         }
         @Override public void close() {
             stopAndVerify("registry_cleanup");

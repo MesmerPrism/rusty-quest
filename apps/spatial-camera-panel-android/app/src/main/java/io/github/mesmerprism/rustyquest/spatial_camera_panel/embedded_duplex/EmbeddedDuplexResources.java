@@ -89,7 +89,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             throw invalid;
         }
         try {
-            outgoing = new PackedStereoMediaOwnerSet(generation, pipeline);
+            outgoing = new PackedStereoMediaOwnerSet(generation, pipeline, incoming);
             MediaProductBinding.Builder builder = new MediaProductBinding.Builder(outgoingSpec.getString("runtime_spec_id"));
             JSONArray outgoingPlacements = nativeInitialization.getJSONArray("owner_placements");
             JSONArray incomingPlacements = nativeInitialization.getJSONArray("incoming_owner_placements");

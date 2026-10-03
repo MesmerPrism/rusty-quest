@@ -146,6 +146,53 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
                 1920, 1080, 60, bounds(), factory);
     }
 
+    @Test public void verifiedStopAllowsFreshReceiverIncarnationAndRejectsOldCallbacks() throws Exception {
+        FakeDisplay display=new FakeDisplay();FakeFactory factory=new FakeFactory();
+        EmbeddedDuplexReceiver receiver=receiver(display,factory);
+        arm(receiver);
+        PackedStereoMediaReceiver.FrameLifecycleListener old=factory.listeners.get(0);
+        long oldRoute=receiver.routeGeneration();
+        receiver.execute(action("stop","stop",2),new CancellationHandle(GENERATION));
+        assertTrue(receiver.snapshot().terminal());
+        receiver.execute(action("arm_receiver","start",3),new CancellationHandle(GENERATION));
+        assertEquals(2,factory.createCount);assertEquals(2,display.prepareCount);
+        assertTrue(receiver.routeGeneration()>oldRoute);
+        assertFalse(old.onFrameReadyForRender(GENERATION,1,1,null));
+        old.onConnectionRetired(GENERATION,1);
+        assertFalse(receiver.snapshot().terminal());
+        assertThrows(IllegalStateException.class,()->arm(receiver));
+        assertEquals(2,factory.createCount);
+    }
+    @Test public void pendingReaderCleanupBlocksFreshAllocation() throws Exception {
+        FakeDisplay display=new FakeDisplay();FakeFactory factory=new FakeFactory();
+        EmbeddedDuplexReceiver receiver=receiver(display,factory);arm(receiver);
+        factory.projection.releaseResults.add(false);
+        assertThrows(IllegalStateException.class,()->receiver.execute(action("stop","stop",2),new CancellationHandle(GENERATION)));
+        assertFalse(receiver.snapshot().terminal());
+        assertThrows(IllegalStateException.class,()->arm(receiver));
+        assertEquals(1,factory.createCount);
+    }
+    @Test public void staleCancellationOrExecutorCannotAllocate() throws Exception {
+        FakeDisplay display=new FakeDisplay();FakeFactory factory=new FakeFactory();
+        EmbeddedDuplexReceiver receiver=receiver(display,factory);
+        assertThrows(IllegalStateException.class,()->receiver.execute(action("arm_receiver","start",1),new CancellationHandle(GENERATION-1)));
+        assertEquals(0,factory.stageCount);
+        MediaOwnerAction stale=action("arm_receiver","start",1,GENERATION-1);
+        assertThrows(IllegalArgumentException.class,()->receiver.execute(stale,new CancellationHandle(GENERATION)));
+        assertEquals(0,factory.createCount);
+    }
+    @Test public void failedFreshStartRetainsNewPendingResource() throws Exception {
+        FakeDisplay display=new FakeDisplay();FakeFactory factory=new FakeFactory();
+        EmbeddedDuplexReceiver receiver=receiver(display,factory);arm(receiver);
+        receiver.execute(action("stop","stop",2),new CancellationHandle(GENERATION));
+        factory.failCreate=true;
+        assertThrows(IllegalStateException.class,()->receiver.execute(action("arm_receiver","start",3),new CancellationHandle(GENERATION)));
+        assertFalse(receiver.snapshot().terminal());
+        assertEquals("preparation_failed",receiver.snapshot().state());
+        assertThrows(IllegalStateException.class,()->arm(receiver));
+        assertEquals(2,factory.createCount);
+    }
+
     private static PackedStereoMediaReceiver.Bounds bounds() {
         return new PackedStereoMediaReceiver.Bounds(
                 4096, 1024 * 1024, 4096, 4096, 4,
@@ -153,8 +200,11 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
     }
 
     private static MediaOwnerAction action(String kind, String operation, int sequence) {
+        return action(kind,operation,sequence,GENERATION);
+    }
+    private static MediaOwnerAction action(String kind,String operation,int sequence,long executor) {
         return MediaOwnerAction.parse("{\"$schema\":\"rusty.quest.android.media.execution-ticket.v1\","+
-                "\"capability\":\"capability.test\",\"executor_generation\":17,"+
+                "\"capability\":\"capability.test\",\"executor_generation\":"+executor+","+
                 "\"action_id\":\"action." + sequence + "\",\"authority_epoch_id\":\"epoch.test\","+
                 "\"media_acceptance_authority_revision\":1,\"expected_runtime_revision\":0,"+
                 "\"client_id\":\"client.test\",\"lease_id\":\"lease.test\",\"sequence\":" + sequence + ","+
@@ -165,10 +215,11 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
 
     private static final class FakeProjection implements EmbeddedDuplexReceiver.ProjectionResource {
         long readerGeneration = 43L;
+        long route = 41L;
         int releaseCount;
         final ArrayDeque<Boolean> releaseResults = new ArrayDeque<>();
 
-        @Override public long routeGeneration() { return 41L; }
+        @Override public long routeGeneration() { return route; }
         @Override public long decoderToken() { return 42L; }
         @Override public long readerGeneration() { return readerGeneration; }
         @Override public boolean release() {
@@ -178,7 +229,8 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
     }
 
     private static final class FakeFactory implements EmbeddedDuplexReceiver.RuntimeFactory {
-        final FakeProjection projection = new FakeProjection();
+        FakeProjection projection = new FakeProjection();
+        final java.util.List<PackedStereoMediaReceiver.FrameLifecycleListener> listeners=new java.util.ArrayList<>();
         int stageCount;
         int createCount;
         boolean failCreate;
@@ -186,7 +238,9 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
         @Override public EmbeddedDuplexReceiver.ProjectionResource stage(int width, int height,
                 int imageCount, int fpsCap, long routeGeneration) {
             stageCount++;
-            assertEquals(41L, routeGeneration);
+            assertEquals(40L+stageCount, routeGeneration);
+            if(stageCount>1){projection=new FakeProjection();projection.readerGeneration=42L+stageCount;}
+            projection.route=routeGeneration;
             return projection;
         }
 
@@ -195,6 +249,7 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
                 int sourcePort, long generation, PackedStereoMediaReceiver.Bounds ignoredBounds,
                 PackedStereoMediaReceiver.FrameLifecycleListener ignoredListener) {
             createCount++;
+            listeners.add(ignoredListener);
             if (failCreate) throw new IllegalStateException("create failed");
             return new FakeRuntime(generation);
         }
@@ -204,21 +259,24 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
             MediaOwnerProvider {
         private final long generation;
         private long revision = 1L;
+        private String state="prepared";
+        private boolean terminal;
 
         FakeRuntime(long generation) { this.generation = generation; }
         @Override public MediaOwnerProvider provider() { return this; }
         @Override public void start() { }
         @Override public MediaRuntimeSnapshot snapshot() {
-            return new MediaRuntimeSnapshot(generation, revision, "prepared", false, "",
+            return new MediaRuntimeSnapshot(generation, revision, state, terminal, "",
                     "fake-receiver");
         }
         @Override public MediaProviderReadback execute(MediaOwnerAction action,
                 CancellationHandle cancellation) {
-            return readback(action, "prepared");
+            if("stop".equals(action.actionKind())||"cleanup".equals(action.actionKind())){state="stopped";terminal=true;}
+            return readback(action, state);
         }
         @Override public MediaProviderReadback compensate(MediaOwnerAction action,
                 CancellationHandle cancellation) {
-            return readback(action, "stopped");
+            state="stopped";terminal=true;return readback(action,state);
         }
         private MediaProviderReadback readback(MediaOwnerAction action, String state) {
             return new MediaProviderReadback(action, "fake-receiver", ++revision, state,
@@ -239,7 +297,7 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
         @Override public long preparePeerProjection() {
             prepareCount++;
             if (failPrepare) throw new IllegalStateException("prepare failed");
-            return 41L;
+            return 40L+prepareCount;
         }
         @Override public void bindPeerProjection(long routeGeneration, long decoderToken,
                 long readerGeneration) {

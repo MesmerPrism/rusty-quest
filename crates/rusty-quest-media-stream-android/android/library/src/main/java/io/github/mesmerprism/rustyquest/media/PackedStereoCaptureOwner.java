@@ -50,6 +50,7 @@ public final class PackedStereoCaptureOwner {
     private final Object subscriptionLock = new Object();
     private EncoderConsumer encoderConsumer;
     private long encoderGeneration;
+    private long reservedEncoderGeneration;
     private volatile PackedStereoGlCompositor compositor;
     private volatile HandlerThread cameraThread;
     private volatile Endpoint left, right;
@@ -334,6 +335,17 @@ public final class PackedStereoCaptureOwner {
             if (stopRequested || encoderConsumer != null || generation <= encoderGeneration)
                 throw new IllegalStateException("encoder subscription unavailable or stale");
             encoderGeneration = generation; encoderConsumer = consumer;
+        }
+    }
+
+    /** Reserve a fresh peer subscription after the prior graph's physical barrier. */
+    long reserveEncoderGenerationAfterRetirement(long priorGeneration) {
+        synchronized(subscriptionLock) {
+            if(stopRequested || encoderConsumer!=null || priorGeneration<=0
+                    || priorGeneration!=encoderGeneration)
+                throw new IllegalStateException("prior encoder subscription not retired");
+            reservedEncoderGeneration=Math.addExact(Math.max(reservedEncoderGeneration,encoderGeneration),1L);
+            return reservedEncoderGeneration;
         }
     }
 

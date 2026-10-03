@@ -45,6 +45,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     private volatile String preparationState = "unprepared";
     private volatile long preparationRevision;
     private volatile long connectionGeneration;
+    private volatile long incarnation;
     private volatile boolean surfaceReleased;
     private volatile boolean projectionRetired = true;
     enum ArmStage { NONE, PEER_PROJECTION, READER_STAGE, READER_IDENTITY, RECEIVER_CREATE,
@@ -87,9 +88,16 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     // Allocate only inside the authenticated Sink effect, after this retryable owner
     // has already been installed in the registry. A failed preparation retains it.
     private void prepare() {
-        if (!"unprepared".equals(preparationState)) {
+        if("cleaned".equals(preparationState)) {
+            if(!surfaceReleased || !projectionRetired || !snapshot().terminal())
+                throw new IllegalStateException("prior receiver cleanup unresolved");
+            staged=null;receiver=null;provider=null;
+            surfaceReleased=false;connectionGeneration=0L;
+        } else if (!"unprepared".equals(preparationState)) {
             throw new IllegalStateException("receiver preparation already attempted");
         }
+        final long preparingIncarnation=Math.addExact(incarnation,1L);
+        incarnation=preparingIncarnation;
         preparationState = "preparing";
         preparationRevision++;
         projectionRetired = false;
@@ -102,28 +110,29 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             if (staged == null || staged.readerGeneration() <= 0L) {
                 throw new IllegalStateException("embedded reader generation unavailable");
             }
+            final ProjectionResource preparingProjection=staged;
             armStage = ArmStage.RECEIVER_CREATE;
             receiver = runtimeFactory.create(staged, sourceHost, sourcePort,
                     generation, bounds, new PackedStereoMediaReceiver.FrameLifecycleListener() {
                 @Override public boolean onFrameReadyForRender(long receiverGeneration,
                         long connection, long presentationTimeNs,
                         PackedStereoMediaReceiver.FrameIdentity identity) {
-                    if (surfaceReleased || receiverGeneration != generation || connection <= 0L) return false;
+                    if (preparingIncarnation!=incarnation || surfaceReleased || receiverGeneration != generation || connection <= 0L) return false;
                     connectionGeneration = connection;
                     return EmbeddedDuplexNative.registerReceiverFrame(
-                            identityWords(connection, presentationTimeNs, identity));
+                            identityWords(preparingProjection,connection, presentationTimeNs, identity));
                 }
                 @Override public void onFrameRendered(long receiverGeneration, long connection,
                         long presentationTimeNs, PackedStereoMediaReceiver.FrameIdentity identity) {
-                    if (surfaceReleased || receiverGeneration != generation
+                    if (preparingIncarnation!=incarnation || surfaceReleased || receiverGeneration != generation
                             || connection != connectionGeneration
                             || !EmbeddedDuplexNative.recordReceiverFrameRendered(
-                                    identityWords(connection, presentationTimeNs, identity))) {
+                                    identityWords(preparingProjection,connection, presentationTimeNs, identity))) {
                         throw new IllegalStateException("embedded rendered frame identity rejected");
                     }
                 }
                 @Override public void onConnectionRetired(long receiverGeneration, long connection) {
-                    if (receiverGeneration != generation) return;
+                    if (preparingIncarnation!=incarnation || receiverGeneration != generation) return;
                     EmbeddedDuplexNative.retireReceiverConnection(receiverGeneration, connection);
                     if (connectionGeneration == connection) connectionGeneration = 0L;
                 }
@@ -271,6 +280,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
 
     @Override public synchronized MediaProviderReadback execute(MediaOwnerAction action,
             CancellationHandle cancellation) throws Exception {
+        cancellation.requireCurrent(generation);
+        if(action.executorGeneration()!=generation)throw new IllegalArgumentException("receiver executor generation mismatch");
         if ("arm_receiver".equals(action.actionKind())) prepare();
         if (provider == null) {
             if (!("stop".equals(action.actionKind()) || "cleanup".equals(action.actionKind()))) {
@@ -294,6 +305,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
 
     @Override public synchronized MediaProviderReadback compensate(MediaOwnerAction action,
             CancellationHandle cancellation) throws Exception {
+        cancellation.requireCurrent(generation);
+        if(action.executorGeneration()!=generation)throw new IllegalArgumentException("receiver executor generation mismatch");
         if (provider == null) return cleanupUnprepared(action);
         MediaProviderReadback result = provider.compensate(action, cancellation);
         releaseStoppedReaderAndProjection();
@@ -356,6 +369,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             surfaceReleased = true;
         }
         retireProjection();
+        preparationState="cleaned";
+        preparationRevision++;
     }
 
     private void retireProjection() {
@@ -364,10 +379,10 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         projectionRetired = true;
     }
 
-    private long[] identityWords(long connection, long ptsNs,
+    private long[] identityWords(ProjectionResource projection,long connection, long ptsNs,
             PackedStereoMediaReceiver.FrameIdentity identity) {
-        return new long[] { generation, connection, staged.routeGeneration(), staged.decoderToken(),
-                staged.readerGeneration(), ptsNs, identity.sourceElapsedNs, identity.sourceUnixNs,
+        return new long[] { generation, connection, projection.routeGeneration(), projection.decoderToken(),
+                projection.readerGeneration(), ptsNs, identity.sourceElapsedNs, identity.sourceUnixNs,
                 identity.pairId, identity.leftSourceFrame, identity.rightSourceFrame,
                 identity.leftSensorTimestampNs, identity.rightSensorTimestampNs, identity.pairDeltaNs };
     }
