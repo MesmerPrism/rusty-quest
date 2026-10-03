@@ -16,7 +16,7 @@ public final class BridgeControlProvider extends ContentProvider {
         getContext().enforceCallingPermission("android.permission.DUMP", "carrier_control_dump_permission_required");
         BridgeController.authorize(Binder.getCallingUid(), method, argument, extras != null && !extras.isEmpty());
         try {
-            String receipt = new BridgeController(getContext()).invoke(method).toString();
+            String receipt = new BridgeController(getContext()).invokeShell(Binder.getCallingUid(), method).toString();
             Bundle result = new Bundle();
             result.putString("receipt_b64", Base64.encodeToString(receipt.getBytes(StandardCharsets.UTF_8), Base64.NO_WRAP));
             return result;

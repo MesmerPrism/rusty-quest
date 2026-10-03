@@ -8,12 +8,23 @@ public final class BridgeControllerTest {
     interface Action { void run() throws Exception; }
     static void rejects(Action action) throws Exception { boolean denied=false; try{action.run();}catch(SecurityException|IllegalArgumentException expected){denied=true;}check(denied); }
     static final class Port implements BridgeController.Port {
-        long clock=100;boolean permissions=true,hub=true,startFails,stopFails,stopAccepted=true;int starts,stops,hubReads;
+        long clock=100;Exception startError;boolean permissions=true,hub=true,startFails,stopFails,stopAccepted=true;int starts,stops,hubReads;
         public long now(){return clock;}
         public boolean permissionsReady(){return permissions;}
         public void requireHubCurrent() throws Exception{hubReads++;if(!hub)throw new Exception("opaque detail must not escape");}
-        public void start() throws Exception{starts++;if(startFails)throw new Exception("opaque start failure");}
+        public void start() throws Exception{starts++;if(startError!=null)throw startError;if(startFails)throw new Exception("opaque start failure");}
         public boolean stop() throws Exception{stops++;if(stopFails)throw new Exception("opaque stop failure");return stopAccepted;}
+    }
+    static void classified(Exception error,String expected) throws Exception {
+        Port port=new Port();port.startError=error;BridgeController.State state=new BridgeController.State();
+        BridgeController controller=new BridgeController(port,state);JSONObject v=controller.enable();
+        check(!v.getBoolean("request_accepted")&&v.getString("outcome").equals("start_dispatch_failed")
+            &&v.getString("error_code").equals(expected)&&v.getString("carrier_state").equals("failed")
+            &&!v.getBoolean("service_observed")&&!v.getBoolean("service_live")&&!v.getBoolean("carrier_ready_now"));
+        check(!v.toString().contains("private failure details")&&!v.toString().contains(error.getClass().getName()));
+        check(controller.status().getString("error_code").equals(expected));
+        check(!controller.enable().getBoolean("request_accepted")&&port.starts==1&&v.getLong("generation")==1);
+        state.failure(0,"start_dispatch_background_restricted");check(controller.status().getString("error_code").equals(expected));
     }
     public static void main(String[] ignored) throws Exception {
         for(String method:new String[]{"enable","disable","status"})BridgeController.authorize(2000,method,null,false);
@@ -50,6 +61,48 @@ public final class BridgeControllerTest {
         BridgeController.State process=new BridgeController.State();check(!process.processInstance.equals(state.processInstance));
         v=cli.status();check(!v.getBoolean("controller_authority_claimed")&&!v.getBoolean("pairing_secret_in_receipt")&&!v.getBoolean("production_eligible")&&!v.getBoolean("radio_cleanup_qualified"));
         rejects(()->cli.invoke("pair"));
+        classified(new SecurityException("private failure details"),"start_dispatch_security_rejected");
+        classified(new IllegalArgumentException("private failure details"),"start_dispatch_argument_rejected");
+        classified(new IllegalStateException("private failure details"),"start_dispatch_state_rejected");
+        classified(new Exception("android.app.ForegroundServiceStartNotAllowedException private failure details"),"start_dispatch_failed");
+        classified(new Exception("private failure details",new SecurityException("nested private failure details")),"start_dispatch_failed");
+        classified(new SecurityException("private failure details"){},"start_dispatch_failed");
+        // Exact pinned SDK class metadata tests classification without invoking stub constructors.
+        Class<?> sdkType=Class.forName("android.app.ForegroundServiceStartNotAllowedException");
+        check(Exception.class.isAssignableFrom(sdkType)&&BridgeController.startFailureCode(sdkType).equals("start_dispatch_background_restricted"));
+        check(BridgeController.startFailureCode(BridgeControllerTest.class).equals("start_dispatch_failed"));
+        BridgeController.State admitted=new BridgeController.State();Port shellPort=new Port();BridgeController handler=new BridgeController(shellPort,admitted);
+        rejects(()->handler.enableShell(12345));check(shellPort.hubReads==0&&shellPort.starts==0);
+        JSONObject prep=handler.invokeShell(2000,"enable");long gen=prep.getLong("generation");
+        check(prep.getString("outcome").equals("shell_start_prepared")&&prep.getBoolean("request_accepted")&&!prep.getBoolean("service_live")&&!prep.getBoolean("carrier_ready_now")&&shellPort.starts==0&&shellPort.hubReads==1);
+        check(!admitted.consumeAdmission(false,admitted.processInstance,gen,null,100));
+        check(!admitted.consumeAdmission(true,"00000000000000000000000000000000",gen,null,100));
+        check(!admitted.consumeAdmission(true,admitted.processInstance,gen+1,null,100));
+        check(!admitted.consumeAdmission(true,admitted.processInstance,gen,"extra",100));
+        check(!admitted.consumeAdmission(true,admitted.processInstance,gen,null,-1));
+        check(!admitted.consumeAdmission(true,admitted.processInstance,gen,null,30100));
+        check(admitted.consumeAdmission(true,admitted.processInstance,gen,null,30099));
+        check(!admitted.consumeAdmission(true,admitted.processInstance,gen,null,30099));
+        check(!handler.status().getBoolean("carrier_ready_now"));
+        check(admitted.serviceStarted(gen,900100));admitted.advertising(gen);check(handler.status().getBoolean("carrier_ready_now"));
+        check(!handler.enableShell(2000).getBoolean("request_accepted")&&shellPort.hubReads==2&&shellPort.starts==0);
+        BridgeController.State internal=new BridgeController.State();Port internalPort=new Port();new BridgeController(internalPort,internal).enable();
+        check(internalPort.starts==1&&!internal.consumeAdmission(true,internal.processInstance,1,null,100));
+        check(!internal.consumeAdmission(false,internal.processInstance,1,"wrong",100));
+        check(internal.consumeAdmission(false,internal.processInstance,1,internal.internalToken(),100));
+        check(!internal.consumeAdmission(false,internal.processInstance,1,internal.internalToken(),100));
+        BridgeController.State cancelled=new BridgeController.State();new BridgeController(new Port(),cancelled).enableShell(2000);cancelled.requestStop();
+        check(!cancelled.consumeAdmission(true,cancelled.processInstance,1,null,100));
+        BridgeController.State fields=new BridgeController.State();new BridgeController(new Port(),fields).enableShell(2000);
+        check(!BridgeController.acceptStartFields(fields,true,3,fields.processInstance,Long.valueOf(1),null,100));
+        check(!BridgeController.acceptStartFields(fields,true,1,fields.processInstance,Long.valueOf(1),null,100));
+        check(!BridgeController.acceptStartFields(fields,true,2,fields.processInstance,"1",null,100));
+        check(!BridgeController.acceptStartFields(fields,true,2,fields.processInstance,Integer.valueOf(1),null,100));
+        check(!BridgeController.acceptStartFields(fields,true,2,null,Long.valueOf(1),null,100));
+        check(!BridgeController.acceptStartFields(fields,true,2,fields.processInstance,Long.valueOf(1),"extra",100));
+        check(!BridgeController.acceptStartFields(fields,false,3,fields.processInstance,Long.valueOf(1),"foreign",100));
+        check(BridgeController.acceptStartFields(fields,true,2,fields.processInstance,Long.valueOf(1),null,100));
+        check(!BridgeController.acceptStartFields(fields,true,2,fields.processInstance,Long.valueOf(1),null,100));
         System.out.println("PASS "+cases+" production cases");
     }
 }

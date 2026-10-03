@@ -51,3 +51,20 @@ cleanup. Stop request success does not prove effective service or GATT absence;
 read Status plus independent platform readback. An unknown start/stop outcome
 remains unknown. Nothing exposes pairing codes, opaque sessions, credentials,
 caller-selected components or arbitrary provider operations.
+
+
+### Shell foreground dispatch
+
+The DUMP-protected provider additionally verifies the actual Binder caller is UID 2000.
+Typed `enable` runs the same controller permission, Hub readiness and generation checks
+as the human Enable handler, then returns `shell_start_prepared`. It does not start
+advertising. Within 30 seconds the shell can dispatch the fixed `.BridgeService`
+`SHELL_START` action with exactly `process_instance_id` (string) and `generation`
+(long) from that receipt. The service consumes the process-held shell admission once
+before foreground or GATT work. Wrong process/generation, expiry, replay, internal UI
+scope and extra fields are denied. No new receipt grants Hub or pairing authority.
+The UI uses an internal dispatch adapter with a separate private one-use token;
+validation and the foreground/GATT implementation remain shared. Notification Stop
+has a private service-instance token. Rejected intents cannot stop another scope.
+`status` continues to distinguish prepared dispatch from service observation and
+actual advertising callback. Fixed exception categories disclose no platform messages.
