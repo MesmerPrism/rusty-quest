@@ -4,7 +4,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) { $RepoRoot = Resolve-Path (Join-Pa
 $RepoRoot = (Resolve-Path $RepoRoot).Path
 $builderPath = Join-Path $RepoRoot 'tools/Build-ManifoldBrokerAndroid.ps1'
 $ast = [Management.Automation.Language.Parser]::ParseFile($builderPath,[ref]$null,[ref]$null)
-foreach ($name in @('Get-FileSha256Hex','Get-TextSha256Hex','Read-ValidatedClientLock','New-ConcurrentStereoClientInput','Read-ConcurrentStereoHubContract','Add-ConcurrentStereoHubPolicy','Assert-UniqueAndroidAdmissionSubjects')) {
+foreach ($name in @('Get-FileSha256Hex','Get-TextSha256Hex','Read-ValidatedClientLock','New-ConcurrentStereoClientInput','Read-ConcurrentStereoHubContract','Add-ConcurrentStereoHubPolicy','Assert-UniqueAndroidAdmissionSubjects','Read-ValidatedSpatialVideoHubContract','Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract')) {
     $definition = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name},$true))
     if ($definition.Count -ne 1) { throw "Missing/ambiguous actual production function $name" }
     . ([scriptblock]::Create($definition[0].Extent.Text))
@@ -90,6 +90,35 @@ if ($ConcurrentStereoClientSpecPath) {
     $source = Get-Content -LiteralPath $ConcurrentStereoClientSpecPath -Raw | ConvertFrom-Json
     if ($actual.lock.client_id -cne $source.client_id -or $actual.lock.feature_lock_id -cne $source.feature_lock_id -or $actual.lock.marker_namespace -cne $source.marker_namespace -or ($actual.lock.capabilities -join ',') -cne 'capability.connection_hub.provider.register' -or @($actual.lock.contract_families).Count -ne 0) {throw 'Actual retained client identity/narrowing failed'};$cases++
 }
+# Execute the complete production config-construction assignment, preserving its
+# actual ordered dictionaries rather than replacing them with JSON roundtrip objects.
+$construction = @($ast.FindAll({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$connectionHubNativeConfig' -and $node.Right.Extent.Text.Contains('policy = [ordered]@')},$true))
+if ($construction.Count -ne 1) { throw 'Actual complete Hub config constructor missing/ambiguous' }
+$productInputs = [pscustomobject]@{product_id='broker.connection-hub.standalone';manifold_lock_id='lock.broker.connection-hub.standalone';manifold_lock_sha256=('a'*64);manifold_lock_fingerprint='fixture.fingerprint'}
+$acceptedProductLock = [ordered]@{fixture_only=$true};$acceptedProductLockJson='{"fixture_only":true}'
+$manifoldSourceLock = [pscustomobject]@{revision=('b'*40);tree=('c'*40)}
+$EnableConnectionHubDebugOperator = $true
+$sampleProviderInput = Read-ValidatedClientLock (Join-Path $RepoRoot 'fixtures/broker-clients/connection-hub-sample.client.json')
+$lockedPlaylistProviderInput = Read-ValidatedClientLock (Join-Path $RepoRoot 'fixtures/broker-clients/spatial-camera-panel.client.json')
+$spatialProviderInput = Read-ValidatedClientLock (Join-Path $RepoRoot 'fixtures/broker-clients/spatial-video-control-example.client.json')
+$lockedPlaylistHubContract = Read-ValidatedSpatialCameraPanelLockedPlaylistHubContract $RepoRoot
+$spatialVideoHubContract = Read-ValidatedSpatialVideoHubContract $RepoRoot
+$lockedPlaylistCommands=@($lockedPlaylistHubContract.commands);$connectionHubCommands=@($spatialVideoHubContract.commands)
+. ([scriptblock]::Create($construction[0].Extent.Text))
+$orderedBefore = $connectionHubNativeConfig.policy | ConvertTo-Json -Depth 30 -Compress
+$baselineGrants=@($connectionHubNativeConfig.policy.provider_grants | ForEach-Object { $_ | ConvertTo-Json -Depth 30 -Compress })
+if ($connectionHubNativeConfig.policy.provider_grants[0] -isnot [Collections.Specialized.OrderedDictionary]) { throw 'Production builder representation lost' };$cases++
+Add-ConcurrentStereoHubPolicy $connectionHubNativeConfig.policy $false $null $null | Out-Null
+if (($connectionHubNativeConfig.policy | ConvertTo-Json -Depth 30 -Compress) -cne $orderedBefore) { throw 'Actual constructor disabled policy changed' };$cases++
+$connectionHubNativeConfig.policy=Add-ConcurrentStereoHubPolicy $connectionHubNativeConfig.policy $true $input $contract
+$expectedProviders=@('provider.quest.concurrent-stereo','provider.quest.connection-hub-sample','provider.quest.spatial-camera-panel-locked-playlist','provider.quest.spatial-video-control-example')
+if (($connectionHubNativeConfig.policy.provider_grants.provider_id -join ',') -cne ($expectedProviders -join ',')) { throw 'Actual full builder ordered grant items not canonical' };$cases++
+[string[]]$expectedCaps=@($connectionHubNativeConfig.policy.allowed_controller_capabilities);[Array]::Sort($expectedCaps,[StringComparer]::Ordinal)
+if (($connectionHubNativeConfig.policy.allowed_controller_capabilities -join ',') -cne ($expectedCaps -join ',')) { throw 'Actual full builder capabilities not canonical' };$cases++
+for($n=0;$n-lt$baselineGrants.Count;$n++){if(($connectionHubNativeConfig.policy.provider_grants[$n+1]|ConvertTo-Json -Depth 30 -Compress)-cne$baselineGrants[$n]){throw 'Canonical ordering changed an existing grant body'}};$cases++
+$duplicatePolicy=[ordered]@{allowed_controller_capabilities=@('a','a');provider_grants=@([ordered]@{provider_id='provider.same'},[ordered]@{provider_id='provider.same'})}
+$duplicatePolicy=Add-ConcurrentStereoHubPolicy $duplicatePolicy $true $input $contract
+if(@($duplicatePolicy.allowed_controller_capabilities|Where-Object {$_-ceq'a'}).Count-ne2-or@($duplicatePolicy.provider_grants|Where-Object {$_.provider_id-ceq'provider.same'}).Count-ne2){throw 'Duplicate policy input silently normalized'};$cases++
 Write-Output "Concurrent stereo production grant cases PASS: $cases; no APK/device/native authority effects."
 if ($ConcurrentStereoGrantOnly) {return}
 $app = Join-Path $RepoRoot "apps\manifold-broker-android"

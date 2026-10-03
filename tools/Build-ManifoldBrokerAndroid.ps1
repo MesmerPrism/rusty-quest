@@ -356,10 +356,10 @@ function Add-ConcurrentStereoHubPolicy {
     [string[]]$capabilities = @($Policy.allowed_controller_capabilities)
     [Array]::Sort($capabilities,[StringComparer]::Ordinal)
     $Policy.allowed_controller_capabilities = $capabilities
-    [object[]]$grants = @($Policy.provider_grants)
-    [string[]]$providerIds = @($grants | ForEach-Object { $_.provider_id })
-    [Array]::Sort($providerIds,$grants,[StringComparer]::Ordinal)
-    $Policy.provider_grants = $grants
+    $grants = [Collections.Generic.List[object]]::new()
+    foreach ($grant in $Policy.provider_grants) { $grants.Add($grant) }
+    $grants.Sort([Comparison[object]]{param($left,$right) [StringComparer]::Ordinal.Compare([string]$left.provider_id,[string]$right.provider_id)})
+    $Policy.provider_grants = $grants.ToArray()
     return $Policy
 }
 
