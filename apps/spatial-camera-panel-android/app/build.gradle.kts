@@ -247,6 +247,16 @@ providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_BUILD_DIR").orNull
 fun buildConfigString(value: String): String =
   "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
+fun sourceCompositionVersionName(fingerprint: String?): String {
+  if (fingerprint == null || fingerprint.isEmpty()) return "0.1.0"
+  require(Regex("^[a-f0-9]{64}$").matches(fingerprint)) {
+    "Developer source version requires an exact resolved source composition fingerprint"
+  }
+  return "0.1.0+src.$fingerprint"
+}
+val spatialSourceVersionName = sourceCompositionVersionName(
+  providers.gradleProperty("rqDeveloperSourceCompositionFingerprint").orNull)
+
 android {
   namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
   compileSdk = 34
@@ -257,7 +267,7 @@ android {
     minSdk = 34
     targetSdk = 34
     versionCode = 1
-    versionName = "0.1.0"
+    versionName = spatialSourceVersionName
     if (spatialSdkDepthApiLayerEnabled.get()) {
       ndk { abiFilters += "arm64-v8a" }
       externalNativeBuild {

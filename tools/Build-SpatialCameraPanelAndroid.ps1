@@ -9,6 +9,7 @@ param(
     [string]$GradleVersion = "9.4.1",
     [ValidateSet("DevFast", "Candidate")]
     [string]$BuildMode = "DevFast",
+    [switch]$UseSourceCompositionVersionName,
     [ValidateSet("Static", "Dynamic")]
     [string]$RustStdLinkage = "Static",
     [switch]$AllowNonDeployableDynamicStdBenchmark,
@@ -1368,6 +1369,8 @@ $embeddedMediaBuildInputs = [ordered]@{
 }
 $embeddedMediaBuildInputsJson = $embeddedMediaBuildInputs | ConvertTo-Json -Depth 12
 $embeddedMediaBuildInputsSha256 = Get-StringSha256 -Value $embeddedMediaBuildInputsJson
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
+$sourceVersionMetadata=New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) -Enabled:$UseSourceCompositionVersionName
 $buildInputDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
     source_commit = $sourceHead
@@ -1494,6 +1497,7 @@ $nativeIdentityDescriptor = [ordered]@{
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
+if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
 $shellIdentityInputs = [ordered]@{
@@ -1538,6 +1542,7 @@ $shellIdentityDescriptor = [ordered]@{
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
+if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
 $shellFingerprint = Get-StringSha256 -Value ($shellIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $packageIdentityDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.package_cache_identity.v1"
@@ -2127,6 +2132,9 @@ try {
         "-p", ([string]$appRoot),
         ":app:assemble$BuildType"
     )
+    # Explicit empty default prevents ambient Gradle properties from choosing metadata.
+    $versionProperty=if($UseSourceCompositionVersionName){$sourceVersionMetadata.source_composition_fingerprint}else{''}
+    $gradleArguments=@("-PrqDeveloperSourceCompositionFingerprint=$versionProperty")+$gradleArguments
     if ($BuildMode -eq "Candidate") {
         $gradleArguments = @("--init-script", $gradleTimingInitPath) + $gradleArguments
     }
@@ -2412,6 +2420,7 @@ if ($LASTEXITCODE -ne 0) { throw "Produced APK failed 16-KiB-aware zip alignment
 $badging = @(& $shortAapt2 "dump" "badging" $apkInspectionPath 2>&1)
 if ($LASTEXITCODE -ne 0) { throw "Produced APK failed AAPT2 badging inspection." }
 $badgingText = $badging -join "`n"
+$observedSourceVersion=Assert-SpatialSourceVersionBadging -BadgingText $badgingText -PackageName $resolvedAppId -Metadata $sourceVersionMetadata
 if ($badgingText -notmatch ("package:\s+name='" + [regex]::Escape($resolvedAppId) + "'") -or
     $badgingText -notmatch "sdkVersion:'34'" -or
     $badgingText -notmatch "targetSdkVersion:'34'" -or
@@ -2524,6 +2533,7 @@ $apkInspection = [ordered]@{
     plaintext_video_payload_count = $plaintextVideoPayload.Count
     private_path_recorded = $false
 }
+if($UseSourceCompositionVersionName){$apkInspection['developer_source_version']=$observedSourceVersion}
 $apkInspectionPath = Join-Path $OutDir "apk-inspection.json"
 [void](Set-TextFileIfChanged -Path $apkInspectionPath -Value ($apkInspection | ConvertTo-Json -Depth 12))
 $phaseReceipts.Add([ordered]@{
@@ -3245,6 +3255,7 @@ $manifest = [ordered]@{
     expected_signer_sha256 = $normalizedExpectedSignerSha256
     signer_path_alias_password_recorded = $false
 }
+if($UseSourceCompositionVersionName){$manifest['developer_source_version']=$observedSourceVersion}
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 [void](Set-TextFileIfChanged -Path $manifestPath -Value ($manifest | ConvertTo-Json -Depth 12))
 
