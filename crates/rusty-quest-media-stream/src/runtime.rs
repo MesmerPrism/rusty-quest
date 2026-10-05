@@ -263,6 +263,34 @@ impl MediaStreamSessionRuntime {
         })
     }
 
+    /// Rebuilds lifecycle state only after its product owner has validated a
+    /// trusted cleanup journal. This constructor does not authorize Start.
+    pub(crate) fn restore_cleanup_state(
+        spec: MediaStreamRuntimeSpec,
+        state: MediaStreamRuntimeState,
+    ) -> Result<Self, Vec<ValidationError>> {
+        validate_media_stream_runtime_spec(&spec)?;
+        if state.schema != MEDIA_STREAM_RUNTIME_STATE_SCHEMA
+            || state.runtime_spec_id != spec.runtime_spec_id
+            || state.runtime_revision == 0
+            || state
+                .applied_request_ids
+                .iter()
+                .any(|id| id.trim().is_empty())
+            || state.applied_request_ids.len()
+                != state
+                    .applied_request_ids
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    .len()
+        {
+            return Err(vec![ValidationError::new(
+                "media recovery lifecycle state is malformed",
+            )]);
+        }
+        Ok(Self { spec, state })
+    }
+
     /// Read the accepted platform lifecycle state.
     pub fn state(&self) -> &MediaStreamRuntimeState {
         &self.state

@@ -1,5 +1,17 @@
 # Rusty Quest Validation
 
+For development graphs whose current Manifold source differs from the exact
+legacy camera/P2P compatibility supplier, keep those suppliers separate. The
+product preparation fixture accepts
+`-LegacyManifoldSourceRoot <clean-approved-root>`. The aggregate uses the
+explicit process-local `RUSTY_QUEST_LEGACY_COMPATIBILITY_SOURCE_ROOT` selection
+for that fixture; restore its previous value after the invocation. Modern
+fixtures still use the current sibling Manifold source. The compatibility
+builder retains its exact approved commit/tree and spec/lock byte guards.
+This `-PrepareOnly` fixture emits no runtime config, Java, native code, or APK;
+it neither adopts the compatibility source for current development nor
+provides device evidence.
+
 For P70, first run
 `pwsh -NoProfile -File ./tools/Test-LslRustFloat32LanOutletAndroid.ps1`.
 Acquire the exact content-addressed build-output claim before its build.

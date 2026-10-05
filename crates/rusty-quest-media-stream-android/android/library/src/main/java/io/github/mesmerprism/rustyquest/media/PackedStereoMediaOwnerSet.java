@@ -40,7 +40,23 @@ public final class PackedStereoMediaOwnerSet implements AutoCloseable {
             require(action,cancellation);
             String actionKind=action.actionKind();
             if("stop".equals(actionKind)||"cleanup".equals(actionKind))return stop(action);
-            if(!state.compareAndSet("stopped","starting"))throw new IllegalStateException("provider busy");
+            synchronized(PackedStereoMediaOwnerSet.this) {
+                String expected="stopped";
+                if("cleanup".equals(kind) && "arm_cleanup".equals(actionKind)
+                        && "cleaned".equals(state.get())) {
+                    for(MediaOwnerProvider prior:owners.values()) {
+                        MediaRuntimeSnapshot observed=prior.snapshot();
+                        if(observed.generation()!=generation || !observed.terminal() || !("stopped".equals(observed.state())
+                                || "cleaned".equals(observed.state())))
+                            throw new IllegalStateException("prior graph cleanup unresolved");
+                    }
+                    pipeline.requireStopped();
+                    if(cleanupArmed.get())throw new IllegalStateException("prior cleanup remains armed");
+                    pipeline.recreateAfterVerifiedCleanup();
+                    expected="cleaned";
+                }
+                if(!state.compareAndSet(expected,"starting"))throw new IllegalStateException("provider busy");
+            }
             try{
                 if("cleanup".equals(kind)){cleanupArmed.set(true);}
                 else if("route".equals(kind)){pipeline.validateRoute();}
@@ -69,6 +85,7 @@ public final class PackedStereoMediaOwnerSet implements AutoCloseable {
         private void require(MediaOwnerAction action,CancellationHandle cancellation){
             if(!kind.equals(action.ownerKind()))throw new IllegalArgumentException("owner kind mismatch");
             cancellation.requireCurrent(generation);
+            if(action.executorGeneration()!=generation)throw new IllegalArgumentException("owner executor generation mismatch");
         }
         private String handle(){return pipeline.handleId()+":"+kind+":g"+generation;}
         private MediaProviderReadback readback(MediaOwnerAction action,String observed){

@@ -8,4 +8,4 @@
 *.log
 *.tmp
 __pycache__/
-
+/crates/rusty-quest-media-stream-android/android/library/build/

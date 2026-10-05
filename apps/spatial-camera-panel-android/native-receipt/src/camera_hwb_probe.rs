@@ -2,7 +2,8 @@ use std::ffi::c_void;
 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
 use std::ffi::CString;
 use std::os::raw::{c_float, c_int};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,9 @@ use ash::vk::Handle;
 
 use crate::acamera_sys::{ANativeWindow, ANativeWindow_release as ACameraNativeWindow_release};
 use crate::ahardware_buffer_vulkan::{
-    import_ahb_sampled_image, query_ahb_vulkan_import_properties, AhbVulkanSampledImageCreateInfo,
+    import_ahb_sampled_image, query_ahb_vulkan_import_properties, AhbVulkanDevice,
+    AhbVulkanFormatKey, AhbVulkanImportProperties, AhbVulkanSampledImage,
+    AhbVulkanSampledImageCreateInfo,
 };
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
@@ -32,18 +35,24 @@ use crate::camera_hwb_wsi::{
     choose_surface_format, create_camera_hwb_probe_resources, create_framebuffers,
     create_image_views, create_render_pass, record_camera_hwb_probe_command_buffer,
     select_camera_surface_device, update_camera_hwb_probe_descriptor_set, CameraHwbImportCache,
-    CameraHwbImportPerformanceStats,
+    CameraHwbImportPerformanceStats, CameraHwbProbeResources, CameraVulkanExtensionStatus,
 };
 use crate::camera_latency_diagnostics::{
     boottime_now_ns, camera_latency_strict_pair_decision, current_camera_latency_settings,
     current_camera_latency_stereo_reprojection, CameraLatencyCameraSyncMode,
-    CameraLatencyFrameTiming, CameraLatencyStereoPolicy, CameraLatencyStrictPairDecision,
-    CameraLatencyWindow, CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
+    CameraLatencyFrameTiming, CameraLatencySettings, CameraLatencyStereoPolicy,
+    CameraLatencyStrictPairDecision, CameraLatencyWindow, CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
 };
 use crate::camera_replay_capture::{
     configured_camera_replay_capture, CameraReplayCaptureRecorder, CameraReplayFrameMetadata,
 };
 use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandController;
+use crate::packed_sbs_normalizer::{PackedSbsNormalizer, NORMALIZED_EYE_FORMAT};
+use crate::peer_projection_ingress::{
+    packed_sbs_normalization_plan, PeerFrameFreshness, PeerFrameFreshnessDecision,
+    PeerSessionClaimState,
+};
+use crate::peer_projection_runtime::PeerFrameWitness;
 use crate::projection_surface_displacement::{
     current_projection_surface_displacement_settings,
     update_projection_surface_displacement_settings,
@@ -58,12 +67,15 @@ use crate::spatial_public_multistack_runtime::{
     update_spatial_public_depth_alignment, update_spatial_public_depth_layer_policy,
     update_spatial_public_guide_processing_policy,
     update_spatial_public_opaque_projection_layer_override,
-    update_spatial_public_strength_cycle_speed_hz,
+    update_spatial_public_strength_cycle_speed_hz, SpatialPublicGuideTargets,
 };
 use crate::spatial_video_projection::{
     SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
 };
-use crate::spatial_video_projection_native_stream::latest_spatial_video_projection_frame;
+use crate::spatial_video_projection_native_stream::{
+    latest_projection_peer_frame, latest_spatial_video_projection_frame,
+    projection_peer_binding_matches, SpatialVideoProjectionFrame,
+};
 use crate::spatial_video_projection_qualification::record_presented_frame;
 #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
 use crate::spatial_video_projection_settings::spatial_video_media_source_generation;
@@ -74,10 +86,152 @@ const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
 const CAMERA_HWB_PROBE_MAX_FRAMES: u32 = 1800;
 
 static STOP_CAMERA_HWB_PROBE: AtomicBool = AtomicBool::new(false);
+static ACTIVE_LOCAL_CAMERA_WORKERS: AtomicUsize = AtomicUsize::new(0);
+static ACTIVE_PEER_COMMON_GRAPH_WORKERS: AtomicUsize = AtomicUsize::new(0);
+static LOCAL_CAMERA_START_OWNER: Mutex<
+    Option<crate::peer_projection_runtime::LocalCameraStartPermit>,
+> = Mutex::new(None);
+static PEER_COMMON_GRAPH_SESSION: LazyLock<Mutex<PeerCommonGraphSessionOwner>> =
+    LazyLock::new(|| Mutex::new(PeerCommonGraphSessionOwner::default()));
 static NEXT_CAMERA_IMPORT_STREAM_GENERATION: AtomicU64 = AtomicU64::new(1);
-#[cfg(rq_environment_depth_spatial_sdk_api_layer)]
 static NEXT_SDK_SURFACE_GENERATION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LocalCameraOwnershipSnapshot {
+    pub(crate) active_workers: usize,
+    pub(crate) claimed_route_generation: Option<i64>,
+    pub(crate) stop_requested: bool,
+}
+
+pub(crate) fn local_camera_ownership_snapshot() -> Option<LocalCameraOwnershipSnapshot> {
+    let owner = LOCAL_CAMERA_START_OWNER.lock().ok()?;
+    Some(LocalCameraOwnershipSnapshot {
+        active_workers: ACTIVE_LOCAL_CAMERA_WORKERS.load(Ordering::Acquire),
+        claimed_route_generation: (*owner).map(|permit| permit.route_generation),
+        stop_requested: STOP_CAMERA_HWB_PROBE.load(Ordering::Acquire),
+    })
+}
+
+pub(crate) fn local_camera_acquisition_quiescent() -> bool {
+    local_camera_ownership_snapshot().is_some_and(|snapshot| {
+        snapshot.active_workers == 0 && snapshot.claimed_route_generation.is_none()
+    })
+}
+
+pub(crate) fn request_camera_hwb_probe_stop() {
+    STOP_CAMERA_HWB_PROBE.store(true, Ordering::Release);
+    stop_peer_common_graph_session();
+    publish_acquisition_stopped_if_quiescent();
+}
+
+fn publish_acquisition_stopped_if_quiescent() {
+    if ACTIVE_LOCAL_CAMERA_WORKERS.load(Ordering::Acquire) == 0
+        && ACTIVE_PEER_COMMON_GRAPH_WORKERS.load(Ordering::Acquire) == 0
+    {
+        crate::peer_projection_runtime::record_current_acquisition_stopped_if_pending();
+    }
+}
+
+fn claim_local_camera_start(
+    permit: crate::peer_projection_runtime::LocalCameraStartPermit,
+) -> bool {
+    if !crate::peer_projection_runtime::local_camera_start_permit_is_current(permit) {
+        return false;
+    }
+    let Ok(mut owner) = LOCAL_CAMERA_START_OWNER.lock() else {
+        return false;
+    };
+    if owner.is_some() {
+        return false;
+    }
+    *owner = Some(permit);
+    true
+}
+
+fn release_local_camera_start(
+    permit: Option<crate::peer_projection_runtime::LocalCameraStartPermit>,
+) {
+    let Some(permit) = permit else { return };
+    if let Ok(mut owner) = LOCAL_CAMERA_START_OWNER.lock() {
+        if *owner == Some(permit) {
+            *owner = None;
+        }
+    }
+}
+
+#[derive(Default)]
+struct PeerCommonGraphSessionOwner {
+    claim: PeerSessionClaimState,
+    cancellation: Option<Arc<AtomicBool>>,
+    worker: Option<thread::JoinHandle<()>>,
+    window_address: usize,
+    own_epoch: Option<crate::stereo_input_set::SourceEpoch>,
+}
+
+// A concurrent Peer joins this exact retained source-set renderer. It cannot stop or
+// replace that actor. This lock covers only owner facts and pure source receipt selection.
+pub(crate) fn select_peer_source_with_own_actor(
+    words: [i64; crate::peer_projection_runtime::SOURCE_ABI_WORDS],
+    window_address: usize,
+    proof: [i64; 5],
+) -> Option<crate::peer_projection_runtime::SourceReceipt> {
+    if words[2] != crate::peer_projection_runtime::SOURCE_PEER
+        || words[5] != proof[1]
+        || words[6] != proof[2]
+        || window_address == 0
+    {
+        return None;
+    }
+    let owner = PEER_COMMON_GRAPH_SESSION.lock().ok()?;
+    let claim_generation = (u64::try_from(proof[3]).ok()? & i64::MAX as u64).max(1) as i64;
+    if owner.claim.generation() != Some(claim_generation)
+        || owner.window_address != window_address
+        || !owner
+            .worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished())
+        || !owner
+            .cancellation
+            .as_ref()
+            .is_some_and(|cancel| !cancel.load(Ordering::Acquire))
+        || !crate::own_stereo_capture_runtime::concurrent_peer_epoch_is_current(proof)
+    {
+        return None;
+    }
+    Some(
+        crate::peer_projection_runtime::request_source_with_current_carrier(
+            words,
+            [proof[0], proof[1], proof[2]],
+        ),
+    )
+}
+
+fn stop_peer_common_graph_session() {
+    let owned = {
+        let mut owner = PEER_COMMON_GRAPH_SESSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let generation = owner.claim.generation();
+        if let Some(cancel) = owner.cancellation.as_ref() {
+            cancel.store(true, Ordering::Release);
+        }
+        generation.map(|generation| (generation, owner.worker.take()))
+    };
+    if let Some((generation, Some(worker))) = owned {
+        let _ = worker.join();
+        let mut owner = PEER_COMMON_GRAPH_SESSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if owner.claim.generation() == Some(generation) {
+            owner.cancellation = None;
+            let released = owner.claim.release(generation);
+            debug_assert!(released);
+        }
+        drop(owner);
+        publish_acquisition_stopped_if_quiescent();
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum CameraHwbProbeMode {
@@ -221,6 +375,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         frame_count,
         reader_max_images,
         CameraHwbProbeMode::LumaChecker,
+        None,
     )
 }
 
@@ -243,6 +398,28 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         frame_count,
         reader_max_images,
         CameraHwbProbeMode::RawColorProjection,
+        None,
+    )
+}
+
+pub(crate) fn start_camera_hwb_projection_probe_for_route(
+    env: *mut c_void,
+    surface: *mut c_void,
+    width: c_int,
+    height: c_int,
+    frame_count: c_int,
+    reader_max_images: c_int,
+    permit: crate::peer_projection_runtime::LocalCameraStartPermit,
+) -> i64 {
+    start_camera_hwb_probe(
+        env,
+        surface,
+        width,
+        height,
+        frame_count,
+        reader_max_images,
+        CameraHwbProbeMode::RawColorProjection,
+        Some(permit),
     )
 }
 
@@ -805,6 +982,7 @@ fn start_camera_hwb_probe(
     frame_count: c_int,
     reader_max_images: c_int,
     mode: CameraHwbProbeMode,
+    local_permit: Option<crate::peer_projection_runtime::LocalCameraStartPermit>,
 ) -> i64 {
     let mut mask = 1_i64;
     if !surface.is_null() {
@@ -822,8 +1000,26 @@ fn start_camera_hwb_probe(
         return mask;
     }
 
+    if local_permit.is_none()
+        && !crate::peer_projection_runtime::unfenced_local_camera_start_allowed()
+    {
+        log_marker(
+            "status=start-receipt startStatus=unfenced-local-camera-start-rejected failClosed=true renderThreadSpawned=false runtimeCrash=false"
+                .to_string(),
+        );
+        return mask;
+    }
+
+    if local_permit.is_some_and(|permit| !claim_local_camera_start(permit)) {
+        log_marker(
+            "status=start-receipt startStatus=stale-local-camera-permit failClosed=true renderThreadSpawned=false runtimeCrash=false"
+                .to_string(),
+        );
+        return mask;
+    }
     let window = unsafe { ANativeWindow_fromSurface(env, surface) };
     if window.is_null() {
+        release_local_camera_start(local_permit);
         log_marker(format!(
             "status=start-receipt startStatus=native-window-null startMask={} surfaceNonNull=true nativeWindowObtained=false renderThreadSpawned=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi rawCameraProjectionProbe={} outputMode={} {} runtimeCrash=false",
             mask,
@@ -834,7 +1030,25 @@ fn start_camera_hwb_probe(
         return mask;
     }
     mask |= 1 << 2;
+    if local_permit.is_some_and(|permit| {
+        !crate::peer_projection_runtime::local_camera_start_permit_is_current(permit)
+    }) {
+        unsafe { ACameraNativeWindow_release(window.cast::<ANativeWindow>()) };
+        release_local_camera_start(local_permit);
+        return mask;
+    }
+    ACTIVE_LOCAL_CAMERA_WORKERS.fetch_add(1, Ordering::AcqRel);
     STOP_CAMERA_HWB_PROBE.store(false, Ordering::Release);
+    if local_permit.is_some_and(|permit| {
+        !crate::peer_projection_runtime::local_camera_start_permit_is_current(permit)
+    }) {
+        STOP_CAMERA_HWB_PROBE.store(true, Ordering::Release);
+        unsafe { ACameraNativeWindow_release(window.cast::<ANativeWindow>()) };
+        release_local_camera_start(local_permit);
+        ACTIVE_LOCAL_CAMERA_WORKERS.fetch_sub(1, Ordering::AcqRel);
+        publish_acquisition_stopped_if_quiescent();
+        return mask;
+    }
 
     let window_addr = window as usize;
     let width = width.max(64) as u32;
@@ -852,12 +1066,28 @@ fn start_camera_hwb_probe(
             let window = window_addr as *mut vk::ANativeWindow;
             let started = Instant::now();
             let result = std::panic::catch_unwind(|| unsafe {
-                render_camera_hwb_probe(window, width, height, max_frames, reader_max_images, mode)
+                if local_permit.is_some_and(|permit| {
+                    !crate::peer_projection_runtime::local_camera_start_permit_is_current(permit)
+                }) {
+                    return Err("stale-local-camera-permit".to_string());
+                }
+                render_camera_hwb_probe(
+                    window,
+                    width,
+                    height,
+                    max_frames,
+                    reader_max_images,
+                    mode,
+                    local_permit,
+                )
             })
             .unwrap_or_else(|_| Err("panic".to_string()));
             unsafe {
                 ACameraNativeWindow_release(window.cast::<ANativeWindow>());
             }
+            ACTIVE_LOCAL_CAMERA_WORKERS.fetch_sub(1, Ordering::AcqRel);
+            release_local_camera_start(local_permit);
+            publish_acquisition_stopped_if_quiescent();
             match result {
                 Ok(stats) => {
                     log_marker(format!(
@@ -915,6 +1145,9 @@ fn start_camera_hwb_probe(
             ));
         }
         Err(error) => {
+            ACTIVE_LOCAL_CAMERA_WORKERS.fetch_sub(1, Ordering::AcqRel);
+            release_local_camera_start(local_permit);
+            publish_acquisition_stopped_if_quiescent();
             unsafe {
                 ACameraNativeWindow_release(window.cast::<ANativeWindow>());
             }
@@ -931,13 +1164,155 @@ fn start_camera_hwb_probe(
     mask
 }
 
+pub(crate) unsafe fn start_peer_common_graph(
+    window: *mut ANativeWindow,
+    requested_width: u32,
+    requested_height: u32,
+    frame_count: i32,
+    route_generation: i64,
+) -> i64 {
+    if crate::own_stereo_capture_runtime::capture_route_selected() {
+        let pending = crate::peer_projection_runtime::read_source(route_generation);
+        if route_generation <= 0
+            || pending.words[1] != route_generation
+            || pending.words[2] != crate::peer_projection_runtime::SOURCE_PEER
+            || pending.words[11] != crate::peer_projection_runtime::RESULT_PENDING
+            || pending.words[3] <= 0
+            || pending.words[4] <= 0
+            || !projection_peer_binding_matches(
+                route_generation as u64,
+                pending.words[3] as u64,
+                pending.words[4] as u64,
+            )
+        {
+            if !window.is_null() {
+                ACameraNativeWindow_release(window);
+            }
+            return 0;
+        }
+        let result =
+            start_source_set_common_graph(window, requested_width, requested_height, frame_count);
+        if result <= 0 {
+            return result;
+        }
+        let attached =
+            crate::peer_projection_runtime::record_peer_common_graph_attached(route_generation);
+        return if attached.words[11] == crate::peer_projection_runtime::RESULT_PENDING {
+            result
+        } else {
+            0
+        };
+    }
+    if window.is_null() || route_generation <= 0 {
+        return 0;
+    }
+    let max_frames = if frame_count <= 0 {
+        0
+    } else {
+        (frame_count as u32).min(CAMERA_HWB_PROBE_MAX_FRAMES)
+    };
+    let window_address = window as usize;
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+    let cancellation = Arc::new(AtomicBool::new(false));
+    {
+        let mut owner = PEER_COMMON_GRAPH_SESSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !owner.claim.claim(route_generation) {
+            ACameraNativeWindow_release(window);
+            return 0;
+        }
+        owner.cancellation = Some(cancellation.clone());
+        let worker_cancellation = cancellation.clone();
+        ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_add(1, Ordering::AcqRel);
+        let spawn = thread::Builder::new()
+            .name(format!("spatial-peer-common-graph-{route_generation}"))
+            .spawn(move || {
+                let window = window_address as *mut vk::ANativeWindow;
+                let result = std::panic::catch_unwind(|| unsafe {
+                    render_peer_common_graph(
+                        window,
+                        requested_width.max(64),
+                        requested_height.max(64),
+                        max_frames,
+                        route_generation,
+                        worker_cancellation,
+                        ready_tx,
+                    )
+                })
+                .unwrap_or_else(|_| Err("panic".to_string()));
+                unsafe {
+                    ACameraNativeWindow_release(window.cast::<ANativeWindow>());
+                }
+                ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_sub(1, Ordering::AcqRel);
+                publish_acquisition_stopped_if_quiescent();
+                if let Err(error) = result {
+                    log_marker(format!(
+                        "status=peer-common-graph-failed routeGeneration={} error={} source=peer-packed-stereo camera2Opened=false runtimeCrash=false",
+                        route_generation,
+                        marker_token(&error),
+                    ));
+                    crate::peer_projection_runtime::mark_route_lost(
+                        route_generation,
+                        crate::peer_projection_runtime::REASON_PROVIDER_REJECTED,
+                    );
+                }
+            });
+        match spawn {
+            Ok(worker) => owner.worker = Some(worker),
+            Err(_) => {
+                ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_sub(1, Ordering::AcqRel);
+                publish_acquisition_stopped_if_quiescent();
+                owner.cancellation = None;
+                let released = owner.claim.release(route_generation);
+                debug_assert!(released);
+                ACameraNativeWindow_release(window);
+                return 0;
+            }
+        }
+    }
+    if matches!(
+        ready_rx.recv_timeout(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS * 2)),
+        Ok(Ok(()))
+    ) {
+        return 1;
+    }
+    let worker = {
+        let mut owner = PEER_COMMON_GRAPH_SESSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if owner.claim.generation() != Some(route_generation) {
+            None
+        } else {
+            cancellation.store(true, Ordering::Release);
+            owner.worker.take()
+        }
+    };
+    if let Some(worker) = worker {
+        let _ = worker.join();
+        let mut owner = PEER_COMMON_GRAPH_SESSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if owner.claim.generation() == Some(route_generation) {
+            owner.cancellation = None;
+            let released = owner.claim.release(route_generation);
+            debug_assert!(released);
+        }
+    }
+    crate::peer_projection_runtime::mark_route_lost(
+        route_generation,
+        crate::peer_projection_runtime::REASON_PROVIDER_REJECTED,
+    );
+    0
+}
+
 #[no_mangle]
 #[allow(non_snake_case)]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStopCameraHwbProbe(
     _env: *mut c_void,
     _thiz: *mut c_void,
 ) {
-    STOP_CAMERA_HWB_PROBE.store(true, Ordering::Release);
+    request_camera_hwb_probe_stop();
     log_marker(
         "status=stop-requested carrier=scenequadlayer-createAsAndroid-vulkan-wsi runtimeCrash=false"
             .to_string(),
@@ -959,319 +1334,592 @@ struct CameraHwbProbeStats {
     sampler_mode: &'static str,
 }
 
-unsafe fn render_camera_hwb_probe(
-    window: *mut vk::ANativeWindow,
-    requested_width: u32,
-    requested_height: u32,
-    max_frames: u32,
-    reader_max_images: c_int,
-    mode: CameraHwbProbeMode,
-) -> Result<CameraHwbProbeStats, String> {
-    let entry = ash::Entry::load().map_err(|error| format!("vulkan-loader-{error}"))?;
+struct CameraHwbWsiParts {
+    _entry: ash::Entry,
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    let sdk_binding = {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            if let Some(binding) = crate::spatial_sdk_depth_handoff::spatial_depth_device_binding()
-            {
-                break binding;
+    sdk_binding: crate::spatial_sdk_depth_handoff::SpatialDepthDeviceBindingV2,
+    instance: ash::Instance,
+    device: ash::Device,
+    surface_loader: ash::khr::surface::Instance,
+    surface: vk::SurfaceKHR,
+    physical_device: vk::PhysicalDevice,
+    queue_family_index: u32,
+    extension_status: CameraVulkanExtensionStatus,
+    foreign_queue_ownership_enabled: bool,
+    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+    queue: vk::Queue,
+    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+    _queue: vk::Queue,
+    swapchain_loader: ash::khr::swapchain::Device,
+    surface_format: vk::SurfaceFormatKHR,
+    capabilities: vk::SurfaceCapabilitiesKHR,
+    present_modes: Vec<vk::PresentModeKHR>,
+    active_latency_launch_settings: CameraLatencySettings,
+    present_mode: vk::PresentModeKHR,
+    extent: vk::Extent2D,
+    composite_alpha: vk::CompositeAlphaFlagsKHR,
+    swapchain_usage: vk::ImageUsageFlags,
+    swapchain: vk::SwapchainKHR,
+    images: Vec<vk::Image>,
+    image_views: Vec<vk::ImageView>,
+    render_pass: vk::RenderPass,
+    framebuffers: Vec<vk::Framebuffer>,
+    command_pool: vk::CommandPool,
+    command_buffers: Vec<vk::CommandBuffer>,
+    image_available: vk::Semaphore,
+    render_finished: vk::Semaphore,
+    frame_fence: vk::Fence,
+    gpu_timestamps: CameraHwbGpuTimestampTracker,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    ahb_device: AhbVulkanDevice,
+}
+
+impl CameraHwbWsiParts {
+    unsafe fn create(
+        window: *mut vk::ANativeWindow,
+        requested_width: u32,
+        requested_height: u32,
+    ) -> Result<Self, String> {
+        let entry = ash::Entry::load().map_err(|error| format!("vulkan-loader-{error}"))?;
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        let sdk_binding = {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Some(binding) =
+                    crate::spatial_sdk_depth_handoff::spatial_depth_device_binding()
+                {
+                    break binding;
+                }
+                if Instant::now() >= deadline {
+                    return Err("spatial-sdk-vulkan-binding-timeout".to_string());
+                }
+                thread::sleep(Duration::from_millis(10));
             }
-            if Instant::now() >= deadline {
-                return Err("spatial-sdk-vulkan-binding-timeout".to_string());
-            }
-            thread::sleep(Duration::from_millis(10));
-        }
-    };
-    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    let instance = ash::Instance::load(
-        entry.static_fn(),
-        vk::Instance::from_raw(sdk_binding.instance_handle),
-    );
-    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    let device = ash::Device::load(
-        instance.fp_v1_0(),
-        vk::Device::from_raw(sdk_binding.device_handle),
-    );
+        };
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        let instance = ash::Instance::load(
+            entry.static_fn(),
+            vk::Instance::from_raw(sdk_binding.instance_handle),
+        );
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        let device = ash::Device::load(
+            instance.fp_v1_0(),
+            vk::Device::from_raw(sdk_binding.device_handle),
+        );
 
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let app_name = CString::new("rusty-quest-spatial-camera-panel").expect("static app name");
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let engine_name = CString::new("camera-hwb-spatial-probe").expect("static engine name");
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let app_info = vk::ApplicationInfo::default()
-        .application_name(&app_name)
-        .application_version(1)
-        .engine_name(&engine_name)
-        .engine_version(1)
-        .api_version(vk::make_api_version(0, 1, 1, 0));
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let instance_extensions = [
-        ash::khr::surface::NAME.as_ptr(),
-        ash::khr::android_surface::NAME.as_ptr(),
-    ];
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let instance_info = vk::InstanceCreateInfo::default()
-        .application_info(&app_info)
-        .enabled_extension_names(&instance_extensions);
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let instance = entry
-        .create_instance(&instance_info, None)
-        .map_err(|error| format!("create-instance-{error:?}"))?;
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let app_name = CString::new("rusty-quest-spatial-camera-panel").expect("static app name");
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let engine_name = CString::new("camera-hwb-spatial-probe").expect("static engine name");
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let app_info = vk::ApplicationInfo::default()
+            .application_name(&app_name)
+            .application_version(1)
+            .engine_name(&engine_name)
+            .engine_version(1)
+            .api_version(vk::make_api_version(0, 1, 1, 0));
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let instance_extensions = [
+            ash::khr::surface::NAME.as_ptr(),
+            ash::khr::android_surface::NAME.as_ptr(),
+        ];
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let instance_info = vk::InstanceCreateInfo::default()
+            .application_info(&app_info)
+            .enabled_extension_names(&instance_extensions);
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let instance = entry
+            .create_instance(&instance_info, None)
+            .map_err(|error| format!("create-instance-{error:?}"))?;
 
-    let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
-    let android_surface_loader = ash::khr::android_surface::Instance::new(&entry, &instance);
-    let surface_info = vk::AndroidSurfaceCreateInfoKHR::default().window(window);
-    let surface = android_surface_loader
-        .create_android_surface(&surface_info, None)
-        .map_err(|error| {
-            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-            instance.destroy_instance(None);
-            format!("create-android-surface-{error:?}")
-        })?;
-
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let physical_devices = instance.enumerate_physical_devices().map_err(|error| {
-        surface_loader.destroy_surface(surface, None);
-        instance.destroy_instance(None);
-        format!("enumerate-physical-devices-{error:?}")
-    })?;
-    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    let physical_devices = [vk::PhysicalDevice::from_raw(
-        sdk_binding.physical_device_handle,
-    )];
-    let (physical_device, queue_family_index, extension_status) =
-        select_camera_surface_device(&instance, &surface_loader, surface, &physical_devices)
-            .ok_or_else(|| {
-                surface_loader.destroy_surface(surface, None);
+        let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
+        let android_surface_loader = ash::khr::android_surface::Instance::new(&entry, &instance);
+        let surface_info = vk::AndroidSurfaceCreateInfoKHR::default().window(window);
+        let surface = android_surface_loader
+            .create_android_surface(&surface_info, None)
+            .map_err(|error| {
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                 instance.destroy_instance(None);
-                "no-camera-hwb-vulkan-device".to_string()
+                format!("create-android-surface-{error:?}")
             })?;
 
-    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    if physical_device.as_raw() != sdk_binding.physical_device_handle
-        || queue_family_index != sdk_binding.queue_family_index
-        || sdk_binding.enabled_capability_mask & 0x0f != 0x0f
-    {
-        surface_loader.destroy_surface(surface, None);
-        return Err(format!(
-            "spatial-sdk-vulkan-binding-incompatible-physical-{}-queue-{}-capabilities-0x{:x}",
-            physical_device.as_raw() == sdk_binding.physical_device_handle,
-            queue_family_index == sdk_binding.queue_family_index,
-            sdk_binding.enabled_capability_mask,
-        ));
-    }
-
-    if !extension_status.external_hwb_extension_ready
-        || !extension_status.sampler_ycbcr_extension_ready
-        || !extension_status.sampler_ycbcr_feature_ready
-    {
-        surface_loader.destroy_surface(surface, None);
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-        instance.destroy_instance(None);
-        return Err(format!(
-            "vulkan-ahb-prereq-missing-externalHwb-{}-samplerYcbcrExt-{}-samplerYcbcrFeature-{}",
-            extension_status.external_hwb_extension_ready,
-            extension_status.sampler_ycbcr_extension_ready,
-            extension_status.sampler_ycbcr_feature_ready,
-        ));
-    }
-
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let queue_priorities = [1.0_f32];
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let queue_info = [vk::DeviceQueueCreateInfo::default()
-        .queue_family_index(queue_family_index)
-        .queue_priorities(&queue_priorities)];
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let device_extensions = [
-        ash::khr::swapchain::NAME.as_ptr(),
-        ash::android::external_memory_android_hardware_buffer::NAME.as_ptr(),
-        ash::khr::sampler_ycbcr_conversion::NAME.as_ptr(),
-    ];
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let mut sampler_ycbcr_enable =
-        vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default().sampler_ycbcr_conversion(true);
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let device_info = vk::DeviceCreateInfo::default()
-        .queue_create_infos(&queue_info)
-        .enabled_extension_names(&device_extensions)
-        .push_next(&mut sampler_ycbcr_enable);
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let device = instance
-        .create_device(physical_device, &device_info, None)
-        .map_err(|error| {
+        let physical_devices = instance.enumerate_physical_devices().map_err(|error| {
             surface_loader.destroy_surface(surface, None);
             instance.destroy_instance(None);
-            format!("create-device-{error:?}")
+            format!("enumerate-physical-devices-{error:?}")
         })?;
-    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-    let queue = device.get_device_queue(queue_family_index, 0);
-    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    let _queue = vk::Queue::from_raw(sdk_binding.queue_handle);
-    let swapchain_loader = ash::khr::swapchain::Device::new(&instance, &device);
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        let physical_devices = [vk::PhysicalDevice::from_raw(
+            sdk_binding.physical_device_handle,
+        )];
+        let (physical_device, queue_family_index, extension_status) =
+            select_camera_surface_device(&instance, &surface_loader, surface, &physical_devices)
+                .ok_or_else(|| {
+                    surface_loader.destroy_surface(surface, None);
+                    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+                    instance.destroy_instance(None);
+                    "no-camera-hwb-vulkan-device".to_string()
+                })?;
 
-    let surface_format = choose_surface_format(
-        &surface_loader
-            .get_physical_device_surface_formats(physical_device, surface)
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        if physical_device.as_raw() != sdk_binding.physical_device_handle
+            || queue_family_index != sdk_binding.queue_family_index
+            || sdk_binding.enabled_capability_mask & 0x0f != 0x0f
+        {
+            surface_loader.destroy_surface(surface, None);
+            return Err(format!(
+                "spatial-sdk-vulkan-binding-incompatible-physical-{}-queue-{}-capabilities-0x{:x}",
+                physical_device.as_raw() == sdk_binding.physical_device_handle,
+                queue_family_index == sdk_binding.queue_family_index,
+                sdk_binding.enabled_capability_mask,
+            ));
+        }
+
+        if !extension_status.external_hwb_extension_ready
+            || !extension_status.sampler_ycbcr_extension_ready
+            || !extension_status.sampler_ycbcr_feature_ready
+        {
+            surface_loader.destroy_surface(surface, None);
+            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+            instance.destroy_instance(None);
+            return Err(format!(
+                "vulkan-ahb-prereq-missing-externalHwb-{}-samplerYcbcrExt-{}-samplerYcbcrFeature-{}",
+                extension_status.external_hwb_extension_ready,
+                extension_status.sampler_ycbcr_extension_ready,
+                extension_status.sampler_ycbcr_feature_ready,
+            ));
+        }
+
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let queue_priorities = [1.0_f32];
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let queue_info = [vk::DeviceQueueCreateInfo::default()
+            .queue_family_index(queue_family_index)
+            .queue_priorities(&queue_priorities)];
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let foreign_queue_ownership_enabled =
+            if crate::own_stereo_capture_runtime::capture_route_selected() {
+                let supported = instance
+                    .enumerate_device_extension_properties(physical_device)
+                    .map_err(|e| format!("foreign-ownership-extension-query-{e:?}"))?
+                    .iter()
+                    .any(|extension| {
+                        std::ffi::CStr::from_ptr(extension.extension_name.as_ptr()).to_bytes()
+                            == b"VK_EXT_queue_family_foreign"
+                    });
+                if !supported {
+                    return Err("own-source-foreign-ownership-extension-unavailable".into());
+                }
+                true
+            } else {
+                false
+            };
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let mut device_extensions = vec![
+            ash::khr::swapchain::NAME.as_ptr(),
+            ash::android::external_memory_android_hardware_buffer::NAME.as_ptr(),
+            ash::khr::sampler_ycbcr_conversion::NAME.as_ptr(),
+        ];
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        if foreign_queue_ownership_enabled {
+            device_extensions.push(c"VK_EXT_queue_family_foreign".as_ptr());
+        }
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        let foreign_queue_ownership_enabled = sdk_binding.enabled_capability_mask
+            & crate::spatial_sdk_depth_handoff::SPATIAL_DEPTH_CAP_FOREIGN_QUEUE_OWNERSHIP_V2
+            != 0;
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let mut sampler_ycbcr_enable = vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default()
+            .sampler_ycbcr_conversion(true);
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let device_info = vk::DeviceCreateInfo::default()
+            .queue_create_infos(&queue_info)
+            .enabled_extension_names(&device_extensions)
+            .push_next(&mut sampler_ycbcr_enable);
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let device = instance
+            .create_device(physical_device, &device_info, None)
+            .map_err(|error| {
+                surface_loader.destroy_surface(surface, None);
+                instance.destroy_instance(None);
+                format!("create-device-{error:?}")
+            })?;
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let queue = device.get_device_queue(queue_family_index, 0);
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        let _queue = vk::Queue::from_raw(sdk_binding.queue_handle);
+        let swapchain_loader = ash::khr::swapchain::Device::new(&instance, &device);
+
+        let surface_format = choose_surface_format(
+            &surface_loader
+                .get_physical_device_surface_formats(physical_device, surface)
+                .map_err(|error| {
+                    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+                    device.destroy_device(None);
+                    surface_loader.destroy_surface(surface, None);
+                    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+                    instance.destroy_instance(None);
+                    format!("surface-formats-{error:?}")
+                })?,
+        );
+        let capabilities = surface_loader
+            .get_physical_device_surface_capabilities(physical_device, surface)
             .map_err(|error| {
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                 device.destroy_device(None);
                 surface_loader.destroy_surface(surface, None);
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                 instance.destroy_instance(None);
-                format!("surface-formats-{error:?}")
-            })?,
-    );
-    let capabilities = surface_loader
-        .get_physical_device_surface_capabilities(physical_device, surface)
-        .map_err(|error| {
-            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-            device.destroy_device(None);
-            surface_loader.destroy_surface(surface, None);
-            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-            instance.destroy_instance(None);
-            format!("surface-capabilities-{error:?}")
-        })?;
-    let present_modes = surface_loader
-        .get_physical_device_surface_present_modes(physical_device, surface)
-        .unwrap_or_default();
-    let active_latency_launch_settings = current_camera_latency_settings();
-    let present_mode = active_latency_launch_settings
-        .present_mode
-        .choose(&present_modes);
-    let extent = choose_extent(&capabilities, requested_width, requested_height);
-    let image_count = active_latency_launch_settings
-        .image_count
-        .choose(&capabilities);
-    let composite_alpha = choose_composite_alpha(capabilities.supported_composite_alpha);
-    let swapchain_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT
-        | if capabilities
-            .supported_usage_flags
-            .contains(vk::ImageUsageFlags::TRANSFER_SRC)
-        {
-            vk::ImageUsageFlags::TRANSFER_SRC
-        } else {
-            vk::ImageUsageFlags::empty()
-        };
-    let swapchain_info = vk::SwapchainCreateInfoKHR::default()
-        .surface(surface)
-        .min_image_count(image_count)
-        .image_format(surface_format.format)
-        .image_color_space(surface_format.color_space)
-        .image_extent(extent)
-        .image_array_layers(1)
-        .image_usage(swapchain_usage)
-        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .pre_transform(capabilities.current_transform)
-        .composite_alpha(composite_alpha)
-        .present_mode(present_mode)
-        .clipped(true);
-    let swapchain = swapchain_loader
-        .create_swapchain(&swapchain_info, None)
-        .map_err(|error| {
-            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-            device.destroy_device(None);
-            surface_loader.destroy_surface(surface, None);
-            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-            instance.destroy_instance(None);
-            format!("create-swapchain-{error:?}")
-        })?;
-    let images = swapchain_loader
-        .get_swapchain_images(swapchain)
-        .map_err(|error| {
-            swapchain_loader.destroy_swapchain(swapchain, None);
-            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-            device.destroy_device(None);
-            surface_loader.destroy_surface(surface, None);
-            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-            instance.destroy_instance(None);
-            format!("swapchain-images-{error:?}")
-        })?;
-    let image_views = create_image_views(&device, surface_format.format, &images)?;
-    let render_pass = create_render_pass(&device, surface_format.format)?;
-    let framebuffers = create_framebuffers(&device, render_pass, extent, &image_views)?;
-    let command_pool_info = vk::CommandPoolCreateInfo::default()
-        .queue_family_index(queue_family_index)
-        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
-    let command_pool = device
-        .create_command_pool(&command_pool_info, None)
-        .map_err(|error| format!("create-command-pool-{error:?}"))?;
-    let command_buffers = device
-        .allocate_command_buffers(
-            &vk::CommandBufferAllocateInfo::default()
-                .command_pool(command_pool)
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .command_buffer_count(images.len() as u32),
-        )
-        .map_err(|error| format!("allocate-command-buffers-{error:?}"))?;
-    let semaphore_info = vk::SemaphoreCreateInfo::default();
-    let image_available = device
-        .create_semaphore(&semaphore_info, None)
-        .map_err(|error| format!("create-image-semaphore-{error:?}"))?;
-    let render_finished = device
-        .create_semaphore(&semaphore_info, None)
-        .map_err(|error| format!("create-render-semaphore-{error:?}"))?;
-    let frame_fence = device
-        .create_fence(
-            &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
-            None,
-        )
-        .map_err(|error| format!("create-frame-fence-{error:?}"))?;
-    let timestamp_valid_bits = instance
-        .get_physical_device_queue_family_properties(physical_device)
-        .get(queue_family_index as usize)
-        .map(|family| family.timestamp_valid_bits)
-        .unwrap_or(0);
-    let timestamp_period_ns = instance
-        .get_physical_device_properties(physical_device)
-        .limits
-        .timestamp_period as f64;
-    let mut gpu_timestamps = CameraHwbGpuTimestampTracker::new(
-        &device,
-        images.len(),
-        CameraHwbGpuTimestampTracker::requested_from_runtime(),
-        timestamp_valid_bits,
-        timestamp_period_ns,
-    );
-    log_marker(format!(
-        "status=gpu-timestamp-config {} runtimeCrash=false",
-        gpu_timestamps.config_marker_fields(),
-    ));
+                format!("surface-capabilities-{error:?}")
+            })?;
+        let present_modes = surface_loader
+            .get_physical_device_surface_present_modes(physical_device, surface)
+            .unwrap_or_default();
+        let active_latency_launch_settings = current_camera_latency_settings();
+        let present_mode = active_latency_launch_settings
+            .present_mode
+            .choose(&present_modes);
+        let extent = choose_extent(&capabilities, requested_width, requested_height);
+        let image_count = active_latency_launch_settings
+            .image_count
+            .choose(&capabilities);
+        let composite_alpha = choose_composite_alpha(capabilities.supported_composite_alpha);
+        let swapchain_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT
+            | if capabilities
+                .supported_usage_flags
+                .contains(vk::ImageUsageFlags::TRANSFER_SRC)
+            {
+                vk::ImageUsageFlags::TRANSFER_SRC
+            } else {
+                vk::ImageUsageFlags::empty()
+            };
+        let swapchain_info = vk::SwapchainCreateInfoKHR::default()
+            .surface(surface)
+            .min_image_count(image_count)
+            .image_format(surface_format.format)
+            .image_color_space(surface_format.color_space)
+            .image_extent(extent)
+            .image_array_layers(1)
+            .image_usage(swapchain_usage)
+            .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .pre_transform(capabilities.current_transform)
+            .composite_alpha(composite_alpha)
+            .present_mode(present_mode)
+            .clipped(true);
+        let swapchain = swapchain_loader
+            .create_swapchain(&swapchain_info, None)
+            .map_err(|error| {
+                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+                device.destroy_device(None);
+                surface_loader.destroy_surface(surface, None);
+                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+                instance.destroy_instance(None);
+                format!("create-swapchain-{error:?}")
+            })?;
+        let images = swapchain_loader
+            .get_swapchain_images(swapchain)
+            .map_err(|error| {
+                swapchain_loader.destroy_swapchain(swapchain, None);
+                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+                device.destroy_device(None);
+                surface_loader.destroy_surface(surface, None);
+                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+                instance.destroy_instance(None);
+                format!("swapchain-images-{error:?}")
+            })?;
+        let image_views = create_image_views(&device, surface_format.format, &images)?;
+        let render_pass = create_render_pass(&device, surface_format.format)?;
+        let framebuffers = create_framebuffers(&device, render_pass, extent, &image_views)?;
+        let command_pool_info = vk::CommandPoolCreateInfo::default()
+            .queue_family_index(queue_family_index)
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+        let command_pool = device
+            .create_command_pool(&command_pool_info, None)
+            .map_err(|error| format!("create-command-pool-{error:?}"))?;
+        let command_buffers = device
+            .allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::default()
+                    .command_pool(command_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(images.len() as u32),
+            )
+            .map_err(|error| format!("allocate-command-buffers-{error:?}"))?;
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        let image_available = device
+            .create_semaphore(&semaphore_info, None)
+            .map_err(|error| format!("create-image-semaphore-{error:?}"))?;
+        let render_finished = device
+            .create_semaphore(&semaphore_info, None)
+            .map_err(|error| format!("create-render-semaphore-{error:?}"))?;
+        let frame_fence = device
+            .create_fence(
+                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            )
+            .map_err(|error| format!("create-frame-fence-{error:?}"))?;
+        let timestamp_valid_bits = instance
+            .get_physical_device_queue_family_properties(physical_device)
+            .get(queue_family_index as usize)
+            .map(|family| family.timestamp_valid_bits)
+            .unwrap_or(0);
+        let timestamp_period_ns = instance
+            .get_physical_device_properties(physical_device)
+            .limits
+            .timestamp_period as f64;
+        let gpu_timestamps = CameraHwbGpuTimestampTracker::new(
+            &device,
+            images.len(),
+            CameraHwbGpuTimestampTracker::requested_from_runtime(),
+            timestamp_valid_bits,
+            timestamp_period_ns,
+        );
+        let memory_properties = instance.get_physical_device_memory_properties(physical_device);
+        let ahb_device = AhbVulkanDevice::new(&instance, &device);
 
-    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-    log_marker(format!(
-        "status=spatial-sdk-vulkan-binding-accepted sameLogicalDevice=true samePhysicalDevice=true sameQueueFamily=true sameQueue=true queueFamilyIndex={} queueIndex={} appWsiOwned=true sdkDeviceOwned=true sdkQueueOpaqueOwnership=true appSubmissionAuthority=layer-broker consumerFencePolicy=nonblocking-poll perFrameHostFenceWait=false rawHandlesLogged=false enabledCapabilityMask=0x{:x} runtimeCrash=false",
-        sdk_binding.queue_family_index,
-        sdk_binding.queue_index,
-        sdk_binding.enabled_capability_mask,
-    ));
+        Ok(Self {
+            _entry: entry,
+            #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+            sdk_binding,
+            instance,
+            device,
+            surface_loader,
+            surface,
+            physical_device,
+            queue_family_index,
+            extension_status,
+            foreign_queue_ownership_enabled,
+            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+            queue,
+            #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+            _queue,
+            swapchain_loader,
+            surface_format,
+            capabilities,
+            present_modes,
+            active_latency_launch_settings,
+            present_mode,
+            extent,
+            composite_alpha,
+            swapchain_usage,
+            swapchain,
+            images,
+            image_views,
+            render_pass,
+            framebuffers,
+            command_pool,
+            command_buffers,
+            image_available,
+            render_finished,
+            frame_fence,
+            gpu_timestamps,
+            memory_properties,
+            ahb_device,
+        })
+    }
 
-    log_marker(format!(
-        "status=render-loop-ready carrier=scenequadlayer-createAsAndroid-vulkan-wsi producerPath=Camera2-AImageReader-AHardwareBuffer-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} presentModesAvailable={} compositeAlpha={:?} swapchainUsage=0x{:x} projectionProducerReadbackTransferSrcAvailable={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false customProjectionStack=false dynamicCameraPoseMetadataUsed=false imageTimestampPoseAssociation=selected-by-camera-latency-reprojection-mode captureResultMetadataCallbacks=false runtimeCrash=false {} {}",
-        images.len(),
-        extent.width,
-        extent.height,
-        surface_format.format,
-        present_mode,
-        marker_token(&format!("{present_modes:?}")),
-        composite_alpha,
-        swapchain_usage.as_raw(),
-        swapchain_usage.contains(vk::ImageUsageFlags::TRANSFER_SRC),
-        extension_status.external_hwb_extension_ready,
-        extension_status.sampler_ycbcr_extension_ready,
-        extension_status.sampler_ycbcr_feature_ready,
-        mode.output_mode(),
-        mode.raw_projection_token(),
-        mode.stereo_source(),
-        mode.projection_contract_marker_fields(),
-        active_latency_launch_settings.marker_fields(),
-    ));
-    log_marker(format!(
-        "status=projection-producer-color-contract surfaceFormatSelected={:?} surfaceColorSpaceSelected={:?} compositeAlphaSelected={:?} androidDataspaceObserved=false systemLayerAlphaObserved=false colorContractEvidence=vulkan-swapchain-create-parameters runtimeCrash=false",
-        surface_format.format, surface_format.color_space, composite_alpha,
-    ));
+    unsafe fn destroy_after_idle(self) {
+        let Self {
+            _entry,
+            #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+            sdk_binding,
+            instance,
+            device,
+            surface_loader,
+            surface,
+            physical_device: _,
+            queue_family_index: _,
+            extension_status: _,
+            foreign_queue_ownership_enabled: _,
+            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+                queue: _,
+            #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+                _queue: _,
+            swapchain_loader,
+            surface_format: _,
+            capabilities: _,
+            present_modes: _,
+            active_latency_launch_settings: _,
+            present_mode: _,
+            extent: _,
+            composite_alpha: _,
+            swapchain_usage: _,
+            swapchain,
+            images: _,
+            image_views,
+            render_pass,
+            framebuffers,
+            command_pool,
+            command_buffers: _,
+            image_available,
+            render_finished,
+            frame_fence,
+            mut gpu_timestamps,
+            memory_properties: _,
+            ahb_device: _,
+        } = self;
+        gpu_timestamps.destroy(&device);
+        device.destroy_fence(frame_fence, None);
+        device.destroy_semaphore(render_finished, None);
+        device.destroy_semaphore(image_available, None);
+        device.destroy_command_pool(command_pool, None);
+        for framebuffer in framebuffers {
+            device.destroy_framebuffer(framebuffer, None);
+        }
+        device.destroy_render_pass(render_pass, None);
+        for view in image_views {
+            device.destroy_image_view(view, None);
+        }
+        swapchain_loader.destroy_swapchain(swapchain, None);
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        crate::spatial_sdk_depth_handoff::request_spatial_depth_shutdown(
+            sdk_binding.session_generation,
+        );
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        device.destroy_device(None);
+        surface_loader.destroy_surface(surface, None);
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        instance.destroy_instance(None);
+    }
+}
 
+struct PeerCommonGraphResources {
+    wsi: Option<CameraHwbWsiParts>,
+    normalizer: Option<PackedSbsNormalizer>,
+    sampled_packed_image: Option<AhbVulkanSampledImage>,
+    pending_camera_resources: Option<CameraHwbProbeResources>,
+    pending_public_guide_targets: Option<SpatialPublicGuideTargets>,
+    processing_graph: Option<CameraProcessingGraph>,
+    projection_readback: Option<ProjectionReadback>,
+    current_frame: Option<SpatialVideoProjectionFrame>,
+    video_renderer: Option<SpatialVideoProjectionRenderer>,
+}
+
+impl PeerCommonGraphResources {
+    fn new(wsi: CameraHwbWsiParts) -> Self {
+        Self {
+            wsi: Some(wsi),
+            normalizer: None,
+            sampled_packed_image: None,
+            pending_camera_resources: None,
+            pending_public_guide_targets: None,
+            processing_graph: None,
+            projection_readback: None,
+            current_frame: None,
+            video_renderer: None,
+        }
+    }
+
+    unsafe fn teardown(mut self) -> Result<(), String> {
+        let wsi = self.wsi.as_ref().expect("peer WSI remains owned");
+        let idle_result = wsi
+            .device
+            .device_wait_idle()
+            .map_err(|error| format!("peer-device-wait-idle-{error:?}"));
+        if let Err(error) = idle_result {
+            std::mem::forget(self);
+            return Err(error);
+        }
+        if let Some(graph) = self.processing_graph.as_mut() {
+            if let Some(targets) = graph.public_guide_targets.as_mut() {
+                if let Err(error) = targets.retire_stereo_banks_after_fence(&wsi.device) {
+                    std::mem::forget(self);
+                    return Err(error);
+                }
+            }
+        }
+        if let Some(mut renderer) = self.video_renderer.take() {
+            renderer.destroy(&wsi.device);
+        }
+        if let Some(mut readback) = self.projection_readback.take() {
+            readback.retire_after_fence(&wsi.device);
+            readback.destroy(&wsi.device);
+        }
+        if let Some(graph) = self.processing_graph.take() {
+            if let Some(targets) = graph.public_guide_targets {
+                targets.destroy(&wsi.device);
+            }
+            graph.camera_resources.destroy(&wsi.device);
+        }
+        if let Some(targets) = self.pending_public_guide_targets.take() {
+            targets.destroy(&wsi.device);
+        }
+        if let Some(resources) = self.pending_camera_resources.take() {
+            resources.destroy(&wsi.device);
+        }
+        if let Some(image) = self.sampled_packed_image.take() {
+            image.destroy(&wsi.device);
+        }
+        if let Some(normalizer) = self.normalizer.take() {
+            normalizer.destroy(&wsi.device);
+        }
+        // AImage owns the imported AHardwareBuffer lease. It remains pinned until
+        // every submitted command is terminal/cancelled and the device is idle.
+        self.current_frame.take();
+        self.wsi
+            .take()
+            .expect("peer WSI remains owned")
+            .destroy_after_idle();
+        idle_result
+    }
+}
+
+struct LocalCameraStartup {
+    camera_runtime: CameraProbeRuntime,
+    initial_frames: CameraProbeFrameSet,
+    camera_import_stream_generation: u64,
+    camera_import_inactive_limit: usize,
+    left_import_properties: AhbVulkanImportProperties,
+    right_import_properties: AhbVulkanImportProperties,
+    format_props: vk::AndroidHardwareBufferFormatPropertiesANDROID<'static>,
+    format_key: AhbVulkanFormatKey,
+}
+
+struct CameraProcessingGraph {
+    camera_resources: CameraHwbProbeResources,
+    descriptor_set: vk::DescriptorSet,
+    public_guide_targets: Option<SpatialPublicGuideTargets>,
+    camera_replay_capture: Option<CameraReplayCaptureRecorder>,
+    sampler_mode: &'static str,
+    format_key: AhbVulkanFormatKey,
+    format_props: vk::AndroidHardwareBufferFormatPropertiesANDROID<'static>,
+}
+
+struct LocalCameraProvider {
+    camera_runtime: CameraProbeRuntime,
+    current_left_frame: CameraProbeFrame,
+    current_right_frame: CameraProbeFrame,
+    pending_strict_left: Option<CameraProbeFrame>,
+    pending_strict_right: Option<CameraProbeFrame>,
+    sampled_left_image: AhbVulkanSampledImage,
+    sampled_right_image: Option<AhbVulkanSampledImage>,
+    left_camera_import_cache: CameraHwbImportCache,
+    right_camera_import_cache: CameraHwbImportCache,
+    left_camera_import_stats: CameraHwbImportPerformanceStats,
+    right_camera_import_stats: CameraHwbImportPerformanceStats,
+    camera_import_stream_generation: u64,
+    last_polled_left_hwb_import_sequence: u64,
+    last_polled_right_hwb_import_sequence: u64,
+    strict_pair_rejections: u64,
+    strict_unpaired_resets: u64,
+    strict_pair_generation: u64,
+    transition_left_camera_image: bool,
+    transition_right_camera_image: bool,
+    camera_reprojection_guard_band: CameraReprojectionGuardBandController,
+    observed_latency_settings: CameraLatencySettings,
+    freeze_frame_pending: bool,
+    freeze_frame_latched: bool,
+    latency_window: CameraLatencyWindow,
+}
+
+unsafe fn start_local_camera_input(
+    ahb_device: &AhbVulkanDevice,
+    reader_max_images: c_int,
+    mode: CameraHwbProbeMode,
+) -> Result<LocalCameraStartup, String> {
+    if crate::own_stereo_capture_runtime::capture_route_selected() {
+        return Err("legacy-local-camera-suppressed-own-capture-route".into());
+    }
     let camera_runtime = CameraProbeRuntime::start(reader_max_images, mode.stream_mode())?;
     let camera_import_stream_generation =
         NEXT_CAMERA_IMPORT_STREAM_GENERATION.fetch_add(1, Ordering::AcqRel);
@@ -1292,20 +1940,10 @@ unsafe fn render_camera_hwb_probe(
         }
     };
 
-    let memory_properties = instance.get_physical_device_memory_properties(physical_device);
-    let mut projection_readback = ProjectionReadback::new(
-        surface_format,
-        composite_alpha,
-        extent,
-        capabilities.supported_usage_flags,
-        memory_properties,
-    );
-    let ahb_device =
-        ash::android::external_memory_android_hardware_buffer::Device::new(&instance, &device);
     let (left_import_properties, format_props) =
-        query_ahb_vulkan_import_properties(&ahb_device, &initial_frames.left.hardware_buffer)?;
+        query_ahb_vulkan_import_properties(ahb_device, &initial_frames.left.hardware_buffer)?;
     let (right_import_properties, _right_format_props) =
-        query_ahb_vulkan_import_properties(&ahb_device, &initial_frames.right.hardware_buffer)?;
+        query_ahb_vulkan_import_properties(ahb_device, &initial_frames.right.hardware_buffer)?;
     let format_key = left_import_properties.format_key;
     if right_import_properties.format_key != format_key {
         return Err(format!(
@@ -1339,6 +1977,121 @@ unsafe fn render_camera_hwb_probe(
         mode.projection_contract_marker_fields(),
     ));
 
+    Ok(LocalCameraStartup {
+        camera_runtime,
+        initial_frames,
+        camera_import_stream_generation,
+        camera_import_inactive_limit,
+        left_import_properties,
+        right_import_properties,
+        format_props,
+        format_key,
+    })
+}
+
+unsafe fn render_camera_hwb_probe(
+    window: *mut vk::ANativeWindow,
+    requested_width: u32,
+    requested_height: u32,
+    max_frames: u32,
+    reader_max_images: c_int,
+    mode: CameraHwbProbeMode,
+    local_permit: Option<crate::peer_projection_runtime::LocalCameraStartPermit>,
+) -> Result<CameraHwbProbeStats, String> {
+    let CameraHwbWsiParts {
+        _entry,
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        sdk_binding,
+        instance,
+        device,
+        surface_loader,
+        surface,
+        physical_device,
+        queue_family_index,
+        extension_status,
+        foreign_queue_ownership_enabled: _,
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        queue,
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        _queue,
+        swapchain_loader,
+        surface_format,
+        capabilities,
+        present_modes,
+        active_latency_launch_settings,
+        present_mode,
+        extent,
+        composite_alpha,
+        swapchain_usage,
+        swapchain,
+        images,
+        image_views,
+        render_pass,
+        framebuffers,
+        command_pool,
+        command_buffers,
+        image_available,
+        render_finished,
+        frame_fence,
+        mut gpu_timestamps,
+        memory_properties,
+        ahb_device,
+    } = CameraHwbWsiParts::create(window, requested_width, requested_height)?;
+    log_marker(format!(
+        "status=gpu-timestamp-config {} runtimeCrash=false",
+        gpu_timestamps.config_marker_fields(),
+    ));
+    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+    log_marker(format!(
+        "status=spatial-sdk-vulkan-binding-accepted sameLogicalDevice=true samePhysicalDevice=true sameQueueFamily=true sameQueue=true queueFamilyIndex={} queueIndex={} appWsiOwned=true sdkDeviceOwned=true sdkQueueOpaqueOwnership=true appSubmissionAuthority=layer-broker consumerFencePolicy=nonblocking-poll perFrameHostFenceWait=false rawHandlesLogged=false enabledCapabilityMask=0x{:x} runtimeCrash=false",
+        sdk_binding.queue_family_index,
+        sdk_binding.queue_index,
+        sdk_binding.enabled_capability_mask,
+    ));
+
+    log_marker(format!(
+        "status=render-loop-ready carrier=scenequadlayer-createAsAndroid-vulkan-wsi producerPath=Camera2-AImageReader-AHardwareBuffer-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} presentModesAvailable={} compositeAlpha={:?} swapchainUsage=0x{:x} projectionProducerReadbackTransferSrcAvailable={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false customProjectionStack=false dynamicCameraPoseMetadataUsed=false imageTimestampPoseAssociation=selected-by-camera-latency-reprojection-mode captureResultMetadataCallbacks=false runtimeCrash=false {} {}",
+        images.len(),
+        extent.width,
+        extent.height,
+        surface_format.format,
+        present_mode,
+        marker_token(&format!("{present_modes:?}")),
+        composite_alpha,
+        swapchain_usage.as_raw(),
+        swapchain_usage.contains(vk::ImageUsageFlags::TRANSFER_SRC),
+        extension_status.external_hwb_extension_ready,
+        extension_status.sampler_ycbcr_extension_ready,
+        extension_status.sampler_ycbcr_feature_ready,
+        mode.output_mode(),
+        mode.raw_projection_token(),
+        mode.stereo_source(),
+        mode.projection_contract_marker_fields(),
+        active_latency_launch_settings.marker_fields(),
+    ));
+    log_marker(format!(
+        "status=projection-producer-color-contract surfaceFormatSelected={:?} surfaceColorSpaceSelected={:?} compositeAlphaSelected={:?} androidDataspaceObserved=false systemLayerAlphaObserved=false colorContractEvidence=vulkan-swapchain-create-parameters runtimeCrash=false",
+        surface_format.format, surface_format.color_space, composite_alpha,
+    ));
+
+    let LocalCameraStartup {
+        camera_runtime,
+        initial_frames,
+        camera_import_stream_generation,
+        camera_import_inactive_limit,
+        left_import_properties,
+        right_import_properties,
+        format_props,
+        format_key,
+    } = start_local_camera_input(&ahb_device, reader_max_images, mode)?;
+
+    let mut projection_readback = ProjectionReadback::new(
+        surface_format,
+        composite_alpha,
+        extent,
+        capabilities.supported_usage_flags,
+        memory_properties,
+    );
     let camera_resources =
         create_camera_hwb_probe_resources(&device, render_pass, format_key, &format_props, mode)?;
     let mut public_guide_targets = if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
@@ -1488,7 +2241,6 @@ unsafe fn render_camera_hwb_probe(
     ));
 
     let render_started = Instant::now();
-    #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     let surface_generation = NEXT_SDK_SURFACE_GENERATION.fetch_add(1, Ordering::AcqRel);
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     let mut submitted_depth_lease: Option<
@@ -1544,27 +2296,65 @@ unsafe fn render_camera_hwb_probe(
     let mut spatial_video_projection_rendered_marker_logged = false;
     let mut last_projection_zone_render_stats = None;
     let mut public_multistack_depth_evidence_marker_logged = false;
-    let mut observed_latency_settings = active_latency_launch_settings;
-    let mut freeze_frame_pending = active_latency_launch_settings.enabled
+    let observed_latency_settings = active_latency_launch_settings;
+    let freeze_frame_pending = active_latency_launch_settings.enabled
         && active_latency_launch_settings.freeze_frame
         && active_latency_launch_settings.camera_sync_mode
             == CameraLatencyCameraSyncMode::HoldImageUntilGpuFence;
-    let mut freeze_frame_latched = false;
+    let freeze_frame_latched = false;
     let (initial_left_published_frames, initial_right_published_frames) =
         camera_runtime.published_frame_counts();
-    let mut latency_window = CameraLatencyWindow::new(
+    let latency_window = CameraLatencyWindow::new(
         current_left_frame.frame_index,
         current_right_frame.frame_index,
         initial_left_published_frames,
         initial_right_published_frames,
     );
+    let mut processing_graph = CameraProcessingGraph {
+        camera_resources,
+        descriptor_set,
+        public_guide_targets,
+        camera_replay_capture,
+        sampler_mode,
+        format_key,
+        format_props,
+    };
+    let mut local_provider = LocalCameraProvider {
+        camera_runtime,
+        current_left_frame,
+        current_right_frame,
+        pending_strict_left,
+        pending_strict_right,
+        sampled_left_image,
+        sampled_right_image,
+        left_camera_import_cache,
+        right_camera_import_cache,
+        left_camera_import_stats,
+        right_camera_import_stats,
+        camera_import_stream_generation,
+        last_polled_left_hwb_import_sequence,
+        last_polled_right_hwb_import_sequence,
+        strict_pair_rejections,
+        strict_unpaired_resets,
+        strict_pair_generation,
+        transition_left_camera_image,
+        transition_right_camera_image,
+        camera_reprojection_guard_band,
+        observed_latency_settings,
+        freeze_frame_pending,
+        freeze_frame_latched,
+        latency_window,
+    };
     while (max_frames == 0 || frames_presented < max_frames)
         && !STOP_CAMERA_HWB_PROBE.load(Ordering::Acquire)
+        && local_permit.map_or(true, |permit| {
+            crate::peer_projection_runtime::local_camera_start_permit_is_current(permit)
+        })
     {
         let loop_started = Instant::now();
         let requested_latency_settings = current_camera_latency_settings();
-        if requested_latency_settings != observed_latency_settings {
-            let previous_latency_settings = observed_latency_settings;
+        if requested_latency_settings != local_provider.observed_latency_settings {
+            let previous_latency_settings = local_provider.observed_latency_settings;
             let launch_settings_pending_restart = requested_latency_settings.present_mode
                 != active_latency_launch_settings.present_mode
                 || requested_latency_settings.image_count
@@ -1573,45 +2363,47 @@ unsafe fn render_camera_hwb_probe(
                     != active_latency_launch_settings.capture_fps
                 || requested_latency_settings.capture_processing
                     != active_latency_launch_settings.capture_processing;
-            observed_latency_settings = requested_latency_settings;
+            local_provider.observed_latency_settings = requested_latency_settings;
             let (left_published_frames, right_published_frames) =
-                camera_runtime.published_frame_counts();
-            latency_window = CameraLatencyWindow::new(
-                current_left_frame.frame_index,
-                current_right_frame.frame_index,
+                local_provider.camera_runtime.published_frame_counts();
+            local_provider.latency_window = CameraLatencyWindow::new(
+                local_provider.current_left_frame.frame_index,
+                local_provider.current_right_frame.frame_index,
                 left_published_frames,
                 right_published_frames,
             );
-            pending_strict_left = None;
-            pending_strict_right = None;
-            if !observed_latency_settings.enabled || !observed_latency_settings.freeze_frame {
-                if freeze_frame_latched || freeze_frame_pending {
+            local_provider.pending_strict_left = None;
+            local_provider.pending_strict_right = None;
+            if !local_provider.observed_latency_settings.enabled
+                || !local_provider.observed_latency_settings.freeze_frame
+            {
+                if local_provider.freeze_frame_latched || local_provider.freeze_frame_pending {
                     log_marker(format!(
                         "status=camera-freeze-released cameraLatencyRevision={} runtimeCrash=false",
-                        observed_latency_settings.revision,
+                        local_provider.observed_latency_settings.revision,
                     ));
                 }
-                freeze_frame_pending = false;
-                freeze_frame_latched = false;
-            } else if observed_latency_settings.camera_sync_mode
+                local_provider.freeze_frame_pending = false;
+                local_provider.freeze_frame_latched = false;
+            } else if local_provider.observed_latency_settings.camera_sync_mode
                 != CameraLatencyCameraSyncMode::HoldImageUntilGpuFence
             {
-                freeze_frame_pending = false;
-                freeze_frame_latched = false;
+                local_provider.freeze_frame_pending = false;
+                local_provider.freeze_frame_latched = false;
                 log_marker(format!(
                     "status=camera-freeze-rejected reason=requires-hold-image-until-gpu-fence cameraLatencyRevision={} cameraSyncRequested={} runtimeCrash=false",
-                    observed_latency_settings.revision,
-                    observed_latency_settings.camera_sync_mode.marker_token(),
+                    local_provider.observed_latency_settings.revision,
+                    local_provider.observed_latency_settings.camera_sync_mode.marker_token(),
                 ));
             } else if !previous_latency_settings.freeze_frame
                 || previous_latency_settings.camera_sync_mode
                     != CameraLatencyCameraSyncMode::HoldImageUntilGpuFence
             {
-                freeze_frame_pending = true;
-                freeze_frame_latched = false;
+                local_provider.freeze_frame_pending = true;
+                local_provider.freeze_frame_latched = false;
                 log_marker(format!(
                     "status=camera-freeze-armed latchPolicy=next-complete-fence-held-stereo-import cameraLatencyRevision={} runtimeCrash=false",
-                    observed_latency_settings.revision,
+                    local_provider.observed_latency_settings.revision,
                 ));
             }
             log_marker(format!(
@@ -1619,7 +2411,7 @@ unsafe fn render_camera_hwb_probe(
                 bool_token(launch_settings_pending_restart),
                 present_mode,
                 images.len(),
-                observed_latency_settings.marker_fields(),
+                local_provider.observed_latency_settings.marker_fields(),
             ));
         }
         let mut frame_timing = CameraLatencyFrameTiming::default();
@@ -1803,19 +2595,25 @@ unsafe fn render_camera_hwb_probe(
                 return Err(format!("spatial-depth-lease-release-{release_status}"));
             }
         }
-        let (left_removed, right_removed) = camera_runtime.drain_removed_hardware_buffer_ids();
-        left_camera_import_cache.process_removed_hardware_buffer_ids(
-            &device,
-            &left_removed.0,
-            left_removed.1,
-            &mut left_camera_import_stats,
-        );
-        right_camera_import_cache.process_removed_hardware_buffer_ids(
-            &device,
-            &right_removed.0,
-            right_removed.1,
-            &mut right_camera_import_stats,
-        );
+        let (left_removed, right_removed) = local_provider
+            .camera_runtime
+            .drain_removed_hardware_buffer_ids();
+        local_provider
+            .left_camera_import_cache
+            .process_removed_hardware_buffer_ids(
+                &device,
+                &left_removed.0,
+                left_removed.1,
+                &mut local_provider.left_camera_import_stats,
+            );
+        local_provider
+            .right_camera_import_cache
+            .process_removed_hardware_buffer_ids(
+                &device,
+                &right_removed.0,
+                right_removed.1,
+                &mut local_provider.right_camera_import_stats,
+            );
         if let Some(retired_frame_slot) = last_submitted_frame_slot.take() {
             if let Some(sample) = gpu_timestamps.read_retired_slot(&device, retired_frame_slot) {
                 if sample.frame_id <= 4 || sample.frame_id % 300 == 0 {
@@ -1824,7 +2622,7 @@ unsafe fn render_camera_hwb_probe(
                         sample.marker_fields(),
                         gpu_timestamps.summary_marker_fields(),
                     ));
-                    if let Some(targets) = public_guide_targets.as_ref() {
+                    if let Some(targets) = processing_graph.public_guide_targets.as_ref() {
                         log_marker(format!(
                             "status=cpu-import-sample sampleFrameId={} {} runtimeCrash=false",
                             sample.frame_id,
@@ -1834,20 +2632,30 @@ unsafe fn render_camera_hwb_probe(
                     log_marker(format!(
                         "status=camera-import-performance-sample sampleFrameId={} {} policy=bounded-generation-aware-ahb-vulkan-import-cache telemetryAllocation=scalar telemetryPerFrameLog=false runtimeCrash=false",
                         sample.frame_id,
-                        left_camera_import_stats.marker_fields("left"),
+                        local_provider.left_camera_import_stats.marker_fields("left"),
                     ));
                     log_marker(format!(
                         "status=camera-import-performance-sample sampleFrameId={} {} policy=bounded-generation-aware-ahb-vulkan-import-cache telemetryAllocation=scalar telemetryPerFrameLog=false runtimeCrash=false",
                         sample.frame_id,
-                        right_camera_import_stats.marker_fields("right"),
+                        local_provider.right_camera_import_stats.marker_fields("right"),
                     ));
                 }
             }
+            crate::peer_projection_runtime::record_current_local_submission_retired(
+                local_provider.camera_import_stream_generation,
+                local_provider
+                    .current_left_frame
+                    .hwb_import_sequence
+                    .max(local_provider.current_right_frame.hwb_import_sequence),
+            );
         }
-        if let Some(capture) = camera_replay_capture.as_mut() {
+        if let Some(capture) = processing_graph.camera_replay_capture.as_mut() {
             capture.retire_completed(&device)?;
         }
         projection_readback.retire_after_fence(&device);
+        if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+            targets.retire_stereo_banks_after_fence(&device)?;
+        }
         device
             .reset_fences(&[frame_fence])
             .map_err(|error| format!("reset-fence-{error:?}"))?;
@@ -1861,52 +2669,66 @@ unsafe fn render_camera_hwb_probe(
         let mut left_imported = false;
         let mut right_imported = false;
         if mode.should_stream_latest_frame()
-            && !freeze_frame_latched
-            && observed_latency_settings.should_adopt_camera_image(frames_presented)
+            && !local_provider.freeze_frame_latched
+            && local_provider
+                .observed_latency_settings
+                .should_adopt_camera_image(frames_presented)
         {
-            let frame_wait =
-                Duration::from_millis(observed_latency_settings.effective_frame_wait_ms() as u64);
-            match observed_latency_settings.stereo_policy {
+            let frame_wait = Duration::from_millis(
+                local_provider
+                    .observed_latency_settings
+                    .effective_frame_wait_ms() as u64,
+            );
+            match local_provider.observed_latency_settings.stereo_policy {
                 CameraLatencyStereoPolicy::IndependentLatest => {
                     let left_wait_started = Instant::now();
-                    let next_left_frame = camera_runtime.wait_for_left_frame_after(
-                        last_polled_left_hwb_import_sequence,
+                    let next_left_frame = local_provider.camera_runtime.wait_for_left_frame_after(
+                        local_provider.last_polled_left_hwb_import_sequence,
                         frame_wait,
                     );
                     frame_timing.camera_wait += left_wait_started.elapsed();
                     if let Some(next_frame) = next_left_frame {
-                        last_polled_left_hwb_import_sequence = next_frame.hwb_import_sequence;
+                        local_provider.last_polled_left_hwb_import_sequence =
+                            next_frame.hwb_import_sequence;
                         let import_started = Instant::now();
-                        match left_camera_import_cache.acquire(
+                        match local_provider.left_camera_import_cache.acquire(
                             &device,
                             &memory_properties,
                             &ahb_device,
-                            &camera_resources,
-                            format_key,
+                            &processing_graph.camera_resources,
+                            processing_graph.format_key,
                             &next_frame,
-                            &mut left_camera_import_stats,
+                            &mut local_provider.left_camera_import_stats,
                         ) {
                             Ok(next_sampled_image) => {
                                 update_camera_hwb_probe_descriptor_set(
                                     &device,
-                                    &camera_resources,
-                                    descriptor_set,
+                                    &processing_graph.camera_resources,
+                                    processing_graph.descriptor_set,
                                     next_sampled_image.image_view,
-                                    sampled_right_image.as_ref().map(|image| image.image_view),
+                                    local_provider
+                                        .sampled_right_image
+                                        .as_ref()
+                                        .map(|image| image.image_view),
                                     mode,
                                 );
-                                log_fence_held_frame_retirement(&current_left_frame, "left");
-                                let previous_image =
-                                    std::mem::replace(&mut sampled_left_image, next_sampled_image);
-                                left_camera_import_cache.retire(
+                                log_fence_held_frame_retirement(
+                                    &local_provider.current_left_frame,
+                                    "left",
+                                );
+                                let previous_image = std::mem::replace(
+                                    &mut local_provider.sampled_left_image,
+                                    next_sampled_image,
+                                );
+                                local_provider.left_camera_import_cache.retire(
                                     &device,
-                                    format_key,
-                                    &current_left_frame,
+                                    processing_graph.format_key,
+                                    &local_provider.current_left_frame,
                                     previous_image,
-                                    &mut left_camera_import_stats,
+                                    &mut local_provider.left_camera_import_stats,
                                 )?;
-                                current_left_frame = next_frame;
-                                transition_left_camera_image = true;
+                                local_provider.current_left_frame = next_frame;
+                                local_provider.transition_left_camera_image = true;
                                 left_imported = true;
                             }
                             Err(error) => {
@@ -1916,45 +2738,51 @@ unsafe fn render_camera_hwb_probe(
                         frame_timing.camera_import += import_started.elapsed();
                     }
                     let right_wait_started = Instant::now();
-                    let next_right_frame = camera_runtime.wait_for_right_frame_after(
-                        last_polled_right_hwb_import_sequence,
-                        frame_wait,
-                    );
+                    let next_right_frame =
+                        local_provider.camera_runtime.wait_for_right_frame_after(
+                            local_provider.last_polled_right_hwb_import_sequence,
+                            frame_wait,
+                        );
                     frame_timing.camera_wait += right_wait_started.elapsed();
                     if let Some(next_frame) = next_right_frame {
-                        last_polled_right_hwb_import_sequence = next_frame.hwb_import_sequence;
+                        local_provider.last_polled_right_hwb_import_sequence =
+                            next_frame.hwb_import_sequence;
                         let import_started = Instant::now();
-                        match right_camera_import_cache.acquire(
+                        match local_provider.right_camera_import_cache.acquire(
                             &device,
                             &memory_properties,
                             &ahb_device,
-                            &camera_resources,
-                            format_key,
+                            &processing_graph.camera_resources,
+                            processing_graph.format_key,
                             &next_frame,
-                            &mut right_camera_import_stats,
+                            &mut local_provider.right_camera_import_stats,
                         ) {
                             Ok(next_sampled_image) => {
                                 update_camera_hwb_probe_descriptor_set(
                                     &device,
-                                    &camera_resources,
-                                    descriptor_set,
-                                    sampled_left_image.image_view,
+                                    &processing_graph.camera_resources,
+                                    processing_graph.descriptor_set,
+                                    local_provider.sampled_left_image.image_view,
                                     Some(next_sampled_image.image_view),
                                     mode,
                                 );
-                                log_fence_held_frame_retirement(&current_right_frame, "right");
-                                let previous_image = sampled_right_image
+                                log_fence_held_frame_retirement(
+                                    &local_provider.current_right_frame,
+                                    "right",
+                                );
+                                let previous_image = local_provider
+                                    .sampled_right_image
                                     .replace(next_sampled_image)
                                     .expect("raw projection has right sampled image");
-                                right_camera_import_cache.retire(
+                                local_provider.right_camera_import_cache.retire(
                                     &device,
-                                    format_key,
-                                    &current_right_frame,
+                                    processing_graph.format_key,
+                                    &local_provider.current_right_frame,
                                     previous_image,
-                                    &mut right_camera_import_stats,
+                                    &mut local_provider.right_camera_import_stats,
                                 )?;
-                                current_right_frame = next_frame;
-                                transition_right_camera_image = true;
+                                local_provider.current_right_frame = next_frame;
+                                local_provider.transition_right_camera_image = true;
                                 right_imported = true;
                             }
                             Err(error) => {
@@ -1966,48 +2794,52 @@ unsafe fn render_camera_hwb_probe(
                 }
                 CameraLatencyStereoPolicy::MonoDuplicateLeft => {
                     let left_wait_started = Instant::now();
-                    let next_left_frame = camera_runtime.wait_for_left_frame_after(
-                        last_polled_left_hwb_import_sequence,
+                    let next_left_frame = local_provider.camera_runtime.wait_for_left_frame_after(
+                        local_provider.last_polled_left_hwb_import_sequence,
                         frame_wait,
                     );
                     frame_timing.camera_wait += left_wait_started.elapsed();
                     if let Some(next_frame) = next_left_frame {
-                        last_polled_left_hwb_import_sequence = next_frame.hwb_import_sequence;
+                        local_provider.last_polled_left_hwb_import_sequence =
+                            next_frame.hwb_import_sequence;
                         let import_started = Instant::now();
-                        match left_camera_import_cache.acquire(
+                        match local_provider.left_camera_import_cache.acquire(
                             &device,
                             &memory_properties,
                             &ahb_device,
-                            &camera_resources,
-                            format_key,
+                            &processing_graph.camera_resources,
+                            processing_graph.format_key,
                             &next_frame,
-                            &mut left_camera_import_stats,
+                            &mut local_provider.left_camera_import_stats,
                         ) {
                             Ok(next_sampled_image) => {
                                 update_camera_hwb_probe_descriptor_set(
                                     &device,
-                                    &camera_resources,
-                                    descriptor_set,
+                                    &processing_graph.camera_resources,
+                                    processing_graph.descriptor_set,
                                     next_sampled_image.image_view,
                                     None,
                                     mode,
                                 );
                                 log_fence_held_frame_retirement(
-                                    &current_left_frame,
+                                    &local_provider.current_left_frame,
                                     "left-mono-source",
                                 );
-                                let previous_image =
-                                    std::mem::replace(&mut sampled_left_image, next_sampled_image);
-                                left_camera_import_cache.retire(
+                                let previous_image = std::mem::replace(
+                                    &mut local_provider.sampled_left_image,
+                                    next_sampled_image,
+                                );
+                                local_provider.left_camera_import_cache.retire(
                                     &device,
-                                    format_key,
-                                    &current_left_frame,
+                                    processing_graph.format_key,
+                                    &local_provider.current_left_frame,
                                     previous_image,
-                                    &mut left_camera_import_stats,
+                                    &mut local_provider.left_camera_import_stats,
                                 )?;
-                                current_left_frame = next_frame;
-                                current_right_frame = current_left_frame.clone();
-                                transition_left_camera_image = true;
+                                local_provider.current_left_frame = next_frame;
+                                local_provider.current_right_frame =
+                                    local_provider.current_left_frame.clone();
+                                local_provider.transition_left_camera_image = true;
                                 left_imported = true;
                                 right_imported = true;
                             }
@@ -2022,101 +2854,116 @@ unsafe fn render_camera_hwb_probe(
                     }
                 }
                 CameraLatencyStereoPolicy::StrictTimestampPair => {
-                    if pending_strict_left.is_none() {
+                    if local_provider.pending_strict_left.is_none() {
                         let left_wait_started = Instant::now();
-                        pending_strict_left = camera_runtime.wait_for_left_frame_after(
-                            last_polled_left_hwb_import_sequence,
-                            frame_wait,
-                        );
+                        local_provider.pending_strict_left =
+                            local_provider.camera_runtime.wait_for_left_frame_after(
+                                local_provider.last_polled_left_hwb_import_sequence,
+                                frame_wait,
+                            );
                         frame_timing.camera_wait += left_wait_started.elapsed();
-                        if let Some(frame) = pending_strict_left.as_ref() {
-                            last_polled_left_hwb_import_sequence = frame.hwb_import_sequence;
+                        if let Some(frame) = local_provider.pending_strict_left.as_ref() {
+                            local_provider.last_polled_left_hwb_import_sequence =
+                                frame.hwb_import_sequence;
                         }
                     }
-                    if pending_strict_right.is_none() {
+                    if local_provider.pending_strict_right.is_none() {
                         let right_wait_started = Instant::now();
-                        pending_strict_right = camera_runtime.wait_for_right_frame_after(
-                            last_polled_right_hwb_import_sequence,
-                            frame_wait,
-                        );
+                        local_provider.pending_strict_right =
+                            local_provider.camera_runtime.wait_for_right_frame_after(
+                                local_provider.last_polled_right_hwb_import_sequence,
+                                frame_wait,
+                            );
                         frame_timing.camera_wait += right_wait_started.elapsed();
-                        if let Some(frame) = pending_strict_right.as_ref() {
-                            last_polled_right_hwb_import_sequence = frame.hwb_import_sequence;
+                        if let Some(frame) = local_provider.pending_strict_right.as_ref() {
+                            local_provider.last_polled_right_hwb_import_sequence =
+                                frame.hwb_import_sequence;
                         }
                     }
-                    if let (Some(left), Some(right)) =
-                        (pending_strict_left.as_ref(), pending_strict_right.as_ref())
-                    {
+                    if let (Some(left), Some(right)) = (
+                        local_provider.pending_strict_left.as_ref(),
+                        local_provider.pending_strict_right.as_ref(),
+                    ) {
                         let pair_delta_ns = camera_probe_pair_delta_ns(left, right);
                         if camera_latency_strict_pair_decision(pair_delta_ns)
                             == CameraLatencyStrictPairDecision::Accept
                         {
-                            let next_left = pending_strict_left.take().expect("left checked");
-                            let next_right = pending_strict_right.take().expect("right checked");
+                            let next_left = local_provider
+                                .pending_strict_left
+                                .take()
+                                .expect("left checked");
+                            let next_right = local_provider
+                                .pending_strict_right
+                                .take()
+                                .expect("right checked");
                             let import_started = Instant::now();
-                            let next_left_image = left_camera_import_cache.acquire(
+                            let next_left_image = local_provider.left_camera_import_cache.acquire(
                                 &device,
                                 &memory_properties,
                                 &ahb_device,
-                                &camera_resources,
-                                format_key,
+                                &processing_graph.camera_resources,
+                                processing_graph.format_key,
                                 &next_left,
-                                &mut left_camera_import_stats,
+                                &mut local_provider.left_camera_import_stats,
                             );
-                            let next_right_image = right_camera_import_cache.acquire(
-                                &device,
-                                &memory_properties,
-                                &ahb_device,
-                                &camera_resources,
-                                format_key,
-                                &next_right,
-                                &mut right_camera_import_stats,
-                            );
+                            let next_right_image =
+                                local_provider.right_camera_import_cache.acquire(
+                                    &device,
+                                    &memory_properties,
+                                    &ahb_device,
+                                    &processing_graph.camera_resources,
+                                    processing_graph.format_key,
+                                    &next_right,
+                                    &mut local_provider.right_camera_import_stats,
+                                );
                             match (next_left_image, next_right_image) {
                                 (Ok(left_image), Ok(right_image)) => {
                                     update_camera_hwb_probe_descriptor_set(
                                         &device,
-                                        &camera_resources,
-                                        descriptor_set,
+                                        &processing_graph.camera_resources,
+                                        processing_graph.descriptor_set,
                                         left_image.image_view,
                                         Some(right_image.image_view),
                                         mode,
                                     );
                                     log_fence_held_frame_retirement(
-                                        &current_left_frame,
+                                        &local_provider.current_left_frame,
                                         "left-strict-pair",
                                     );
                                     log_fence_held_frame_retirement(
-                                        &current_right_frame,
+                                        &local_provider.current_right_frame,
                                         "right-strict-pair",
                                     );
-                                    let previous_left_image =
-                                        std::mem::replace(&mut sampled_left_image, left_image);
-                                    let previous_right_image = sampled_right_image
+                                    let previous_left_image = std::mem::replace(
+                                        &mut local_provider.sampled_left_image,
+                                        left_image,
+                                    );
+                                    let previous_right_image = local_provider
+                                        .sampled_right_image
                                         .replace(right_image)
                                         .expect("raw projection has right sampled image");
-                                    left_camera_import_cache.retire(
+                                    local_provider.left_camera_import_cache.retire(
                                         &device,
-                                        format_key,
-                                        &current_left_frame,
+                                        processing_graph.format_key,
+                                        &local_provider.current_left_frame,
                                         previous_left_image,
-                                        &mut left_camera_import_stats,
+                                        &mut local_provider.left_camera_import_stats,
                                     )?;
-                                    right_camera_import_cache.retire(
+                                    local_provider.right_camera_import_cache.retire(
                                         &device,
-                                        format_key,
-                                        &current_right_frame,
+                                        processing_graph.format_key,
+                                        &local_provider.current_right_frame,
                                         previous_right_image,
-                                        &mut right_camera_import_stats,
+                                        &mut local_provider.right_camera_import_stats,
                                     )?;
-                                    current_left_frame = next_left;
-                                    current_right_frame = next_right;
-                                    transition_left_camera_image = true;
-                                    transition_right_camera_image = true;
+                                    local_provider.current_left_frame = next_left;
+                                    local_provider.current_right_frame = next_right;
+                                    local_provider.transition_left_camera_image = true;
+                                    local_provider.transition_right_camera_image = true;
                                     left_imported = true;
                                     right_imported = true;
-                                    strict_pair_generation =
-                                        strict_pair_generation.saturating_add(1);
+                                    local_provider.strict_pair_generation =
+                                        local_provider.strict_pair_generation.saturating_add(1);
                                 }
                                 (Ok(left_image), Err(error)) => {
                                     left_image.destroy(&device);
@@ -2153,52 +3000,57 @@ unsafe fn render_camera_hwb_probe(
                             }
                             frame_timing.camera_import += import_started.elapsed();
                         } else {
-                            strict_pair_rejections = strict_pair_rejections.saturating_add(1);
-                            pending_strict_left = None;
-                            pending_strict_right = None;
-                            if strict_pair_rejections <= 4
+                            local_provider.strict_pair_rejections =
+                                local_provider.strict_pair_rejections.saturating_add(1);
+                            local_provider.pending_strict_left = None;
+                            local_provider.pending_strict_right = None;
+                            if local_provider.strict_pair_rejections <= 4
                                 || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled()
                             {
                                 log_marker(format!(
                                     "status=strict-stereo-pair-rejected pairDeltaMs={:.3} maxPairDeltaMs={:.3} rejectedPairs={} policy=strict-timestamp-pair recoveryPolicy=discard-both-latest-candidates recoveryReason=prevent-one-source-period-chase runtimeCrash=false",
                                     pair_delta_ns as f64 / 1_000_000.0,
                                     CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS as f64 / 1_000_000.0,
-                                    strict_pair_rejections,
+                                    local_provider.strict_pair_rejections,
                                 ));
                             }
                         }
                     }
-                    if observed_latency_settings.should_discard_unpaired_strict_latest_candidate()
-                        && pending_strict_left.is_some() != pending_strict_right.is_some()
+                    if local_provider
+                        .observed_latency_settings
+                        .should_discard_unpaired_strict_latest_candidate()
+                        && local_provider.pending_strict_left.is_some()
+                            != local_provider.pending_strict_right.is_some()
                     {
-                        strict_unpaired_resets = strict_unpaired_resets.saturating_add(1);
-                        pending_strict_left = None;
-                        pending_strict_right = None;
-                        if strict_unpaired_resets <= 4
+                        local_provider.strict_unpaired_resets =
+                            local_provider.strict_unpaired_resets.saturating_add(1);
+                        local_provider.pending_strict_left = None;
+                        local_provider.pending_strict_right = None;
+                        if local_provider.strict_unpaired_resets <= 4
                             || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled()
                         {
                             log_marker(format!(
                                 "status=strict-stereo-pair-unpaired-reset resets={} policy=strict-timestamp-pair adoptionCadence=display-aligned-45 recoveryPolicy=discard-unpaired-latest-candidate recoveryReason=next-45hz-poll-would-overshoot-missing-eye runtimeCrash=false",
-                                strict_unpaired_resets,
+                                local_provider.strict_unpaired_resets,
                             ));
                         }
                     }
                 }
             }
         }
-        if freeze_frame_pending
-            && current_left_frame.has_fence_held_image()
-            && current_right_frame.has_fence_held_image()
+        if local_provider.freeze_frame_pending
+            && local_provider.current_left_frame.has_fence_held_image()
+            && local_provider.current_right_frame.has_fence_held_image()
         {
-            freeze_frame_pending = false;
-            freeze_frame_latched = true;
+            local_provider.freeze_frame_pending = false;
+            local_provider.freeze_frame_latched = true;
             log_marker(format!(
                 "status=camera-freeze-latched cameraLatencyRevision={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} cameraSyncActive=hold-image-until-gpu-fence latchFenceWaitComplete=true callbacksContinue=true importsPaused=true runtimeCrash=false",
-                observed_latency_settings.revision,
-                current_left_frame.frame_index,
-                current_right_frame.frame_index,
-                current_left_frame.descriptor.hardware_buffer_id,
-                current_right_frame.descriptor.hardware_buffer_id,
+                local_provider.observed_latency_settings.revision,
+                local_provider.current_left_frame.frame_index,
+                local_provider.current_right_frame.frame_index,
+                local_provider.current_left_frame.descriptor.hardware_buffer_id,
+                local_provider.current_right_frame.descriptor.hardware_buffer_id,
             ));
         }
         let acquire_started = Instant::now();
@@ -2222,21 +3074,24 @@ unsafe fn render_camera_hwb_probe(
         };
         let record_started = Instant::now();
         let camera_reprojection = current_camera_latency_stereo_reprojection(
-            current_left_frame.capture_viewer_basis,
-            current_right_frame.capture_viewer_basis,
+            local_provider.current_left_frame.capture_viewer_basis,
+            local_provider.current_right_frame.capture_viewer_basis,
         );
         let projection_zone_settings = current_projection_zone_compositor_settings();
         projection_readback.observe_control(projection_zone_settings);
-        let projection_guard_band = camera_reprojection_guard_band.update_for_projection_buffer(
-            observed_latency_settings,
-            projection_zone_settings.buffer_geometry_mode,
-            projection_zone_settings.buffer_static_width_uv,
-            projection_zone_settings.buffer_minimum_width_uv,
-            projection_zone_settings.buffer_maximum_width_uv,
-            projection_zone_settings.buffer_maximum_speed_meters_per_second,
-            camera_reprojection,
-            boottime_now_ns(),
-        );
+        let projection_guard_band = {
+            let camera_reprojection_guard_band = &mut local_provider.camera_reprojection_guard_band;
+            camera_reprojection_guard_band.update_for_projection_buffer(
+                local_provider.observed_latency_settings,
+                projection_zone_settings.buffer_geometry_mode,
+                projection_zone_settings.buffer_static_width_uv,
+                projection_zone_settings.buffer_minimum_width_uv,
+                projection_zone_settings.buffer_maximum_width_uv,
+                projection_zone_settings.buffer_maximum_speed_meters_per_second,
+                camera_reprojection,
+                boottime_now_ns(),
+            )
+        };
         let presentation_pose = camera_reprojection.presentation;
         let record_result = record_camera_hwb_probe_command_buffer(
             &device,
@@ -2244,13 +3099,18 @@ unsafe fn render_camera_hwb_probe(
             render_pass,
             framebuffers[image_index as usize],
             extent,
-            &camera_resources,
-            descriptor_set,
-            &sampled_left_image,
-            sampled_right_image.as_ref(),
-            transition_left_camera_image,
-            transition_right_camera_image,
-            public_guide_targets.as_mut(),
+            &processing_graph.camera_resources,
+            processing_graph.descriptor_set,
+            local_provider.sampled_left_image.image,
+            local_provider
+                .sampled_right_image
+                .as_ref()
+                .map(|image| image.image),
+            local_provider.transition_left_camera_image,
+            local_provider.transition_right_camera_image,
+            None,
+            processing_graph.public_guide_targets.as_mut(),
+            None,
             public_stack_elapsed_seconds,
             video_renderer.as_mut(),
             latest_video_frame.as_ref(),
@@ -2260,19 +3120,20 @@ unsafe fn render_camera_hwb_probe(
             u64::from(frames_presented) + 1,
             camera_reprojection,
             projection_guard_band,
-            observed_latency_settings,
-            camera_replay_capture.as_mut(),
+            local_provider.observed_latency_settings,
+            processing_graph.camera_replay_capture.as_mut(),
             boottime_now_ns().max(0) as u64,
             CameraReplayFrameMetadata {
-                left_camera_id: current_left_frame.camera_id.clone(),
-                right_camera_id: current_right_frame.camera_id.clone(),
-                left_frame_index: current_left_frame.frame_index,
-                right_frame_index: current_right_frame.frame_index,
-                left_timestamp_ns: current_left_frame.timestamp_ns,
-                right_timestamp_ns: current_right_frame.timestamp_ns,
-                pair_delta_ns: current_left_frame
+                left_camera_id: local_provider.current_left_frame.camera_id.clone(),
+                right_camera_id: local_provider.current_right_frame.camera_id.clone(),
+                left_frame_index: local_provider.current_left_frame.frame_index,
+                right_frame_index: local_provider.current_right_frame.frame_index,
+                left_timestamp_ns: local_provider.current_left_frame.timestamp_ns,
+                right_timestamp_ns: local_provider.current_right_frame.timestamp_ns,
+                pair_delta_ns: local_provider
+                    .current_left_frame
                     .timestamp_ns
-                    .abs_diff(current_right_frame.timestamp_ns),
+                    .abs_diff(local_provider.current_right_frame.timestamp_ns),
             },
             composite_alpha,
             images[image_index as usize],
@@ -2308,8 +3169,8 @@ unsafe fn render_camera_hwb_probe(
             ));
             last_projection_zone_render_stats = Some(record_result.projection_zone_stats);
         }
-        transition_left_camera_image = false;
-        transition_right_camera_image = false;
+        local_provider.transition_left_camera_image = false;
+        local_provider.transition_right_camera_image = false;
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
         let wait_semaphores = [image_available];
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
@@ -2325,6 +3186,10 @@ unsafe fn render_camera_hwb_probe(
             .command_buffers(&submit_command_buffers)
             .signal_semaphores(&signal_semaphores)];
         let submit_started = Instant::now();
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+            targets.mark_stereo_submission_entered()?;
+        }
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
         if let Err(error) = device.queue_submit(queue, &submit_info, frame_fence) {
             projection_readback.cancel_unsubmitted("queue-submit");
@@ -2404,11 +3269,13 @@ unsafe fn render_camera_hwb_probe(
                 .basis
                 .map(|basis| basis.sequence)
                 .unwrap_or(0);
-            let left_capture_sequence = current_left_frame
+            let left_capture_sequence = local_provider
+                .current_left_frame
                 .capture_viewer_basis
                 .map(|basis| basis.sequence)
                 .unwrap_or(0);
-            let right_capture_sequence = current_right_frame
+            let right_capture_sequence = local_provider
+                .current_right_frame
                 .capture_viewer_basis
                 .map(|basis| basis.sequence)
                 .unwrap_or(0);
@@ -2433,7 +3300,7 @@ unsafe fn render_camera_hwb_probe(
                 } else {
                     "fixed-target-rect-with-full-surface-scissor"
                 },
-                observed_latency_settings
+                local_provider.observed_latency_settings
                     .reprojection_guard_band_mode
                     .marker_token(),
                 projection_guard_band.source_overscan_uv,
@@ -2446,62 +3313,78 @@ unsafe fn render_camera_hwb_probe(
                 projection_guard_band.marker_fields(),
             ));
         }
-        if observed_latency_settings.stereo_policy == CameraLatencyStereoPolicy::StrictTimestampPair
+        if local_provider.observed_latency_settings.stereo_policy
+            == CameraLatencyStereoPolicy::StrictTimestampPair
             && left_imported
             && right_imported
-            && (strict_pair_generation <= 4
+            && (local_provider.strict_pair_generation <= 4
                 || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled())
         {
             log_marker(format!(
                 "status=strict-stereo-pair-presented pairGeneration={} presentOrdinal={} leftFrameIndex={} rightFrameIndex={} leftHwbImportSequence={} rightHwbImportSequence={} leftTimestampNs={} rightTimestampNs={} pairDeltaNs={} maxPairDeltaNs={} bothDescriptorBindingsUpdatedBeforeRecord=true bothCameraImagesTransitionedTogether=true packedEyesRecordedInSingleCommandBuffer=true singleQueuePresent=true runtimeCrash=false",
-                strict_pair_generation,
+                local_provider.strict_pair_generation,
                 frames_presented,
-                current_left_frame.frame_index,
-                current_right_frame.frame_index,
-                current_left_frame.hwb_import_sequence,
-                current_right_frame.hwb_import_sequence,
-                current_left_frame.timestamp_ns,
-                current_right_frame.timestamp_ns,
-                current_left_frame.timestamp_ns.abs_diff(current_right_frame.timestamp_ns),
+                local_provider.current_left_frame.frame_index,
+                local_provider.current_right_frame.frame_index,
+                local_provider.current_left_frame.hwb_import_sequence,
+                local_provider.current_right_frame.hwb_import_sequence,
+                local_provider.current_left_frame.timestamp_ns,
+                local_provider.current_right_frame.timestamp_ns,
+                local_provider.current_left_frame.timestamp_ns.abs_diff(local_provider.current_right_frame.timestamp_ns),
                 CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
             ));
         }
         let (left_published_frames, right_published_frames) =
-            camera_runtime.published_frame_counts();
-        latency_window.record(
+            local_provider.camera_runtime.published_frame_counts();
+        local_provider.latency_window.record(
             frame_timing,
             left_imported,
             right_imported,
-            current_left_frame.frame_index,
-            current_right_frame.frame_index,
+            local_provider.current_left_frame.frame_index,
+            local_provider.current_right_frame.frame_index,
             left_published_frames,
             right_published_frames,
-            current_left_frame.source_delta_ns,
-            current_right_frame.source_delta_ns,
-            current_left_frame.callback_delta_ns,
-            current_right_frame.callback_delta_ns,
+            local_provider.current_left_frame.source_delta_ns,
+            local_provider.current_right_frame.source_delta_ns,
+            local_provider.current_left_frame.callback_delta_ns,
+            local_provider.current_right_frame.callback_delta_ns,
             record_result.camera_projection_visible,
         );
-        if latency_window.should_emit(observed_latency_settings) {
+        if local_provider
+            .latency_window
+            .should_emit(local_provider.observed_latency_settings)
+        {
             let present_call_boottime_ns = boottime_now_ns();
-            latency_window.emit_and_reset(
-                observed_latency_settings,
+            local_provider.latency_window.emit_and_reset(
+                local_provider.observed_latency_settings,
                 present_mode,
                 images.len() as u32,
                 active_latency_launch_settings,
-                current_left_frame.timestamp_source.marker_token(),
-                current_right_frame.timestamp_source.marker_token(),
-                current_left_frame.callback_age_ns,
-                current_right_frame.callback_age_ns,
-                current_left_frame.sensor_age_at_boottime(present_call_boottime_ns),
-                current_right_frame.sensor_age_at_boottime(present_call_boottime_ns),
-                current_left_frame
+                local_provider
+                    .current_left_frame
+                    .timestamp_source
+                    .marker_token(),
+                local_provider
+                    .current_right_frame
+                    .timestamp_source
+                    .marker_token(),
+                local_provider.current_left_frame.callback_age_ns,
+                local_provider.current_right_frame.callback_age_ns,
+                local_provider
+                    .current_left_frame
+                    .sensor_age_at_boottime(present_call_boottime_ns),
+                local_provider
+                    .current_right_frame
+                    .sensor_age_at_boottime(present_call_boottime_ns),
+                local_provider
+                    .current_left_frame
                     .timestamp_ns
-                    .abs_diff(current_right_frame.timestamp_ns),
+                    .abs_diff(local_provider.current_right_frame.timestamp_ns),
             );
         }
         if mode.should_stream_latest_frame() && !public_multistack_depth_evidence_marker_logged {
-            if let Some(depth_evidence) = public_guide_targets
+            if let Some(depth_evidence) = processing_graph
+                .public_guide_targets
                 .as_ref()
                 .and_then(|targets| targets.compact_depth_evidence_marker_fields())
             {
@@ -2510,7 +3393,8 @@ unsafe fn render_camera_hwb_probe(
                     frames_presented,
                     depth_evidence,
                 ));
-                if let Some(alignment_evidence) = public_guide_targets
+                if let Some(alignment_evidence) = processing_graph
+                    .public_guide_targets
                     .as_ref()
                     .and_then(|targets| targets.compact_depth_alignment_evidence_marker_fields())
                 {
@@ -2520,7 +3404,8 @@ unsafe fn render_camera_hwb_probe(
                         alignment_evidence,
                     ));
                 }
-                if let Some(source_evidence) = public_guide_targets
+                if let Some(source_evidence) = processing_graph
+                    .public_guide_targets
                     .as_ref()
                     .and_then(|targets| targets.compact_depth_source_evidence_marker_fields())
                 {
@@ -2534,7 +3419,8 @@ unsafe fn render_camera_hwb_probe(
             }
         }
         if mode.should_stream_latest_frame() && frames_presented <= 4 {
-            let public_stack_frame_marker = public_guide_targets
+            let public_stack_frame_marker = processing_graph
+                .public_guide_targets
                 .as_ref()
                 .map(|targets| {
                     targets.frame_marker_fields(
@@ -2549,7 +3435,7 @@ unsafe fn render_camera_hwb_probe(
                 frames_presented,
                 public_stack_frame_marker,
             ));
-            if let Some(targets) = public_guide_targets.as_ref() {
+            if let Some(targets) = processing_graph.public_guide_targets.as_ref() {
                 log_marker(format!(
                     "status=public-multistack-projection-evidence framesPresented={} outputMode=raw-color-target-rect stereoSource=camera50-51 monoDuplicated=false {} runtimeCrash=false",
                     frames_presented,
@@ -2605,31 +3491,31 @@ unsafe fn render_camera_hwb_probe(
         if frames_presented == 1 {
             log_marker(format!(
                 "status=first-camera-frame-presented leftCameraId={} rightCameraId={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} leftHwbImportSequence={} rightHwbImportSequence={} pairDeltaNs={} carrier=scenequadlayer-createAsAndroid-vulkan-wsi vkGetAhbPropertiesResult=success sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture={} samplerMode={} outputMode={} rawCameraProjectionProbe={} privateShaderStack=false customProjectionStack=false leftTimestampNs={} rightTimestampNs={} leftWidth={} leftHeight={} rightWidth={} rightHeight={} leftFormat={} rightFormat={} leftUsage=0x{:x} rightUsage=0x{:x} leftStride={} rightStride={} noRepeatedRawHwbSampling={} stereoSource={} runtimeCrash=false {}",
-                marker_token(&current_left_frame.camera_id),
-                marker_token(&current_right_frame.camera_id),
-                current_left_frame.frame_index,
-                current_right_frame.frame_index,
-                current_left_frame.descriptor.hardware_buffer_id,
-                current_right_frame.descriptor.hardware_buffer_id,
-                current_left_frame.hwb_import_sequence,
-                current_right_frame.hwb_import_sequence,
-                current_left_frame.timestamp_ns.abs_diff(current_right_frame.timestamp_ns),
+                marker_token(&local_provider.current_left_frame.camera_id),
+                marker_token(&local_provider.current_right_frame.camera_id),
+                local_provider.current_left_frame.frame_index,
+                local_provider.current_right_frame.frame_index,
+                local_provider.current_left_frame.descriptor.hardware_buffer_id,
+                local_provider.current_right_frame.descriptor.hardware_buffer_id,
+                local_provider.current_left_frame.hwb_import_sequence,
+                local_provider.current_right_frame.hwb_import_sequence,
+                local_provider.current_left_frame.timestamp_ns.abs_diff(local_provider.current_right_frame.timestamp_ns),
                 bool_token(matches!(mode, CameraHwbProbeMode::RawColorProjection)),
-                sampler_mode,
+                processing_graph.sampler_mode,
                 mode.output_mode(),
                 mode.raw_projection_token(),
-                current_left_frame.timestamp_ns,
-                current_right_frame.timestamp_ns,
-                current_left_frame.descriptor.width,
-                current_left_frame.descriptor.height,
-                current_right_frame.descriptor.width,
-                current_right_frame.descriptor.height,
-                current_left_frame.descriptor.format,
-                current_right_frame.descriptor.format,
-                current_left_frame.descriptor.usage,
-                current_right_frame.descriptor.usage,
-                current_left_frame.descriptor.stride,
-                current_right_frame.descriptor.stride,
+                local_provider.current_left_frame.timestamp_ns,
+                local_provider.current_right_frame.timestamp_ns,
+                local_provider.current_left_frame.descriptor.width,
+                local_provider.current_left_frame.descriptor.height,
+                local_provider.current_right_frame.descriptor.width,
+                local_provider.current_right_frame.descriptor.height,
+                local_provider.current_left_frame.descriptor.format,
+                local_provider.current_right_frame.descriptor.format,
+                local_provider.current_left_frame.descriptor.usage,
+                local_provider.current_right_frame.descriptor.usage,
+                local_provider.current_left_frame.descriptor.stride,
+                local_provider.current_right_frame.descriptor.stride,
                 bool_token(!mode.should_stream_latest_frame()),
                 mode.stereo_source(),
                 mode.projection_contract_marker_fields(),
@@ -2638,15 +3524,15 @@ unsafe fn render_camera_hwb_probe(
             log_marker(format!(
                 "status=raw-camera-frame-presented framesPresented={} leftCameraId={} rightCameraId={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} leftHwbImportSequence={} rightHwbImportSequence={} pairDeltaNs={} sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture=true outputMode=raw-color-target-rect stereoSource=camera50-51 monoDuplicated=false {} runtimeCrash=false",
                 frames_presented,
-                marker_token(&current_left_frame.camera_id),
-                marker_token(&current_right_frame.camera_id),
-                current_left_frame.frame_index,
-                current_right_frame.frame_index,
-                current_left_frame.descriptor.hardware_buffer_id,
-                current_right_frame.descriptor.hardware_buffer_id,
-                current_left_frame.hwb_import_sequence,
-                current_right_frame.hwb_import_sequence,
-                current_left_frame.timestamp_ns.abs_diff(current_right_frame.timestamp_ns),
+                marker_token(&local_provider.current_left_frame.camera_id),
+                marker_token(&local_provider.current_right_frame.camera_id),
+                local_provider.current_left_frame.frame_index,
+                local_provider.current_right_frame.frame_index,
+                local_provider.current_left_frame.descriptor.hardware_buffer_id,
+                local_provider.current_right_frame.descriptor.hardware_buffer_id,
+                local_provider.current_left_frame.hwb_import_sequence,
+                local_provider.current_right_frame.hwb_import_sequence,
+                local_provider.current_left_frame.timestamp_ns.abs_diff(local_provider.current_right_frame.timestamp_ns),
                 mode.public_multistack_marker_fields(),
             ));
         }
@@ -2667,7 +3553,7 @@ unsafe fn render_camera_hwb_probe(
         "status=gpu-timestamp-summary {} runtimeCrash=false",
         gpu_timestamps.summary_marker_fields(),
     ));
-    if let Some(targets) = public_guide_targets.as_ref() {
+    if let Some(targets) = processing_graph.public_guide_targets.as_ref() {
         log_marker(format!(
             "status=cpu-import-summary {} runtimeCrash=false",
             targets.uniform_upload_summary_marker_fields(),
@@ -2675,18 +3561,18 @@ unsafe fn render_camera_hwb_probe(
     }
     log_marker(format!(
         "status=camera-import-performance-summary {} policy=bounded-generation-aware-ahb-vulkan-import-cache runtimeCrash=false",
-        left_camera_import_stats.marker_fields("left"),
+        local_provider.left_camera_import_stats.marker_fields("left"),
     ));
     log_marker(format!(
         "status=camera-import-performance-summary {} policy=bounded-generation-aware-ahb-vulkan-import-cache runtimeCrash=false",
-        right_camera_import_stats.marker_fields("right"),
+        local_provider.right_camera_import_stats.marker_fields("right"),
     ));
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     if let Some(completed_lease) = submitted_depth_lease.take() {
         let _ =
             crate::spatial_sdk_depth_handoff::release_spatial_depth_render_lease(completed_lease);
     }
-    if let Some(mut capture) = camera_replay_capture {
+    if let Some(mut capture) = processing_graph.camera_replay_capture {
         capture.retire_completed(&device)?;
         capture.finish(if capture.is_complete() {
             "requested-frame-count-reached"
@@ -2706,21 +3592,21 @@ unsafe fn render_camera_hwb_probe(
         projection_readback.retire_after_fence(&device);
     }
     projection_readback.destroy(&device);
-    if let Some(sampled_right_image) = sampled_right_image {
+    if let Some(sampled_right_image) = local_provider.sampled_right_image {
         sampled_right_image.destroy(&device);
     }
-    sampled_left_image.destroy(&device);
-    right_camera_import_cache.destroy(&device);
-    left_camera_import_cache.destroy(&device);
+    local_provider.sampled_left_image.destroy(&device);
+    local_provider.right_camera_import_cache.destroy(&device);
+    local_provider.left_camera_import_cache.destroy(&device);
     // Join pending compositor builds before destroying their borrowed camera
     // descriptor layout. Video layout ownership is also pinned by each build.
-    if let Some(public_guide_targets) = public_guide_targets {
+    if let Some(public_guide_targets) = processing_graph.public_guide_targets {
         public_guide_targets.destroy(&device);
     }
     if let Some(mut video_renderer) = video_renderer {
         video_renderer.destroy(&device);
     }
-    camera_resources.destroy(&device);
+    processing_graph.camera_resources.destroy(&device);
     gpu_timestamps.destroy(&device);
     device.destroy_fence(frame_fence, None);
     device.destroy_semaphore(render_finished, None);
@@ -2734,7 +3620,7 @@ unsafe fn render_camera_hwb_probe(
         device.destroy_image_view(image_view, None);
     }
     swapchain_loader.destroy_swapchain(swapchain, None);
-    drop(camera_runtime);
+    drop(local_provider.camera_runtime);
     #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
     crate::spatial_sdk_depth_handoff::request_spatial_depth_shutdown(
         sdk_binding.session_generation,
@@ -2748,17 +3634,793 @@ unsafe fn render_camera_hwb_probe(
     Ok(CameraHwbProbeStats {
         frames_presented,
         extent,
-        left_camera_id: current_left_frame.camera_id,
-        right_camera_id: current_right_frame.camera_id,
-        left_frame_index: current_left_frame.frame_index,
-        right_frame_index: current_right_frame.frame_index,
-        left_hardware_buffer_id: current_left_frame.descriptor.hardware_buffer_id,
-        right_hardware_buffer_id: current_right_frame.descriptor.hardware_buffer_id,
-        left_hwb_import_sequence: current_left_frame.hwb_import_sequence,
-        right_hwb_import_sequence: current_right_frame.hwb_import_sequence,
-        pair_delta_ns: current_left_frame
+        left_camera_id: local_provider.current_left_frame.camera_id,
+        right_camera_id: local_provider.current_right_frame.camera_id,
+        left_frame_index: local_provider.current_left_frame.frame_index,
+        right_frame_index: local_provider.current_right_frame.frame_index,
+        left_hardware_buffer_id: local_provider
+            .current_left_frame
+            .descriptor
+            .hardware_buffer_id,
+        right_hardware_buffer_id: local_provider
+            .current_right_frame
+            .descriptor
+            .hardware_buffer_id,
+        left_hwb_import_sequence: local_provider.current_left_frame.hwb_import_sequence,
+        right_hwb_import_sequence: local_provider.current_right_frame.hwb_import_sequence,
+        pair_delta_ns: local_provider
+            .current_left_frame
             .timestamp_ns
-            .abs_diff(current_right_frame.timestamp_ns),
-        sampler_mode,
+            .abs_diff(local_provider.current_right_frame.timestamp_ns),
+        sampler_mode: processing_graph.sampler_mode,
     })
 }
+
+unsafe fn render_peer_common_graph(
+    window: *mut vk::ANativeWindow,
+    requested_width: u32,
+    requested_height: u32,
+    max_frames: u32,
+    route_generation: i64,
+    cancellation: Arc<AtomicBool>,
+    ready_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
+) -> Result<(), String> {
+    if cancellation.load(Ordering::Acquire) {
+        return Err("peer-session-cancelled-before-wsi".to_string());
+    }
+    let mut owned = PeerCommonGraphResources::new(CameraHwbWsiParts::create(
+        window,
+        requested_width,
+        requested_height,
+    )?);
+    let run_result = (|| -> Result<(), String> {
+        if cancellation.load(Ordering::Acquire) {
+            return Err("peer-session-cancelled-after-wsi".to_string());
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS);
+        let first_frame = loop {
+            if cancellation.load(Ordering::Acquire) {
+                return Err("peer-session-cancelled-during-first-frame".to_string());
+            }
+            if let Some(frame) = latest_projection_peer_frame().filter(|frame| {
+                frame.route_generation == route_generation as u64
+                    && frame.decoder_token > 0
+                    && frame.reader_generation > 0
+                    && frame.packed_pair.is_some()
+            }) {
+                break frame;
+            }
+            if Instant::now() >= deadline {
+                return Err("peer-first-packed-frame-timeout".to_string());
+            }
+            thread::yield_now();
+        };
+        validate_peer_packed_frame(&first_frame, route_generation)?;
+        if !projection_peer_binding_matches(
+            first_frame.route_generation,
+            first_frame.decoder_token,
+            first_frame.reader_generation,
+        ) {
+            return Err("peer-exact-binding-lost-before-attach".to_string());
+        }
+
+        let wsi = owned.wsi.as_ref().expect("peer WSI initialized");
+        let (source_import_properties, source_format_props) =
+            query_ahb_vulkan_import_properties(&wsi.ahb_device, &first_frame.hardware_buffer)?;
+        owned.normalizer = Some(PackedSbsNormalizer::create(
+            &wsi.device,
+            &wsi.memory_properties,
+            first_frame.descriptor.width,
+            first_frame.descriptor.height,
+            source_import_properties.format_key,
+            &source_format_props,
+        )?);
+        let normalizer = owned.normalizer.as_ref().expect("normalizer initialized");
+        owned.sampled_packed_image = Some(import_ahb_sampled_image(
+            &wsi.device,
+            &wsi.memory_properties,
+            &first_frame.hardware_buffer,
+            AhbVulkanSampledImageCreateInfo {
+                width: first_frame.descriptor.width,
+                height: first_frame.descriptor.height,
+                format_key: source_import_properties.format_key,
+                allocation_size: source_import_properties.allocation_size,
+                memory_type_bits: source_import_properties.memory_type_bits,
+                sampler_ycbcr_conversion: normalizer.source_sampler_ycbcr_conversion(),
+                debug_label: "peer-packed-sbs-source",
+            },
+        )?);
+        owned
+            .normalizer
+            .as_mut()
+            .expect("normalizer initialized")
+            .update_source(
+                &wsi.device,
+                owned
+                    .sampled_packed_image
+                    .as_ref()
+                    .expect("packed image initialized")
+                    .image_view,
+            );
+
+        let normalized_format_properties = wsi
+            .instance
+            .get_physical_device_format_properties(wsi.physical_device, NORMALIZED_EYE_FORMAT);
+        if !normalized_format_properties
+            .optimal_tiling_features
+            .contains(
+                vk::FormatFeatureFlags::COLOR_ATTACHMENT | vk::FormatFeatureFlags::SAMPLED_IMAGE,
+            )
+        {
+            return Err("peer-normalized-eye-format-unsupported".to_string());
+        }
+        let mut normalized_ahb_format_props =
+            vk::AndroidHardwareBufferFormatPropertiesANDROID::default();
+        normalized_ahb_format_props.format = NORMALIZED_EYE_FORMAT;
+        normalized_ahb_format_props.format_features =
+            normalized_format_properties.optimal_tiling_features;
+        let normalized_format_key = AhbVulkanFormatKey {
+            format: NORMALIZED_EYE_FORMAT,
+            external_format: 0,
+        };
+        owned.pending_camera_resources = Some(create_camera_hwb_probe_resources(
+            &wsi.device,
+            wsi.render_pass,
+            normalized_format_key,
+            &normalized_ahb_format_props,
+            CameraHwbProbeMode::RawColorProjection,
+        )?);
+        owned.pending_public_guide_targets = Some(allocate_spatial_public_guide_targets(
+            &wsi.device,
+            &wsi.memory_properties,
+            owned
+                .pending_camera_resources
+                .as_ref()
+                .expect("camera resources initialized")
+                .descriptor_set_layout,
+            wsi.render_pass,
+        )?);
+        let normalized_views = owned
+            .normalizer
+            .as_ref()
+            .expect("normalizer initialized")
+            .image_views();
+        let descriptor_set = allocate_camera_hwb_probe_descriptor_set(
+            &wsi.device,
+            owned
+                .pending_camera_resources
+                .as_ref()
+                .expect("camera resources initialized"),
+            normalized_views[0],
+            Some(normalized_views[1]),
+            CameraHwbProbeMode::RawColorProjection,
+        )?;
+        owned.processing_graph = Some(CameraProcessingGraph {
+            camera_resources: owned
+                .pending_camera_resources
+                .take()
+                .expect("camera resources initialized"),
+            descriptor_set,
+            public_guide_targets: Some(
+                owned
+                    .pending_public_guide_targets
+                    .take()
+                    .expect("public guide targets initialized"),
+            ),
+            camera_replay_capture: None,
+            sampler_mode: "normalized-rgba-full-eye",
+            format_key: normalized_format_key,
+            format_props: normalized_ahb_format_props,
+        });
+        owned.projection_readback = Some(ProjectionReadback::new(
+            wsi.surface_format,
+            wsi.composite_alpha,
+            wsi.extent,
+            wsi.capabilities.supported_usage_flags,
+            wsi.memory_properties,
+        ));
+        let surface_generation = NEXT_SDK_SURFACE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        let pending_route = crate::peer_projection_runtime::read_source(route_generation);
+        if pending_route.words[1] != route_generation
+            || pending_route.words[2] != crate::peer_projection_runtime::SOURCE_PEER
+            || pending_route.words[11] != crate::peer_projection_runtime::RESULT_PENDING
+            || u64::try_from(pending_route.words[3]).ok() != Some(first_frame.decoder_token)
+            || u64::try_from(pending_route.words[4]).ok() != Some(first_frame.reader_generation)
+            || !projection_peer_binding_matches(
+                first_frame.route_generation,
+                first_frame.decoder_token,
+                first_frame.reader_generation,
+            )
+        {
+            let _ = ready_tx.send(Err("peer-exact-binding-lost-before-attach".to_string()));
+            return Err("peer-exact-binding-lost-before-attach".to_string());
+        }
+        let attached =
+            crate::peer_projection_runtime::record_peer_common_graph_attached(route_generation);
+        if attached.words[11] != crate::peer_projection_runtime::RESULT_PENDING {
+            let _ = ready_tx.send(Err("peer-common-graph-attachment-rejected".to_string()));
+            return Err("peer-common-graph-attachment-rejected".to_string());
+        }
+        log_marker(format!(
+        "status=peer-common-graph-attached routeGeneration={} decoderToken={} readerGeneration={} packedHardwareBufferId={} packedExtent={}x{} normalizedEyeExtent={}x{} packedBindingCount=1 commonGraphEyeBindingCount=2 normalizedEyeImagesDistinct=true source=peer-packed-stereo producerPath=peer-decoder-AImageReader-AHardwareBuffer-Vulkan-normalize-common-graph camera2Opened=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi compositorVideoPath=absent-cold-peer-limitation independentRendererStarted=false {} runtimeCrash=false",
+        route_generation,
+        first_frame.decoder_token,
+        first_frame.reader_generation,
+        first_frame.descriptor.hardware_buffer_id,
+        first_frame.descriptor.width,
+        first_frame.descriptor.height,
+        owned.normalizer.as_ref().expect("normalizer initialized").extent().width,
+        owned.normalizer.as_ref().expect("normalizer initialized").extent().height,
+        public_multistack_marker_fields(),
+    ));
+        let _ = ready_tx.send(Ok(()));
+
+        owned.current_frame = Some(first_frame);
+        let PeerCommonGraphResources {
+            wsi: Some(wsi),
+            normalizer: Some(normalizer),
+            sampled_packed_image: Some(sampled_packed_image),
+            processing_graph: Some(processing_graph),
+            projection_readback: Some(projection_readback),
+            current_frame: Some(current_frame),
+            ..
+        } = &mut owned
+        else {
+            return Err("peer-common-graph-resource-owner-incomplete".to_string());
+        };
+        let device = &wsi.device;
+        let ahb_device = &wsi.ahb_device;
+        let memory_properties = wsi.memory_properties;
+        let render_pass = wsi.render_pass;
+        let framebuffers = &wsi.framebuffers;
+        let extent = wsi.extent;
+        let composite_alpha = wsi.composite_alpha;
+        let images = &wsi.images;
+        let command_buffers = &wsi.command_buffers;
+        let frame_fence = wsi.frame_fence;
+        let image_available = wsi.image_available;
+        let render_finished = wsi.render_finished;
+        let swapchain = wsi.swapchain;
+        let swapchain_loader = &wsi.swapchain_loader;
+        let gpu_timestamps = &mut wsi.gpu_timestamps;
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        let queue = wsi.queue;
+        #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+        let sdk_binding = wsi.sdk_binding;
+        let mut transition_packed_source = true;
+        let mut frames_presented = 0_u32;
+        let mut guard_band = CameraReprojectionGuardBandController::default();
+        let render_started = Instant::now();
+        let mut freshness = PeerFrameFreshness::new(0, 0, 0, 1_000);
+        let mut stereo_source_imports =
+            if crate::own_stereo_capture_runtime::capture_route_selected() {
+                if !source_bank_build::SOURCE_BANK_SHADER_COMPILED
+                    || !wsi.foreign_queue_ownership_enabled
+                {
+                    return Err("selected-source-bank-provider-or-foreign-owner-unavailable".into());
+                }
+                let targets = processing_graph
+                    .public_guide_targets
+                    .as_mut()
+                    .ok_or("source-bank-guide-owner-unavailable")?;
+                targets.activate_stereo_banks(
+                    device,
+                    &wsi.instance,
+                    wsi.physical_device,
+                    &memory_properties,
+                    processing_graph.camera_resources.descriptor_set_layout,
+                    2,
+                    include_bytes!(concat!(env!("OUT_DIR"), "/spatial_source_bank.frag.spv")),
+                    include_bytes!(concat!(env!("OUT_DIR"), "/spatial_source_bank.vert.spv")),
+                )?;
+                Some(
+                    crate::spatial_stereo_source_import::StereoSourceImports::create(
+                        device,
+                        &processing_graph.camera_resources,
+                        Some(wsi.queue_family_index),
+                    )?,
+                )
+            } else {
+                None
+            };
+        while max_frames == 0 || frames_presented < max_frames {
+            if cancellation.load(Ordering::Acquire) {
+                break;
+            }
+            let route = crate::peer_projection_runtime::read_source(route_generation);
+            if route.words[1] != route_generation
+                || route.words[2] != crate::peer_projection_runtime::SOURCE_PEER
+                || u64::try_from(route.words[3]).ok() != Some(current_frame.decoder_token)
+                || u64::try_from(route.words[4]).ok() != Some(current_frame.reader_generation)
+                || !matches!(
+                    route.words[11],
+                    crate::peer_projection_runtime::RESULT_PENDING
+                        | crate::peer_projection_runtime::RESULT_EFFECTIVE
+                )
+            {
+                break;
+            }
+            if !projection_peer_binding_matches(
+                current_frame.route_generation,
+                current_frame.decoder_token,
+                current_frame.reader_generation,
+            ) {
+                return Err("peer-exact-binding-lost".to_string());
+            }
+            let next_frame = if frames_presented == 0 {
+                Some((*current_frame).clone())
+            } else {
+                loop {
+                    if cancellation.load(Ordering::Acquire) {
+                        break None;
+                    }
+                    let candidate = latest_projection_peer_frame();
+                    let identity = candidate.as_ref().and_then(|frame| {
+                        frame
+                            .packed_pair
+                            .as_ref()
+                            .map(|pair| (pair.pair_id, frame.import_sequence))
+                    });
+                    match freshness.observe(identity, render_started.elapsed().as_millis() as u64) {
+                        PeerFrameFreshnessDecision::Fresh => break candidate,
+                        PeerFrameFreshnessDecision::Lost => {
+                            return Err("peer-input-freshness-timeout".to_string());
+                        }
+                        PeerFrameFreshnessDecision::Wait => thread::yield_now(),
+                    }
+                }
+            };
+            let Some(next_frame) = next_frame else {
+                break;
+            };
+            device
+                .wait_for_fences(&[frame_fence], true, u64::MAX)
+                .map_err(|error| format!("peer-wait-fence-{error:?}"))?;
+            let next = next_frame;
+            validate_peer_packed_frame(&next, route_generation)?;
+            if next.decoder_token != current_frame.decoder_token
+                || next.reader_generation != current_frame.reader_generation
+            {
+                return Err("peer-hot-decoder-or-reader-switch-unsupported".to_string());
+            }
+            if next.import_sequence > current_frame.import_sequence {
+                let (properties, _) =
+                    query_ahb_vulkan_import_properties(&ahb_device, &next.hardware_buffer)?;
+                if properties.format_key != source_import_properties.format_key
+                    || next.descriptor.width != current_frame.descriptor.width
+                    || next.descriptor.height != current_frame.descriptor.height
+                {
+                    return Err("peer-packed-source-format-or-extent-changed".to_string());
+                }
+                let next_image = import_ahb_sampled_image(
+                    &device,
+                    &memory_properties,
+                    &next.hardware_buffer,
+                    AhbVulkanSampledImageCreateInfo {
+                        width: next.descriptor.width,
+                        height: next.descriptor.height,
+                        format_key: properties.format_key,
+                        allocation_size: properties.allocation_size,
+                        memory_type_bits: properties.memory_type_bits,
+                        sampler_ycbcr_conversion: normalizer.source_sampler_ycbcr_conversion(),
+                        debug_label: "peer-packed-sbs-source",
+                    },
+                )?;
+                normalizer.update_source(&device, next_image.image_view);
+                let previous = std::mem::replace(sampled_packed_image, next_image);
+                previous.destroy(&device);
+                *current_frame = next;
+                transition_packed_source = true;
+            }
+            if !projection_peer_binding_matches(
+                current_frame.route_generation,
+                current_frame.decoder_token,
+                current_frame.reader_generation,
+            ) {
+                return Err("peer-exact-binding-lost-before-submit".to_string());
+            }
+            if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+                targets.retire_stereo_banks_after_fence(&device)?;
+            }
+            if let Some(imports) = stereo_source_imports.as_mut() {
+                imports.retire_after_fence(device)?;
+                crate::spatial_stereo_source_import::synchronize_peer_source()?;
+                imports.refresh(
+                    device,
+                    &memory_properties,
+                    ahb_device,
+                    &processing_graph.camera_resources,
+                    CameraHwbProbeMode::RawColorProjection,
+                    1_000_000_000,
+                )?;
+            }
+            device
+                .reset_fences(&[frame_fence])
+                .map_err(|error| format!("peer-reset-fence-{error:?}"))?;
+            let image_index = match swapchain_loader.acquire_next_image(
+                swapchain,
+                u64::MAX,
+                image_available,
+                vk::Fence::null(),
+            ) {
+                Ok((index, _)) => index,
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
+                Err(error) => return Err(format!("peer-acquire-next-image-{error:?}")),
+            };
+            let command_buffer = command_buffers[image_index as usize];
+            let latency_settings = current_camera_latency_settings();
+            let camera_reprojection = current_camera_latency_stereo_reprojection(None, None);
+            let zone_settings = current_projection_zone_compositor_settings();
+            projection_readback.observe_control(zone_settings);
+            let projection_guard_band = guard_band.update_for_projection_buffer(
+                latency_settings,
+                zone_settings.buffer_geometry_mode,
+                zone_settings.buffer_static_width_uv,
+                zone_settings.buffer_minimum_width_uv,
+                zone_settings.buffer_maximum_width_uv,
+                zone_settings.buffer_maximum_speed_meters_per_second,
+                camera_reprojection,
+                boottime_now_ns(),
+            );
+            let normalized_images = normalizer.images();
+            let video_settings = spatial_video_projection_settings();
+            let stereo_inputs = if let Some(imports) = stereo_source_imports.as_mut() {
+                let (words, revision) =
+                    crate::spatial_public_multistack_runtime::read_control_policy();
+                let policy = crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
+                    region_origins: [words[0], words[1], words[2], words[3]],
+                    guide_origins: [words[4], words[5], 0, 0],
+                    source_state: [0, 0, 1, 0],
+                };
+                // Conservative neutral demand covers every selected guide stage;
+                // private effect demand may later reduce this prefix explicitly.
+                let mut prefixes = [0usize; 2];
+                for &origin in &words[..4] {
+                    prefixes[origin as usize] = 6;
+                }
+                for &origin in &words[4..] {
+                    if origin < 2 {
+                        prefixes[origin as usize] = 6;
+                    }
+                }
+                Some(imports.recording_inputs(
+                    policy,
+                    revision,
+                    prefixes,
+                    frame_fence,
+                    u64::from(frames_presented) + 1,
+                    surface_generation,
+                )?)
+            } else {
+                None
+            };
+            let record_result = record_camera_hwb_probe_command_buffer(
+                &device,
+                command_buffer,
+                render_pass,
+                framebuffers[image_index as usize],
+                extent,
+                &processing_graph.camera_resources,
+                stereo_inputs
+                    .as_ref()
+                    .and_then(|inputs| {
+                        inputs
+                            .sources
+                            .iter()
+                            .flatten()
+                            .find(|source| inputs.demanded_prefixes[source.key.origin] > 0)
+                    })
+                    .map_or(processing_graph.descriptor_set, |source| {
+                        source.descriptor_set
+                    }),
+                normalized_images[0],
+                Some(normalized_images[1]),
+                false,
+                false,
+                if stereo_inputs.is_some() {
+                    None
+                } else {
+                    Some((normalizer, sampled_packed_image, transition_packed_source))
+                },
+                processing_graph.public_guide_targets.as_mut(),
+                stereo_inputs,
+                render_started.elapsed().as_secs_f32(),
+                None,
+                None,
+                &video_settings,
+                gpu_timestamps,
+                image_index as usize,
+                u64::from(frames_presented) + 1,
+                camera_reprojection,
+                projection_guard_band,
+                latency_settings,
+                processing_graph.camera_replay_capture.as_mut(),
+                boottime_now_ns().max(0) as u64,
+                CameraReplayFrameMetadata {
+                    left_camera_id: "peer-left".to_string(),
+                    right_camera_id: "peer-right".to_string(),
+                    left_frame_index: current_frame.frame_index,
+                    right_frame_index: current_frame.frame_index,
+                    left_timestamp_ns: current_frame.timestamp_ns,
+                    right_timestamp_ns: current_frame.timestamp_ns,
+                    pair_delta_ns: current_frame
+                        .packed_pair
+                        .as_ref()
+                        .map(|pair| pair.pair_delta_ns as u64)
+                        .unwrap_or(0),
+                },
+                composite_alpha,
+                images[image_index as usize],
+                surface_generation,
+                projection_readback,
+            )?;
+            transition_packed_source = false;
+
+            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+            {
+                let waits = [image_available];
+                let stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+                let signals = [render_finished];
+                let buffers = [command_buffer];
+                let submits = [vk::SubmitInfo::default()
+                    .wait_semaphores(&waits)
+                    .wait_dst_stage_mask(&stages)
+                    .command_buffers(&buffers)
+                    .signal_semaphores(&signals)];
+                if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+                    targets.mark_stereo_submission_entered()?;
+                }
+                device
+                    .queue_submit(queue, &submits, frame_fence)
+                    .map_err(|error| format!("peer-queue-submit-{error:?}"))?;
+                let swapchains = [swapchain];
+                let indices = [image_index];
+                match swapchain_loader.queue_present(
+                    queue,
+                    &vk::PresentInfoKHR::default()
+                        .wait_semaphores(&signals)
+                        .swapchains(&swapchains)
+                        .image_indices(&indices),
+                ) {
+                    Ok(_) => {}
+                    Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
+                    Err(error) => return Err(format!("peer-queue-present-{error:?}")),
+                }
+            }
+            #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
+            {
+                let request_id = (surface_generation << 32) | u64::from(frames_presented + 1);
+                if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+                    targets.mark_stereo_submission_entered()?;
+                }
+                let enqueue = crate::spatial_sdk_depth_handoff::enqueue_spatial_submit_present(
+                    sdk_binding,
+                    request_id,
+                    0,
+                    surface_generation,
+                    0,
+                    command_buffer.as_raw(),
+                    image_available.as_raw(),
+                    render_finished.as_raw(),
+                    frame_fence.as_raw(),
+                    swapchain.as_raw(),
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT.as_raw(),
+                    image_index,
+                );
+                if enqueue != 3 && enqueue != 0 {
+                    projection_readback.cancel_unsubmitted("peer-spatial-sdk-enqueue");
+                    return Err(format!("peer-spatial-sdk-enqueue-{enqueue}"));
+                }
+                let retirement_deadline = Instant::now() + Duration::from_secs(2);
+                let mut retirement =
+                    crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState::new(request_id);
+                let mut shutdown_reason = None;
+                loop {
+                    if shutdown_reason.is_none()
+                        && (cancellation.load(Ordering::Acquire)
+                            || Instant::now() >= retirement_deadline)
+                    {
+                        shutdown_reason = Some(if cancellation.load(Ordering::Acquire) {
+                            "peer-session-cancelled-during-sdk-retirement"
+                        } else {
+                            "peer-spatial-sdk-retirement-timeout"
+                        });
+                        crate::spatial_sdk_depth_handoff::request_spatial_depth_shutdown(
+                            sdk_binding.session_generation,
+                        );
+                    }
+                    if retirement.broker_status.is_none() {
+                        match crate::spatial_sdk_depth_handoff::poll_spatial_submit_request(
+                            request_id,
+                        ) {
+                            Ok(result) if result.status == 0 || result.status < 0 => {
+                                if !retirement.observe_terminal(result) {
+                                    crate::spatial_sdk_depth_handoff::request_spatial_depth_shutdown(
+                                        sdk_binding.session_generation,
+                                    );
+                                    return Err(
+                                        "peer-spatial-sdk-invalid-terminal-result".to_string()
+                                    );
+                                }
+                            }
+                            Ok(_) => retirement.observe_not_ready(),
+                            Err(status)
+                                if status == crate::spatial_sdk_depth_handoff::STATUS_NOT_READY =>
+                            {
+                                retirement.observe_not_ready();
+                            }
+                            Err(status) => {
+                                // The broker did not provide a typed submitted/unsubmitted
+                                // terminal result. Cancel the owning SDK session and keep the
+                                // AImage-backed source pinned until device-idle teardown.
+                                crate::spatial_sdk_depth_handoff::request_spatial_depth_shutdown(
+                                    sdk_binding.session_generation,
+                                );
+                                return Err(format!("peer-spatial-sdk-poll-{status}"));
+                            }
+                        }
+                    }
+                    if retirement.accepted_submission_requires_fence() {
+                        match device.get_fence_status(frame_fence) {
+                            Ok(true) => retirement.observe_fence(),
+                            Ok(false) => {}
+                            Err(error) => {
+                                crate::spatial_sdk_depth_handoff::request_spatial_depth_shutdown(
+                                    sdk_binding.session_generation,
+                                );
+                                return Err(format!("peer-poll-fence-{error:?}"));
+                            }
+                        }
+                    }
+                    match retirement.action() {
+                        crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::Wait => {}
+                        crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseSuccess => {
+                            if let Some(reason) = shutdown_reason {
+                                return Err(reason.to_string());
+                            }
+                            break;
+                        }
+                        crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseUnsubmittedFailure => {
+                            return Err(shutdown_reason.map(str::to_string).unwrap_or_else(|| {
+                                format!(
+                                    "peer-spatial-sdk-unsubmitted-{}-vk-{}",
+                                    retirement.broker_status.unwrap_or(-1),
+                                    retirement.broker_vk_result,
+                                )
+                            }));
+                        }
+                        crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementAction::ReleaseSubmittedFailure => {
+                            return Err(shutdown_reason.map(str::to_string).unwrap_or_else(|| {
+                                format!(
+                                    "peer-spatial-sdk-submitted-{}-vk-{}",
+                                    retirement.broker_status.unwrap_or(-1),
+                                    retirement.broker_vk_result,
+                                )
+                            }));
+                        }
+                    }
+                    thread::yield_now();
+                }
+            }
+            device
+                .wait_for_fences(&[frame_fence], true, u64::MAX)
+                .map_err(|error| format!("peer-retirement-fence-{error:?}"))?;
+            projection_readback.retire_after_fence(&device);
+            frames_presented = frames_presented.saturating_add(1);
+            let pair_generation = current_frame
+                .packed_pair
+                .as_ref()
+                .map(|pair| pair.pair_id)
+                .unwrap_or(0);
+            let effective = crate::peer_projection_runtime::record_peer_submission_retired(
+                route_generation,
+                PeerFrameWitness {
+                    decoder_token: current_frame.decoder_token,
+                    reader_generation: current_frame.reader_generation,
+                    pair_generation,
+                    import_generation: current_frame.import_sequence,
+                },
+            );
+            if effective.words[11] != crate::peer_projection_runtime::RESULT_EFFECTIVE {
+                return Err("peer-submission-retirement-rejected".to_string());
+            }
+            // Only embedded-duplex frames carry receiver identities. Other
+            // peer video keeps its existing graph retirement behavior.
+            if let Some(packed) = current_frame
+                .packed_pair
+                .as_ref()
+                .filter(|pair| pair.receiver_generation != 0)
+            {
+                let gpu_identity = crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+                    receiver_generation: packed.receiver_generation,
+                    connection_generation: packed.connection_generation,
+                    route_generation: current_frame.route_generation,
+                    decoder_token: current_frame.decoder_token,
+                    reader_generation: current_frame.reader_generation,
+                    presentation_time_ns: current_frame.timestamp_ns,
+                    source_elapsed_ns: packed.source_elapsed_ns,
+                    source_unix_ns: packed.source_unix_ns,
+                    pair_id: packed.pair_id,
+                    left_source_frame: packed.left_source_frame,
+                    right_source_frame: packed.right_source_frame,
+                    left_sensor_timestamp_ns: packed.left_sensor_timestamp_ns,
+                    right_sensor_timestamp_ns: packed.right_sensor_timestamp_ns,
+                    pair_delta_ns: packed.pair_delta_ns,
+                };
+                let gpu_retired_ns = crate::peer_projection_runtime::monotonic_now_ns();
+                if gpu_retired_ns <= 0
+                    || crate::embedded_duplex::frame_identity::record_receiver_frame_gpu_retired(
+                        gpu_identity,
+                        current_frame.import_sequence,
+                        gpu_retired_ns as u64,
+                    ) != crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::Accepted
+                {
+                    return Err("peer-exact-gpu-identity-rejected".to_string());
+                }
+            }
+            freshness.commit(
+                pair_generation,
+                current_frame.import_sequence,
+                render_started.elapsed().as_millis() as u64,
+            );
+            if frames_presented <= 4 || frames_presented % 300 == 0 {
+                log_marker(format!(
+                "status=peer-common-graph-frame-retired routeGeneration={} framesPresented={} decoderToken={} readerGeneration={} pairGeneration={} importGeneration={} packedHardwareBufferId={} normalizedEyeImagesDistinct=true commonGraphSubmitted=true publicPrivateGuidePassesRetained=true zoneCompositorRetained=true wsiCarrierRetained=true camera2Opened=false videoProjectionRendered={} runtimeCrash=false",
+                route_generation,
+                frames_presented,
+                current_frame.decoder_token,
+                current_frame.reader_generation,
+                pair_generation,
+                current_frame.import_sequence,
+                current_frame.descriptor.hardware_buffer_id,
+                record_result.video_stats.rendered,
+            ));
+            }
+        }
+        if let Some(mut imports) = stereo_source_imports {
+            device
+                .wait_for_fences(&[frame_fence], true, u64::MAX)
+                .map_err(|e| format!("stereo-final-retire-{e:?}"))?;
+            if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+                targets.retire_stereo_banks_after_fence(device)?;
+            }
+            imports.retire_after_fence(device)?;
+            imports.destroy(device)?;
+        }
+        Ok(())
+    })();
+
+    let cleanup_result = owned.teardown();
+    run_result.and(cleanup_result)
+}
+
+fn validate_peer_packed_frame(
+    frame: &SpatialVideoProjectionFrame,
+    route_generation: i64,
+) -> Result<(), String> {
+    let plan = packed_sbs_normalization_plan(frame.descriptor.width, frame.descriptor.height);
+    if frame.route_generation != route_generation as u64
+        || frame.decoder_token == 0
+        || frame.reader_generation == 0
+        || frame.import_sequence == 0
+        || plan.is_none()
+        || frame.configured_width != frame.descriptor.width as i32
+        || frame.configured_height != frame.descriptor.height as i32
+        || frame
+            .packed_pair
+            .as_ref()
+            .is_none_or(|pair| pair.pair_id == 0)
+    {
+        return Err("peer-packed-frame-identity-or-layout-invalid".to_string());
+    }
+    Ok(())
+}
+
+mod source_bank_build {
+    include!(concat!(env!("OUT_DIR"), "/spatial_source_bank_build.rs"));
+}
+
+#[path = "camera_hwb_source_set.rs"]
+mod source_set;
+pub(crate) use source_set::start_source_set_common_graph;

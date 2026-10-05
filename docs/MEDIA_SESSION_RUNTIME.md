@@ -97,6 +97,29 @@ The compatibility host may delegate media mechanics to the shared AAR while
 keeping those policies local. It must not compile private copies of module
 classes into its source list.
 
+### Signed retained cleanup
+
+The selected embedded executor installs the two-principal retained-cleanup
+protocol. A fresh authenticated requester can be the original holder or a
+separately admitted trusted revoker. The original target client, lease,
+resource tuple and execution provenance remain immutable; expiry does not
+turn them into an ordinary live grant.
+
+For remote effects, a fixed signed prepare exchange makes the target derive
+its own Stop ticket from its independently retained Start tuple and current
+executor identity. Commit binds that exact cached ticket, preparation and
+requester projection. The source completion carries a typed authenticated
+remote-effect proof with the original target readback bytes, rather than
+pretending that source and target tickets are equal. Ordinary readbacks omit
+this optional proof and retain their existing wire representation.
+
+Durable replay reservation precedes effects. Completed replies replay without
+executing a second effect; uncertain attempts remain Pending and retain the
+same target and cleanup credentials. Fresh requester authority can progress
+that retained obligation, but cannot mint teardown evidence. Terminal media
+Stop requires all seven actual owner effects plus route cleanup; it does not
+by itself establish whole-app camera, renderer or control-endpoint closure.
+
 ## Product build API
 
 Full media broker builds require `-MediaSessionBindingPath`. The committed

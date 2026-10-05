@@ -217,6 +217,20 @@ val offlineMediaPackAssetDir =
 val offlineMediaPackagedAssets =
   offlineMediaPackAssetDir.map { it.isNotBlank().toString() }.orElse("false")
 
+val embeddedDuplexProductManifestSha256 =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256")
+    .map { raw ->
+      val value = raw.trim()
+      require(value.isEmpty() || value.matches(Regex("^[a-f0-9]{64}$"))) {
+        "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256 must be empty or lowercase SHA-256"
+      }
+      value
+    }
+    .orElse("")
+
+val embeddedDuplexProductInputsEnabled =
+  embeddedDuplexProductManifestSha256.map { it.isNotEmpty().toString() }
+
 val spatialNdkVersion =
   providers.environmentVariable("RUSTY_QUEST_ANDROID_NDK_VERSION")
     .orElse("27.2.12479018")
@@ -248,6 +262,9 @@ android {
       ndk { abiFilters += "arm64-v8a" }
       externalNativeBuild {
         cmake {
+          val sourceBanks = providers.gradleProperty("rqSourceBanksForeignOwnership").orElse("false").get()
+          require(sourceBanks == "true" || sourceBanks == "false") { "invalid source-bank ownership selection" }
+          arguments += "-DRQ_SOURCE_BANKS_FOREIGN_OWNERSHIP=" + (if (sourceBanks == "true") "ON" else "OFF")
           cppFlags += listOf("-std=c++20")
           targets += "XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff"
         }
@@ -372,6 +389,16 @@ android {
       "OFFLINE_MEDIA_PACKAGED_ASSETS",
       offlineMediaPackagedAssets.get(),
     )
+    buildConfigField(
+      "String",
+      "EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256",
+      buildConfigString(embeddedDuplexProductManifestSha256.get()),
+    )
+    buildConfigField(
+      "boolean",
+      "EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED",
+      embeddedDuplexProductInputsEnabled.get(),
+    )
   }
 
   if (spatialSdkDepthApiLayerEnabled.get()) {
@@ -437,6 +464,15 @@ android {
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { assets.srcDir(it) }
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_ASSET_ROOT").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { assetRoot ->
+          val embeddedDuplexRoot = file(assetRoot).resolve("embedded-duplex")
+          require(embeddedDuplexRoot.isDirectory) {
+            "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_ASSET_ROOT must contain embedded-duplex/"
+          }
+          assets.srcDir(assetRoot)
+        }
       spatialHandMeshRigAssetDir.orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { assets.srcDir(it) }
@@ -471,8 +507,22 @@ android {
   kotlinOptions { jvmTarget = "17" }
 }
 
+val embeddedMediaBuildDir = providers.gradleProperty("mediaBuildDir").orNull
+  ?.let { file(it) }
+  ?: project(":media-stream-android").layout.buildDirectory.get().asFile
+val embeddedMediaAar = embeddedMediaBuildDir.resolve(
+  "outputs/aar/rusty-quest-media-stream-android-release.aar",
+)
+// AGP resolves the file AAR from several tasks, including library discovery and component export.
+tasks.configureEach {
+  if (name != "clean" && group != "help") {
+    dependsOn(":media-stream-android:bundleReleaseAar")
+  }
+}
+
 dependencies {
   implementation(project(":spatial-sdk-shared"))
+  implementation(files(embeddedMediaAar))
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.activity.compose)
   implementation(platform(libs.androidx.compose.bom))

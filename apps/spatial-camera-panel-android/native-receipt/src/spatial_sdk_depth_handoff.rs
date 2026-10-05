@@ -136,9 +136,27 @@ pub(crate) enum SpatialSubmitRetirementAction {
     ReleaseSubmittedFailure,
 }
 
+/// Opaque positive never-entered proof; only exact typed broker completion constructs it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SpatialUnsubmittedProof {
+    session: u64,
+    request: u64,
+    fence: u64,
+}
+impl SpatialUnsubmittedProof {
+    pub(crate) fn matches_request(&self, session: u64, request: u64) -> bool {
+        self.session == session && self.request == request
+    }
+    pub(crate) fn matches(&self, session: u64, request: u64, fence: u64) -> bool {
+        self.session == session && self.request == request && self.fence == fence
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SpatialSubmitRetirementState {
     pub(crate) request_id: u64,
+    submission_identity: Option<(u64, u64)>,
+    unsubmitted_proof: Option<SpatialUnsubmittedProof>,
     pub(crate) broker_status: Option<i32>,
     pub(crate) broker_vk_result: i32,
     pub(crate) qualification_flags: u32,
@@ -151,6 +169,8 @@ impl SpatialSubmitRetirementState {
     pub(crate) fn new(request_id: u64) -> Self {
         Self {
             request_id,
+            submission_identity: None,
+            unsubmitted_proof: None,
             broker_status: None,
             broker_vk_result: 0,
             qualification_flags: 0,
@@ -160,6 +180,17 @@ impl SpatialSubmitRetirementState {
         }
     }
 
+    /// Identity is retained from the exact admitted SDK enqueue, not a caller assertion.
+    pub(crate) fn new_bound(request_id: u64, session_generation: u64, fence_handle: u64) -> Self {
+        let mut state = Self::new(request_id);
+        if request_id != 0 && session_generation != 0 && fence_handle != 0 {
+            state.submission_identity = Some((session_generation, fence_handle));
+        }
+        state
+    }
+    pub(crate) fn unsubmitted_proof(&self) -> Option<&SpatialUnsubmittedProof> {
+        self.unsubmitted_proof.as_ref()
+    }
     pub(crate) fn observe_not_ready(&mut self) {
         if self.broker_status.is_none() {
             self.not_ready_count = self.not_ready_count.saturating_add(1);
@@ -167,8 +198,30 @@ impl SpatialSubmitRetirementState {
     }
 
     pub(crate) fn observe_terminal(&mut self, result: SpatialDepthRequestResultV1) -> bool {
-        if self.broker_status.is_some() || (result.status != STATUS_OK && result.status >= 0) {
+        if self.broker_status.is_some()
+            || result.request_id != self.request_id
+            || (result.status != STATUS_OK && result.status >= 0)
+        {
             return false;
+        }
+        if let Some((session, fence)) = self.submission_identity {
+            if result.struct_size == std::mem::size_of::<SpatialDepthRequestResultV1>() as u32
+                && result.abi_version == ABI_V1
+                && result.generation == session
+                && result.kind == 1
+                && result.state == 4
+                && result.status < 0
+                && result.submitted_monotonic_ns == 0
+                && result.queue_submit_cpu_ns == 0
+                && result.completed_monotonic_ns != 0
+                && result.qualification_flags & QUALIFICATION_QUEUE_SUBMIT_ACCEPTED == 0
+            {
+                self.unsubmitted_proof = Some(SpatialUnsubmittedProof {
+                    session,
+                    request: self.request_id,
+                    fence,
+                });
+            }
         }
         self.broker_status = Some(result.status);
         self.broker_vk_result = result.vk_result;
@@ -179,6 +232,10 @@ impl SpatialSubmitRetirementState {
 
     pub(crate) fn observe_fence(&mut self) {
         self.fence_signaled = true;
+    }
+
+    pub(crate) fn accepted_submission_requires_fence(&self) -> bool {
+        self.qualification_flags & QUALIFICATION_QUEUE_SUBMIT_ACCEPTED != 0 && !self.fence_signaled
     }
 
     pub(crate) fn action(&self) -> SpatialSubmitRetirementAction {
@@ -608,6 +665,17 @@ mod tests {
     }
 
     #[test]
+    fn queued_cancel_after_shutdown_never_waits_for_an_unsignaled_fence() {
+        let mut state = SpatialSubmitRetirementState::new(17);
+        assert!(state.observe_terminal(terminal_result(-10, 0)));
+        assert!(!state.accepted_submission_requires_fence());
+        assert_eq!(
+            state.action(),
+            SpatialSubmitRetirementAction::ReleaseUnsubmittedFailure
+        );
+    }
+
+    #[test]
     fn submitted_failure_and_session_replacement_keep_lease_until_fence() {
         let mut state = SpatialSubmitRetirementState::new(17);
         assert!(state.observe_terminal(terminal_result(-9, QUALIFICATION_QUEUE_SUBMIT_ACCEPTED,)));
@@ -619,3 +687,5 @@ mod tests {
         );
     }
 }
+
+pub(crate) const SPATIAL_DEPTH_CAP_FOREIGN_QUEUE_OWNERSHIP_V2: u32 = 1 << 5;

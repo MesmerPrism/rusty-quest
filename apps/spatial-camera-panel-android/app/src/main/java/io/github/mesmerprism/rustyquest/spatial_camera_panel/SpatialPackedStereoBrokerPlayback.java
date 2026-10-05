@@ -18,8 +18,8 @@ import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
-import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.BooleanSupplier;
 
 /** Transport-neutral one-stream RMANVID v4 packed-stereo source for Spatial projection. */
 final class SpatialPackedStereoBrokerPlayback {
@@ -33,6 +33,7 @@ final class SpatialPackedStereoBrokerPlayback {
     private static final int CODEC_H264 = 1;
     private static final int MAX_METADATA_BYTES = 256 * 1024;
     private static final int MAX_PACKET_BYTES = 1024 * 1024;
+    private static final int MAX_PENDING_PAIR_IDENTITIES = 128;
     private static final long DEQUEUE_TIMEOUT_US = 10_000L;
 
     private SpatialPackedStereoBrokerPlayback() {}
@@ -52,6 +53,8 @@ final class SpatialPackedStereoBrokerPlayback {
         int requestedHeight,
         int maxImages,
         int fpsCap,
+        long decoderToken,
+        BooleanSupplier stopRequested,
         Runnable onFirstFrame
     ) throws IOException {
         if (!MEDIA_LAYOUT.equals(mediaLayout) || port <= 0 || port > 65535) {
@@ -81,7 +84,7 @@ final class SpatialPackedStereoBrokerPlayback {
             Header header = Header.read(input, requestedWidth, requestedHeight);
             codec = createHardwareDecoder(surface, header.width, header.height);
             PairSequence sequence = new PairSequence();
-            TreeMap<Long, PairRecord> queuedPairs = new TreeMap<>();
+            PendingPairIdentities queuedPairs = new PendingPairIdentities();
             MediaCodec.BufferInfo outputInfo = new MediaCodec.BufferInfo();
             long queuedPackets = 0L;
             long renderedFrames = 0L;
@@ -93,12 +96,12 @@ final class SpatialPackedStereoBrokerPlayback {
                     peerSessionId,
                     peerAuthToken != null && !peerAuthToken.trim().isEmpty()),
                 header.width, header.height, maxImages, fpsCap));
-            while (!SpatialStereoVideoPlayback.isStopRequested()) {
+            while (!stopRequested.getAsBoolean()) {
                 Packet packet;
                 try {
                     packet = Packet.read(input, header.maxPairDeltaNs);
                 } catch (SocketTimeoutException timeout) {
-                    long drained = drain(codec, outputInfo, queuedPairs);
+                    long drained = drain(codec, outputInfo, queuedPairs, decoderToken);
                     if (renderedFrames == 0L && drained > 0L) {
                         onFirstFrame.run();
                     }
@@ -120,13 +123,13 @@ final class SpatialPackedStereoBrokerPlayback {
                 int inputIndex;
                 do {
                     inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US);
-                    long drained = drain(codec, outputInfo, queuedPairs);
+                    long drained = drain(codec, outputInfo, queuedPairs, decoderToken);
                     if (renderedFrames == 0L && drained > 0L) {
                         onFirstFrame.run();
                     }
                     renderedFrames += drained;
                     SpatialPeerStereoStatus.rendered(renderedFrames);
-                } while (inputIndex < 0 && !SpatialStereoVideoPlayback.isStopRequested());
+                } while (inputIndex < 0 && !stopRequested.getAsBoolean());
                 if (inputIndex < 0) {
                     break;
                 }
@@ -136,21 +139,25 @@ final class SpatialPackedStereoBrokerPlayback {
                 }
                 buffer.clear();
                 buffer.put(packet.payload);
-                codec.queueInputBuffer(
-                    inputIndex,
-                    0,
-                    packet.payload.length,
-                    packet.ptsUs,
-                    packet.flags
-                );
                 if (!packet.codecConfig) {
-                    queuedPairs.put(packet.ptsUs, packet.pair);
-                    while (queuedPairs.size() > 128) {
-                        queuedPairs.pollFirstEntry();
+                    queuedPairs.register(packet.ptsUs, packet.pair);
+                }
+                try {
+                    codec.queueInputBuffer(
+                        inputIndex,
+                        0,
+                        packet.payload.length,
+                        packet.ptsUs,
+                        packet.flags
+                    );
+                } catch (RuntimeException error) {
+                    if (!packet.codecConfig) {
+                        queuedPairs.removeExact(packet.ptsUs);
                     }
+                    throw error;
                 }
                 queuedPackets++;
-                long drained = drain(codec, outputInfo, queuedPairs);
+                long drained = drain(codec, outputInfo, queuedPairs, decoderToken);
                 if (renderedFrames == 0L && drained > 0L) {
                     onFirstFrame.run();
                 }
@@ -192,7 +199,8 @@ final class SpatialPackedStereoBrokerPlayback {
     private static long drain(
         MediaCodec codec,
         MediaCodec.BufferInfo info,
-        TreeMap<Long, PairRecord> queuedPairs
+        PendingPairIdentities queuedPairs,
+        long decoderToken
     ) throws IOException {
         long rendered = 0L;
         while (true) {
@@ -202,25 +210,24 @@ final class SpatialPackedStereoBrokerPlayback {
             }
             boolean render = info.size != 0;
             if (render) {
-                PairRecord pair = queuedPairs.remove(info.presentationTimeUs);
-                if (pair == null) {
-                    Map.Entry<Long, PairRecord> floor = queuedPairs.floorEntry(info.presentationTimeUs);
-                    if (floor != null) {
-                        pair = floor.getValue();
-                        queuedPairs.remove(floor.getKey());
+                try {
+                    PairRecord pair = queuedPairs.takeExact(info.presentationTimeUs);
+                    long outputPresentationTimeNs = outputTimestampNs(info.presentationTimeUs);
+                    if (!nativeRegisterPackedStereoPairMetadata(
+                            decoderToken,
+                            outputPresentationTimeNs,
+                            pair.pairId,
+                            pair.leftSourceFrame,
+                            pair.rightSourceFrame,
+                            pair.leftSensorTimestampNs,
+                            pair.rightSensorTimestampNs,
+                            pair.pairDeltaNs)) {
+                        throw new IOException("Spatial packed decoder output identity was rejected");
                     }
+                } catch (IOException | RuntimeException error) {
+                    codec.releaseOutputBuffer(outputIndex, false);
+                    throw error;
                 }
-                if (pair == null) {
-                    throw new IOException("Spatial packed decoder output lacks pair metadata");
-                }
-                nativeSetPackedStereoPairMetadata(
-                    pair.pairId,
-                    pair.leftSourceFrame,
-                    pair.rightSourceFrame,
-                    pair.leftSensorTimestampNs,
-                    pair.rightSensorTimestampNs,
-                    pair.pairDeltaNs
-                );
             }
             codec.releaseOutputBuffer(outputIndex, render);
             if (render) {
@@ -274,6 +281,14 @@ final class SpatialPackedStereoBrokerPlayback {
             || name.startsWith("omx.google.")
             || name.contains("google")
             || name.contains("software");
+    }
+
+    static long outputTimestampNs(long presentationTimeUs) throws IOException {
+        try {
+            return Math.multiplyExact(presentationTimeUs, 1_000L);
+        } catch (ArithmeticException error) {
+            throw new IOException("Spatial packed decoder output timestamp overflows nanoseconds", error);
+        }
     }
 
     private static final class Header {
@@ -377,7 +392,7 @@ final class SpatialPackedStereoBrokerPlayback {
         }
     }
 
-    private static final class PairRecord {
+    static final class PairRecord {
         final long pairId;
         final long leftSourceFrame;
         final long rightSourceFrame;
@@ -421,6 +436,36 @@ final class SpatialPackedStereoBrokerPlayback {
         }
     }
 
+    static final class PendingPairIdentities {
+        private final TreeMap<Long, PairRecord> records = new TreeMap<>();
+
+        void register(long presentationTimeUs, PairRecord pair) throws IOException {
+            if (records.containsKey(presentationTimeUs)) {
+                throw new IOException("Spatial packed decoder input repeats a presentation timestamp");
+            }
+            if (records.size() >= MAX_PENDING_PAIR_IDENTITIES) {
+                throw new IOException("Spatial packed decoder pair metadata limit reached");
+            }
+            records.put(presentationTimeUs, pair);
+        }
+
+        PairRecord takeExact(long presentationTimeUs) throws IOException {
+            PairRecord pair = records.remove(presentationTimeUs);
+            if (pair == null) {
+                throw new IOException("Spatial packed decoder output lacks exact pair metadata");
+            }
+            return pair;
+        }
+
+        PairRecord removeExact(long presentationTimeUs) {
+            return records.remove(presentationTimeUs);
+        }
+
+        int size() {
+            return records.size();
+        }
+    }
+
     private static final class PairSequence {
         long pairId;
         long leftFrame;
@@ -442,7 +487,9 @@ final class SpatialPackedStereoBrokerPlayback {
         }
     }
 
-    private static native void nativeSetPackedStereoPairMetadata(
+    private static native boolean nativeRegisterPackedStereoPairMetadata(
+        long decoderToken,
+        long outputPresentationTimeNs,
         long pairId,
         long leftSourceFrame,
         long rightSourceFrame,

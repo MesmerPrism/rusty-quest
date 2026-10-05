@@ -220,6 +220,5 @@ internal class SpatialVideoProjectionProbeCoordinator(
 
 internal object SpatialVideoProjectionStartupPolicy {
   fun delegateStreamToCameraProjection(cameraProjectionEnabled: Boolean, source: String): Boolean =
-      cameraProjectionEnabled &&
-          (source == "broker-rmanvid1" || source == "peer-packed-stereo")
+      cameraProjectionEnabled && source == "broker-rmanvid1"
 }

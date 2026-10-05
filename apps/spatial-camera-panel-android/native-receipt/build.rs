@@ -9,6 +9,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
     emit_environment_depth_owner_cfg();
     write_spatial_presentation_policy(&out_dir);
+    write_own_capture_hold_contract(&out_dir);
     write_recorded_hand_replay_source(&out_dir);
     let shaders = [
         (
@@ -59,6 +60,11 @@ fn main() {
         (
             "shaders/camera_hwb_raw_color.frag.glsl",
             "camera_hwb_raw_color.frag.spv",
+            "fragment",
+        ),
+        (
+            "shaders/packed_sbs_normalize.frag.glsl",
+            "packed_sbs_normalize.frag.spv",
             "fragment",
         ),
         (
@@ -129,6 +135,36 @@ fn main() {
         "fragment",
         &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string()],
     );
+    let source_bank_vertex = compile_optional_shader_env_with_args(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER",
+        "spatial_source_bank.vert.spv",
+        "vertex",
+        &[
+            "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
+            "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+        ],
+    );
+    let source_bank_fragment = compile_optional_shader_env_with_args(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
+        "spatial_source_bank.frag.spv",
+        "fragment",
+        &[
+            "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
+            "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+        ],
+    );
+    fs::write(
+        out_dir.join("spatial_source_bank_build.rs"),
+        format!(
+            "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};",
+            source_bank_vertex.compiled && source_bank_fragment.compiled
+        ),
+    )
+    .expect("write source bank shader metadata");
     let opaque_projection_effect =
         opaque_projection_effect_env("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT");
     let projection_surface_uniform_abi_version = projection_surface_uniform_abi_version_env(
@@ -1166,4 +1202,60 @@ fn env_path(key: &str) -> Option<PathBuf> {
     env::var_os(key)
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
+}
+
+fn write_own_capture_hold_contract(out_dir: &Path) {
+    let keys = [
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES",
+    ];
+    for key in keys {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+    let values: Vec<_> = keys.iter().map(|key| env::var(key).ok()).collect();
+    let source_keys = [
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
+    ];
+    for key in source_keys {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+    let providers: Vec<_> = source_keys.iter().map(|key| env::var_os(key)).collect();
+    assert!(
+        providers.iter().all(Option::is_none) || providers.iter().all(Option::is_some),
+        "source bank shader provider must be an exact pair"
+    );
+    let selected = providers.iter().all(Option::is_some);
+    let limits = if values.iter().all(Option::is_none) {
+        "None".to_string()
+    } else {
+        assert!(
+            selected && values.iter().all(Option::is_some),
+            "Own capture requires complete selected hold contract"
+        );
+        let numbers: Vec<u64> = values
+            .iter()
+            .map(|value| {
+                value
+                    .as_ref()
+                    .unwrap()
+                    .parse::<u64>()
+                    .expect("Own capture holds must be positive decimal integers")
+            })
+            .collect();
+        assert!(
+            numbers.iter().all(|value| *value > 0)
+                && numbers[0] <= usize::MAX as u64
+                && numbers[2] <= usize::MAX as u64,
+            "Own capture holds out of bounds"
+        );
+        format!(
+            "Some(({}usize,{}u64,{}usize))",
+            numbers[0], numbers[1], numbers[2]
+        )
+    };
+    fs::write(out_dir.join("own_capture_build.rs"),format!(
+        "pub(crate) const OWN_CAPTURE_PROVIDER_SELECTED: bool = {selected};\npub(crate) const OWN_CAPTURE_HOLD_LIMITS: Option<(usize,u64,usize)> = {limits};\n"))
+        .expect("write explicit Own capture hold contract");
 }

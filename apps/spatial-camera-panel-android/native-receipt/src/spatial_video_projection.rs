@@ -16,12 +16,16 @@ use crate::{
         AhbVulkanDevice, AhbVulkanFormatKey, AhbVulkanSampledImage,
         AhbVulkanSampledImageCreateInfo,
     },
+    frame_lease_slots::FrameLeaseSlots,
     spatial_video_projection_marker::log_spatial_video_projection_marker as log_marker,
-    spatial_video_projection_native_stream::SpatialVideoProjectionFrame,
+    spatial_video_projection_native_stream::{
+        SpatialVideoProjectionFrame, SpatialVideoProjectionImageLease,
+    },
     spatial_video_projection_settings::{
         should_log_spatial_video_projection_import, spatial_video_projection_import_cache_limit,
         SpatialVideoProjectionSettings, SPATIAL_VIDEO_PROJECTION_IMPORT_CACHE_LIMIT,
     },
+    video_import_cache_policy::{StableVideoImportIdentity, VideoImportInvalidationPolicy},
 };
 
 #[derive(Clone, Debug)]
@@ -185,7 +189,9 @@ pub(crate) struct SpatialVideoProjectionRenderer {
     import_property_query_total_ns: u64,
     import_property_query_max_ns: u64,
     cache_hits_before_property_query: u64,
-    gpu_frame_hardware_buffer_ids: Vec<Vec<u64>>,
+    gpu_frame_hardware_buffer_ids: Vec<Vec<(u64, u64)>>,
+    gpu_frame_image_leases: FrameLeaseSlots<Arc<SpatialVideoProjectionImageLease>>,
+    invalidation_policy: VideoImportInvalidationPolicy,
 }
 
 impl SpatialVideoProjectionRenderer {
@@ -218,6 +224,8 @@ impl SpatialVideoProjectionRenderer {
             import_property_query_max_ns: 0,
             cache_hits_before_property_query: 0,
             gpu_frame_hardware_buffer_ids: Vec::new(),
+            gpu_frame_image_leases: FrameLeaseSlots::default(),
+            invalidation_policy: VideoImportInvalidationPolicy::default(),
         }
     }
 
@@ -227,6 +235,7 @@ impl SpatialVideoProjectionRenderer {
             let _ = build.worker.join();
         }
         self.gpu_frame_hardware_buffer_ids.clear();
+        self.gpu_frame_image_leases.retire_all();
         self.destroy_imports(device);
         self.resources = None;
     }
@@ -235,6 +244,7 @@ impl SpatialVideoProjectionRenderer {
         for ids in &mut self.gpu_frame_hardware_buffer_ids {
             ids.clear();
         }
+        self.gpu_frame_image_leases.retire_all();
     }
 
     /// Returns the most recently imported descriptor without adopting or sampling another frame.
@@ -269,15 +279,28 @@ impl SpatialVideoProjectionRenderer {
         if !settings.active() {
             return Ok(None);
         }
-        let Some(ahb) = self.ahb.as_ref() else {
+        if self.ahb.is_none() {
             return Ok(None);
-        };
+        }
 
+        self.process_frame_cache_policy(device, frame);
         let protected_hardware_buffer_id = frame.descriptor.hardware_buffer_id;
         let import_cache_limit = spatial_video_projection_import_cache_limit(frame.max_images);
-        let key = SpatialVideoProjectionImportKey::from_frame(frame);
+        let candidate_key = self.resources.as_ref().map(|resources| {
+            SpatialVideoProjectionImportKey::from_frame(frame, resources.format_key)
+        });
+        let cache_reuse_allowed = candidate_key.is_some_and(|key| {
+            key.cacheable(frame.descriptor.hardware_buffer_id_status)
+                && !self.invalidation_policy.invalid(key.identity)
+        });
+        let cached_index = cache_reuse_allowed
+            .then(|| {
+                let key = candidate_key.expect("cache reuse has a candidate key");
+                self.imports.iter().position(|import| import.key == key)
+            })
+            .flatten();
         let (import_index, format_key, allocation_size, memory_type_bits) = if let Some(index) =
-            self.imports.iter().position(|import| import.key == key)
+            cached_index
         {
             self.import_cache_hits = self.import_cache_hits.saturating_add(1);
             self.cache_hits_before_property_query =
@@ -300,6 +323,10 @@ impl SpatialVideoProjectionRenderer {
         } else {
             self.import_cache_misses = self.import_cache_misses.saturating_add(1);
             let query_started_at = Instant::now();
+            let ahb = self
+                .ahb
+                .as_ref()
+                .expect("AHardwareBuffer API was checked before import");
             let query_result = query_ahb_vulkan_import_properties(ahb, &frame.hardware_buffer);
             let query_elapsed_ns =
                 u64::try_from(query_started_at.elapsed().as_nanos()).unwrap_or(u64::MAX);
@@ -311,6 +338,7 @@ impl SpatialVideoProjectionRenderer {
                 self.import_property_query_max_ns.max(query_elapsed_ns);
             let (import_properties, format_props) = query_result?;
             let format_key = import_properties.format_key;
+            let key = SpatialVideoProjectionImportKey::from_frame(frame, format_key);
             let allocation_size = import_properties.allocation_size;
             let memory_type_bits = import_properties.memory_type_bits;
             if format_key.format == vk::Format::UNDEFINED && format_key.external_format == 0 {
@@ -334,6 +362,7 @@ impl SpatialVideoProjectionRenderer {
             let imports_before = self.imports.len();
             let eviction_stats = self.evict_imports_to_limit(
                 device,
+                frame.reader_generation,
                 protected_hardware_buffer_id,
                 import_cache_limit,
             );
@@ -427,7 +456,13 @@ impl SpatialVideoProjectionRenderer {
                 resources.descriptor_uses_immutable_sampler,
             )
         };
-        self.track_frame_hardware_buffer_id(frame_slot, protected_hardware_buffer_id);
+        self.track_frame_hardware_buffer_id(
+            frame_slot,
+            frame.reader_generation,
+            protected_hardware_buffer_id,
+        );
+        self.gpu_frame_image_leases
+            .retain(frame_slot, Arc::clone(&frame.image_lease));
         Ok(Some(PreparedSpatialVideoProjection {
             descriptor_set: self.imports[import_index].descriptor_set,
             descriptor_set_layout,
@@ -598,6 +633,7 @@ impl SpatialVideoProjectionRenderer {
     unsafe fn evict_imports_to_limit(
         &mut self,
         device: &ash::Device,
+        protected_reader_generation: u64,
         protected_hardware_buffer_id: u64,
         import_cache_limit: usize,
     ) -> SpatialVideoProjectionCacheEvictionStats {
@@ -607,12 +643,16 @@ impl SpatialVideoProjectionRenderer {
             let mut evict_index = None;
             for (index, import) in self.imports.iter().enumerate() {
                 if protected_hardware_buffer_id != 0
-                    && import.key.buffer_id == protected_hardware_buffer_id
+                    && import.key.identity.reader_generation == protected_reader_generation
+                    && import.key.identity.hardware_buffer_id == protected_hardware_buffer_id
                 {
                     stats.protected_skips += 1;
                     continue;
                 }
-                if self.hardware_buffer_id_in_submitted_frame(import.key.buffer_id) {
+                if self.hardware_buffer_id_in_submitted_frame(
+                    import.key.identity.reader_generation,
+                    import.key.identity.hardware_buffer_id,
+                ) {
                     stats.in_flight_skips += 1;
                     continue;
                 }
@@ -631,22 +671,58 @@ impl SpatialVideoProjectionRenderer {
         stats
     }
 
-    fn hardware_buffer_id_in_submitted_frame(&self, hardware_buffer_id: u64) -> bool {
+    fn hardware_buffer_id_in_submitted_frame(
+        &self,
+        reader_generation: u64,
+        hardware_buffer_id: u64,
+    ) -> bool {
         hardware_buffer_id != 0
-            && self
-                .gpu_frame_hardware_buffer_ids
-                .iter()
-                .any(|ids| ids.iter().any(|id| *id == hardware_buffer_id))
+            && self.gpu_frame_hardware_buffer_ids.iter().any(|ids| {
+                ids.iter()
+                    .any(|identity| *identity == (reader_generation, hardware_buffer_id))
+            })
     }
 
-    fn track_frame_hardware_buffer_id(&mut self, frame_slot: usize, hardware_buffer_id: u64) {
+    fn track_frame_hardware_buffer_id(
+        &mut self,
+        frame_slot: usize,
+        reader_generation: u64,
+        hardware_buffer_id: u64,
+    ) {
         while self.gpu_frame_hardware_buffer_ids.len() <= frame_slot {
             self.gpu_frame_hardware_buffer_ids.push(Vec::new());
         }
         self.gpu_frame_hardware_buffer_ids[frame_slot] = (hardware_buffer_id != 0)
-            .then_some(hardware_buffer_id)
+            .then_some((reader_generation, hardware_buffer_id))
             .into_iter()
             .collect();
+    }
+
+    unsafe fn process_frame_cache_policy(
+        &mut self,
+        device: &ash::Device,
+        frame: &SpatialVideoProjectionFrame,
+    ) {
+        self.invalidation_policy.observe(
+            frame.reader_generation,
+            &frame.removed_hardware_buffer_ids,
+            frame.buffer_reuse_disabled,
+        );
+        let mut index = 0;
+        while index < self.imports.len() {
+            let key = self.imports[index].key;
+            let invalid = self.invalidation_policy.invalid(key.identity);
+            if invalid
+                && !self.hardware_buffer_id_in_submitted_frame(
+                    key.identity.reader_generation,
+                    key.identity.hardware_buffer_id,
+                )
+            {
+                self.imports.remove(index).destroy(device);
+            } else {
+                index += 1;
+            }
+        }
     }
 
     unsafe fn destroy_imports(&mut self, device: &ash::Device) {
@@ -677,24 +753,31 @@ impl SpatialVideoProjectionCacheEvictionStats {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SpatialVideoProjectionImportKey {
-    buffer_id: u64,
-    width: u32,
-    height: u32,
-    native_format: u32,
+    identity: StableVideoImportIdentity,
+    format_key: AhbVulkanFormatKey,
 }
 
 impl SpatialVideoProjectionImportKey {
-    fn from_frame(frame: &SpatialVideoProjectionFrame) -> Self {
+    fn from_frame(frame: &SpatialVideoProjectionFrame, format_key: AhbVulkanFormatKey) -> Self {
         Self {
-            buffer_id: if frame.descriptor.hardware_buffer_id == 0 {
-                frame.timestamp_ns.max(0) as u64
-            } else {
-                frame.descriptor.hardware_buffer_id
+            identity: StableVideoImportIdentity {
+                reader_generation: frame.reader_generation,
+                hardware_buffer_id: frame.descriptor.hardware_buffer_id,
+                width: frame.descriptor.width,
+                height: frame.descriptor.height,
+                layers: frame.descriptor.layers,
+                native_format: frame.descriptor.format,
+                usage: frame.descriptor.usage,
+                stride: frame.descriptor.stride,
+                vk_format_raw: format_key.format.as_raw(),
+                external_format: format_key.external_format,
             },
-            width: frame.descriptor.width,
-            height: frame.descriptor.height,
-            native_format: frame.descriptor.format,
+            format_key,
         }
+    }
+
+    fn cacheable(self, hardware_buffer_id_status: i32) -> bool {
+        self.identity.cacheable(hardware_buffer_id_status)
     }
 }
 

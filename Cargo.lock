@@ -561,6 +561,7 @@ dependencies = [
 name = "rusty-manifold-broker-adapter"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "rusty-manifold-admission",
  "rusty-manifold-broker-product",
  "rusty-manifold-model",
@@ -577,6 +578,7 @@ dependencies = [
  "rusty-manifold-model",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -711,11 +713,13 @@ dependencies = [
 name = "rusty-quest-broker-authority"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "rusty-manifold-admission",
  "rusty-manifold-broker-adapter",
  "rusty-manifold-broker-product",
  "rusty-manifold-media-session",
  "rusty-manifold-model",
+ "rusty-manifold-peer",
  "rusty-manifold-peer-runtime-host",
  "rusty-manifold-runtime-host",
  "rusty-quest-broker-admission",
@@ -747,6 +751,7 @@ version = "0.1.0"
 dependencies = [
  "rusty-manifold-broker-product",
  "rusty-manifold-media-session",
+ "rusty-quest-feature-activation",
  "rusty-quest-media-stream",
  "serde",
  "serde_json",
@@ -857,8 +862,11 @@ dependencies = [
 name = "rusty-quest-media-stream-android"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "rusty-quest-media-stream",
  "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1112,14 +1120,21 @@ name = "spatial-camera-panel-native-receipt"
 version = "0.1.0"
 dependencies = [
  "ash",
+ "ed25519-dalek",
  "jni 0.21.1",
  "libc",
  "ndk-sys",
  "openxr-sys",
+ "rusty-manifold-peer",
+ "rusty-quest-broker-authority",
  "rusty-quest-feature-activation",
  "rusty-quest-hand-adapter",
+ "rusty-quest-media-stream",
+ "rusty-quest-media-stream-android",
  "rusty-quest-particle-adapter",
+ "serde",
  "serde_json",
+ "zeroize",
 ]
 
 [[package]]

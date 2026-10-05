@@ -5,6 +5,8 @@
 //! command application crate-private: no Quest surface may bypass admission or
 //! the integrated owner/runtime mutation gate.
 
+mod embedded_duplex;
 mod runtime;
 
+pub use embedded_duplex::*;
 pub use runtime::*;

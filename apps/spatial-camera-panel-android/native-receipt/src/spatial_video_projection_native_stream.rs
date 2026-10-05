@@ -5,14 +5,16 @@
 //! objects for Vulkan import without Java hardware-buffer bridges or CPU copies.
 
 use std::{
+    collections::BTreeMap,
+    os::raw::c_void,
     ptr,
     sync::{
-        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
-        Mutex,
+        atomic::{AtomicI64, AtomicU64, Ordering},
+        Arc, LazyLock, Mutex,
     },
 };
 
-use jni::sys::{jclass, jint, jlong, jobject, JNIEnv};
+use jni::sys::{jboolean, jclass, jint, jlong, jobject, JNIEnv};
 
 use crate::{
     acamera_sys::{
@@ -25,7 +27,11 @@ use crate::{
         AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, AIMAGE_FORMAT_PRIVATE,
     },
     android_hardware_buffer::{AndroidHardwareBufferDescriptor, AndroidHardwareBufferHandle},
-    marker_token,
+    marker_token, peer_projection_runtime,
+    projection_frame_source::{
+        projection_peer_stop_result, CallbackGate, CallbackPermit, PackedFrameIdentity,
+        ProjectionDecoderRole, ProjectionFrameSourceState,
+    },
     spatial_video_projection_marker::log_spatial_video_projection_marker as log_marker,
     spatial_video_projection_qualification,
     spatial_video_projection_settings::{
@@ -37,17 +43,54 @@ static SPATIAL_VIDEO_PROJECTION_STREAM: Mutex<Option<NativeSpatialVideoProjectio
     Mutex::new(None);
 static SPATIAL_VIDEO_PROJECTION_LATEST_FRAME: Mutex<Option<SpatialVideoProjectionFrame>> =
     Mutex::new(None);
-static SPATIAL_VIDEO_PROJECTION_PACKED_PAIR: Mutex<Option<SpatialPackedPairMetadata>> =
-    Mutex::new(None);
+static PROJECTION_PEER_STREAM: Mutex<Option<NativeSpatialVideoProjectionStream>> = Mutex::new(None);
+static PROJECTION_PEER_LATEST_FRAME: Mutex<Option<SpatialVideoProjectionFrame>> = Mutex::new(None);
+static PROJECTION_PEER_BINDING: Mutex<Option<(u64, u64, u64)>> = Mutex::new(None);
+static PROJECTION_PEER_RETIRED_IDENTITY: Mutex<Option<(u64, u64, u64)>> = Mutex::new(None);
+static SPATIAL_VIDEO_PROJECTION_CONTEXTS: LazyLock<
+    Mutex<BTreeMap<u64, Arc<NativeSpatialVideoProjectionReaderContext>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+static NEXT_SPATIAL_VIDEO_READER_GENERATION: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SpatialPackedPairMetadata {
-    pub(crate) pair_id: u64,
-    pub(crate) left_source_frame: u64,
-    pub(crate) right_source_frame: u64,
-    pub(crate) left_sensor_timestamp_ns: i64,
-    pub(crate) right_sensor_timestamp_ns: i64,
-    pub(crate) pair_delta_ns: u64,
+pub(crate) type SpatialPackedPairMetadata = PackedFrameIdentity;
+
+#[derive(Debug)]
+struct SpatialVideoProjectionReaderLifetime {
+    reader: *mut AImageReader,
+}
+
+unsafe impl Send for SpatialVideoProjectionReaderLifetime {}
+unsafe impl Sync for SpatialVideoProjectionReaderLifetime {}
+
+impl Drop for SpatialVideoProjectionReaderLifetime {
+    fn drop(&mut self) {
+        if !self.reader.is_null() {
+            unsafe {
+                AImageReader_delete(self.reader);
+            }
+            self.reader = ptr::null_mut();
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SpatialVideoProjectionImageLease {
+    image: *mut AImage,
+    _reader_lifetime: Arc<SpatialVideoProjectionReaderLifetime>,
+}
+
+unsafe impl Send for SpatialVideoProjectionImageLease {}
+unsafe impl Sync for SpatialVideoProjectionImageLease {}
+
+impl Drop for SpatialVideoProjectionImageLease {
+    fn drop(&mut self) {
+        if !self.image.is_null() {
+            unsafe {
+                AImage_delete(self.image);
+            }
+            self.image = ptr::null_mut();
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -57,34 +100,378 @@ pub(crate) struct SpatialVideoProjectionFrame {
     pub(crate) frame_index: u64,
     pub(crate) import_sequence: u64,
     pub(crate) timestamp_ns: i64,
+    pub(crate) decoder_token: u64,
+    pub(crate) reader_generation: u64,
+    pub(crate) role: ProjectionDecoderRole,
+    pub(crate) route_generation: u64,
     pub(crate) configured_width: i32,
     pub(crate) configured_height: i32,
     pub(crate) max_images: i32,
     pub(crate) fps_cap: i32,
     pub(crate) dropped_frames: u64,
     pub(crate) buffer_removed_count: u64,
+    pub(crate) removed_hardware_buffer_ids: Vec<u64>,
+    pub(crate) buffer_reuse_disabled: bool,
     pub(crate) packed_pair: Option<SpatialPackedPairMetadata>,
+    pub(crate) image_lease: Arc<SpatialVideoProjectionImageLease>,
 }
 
 pub(crate) fn latest_spatial_video_projection_frame() -> Option<SpatialVideoProjectionFrame> {
-    SPATIAL_VIDEO_PROJECTION_LATEST_FRAME
+    latest_frame_for(&SPATIAL_VIDEO_PROJECTION_LATEST_FRAME)
+}
+
+pub(crate) fn latest_projection_peer_frame() -> Option<SpatialVideoProjectionFrame> {
+    let frame = latest_frame_for(&PROJECTION_PEER_LATEST_FRAME)?;
+    projection_peer_binding_matches(
+        frame.route_generation,
+        frame.decoder_token,
+        frame.reader_generation,
+    )
+    .then_some(frame)
+}
+
+pub(crate) fn projection_peer_binding_matches(
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+) -> bool {
+    PROJECTION_PEER_BINDING.lock().ok().is_some_and(|binding| {
+        binding.as_ref().is_some_and(|(route, decoder, reader)| {
+            *route == route_generation && *decoder == decoder_token && *reader == reader_generation
+        })
+    })
+}
+
+/// Positive exact-reader stop proof, separate from a missing binding. A newer
+/// bound decoder prevents old cleanup from claiming the current source absent.
+pub(crate) fn projection_peer_reader_stopped(route: u64, decoder: u64, reader: u64) -> bool {
+    let Ok(binding) = PROJECTION_PEER_BINDING.lock() else {
+        return false;
+    };
+    binding.is_none()
+        && PROJECTION_PEER_RETIRED_IDENTITY
+            .lock()
+            .ok()
+            .is_some_and(|retired| *retired == Some((route, decoder, reader)))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct EmbeddedReceiverFrameRequest {
+    pub(crate) receiver_generation: u64,
+    pub(crate) connection_generation: u64,
+    pub(crate) route_generation: u64,
+    pub(crate) decoder_token: u64,
+    pub(crate) reader_generation: u64,
+    pub(crate) presentation_time_ns: i64,
+    pub(crate) source_elapsed_ns: i64,
+    pub(crate) source_unix_ns: i64,
+    pub(crate) pair_id: u64,
+    pub(crate) left_source_frame: u64,
+    pub(crate) right_source_frame: u64,
+    pub(crate) left_sensor_timestamp_ns: i64,
+    pub(crate) right_sensor_timestamp_ns: i64,
+    pub(crate) pair_delta_ns: u64,
+}
+
+pub(crate) fn register_embedded_receiver_frame(
+    request: EmbeddedReceiverFrameRequest,
+) -> crate::embedded_duplex::frame_identity::ReceiverFrameRegistrationResult {
+    use crate::embedded_duplex::frame_identity::{
+        register_receiver_frame, ReceiverFrameIdentity, ReceiverFrameRegistrationResult,
+    };
+    if !projection_peer_binding_matches(
+        request.route_generation,
+        request.decoder_token,
+        request.reader_generation,
+    ) {
+        return ReceiverFrameRegistrationResult::Invalid;
+    }
+    let Some(context) = context_for_decoder_token(request.decoder_token) else {
+        return ReceiverFrameRegistrationResult::Invalid;
+    };
+    if context.0.route_generation != request.route_generation
+        || context.0.reader_generation != request.reader_generation
+        || context.0.role != ProjectionDecoderRole::ProjectionPeer
+    {
+        return ReceiverFrameRegistrationResult::Invalid;
+    }
+    let identity = ReceiverFrameIdentity {
+        receiver_generation: request.receiver_generation,
+        connection_generation: request.connection_generation,
+        route_generation: request.route_generation,
+        decoder_token: request.decoder_token,
+        reader_generation: request.reader_generation,
+        presentation_time_ns: request.presentation_time_ns,
+        source_elapsed_ns: request.source_elapsed_ns,
+        source_unix_ns: request.source_unix_ns,
+        pair_id: request.pair_id,
+        left_source_frame: request.left_source_frame,
+        right_source_frame: request.right_source_frame,
+        left_sensor_timestamp_ns: request.left_sensor_timestamp_ns,
+        right_sensor_timestamp_ns: request.right_sensor_timestamp_ns,
+        pair_delta_ns: request.pair_delta_ns,
+    };
+    let Ok(mut source) = context.0.source.lock() else {
+        return ReceiverFrameRegistrationResult::Invalid;
+    };
+    if source
+        .register_packed(
+            request.presentation_time_ns,
+            PackedFrameIdentity {
+                receiver_generation: request.receiver_generation,
+                connection_generation: request.connection_generation,
+                source_elapsed_ns: request.source_elapsed_ns,
+                source_unix_ns: request.source_unix_ns,
+                pair_id: request.pair_id,
+                left_source_frame: request.left_source_frame,
+                right_source_frame: request.right_source_frame,
+                left_sensor_timestamp_ns: request.left_sensor_timestamp_ns,
+                right_sensor_timestamp_ns: request.right_sensor_timestamp_ns,
+                pair_delta_ns: request.pair_delta_ns,
+            },
+        )
+        .is_err()
+    {
+        return ReceiverFrameRegistrationResult::Invalid;
+    }
+    let now = peer_projection_runtime::monotonic_now_ns();
+    let result = if now > 0 {
+        register_receiver_frame(identity, now as u64)
+    } else {
+        ReceiverFrameRegistrationResult::Invalid
+    };
+    if result != ReceiverFrameRegistrationResult::Accepted {
+        source.discard_exact(request.presentation_time_ns);
+    }
+    result
+}
+
+pub(crate) fn record_embedded_receiver_frame_rendered(
+    request: EmbeddedReceiverFrameRequest,
+) -> crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult {
+    let now = peer_projection_runtime::monotonic_now_ns();
+    if now <= 0 {
+        return crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::IdentityMismatch;
+    }
+    crate::embedded_duplex::frame_identity::record_receiver_frame_rendered(
+        receiver_frame_identity(request),
+        now as u64,
+    )
+}
+
+fn receiver_frame_identity(
+    request: EmbeddedReceiverFrameRequest,
+) -> crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+    crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+        receiver_generation: request.receiver_generation,
+        connection_generation: request.connection_generation,
+        route_generation: request.route_generation,
+        decoder_token: request.decoder_token,
+        reader_generation: request.reader_generation,
+        presentation_time_ns: request.presentation_time_ns,
+        source_elapsed_ns: request.source_elapsed_ns,
+        source_unix_ns: request.source_unix_ns,
+        pair_id: request.pair_id,
+        left_source_frame: request.left_source_frame,
+        right_source_frame: request.right_source_frame,
+        left_sensor_timestamp_ns: request.left_sensor_timestamp_ns,
+        right_sensor_timestamp_ns: request.right_sensor_timestamp_ns,
+        pair_delta_ns: request.pair_delta_ns,
+    }
+}
+
+pub(crate) fn current_embedded_receiver_frame_observation(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    max_age_ns: u64,
+) -> Option<crate::embedded_duplex::frame_identity::ReceiverFrameObservation> {
+    current_embedded_receiver_frame_timed_observation(
+        receiver_generation,
+        connection_generation,
+        route_generation,
+        decoder_token,
+        reader_generation,
+        max_age_ns,
+    )
+    .map(|timed| timed.observation)
+}
+
+/// The observation time must come from the same CLOCK_MONOTONIC query that
+/// establishes freshness; Java wall time cannot reconstruct this witness.
+pub(crate) fn current_embedded_receiver_frame_timed_observation(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    max_age_ns: u64,
+) -> Option<crate::embedded_duplex::frame_identity::TimedReceiverFrameObservation> {
+    if max_age_ns == 0
+        || !projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+    {
+        return None;
+    }
+    let now = peer_projection_runtime::monotonic_now_ns();
+    if now <= 0 {
+        return None;
+    }
+    let observation = crate::embedded_duplex::frame_identity::latest_receiver_frame_observation(
+        receiver_generation,
+        connection_generation,
+        route_generation,
+        decoder_token,
+        reader_generation,
+        now as u64,
+    )?;
+    observation.timed_at(now as u64, max_age_ns)
+}
+
+pub(crate) fn current_embedded_receiver_acquired_timed(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    max_age_ns: u64,
+) -> Option<crate::embedded_duplex::frame_identity::TimedSurfaceAcquiredFrame> {
+    if max_age_ns == 0
+        || !projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+    {
+        return None;
+    }
+    let now = peer_projection_runtime::monotonic_now_ns();
+    if now <= 0 {
+        return None;
+    }
+    let timed = crate::embedded_duplex::frame_identity::latest_surface_acquired_timed(
+        receiver_generation,
+        connection_generation,
+        route_generation,
+        decoder_token,
+        reader_generation,
+        now as u64,
+        max_age_ns,
+    )?;
+    projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+        .then_some(timed)
+}
+
+pub(crate) fn current_embedded_receiver_effective_timed(
+    receiver_generation: u64,
+    connection_generation: u64,
+    route_generation: u64,
+    decoder_token: u64,
+    reader_generation: u64,
+    max_age_ns: u64,
+) -> Option<crate::embedded_duplex::frame_identity::TimedPeerGpuRetiredFrame> {
+    if max_age_ns == 0
+        || !projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+    {
+        return None;
+    }
+    let now = peer_projection_runtime::monotonic_now_ns();
+    if now <= 0 {
+        return None;
+    }
+    let timed = crate::embedded_duplex::frame_identity::latest_peer_gpu_retired_timed(
+        receiver_generation,
+        connection_generation,
+        route_generation,
+        decoder_token,
+        reader_generation,
+        now as u64,
+        max_age_ns,
+    )?;
+    let route = peer_projection_runtime::read_source(i64::try_from(route_generation).ok()?);
+    if route.words[1] != i64::try_from(route_generation).ok()?
+        || route.words[2] != peer_projection_runtime::SOURCE_PEER
+        || route.words[3] != i64::try_from(decoder_token).ok()?
+        || route.words[4] != i64::try_from(reader_generation).ok()?
+        || route.words[7] != i64::try_from(timed.acquired.identity.pair_id).ok()?
+        || route.words[8] != i64::try_from(timed.import_sequence).ok()?
+        || route.words[11] != peer_projection_runtime::RESULT_EFFECTIVE
+    {
+        return None;
+    }
+    projection_peer_binding_matches(route_generation, decoder_token, reader_generation)
+        .then_some(timed)
+}
+
+pub(crate) fn retire_embedded_receiver_generation(receiver_generation: u64) {
+    crate::embedded_duplex::frame_identity::retire_receiver_generation(receiver_generation);
+    if let Ok(contexts) = SPATIAL_VIDEO_PROJECTION_CONTEXTS.lock() {
+        for context in contexts.values() {
+            if let Ok(mut source) = context.source.lock() {
+                source.retire_receiver_generation(receiver_generation);
+            }
+        }
+    }
+}
+
+pub(crate) fn retire_embedded_receiver_connection(
+    receiver_generation: u64,
+    connection_generation: u64,
+) {
+    crate::embedded_duplex::frame_identity::retire_receiver_connection(
+        receiver_generation,
+        connection_generation,
+    );
+    if let Ok(contexts) = SPATIAL_VIDEO_PROJECTION_CONTEXTS.lock() {
+        for context in contexts.values() {
+            if let Ok(mut source) = context.source.lock() {
+                source.retire_receiver_connection(receiver_generation, connection_generation);
+            }
+        }
+    }
+}
+
+fn latest_frame_for(
+    slot: &Mutex<Option<SpatialVideoProjectionFrame>>,
+) -> Option<SpatialVideoProjectionFrame> {
+    let mut frame = slot.lock().ok().and_then(|guard| guard.as_ref().cloned())?;
+    let context = SPATIAL_VIDEO_PROJECTION_CONTEXTS
         .lock()
         .ok()
-        .and_then(|guard| guard.as_ref().cloned())
+        .and_then(|contexts| contexts.get(&frame.reader_generation).cloned());
+    match context.and_then(|context| {
+        context
+            .source
+            .lock()
+            .ok()
+            .map(|source| source.buffer_removal_snapshot())
+    }) {
+        Some((removed_ids, reuse_disabled)) => {
+            frame.removed_hardware_buffer_ids = removed_ids;
+            frame.buffer_reuse_disabled = reuse_disabled;
+        }
+        None => {
+            // Losing the exact generation state can never authorize cache reuse.
+            frame.removed_hardware_buffer_ids.clear();
+            frame.buffer_reuse_disabled = true;
+        }
+    }
+    Some(frame)
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialPackedStereoBrokerPlayback_nativeSetPackedStereoPairMetadata(
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialPackedStereoBrokerPlayback_nativeRegisterPackedStereoPairMetadata(
     _env: *mut JNIEnv,
     _class: jclass,
+    decoder_token: jlong,
+    output_timestamp_ns: jlong,
     pair_id: jlong,
     left_source_frame: jlong,
     right_source_frame: jlong,
     left_sensor_timestamp_ns: jlong,
     right_sensor_timestamp_ns: jlong,
     pair_delta_ns: jlong,
-) {
-    if pair_id <= 0
+) -> jboolean {
+    if decoder_token <= 0
+        || output_timestamp_ns < 0
+        || pair_id <= 0
         || left_source_frame <= 0
         || right_source_frame <= 0
         || left_sensor_timestamp_ns <= 0
@@ -92,62 +479,105 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         || pair_delta_ns < 0
     {
         log_marker("status=packed-pair-rejected reason=invalid-pair-metadata".to_string());
-        return;
+        return 0;
     }
-    if let Ok(mut metadata) = SPATIAL_VIDEO_PROJECTION_PACKED_PAIR.lock() {
-        *metadata = Some(SpatialPackedPairMetadata {
-            pair_id: pair_id as u64,
-            left_source_frame: left_source_frame as u64,
-            right_source_frame: right_source_frame as u64,
-            left_sensor_timestamp_ns,
-            right_sensor_timestamp_ns,
-            pair_delta_ns: pair_delta_ns as u64,
-        });
+    let Some((context, _permit)) = context_for_decoder_token(decoder_token as u64) else {
+        log_marker("status=packed-pair-rejected reason=stale-decoder-token".to_string());
+        return 0;
+    };
+    let Ok(mut source) = context.source.lock() else {
+        log_marker("status=packed-pair-rejected reason=identity-lock-poisoned".to_string());
+        return 0;
+    };
+    let accepted = source
+        .register_packed(
+            output_timestamp_ns,
+            SpatialPackedPairMetadata {
+                receiver_generation: 0,
+                connection_generation: 0,
+                source_elapsed_ns: 0,
+                source_unix_ns: 0,
+                pair_id: pair_id as u64,
+                left_source_frame: left_source_frame as u64,
+                right_source_frame: right_source_frame as u64,
+                left_sensor_timestamp_ns,
+                right_sensor_timestamp_ns,
+                pair_delta_ns: pair_delta_ns as u64,
+            },
+        )
+        .is_ok();
+    if !accepted {
+        log_marker(
+            "status=packed-pair-rejected reason=duplicate-missing-or-bounded-identity".to_string(),
+        );
+    }
+    if accepted {
+        1
+    } else {
+        0
     }
 }
 
 struct NativeSpatialVideoProjectionStream {
-    reader: *mut AImageReader,
     window: *mut ANativeWindow,
-    context: *mut NativeSpatialVideoProjectionReaderContext,
+    reader_lifetime: Arc<SpatialVideoProjectionReaderLifetime>,
+    context: Arc<NativeSpatialVideoProjectionReaderContext>,
 }
 
 unsafe impl Send for NativeSpatialVideoProjectionStream {}
 
 impl Drop for NativeSpatialVideoProjectionStream {
     fn drop(&mut self) {
-        unsafe {
-            if !self.context.is_null() {
-                (*self.context).alive.store(false, Ordering::Release);
+        self.context.callback_gate.deactivate();
+        if let Ok(mut contexts) = SPATIAL_VIDEO_PROJECTION_CONTEXTS.lock() {
+            if contexts
+                .get(&self.context.reader_generation)
+                .is_some_and(|registered| Arc::ptr_eq(registered, &self.context))
+            {
+                contexts.remove(&self.context.reader_generation);
             }
-            if let Ok(mut latest) = SPATIAL_VIDEO_PROJECTION_LATEST_FRAME.lock() {
+        }
+        unsafe {
+            let reader = self.reader_lifetime.reader;
+            let image_listener_status = AImageReader_setImageListener(reader, ptr::null_mut());
+            let buffer_listener_status =
+                AImageReader_setBufferRemovedListener(reader, ptr::null_mut());
+            log_marker(format!(
+                "status=listeners-unregistered stream=stereo_video readerGeneration={} imageListenerResult={} bufferListenerResult={}",
+                self.context.reader_generation, image_listener_status, buffer_listener_status
+            ));
+        }
+        self.context.callback_gate.wait_for_quiescence();
+        let latest_slot = match self.context.role {
+            ProjectionDecoderRole::CompositorVideo => &SPATIAL_VIDEO_PROJECTION_LATEST_FRAME,
+            ProjectionDecoderRole::ProjectionPeer => &PROJECTION_PEER_LATEST_FRAME,
+        };
+        if let Ok(mut latest) = latest_slot.lock() {
+            if latest
+                .as_ref()
+                .is_some_and(|frame| frame.reader_generation == self.context.reader_generation)
+            {
                 *latest = None;
             }
-            if !self.reader.is_null() {
-                let mut listener = AImageReader_ImageListener {
-                    context: ptr::null_mut(),
-                    onImageAvailable: None,
-                };
-                let _ = AImageReader_setImageListener(self.reader, &mut listener);
-            }
+        }
+        unsafe {
             if !self.window.is_null() {
                 ANativeWindow_release(self.window);
                 self.window = ptr::null_mut();
-            }
-            if !self.reader.is_null() {
-                AImageReader_delete(self.reader);
-                self.reader = ptr::null_mut();
-            }
-            if !self.context.is_null() {
-                drop(Box::from_raw(self.context));
-                self.context = ptr::null_mut();
             }
         }
     }
 }
 
 struct NativeSpatialVideoProjectionReaderContext {
-    alive: AtomicBool,
+    reader_generation: u64,
+    decoder_token: u64,
+    role: ProjectionDecoderRole,
+    route_generation: u64,
+    reader_address: usize,
+    reader_lifetime: Arc<SpatialVideoProjectionReaderLifetime>,
+    callback_gate: Arc<CallbackGate>,
+    source: Mutex<ProjectionFrameSourceState>,
     width: i32,
     height: i32,
     max_images: i32,
@@ -160,6 +590,63 @@ struct NativeSpatialVideoProjectionReaderContext {
     last_accepted_timestamp_ns: AtomicI64,
 }
 
+unsafe impl Send for NativeSpatialVideoProjectionReaderContext {}
+unsafe impl Sync for NativeSpatialVideoProjectionReaderContext {}
+
+fn next_reader_generation() -> Result<u64, String> {
+    let generation = NEXT_SPATIAL_VIDEO_READER_GENERATION
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            (current != 0 && current != u64::MAX).then_some(current + 1)
+        })
+        .map_err(|_| "AImageReader generation space exhausted".to_string())?;
+    usize::try_from(generation)
+        .map_err(|_| "AImageReader generation does not fit callback context".to_string())?;
+    Ok(generation)
+}
+
+fn context_token(reader_generation: u64) -> *mut c_void {
+    reader_generation as usize as *mut c_void
+}
+
+fn context_for_decoder_token(
+    decoder_token: u64,
+) -> Option<(
+    Arc<NativeSpatialVideoProjectionReaderContext>,
+    CallbackPermit,
+)> {
+    let context = SPATIAL_VIDEO_PROJECTION_CONTEXTS
+        .lock()
+        .ok()?
+        .values()
+        .find(|context| context.decoder_token == decoder_token)
+        .cloned()?;
+    let permit = context.callback_gate.try_enter()?;
+    Some((context, permit))
+}
+
+fn context_for_callback(
+    token: *mut c_void,
+    reader: *mut AImageReader,
+) -> Option<(
+    Arc<NativeSpatialVideoProjectionReaderContext>,
+    CallbackPermit,
+)> {
+    let reader_generation = token as usize as u64;
+    if reader_generation == 0 || reader.is_null() {
+        return None;
+    }
+    let context = SPATIAL_VIDEO_PROJECTION_CONTEXTS
+        .lock()
+        .ok()?
+        .get(&reader_generation)
+        .cloned()?;
+    if context.reader_address != reader as usize {
+        return None;
+    }
+    let permit = context.callback_gate.try_enter()?;
+    Some((context, permit))
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialStereoVideoPlayback_nativeCreateStereoVideoSurface(
     env: *mut JNIEnv,
@@ -168,13 +655,12 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     height: jint,
     max_images: jint,
     fps_cap: jint,
+    decoder_token: jlong,
+    packed_identity_required: jboolean,
 ) -> jobject {
-    if let Ok(mut pair) = SPATIAL_VIDEO_PROJECTION_PACKED_PAIR.lock() {
-        *pair = None;
-    }
-    if env.is_null() {
+    if env.is_null() || decoder_token <= 0 {
         log_marker(
-            "status=error reason=null-jni-env nativeImageReader=true javaHardwareBufferBridge=false"
+            "status=error reason=null-jni-env-or-decoder-token nativeImageReader=true javaHardwareBufferBridge=false"
                 .to_string(),
         );
         return ptr::null_mut();
@@ -182,7 +668,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 
     let width = width.clamp(320, 4096);
     let height = height.clamp(240, 4096);
-    let max_images = max_images.clamp(2, 6);
+    let max_images = max_images.clamp(4, 6);
     let fps_cap = fps_cap.clamp(1, 90);
 
     let mut guard = match SPATIAL_VIDEO_PROJECTION_STREAM.lock() {
@@ -198,7 +684,17 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     *guard = None;
 
     match unsafe {
-        NativeSpatialVideoProjectionStream::create_surface(env, width, height, max_images, fps_cap)
+        NativeSpatialVideoProjectionStream::create_surface(
+            env,
+            width,
+            height,
+            max_images,
+            fps_cap,
+            decoder_token as u64,
+            ProjectionDecoderRole::CompositorVideo,
+            0,
+            packed_identity_required != 0,
+        )
     } {
         Ok((stream, surface)) => {
             log_marker(format!(
@@ -227,9 +723,6 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _env: *mut JNIEnv,
     _class: jclass,
 ) {
-    if let Ok(mut pair) = SPATIAL_VIDEO_PROJECTION_PACKED_PAIR.lock() {
-        *pair = None;
-    }
     if let Ok(mut guard) = SPATIAL_VIDEO_PROJECTION_STREAM.lock() {
         let had_stream = guard.take().is_some();
         if let Ok(mut latest) = SPATIAL_VIDEO_PROJECTION_LATEST_FRAME.lock() {
@@ -239,6 +732,182 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             "status=stopped stream=stereo_video hadStream={} nativeImageReader=true javaHardwareBufferBridge=false",
             had_stream
         ));
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialStereoVideoPlayback_nativeCreateProjectionPeerVideoSurface(
+    env: *mut JNIEnv,
+    _class: jclass,
+    width: jint,
+    height: jint,
+    max_images: jint,
+    fps_cap: jint,
+    decoder_token: jlong,
+    route_generation: jlong,
+) -> jobject {
+    if env.is_null() || decoder_token <= 0 || route_generation <= 0 {
+        return ptr::null_mut();
+    }
+    let mut guard = match PROJECTION_PEER_STREAM.lock() {
+        Ok(guard) => guard,
+        Err(_) => return ptr::null_mut(),
+    };
+    if guard.is_some() {
+        return ptr::null_mut();
+    }
+    match unsafe {
+        NativeSpatialVideoProjectionStream::create_surface(
+            env,
+            width.clamp(320, 4096),
+            height.clamp(240, 4096),
+            max_images.clamp(4, 6),
+            fps_cap.clamp(1, 90),
+            decoder_token as u64,
+            ProjectionDecoderRole::ProjectionPeer,
+            route_generation as u64,
+            true,
+        )
+    } {
+        Ok((stream, surface)) => {
+            *guard = Some(stream);
+            surface
+        }
+        Err(error) => {
+            log_marker(format!(
+                "status=projection-peer-surface-error reason={}",
+                marker_token(&error)
+            ));
+            ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialStereoVideoPlayback_nativeProjectionPeerReaderGeneration(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    route_generation: jlong,
+    decoder_token: jlong,
+) -> jlong {
+    if route_generation <= 0 || decoder_token <= 0 {
+        return 0;
+    }
+    PROJECTION_PEER_STREAM
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard.as_ref().and_then(|stream| {
+                (stream.context.role == ProjectionDecoderRole::ProjectionPeer
+                    && stream.context.route_generation == route_generation as u64
+                    && stream.context.decoder_token == decoder_token as u64)
+                    .then_some(stream.context.reader_generation as jlong)
+            })
+        })
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialStereoVideoPlayback_nativeStopProjectionPeerVideoStream(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    route_generation: jlong,
+    decoder_token: jlong,
+) -> jint {
+    if route_generation <= 0 || decoder_token <= 0 {
+        return 0;
+    }
+    let Ok(mut guard) = PROJECTION_PEER_STREAM.lock() else {
+        return 0;
+    };
+    let matches = guard.as_ref().is_some_and(|stream| {
+        stream.context.role == ProjectionDecoderRole::ProjectionPeer
+            && stream.context.route_generation == route_generation as u64
+            && stream.context.decoder_token == decoder_token as u64
+    });
+    if !matches {
+        let retired_match = PROJECTION_PEER_RETIRED_IDENTITY
+            .lock()
+            .ok()
+            .is_some_and(|retired| {
+                retired.as_ref().is_some_and(|(route, decoder, _)| {
+                    *route == route_generation as u64 && *decoder == decoder_token as u64
+                })
+            });
+        return projection_peer_stop_result(false, retired_match);
+    }
+    let reader_generation = guard.as_ref().unwrap().context.reader_generation;
+    guard.take();
+    if let Ok(mut binding) = PROJECTION_PEER_BINDING.lock() {
+        if binding.as_ref().is_some_and(|(route, decoder, _)| {
+            *route == route_generation as u64 && *decoder == decoder_token as u64
+        }) {
+            *binding = None;
+        }
+    }
+    if let Ok(mut latest) = PROJECTION_PEER_LATEST_FRAME.lock() {
+        if latest.as_ref().is_some_and(|frame| {
+            frame.route_generation == route_generation as u64
+                && frame.decoder_token == decoder_token as u64
+        }) {
+            *latest = None;
+        }
+    }
+    if let Ok(mut retired) = PROJECTION_PEER_RETIRED_IDENTITY.lock() {
+        *retired = Some((
+            route_generation as u64,
+            decoder_token as u64,
+            reader_generation,
+        ));
+    }
+    projection_peer_stop_result(true, false)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeBindSpatialProjectionPeerDecoder(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    route_generation: jlong,
+    decoder_token: jlong,
+    reader_generation: jlong,
+) -> jlong {
+    if route_generation <= 0 || decoder_token <= 0 || reader_generation <= 0 {
+        return 0;
+    }
+    let exact_stream = PROJECTION_PEER_STREAM.lock().ok().is_some_and(|guard| {
+        guard.as_ref().is_some_and(|stream| {
+            stream.context.role == ProjectionDecoderRole::ProjectionPeer
+                && stream.context.route_generation == route_generation as u64
+                && stream.context.decoder_token == decoder_token as u64
+                && stream.context.reader_generation == reader_generation as u64
+        })
+    });
+    if !exact_stream {
+        return 0;
+    }
+    let Ok(mut binding) = PROJECTION_PEER_BINDING.lock() else {
+        return 0;
+    };
+    *binding = Some((
+        route_generation as u64,
+        decoder_token as u64,
+        reader_generation as u64,
+    ));
+    let receipt = peer_projection_runtime::record_peer_decoder_bound(
+        route_generation,
+        decoder_token as u64,
+        reader_generation as u64,
+    );
+    if receipt.words[1] == route_generation
+        && receipt.words[2] == peer_projection_runtime::SOURCE_PEER
+        && receipt.words[3] == decoder_token
+        && receipt.words[4] == reader_generation
+        && receipt.words[11] == peer_projection_runtime::RESULT_PENDING
+    {
+        1
+    } else {
+        *binding = None;
+        0
     }
 }
 
@@ -321,21 +990,12 @@ impl NativeSpatialVideoProjectionStream {
         height: i32,
         max_images: i32,
         fps_cap: i32,
+        decoder_token: u64,
+        role: ProjectionDecoderRole,
+        route_generation: u64,
+        packed_identity_required: bool,
     ) -> Result<(Self, jobject), String> {
-        let context = Box::into_raw(Box::new(NativeSpatialVideoProjectionReaderContext {
-            alive: AtomicBool::new(true),
-            width,
-            height,
-            max_images,
-            fps_cap,
-            frame_count: AtomicU64::new(0),
-            import_sequence: AtomicU64::new(0),
-            acquire_errors: AtomicU64::new(0),
-            dropped_frames: AtomicU64::new(0),
-            buffer_removed_count: AtomicU64::new(0),
-            last_accepted_timestamp_ns: AtomicI64::new(0),
-        }));
-
+        let reader_generation = next_reader_generation()?;
         let mut reader = ptr::null_mut();
         let usage =
             AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE | AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT;
@@ -348,81 +1008,113 @@ impl NativeSpatialVideoProjectionStream {
             &mut reader,
         );
         if result != 0 || reader.is_null() {
-            drop(Box::from_raw(context));
             return Err(format!(
                 "AImageReader_newWithUsage failed result={result} format=private usage={usage}"
             ));
         }
 
+        let reader_lifetime = Arc::new(SpatialVideoProjectionReaderLifetime { reader });
+        let context = Arc::new(NativeSpatialVideoProjectionReaderContext {
+            reader_generation,
+            decoder_token,
+            role,
+            route_generation,
+            reader_address: reader as usize,
+            reader_lifetime: Arc::clone(&reader_lifetime),
+            callback_gate: CallbackGate::new(),
+            source: Mutex::new(ProjectionFrameSourceState::new_bound(
+                reader_generation,
+                decoder_token,
+                role,
+                route_generation,
+                packed_identity_required,
+            )),
+            width,
+            height,
+            max_images,
+            fps_cap,
+            frame_count: AtomicU64::new(0),
+            import_sequence: AtomicU64::new(0),
+            acquire_errors: AtomicU64::new(0),
+            dropped_frames: AtomicU64::new(0),
+            buffer_removed_count: AtomicU64::new(0),
+            last_accepted_timestamp_ns: AtomicI64::new(0),
+        });
+        let mut stream = Self {
+            window: ptr::null_mut(),
+            reader_lifetime,
+            context: Arc::clone(&context),
+        };
+        {
+            let mut contexts = SPATIAL_VIDEO_PROJECTION_CONTEXTS
+                .lock()
+                .map_err(|_| "AImageReader callback registry lock poisoned".to_string())?;
+            if contexts
+                .insert(reader_generation, Arc::clone(&context))
+                .is_some()
+            {
+                return Err("AImageReader generation collision".to_string());
+            }
+        }
+
         let mut listener = AImageReader_ImageListener {
-            context: context.cast(),
+            context: context_token(reader_generation),
             onImageAvailable: Some(spatial_video_projection_on_image_available),
         };
         let listener_status = AImageReader_setImageListener(reader, &mut listener);
         if listener_status != 0 {
-            AImageReader_delete(reader);
-            drop(Box::from_raw(context));
             return Err(format!(
                 "AImageReader_setImageListener failed result={listener_status}"
             ));
         }
 
         let mut buffer_listener = AImageReader_BufferRemovedListener {
-            context: context.cast(),
+            context: context_token(reader_generation),
             onBufferRemoved: Some(spatial_video_projection_on_buffer_removed),
         };
         let buffer_listener_status =
             AImageReader_setBufferRemovedListener(reader, &mut buffer_listener);
         log_marker(format!(
-            "status={} stream=stereo_video cacheEvictionSignal=true nativeImageReader=true",
+            "status={} stream=stereo_video readerGeneration={} cacheEvictionSignal=true nativeImageReader=true",
             if buffer_listener_status == 0 {
                 "buffer-removed-listener-registered"
             } else {
                 "buffer-removed-listener-error"
-            }
+            },
+            reader_generation
         ));
+        if buffer_listener_status != 0 {
+            return Err(format!(
+                "AImageReader_setBufferRemovedListener failed result={buffer_listener_status}"
+            ));
+        }
 
         let mut window = ptr::null_mut();
         let window_result = AImageReader_getWindow(reader, &mut window);
         if window_result != 0 || window.is_null() {
-            AImageReader_delete(reader);
-            drop(Box::from_raw(context));
             return Err(format!(
                 "AImageReader_getWindow failed result={window_result}"
             ));
         }
         ANativeWindow_acquire(window);
+        stream.window = window;
 
         let surface = ANativeWindow_toSurface(env, window);
         if surface.is_null() {
-            ANativeWindow_release(window);
-            AImageReader_delete(reader);
-            drop(Box::from_raw(context));
             return Err("ANativeWindow_toSurface returned null".to_string());
         }
 
-        Ok((
-            Self {
-                reader,
-                window,
-                context,
-            },
-            surface,
-        ))
+        Ok((stream, surface))
     }
 }
 
 unsafe extern "C" fn spatial_video_projection_on_image_available(
-    context: *mut std::os::raw::c_void,
+    context: *mut c_void,
     reader: *mut AImageReader,
 ) {
-    if context.is_null() {
+    let Some((reader_context, _permit)) = context_for_callback(context, reader) else {
         return;
-    }
-    let reader_context = &*(context as *mut NativeSpatialVideoProjectionReaderContext);
-    if !reader_context.alive.load(Ordering::Acquire) {
-        return;
-    }
+    };
 
     let mut image: *mut AImage = ptr::null_mut();
     let acquire_result = AImageReader_acquireLatestImage(reader, &mut image);
@@ -442,10 +1134,87 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
         ));
         return;
     }
+    let image_lease = Arc::new(SpatialVideoProjectionImageLease {
+        image,
+        _reader_lifetime: Arc::clone(&reader_context.reader_lifetime),
+    });
 
     let mut timestamp_ns = 0_i64;
-    let _ = AImage_getTimestamp(image, &mut timestamp_ns);
-    if should_drop_for_fps_cap(reader_context, timestamp_ns) {
+    let timestamp_status = AImage_getTimestamp(image, &mut timestamp_ns);
+    if timestamp_status != 0 || timestamp_ns < 0 {
+        let acquire_error_count = reader_context
+            .acquire_errors
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        log_marker(format!(
+            "status=timestamp-error stream=stereo_video readerGeneration={} timestampResult={} timestampNs={} acquireErrorCount={}",
+            reader_context.reader_generation,
+            timestamp_status,
+            timestamp_ns,
+            acquire_error_count
+        ));
+        return;
+    }
+    let packed_pair = {
+        let Ok(mut source) = reader_context.source.lock() else {
+            log_marker(format!(
+                "status=frame-identity-rejected reason=identity-lock-poisoned readerGeneration={} timestampNs={}",
+                reader_context.reader_generation, timestamp_ns
+            ));
+            return;
+        };
+        match source.consume_exact(timestamp_ns) {
+            Ok(pair) => pair,
+            Err(error) => {
+                log_marker(format!(
+                    "status=frame-identity-rejected reason={:?} readerGeneration={} timestampNs={}",
+                    error, reader_context.reader_generation, timestamp_ns
+                ));
+                return;
+            }
+        }
+    };
+    if let Some(identity) = packed_pair.filter(|identity| identity.receiver_generation != 0) {
+        let now = peer_projection_runtime::monotonic_now_ns();
+        if now <= 0
+            || crate::embedded_duplex::frame_identity::record_receiver_frame_acquired(
+                crate::embedded_duplex::frame_identity::ReceiverFrameIdentity {
+                    receiver_generation: identity.receiver_generation,
+                    connection_generation: identity.connection_generation,
+                    route_generation: reader_context.route_generation,
+                    decoder_token: reader_context.decoder_token,
+                    reader_generation: reader_context.reader_generation,
+                    presentation_time_ns: timestamp_ns,
+                    source_elapsed_ns: identity.source_elapsed_ns,
+                    source_unix_ns: identity.source_unix_ns,
+                    pair_id: identity.pair_id,
+                    left_source_frame: identity.left_source_frame,
+                    right_source_frame: identity.right_source_frame,
+                    left_sensor_timestamp_ns: identity.left_sensor_timestamp_ns,
+                    right_sensor_timestamp_ns: identity.right_sensor_timestamp_ns,
+                    pair_delta_ns: identity.pair_delta_ns,
+                },
+                now.max(0) as u64,
+            ) != crate::embedded_duplex::frame_identity::ReceiverFrameObservationResult::Accepted
+        {
+            log_marker(format!(
+                "status=frame-identity-rejected reason=embedded-receiver-acquisition-mismatch readerGeneration={} timestampNs={}",
+                reader_context.reader_generation, timestamp_ns
+            ));
+            return;
+        }
+    }
+    if reader_context.role == ProjectionDecoderRole::ProjectionPeer
+        && !projection_peer_binding_matches(
+            reader_context.route_generation,
+            reader_context.decoder_token,
+            reader_context.reader_generation,
+        )
+    {
+        // Drain and release pre-bind output, but never publish it into the fixed Peer slot.
+        return;
+    }
+    if should_drop_for_fps_cap(&reader_context, timestamp_ns) {
         let dropped = reader_context
             .dropped_frames
             .fetch_add(1, Ordering::Relaxed)
@@ -456,7 +1225,6 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
                 dropped, reader_context.fps_cap, timestamp_ns
             ));
         }
-        AImage_delete(image);
         return;
     }
 
@@ -472,7 +1240,6 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
             "status=ahardware-buffer-error reason=AImage_getHardwareBuffer stream=stereo_video acquireErrorCount={} timestampNs={} nativeImageReader=true javaHardwareBufferBridge=false",
             acquire_error_count, timestamp_ns
         ));
-        AImage_delete(image);
         return;
     }
 
@@ -489,7 +1256,6 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
                 acquire_error_count,
                 timestamp_ns
             ));
-            AImage_delete(image);
             return;
         }
     };
@@ -502,42 +1268,57 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
         + 1;
     let dropped = reader_context.dropped_frames.load(Ordering::Relaxed);
     let buffer_removed_count = reader_context.buffer_removed_count.load(Ordering::Relaxed);
-    let packed_pair = SPATIAL_VIDEO_PROJECTION_PACKED_PAIR
-        .lock()
-        .ok()
-        .and_then(|pair| *pair);
+    let (removed_hardware_buffer_ids, buffer_reuse_disabled) = match reader_context.source.lock() {
+        Ok(source) => source.buffer_removal_snapshot(),
+        Err(_) => (Vec::new(), true),
+    };
     let frame = SpatialVideoProjectionFrame {
         hardware_buffer,
         descriptor,
         frame_index,
         import_sequence,
         timestamp_ns,
+        decoder_token: reader_context.decoder_token,
+        reader_generation: reader_context.reader_generation,
+        role: reader_context.role,
+        route_generation: reader_context.route_generation,
         configured_width: reader_context.width,
         configured_height: reader_context.height,
         max_images: reader_context.max_images,
         fps_cap: reader_context.fps_cap,
         dropped_frames: dropped,
         buffer_removed_count,
+        removed_hardware_buffer_ids,
+        buffer_reuse_disabled,
         packed_pair,
+        image_lease,
     };
-    spatial_video_projection_qualification::record_decoded_frame(
-        frame.frame_index,
-        frame.import_sequence,
-        frame.timestamp_ns,
-        frame.configured_width,
-        frame.configured_height,
-        frame.max_images,
-        frame.fps_cap,
-    );
-    if let Ok(mut latest) = SPATIAL_VIDEO_PROJECTION_LATEST_FRAME.lock() {
+    if reader_context.role == ProjectionDecoderRole::CompositorVideo {
+        spatial_video_projection_qualification::record_decoded_frame(
+            frame.frame_index,
+            frame.import_sequence,
+            frame.timestamp_ns,
+            frame.configured_width,
+            frame.configured_height,
+            frame.max_images,
+            frame.fps_cap,
+        );
+    }
+    let latest_slot = match reader_context.role {
+        ProjectionDecoderRole::CompositorVideo => &SPATIAL_VIDEO_PROJECTION_LATEST_FRAME,
+        ProjectionDecoderRole::ProjectionPeer => &PROJECTION_PEER_LATEST_FRAME,
+    };
+    if let Ok(mut latest) = latest_slot.lock() {
         *latest = Some(frame.clone());
     }
     if should_log_spatial_video_projection_frame(frame_index) {
         log_marker(format!(
-            "status=decoded-frame-acquired stream=stereo_video frameIndex={} importSequence={} timestampNs={} descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} hardwareBufferId={} hardwareBufferIdStatus={} configuredWidth={} configuredHeight={} maxImages={} fpsCap={} droppedFrames={} bufferRemovedCount={} packedStereo={} stereoPairId={} leftSourceFrame={} rightSourceFrame={} leftSensorTimestampNs={} rightSensorTimestampNs={} pairDeltaNs={} receiptSampling=first-and-every-60 imageAcquireApi=AImageReader_acquireLatestImage imageReleaseApi=AImage_delete descriptorShape=android-hardware-buffer-private sourceAuthority=android-mediacodec-surface-decoder rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false nativeImageReader=true nativeImageReaderCount=1 javaHardwareBufferBridge=false cpuPixelCopy=false ahbHandleRetained=true latestFramePublished=true videoProjectionGpuImportReady=false videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image",
+            "status=decoded-frame-acquired stream=stereo_video frameIndex={} importSequence={} timestampNs={} decoderToken={} readerGeneration={} descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} hardwareBufferId={} hardwareBufferIdStatus={} configuredWidth={} configuredHeight={} maxImages={} fpsCap={} droppedFrames={} bufferRemovedCount={} removalBatchCount={} bufferReuseDisabled={} packedStereo={} stereoPairId={} leftSourceFrame={} rightSourceFrame={} leftSensorTimestampNs={} rightSensorTimestampNs={} pairDeltaNs={} receiptSampling=first-and-every-60 imageAcquireApi=AImageReader_acquireLatestImage imageReleaseApi=frame-lease-drop descriptorShape=android-hardware-buffer-private sourceAuthority=android-mediacodec-surface-decoder rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false nativeImageReader=true nativeImageReaderCount=1 javaHardwareBufferBridge=false cpuPixelCopy=false ahbHandleRetained=true imageLeaseRetained=true latestFramePublished=true videoProjectionGpuImportReady=false videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image",
             frame_index,
             import_sequence,
             timestamp_ns,
+            reader_context.decoder_token,
+            reader_context.reader_generation,
             descriptor.width,
             descriptor.height,
             descriptor.layers,
@@ -552,6 +1333,8 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
             reader_context.fps_cap,
             dropped,
             buffer_removed_count,
+            frame.removed_hardware_buffer_ids.len(),
+            frame.buffer_reuse_disabled,
             packed_pair.is_some(),
             packed_pair.map(|pair| pair.pair_id).unwrap_or(0),
             packed_pair.map(|pair| pair.left_source_frame).unwrap_or(0),
@@ -561,18 +1344,16 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
             packed_pair.map(|pair| pair.pair_delta_ns).unwrap_or(0)
         ));
     }
-    AImage_delete(image);
 }
 
 unsafe extern "C" fn spatial_video_projection_on_buffer_removed(
-    context: *mut std::os::raw::c_void,
-    _reader: *mut AImageReader,
+    context: *mut c_void,
+    reader: *mut AImageReader,
     buffer: *mut ndk_sys::AHardwareBuffer,
 ) {
-    if context.is_null() {
+    let Some((reader_context, _permit)) = context_for_callback(context, reader) else {
         return;
-    }
-    let reader_context = &*(context as *mut NativeSpatialVideoProjectionReaderContext);
+    };
     let count = reader_context
         .buffer_removed_count
         .fetch_add(1, Ordering::Relaxed)
@@ -584,12 +1365,25 @@ unsafe extern "C" fn spatial_video_projection_on_buffer_removed(
             .ok()
             .map(|handle| handle.descriptor())
     };
+    let stable_buffer_id = descriptor.and_then(|descriptor| {
+        (descriptor.hardware_buffer_id_status == 0 && descriptor.hardware_buffer_id != 0)
+            .then_some(descriptor.hardware_buffer_id)
+    });
+    let buffer_reuse_disabled = match reader_context.source.lock() {
+        Ok(mut source) => {
+            source.record_buffer_removed(stable_buffer_id);
+            source.buffer_reuse_disabled()
+        }
+        Err(_) => true,
+    };
     log_marker(format!(
-        "status=buffer-removed stream=stereo_video removedCount={} hardwareBufferId={} descriptorWidth={} descriptorHeight={} nativeImageReader=true javaHardwareBufferBridge=false cacheEvictionSignal=true",
+        "status=buffer-removed stream=stereo_video readerGeneration={} removedCount={} hardwareBufferId={} descriptorWidth={} descriptorHeight={} bufferReuseDisabled={} nativeImageReader=true javaHardwareBufferBridge=false cacheEvictionSignal=true",
+        reader_context.reader_generation,
         count,
         descriptor.map(|desc| desc.hardware_buffer_id).unwrap_or(0),
         descriptor.map(|desc| desc.width).unwrap_or(0),
-        descriptor.map(|desc| desc.height).unwrap_or(0)
+        descriptor.map(|desc| desc.height).unwrap_or(0),
+        buffer_reuse_disabled
     ));
 }
 
