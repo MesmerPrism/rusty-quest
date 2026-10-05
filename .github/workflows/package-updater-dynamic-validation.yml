@@ -127,7 +127,7 @@ jobs:
           lfs: false
           path: rusty-manifold
           persist-credentials: false
-          ref: 947421a928889889e485006bcc0200e05c2394f9
+          ref: 091dabcbef02e0f93fbbcb6eaf0fc7d14307253c
           repository: MesmerPrism/rusty-manifold
           submodules: false
 
@@ -138,7 +138,7 @@ jobs:
           lfs: false
           path: rusty-lattice
           persist-credentials: false
-          ref: 0aee7faa52fc965ff2255381781dd082ab639f4b
+          ref: 2594b2bb0cd9e2e3593011f7dd09f68b59ea1989
           repository: MesmerPrism/rusty-lattice
           submodules: false
 
@@ -149,7 +149,7 @@ jobs:
           lfs: false
           path: rusty-matter
           persist-credentials: false
-          ref: eec8cddd9830f7ef0f90574ddcbde2daac0ec804
+          ref: 54a18d85ee877f5cb6c8275013da8a76764b140e
           repository: MesmerPrism/rusty-matter
           submodules: false
 
@@ -160,7 +160,7 @@ jobs:
           lfs: false
           path: rusty-optics
           persist-credentials: false
-          ref: fd01d84acffa1b0a3a192fe978af337d9fedd18a
+          ref: 23ce99bbb24ca90d7dcd1bf85dbda3a8603543c7
           repository: MesmerPrism/rusty-optics
           submodules: false
 
