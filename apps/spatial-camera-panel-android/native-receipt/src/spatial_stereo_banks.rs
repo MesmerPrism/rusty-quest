@@ -553,6 +553,7 @@ impl SpatialPublicGuideTargets {
         }
         Ok(())
     }
+    #[cfg(any(rq_environment_depth_spatial_sdk_api_layer, test))]
     pub(crate) fn cancel_stereo_sdk_unsubmitted(
         &mut self,
         proof: &crate::spatial_sdk_depth_handoff::SpatialUnsubmittedProof,

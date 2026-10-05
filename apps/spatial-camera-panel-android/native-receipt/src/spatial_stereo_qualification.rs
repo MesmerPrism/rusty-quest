@@ -1097,6 +1097,7 @@ mod tests {
 }
 
 /// Cancel only the exact typed never-submitted SDK frame. No GPU or rendered counters advance.
+#[cfg(any(rq_environment_depth_spatial_sdk_api_layer, test))]
 pub(crate) fn cancel_sdk_unsubmitted(
     ordinal: u64,
     surface: u64,

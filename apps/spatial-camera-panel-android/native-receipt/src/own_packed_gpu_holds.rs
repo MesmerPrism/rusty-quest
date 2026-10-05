@@ -301,6 +301,7 @@ pub(crate) fn mark_vk_sdk_submission_entered(
     }
     Err("submission hold unavailable".into())
 }
+#[cfg(any(rq_environment_depth_spatial_sdk_api_layer, test))]
 pub(crate) fn cancel_vk_sdk_unsubmitted(
     token: u64,
     proof: &crate::spatial_sdk_depth_handoff::SpatialUnsubmittedProof,

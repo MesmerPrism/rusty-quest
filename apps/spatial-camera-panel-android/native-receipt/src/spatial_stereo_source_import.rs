@@ -248,6 +248,7 @@ impl StereoSourceImports {
     }
     // Positive typed SDK never-entered proof is bound to this exact imported frame fence.
     // Unknown or accepted submission cannot use this path.
+    #[cfg(any(rq_environment_depth_spatial_sdk_api_layer, test))]
     pub(crate) fn cancel_sdk_unsubmitted(
         &mut self,
         session: u64,
