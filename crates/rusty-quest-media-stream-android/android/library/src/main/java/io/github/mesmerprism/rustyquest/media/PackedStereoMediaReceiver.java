@@ -38,6 +38,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     private volatile ServerSocket incomingListener;
     private final long generation;
     private final Bounds bounds;
+    private final ReceiverStageTrace stageTrace;
     private final FrameListener listener;
     private final FrameLifecycleListener lifecycleListener;
     private final SurfaceAcquisitionProbe acquisitionProbe;
@@ -121,6 +122,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         this.expectedSourceHost = expectedSourceHost;
         this.generation = generation;
         this.bounds = bounds;
+        this.stageTrace = new ReceiverStageTrace(generation);
         this.listener = listener;
         this.lifecycleListener = lifecycleListener;
         this.acquisitionProbe = acquisitionProbe;
@@ -450,6 +452,10 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         try { codec.start(); }
         catch (RuntimeException start) { throw closed("DECODER_START", start); }
         connectionState = "decoder_configured";
+        synchronized (lock) {
+            if (decoder == codec && !stopRequested && retiredConnectionGeneration < activeConnection)
+                stageTrace.begin(activeConnection, SystemClock.elapsedRealtimeNanos());
+        }
 
         boolean configurationSeen = false;
         boolean keyframeSeen = false;
@@ -461,6 +467,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             boolean keyframe = (packet.flags & RmanvidPacketReader.FLAG_KEY_FRAME) != 0;
             synchronized (lock) {
                 packetsRead++;
+                stageTrace.progress(ReceiverStageTrace.PACKET, activeConnection,
+                        SystemClock.elapsedRealtimeNanos(), packet.ptsUs, config ? 0L : packet.pair.pairId);
                 if (config) { configPackets++; connectionConfigSeen = true; }
                 if (config) connectionKeyframeSeen = false;
                 if (keyframe) { keyframePackets++; if (!config && connectionConfigSeen) connectionKeyframeSeen = true; }
@@ -517,7 +525,11 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         // forwarded; transport bits must never become EOS/PARTIAL_FRAME.
         codec.queueInputBuffer(inputIndex, 0, packet.payload.length, packet.ptsUs,
                 codecInputFlags(packet.flags));
-        synchronized (lock) { receivedPackets++; inputsQueued++; }
+        synchronized (lock) {
+            receivedPackets++; inputsQueued++;
+            stageTrace.progress(ReceiverStageTrace.INPUT, activeConnection,
+                    SystemClock.elapsedRealtimeNanos(), packet.ptsUs, config ? 0L : packet.pair.pairId);
+        }
     }
 
     private void awaitIdentityCapacity(MediaCodec codec, long activeConnection) throws Exception {
@@ -565,6 +577,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             if (exact.releaseOrdinal <= lastAcquiredReleaseOrdinal) return;
             lastAcquiredReleaseOrdinal = exact.releaseOrdinal;
             acquiredFrames = saturatedIncrement(acquiredFrames);
+            stageTrace.progress(ReceiverStageTrace.ACQUIRED, activeConnection,
+                    SystemClock.elapsedRealtimeNanos(), exact.identity.presentationTimeUs, exact.identity.pairId);
             int superseded = retireEarlierReleasedLocked(activeConnection, exact.releaseOrdinal);
             acquiredSuperseded += Math.min((long) superseded, Long.MAX_VALUE - acquiredSuperseded);
             connectionState = "receiving";
@@ -598,6 +612,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                         || pending.readyForRender) {
                     throw closed("OUTPUT_IDENTITY_MISSING", null);
                 }
+                stageTrace.progress(ReceiverStageTrace.OUTPUT, activeConnection,
+                        SystemClock.elapsedRealtimeNanos(), info.presentationTimeUs, pending.identity.pairId);
                 // PTS is an exact lookup key, never an ordering promise. Retain
                 // queued frames across reordered output until their own output
                 // arrives or this connection is retired.
@@ -639,6 +655,12 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 }
             }
             codec.releaseOutputBuffer(outputIndex, accepted);
+            if (accepted) {
+                synchronized (lock) {
+                    stageTrace.progress(ReceiverStageTrace.RELEASE, activeConnection,
+                            SystemClock.elapsedRealtimeNanos(), info.presentationTimeUs, pending.identity.pairId);
+                }
+            }
             if (!accepted) throw closed("PRE_RENDER_IDENTITY_REJECTED", null);
         }
     }
@@ -781,6 +803,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             if (connectionGeneration > retiredConnectionGeneration) {
                 retiredConnection = connectionGeneration;
                 retiredConnectionGeneration = connectionGeneration;
+                stageTrace.retire(retiredConnection, SystemClock.elapsedRealtimeNanos());
             }
         }
         if (retiredConnection != 0L && lifecycleListener != null) {
@@ -930,6 +953,11 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         static FrameIdentity from(RmanvidPacketReader.Packet packet) {
             return new FrameIdentity(packet);
         }
+    }
+
+    /** Debug-only stage timings; no readiness, GPU completion or acceptance claim. */
+    public org.json.JSONObject diagnosticStageSnapshot() throws Exception {
+        return stageTrace.sample(SystemClock::elapsedRealtimeNanos);
     }
 
     /** Closed receiver counters for activation/status diagnostics. Never contains free text. */

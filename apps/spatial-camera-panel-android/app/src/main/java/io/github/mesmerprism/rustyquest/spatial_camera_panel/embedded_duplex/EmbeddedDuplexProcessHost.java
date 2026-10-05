@@ -269,7 +269,8 @@ final class EmbeddedDuplexProcessHost {
                                 .put("sample_end_elapsed_ns", android.os.SystemClock.elapsedRealtimeNanos())
                                 .put("qualification", qualification)
                                 .put("native_dropout_observation", nativeObservation)
-                                .put("java_dropout_observation", javaObservation);
+                                .put("java_dropout_observation", javaObservation)
+                                .put("receiver_stage_observation", retained.receiverStageSnapshot());
                         String exact = report.toString();
                         if (exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 32 * 1024) {
                             throw new IllegalStateException("Stream dropout diagnostic bounds");
