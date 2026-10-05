@@ -62,6 +62,7 @@ pub(super) struct Cleanup {
     serial: Arc<Mutex<Option<()>>>,
     state: Arc<Mutex<PreparedState>>,
     pub(super) requester: Arc<Mutex<Option<Requester>>>,
+    failure: Arc<Mutex<Option<&'static str>>>,
 }
 fn key(t: &AndroidMediaExecutionTicket) -> String {
     format!(
@@ -105,6 +106,7 @@ impl Cleanup {
         remote_key_id: String,
         remote_key: [u8; 32],
         generation: u64,
+        failure: Arc<Mutex<Option<&'static str>>>,
     ) -> Result<Self, String> {
         let state: PreparedState = serde_json::from_str(&callbacks.load_cleanup_preparations()?)
             .map_err(|_| "cleanup preparations decode")?;
@@ -124,6 +126,7 @@ impl Cleanup {
             serial: Arc::new(Mutex::new(Some(()))),
             state: Arc::new(Mutex::new(state)),
             requester: Arc::new(Mutex::new(None)),
+            failure,
         })
     }
     fn persist(&self, next: PreparedState) -> Result<(), String> {
@@ -430,6 +433,8 @@ impl AndroidMediaOwnerExecutor for Executor {
         ticket: &AndroidMediaExecutionTicket,
         mode: AndroidMediaExecutionMode,
     ) -> Result<AndroidMediaOwnerReadback, String> {
+        let mut failure_stage = OwnerFailureStage::Executor;
+        let result = (|| {
         let requester = self
             .cleanup
             .requester
@@ -439,6 +444,7 @@ impl AndroidMediaOwnerExecutor for Executor {
         let Some(requester) =
             requester.filter(|_| ticket.operation == MediaStreamPlatformOperation::Stop || is_retained_start_abort_ticket(ticket))
         else {
+            failure_stage = OwnerFailureStage::OrdinaryCallback;
             return self.ordinary.execute(ticket, mode);
         };
         let placement = self
@@ -459,6 +465,7 @@ impl AndroidMediaOwnerExecutor for Executor {
         let now = self.cleanup.clock.now_ms()?;
         let readback = match &placement.target {
             AndroidMediaOwnerPlacementTarget::Local => {
+        failure_stage = OwnerFailureStage::LocalProjection;
                 let projection = self.cleanup.authority.retained_local_cleanup_projection(
                     &serde_json::from_value(json!(grant)).map_err(safe_decode)?,
                     &serde_json::from_value(json!(requester.id)).map_err(safe_decode)?,
@@ -471,15 +478,18 @@ impl AndroidMediaOwnerExecutor for Executor {
                 // effect is verified before projecting original action fields.
                 let mut target=ticket.clone();
                 target.operation=MediaStreamPlatformOperation::Stop;
+        failure_stage = OwnerFailureStage::LocalCallback;
                 let effect=RetainedCleanupRegistry::execute_and_verify(
                     &mut self.cleanup.callbacks,
                     &projection,
                     &target,
                     mode,
                 )?;
+                failure_stage = OwnerFailureStage::SourceReadback;
                 retained_local_source_readback(ticket,&target,effect)?
             }
             AndroidMediaOwnerPlacementTarget::Remote { peer_id } => {
+                failure_stage = OwnerFailureStage::RemotePrepare;
                 if peer_id != &self.cleanup.remote {
                     return Err("cleanup unbound peer".into());
                 }
@@ -550,7 +560,9 @@ impl AndroidMediaOwnerExecutor for Executor {
                 if pending.prepared.is_none() {
                     let mut frame = PREPARE_MAGIC.to_vec();
                     frame.extend(encode(&pending.request)?);
+        failure_stage = OwnerFailureStage::RemotePrepare;
                     let bytes = self.cleanup.callbacks.exchange(&frame, 128 * 1024)?;
+        failure_stage = OwnerFailureStage::RemotePrepareProof;
                     let prepared: RetainedCleanupPreparedStop = serde_json::from_slice(&bytes)
                         .map_err(|_| "cleanup preparation response decode")?;
                     verify_retained_cleanup_prepared(
@@ -564,6 +576,7 @@ impl AndroidMediaOwnerExecutor for Executor {
                         return Err("cleanup preparation request changed".into());
                     }
                     let observed_now = self.cleanup.clock.now_ms()?;
+        failure_stage = OwnerFailureStage::RemoteProjection;
                     let mut local = self.cleanup.projection(
                         &pending.request.route_grant_id,
                         &pending.request.requester_id,
@@ -584,6 +597,7 @@ impl AndroidMediaOwnerExecutor for Executor {
                     pending.prepared = Some(prepared);
                 }
                 let prepared = pending.prepared.clone().ok_or("cleanup prepare absent")?;
+        failure_stage = OwnerFailureStage::RemoteCommit;
                 if pending.commit.is_none() {
                     let effect_sha = digest(&encode(&(
                         &prepared.authority,
@@ -611,6 +625,7 @@ impl AndroidMediaOwnerExecutor for Executor {
                 }
                 let commit = pending.commit.clone().ok_or("cleanup commit absent")?;
                 self.uncertain.insert(ticket.capability.clone());
+        failure_stage = OwnerFailureStage::RemoteExchange;
                 if pending.response.is_none() {
                     pending.response = Some(
                         self.cleanup
@@ -618,6 +633,7 @@ impl AndroidMediaOwnerExecutor for Executor {
                             .exchange(&encode(&commit)?, 128 * 1024)?,
                     );
                 }
+        failure_stage = OwnerFailureStage::RemoteProof;
                 let proof = RemoteRetainedCleanupEffect {
                     schema_id: if is_retained_start_abort_ticket(ticket) {"rusty.quest.android.media.remote_retained_abort_effect.v2"}
                         else {"rusty.quest.android.media.remote_retained_cleanup_effect.v1"}.into(),
@@ -636,12 +652,15 @@ impl AndroidMediaOwnerExecutor for Executor {
             }
         };
         // Only physically verified actual local effect or signed target Stop reaches this table.
+        failure_stage = OwnerFailureStage::SourceReadback;
         validate_readback(ticket, &readback).map_err(|_| "cleanup source readback rejected")?;
         self.verified
             .lock()
             .map_err(|_| "cleanup verification poisoned")?
             .insert(ticket.capability.clone(), readback.clone());
         Ok(readback)
+        })();
+        owner_failure::observe(result, &self.cleanup.failure, failure_stage)
     }
     fn verify(
         &self,

@@ -85,6 +85,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         && state.activation.as_ref().is_some_and(|v|
         v.pointer("/activation/status").and_then(Value::as_str) == Some("completed"))
         && current.is_some();
+    let (owner_diagnostic, owner_diagnostic_status) = owner_failure::diagnostic(host.callbacks.owner_failure_diagnostic());
     Ok(json!({"$schema":"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1",
         "action":action,"config_sha256":host.config_sha256,
         "native_executor_generation":host.capability.generation,"app_process_generation":host.capability.binding.generation,
@@ -95,7 +96,8 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "route_receipt":state.route_receipt,"route_termination":state.route_termination,"route_cleanup":state.route_cleanup,
         "termination_action":state.termination_action,"revoker_adoption":state.revoker_adoption,
         "media_completion":state.stop_completion,"media_stop_effect_receipt":media_stop_effect(state),
-        "owner_failure_diagnostic":host.callbacks.owner_failure_diagnostic().ok(),
+        "owner_failure_diagnostic":owner_diagnostic,
+        "owner_failure_diagnostic_status":owner_diagnostic_status,
         "native_owner_dispatch_failure":*host.owner_dispatch_failure.lock().map_err(|_| "owner diagnostic state unavailable")?,
         "activation":state.activation,"renewal_receipts":&state.renewals[state.renewals.len().saturating_sub(2)..],
         "renewal_total_completed":state.renewals.len(),

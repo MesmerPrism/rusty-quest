@@ -8,6 +8,7 @@ use super::common_lan_signing::{
     CommonLanSigningPolicy,
 };
 use super::java_bridge::JavaOwnerCallbacks;
+use super::owner_failure::{self, Stage as OwnerFailureStage};
 use super::native_fence_jni;
 use super::packaged_config::assemble_packaged_config_request_json;
 use super::packaged_route::PackagedDuplexRoute;
@@ -700,9 +701,10 @@ fn build_host(
     )?;
     let remote_public_key = decode_key(&bootstrap.remote_public_key_hex)?;
     let local_public_key = callbacks.local_public_key()?;
+    let owner_dispatch_failure = Arc::new(Mutex::new(None));
     let cleanup = retained_cleanup_host::Cleanup::new(authority.clone(),callbacks.clone(),clock.clone(),
         bootstrap.local_peer_id.clone(),bootstrap.remote_peer_id.clone(),bootstrap.remote_key_id.clone(),
-        remote_public_key,capability.generation)?;
+        remote_public_key,capability.generation,owner_dispatch_failure.clone())?;
     let cleanup_replay = serde_json::from_str(&callbacks.load_retained_cleanup_replay()?)
         .map_err(|_| "retained cleanup replay decode")?;
     let cleanup_server = retained_cleanup_host::Server::restore(bootstrap.local_peer_id.clone(),
@@ -793,7 +795,7 @@ fn build_host(
             installed_signing_certificate_sha256,
             peer_lifecycle: Arc::new(Mutex::new(Some(peer_lifecycle::State::default()))),
             owner_effect_attempted: Arc::new(AtomicBool::new(false)),
-            owner_dispatch_failure: Arc::new(Mutex::new(None)),
+            owner_dispatch_failure,
             restored_owner_replay,
         },
         result,
@@ -981,14 +983,14 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             return result;
         }
         if bytes.starts_with(retained_cleanup_host::PREPARE_MAGIC) {
-            let result=host.cleanup.prepare_frame(&bytes);
-            host.capability.require_live()?;
+            let result=owner_failure::observe(host.cleanup.prepare_frame(&bytes), &host.owner_dispatch_failure, OwnerFailureStage::Prepare);
+            owner_failure::observe(host.capability.require_live(), &host.owner_dispatch_failure, OwnerFailureStage::Capability)?;
             return result;
         }
         if let Ok(request)=serde_json::from_slice::<rusty_quest_media_stream_android::RetainedCleanupDispatchRequest>(&bytes) {
             host.owner_effect_attempted.store(true,Ordering::SeqCst);
-            let result=Checkout::take(host.cleanup_server.clone())?.get().handle(&request);
-            host.capability.require_live()?;
+            let result=owner_failure::observe((||{Checkout::take(host.cleanup_server.clone())?.get().handle(&request)})(), &host.owner_dispatch_failure, OwnerFailureStage::Dispatch);
+            owner_failure::observe(host.capability.require_live(), &host.owner_dispatch_failure, OwnerFailureStage::Capability)?;
             return result;
         }
         host.owner_effect_attempted.store(true, Ordering::SeqCst);
