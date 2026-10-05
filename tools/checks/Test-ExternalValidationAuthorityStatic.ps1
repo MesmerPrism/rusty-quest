@@ -254,7 +254,7 @@ foreach ($token in @(
     'path: rusty-quest',
     'path: rusty-manifold',
     'repository: MesmerPrism/rusty-manifold',
-    'ref: 091dabcbef02e0f93fbbcb6eaf0fc7d14307253c',
+    'ref: 847c320faba217708d38a9755a55efa5b3e43874',
     'path: rusty-lattice',
     'repository: MesmerPrism/rusty-lattice',
     'ref: 2594b2bb0cd9e2e3593011f7dd09f68b59ea1989',
