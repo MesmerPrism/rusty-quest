@@ -21,29 +21,80 @@ function Require([string]$Label, [string]$Text, [string]$Pattern) {
     }
 }
 
+function Get-SourceCodeMask([string]$Text) {
+    # Bounded lexical masking preserves every offset while ignoring strings/comments.
+    if ($Text.Length -gt 262144) { throw 'Stereo source exceeds bounded parser input.' }
+    $mask=$Text.ToCharArray();$state='code';$depth=0
+    for($i=0;$i-lt$Text.Length;$i++){
+        $c=$Text[$i];$next=if($i+1-lt$Text.Length){$Text[$i+1]}else{[char]0}
+        if($state-eq'line'){$mask[$i]=' ';if($c-eq"`n"){$state='code'};continue}
+        if($state-eq'block'){
+            $mask[$i]=' '
+            if($c-eq'/'-and$next-eq'*'){$mask[++$i]=' ';$depth++}
+            elseif($c-eq'*'-and$next-eq'/'){$mask[++$i]=' ';$depth--;if($depth-eq0){$state='code'}}
+            continue
+        }
+        if($state-eq'string'-or$state-eq'character'){
+            $mask[$i]=' '
+            if($c-eq'\') {if($i+1-ge$Text.Length){throw 'Unclosed escaped literal.'};$mask[++$i]=' ';continue}
+            if(($state-eq'string'-and$c-eq'"')-or($state-eq'character'-and$c-eq"'")){$state='code'}
+            continue
+        }
+        if($c-eq'/'-and$next-eq'/'){$mask[$i]=' ';$mask[++$i]=' ';$state='line';continue}
+        if($c-eq'/'-and$next-eq'*'){$mask[$i]=' ';$mask[++$i]=' ';$state='block';$depth=1;continue}
+        if($c-eq'"'){
+            if($i-gt0-and$Text.Substring(0,$i)-cmatch'r#*$'){throw 'Raw strings require an explicitly supported source parser.'}
+            $mask[$i]=' ';$state='string';continue
+        }
+        # Recognize character literals; Rust lifetimes remain ordinary code.
+        if($c-eq"'"-and(($i+2-lt$Text.Length-and$Text[$i+2]-eq"'")-or($next-eq'\'))){$mask[$i]=' ';$state='character'}
+    }
+    if($state-notin@('code','line')){throw 'Unclosed source literal/comment.'}
+    # Preserve line boundaries for anchored executable declaration matching.
+    for($i=0;$i-lt$Text.Length;$i++){if($Text[$i]-eq"`n"-or$Text[$i]-eq"`r"){$mask[$i]=$Text[$i]}}
+    return -join$mask
+}
+
+function Get-BalancedSourceBlock([string]$Text,[string]$Code,[string]$Header) {
+    $matches=[regex]::Matches($Code,$Header)
+    if($matches.Count-ne1){throw 'Exactly one executable source block header required.'}
+    $start=$matches[0].Index;$open=$Code.IndexOf('{',$start+$matches[0].Length)
+    if($open-lt0){throw 'Source block opening brace absent.'}
+    $depth=1
+    for($end=$open+1;$end-lt$Code.Length;$end++){
+        if($Code[$end]-eq'{'){$depth++}elseif($Code[$end]-eq'}'){$depth--}
+        if($depth-eq0){return @{Text=$Text.Substring($start,$end+1-$start);Code=$Code.Substring($start,$end+1-$start);Body=$Code.Substring($open+1,$end-$open-1);Start=$start;End=$end+1}}
+    }
+    throw 'Source block is unbalanced.'
+}
+
 function Assert-PackedStereoMetadataContract([string]$Consumer, [string]$NativeStream) {
+    $consumerCode=Get-SourceCodeMask $Consumer;$nativeCode=Get-SourceCodeMask $NativeStream
     $call = 'if \(!nativeRegisterPackedStereoPairMetadata\(\s*decoderToken,\s*outputPresentationTimeNs,\s*pair\.pairId,\s*pair\.leftSourceFrame,\s*pair\.rightSourceFrame,\s*pair\.leftSensorTimestampNs,\s*pair\.rightSensorTimestampNs,\s*pair\.pairDeltaNs\)\)'
-    Require 'Spatial pair registration' $Consumer $call
-    Require 'Spatial native declaration' $Consumer 'private static native boolean nativeRegisterPackedStereoPairMetadata\(\s*long decoderToken,\s*long outputPresentationTimeNs,\s*long pairId,\s*long leftSourceFrame,\s*long rightSourceFrame,\s*long leftSensorTimestampNs,\s*long rightSensorTimestampNs,\s*long pairDeltaNs\s*\);'
-    $drainStart = $Consumer.IndexOf('private static long drain(')
-    $drainEnd = $Consumer.IndexOf('private static MediaCodec createHardwareDecoder(', $drainStart)
-    if ($drainStart -lt 0 -or $drainEnd -le $drainStart) { throw 'Spatial decoder drain boundary is missing.' }
-    $drain = $Consumer.Substring($drainStart, $drainEnd - $drainStart)
+    Require 'Spatial native declaration' $consumerCode 'private static native boolean nativeRegisterPackedStereoPairMetadata\(\s*long decoderToken,\s*long outputPresentationTimeNs,\s*long pairId,\s*long leftSourceFrame,\s*long rightSourceFrame,\s*long leftSensorTimestampNs,\s*long rightSensorTimestampNs,\s*long pairDeltaNs\s*\);'
+    $drainBlock=Get-BalancedSourceBlock $Consumer $consumerCode 'private static long drain\('
+    $drain=$drainBlock.Code
+    $rejection=Get-BalancedSourceBlock $drainBlock.Text $drain $call
+    Require 'Spatial registration rejection body' $rejection.Body '^\s*throw new IOException\(\s*\);\s*$'
+    $catch=Get-BalancedSourceBlock $drainBlock.Text $drain 'catch \(IOException \| RuntimeException error\)'
+    Require 'Spatial rejected output body' $catch.Body '^\s*codec\.releaseOutputBuffer\(outputIndex, false\);\s*throw error;\s*$'
     $match = $drain.IndexOf('queuedPairs.takeExact(info.presentationTimeUs)')
     $timestamp = $drain.IndexOf('outputTimestampNs(info.presentationTimeUs)')
     $register = $drain.IndexOf('if (!nativeRegisterPackedStereoPairMetadata(')
     $discard = $drain.IndexOf('codec.releaseOutputBuffer(outputIndex, false)')
     $release = $drain.IndexOf('codec.releaseOutputBuffer(outputIndex, render)')
     if ($match -lt 0 -or $timestamp -le $match -or $register -le $timestamp -or
-        $discard -le $register -or $release -le $discard) {
+        $discard -le $register -or $release -le $discard -or $rejection.End-ge$catch.Start -or $catch.End-ge$release) {
         throw 'Spatial output must join exact PTS and register metadata before render; rejection must discard.'
     }
-    Require 'Spatial rejected output' $drain 'catch \(IOException \| RuntimeException error\) \{\s*codec\.releaseOutputBuffer\(outputIndex, false\);\s*throw error;'
-    Require 'Spatial metadata JNI' $NativeStream 'pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialPackedStereoBrokerPlayback_nativeRegisterPackedStereoPairMetadata\('
-    Require 'Spatial JNI tuple' $NativeStream 'decoder_token: jlong,\s*output_timestamp_ns: jlong,\s*pair_id: jlong,\s*left_source_frame: jlong,\s*right_source_frame: jlong,\s*left_sensor_timestamp_ns: jlong,\s*right_sensor_timestamp_ns: jlong,\s*pair_delta_ns: jlong,\s*\) -> jboolean'
-    Require 'Spatial decoder authority' $NativeStream 'context_for_decoder_token\(decoder_token as u64\)'
-    Require 'Spatial timestamp registration' $NativeStream '\.register_packed\(\s*output_timestamp_ns,\s*SpatialPackedPairMetadata'
-    Require 'Spatial frame identity consumption' $NativeStream 'source\.consume_exact\(timestamp_ns\)'
+    $jni=Get-BalancedSourceBlock $NativeStream $nativeCode '(?m)^pub\s+extern\s+fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialPackedStereoBrokerPlayback_nativeRegisterPackedStereoPairMetadata\('
+    Require 'Spatial metadata JNI ABI' $jni.Text '^pub extern "system" fn'
+    Require 'Spatial JNI tuple' $jni.Code 'decoder_token: jlong,\s*output_timestamp_ns: jlong,\s*pair_id: jlong,\s*left_source_frame: jlong,\s*right_source_frame: jlong,\s*left_sensor_timestamp_ns: jlong,\s*right_sensor_timestamp_ns: jlong,\s*pair_delta_ns: jlong,\s*\) -> jboolean'
+    Require 'Spatial decoder authority' $jni.Code 'context_for_decoder_token\(decoder_token as u64\)'
+    Require 'Spatial timestamp registration' $jni.Code '\.register_packed\(\s*output_timestamp_ns,\s*SpatialPackedPairMetadata'
+    $acquire=Get-BalancedSourceBlock $NativeStream $nativeCode '(?m)^unsafe\s+extern\s+fn spatial_video_projection_on_image_available\('
+    Require 'Spatial acquired timestamp' $acquire.Code 'AImage_getTimestamp\(image, &mut timestamp_ns\)'
+    Require 'Spatial frame identity consumption' $acquire.Code 'source\.consume_exact\(timestamp_ns\)'
 }
 
 $productRoot = Join-Path $root 'apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel'
@@ -147,19 +198,36 @@ Require 'Opaque relay' $relay 'hmac\.compare_digest'
 Require 'Product doc' $doc 'screenshot brightness is\s+not camera freshness evidence'
 
 # Damaged-source controls exercise this source contract; no decoder/JNI/device runs.
+$nativeCode=Get-SourceCodeMask $nativeStream
+$registration=Get-BalancedSourceBlock $nativeStream $nativeCode '(?m)^pub\s+extern\s+fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialPackedStereoBrokerPlayback_nativeRegisterPackedStereoPairMetadata\('
+$acquisition=Get-BalancedSourceBlock $nativeStream $nativeCode '(?m)^unsafe\s+extern\s+fn spatial_video_projection_on_image_available\('
+function Replace-ExactSourceBlock([string]$Source,$Block,[string]$Before,[string]$After){
+    if([regex]::Matches($Block.Text,[regex]::Escape($Before)).Count-ne1){throw 'Unique target within actual source function required.'}
+    return $Source.Substring(0,$Block.Start)+$Block.Text.Replace($Before,$After)+$Source.Substring($Block.End)
+}
 $damaged = @(
     @($consumer.Replace('if (!nativeRegisterPackedStereoPairMetadata(', 'if (nativeRegisterPackedStereoPairMetadata('), $nativeStream),
     @($consumer.Replace('queuedPairs.takeExact(info.presentationTimeUs)', 'queuedPairs.takeExact(0L)'), $nativeStream),
     @($consumer.Replace('codec.releaseOutputBuffer(outputIndex, false)', 'codec.releaseOutputBuffer(outputIndex, true)'), $nativeStream),
     @($consumer.Replace('long outputPresentationTimeNs,', 'long incorrectTimestampNs,'), $nativeStream),
-    @($consumer, $nativeStream.Replace(') -> jboolean {', ') -> jlong {')),
-    @($consumer, $nativeStream.Replace('context_for_decoder_token(decoder_token as u64)', 'context_for_decoder_token(1)')),
-    @($consumer, $nativeStream.Replace('source.consume_exact(timestamp_ns)', 'source.consume_exact(0)'))
+    @($consumer.Replace('throw new IOException("Spatial packed decoder output identity was rejected");', ';'), $nativeStream),
+    @($consumer, (Replace-ExactSourceBlock $nativeStream $registration ') -> jboolean {' ') -> jlong {')),
+    @($consumer, (Replace-ExactSourceBlock $nativeStream $registration 'context_for_decoder_token(decoder_token as u64)' 'context_for_decoder_token(1)')),
+    @($consumer, (Replace-ExactSourceBlock $nativeStream $registration 'output_timestamp_ns,' '0,')),
+    @($consumer, (Replace-ExactSourceBlock $nativeStream $acquisition 'AImage_getTimestamp(image, &mut timestamp_ns)' 'AImage_getTimestamp(image, &mut unrelated_timestamp_ns)')),
+    @($consumer, (Replace-ExactSourceBlock $nativeStream $acquisition 'source.consume_exact(timestamp_ns)' 'source.consume_exact(0)'))
 )
 foreach ($case in $damaged) {
     $rejected = $false
     try { Assert-PackedStereoMetadataContract $case[0] $case[1] } catch { $rejected = $true }
     if (-not $rejected) { throw 'Damaged Spatial stereo metadata contract admitted.' }
 }
+
+# Balanced extraction ignores braces/declarations in literals and nested comments.
+$lexical='fn sample() { let value = "{ } fn sample() {"; /* outer { /* nested } */ } */ if (true) { } } fn following() { }'
+$block=Get-BalancedSourceBlock $lexical (Get-SourceCodeMask $lexical) 'fn sample\('
+if($block.Text.Contains('fn following')){throw 'Balanced extraction crossed the actual function boundary.'}
+$rejected=$false;try{$null=Get-SourceCodeMask 'fn sample() { /* unclosed'}catch{$rejected=$true}
+if(-not$rejected){throw 'Unclosed source comment accepted.'}
 
 Write-Host 'Rusty Quest Q2Q peer-stereo static gate: PASS'
