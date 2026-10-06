@@ -1,0 +1,15 @@
+name: External validation authority spoof probe
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  spoof:
+    name: Static admission
+    runs-on: ubuntu-latest
+    steps:
+      - name: Succeed without checkout or effects
+        run: exit 0
