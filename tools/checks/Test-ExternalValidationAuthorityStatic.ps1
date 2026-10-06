@@ -36,6 +36,8 @@ $policySelfTest = Join-Path $RepoRoot `
     "tools\checks\Test-ExternalValidationAuthorityPolicySelfTest.ps1"
 $externalOwnerSelfTest = Join-Path $RepoRoot `
     "tools\checks\Test-ExternalOwnerAuthorization.ps1"
+$externalOwnerTupleSelfTest = Join-Path $RepoRoot `
+    "tools\checks\Test-ExternalOwnerTupleEnvelope.ps1"
 $externalOwnerBootstrapSelfTest = Join-Path $RepoRoot `
     "tools\checks\Test-ExternalOwnerBootstrapAuthorization.ps1"
 $bootstrapRequestSchemaPath = Join-Path $RepoRoot `
@@ -56,6 +58,7 @@ foreach ($path in @(
     $approvalFixturePath,
     $policySelfTest,
     $externalOwnerSelfTest,
+    $externalOwnerTupleSelfTest,
     $externalOwnerBootstrapSelfTest,
     $bootstrapRequestSchemaPath,
     $bootstrapAuthorizationSchemaPath
@@ -534,7 +537,7 @@ foreach ($trimProbe in @('C:\trusted\', 'C:\trusted/')) {
     }
 }
 
-foreach ($scriptPath in @($adapterPath, $externalOwnerModulePath, $policySelfTest, $externalOwnerSelfTest, $externalOwnerBootstrapSelfTest, $PSCommandPath)) {
+foreach ($scriptPath in @($adapterPath, $externalOwnerModulePath, $policySelfTest, $externalOwnerSelfTest, $externalOwnerTupleSelfTest, $externalOwnerBootstrapSelfTest, $PSCommandPath)) {
     $tokens = $null
     $errors = $null
     [void][Management.Automation.Language.Parser]::ParseFile(
@@ -834,5 +837,6 @@ foreach ($damage in @(
     -RepoRoot $RepoRoot `
     -ExpectedBootstrapApprovalAncestor $ExpectedBootstrapApprovalAncestor
 & $externalOwnerSelfTest -RepoRoot $RepoRoot
+& $externalOwnerTupleSelfTest -RepoRoot $RepoRoot
 & $externalOwnerBootstrapSelfTest -RepoRoot $RepoRoot
 Write-Output "External validation authority static contract passed."

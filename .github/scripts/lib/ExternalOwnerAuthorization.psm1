@@ -570,6 +570,62 @@ function New-ExternalOwnerAuthorizationPayload {
     }
 }
 
+# v2 changes only the artifact wire representation. Signatures still cover the
+# complete canonical v1 payload, never the compact transport representation.
+function ConvertFrom-ExternalOwnerAuthorizationEnvelope {
+    param([Parameter(Mandatory)][string]$Json, [Parameter(Mandatory)][object]$Policy,
+          [Parameter(Mandatory)][string]$SchemaPath)
+    $document = ConvertFrom-ExternalOwnerJsonStrict $Json
+    if ([string]$document.schema -ceq "rusty.quest.external_owner_authorization.v1") { return $document }
+    if ([string]$document.schema -cne "rusty.quest.external_owner_authorization.v2") { throw "Unsupported authorization envelope." }
+    if (-not $Policy.PSObject.Properties['allowed_envelope_schemas'] -or
+        [string]$document.schema -cnotin @($Policy.allowed_envelope_schemas)) { throw "Trusted policy does not allow tuple envelopes." }
+    $tupleSchema = Join-Path (Split-Path -Parent $SchemaPath) "rusty.quest.external_owner_authorization.v2.schema.json"
+    if (-not (Test-Json -Json $Json -SchemaFile $tupleSchema -ErrorAction Stop)) { throw "Tuple envelope failed its schema." }
+    foreach ($role in @('changed_artifacts','protected_artifacts')) {
+        $expanded = [Collections.Generic.List[object]]::new()
+        foreach ($tuple in $document.payload.$role) {
+            if ($tuple -isnot [array]) { throw "Artifact tuple must be an array." }
+            if ($tuple[1] -ceq 'absent') {
+                if ($tuple.Count -ne 2) { throw "Absent artifact tuple is not closed." }
+                $expanded.Add([pscustomobject][ordered]@{path=$tuple[0];state='absent'})
+            } elseif ($tuple[1] -ceq 'present') {
+                if ($tuple.Count -ne 5 -or ($tuple[3] -isnot [int] -and $tuple[3] -isnot [long])) { throw "Present artifact tuple is not closed or integer typed." }
+                $expanded.Add([pscustomobject][ordered]@{path=$tuple[0];state='present';mode=$tuple[2];size_bytes=$tuple[3];sha256=$tuple[4]})
+            } else { throw "Unsupported artifact tuple state." }
+        }
+        $document.payload.$role = $expanded.ToArray()
+    }
+    $document.schema = 'rusty.quest.external_owner_authorization.v1'
+    $document.payload.schema = 'rusty.quest.external_owner_authorization_payload.v1'
+    $expandedJson = $document | ConvertTo-Json -Depth 30 -Compress
+    if (-not (Test-Json -Json $expandedJson -SchemaFile $SchemaPath -ErrorAction Stop)) { throw "Expanded tuple envelope failed its schema." }
+    Assert-ExternalOwnerArtifactInventory -ChangedPaths @($document.payload.changed_artifacts | ForEach-Object path) -ChangedArtifacts $document.payload.changed_artifacts -ProtectedPaths @($document.payload.protected_artifacts | ForEach-Object path) -ProtectedArtifacts $document.payload.protected_artifacts
+    return $document
+}
+
+function ConvertTo-ExternalOwnerTupleEnvelope {
+    param([Parameter(Mandatory)][object]$Document, [Parameter(Mandatory)][object]$Policy,
+          [Parameter(Mandatory)][string]$SchemaPath)
+    # Copy through the strict parser; callers cannot mutate the signed input.
+    $json = $Document | ConvertTo-Json -Depth 30 -Compress
+    if (-not (Test-Json -Json $json -SchemaFile $SchemaPath -ErrorAction Stop)) { throw "Tuple emission requires a complete v1 envelope." }
+    $wire = ConvertFrom-ExternalOwnerJsonStrict $json
+    foreach ($role in @('changed_artifacts','protected_artifacts')) {
+        $tuples = [Collections.Generic.List[object]]::new()
+        foreach ($artifact in $wire.payload.$role) {
+            if ($artifact.state -ceq 'present') { $tuples.Add(@($artifact.path,'present',$artifact.mode,$artifact.size_bytes,$artifact.sha256)) }
+            else { $tuples.Add(@($artifact.path,'absent')) }
+        }
+        $wire.payload.$role = $tuples.ToArray()
+    }
+    $wire.schema = 'rusty.quest.external_owner_authorization.v2'
+    $wire.payload.schema = 'rusty.quest.external_owner_authorization_payload.tuples.v2'
+    $roundTrip = ConvertFrom-ExternalOwnerAuthorizationEnvelope -Json ($wire | ConvertTo-Json -Depth 30 -Compress) -Policy $Policy -SchemaPath $SchemaPath
+    if (-not [Security.Cryptography.CryptographicOperations]::FixedTimeEquals((Get-CanonicalAuthorizationBytes $Document.payload),(Get-CanonicalAuthorizationBytes $roundTrip.payload))) { throw "Tuple emission changed the signed payload." }
+    return $wire
+}
+
 function Test-ExternalOwnerAuthorizationComments {
     param([Parameter(Mandatory)][object[]]$Comments, [Parameter(Mandatory)][object]$ExpectedPayload, [Parameter(Mandatory)][object]$Policy, [datetimeoffset]$Now = [datetimeoffset]::UtcNow, [Parameter(Mandatory)][string]$SchemaPath)
     Initialize-ExternalOwnerAuthorizationTypes
@@ -594,7 +650,7 @@ function Test-ExternalOwnerAuthorizationComments {
     if ([Text.Encoding]::UTF8.GetByteCount([string]$comment.body) -gt [int]$Policy.maximum_comment_bytes) { throw "Authorization comment exceeds the size bound." }
     $lines = ([string]$comment.body) -split "\r?\n", 2
     if ($lines.Count -ne 2 -or $lines[0] -cne [string]$Policy.comment_marker) { throw "Authorization marker framing is not canonical." }
-    $document = ConvertFrom-ExternalOwnerJsonStrict $lines[1]
+    $document = ConvertFrom-ExternalOwnerAuthorizationEnvelope -Json $lines[1] -Policy $Policy -SchemaPath $SchemaPath
     $documentJson = $document | ConvertTo-Json -Depth 30 -Compress
     if (-not (Test-Json -Json $documentJson -SchemaFile $SchemaPath -ErrorAction Stop)) { throw "Authorization document failed its schema." }
     if ([string]$document.payload.issuer_id -cne [string]$Policy.issuer_id -or [string]$document.payload.key_id -cne [string]$Policy.key_id -or [string]$document.signature.algorithm -cne "RSA-PSS-SHA256" -or [string]$document.signature.public_key_spki_sha256 -cne [string]$Policy.public_key_spki_sha256) { throw "Authorization issuer, key, or algorithm is not pinned." }
@@ -609,4 +665,4 @@ function Test-ExternalOwnerAuthorizationComments {
     return $document.payload
 }
 
-Export-ModuleMember -Function Get-CanonicalAuthorizationBytes, Get-ExternalOwnerSha256, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, ConvertFrom-ExternalOwnerGitNameStatusBytes, Assert-ExternalOwnerArtifactInventory, Assert-ExternalOwnerProtectedWithoutBaseApprovalAssessment, New-ExternalOwnerProtectedWithoutBaseApprovalAssessment, Assert-ExternalOwnerFallbackVerifierFailure, Resolve-ExternalOwnerAdapterExitCode, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments
+Export-ModuleMember -Function ConvertFrom-ExternalOwnerAuthorizationEnvelope, ConvertTo-ExternalOwnerTupleEnvelope, Get-CanonicalAuthorizationBytes, Get-ExternalOwnerSha256, ConvertFrom-ExternalOwnerJsonStrict, Read-ExternalOwnerAuthorizationPolicy, ConvertFrom-ExternalOwnerGitNameStatusBytes, Assert-ExternalOwnerArtifactInventory, Assert-ExternalOwnerProtectedWithoutBaseApprovalAssessment, New-ExternalOwnerProtectedWithoutBaseApprovalAssessment, Assert-ExternalOwnerFallbackVerifierFailure, Resolve-ExternalOwnerAdapterExitCode, New-ExternalOwnerAuthorizationRequest, New-ExternalOwnerAuthorizationPayload, Test-ExternalOwnerAuthorizationComments

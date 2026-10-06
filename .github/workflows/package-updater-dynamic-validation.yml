@@ -194,6 +194,13 @@ jobs:
         shell: pwsh
         run: cargo +1.96.0 test -p rusty-quest-package-updater --locked
 
+      - name: Test external-owner tuple transport (non-authoritative)
+        shell: pwsh
+        run: >-
+          pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File .\tools\checks\Test-ExternalOwnerTupleEnvelope.ps1
+          -RepoRoot .
+
       - name: Test package updater Android static boundary
         shell: pwsh
         run: >-

@@ -6,6 +6,7 @@
   "additionalProperties": false,
   "required": ["schema", "issuer_id", "key_id", "owner_login", "comment_marker", "bootstrap_comment_marker", "max_authorization_age_seconds", "max_future_skew_seconds", "maximum_comments", "maximum_response_bytes", "maximum_comment_bytes", "public_key_spki_sha256", "public_key_pem"],
   "properties": {
+    "allowed_envelope_schemas": { "const": ["rusty.quest.external_owner_authorization.v1", "rusty.quest.external_owner_authorization.v2"] },
     "schema": { "const": "rusty.quest.external_owner_authorization_policy.v1" },
     "issuer_id": { "const": "mesmerprism-owner-policy-authority-v1" },
     "key_id": { "const": "mesmerprism-owner-policy-rsa-pss-2026-08" },
