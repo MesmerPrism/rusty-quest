@@ -1,4 +1,5 @@
 {
+  "allowed_envelope_schemas": ["rusty.quest.external_owner_authorization.v1", "rusty.quest.external_owner_authorization.v2"],
   "schema": "rusty.quest.external_owner_authorization_policy.v1",
   "issuer_id": "mesmerprism-owner-policy-authority-v1",
   "key_id": "mesmerprism-owner-policy-rsa-pss-2026-08",
