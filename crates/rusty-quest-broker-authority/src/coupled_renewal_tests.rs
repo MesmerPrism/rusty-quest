@@ -88,6 +88,15 @@ fn retained_failed_start_uses_live_revoker_and_original_target_stop() {
 }
 
 fn run_coupled_owner_graph(retained_abort: bool) {
+    run_coupled_owner_graph_with_projection_probe(retained_abort, false);
+}
+
+#[test]
+fn retained_prepare_sender_grant_and_requester_are_not_receiver_local_authority() {
+    run_coupled_owner_graph_with_projection_probe(false, true);
+}
+
+fn run_coupled_owner_graph_with_projection_probe(retained_abort: bool, cross_authority_probe: bool) {
     struct FailStopOnce {inner:DeterministicAndroidMediaOwnerExecutor,failed:bool,retained_abort:bool,start_failed:bool,abort_failed:bool}
     impl AndroidMediaOwnerExecutor for FailStopOnce {
         fn executor_generation(&self)->u64{self.inner.executor_generation()}
@@ -166,6 +175,11 @@ fn run_coupled_owner_graph(retained_abort: bool) {
             .as_mut()
             .expect("duplex config")
             .runtime_host_id = id("host.quest-b.media-runtime");
+        if cross_authority_probe {
+            // Independent product-owned admission grants, without mutating runtime state.
+            let encoded = serde_json::to_string(&peer_b_config).unwrap();
+            peer_b_config = serde_json::from_str(&encoded.replace("grant.quest.runtime", "grant.quest.peer-b")).unwrap();
+        }
         let mut runtime = QuestBrokerAuthorityRuntime::from_config(
             runtime_config,
             &"09".repeat(32),
@@ -297,6 +311,110 @@ fn run_coupled_owner_graph(retained_abort: bool) {
                 provider.media_owner_executor.as_mut().unwrap().as_mut(),&mut provider.next_media_execution_nonce);
             if retained_abort && index == 1 { assert!(matches!(completed, Err(QuestBrokerRuntimeError::MediaStartAbortFailed{..})), "actual Start result: {completed:?}"); }
             else { completed.unwrap(); }
+        }
+        if cross_authority_probe {
+            // Two independently constructed production Broker/peer stores and actual
+            // signed pair/session/route/revoker APIs; platform executors remain modeled.
+            let mut originals = Vec::new();
+            for (provider, authority, local, remote) in [
+                (&provider_a, &authority_a, "peer.quest-a", "peer.quest-b"),
+                (&provider_b, &authority_b, "peer.quest-b", "peer.quest-a"),
+            ] {
+                let grant = provider.runtime.as_ref().unwrap().peer_runtime_host.as_ref().unwrap()
+                    .read().unwrap().snapshot().pair_media_routes.routes[0].grant_id().clone();
+                let projection = authority.current_owner_projection(&grant, &id(local), &id(remote), 4200).unwrap();
+                let recovery = provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id].recovery_snapshot().unwrap();
+                let action = recovery.active_start_action.unwrap();
+                let ticket = rusty_quest_media_stream_android::execution_ticket(&action, &action.owner_actions[0],
+                    1, 9, format!("fixture.retained.{local}")).unwrap();
+                originals.push((projection, ticket));
+            }
+            let late = 250_000;
+            let mut requests = Vec::new();
+            for (index, provider) in [&mut provider_a, &mut provider_b].into_iter().enumerate() {
+                let mut clock = provider.runtime.as_ref().unwrap().runtime.read().unwrap()
+                    .control_lease_authority_snapshot().clock_snapshot.clone();
+                clock.sequence += 1;
+                clock.wall_unix_ms = late as i64;
+                clock.monotonic_elapsed_ns = 1_000_000_000 + (late - 1000) * 1_000_000;
+                let adoption = provider.adopt_concurrent_peer_revoker(
+                    &clock, late, &format!("{:02x}", 180 + index).repeat(32)).unwrap();
+                provider.prepare_concurrent_peer_revoker_cleanup(
+                    &identity().client_id, &adoption, late,
+                    &format!("{:02x}", 182 + index).repeat(32)).unwrap();
+                provider.terminate_concurrent_peer_route(true, late + 10,
+                    &format!("{:02x}", 184 + index).repeat(32)).unwrap();
+                let stop = provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
+                    .pending_action().unwrap();
+                let position = stop.owner_actions.iter().position(|owner|
+                    owner.selection.owner_id == originals[index].1.owner_id
+                    && owner.selection.resource_id == originals[index].1.resource_id).unwrap();
+                let stop_ticket = rusty_quest_media_stream_android::execution_ticket(stop,
+                    &stop.owner_actions[position], (position+1) as u32, 9, format!("fixture.cleanup.{index}")).unwrap();
+                let grant = provider.runtime.as_ref().unwrap().peer_runtime_host.as_ref().unwrap()
+                    .read().unwrap().snapshot().pair_media_routes.routes.iter()
+                    .find(|r| *r.cleanup_status() == rusty_manifold_peer::ManifoldPairMediaRouteCleanupStatus::Pending)
+                    .unwrap().grant_id().clone();
+                requests.push((grant, adoption.revoker_id, adoption.lease.lease_id, stop_ticket));
+            }
+            assert_ne!(requests[0].0, requests[1].0);
+            assert_ne!(requests[0].2, requests[1].2);
+            let before_a = authority_a.snapshot_json().unwrap();
+            let before_b = authority_b.snapshot_json().unwrap();
+            for (receiver, local, sender, receiver_peer, sender_peer) in [
+                (&authority_a, &requests[0], &requests[1], "peer.quest-a", "peer.quest-b"),
+                (&authority_b, &requests[1], &requests[0], "peer.quest-b", "peer.quest-a"),
+            ] {
+                receiver.retained_cleanup_projection(&local.0, &local.1, &local.2,
+                    &id(receiver_peer), &id(sender_peer), late + 10).unwrap();
+                assert_eq!(receiver.retained_cleanup_projection(&sender.0, &sender.1, &sender.2,
+                    &id(sender_peer), &id(receiver_peer), late + 10).unwrap_err(), "cleanup route is absent");
+                assert_eq!(receiver.retained_cleanup_projection(&local.0, &sender.1, &sender.2,
+                    &id(sender_peer), &id(receiver_peer), late + 10).unwrap_err(), "cleanup requester lease is absent");
+            }
+            assert_eq!(before_a, authority_a.snapshot_json().unwrap());
+            assert_eq!(before_b, authority_b.snapshot_json().unwrap());
+            // Signature authentication of complete native Prepare is separate;
+            // these are real receiving-store/current-enrollment authority joins.
+            for (receiver, sender, request, original, local, remote, key_id, signer) in [
+                (&authority_b, &authority_a, &requests[0], &originals[0], "peer.quest-a", "peer.quest-b", "key.peer.quest-a.1", &alpha),
+                (&authority_a, &authority_b, &requests[1], &originals[1], "peer.quest-b", "peer.quest-a", "key.peer.quest-b.1", &beta),
+            ] {
+                let cleanup = sender.retained_cleanup_projection(&request.0, &request.1, &request.2,
+                    &id(local), &id(remote), late + 10).unwrap();
+                let key = signer.verifying_key().to_bytes();
+                receiver.validate_remote_retained_cleanup_projection(&cleanup, &original.0, &original.1,
+                    key_id, &key, late + 10).unwrap();
+                receiver.validate_remote_retained_cleanup_projection(&cleanup, &original.0, &original.1,
+                    key_id, &key, late + 11).unwrap();
+                for changed in [
+                    {let mut v=cleanup.clone();v.target_client_id="client.foreign".into();v},
+                    {let mut v=cleanup.clone();v.target_runtime_lease_id="lease.foreign".into();v},
+                    {let mut v=cleanup.clone();v.provider_epoch_id="epoch.foreign".into();v},
+                    {let mut v=cleanup.clone();v.authority_peer_id=remote.into();v},
+                    {let mut v=cleanup.clone();v.executor_peer_id=local.into();v},
+                    {let mut v=cleanup.clone();v.peer_session_id="session.foreign".into();v},
+                    {let mut v=cleanup.clone();v.signed_topology_sha256=format!("sha256:{}", "f".repeat(64));v},
+                    {let mut v=cleanup.clone();v.route_grant_id="grant.foreign".into();v},
+                    {let mut v=cleanup.clone();v.requester_id="revoker.untrusted".into();v},
+                    {let mut v=cleanup.clone();v.requester_runtime_lease_id=v.target_runtime_lease_id.clone();v},
+                    {let mut v=cleanup.clone();v.expires_at_ms=late;v},
+                    {let mut v=cleanup.clone();v.requester_expires_at_ms=late;v},
+                    {let mut v=cleanup.clone();v.schema_id="unknown".into();v},
+                ] {
+                    assert!(receiver.validate_remote_retained_cleanup_projection(&changed, &original.0,
+                        &original.1, key_id, &key, late + 10).is_err());
+                }
+                assert!(receiver.validate_remote_retained_cleanup_projection(&cleanup, &original.0,
+                    &original.1, "key.foreign", &key, late + 10).is_err());
+                assert!(receiver.validate_remote_retained_cleanup_projection(&cleanup, &original.0,
+                    &original.1, key_id, &[0;32], late + 10).is_err());
+                assert!(receiver.validate_remote_retained_cleanup_projection(&cleanup, &original.0,
+                    &original.1, key_id, &key, cleanup.expires_at_ms).is_err());
+            }
+            assert_eq!(before_a, authority_a.snapshot_json().unwrap());
+            assert_eq!(before_b, authority_b.snapshot_json().unwrap());
+            return; // No owner Stop completion or physical cleanup is modeled by this authority test.
         }
         if retained_abort {
             let provider = &mut provider_b;

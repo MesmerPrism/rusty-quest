@@ -34,6 +34,27 @@ registry and stale callback suppression cannot prove old provider teardown.
 
 ## Validation boundaries
 
+### Retained prepare failure observations
+
+The native first-failure latch distinguishes outgoing peer binding, pending
+capacity, sequence, entropy, preparation encoding, signing and exchange using
+fixed `RETAINED_REMOTE_*` codes. Incoming preparation separately identifies
+requester-authority lookup and original-owner tuple joins with fixed
+`RETAINED_INCOMING_*` codes. The existing generic stages remain available for
+other failures. These codes contain no exception text, identities or payloads;
+they preserve the original operation result and never establish completion.
+`peer_status.native_owner_dispatch_failure` carries the code through its
+existing field. The Java diagnostic parser and cleanup authority remain unchanged.
+
+`tools/checks/Test-RetainedPrepareDiagnosticHost.ps1` executes the exact outgoing
+production preparation block and latch with explicitly modeled platform seams.
+The focused broker-authority test
+`retained_prepare_sender_grant_and_requester_are_not_receiver_local_authority`
+uses distinct production authority stores, signed pair/session/route and revoker
+APIs to check local and foreign grant/requester lookup. Its platform executors
+are modeled. Neither test observes an actual incoming headset packet, JNI
+execution, or completed remote cleanup.
+
 ### Process-local installed APK digest
 
 The process host owns one non-persisted installed-base-APK digest entry. Each
@@ -129,3 +150,20 @@ verify its current terminal snapshot. Unknown or stale snapshots remain Pending.
 modeled supplier graph and checks the real owner continuation, recovery damage,
 registry resources, neutral consumer and Android native type boundary. It
 neither admits that graph nor builds an APK or proves physical terminal cleanup.
+
+The signed cross-peer cleanup request now has a separate v3 Stop / v4 retained
+abort domain. It carries the issuing peer's cleanup projection, binds it to the
+authenticated remote Start projection retained at the executor, and verifies
+the currently enrolled peer signer. The executor does not import foreign grants
+or requester leases into its own Broker store. Source-side live requester checks
+remain required before preparation and commit exchange; receiver-side replay and
+commit revalidate the retained source, signed request and finite expiry.
+
+Old retained records without the authenticated Start projection cannot acquire
+this authority by inference. Legacy v1/v2 requests retain their original strict
+local-store validation. Signed field changes, stale enrollment, missing original
+provenance, replay collisions and expiry reject cleanup; rejection leaves the
+physical retirement barrier unresolved. The separate-store host controls execute
+the exact native prepare/current-source code with real signatures and production
+Broker validators; Java persistence, clock and platform completion are modeled.
+No host result identifies the incoming packet or cause of a prior device failure.

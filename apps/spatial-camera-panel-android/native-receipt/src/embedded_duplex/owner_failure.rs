@@ -10,6 +10,17 @@ pub(crate) enum Stage {
     LocalProjection,
     LocalCallback,
     RemotePrepare,
+    RemotePeerBind,
+    RemoteRequesterAuthority,
+    RemotePendingCapacity,
+    RemoteSequence,
+    RemoteEntropy,
+    RemotePrepareEncode,
+    RemotePrepareSign,
+    RemotePrepareExchange,
+    IncomingPrepare,
+    IncomingRequesterAuthority,
+    IncomingOriginalJoin,
     RemotePrepareProof,
     RemoteProjection,
     RemoteCommit,
@@ -28,6 +39,17 @@ impl Stage {
             Self::LocalProjection => "RETAINED_LOCAL_PROJECTION",
             Self::LocalCallback => "RETAINED_LOCAL_CALLBACK",
             Self::RemotePrepare => "RETAINED_REMOTE_PREPARE",
+            Self::RemotePeerBind => "RETAINED_REMOTE_PEER_BIND",
+            Self::RemoteRequesterAuthority => "RETAINED_REMOTE_REQUESTER_AUTHORITY",
+            Self::RemotePendingCapacity => "RETAINED_REMOTE_PENDING_CAPACITY",
+            Self::RemoteSequence => "RETAINED_REMOTE_SEQUENCE",
+            Self::RemoteEntropy => "RETAINED_REMOTE_ENTROPY",
+            Self::RemotePrepareEncode => "RETAINED_REMOTE_PREPARE_ENCODE",
+            Self::RemotePrepareSign => "RETAINED_REMOTE_PREPARE_SIGN",
+            Self::RemotePrepareExchange => "RETAINED_REMOTE_PREPARE_EXCHANGE",
+            Self::IncomingPrepare => "RETAINED_INCOMING_PREPARE",
+            Self::IncomingRequesterAuthority => "RETAINED_INCOMING_REQUESTER_AUTHORITY",
+            Self::IncomingOriginalJoin => "RETAINED_INCOMING_ORIGINAL_JOIN",
             Self::RemotePrepareProof => "RETAINED_REMOTE_PREPARE_PROOF",
             Self::RemoteProjection => "RETAINED_REMOTE_PROJECTION",
             Self::RemoteCommit => "RETAINED_REMOTE_COMMIT",
@@ -90,6 +112,17 @@ mod tests {
             Stage::LocalProjection,
             Stage::LocalCallback,
             Stage::RemotePrepare,
+            Stage::RemotePeerBind,
+            Stage::RemoteRequesterAuthority,
+            Stage::RemotePendingCapacity,
+            Stage::RemoteSequence,
+            Stage::RemoteEntropy,
+            Stage::RemotePrepareEncode,
+            Stage::RemotePrepareSign,
+            Stage::RemotePrepareExchange,
+            Stage::IncomingPrepare,
+            Stage::IncomingRequesterAuthority,
+            Stage::IncomingOriginalJoin,
             Stage::RemotePrepareProof,
             Stage::RemoteProjection,
             Stage::RemoteCommit,
@@ -130,5 +163,30 @@ mod tests {
             assert_eq!(diagnostic::<()>(Err(error.into())), (None, code));
         }
         assert_eq!(diagnostic(Ok(9)), (Some(9), "AVAILABLE"));
+    }
+    #[test]
+    fn remote_prepare_substages_are_finite_and_later_outer_errors_do_not_replace_them() {
+        for (stage, code) in [
+            (Stage::RemotePeerBind, "RETAINED_REMOTE_PEER_BIND"),
+            (Stage::RemoteRequesterAuthority, "RETAINED_REMOTE_REQUESTER_AUTHORITY"),
+            (Stage::RemotePendingCapacity, "RETAINED_REMOTE_PENDING_CAPACITY"),
+            (Stage::RemoteSequence, "RETAINED_REMOTE_SEQUENCE"),
+            (Stage::RemoteEntropy, "RETAINED_REMOTE_ENTROPY"),
+            (Stage::RemotePrepareEncode, "RETAINED_REMOTE_PREPARE_ENCODE"),
+            (Stage::RemotePrepareSign, "RETAINED_REMOTE_PREPARE_SIGN"),
+            (Stage::RemotePrepareExchange, "RETAINED_REMOTE_PREPARE_EXCHANGE"),
+        ] {
+            let slot = Mutex::new(None);
+            // Successful preparation work cannot manufacture a failure or completion.
+            assert_eq!(observe(Ok(7), &slot, stage), Ok(7));
+            assert_eq!(*slot.lock().unwrap(), None);
+            let private_error = "java_bridge.exchange: private remote payload".to_owned();
+            assert_eq!(observe::<()>(Err(private_error.clone()), &slot, stage), Err(private_error));
+            assert_eq!(*slot.lock().unwrap(), Some(code));
+            assert!(observe::<()>(Err("outer retained prepare".into()), &slot, Stage::RemotePrepare).is_err());
+            assert!(observe::<()>(Err("later remote proof".into()), &slot, Stage::RemotePrepareProof).is_err());
+            assert_eq!(*slot.lock().unwrap(), Some(code));
+            assert!(!code.contains("java_bridge") && !code.contains("payload"));
+        }
     }
 }

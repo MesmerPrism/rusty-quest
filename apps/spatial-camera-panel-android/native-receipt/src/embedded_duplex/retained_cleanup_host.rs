@@ -8,11 +8,15 @@ use std::io::Read;
 pub(super) const PREPARE_MAGIC: &[u8] = b"RQCP1\0";
 const DOMAIN: &[u8] = b"rusty.quest.android.media.retained_cleanup_prepare.v1\0";
 const ABORT_DOMAIN: &[u8] = b"rusty.quest.android.media.retained_abort_prepare.v2\0";
+const REMOTE_DOMAIN: &[u8] = b"rusty.quest.android.media.retained_cleanup_prepare.v3\0";
+const REMOTE_ABORT_DOMAIN: &[u8] = b"rusty.quest.android.media.retained_abort_prepare.v4\0";
 
 fn prepare_domain(schema: &str) -> Result<&'static [u8], String> {
     match schema {
         "rusty.quest.android.media.retained_cleanup_prepare_request.v1" => Ok(DOMAIN),
         "rusty.quest.android.media.retained_abort_prepare_request.v2" => Ok(ABORT_DOMAIN),
+        "rusty.quest.android.media.retained_cleanup_prepare_request.v3" => Ok(REMOTE_DOMAIN),
+        "rusty.quest.android.media.retained_abort_prepare_request.v4" => Ok(REMOTE_ABORT_DOMAIN),
         _ => Err("unknown cleanup prepare schema".into()),
     }
 }
@@ -29,11 +33,15 @@ struct Prepare {
     issued_at_ms: u64,
     signer_key_id: String,
     signature_base64: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    authority: Option<RetainedCleanupAuthorityProjection>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Original {
     ticket: AndroidMediaExecutionTicket,
     effect: Option<AuthenticatedOwnerEffect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_authority: Option<OwnerDispatchAuthorityProjection>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,6 +50,8 @@ struct PreparedState {
     revision: u64,
     originals: BTreeMap<String, Original>,
     prepared: BTreeMap<String, RetainedCleanupPreparedStop>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    remote_requests: BTreeMap<String, Prepare>,
 }
 #[derive(Clone, Default)]
 pub(super) struct Requester {
@@ -110,7 +120,7 @@ impl Cleanup {
     ) -> Result<Self, String> {
         let state: PreparedState = serde_json::from_str(&callbacks.load_cleanup_preparations()?)
             .map_err(|_| "cleanup preparations decode")?;
-        if state.originals.len() > 256 || state.prepared.len() > 256 {
+        if state.originals.len() > 256 || state.prepared.len() > 256 || state.remote_requests.len() > 256 {
             return Err("cleanup retained state capacity".into());
         }
         Ok(Self {
@@ -165,7 +175,40 @@ impl Cleanup {
             now,
         )
     }
+    fn remote_projection(&self, request: &Prepare, original: &Original, now: u64)
+        -> Result<RetainedCleanupAuthorityProjection, String> {
+        let authority = request.authority.as_ref().ok_or("remote cleanup projection absent")?;
+        let retained = original.source_authority.as_ref().ok_or("authenticated remote Start projection absent")?;
+        let abort = request.schema_id == "rusty.quest.android.media.retained_abort_prepare_request.v4"
+            && is_retained_start_abort_ticket(&request.source_ticket);
+        if !(abort || (request.schema_id == "rusty.quest.android.media.retained_cleanup_prepare_request.v3"
+            && request.source_ticket.operation == MediaStreamPlatformOperation::Stop))
+            || !same_owner(&original.ticket, &request.source_ticket)
+            || (abort && request.source_ticket.action_id != format!("{}.abort", original.ticket.action_id)) {
+            return Err("remote cleanup retained action differs".into());
+        }
+        if request.signer_key_id != self.remote_key_id || request.issued_at_ms > now.saturating_add(2000)
+            || now.saturating_sub(request.issued_at_ms) > 30_000 {
+            return Err("remote cleanup request signer/freshness differs".into());
+        }
+        let mut unsigned = request.clone(); unsigned.signature_base64.clear();
+        let mut signing = prepare_domain(&request.schema_id)?.to_vec(); signing.extend(encode(&unsigned)?);
+        VerifyingKey::from_bytes(&self.remote_key).map_err(|_| "cleanup remote key")?
+            .verify_strict(&signing, &Signature::from_bytes(&decode_signature_base64(&request.signature_base64)?))
+            .map_err(|_| "cleanup prepare signature")?;
+        if request.route_grant_id != authority.route_grant_id
+            || request.requester_id != authority.requester_id
+            || request.requester_lease_id != authority.requester_runtime_lease_id
+            || authority.authority_peer_id != self.remote || authority.executor_peer_id != self.local {
+            return Err("remote cleanup request source differs".into());
+        }
+        self.authority.validate_remote_retained_cleanup_projection(authority, retained,
+            &original.ticket, &request.signer_key_id, &self.remote_key, now)?;
+        Ok(authority.clone())
+    }
     pub(super) fn prepare_frame(&self, bytes: &[u8]) -> Result<Vec<u8>, String> {
+        let mut failure_stage = OwnerFailureStage::IncomingPrepare;
+        let result = (|| {
         self.require_state()?;
         let _mutation = Checkout::take(self.serial.clone())?;
         if bytes.len() > 128 * 1024 || !bytes.starts_with(PREPARE_MAGIC) {
@@ -174,10 +217,16 @@ impl Cleanup {
         let request: Prepare = serde_json::from_slice(&bytes[PREPARE_MAGIC.len()..])
             .map_err(|_| "cleanup prepare decode")?;
         let now = self.clock.now_ms()?;
-        let retained_abort = request.schema_id == "rusty.quest.android.media.retained_abort_prepare_request.v2"
+        let remote_projection = matches!(request.schema_id.as_str(),
+            "rusty.quest.android.media.retained_cleanup_prepare_request.v3" |
+            "rusty.quest.android.media.retained_abort_prepare_request.v4");
+        let retained_abort = matches!(request.schema_id.as_str(), "rusty.quest.android.media.retained_abort_prepare_request.v2" |
+            "rusty.quest.android.media.retained_abort_prepare_request.v4")
             && is_retained_start_abort_ticket(&request.source_ticket);
-        if !(retained_abort || (request.schema_id == "rusty.quest.android.media.retained_cleanup_prepare_request.v1"
+        if !(retained_abort || (matches!(request.schema_id.as_str(), "rusty.quest.android.media.retained_cleanup_prepare_request.v1" |
+            "rusty.quest.android.media.retained_cleanup_prepare_request.v3")
             && request.source_ticket.operation == MediaStreamPlatformOperation::Stop))
+            || remote_projection != request.authority.is_some()
             || request.sequence == 0
             || request.signer_key_id != self.remote_key_id
             || request.issued_at_ms > now.saturating_add(2000)
@@ -195,27 +244,38 @@ impl Cleanup {
             .verify_strict(&signing, &Signature::from_bytes(&sig))
             .map_err(|_| "cleanup prepare signature")?;
         let hash = digest(&encode(&request)?)?;
-        if let Some(prepared) = self
+        let previous_preparation = self
             .state
             .lock()
             .map_err(|_| "cleanup state poisoned")?
             .prepared
             .get(&request.dispatch_id)
-            .cloned()
-        {
+            .cloned();
+        if let Some(prepared) = previous_preparation {
             if prepared.prepare_request_sha256 != hash {
                 return Err("cleanup prepare replay collision".into());
             }
+            if remote_projection {
+                let original = self.state.lock().map_err(|_| "cleanup state poisoned")?
+                    .originals.get(&key(&request.source_ticket)).cloned().ok_or("retained original owner absent")?;
+                if self.remote_projection(&request, &original, now)? != prepared.authority {
+                    return Err("remote cleanup replay authority differs".into());
+                }
+            }
             return encode(&prepared);
         }
-        let authority = self.projection(
+        failure_stage = OwnerFailureStage::IncomingRequesterAuthority;
+        let original = self.state.lock().map_err(|_| "cleanup state poisoned")?
+            .originals.get(&key(&request.source_ticket)).cloned().ok_or("retained original owner absent")?;
+        let authority = if remote_projection { self.remote_projection(&request, &original, now)? } else { self.projection(
             &request.route_grant_id,
             &request.requester_id,
             &request.requester_lease_id,
             &self.remote,
             &self.local,
             now,
-        )?;
+        )? };
+        failure_stage = OwnerFailureStage::IncomingOriginalJoin;
         let original = self
             .state
             .lock()
@@ -232,6 +292,7 @@ impl Cleanup {
         {
             return Err("cleanup original target tuple differs".into());
         }
+        failure_stage = OwnerFailureStage::IncomingPrepare;
         let previous = self
             .state
             .lock()
@@ -256,9 +317,9 @@ impl Cleanup {
             schema_id: if retained_abort {"rusty.quest.android.media.retained_abort_prepared_stop.v2"}
                 else {"rusty.quest.android.media.retained_cleanup_prepared_stop.v1"}.into(),
             prepare_request_sha256: hash,
-            dispatch_id: request.dispatch_id,
+            dispatch_id: request.dispatch_id.clone(),
             target_preparation_revision: preparation_revision,
-            source_ticket: request.source_ticket,
+            source_ticket: request.source_ticket.clone(),
             target_ticket: target,
             authority,
             signer_key_id: self.callbacks.key_id().into(),
@@ -280,8 +341,11 @@ impl Cleanup {
         next.revision = preparation_revision;
         next.prepared
             .insert(prepared.dispatch_id.clone(), prepared.clone());
+        if remote_projection { next.remote_requests.insert(request.dispatch_id.clone(), request); }
         self.persist(next)?;
         encode(&prepared)
+        })();
+        owner_failure::observe(result, &self.failure, failure_stage)
     }
 }
 impl RetainedCleanupAuthoritySource for Cleanup {
@@ -299,14 +363,23 @@ impl RetainedCleanupAuthoritySource for Cleanup {
             .get(&request.dispatch_id)
             .cloned()
             .ok_or("independent Stop preparation absent")?;
-        let mut current = self.projection(
+        let remote_request = self.state.lock().map_err(|_| "cleanup state poisoned")?
+            .remote_requests.get(&request.dispatch_id).cloned();
+        let mut current = if let Some(remote) = remote_request {
+            if digest(&encode(&remote)?)? != prepared.prepare_request_sha256 {
+                return Err("remote cleanup retained request differs".into());
+            }
+            let original = self.state.lock().map_err(|_| "cleanup state poisoned")?
+                .originals.get(&key(&remote.source_ticket)).cloned().ok_or("retained original owner absent")?;
+            self.remote_projection(&remote, &original, now)?
+        } else { self.projection(
             &prepared.authority.route_grant_id,
             &prepared.authority.requester_id,
             &prepared.authority.requester_runtime_lease_id,
             &self.remote,
             &self.local,
             now,
-        )?;
+        )? };
         if prepared.authority.expires_at_ms > current.expires_at_ms
             || prepared.authority.expires_at_ms <= now
         {
@@ -353,6 +426,7 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
                 Original {
                     ticket: ticket.clone(),
                     effect: None,
+                    source_authority: authority.cloned(),
                 },
             );
             self.cleanup.persist(next)?;
@@ -489,10 +563,11 @@ impl AndroidMediaOwnerExecutor for Executor {
                 retained_local_source_readback(ticket,&target,effect)?
             }
             AndroidMediaOwnerPlacementTarget::Remote { peer_id } => {
-                failure_stage = OwnerFailureStage::RemotePrepare;
+                failure_stage = OwnerFailureStage::RemotePeerBind;
                 if peer_id != &self.cleanup.remote {
                     return Err("cleanup unbound peer".into());
                 }
+                failure_stage = OwnerFailureStage::RemotePrepare;
                 let base_key = format!("{}|{}", ticket.capability, requester.lease);
                 let previous = self.active.get(&base_key).and_then(|k| self.pending.get(k));
                 let reusable = previous.is_some_and(|p| {
@@ -504,6 +579,7 @@ impl AndroidMediaOwnerExecutor for Executor {
                         .cloned()
                         .ok_or("cleanup active lost")?
                 } else {
+                    failure_stage = OwnerFailureStage::RemoteSequence;
                     format!(
                         "{}|{}",
                         base_key,
@@ -518,28 +594,37 @@ impl AndroidMediaOwnerExecutor for Executor {
                     mode
                 };
                 if !self.pending.contains_key(&pending_key) {
+                    failure_stage = OwnerFailureStage::RemotePendingCapacity;
                     if self.pending.len() >= 256 {
                         return Err("cleanup pending capacity".into());
                     }
+                    failure_stage = OwnerFailureStage::RemoteSequence;
                     self.sequence = self
                         .sequence
                         .checked_add(1)
                         .ok_or("cleanup sequence exhausted")?;
+                    failure_stage = OwnerFailureStage::RemoteRequesterAuthority;
+                    let authority = self.cleanup.projection(&grant, &requester.id, &requester.lease,
+                        &self.cleanup.local, &self.cleanup.remote, now)?;
+                    failure_stage = OwnerFailureStage::RemoteEntropy;
                     let mut request = Prepare {
-                        schema_id: if is_retained_start_abort_ticket(ticket) {"rusty.quest.android.media.retained_abort_prepare_request.v2"}
-                            else {"rusty.quest.android.media.retained_cleanup_prepare_request.v1"}.into(),
+                        schema_id: if is_retained_start_abort_ticket(ticket) {"rusty.quest.android.media.retained_abort_prepare_request.v4"}
+                            else {"rusty.quest.android.media.retained_cleanup_prepare_request.v3"}.into(),
                         dispatch_id: format!("cleanup.dispatch.{}", fresh()?),
                         source_ticket: ticket.clone(),
-                        requester_id: requester.id,
-                        requester_lease_id: requester.lease,
-                        route_grant_id: grant,
+                        requester_id: requester.id.clone(),
+                        requester_lease_id: requester.lease.clone(),
+                        route_grant_id: grant.clone(),
                         sequence: self.sequence,
                         issued_at_ms: now,
                         signer_key_id: self.cleanup.callbacks.key_id().into(),
                         signature_base64: String::new(),
+                        authority: Some(authority),
                     };
+                    failure_stage = OwnerFailureStage::RemotePrepareEncode;
                     let mut bytes = prepare_domain(&request.schema_id)?.to_vec();
                     bytes.extend(encode(&request)?);
+                    failure_stage = OwnerFailureStage::RemotePrepareSign;
                     request.signature_base64 =
                         encode_signature_base64(&self.cleanup.callbacks.sign(&bytes)?);
                     self.active.insert(base_key, pending_key.clone());
@@ -553,14 +638,16 @@ impl AndroidMediaOwnerExecutor for Executor {
                         },
                     );
                 }
+                failure_stage = OwnerFailureStage::RemotePrepare;
                 let pending = self
                     .pending
                     .get_mut(&pending_key)
                     .ok_or("cleanup pending disappeared")?;
                 if pending.prepared.is_none() {
+                    failure_stage = OwnerFailureStage::RemotePrepareEncode;
                     let mut frame = PREPARE_MAGIC.to_vec();
                     frame.extend(encode(&pending.request)?);
-        failure_stage = OwnerFailureStage::RemotePrepare;
+        failure_stage = OwnerFailureStage::RemotePrepareExchange;
                     let bytes = self.cleanup.callbacks.exchange(&frame, 128 * 1024)?;
         failure_stage = OwnerFailureStage::RemotePrepareProof;
                     let prepared: RetainedCleanupPreparedStop = serde_json::from_slice(&bytes)
@@ -627,6 +714,18 @@ impl AndroidMediaOwnerExecutor for Executor {
                 self.uncertain.insert(ticket.capability.clone());
         failure_stage = OwnerFailureStage::RemoteExchange;
                 if pending.response.is_none() {
+                    failure_stage = OwnerFailureStage::RemoteProjection;
+                    let current_now = self.cleanup.clock.now_ms()?;
+                    let mut current = self.cleanup.projection(&pending.request.route_grant_id,
+                        &pending.request.requester_id, &pending.request.requester_lease_id,
+                        &self.cleanup.local, &self.cleanup.remote, current_now)?;
+                    if prepared.authority.expires_at_ms <= current_now
+                        || prepared.authority.expires_at_ms > current.expires_at_ms {
+                        return Err("cleanup commit live requester expired".into());
+                    }
+                    current.expires_at_ms = prepared.authority.expires_at_ms;
+                    if current != prepared.authority { return Err("cleanup commit source changed".into()); }
+                    failure_stage = OwnerFailureStage::RemoteExchange;
                     pending.response = Some(
                         self.cleanup
                             .callbacks
