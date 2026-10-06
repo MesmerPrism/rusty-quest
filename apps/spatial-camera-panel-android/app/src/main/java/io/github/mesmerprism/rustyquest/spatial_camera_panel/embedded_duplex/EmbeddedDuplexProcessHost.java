@@ -33,6 +33,7 @@ final class EmbeddedDuplexProcessHost {
     }
 
     private final Context applicationContext;
+    private final InstalledApkDigest installedApkDigest = new InstalledApkDigest();
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
     private volatile EmbeddedDuplexProcessFence processFence;
     private long nativeExecutorGeneration;
@@ -405,17 +406,11 @@ final class EmbeddedDuplexProcessHost {
             String epoch = processFence.epochId();
             final String receiptConfig = noMediaFallback ? ownNoMediaConfigSha256 : runtimeConfigSha256;
             final String receiptFeature = noMediaFallback ? ownNoMediaFeatureSha256 : ownFeatureLockSha256;
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            try (java.io.InputStream input = new java.io.FileInputStream(applicationContext.getApplicationInfo().sourceDir)) {
-                byte[] block = new byte[65536]; int count;
-                while ((count = input.read(block)) != -1) digest.update(block, 0, count);
-            }
-            StringBuilder apk = new StringBuilder();
-            for (byte b : digest.digest()) apk.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
+            String apk = installedApkDigest.read(applicationContext);
             if (peerAction != null) {
                 // Check the retained process/challenge/arm before any authority mutation.
                 ConcurrentStereoQualification.status(challenge, epoch, receiptConfig,
-                        receiptFeature, apk.toString());
+                        receiptFeature, apk);
                 EmbeddedDuplexStartPreflight starting = startIntent.pending();
                 if (peerAction == EmbeddedDuplexPeerAction.START && !preflightLive(starting))
                     throw new IllegalStateException("current paired Start intent unavailable");
@@ -449,7 +444,7 @@ final class EmbeddedDuplexProcessHost {
 
                     nativeReceipt = physical.toString();
                 }
-                String receipt = ConcurrentStereoQualification.lifecycle(peerAction.action, challenge, epoch, receiptConfig, receiptFeature, apk.toString(), nativeReceipt);
+                String receipt = ConcurrentStereoQualification.lifecycle(peerAction.action, challenge, epoch, receiptConfig, receiptFeature, apk, nativeReceipt);
                 if (peerAction == EmbeddedDuplexPeerAction.START) startIntent.acknowledge(starting, nativeReceipt);
                 if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
                         && "terminal".equals(new JSONObject(nativeReceipt).optString("whole_app_physical_cleanup"))) {
@@ -469,10 +464,10 @@ final class EmbeddedDuplexProcessHost {
                 EmbeddedDuplexPairStatus pair=EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand("pair_status","{}"));
                 ConcurrentStereoQualification.hubSnapshot(epoch,receiptConfig,receiptFeature,life,pair);
             }
-            if (maskAction) return ConcurrentStereoQualification.mask(challenge,epoch,receiptConfig,receiptFeature,apk.toString(),policy);
-            if (policyAction) return ConcurrentStereoQualification.policy(challenge, epoch, receiptConfig, receiptFeature, apk.toString(), policy);
+            if (maskAction) return ConcurrentStereoQualification.mask(challenge,epoch,receiptConfig,receiptFeature,apk,policy);
+            if (policyAction) return ConcurrentStereoQualification.policy(challenge, epoch, receiptConfig, receiptFeature, apk, policy);
             if (arm) {
-                String receipt = ConcurrentStereoQualification.arm(challenge, epoch, receiptConfig, receiptFeature, apk.toString());
+                String receipt = ConcurrentStereoQualification.arm(challenge, epoch, receiptConfig, receiptFeature, apk);
                 EmbeddedDuplexResources retained = resources;
                 if (retained != null && retained.ownAppCaptureEnabled()) {
                     JSONObject context = new JSONObject(ConcurrentStereoQualification.diagnosticArmContext(challenge, epoch));
@@ -480,7 +475,7 @@ final class EmbeddedDuplexProcessHost {
                 }
                 return receipt;
             }
-            return ConcurrentStereoQualification.status(challenge, epoch, receiptConfig, receiptFeature, apk.toString());
+            return ConcurrentStereoQualification.status(challenge, epoch, receiptConfig, receiptFeature, apk);
         });
     }
 

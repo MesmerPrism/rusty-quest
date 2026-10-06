@@ -34,6 +34,28 @@ registry and stale callback suppression cannot prove old provider teardown.
 
 ## Validation boundaries
 
+### Process-local installed APK digest
+
+The process host owns one non-persisted installed-base-APK digest entry. Each
+qualification request still reads current PackageManager package, version,
+install timestamps, UID and source path, opens a readable APK descriptor, and
+checks its identity against the current path. The key includes device/inode,
+mode, owner, link count, size, and modification/change timestamps including
+nanoseconds. Access time is excluded because a digest read can change it.
+Identity is checked before and after a hit or full digest read. Changes and
+observation/read/close failures discard the entry; a new process starts empty.
+This relies on the ordinary Android installed-package filesystem and metadata
+boundary, not on resistance to a privileged actor forging that boundary.
+It does not cache qualification, process fences, native status, signed sessions,
+Start intents, cleanup results or execution authority. These guards remain live.
+
+`tools/checks/Test-InstalledApkDigestMemoHost.ps1` executes the production memo
+and extracted identity comparison with modeled package/stat boundaries, checks
+concurrent requests and failure invalidation, and compiles the Android adapter
+against API34. It establishes neither Android execution nor an end-to-end
+performance gain. SDK installed-byte-read counters do not count this app-local
+digest calculation.
+
 ### Process-held Start intent consumption
 
 The app consumes its exact preflight object before native Start dispatch. A
