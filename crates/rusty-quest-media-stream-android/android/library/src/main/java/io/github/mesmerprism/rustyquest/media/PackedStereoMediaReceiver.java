@@ -262,14 +262,24 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             releaseConnection();
             closeListener();
         }
+        final HandlerThread callbacks;
+        final long callbackConnection;
         synchronized (lock) {
-            HandlerThread callbacks = renderThread;
-            if (callbacks != null) {
-                callbacks.quitSafely();
-                try { callbacks.join(bounds.shutdownTimeoutMs); }
-                catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-                if (!callbacks.isAlive()) renderThread = null;
+            callbacks = renderThread;
+            callbackConnection = connectionGeneration;
+        }
+        // A queued render callback needs this monitor to observe stopRequested.
+        // Retain ownership while it drains; joining under the monitor fences it out.
+        if (callbacks != null) {
+            callbacks.quitSafely();
+            try { callbacks.join(bounds.shutdownTimeoutMs); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        }
+        synchronized (lock) {
+            if (renderThread != callbacks || connectionGeneration != callbackConnection) {
+                throw new IllegalStateException("receiver callback ownership changed during shutdown");
             }
+            if (callbacks != null && !callbacks.isAlive()) renderThread = null;
             if ((active != null && active.isAlive()) || incomingListener != null || socket != null || decoder != null
                     || renderThread != null || !pendingFrames.isEmpty() || worker != null) {
                 state = "failed";
