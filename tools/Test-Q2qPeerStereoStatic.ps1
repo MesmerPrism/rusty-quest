@@ -21,10 +21,36 @@ function Require([string]$Label, [string]$Text, [string]$Pattern) {
     }
 }
 
+function Assert-PackedStereoMetadataContract([string]$Consumer, [string]$NativeStream) {
+    $call = 'if \(!nativeRegisterPackedStereoPairMetadata\(\s*decoderToken,\s*outputPresentationTimeNs,\s*pair\.pairId,\s*pair\.leftSourceFrame,\s*pair\.rightSourceFrame,\s*pair\.leftSensorTimestampNs,\s*pair\.rightSensorTimestampNs,\s*pair\.pairDeltaNs\)\)'
+    Require 'Spatial pair registration' $Consumer $call
+    Require 'Spatial native declaration' $Consumer 'private static native boolean nativeRegisterPackedStereoPairMetadata\(\s*long decoderToken,\s*long outputPresentationTimeNs,\s*long pairId,\s*long leftSourceFrame,\s*long rightSourceFrame,\s*long leftSensorTimestampNs,\s*long rightSensorTimestampNs,\s*long pairDeltaNs\s*\);'
+    $drainStart = $Consumer.IndexOf('private static long drain(')
+    $drainEnd = $Consumer.IndexOf('private static MediaCodec createHardwareDecoder(', $drainStart)
+    if ($drainStart -lt 0 -or $drainEnd -le $drainStart) { throw 'Spatial decoder drain boundary is missing.' }
+    $drain = $Consumer.Substring($drainStart, $drainEnd - $drainStart)
+    $match = $drain.IndexOf('queuedPairs.takeExact(info.presentationTimeUs)')
+    $timestamp = $drain.IndexOf('outputTimestampNs(info.presentationTimeUs)')
+    $register = $drain.IndexOf('if (!nativeRegisterPackedStereoPairMetadata(')
+    $discard = $drain.IndexOf('codec.releaseOutputBuffer(outputIndex, false)')
+    $release = $drain.IndexOf('codec.releaseOutputBuffer(outputIndex, render)')
+    if ($match -lt 0 -or $timestamp -le $match -or $register -le $timestamp -or
+        $discard -le $register -or $release -le $discard) {
+        throw 'Spatial output must join exact PTS and register metadata before render; rejection must discard.'
+    }
+    Require 'Spatial rejected output' $drain 'catch \(IOException \| RuntimeException error\) \{\s*codec\.releaseOutputBuffer\(outputIndex, false\);\s*throw error;'
+    Require 'Spatial metadata JNI' $NativeStream 'pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialPackedStereoBrokerPlayback_nativeRegisterPackedStereoPairMetadata\('
+    Require 'Spatial JNI tuple' $NativeStream 'decoder_token: jlong,\s*output_timestamp_ns: jlong,\s*pair_id: jlong,\s*left_source_frame: jlong,\s*right_source_frame: jlong,\s*left_sensor_timestamp_ns: jlong,\s*right_sensor_timestamp_ns: jlong,\s*pair_delta_ns: jlong,\s*\) -> jboolean'
+    Require 'Spatial decoder authority' $NativeStream 'context_for_decoder_token\(decoder_token as u64\)'
+    Require 'Spatial timestamp registration' $NativeStream '\.register_packed\(\s*output_timestamp_ns,\s*SpatialPackedPairMetadata'
+    Require 'Spatial frame identity consumption' $NativeStream 'source\.consume_exact\(timestamp_ns\)'
+}
+
 $productRoot = Join-Path $root 'apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel'
 $brokerRoot = Join-Path $root 'apps\manifold-broker-android\src\main\java\io\github\mesmerprism\rustymanifold\broker'
 $settings = Read-Required (Join-Path $productRoot 'SpatialVideoProjectionSettings.kt')
 $nativeSettings = Read-Required (Join-Path $root 'apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_settings.rs')
+$nativeStream = Read-Required (Join-Path $root 'apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_native_stream.rs')
 $consumer = Read-Required (Join-Path $productRoot 'SpatialPackedStereoBrokerPlayback.java')
 $playback = Read-Required (Join-Path $productRoot 'SpatialStereoVideoPlayback.java')
 $startup = Read-Required (Join-Path $productRoot 'SpatialVideoProjectionProbeCoordinator.kt')
@@ -49,7 +75,7 @@ Require 'Native settings' $nativeSettings 'self\.source\.stream_backed\(\) \|\| 
 Require 'Native settings' $nativeSettings 'peer_stream_is_active_without_a_file_path'
 Require 'Native settings' $nativeSettings 'unknown_source_without_a_file_path_stays_inactive'
 Require 'Consumer' $consumer 'RMANVID v4 packed-stereo'
-Require 'Consumer' $consumer 'nativeSetPackedStereoPairMetadata'
+Assert-PackedStereoMetadataContract $consumer $nativeStream
 Require 'Consumer' $consumer 'SpatialPeerStereoStatus\.rendered'
 Require 'Playback diagnostics' $playback 'status=playback-error failureType='
 Require 'Playback diagnostics' $playback 'peerEndpointRedacted=true peerSecretSerialized=false'
@@ -119,5 +145,21 @@ if ($credential -cmatch 'SharedPreferences|System\.setProperty|SystemProperties'
 Require 'Opaque relay' $relay 'opaque_binary_media'
 Require 'Opaque relay' $relay 'hmac\.compare_digest'
 Require 'Product doc' $doc 'screenshot brightness is\s+not camera freshness evidence'
+
+# Damaged-source controls exercise this source contract; no decoder/JNI/device runs.
+$damaged = @(
+    @($consumer.Replace('if (!nativeRegisterPackedStereoPairMetadata(', 'if (nativeRegisterPackedStereoPairMetadata('), $nativeStream),
+    @($consumer.Replace('queuedPairs.takeExact(info.presentationTimeUs)', 'queuedPairs.takeExact(0L)'), $nativeStream),
+    @($consumer.Replace('codec.releaseOutputBuffer(outputIndex, false)', 'codec.releaseOutputBuffer(outputIndex, true)'), $nativeStream),
+    @($consumer.Replace('long outputPresentationTimeNs,', 'long incorrectTimestampNs,'), $nativeStream),
+    @($consumer, $nativeStream.Replace(') -> jboolean {', ') -> jlong {')),
+    @($consumer, $nativeStream.Replace('context_for_decoder_token(decoder_token as u64)', 'context_for_decoder_token(1)')),
+    @($consumer, $nativeStream.Replace('source.consume_exact(timestamp_ns)', 'source.consume_exact(0)'))
+)
+foreach ($case in $damaged) {
+    $rejected = $false
+    try { Assert-PackedStereoMetadataContract $case[0] $case[1] } catch { $rejected = $true }
+    if (-not $rejected) { throw 'Damaged Spatial stereo metadata contract admitted.' }
+}
 
 Write-Host 'Rusty Quest Q2Q peer-stereo static gate: PASS'
