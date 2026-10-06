@@ -67,7 +67,7 @@ foreach ($token in @(
     'plaintext video media',
     'private_path_recorded = $false'
 )) {
-    Require $build $token "Morphovision build workflow is missing: $token"
+    Require $build $token "Spatial Camera Panel build workflow is missing: $token"
 }
 
 if ($build.Contains('$intermediateRoot = Join-Path $targetRoot ("apk-i\{0}" -f $buildInputFingerprint', [StringComparison]::Ordinal)) {
