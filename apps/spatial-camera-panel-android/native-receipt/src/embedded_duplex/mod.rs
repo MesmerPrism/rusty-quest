@@ -10,6 +10,10 @@ mod frame_jni;
 mod identity_jni;
 #[cfg(target_os = "android")]
 mod java_bridge;
+#[cfg(any(target_os = "android", test))]
+mod owner_diagnostic_read;
+#[cfg(any(target_os = "android", test))]
+mod owner_failure;
 pub(crate) mod packaged_config;
 pub(crate) mod packaged_route;
 pub(crate) mod pair_lifetime_policy;

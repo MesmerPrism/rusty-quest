@@ -113,6 +113,8 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
             v.pointer("/activation/status").and_then(Value::as_str) == Some("completed")
         })
         && current.is_some();
+    let (owner_diagnostic, owner_diagnostic_status) =
+        owner_failure::diagnostic(host.callbacks.owner_failure_diagnostic());
     Ok(
         json!({"$schema":"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1",
         "action":action,"config_sha256":host.config_sha256,
@@ -124,7 +126,8 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "route_receipt":state.route_receipt,"route_termination":state.route_termination,"route_cleanup":state.route_cleanup,
         "termination_action":state.termination_action,"revoker_adoption":state.revoker_adoption,
         "media_completion":state.stop_completion,"media_stop_effect_receipt":media_stop_effect(state),
-        "owner_failure_diagnostic":host.callbacks.owner_failure_diagnostic().ok(),
+        "owner_failure_diagnostic":owner_diagnostic,
+        "owner_failure_diagnostic_status":owner_diagnostic_status,
         "native_owner_dispatch_failure":*host.owner_dispatch_failure.lock().map_err(|_| "owner diagnostic state unavailable")?,
         "activation":state.activation,"renewal_receipts":&state.renewals[state.renewals.len().saturating_sub(2)..],
         "renewal_total_completed":state.renewals.len(),
@@ -713,6 +716,27 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     word: jni::sys::jint,
 ) -> jstring {
     let result = operate(&mut env, word);
+    if env.exception_check().unwrap_or(true) {
+        let _ = env.exception_clear();
+    }
+    return_string(&mut env, result)
+}
+
+// Fixed observation: retain a host lease and validate liveness, without any lifecycle operation.
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_ownerFailureDiagnosticRead(
+    mut env: JNIEnv<'_>,
+    _: JClass<'_>,
+) -> jstring {
+    let result = (|| {
+        let host = host()?;
+        host.capability.require_live()?;
+        let mut value = host.callbacks.owner_failure_diagnostic_read();
+        host.capability.require_live()?;
+        value["native_executor_generation"] = json!(host.capability.generation);
+        value["app_process_generation"] = json!(host.capability.binding.generation);
+        Ok(value.to_string())
+    })();
     if env.exception_check().unwrap_or(true) {
         let _ = env.exception_clear();
     }

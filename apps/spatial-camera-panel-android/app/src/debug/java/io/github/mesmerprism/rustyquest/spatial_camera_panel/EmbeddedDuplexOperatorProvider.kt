@@ -61,6 +61,11 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
           else EmbeddedDuplexRuntimeService.concurrentQualificationStatus(app, request.challenge).get(30, TimeUnit.SECONDS)
           Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
         }
+        EmbeddedDuplexOperatorContract.Route.OWNER_FAILURE_DIAGNOSTIC -> {
+          val receipt = EmbeddedDuplexRuntimeService.ownerFailureDiagnosticRead(app, request.challenge)
+              .get(30, TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
+        }
         EmbeddedDuplexOperatorContract.Route.OWN_CAPTURE_DIAGNOSTIC -> {
           val receipt = EmbeddedDuplexRuntimeService.ownCaptureDiagnostic(app, request.challenge)
               .get(30, TimeUnit.SECONDS)

@@ -615,6 +615,86 @@ impl QuestEmbeddedDuplexAuthority {
         })
     }
 
+    /// Validates an already signature-authenticated remote cleanup projection
+    /// against the authenticated Start retained by the executor. This does not
+    /// import foreign grants/leases or authenticate unsigned caller evidence.
+    /// The transport must verify the complete signed frame before calling it.
+    ///
+    /// # Errors
+    /// Rejects missing current enrollment, altered retained identity, untrusted
+    /// requester, malformed digests or expired delegated cleanup authority.
+    pub fn validate_remote_retained_cleanup_projection(
+        &self,
+        cleanup: &RetainedCleanupAuthorityProjection,
+        original: &OwnerDispatchAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket,
+        signer_key_id: &str,
+        signer_key: &[u8; 32],
+        now_ms: u64,
+    ) -> Result<(), String> {
+        let peer = read_peer(&self.peer)?;
+        let snapshot = peer.snapshot();
+        let credential = snapshot
+            .enrollment
+            .credentials
+            .iter()
+            .find(|credential| {
+                credential.peer_id.to_string() == original.authority_peer_id
+                    && credential.key_id.to_string() == signer_key_id
+                    && matches!(
+                        credential.status,
+                        rusty_manifold_peer::ManifoldPeerCredentialStatus::Active
+                    )
+                    && credential.valid_from_ms <= now_ms
+                    && credential.expires_at_ms > now_ms
+            })
+            .ok_or("cleanup signer is not currently enrolled")?;
+        if decode_array::<32>(&credential.public_key_hex)? != *signer_key {
+            return Err("cleanup enrolled signer changed".into());
+        }
+        let parties = if cleanup.trusted_revoker {
+            cleanup.requester_id != cleanup.target_client_id
+                && cleanup.requester_runtime_lease_id != cleanup.target_runtime_lease_id
+                && snapshot
+                    .trust_policy
+                    .trusted_media_revoker_ids
+                    .iter()
+                    .any(|id| id.as_str() == cleanup.requester_id)
+        } else {
+            cleanup.requester_id == cleanup.target_client_id
+                && cleanup.requester_runtime_lease_id == cleanup.target_runtime_lease_id
+        };
+        if original.schema_id != QUEST_C1_OWNER_PROJECTION_SCHEMA
+            || original.authorization_kind != OwnerDispatchAuthorizationKind::CurrentRoute
+            || cleanup.schema_id != RETAINED_CLEANUP_PROJECTION_SCHEMA
+            || cleanup.authority_peer_id != original.authority_peer_id
+            || cleanup.executor_peer_id != original.executor_peer_id
+            || cleanup.authority_peer_id == cleanup.executor_peer_id
+            || cleanup.peer_session_id != original.peer_session_id
+            || cleanup.route_grant_id != original.route_grant_id
+            || cleanup.route_authority_revision < original.route_authority_revision
+            || cleanup.provider_epoch_id != original.authority_provider_epoch_id
+            || cleanup.platform_runtime_spec_id != original.platform_runtime_spec_id
+            || cleanup.target_client_id != original.authority_client_id
+            || cleanup.target_runtime_lease_id != original.authority_runtime_lease_id
+            || cleanup.signed_topology_sha256 != original.signed_topology_sha256
+            || ticket.authority_epoch_id != cleanup.provider_epoch_id
+            || ticket.client_id != cleanup.target_client_id
+            || ticket.lease_id != cleanup.target_runtime_lease_id
+            || !valid_sha256(&cleanup.cleanup_target_sha256)
+            || !valid_sha256(&cleanup.terminal_route_sha256)
+            || !parties
+            || now_ms == 0
+            || cleanup.expires_at_ms <= now_ms
+            || cleanup.requester_expires_at_ms <= now_ms
+            || cleanup.expires_at_ms > cleanup.requester_expires_at_ms
+            || cleanup.expires_at_ms > now_ms.saturating_add(30_000)
+        {
+            return Err("remote cleanup retained source differs".into());
+        }
+        Ok(())
+    }
+
     /// Returns the complete durable v5 Runtime Host snapshot JSON.
     ///
     /// # Errors

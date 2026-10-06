@@ -38,19 +38,35 @@ public final class EmbeddedDuplexNative {
             long connectionGeneration, long routeGeneration, long decoderToken,
             long readerGeneration, long maxAgeNs);
     public static native void retireReceiverGeneration(long receiverGeneration);
+
     public static native void retireReceiverConnection(long receiverGeneration, long connectionGeneration);
+
     public static native boolean localCameraQuiescent();
 
+
+
     static native String claimNativeProcessFence(Object heldAppFence);
+
     static native void finishNativeNoMediaCleanup(long executorGeneration, String expectedConfigSha256);
+
     static native String assemblePackagedConfig(String exactRequestJson);
+
     static native String initializeRuntime(String runtimeConfig, String expectedConfigSha256,
+
             String providerEpochEntropyHex, String bootstrap, Object platformCallbacks);
+
     static native String runtimeCommand(String operation, String input);
     static native String peerLifecycle(int action);
+
+    static native String ownerFailureDiagnosticRead();
     static native String closeNoMediaRuntime(String expectedConfigSha256);
+
     static native boolean processIdleForEnrollment();
+
     static native byte[] handleOwnerFrame(byte[] exactFrame);
+
     static native byte[] ed25519PublicFromSeed(byte[] seed);
+
     static native byte[] ed25519SignAuthorityBytes(byte[] seed, byte[] exactSigningBytes);
+
 }

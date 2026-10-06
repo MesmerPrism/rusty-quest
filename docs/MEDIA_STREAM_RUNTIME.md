@@ -245,3 +245,24 @@ retain first/final closed observations before and after Stop. Android
 lifecycle and decoder configuration are mocked; this proves no H264 decode,
 JNI, headset LAN, rendered frames, physical cleanup or field failure cause.
 It uses explicit host dependencies and adds no universal prerequisite.
+
+### Receiver stage observation
+
+The existing debug-only stream dropout report includes `receiver_stage_observation`.
+It reports local monotonic progress at packet read completion, decoder input queue,
+identity-bound output dequeue, successful Surface release and exact host acquisition.
+Samples carry receiver/connection generations, PTS and pair IDs. Receiver counters
+are independent of qualification arm counters and do not establish GPU retirement,
+frame acceptance or cross-device clock alignment.
+
+Closed progress gaps, first waits, currently open waits and retirement censoring
+are separate. Retiring a connection clears its progress baseline; a later connection
+cannot close an interval from its predecessor. At most four violating interval
+samples per stage retain the first two and latest two while counters remain complete.
+An unprepared receiver reports `unprepared`; an injected implementation without the
+observation reports `unsupported`. Neither supplies synthetic stage counters.
+
+Run `tools/checks/Test-ReceiverStageTraceHost.ps1` with an explicit JDK, the existing
+pinned host JSON dependency, API34 Android jar and create-new output under `target`.
+The pure clock/generation controls and Android receiver typecheck do not establish
+headset, transport, codec or duplex readiness.

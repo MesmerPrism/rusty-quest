@@ -2026,3 +2026,22 @@ The native capability candidate and initialization unwind contract are routed in
 [Embedded duplex finite authority and native fencing](../../docs/EMBEDDED_DUPLEX_R5_CONTINUITY.md).
 Its separate native lock and executor counter do not provide durable restoration
 or physical cleanup evidence.
+
+### Optional source version metadata
+
+`Build-SpatialCameraPanelAndroid.ps1 -UseSourceCompositionVersionName` derives
+`versionName` as `0.1.0+src.<source-composition fingerprint>` from the existing
+resolved source composition. The default remains `0.1.0`, with `versionCode` 1.
+The wrapper supplies the Gradle property explicitly, including an empty default,
+so ambient Gradle properties cannot choose a different identifier.
+
+Enabled metadata enters the build input lock and Android shell/package cache
+identity. The native cache does not depend on this option. APK badging must return
+the exact package, version code and derived version name before the builder records
+a passed inspection and build manifest. This supports cheap development metadata
+comparison; it proves no installed APK byte equality, signer or provenance.
+
+`tools/checks/Test-SpatialSourceVersion.ps1` exercises manifest rejection controls
+and the actual cache/property producer statements without building an APK. Supplying
+an explicit JDK and Kotlin compiler classpath additionally compiles and executes
+the exact version-name function extracted from the Gradle source.

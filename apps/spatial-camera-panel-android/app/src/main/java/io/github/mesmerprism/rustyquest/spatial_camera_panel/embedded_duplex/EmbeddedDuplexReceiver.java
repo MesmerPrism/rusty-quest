@@ -23,6 +23,10 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         MediaRuntimeSnapshot snapshot();
         /** Closed enum/counter fields only; never exception text or endpoints. */
         default String closedCounters() { return "counters=UNAVAILABLE"; }
+        default org.json.JSONObject diagnosticStages() throws Exception {
+            return new org.json.JSONObject().put("status", "unsupported")
+                    .put("qualification_claimed", false);
+        }
     }
 
     interface RuntimeFactory {
@@ -391,6 +395,13 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                 identity.leftSensorTimestampNs, identity.rightSensorTimestampNs, identity.pairDeltaNs };
     }
 
+    org.json.JSONObject diagnosticStages() throws Exception {
+        ReceiverRuntime current = receiver;
+        if (current == null) return new org.json.JSONObject().put("status", "unprepared")
+                .put("qualification_claimed", false).put("receiver_generation", generation);
+        return current.diagnosticStages();
+    }
+
     private static final class ProductionRuntimeFactory implements RuntimeFactory {
         private final String expectedSourceHost;
         ProductionRuntimeFactory() { this.expectedSourceHost = null; }
@@ -463,5 +474,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         @Override public void start() throws Exception { receiver.start(); }
         @Override public MediaRuntimeSnapshot snapshot() { return receiver.snapshot(); }
         @Override public String closedCounters() { return receiver.closedActivationCounters(); }
+        @Override public org.json.JSONObject diagnosticStages() throws Exception {
+            return receiver.diagnosticStageSnapshot();
+        }
     }
 }

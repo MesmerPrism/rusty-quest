@@ -150,6 +150,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         if (retained == null) throw new IllegalStateException("Shared Own dropout observation unavailable");
         return retained.diagnosticDropoutSnapshot();
     }
+    JSONObject receiverStageSnapshot() throws Exception { return incoming.diagnosticStages(); }
     boolean ownAppCaptureEnabled() { return ownCapture != null; }
     void armOwnCaptureTrace(String processEpoch, long appGeneration, long armGeneration) {
         io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner retained =

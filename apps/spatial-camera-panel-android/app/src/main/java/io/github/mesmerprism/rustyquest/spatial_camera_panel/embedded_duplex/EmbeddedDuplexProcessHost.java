@@ -33,6 +33,7 @@ final class EmbeddedDuplexProcessHost {
     }
 
     private final Context applicationContext;
+    private final InstalledApkDigest installedApkDigest = new InstalledApkDigest();
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
     private volatile EmbeddedDuplexProcessFence processFence;
     private long nativeExecutorGeneration;
@@ -218,6 +219,27 @@ final class EmbeddedDuplexProcessHost {
         return concurrentQualificationOnLane(arm, challenge, false, null, null);
     }
     /** Bounded debug-only observation; a current arm is checked twice across lane turns. */
+    CompletableFuture<String> ownerFailureDiagnosticRead(String challenge) {
+        return submit(() -> {
+            if (challenge == null || !challenge.matches("[0-9a-f]{32}")) throw new IllegalArgumentException("diagnostic challenge");
+            requireFreshProcess();
+            if ((phase.get() != Phase.READY && phase.get() != Phase.FAILED) || localFixture
+                    || platform == null || processFence == null) throw new IllegalStateException("owner diagnostic unavailable");
+            processFence.requireLive(processFence.generation());
+            JSONObject nativeRead = new JSONObject(EmbeddedDuplexNative.ownerFailureDiagnosticRead());
+            if (!"rusty.quest.embedded_duplex.owner_diagnostic_native_read.v1".equals(nativeRead.getString("schema"))
+                    || nativeRead.getLong("native_executor_generation") != nativeExecutorGeneration
+                    || nativeRead.getLong("app_process_generation") != processFence.generation()) {
+                throw new IllegalStateException("owner diagnostic lineage changed");
+            }
+            processFence.requireLive(processFence.generation());
+            return new JSONObject().put("schema", "rusty.quest.embedded_duplex.owner_failure_diagnostic_read.v1")
+                    .put("challenge", challenge).put("process_epoch_id", processFence.epochId())
+                    .put("app_generation", processFence.generation()).put("runtime_config_sha256", runtimeConfigSha256)
+                    .put("feature_lock_sha256", ownFeatureLockSha256).put("qualification_claimed", false)
+                    .put("native_observation", nativeRead).toString();
+        });
+    }
     CompletableFuture<String> ownCaptureDiagnostic(String challenge) {
         return captureDiagnostic(challenge, false);
     }
@@ -269,7 +291,8 @@ final class EmbeddedDuplexProcessHost {
                                 .put("sample_end_elapsed_ns", android.os.SystemClock.elapsedRealtimeNanos())
                                 .put("qualification", qualification)
                                 .put("native_dropout_observation", nativeObservation)
-                                .put("java_dropout_observation", javaObservation);
+                                .put("java_dropout_observation", javaObservation)
+                                .put("receiver_stage_observation", retained.receiverStageSnapshot());
                         String exact = report.toString();
                         if (exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 32 * 1024) {
                             throw new IllegalStateException("Stream dropout diagnostic bounds");
@@ -383,17 +406,11 @@ final class EmbeddedDuplexProcessHost {
             String epoch = processFence.epochId();
             final String receiptConfig = noMediaFallback ? ownNoMediaConfigSha256 : runtimeConfigSha256;
             final String receiptFeature = noMediaFallback ? ownNoMediaFeatureSha256 : ownFeatureLockSha256;
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            try (java.io.InputStream input = new java.io.FileInputStream(applicationContext.getApplicationInfo().sourceDir)) {
-                byte[] block = new byte[65536]; int count;
-                while ((count = input.read(block)) != -1) digest.update(block, 0, count);
-            }
-            StringBuilder apk = new StringBuilder();
-            for (byte b : digest.digest()) apk.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
+            String apk = installedApkDigest.read(applicationContext);
             if (peerAction != null) {
                 // Check the retained process/challenge/arm before any authority mutation.
                 ConcurrentStereoQualification.status(challenge, epoch, receiptConfig,
-                        receiptFeature, apk.toString());
+                        receiptFeature, apk);
                 EmbeddedDuplexStartPreflight starting = startIntent.pending();
                 if (peerAction == EmbeddedDuplexPeerAction.START && !preflightLive(starting))
                     throw new IllegalStateException("current paired Start intent unavailable");
@@ -427,7 +444,7 @@ final class EmbeddedDuplexProcessHost {
 
                     nativeReceipt = physical.toString();
                 }
-                String receipt = ConcurrentStereoQualification.lifecycle(peerAction.action, challenge, epoch, receiptConfig, receiptFeature, apk.toString(), nativeReceipt);
+                String receipt = ConcurrentStereoQualification.lifecycle(peerAction.action, challenge, epoch, receiptConfig, receiptFeature, apk, nativeReceipt);
                 if (peerAction == EmbeddedDuplexPeerAction.START) startIntent.acknowledge(starting, nativeReceipt);
                 if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
                         && "terminal".equals(new JSONObject(nativeReceipt).optString("whole_app_physical_cleanup"))) {
@@ -447,10 +464,10 @@ final class EmbeddedDuplexProcessHost {
                 EmbeddedDuplexPairStatus pair=EmbeddedDuplexPairStatus.parse(EmbeddedDuplexNative.runtimeCommand("pair_status","{}"));
                 ConcurrentStereoQualification.hubSnapshot(epoch,receiptConfig,receiptFeature,life,pair);
             }
-            if (maskAction) return ConcurrentStereoQualification.mask(challenge,epoch,receiptConfig,receiptFeature,apk.toString(),policy);
-            if (policyAction) return ConcurrentStereoQualification.policy(challenge, epoch, receiptConfig, receiptFeature, apk.toString(), policy);
+            if (maskAction) return ConcurrentStereoQualification.mask(challenge,epoch,receiptConfig,receiptFeature,apk,policy);
+            if (policyAction) return ConcurrentStereoQualification.policy(challenge, epoch, receiptConfig, receiptFeature, apk, policy);
             if (arm) {
-                String receipt = ConcurrentStereoQualification.arm(challenge, epoch, receiptConfig, receiptFeature, apk.toString());
+                String receipt = ConcurrentStereoQualification.arm(challenge, epoch, receiptConfig, receiptFeature, apk);
                 EmbeddedDuplexResources retained = resources;
                 if (retained != null && retained.ownAppCaptureEnabled()) {
                     JSONObject context = new JSONObject(ConcurrentStereoQualification.diagnosticArmContext(challenge, epoch));
@@ -458,7 +475,7 @@ final class EmbeddedDuplexProcessHost {
                 }
                 return receipt;
             }
-            return ConcurrentStereoQualification.status(challenge, epoch, receiptConfig, receiptFeature, apk.toString());
+            return ConcurrentStereoQualification.status(challenge, epoch, receiptConfig, receiptFeature, apk);
         });
     }
 
