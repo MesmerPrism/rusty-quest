@@ -1,3 +1,4 @@
+[CmdletBinding()]
 param(
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
@@ -18,17 +19,37 @@ param(
     [string]$SpatialCameraPanelPackageName = "",
     [switch]$EnableConnectionHubDebugOperator,
     [switch]$EnableRemoteCameraDebugOperator,
-    [switch]$RequireSharedMorphovisionSigner,
+    [switch]$RequireSharedSigner,
+    [string]$ExpectedSignerSha256 = "",
     [switch]$PrepareOnly,
     [switch]$ValidateRuntimeConfigOnly
 )
 
 $ErrorActionPreference = "Stop"
-$SharedMorphovisionSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
 $ApprovedManifoldRevision = "ae3effb502e5b3bf565dc628b3ac74235397145d"
 $ApprovedManifoldTree = "4a148035b8692be171833a7ba235a391403c8256"
 $ApprovedLegacyProductSpecSha256 = "007cac98547be79ddfdade70cfeedbca1c154034e52a8d62b59946f3dea5b314"
 $ApprovedLegacyProductLockSha256 = "f311d4fa9f5ddd37f6936b33f996885d12997edb9f89c36048945eb1f339268d"
+
+function Assert-SharedSignerExpectedIdentity {
+    param([bool]$Required, [string]$ExpectedSha256)
+    if (($Required -or -not [string]::IsNullOrEmpty($ExpectedSha256)) -and
+        $ExpectedSha256 -cnotmatch '^[0-9a-f]{64}$') {
+        throw 'An explicit canonical expected signer fingerprint is required for shared signing.'
+    }
+    if (-not $Required -and -not [string]::IsNullOrEmpty($ExpectedSha256)) {
+        throw 'Expected signer fingerprint requires explicit shared signing mode.'
+    }
+}
+
+function Assert-SharedSignerCertificate {
+    param([bool]$Required, [string]$ExpectedSha256, [string]$ActualSha256)
+    Assert-SharedSignerExpectedIdentity -Required $Required -ExpectedSha256 $ExpectedSha256
+    if ($ActualSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Exported signer certificate fingerprint is malformed.' }
+    if ($Required -and $ActualSha256 -cne $ExpectedSha256) {
+        throw 'Explicit shared signer fingerprint mismatch.'
+    }
+}
 
 function Get-LatestDirectory {
     param(
@@ -518,29 +539,30 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path $targetRoot "manifold-broker-android"
 }
 $keystoreWasExplicit = -not [string]::IsNullOrWhiteSpace($Keystore)
-if ($RequireSharedMorphovisionSigner -and -not $keystoreWasExplicit) {
-    throw "Shared Morphovision package builds require an explicit local -Keystore binding."
+Assert-SharedSignerExpectedIdentity -Required ([bool]$RequireSharedSigner) -ExpectedSha256 $ExpectedSignerSha256
+if ($RequireSharedSigner -and -not $keystoreWasExplicit) {
+    throw "Shared client package builds require an explicit local -Keystore binding."
 }
-$signingAlias = if ($RequireSharedMorphovisionSigner) {
-    $env:RUSTY_QUEST_MORPHOVISION_SIGNING_ALIAS
+$signingAlias = if ($RequireSharedSigner) {
+    $env:RUSTY_QUEST_SHARED_SIGNING_ALIAS
 } else {
     "androiddebugkey"
 }
-$signingStorePassword = if ($RequireSharedMorphovisionSigner) {
-    $env:RUSTY_QUEST_MORPHOVISION_SIGNING_STORE_PASSWORD
+$signingStorePassword = if ($RequireSharedSigner) {
+    $env:RUSTY_QUEST_SHARED_SIGNING_STORE_PASSWORD
 } else {
     "android"
 }
-$signingKeyPassword = if ($RequireSharedMorphovisionSigner) {
-    $env:RUSTY_QUEST_MORPHOVISION_SIGNING_KEY_PASSWORD
+$signingKeyPassword = if ($RequireSharedSigner) {
+    $env:RUSTY_QUEST_SHARED_SIGNING_KEY_PASSWORD
 } else {
     "android"
 }
-if ($RequireSharedMorphovisionSigner -and (
+if ($RequireSharedSigner -and (
         [string]::IsNullOrWhiteSpace($signingAlias) -or
         [string]::IsNullOrWhiteSpace($signingStorePassword) -or
         [string]::IsNullOrWhiteSpace($signingKeyPassword))) {
-    throw "Shared Morphovision signer alias and passwords require local environment bindings."
+    throw "Shared client signer alias and passwords require local environment bindings."
 }
 
 $resolvedOutParent = Split-Path -Parent $OutDir
@@ -682,7 +704,7 @@ if ($LegacyCameraP2pCompatibility) {
 if (-not [string]::IsNullOrWhiteSpace($SpatialCameraPanelPackageName)) {
     if (-not $LegacyCameraP2pCompatibility -or
         -not $EnableRemoteCameraDebugOperator -or
-        -not $RequireSharedMorphovisionSigner) {
+        -not $RequireSharedSigner) {
         throw "Spatial Camera Panel package specialization requires the legacy compatibility product, remote-camera debug operator, and shared signer gate."
     }
 }
@@ -745,8 +767,8 @@ $mediaStreamInput = Expand-ValidatedMediaStreamAar -Path $MediaStreamAarPath `
     -ExpectedSha256 $ExpectedMediaStreamAarSha256 -OutputRoot (Join-Path $OutDir 'media-stream-aar')
 $mediaStreamAarClassesJar = $mediaStreamInput.classes_jar_path
 
-if ($RequireSharedMorphovisionSigner -and -not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
-    throw "The explicit shared Morphovision signing keystore does not exist."
+if ($RequireSharedSigner -and -not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
+    throw "The explicit shared client signing keystore does not exist."
 }
 if (-not (Test-Path $Keystore)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Keystore) | Out-Null
@@ -773,13 +795,7 @@ Invoke-Checked "keytool certificate export" $keytool @(
     "-file", $certificatePath
 )
 $certificateSha256 = Get-FileSha256Hex -Path $certificatePath
-if ($RequireSharedMorphovisionSigner -and
-    -not [string]::Equals(
-        $certificateSha256,
-        $SharedMorphovisionSignerSha256,
-        [System.StringComparison]::Ordinal)) {
-    throw "Explicit shared Morphovision signer fingerprint mismatch."
-}
+Assert-SharedSignerCertificate -Required ([bool]$RequireSharedSigner) -ExpectedSha256 $ExpectedSignerSha256 -ActualSha256 $certificateSha256
 $acceptedProductLockJson = [System.IO.File]::ReadAllText($acceptedProductLockPath)
 $acceptedProductSpecJson = [System.IO.File]::ReadAllText($canonicalProductSpecPath)
 $acceptedProductLock = $acceptedProductLockJson | ConvertFrom-Json
@@ -1426,7 +1442,7 @@ foreach ($kind in @("activity", "service", "provider")) {
     }
 }
 $manifest = [ordered]@{
-    '$schema' = "rusty.quest.manifold_broker_android.build_manifest.v2"
+    '$schema' = "rusty.quest.manifold_broker_android.build_manifest.v3"
     package_name = "io.github.mesmerprism.rustymanifold.broker"
     version_code = $VersionCode
     version_name = $VersionName
@@ -1481,8 +1497,8 @@ $manifest = [ordered]@{
     packaging_android_manifest_sha256 = Get-FileSha256Hex -Path $packagingManifestPath
     connection_hub_debug_operator = [bool]$EnableConnectionHubDebugOperator
     remote_camera_debug_operator = [bool]$EnableRemoteCameraDebugOperator
-    shared_morphovision_signer_required = [bool]$RequireSharedMorphovisionSigner
-    expected_shared_morphovision_signer_sha256 = $(if ($RequireSharedMorphovisionSigner) { $SharedMorphovisionSignerSha256 } else { $null })
+    shared_signer_required = [bool]$RequireSharedSigner
+    expected_shared_signer_sha256 = $(if ($RequireSharedSigner) { $ExpectedSignerSha256 } else { $null })
     artifact_signer_sha256 = $certificateSha256
     generated_manifest_projection_sha256 = [string]$productInputs.manifest_projection_sha256
     generated_command_registry_sha256 = [string]$productInputs.command_registry_sha256

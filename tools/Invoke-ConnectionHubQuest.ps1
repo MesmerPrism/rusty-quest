@@ -21,8 +21,8 @@ param(
     [ValidatePattern('^[0-9a-f]{64}$')]
     [string]$GradleSha256 = "",
     [string]$Keystore = "",
-    [ValidatePattern('^722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8$')]
-    [string]$ExpectedSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8",
+    [ValidatePattern('^$|^[0-9a-f]{64}$')]
+    [string]$ExpectedSignerSha256 = "",
     [string]$HubManifoldSourceRoot = "",
     [string]$SpatialManifoldSourceRoot = "",
     [string]$HubApk = "",
@@ -109,7 +109,7 @@ $QfmProximityGap = "qfm-missing-typed-bounded-virtual-proximity-v1"
 $QfmProviderDebugGap = "qfm-missing-typed-debug-provider-service-action-v1"
 $ReceiptSchema = "rusty.quest.connection_hub.operator_receipt.v1"
 $ManifestSchema = "rusty.quest.connection_hub.operator_evidence_manifest.v1"
-$CheckpointSchema = "rusty.quest.connection_hub.operator_checkpoint.v2"
+$CheckpointSchema = "rusty.quest.connection_hub.operator_checkpoint.v3"
 $ProtocolVectorPath = Join-Path $RepoRoot $(if($LegacyV1){
     "apps\manifold-broker-android\contracts\connection-hub-protocol-v1.json"
 }else{
@@ -443,6 +443,7 @@ function Initialize-Checkpoint {
         if ([string]$checkpoint.'$schema' -ne $CheckpointSchema -or
                 -not $actionMatches -or
                 [string]$checkpoint.serial -ne $Serial -or
+                [string]$checkpoint.expected_signer_sha256 -cne $ExpectedSignerSha256 -or
                 [string]$checkpoint.protocol_vectors_sha256 -ne $protocolSha -or
                 [string]$checkpoint.existing_target_policy -ne $ExistingTargetPolicy -or
                 [string]$checkpoint.adb_sha256 -ne [string]$script:AdbPin -or
@@ -535,6 +536,7 @@ function Initialize-Checkpoint {
         serial = $Serial
         run_directory = $script:RunDir
         existing_target_policy = $ExistingTargetPolicy
+        expected_signer_sha256 = $ExpectedSignerSha256
         protocol_vectors_sha256 = $protocolSha
         file_manager_sha256 = $FileManagerSha256
         hostess_sha256 = $HostessCliSha256
@@ -1407,7 +1409,8 @@ function Build-All {
         -ProductLockPath $lock `
         -ManifoldSourceRoot $hubRoot `
         -Keystore $resolvedKeystore `
-        -RequireSharedMorphovisionSigner `
+        -RequireSharedSigner `
+        -ExpectedSignerSha256 $ExpectedSignerSha256 `
         -EnableConnectionHubDebugOperator
     if ($LASTEXITCODE -ne 0) { throw "Hub APK build failed." }
     $previousManifold = $env:RUSTY_MANIFOLD_SOURCE_ROOT
@@ -1426,10 +1429,11 @@ function Build-All {
     }
     $manifest = Get-Content -Raw (Join-Path $RepoRoot "target\connection-hub-debug\build-manifest.json") | ConvertFrom-Json
     if (-not (Test-ExactBoolean $manifest.connection_hub_debug_operator $true)) { throw "Debug Hub build omitted its shell operator route." }
-    if (-not (Test-ExactBoolean $manifest.shared_morphovision_signer_required $true) -or
-        [string]$manifest.expected_shared_morphovision_signer_sha256 -ne $ExpectedSignerSha256 -or
+    if ([string]$manifest.'$schema' -cne "rusty.quest.manifold_broker_android.build_manifest.v3" -or
+        -not (Test-ExactBoolean $manifest.shared_signer_required $true) -or
+        [string]$manifest.expected_shared_signer_sha256 -ne $ExpectedSignerSha256 -or
         [string]$manifest.artifact_signer_sha256 -ne $ExpectedSignerSha256) {
-        throw "Hub build did not prove the intended shared Morphovision signer."
+        throw "Hub build did not prove the intended shared client signer."
     }
     return Save-Receipt "build" (New-Receipt "build" "project-build" "passed" ([ordered]@{
         hub_build_manifest_sha256 = Get-Sha256 (Join-Path $RepoRoot "target\connection-hub-debug\build-manifest.json")
@@ -2702,6 +2706,8 @@ function New-DryRunPlan {
         qfm_first = $true
         qfm_exact_sha256_required = $true
         all_apk_signers_must_match_before_install = $true
+        explicit_expected_signer_required = $true
+        expected_signer_sha256 = $ExpectedSignerSha256
         socket_protocol = $(if($LegacyV1){"rusty.quest.connection_hub.v1"}else{"rusty.quest.connection_hub.v2"})
         rollover_safe = (-not [bool]$LegacyV1)
         reviewed_fallbacks = @(
@@ -2748,6 +2754,8 @@ if ($DryRun) {
     New-DryRunPlan | ConvertTo-Json -Depth 10
     exit 0
 }
+
+if ($ExpectedSignerSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'An explicit -ExpectedSignerSha256 is required before Connection Hub operations.' }
 
 if ([string]::IsNullOrWhiteSpace($EvidenceRoot)) { throw "-EvidenceRoot is required outside dry-run mode." }
 $resolvedEvidenceRoot = [System.IO.Path]::GetFullPath($EvidenceRoot).TrimEnd('\')
