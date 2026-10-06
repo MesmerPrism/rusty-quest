@@ -456,3 +456,20 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     if env.exception_check().unwrap_or(true){let _=env.exception_clear();}
     return_string(&mut env,result)
 }
+
+// Fixed observation: retain a host lease and validate liveness, without any lifecycle operation.
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_ownerFailureDiagnosticRead(
+    mut env: JNIEnv<'_>, _: JClass<'_>) -> jstring {
+    let result = (|| {
+        let host = host()?;
+        host.capability.require_live()?;
+        let mut value = host.callbacks.owner_failure_diagnostic_read();
+        host.capability.require_live()?;
+        value["native_executor_generation"] = json!(host.capability.generation);
+        value["app_process_generation"] = json!(host.capability.binding.generation);
+        Ok(value.to_string())
+    })();
+    if env.exception_check().unwrap_or(true) { let _ = env.exception_clear(); }
+    return_string(&mut env, result)
+}

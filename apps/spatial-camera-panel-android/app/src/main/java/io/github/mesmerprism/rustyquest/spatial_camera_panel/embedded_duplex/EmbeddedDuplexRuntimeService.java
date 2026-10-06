@@ -15,6 +15,9 @@ public final class EmbeddedDuplexRuntimeService {
     }
 
     /** Debug shell observation only; does not advance an owner or media readiness state. */
+    public static CompletableFuture<String> ownerFailureDiagnosticRead(Context context, String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).ownerFailureDiagnosticRead(challenge);
+    }
     public static CompletableFuture<String> ownCaptureDiagnostic(Context context, String challenge) {
         return EmbeddedDuplexProcessHost.forApplication(context).ownCaptureDiagnostic(challenge);
     }

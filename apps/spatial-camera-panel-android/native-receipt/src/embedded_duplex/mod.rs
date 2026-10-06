@@ -5,6 +5,8 @@ pub(crate) mod common_lan_signing;
 mod cleanup_failure;
 #[cfg(any(target_os = "android", test))]
 mod owner_failure;
+#[cfg(any(target_os = "android", test))]
+mod owner_diagnostic_read;
 pub(crate) mod frame_identity;
 #[cfg(target_os = "android")]
 mod frame_jni;

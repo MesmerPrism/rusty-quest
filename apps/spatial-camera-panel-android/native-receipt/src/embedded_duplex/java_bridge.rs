@@ -457,13 +457,22 @@ impl JavaOwnerCallbacks {
         self.persist_replay("persistCleanupPreparations", text.to_owned())
     }
     pub(crate) fn owner_failure_diagnostic(&self) -> Result<serde_json::Value, String> {
+        parse_owner_failure_diagnostic(&self.owner_failure_diagnostic_text()?)
+    }
+    pub(crate) fn owner_failure_diagnostic_read(&self) -> serde_json::Value {
+        match self.owner_failure_diagnostic_text() {
+            Ok(text) => super::owner_diagnostic_read::snapshot(&text, parse_owner_failure_diagnostic(&text)),
+            Err(error) => super::owner_diagnostic_read::unavailable(&error),
+        }
+    }
+    fn owner_failure_diagnostic_text(&self) -> Result<String, String> {
         let mut env = self.attached()?;
         let call = env.call_method(self.callback.as_obj(), "ownerFailureDiagnostic", "()Ljava/lang/String;", &[]);
         let value = self.checked_call(&mut env, call, "java_bridge.owner_diagnostic_call")?
             .l().map_err(|_| "java_bridge.owner_diagnostic_type")?;
         if value.is_null() { return Err("java_bridge.owner_diagnostic_null".into()); }
         let text: String = env.get_string(&JString::from(value)).map_err(|_| "java_bridge.owner_diagnostic_string")?.into();
-        parse_owner_failure_diagnostic(&text)
+        Ok(text)
     }
     pub(crate) fn load_cleanup_preparations(&self) -> Result<String, String> {
         self.load_bounded_cleanup_string("loadCleanupPreparations")

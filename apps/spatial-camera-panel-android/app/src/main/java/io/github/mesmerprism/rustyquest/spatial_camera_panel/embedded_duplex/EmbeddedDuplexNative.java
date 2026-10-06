@@ -48,6 +48,7 @@ public final class EmbeddedDuplexNative {
             String providerEpochEntropyHex, String bootstrap, Object platformCallbacks);
     static native String runtimeCommand(String operation, String input);
     static native String peerLifecycle(int action);
+    static native String ownerFailureDiagnosticRead();
     static native String closeNoMediaRuntime(String expectedConfigSha256);
     static native boolean processIdleForEnrollment();
     static native byte[] handleOwnerFrame(byte[] exactFrame);

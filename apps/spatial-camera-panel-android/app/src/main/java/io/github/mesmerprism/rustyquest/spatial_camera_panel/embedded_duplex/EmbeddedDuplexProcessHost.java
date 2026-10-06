@@ -218,6 +218,27 @@ final class EmbeddedDuplexProcessHost {
         return concurrentQualificationOnLane(arm, challenge, false, null, null);
     }
     /** Bounded debug-only observation; a current arm is checked twice across lane turns. */
+    CompletableFuture<String> ownerFailureDiagnosticRead(String challenge) {
+        return submit(() -> {
+            if (challenge == null || !challenge.matches("[0-9a-f]{32}")) throw new IllegalArgumentException("diagnostic challenge");
+            requireFreshProcess();
+            if ((phase.get() != Phase.READY && phase.get() != Phase.FAILED) || localFixture
+                    || platform == null || processFence == null) throw new IllegalStateException("owner diagnostic unavailable");
+            processFence.requireLive(processFence.generation());
+            JSONObject nativeRead = new JSONObject(EmbeddedDuplexNative.ownerFailureDiagnosticRead());
+            if (!"rusty.quest.embedded_duplex.owner_diagnostic_native_read.v1".equals(nativeRead.getString("schema"))
+                    || nativeRead.getLong("native_executor_generation") != nativeExecutorGeneration
+                    || nativeRead.getLong("app_process_generation") != processFence.generation()) {
+                throw new IllegalStateException("owner diagnostic lineage changed");
+            }
+            processFence.requireLive(processFence.generation());
+            return new JSONObject().put("schema", "rusty.quest.embedded_duplex.owner_failure_diagnostic_read.v1")
+                    .put("challenge", challenge).put("process_epoch_id", processFence.epochId())
+                    .put("app_generation", processFence.generation()).put("runtime_config_sha256", runtimeConfigSha256)
+                    .put("feature_lock_sha256", ownFeatureLockSha256).put("qualification_claimed", false)
+                    .put("native_observation", nativeRead).toString();
+        });
+    }
     CompletableFuture<String> ownCaptureDiagnostic(String challenge) {
         return captureDiagnostic(challenge, false);
     }
