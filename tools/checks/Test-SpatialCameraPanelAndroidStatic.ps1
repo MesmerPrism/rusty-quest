@@ -598,7 +598,38 @@ Assert-Contains "Activity" $activity "SpatialSdkQuadResourceBindings("
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.resources.adoptSwapchain(sdkSwapchain)"
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "bindings.resources.registerLayer(layer)"
 Assert-Contains "SDK quad surface probe coordinator" $sdkQuadSurfaceProbeCoordinator 'bindings.resources.cleanupSceneOnly("plain-entity-retry")'
-Assert-Contains "Activity" $activity "return sdkQuadResourceCoordinator.cleanup(reason)"
+# Cleanup now dispatches through the UI-thread owner guard; a direct return
+# would skip that guard. Keep the assertions scoped to the actual helper body.
+$cleanupStart = $activity.IndexOf('  private fun cleanupSdkProjectionResourcesOnUiThread(reason: String): String {', [StringComparison]::Ordinal)
+$cleanupEnd = $activity.IndexOf('  private fun cleanupSdkQuadSurfaceProbe(reason: String): String {', [StringComparison]::Ordinal)
+if ($cleanupStart -lt 0 -or $cleanupEnd -le $cleanupStart) { throw 'SDK cleanup owner helper cannot be isolated.' }
+$cleanupBody = $activity.Substring($cleanupStart, $cleanupEnd - $cleanupStart)
+$cleanupTokens = @(
+    'val expectedRevision = sdkQuadResourceCoordinator.ownershipRevision()',
+    'sdkQuadResourceCoordinator.ownershipRevision() == expectedRevision &&',
+    'cameraHwbProjectionEntity === expectedEntity &&',
+    'cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext() == expectedCarrier',
+    'val status = sdkQuadResourceCoordinator.cleanup(reason)',
+    'if (status == "destroyed") {',
+    'cameraHwbProjectionRawCarrierCoordinator.recordLayerRemoved(reason)',
+    'cameraHwbProjectionEntity = null',
+    'android.os.Looper.myLooper() == android.os.Looper.getMainLooper()',
+    'runOnUiThread {',
+    'disposition.compareAndSet(0, 1)',
+    'check(System.nanoTime() <= deadline)',
+    'result.complete(cleanup())',
+    'result.get(10, java.util.concurrent.TimeUnit.SECONDS)',
+    'disposition.compareAndSet(0, 2)'
+)
+foreach ($token in $cleanupTokens) { Assert-Contains 'SDK cleanup owner helper' $cleanupBody $token }
+foreach ($token in $cleanupTokens) {
+    $damaged = $cleanupBody.Replace($token, '/* removed by owner-guard negative control */')
+    $rejected = $false
+    try { foreach ($required in $cleanupTokens) { Assert-Contains 'SDK cleanup damaged control' $damaged $required } }
+    catch { $rejected = $true }
+    if (-not $rejected) { throw "SDK cleanup damage escaped its scoped check: $token" }
+}
+Assert-Contains "Activity" $activity "return cleanupSdkProjectionResourcesOnUiThread(reason)"
 Assert-NotContains "Activity" $activity "private var sdkQuadSurfaceProbeLayer"
 Assert-NotContains "Activity" $activity "private var sdkQuadSurfaceProbeSceneObject"
 Assert-NotContains "Activity" $activity "private var sdkQuadSurfaceProbeSwapchain"
@@ -1598,7 +1629,12 @@ Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbP
 Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "private var lastMarkerMs = 0L"
 Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "fun resetMarkerCadence()"
 Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "fun update(reason: String, forceLog: Boolean)"
-Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "if (!bindings.routeActive())"
+Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "val routeActive = bindings.routeActive()"
+Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "if (!routeActive && bindings.resources.withLayer { true } != true)"
+Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "val panelCarrierUpdateStatus = if (routeActive) bindings.updatePanelCarrierLayer(plane, reason)"
+Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator 'else "inactive-retained-raw-layer"'
+Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "val nativePanelPoseUpdateMask = if (routeActive) updateNativePanelPose(plane, reason, forceLog)"
+Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "else 0L"
 Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "bindings.resources.withLayer"
 Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "bindings.updatePanelCarrierLayer(plane, reason)"
 Assert-Contains "Camera HWB projection placement update coordinator" $cameraHwbProjectionPlacementUpdateCoordinator "bindings.updateNativePanelPose(plane)"

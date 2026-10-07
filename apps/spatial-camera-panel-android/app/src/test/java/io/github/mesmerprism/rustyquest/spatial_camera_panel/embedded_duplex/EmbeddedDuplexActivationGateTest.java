@@ -20,6 +20,15 @@ public final class EmbeddedDuplexActivationGateTest {
         assertEquals(1, target.activated);
     }
 
+    @Test public void diagnosticLogFailureCannotReplaceOriginalActivationFailure() throws Exception {
+        FakeTarget target = new FakeTarget(); target.failAwait = true; target.failDiagnosticLog = true;
+        EmbeddedDuplexActivationGate gate = armed(target);
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> gate.activate("activation.log-failure", authority().toString(), proof().toString()));
+        assertEquals("receiver uncertain", failure.getMessage());
+        assertEquals(1, target.failureLogCount);
+        assertEquals(0, target.activated);
+    }
     @Test public void wrongProofAndWrongArmLineageRejectBeforeGraph() throws Exception {
         FakeTarget target = new FakeTarget();
         EmbeddedDuplexActivationGate wrongArm = new EmbeddedDuplexActivationGate(target, () -> 1000L);
@@ -717,6 +726,28 @@ public final class EmbeddedDuplexActivationGateTest {
         int awaited;
         int activated;
         boolean failAwait;
+        boolean failDiagnosticLog;
+        int failureLogCount;
+        @Override public void logActivationFailure(String record) {
+            failureLogCount++;
+            assertTrue(record.contains("code=ACTIVATION_EFFECT_UNCERTAIN"));
+            if (failDiagnosticLog) throw new IllegalStateException("diagnostic log unavailable");
+        }
+        @Override public long[] currentIncomingAcquiredFrame(long maxAgeNs) {
+            long[] words = new long[19];
+            words[0] = 2; words[1] = 7; words[2] = 8;
+            words[3] = route; words[4] = decoder; words[5] = reader; words[6] = 100;
+            words[15] = 1000; words[16] = 1100; words[17] = 1200; words[18] = 200;
+            return words;
+        }
+        @Override public long[] currentIncomingEffectiveFrame(long maxAgeNs) {
+            long[] words = new long[21];
+            words[0] = 2; words[1] = 7; words[2] = 8;
+            words[3] = route; words[4] = decoder; words[5] = reader; words[6] = 100;
+            words[15] = 1000; words[16] = 1100; words[17] = 1300;
+            words[18] = 1400; words[19] = 400; words[20] = 1;
+            return words;
+        }
         boolean retained = true;
         Runnable onAwait;
 

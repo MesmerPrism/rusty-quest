@@ -42,18 +42,28 @@ class ConcurrentStereoHubTargetTest {
     assertFalse(ConcurrentStereoHubContract.effectObserved(ConcurrentStereoHubContract.OWN,8,s,999))
     for(key in listOf("running","pair_current","policy_pixel_current")){val damaged=JSONObject(s.toString()).put(key,false);assertFalse(ConcurrentStereoHubContract.effectObserved(ConcurrentStereoHubContract.OWN,8,damaged,1500))}
   }
-  @Test fun actualRetainedStaleSampleDeniesAndModeledCurrentLineageDamageDenies() {
-    val actual=JSONObject(java.io.File(System.getProperty("duplex.receipt")).readText()).getJSONObject("receipt").getJSONArray("native_snapshot")
-    val retained=LongArray(actual.length()){actual.getLong(it)};val policy=LongArray(6){retained[138+it]};val process=retained[2];val revision=retained[144]
-    assertFalse(ConcurrentStereoHubContract.currentPolicyPixels(retained,policy,revision,process,retained[5],false))
-    // Explicit future modeled current sample, never device qualification.
-    val modeled=retained.clone();modeled[27]=revision;modeled[41]=modeled[54]-500_000_000;modeled[35]=1;modeled[146]=1;modeled[38]=6
+  @Test fun optionalRetainedStaleSampleDenies() {
+    val path = System.getProperty("duplex.receipt")
+    org.junit.Assume.assumeTrue("Optional retained hardware receipt was not selected", path != null)
+    val actual=JSONObject(java.io.File(requireNotNull(path)).readText()).getJSONObject("receipt").getJSONArray("native_snapshot")
+    val retained=LongArray(actual.length()){actual.getLong(it)}
+    val policy=LongArray(6){retained[138+it]}
+    assertFalse(ConcurrentStereoHubContract.currentPolicyPixels(retained,policy,retained[144],retained[2],retained[5],false))
+  }
+  @Test fun modeledCurrentLineageDamageDenies() {
+    // Explicit modeled current v160 record; it is never observed device evidence.
+    val process=17L; val arm=23L; val revision=29L
+    val policy=longArrayOf(0,1,0,1,1,1)
+    val modeled=LongArray(160)
+    modeled[0]=1;modeled[1]=160;modeled[2]=process;modeled[5]=arm;modeled[6]=1;modeled[159]=1
+    modeled[144]=revision;modeled[27]=revision;modeled[54]=1_000_000_000;modeled[41]=500_000_000
+    modeled[34]=policy[3];modeled[145]=policy[3];modeled[35]=1;modeled[146]=1;modeled[38]=6
     for(i in 0..5){modeled[28+i]=policy[i];modeled[138+i]=policy[i]}
     for(o in 0..1){val b=64+32*o;val pixel=128+5*o;modeled[b]=1;modeled[b+2]=process;modeled[b+3]=o+1L;modeled[b+4]=10;modeled[pixel]=1;modeled[pixel+1]=process;modeled[pixel+2]=o+1L;modeled[pixel+3]=9;modeled[pixel+4]=6}
-    assertTrue(ConcurrentStereoHubContract.currentPolicyPixels(modeled,policy,revision,process,retained[5],false))
-    assertFalse(ConcurrentStereoHubContract.currentPolicyPixels(modeled,policy,revision,process,retained[5],true))
-    for(index in listOf(2,5,6,27,34,35,38,138,144,145,146,159)){val d=modeled.clone();d[index]=d[index]+1;assertFalse("word $index",ConcurrentStereoHubContract.currentPolicyPixels(d,policy,revision,process,retained[5],false))}
-    for(o in (0..1).filter {policy.take(4).contains(it.toLong())}){for(index in listOf(64+o*32,66+o*32,128+o*5,129+o*5,130+o*5,132+o*5)){val d=modeled.clone();d[index]=0;assertFalse("bank word $index",ConcurrentStereoHubContract.currentPolicyPixels(d,policy,revision,process,retained[5],false))}}
+    assertTrue(ConcurrentStereoHubContract.currentPolicyPixels(modeled,policy,revision,process,arm,false))
+    assertFalse(ConcurrentStereoHubContract.currentPolicyPixels(modeled,policy,revision,process,arm,true))
+    for(index in listOf(2,5,6,27,34,35,38,138,144,145,146,159)){val d=modeled.clone();d[index]=d[index]+1;assertFalse("word $index",ConcurrentStereoHubContract.currentPolicyPixels(d,policy,revision,process,arm,false))}
+    for(o in (0..1).filter {policy.take(4).contains(it.toLong())}){for(index in listOf(64+o*32,66+o*32,128+o*5,129+o*5,130+o*5,132+o*5)){val d=modeled.clone();d[index]=0;assertFalse("bank word $index",ConcurrentStereoHubContract.currentPolicyPixels(d,policy,revision,process,arm,false))}}
   }
 }
 

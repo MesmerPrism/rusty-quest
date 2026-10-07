@@ -91,7 +91,7 @@ $lock = Get-Content -Raw -LiteralPath $paths.lock | ConvertFrom-Json
 $projection = Get-Content -Raw -LiteralPath $paths.projection | ConvertFrom-Json
 [xml]$generatedManifest = Get-Content -Raw -LiteralPath $paths.android_manifest
 
-Assert-Equal $receipt.'$schema' "rusty.quest.manifold_broker_android.build_manifest.v2" "build receipt schema"
+Assert-Equal $receipt.'$schema' "rusty.quest.manifold_broker_android.build_manifest.v3" "build receipt schema"
 Assert-Equal $receipt.manifold_product_id $productReceipt.product_id "product id"
 Assert-Equal $receipt.manifold_product_lock_id $productReceipt.manifold_lock_id "product lock id"
 Assert-Equal $receipt.manifold_product_lock_fingerprint $productReceipt.manifold_lock_fingerprint "product lock fingerprint"

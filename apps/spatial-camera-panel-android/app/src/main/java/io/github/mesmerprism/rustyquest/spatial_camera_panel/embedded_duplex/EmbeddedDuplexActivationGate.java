@@ -38,6 +38,10 @@ final class EmbeddedDuplexActivationGate {
          * activation_effect_uncertain response). Must not throw; must not block long.
          */
         default void recordActivationFailure(String closedRecord) { }
+        /** Diagnostic only; production logs the same closed record. */
+        default void logActivationFailure(String closedRecord) {
+            android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-rejected " + closedRecord);
+        }
     }
 
     interface Clock { long wallTimeMillis(); }
@@ -216,7 +220,7 @@ final class EmbeddedDuplexActivationGate {
                     + " code=ACTIVATION_EFFECT_UNCERTAIN " + receiverDiagnostic;
             // Persist first: logcat capture has already missed this line once.
             try { target.recordActivationFailure(record); } catch (RuntimeException ignored) { }
-            android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-rejected " + record);
+            try { target.logActivationFailure(record); } catch (RuntimeException ignored) { }
             throw failure;
         }
     }

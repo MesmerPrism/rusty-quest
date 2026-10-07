@@ -37,7 +37,7 @@ public final class Looper {private static final Looper main=new Looper(); public
 $native=WriteHost 'EmbeddedDuplexNative.java' @'
 package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 public final class EmbeddedDuplexNative {
- public static final int FRAME_EVIDENCE_VERSION=2,ACQUIRED_TIMED_OBSERVATION_WORDS=20,EFFECTIVE_TIMED_OBSERVATION_WORDS=20,FRAME_OBSERVATION_WORDS=18,FRAME_TIMED_OBSERVATION_WORDS=19;
+ public static final int FRAME_EVIDENCE_VERSION=2,ACQUIRED_TIMED_OBSERVATION_WORDS=19,EFFECTIVE_TIMED_OBSERVATION_WORDS=21,FRAME_OBSERVATION_WORDS=17,FRAME_TIMED_OBSERVATION_WORDS=19;
  public static boolean localCameraQuiescent(){return true;}
  public static boolean registerReceiverFrame(long[] x){throw new AssertionError("unexpected frame adoption");}
  public static boolean recordReceiverFrameRendered(long[] x){throw new AssertionError("unexpected render");}
@@ -73,7 +73,7 @@ internal class OwnStereoCaptureRuntime {
 }
 '@
 $app=Join-Path $root 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel'
-$test=Join-Path $root 'apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/ConcurrentPeerRetirementHost.kt'
+$test=Join-Path $root 'apps/spatial-camera-panel-android/host-tests/embedded_duplex/ConcurrentPeerRetirementHost.kt'
 $production=@((Join-Path $app 'SpatialVideoSourceRoutingCoordinator.kt'),(Join-Path $app 'embedded_duplex/EmbeddedDuplexDisplayCoordinator.kt'),(Join-Path $app 'embedded_duplex/EmbeddedDuplexReceiver.java'),(Join-Path $app 'embedded_duplex/EmbeddedDuplexDisplay.java'))
 $before=@($production+$test+$PSCommandPath|ForEach-Object{[ordered]@{path=$_;sha256=(Get-FileHash $_).Hash.ToLowerInvariant()}})
 if($Baseline){

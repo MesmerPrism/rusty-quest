@@ -107,6 +107,19 @@ provider accepts only `check`, `status`, and `cancel`; callers cannot supply a
 URL, key, package, signer, ring, APK, or installer flag.
 
 `check` queues the same `PackageUpdatePipeline` used by the visible Activity.
+A process-owned preparation slot admits one UI or CLI check at a time before
+manifest fetching, shared staging-file access or session creation. An overlap
+fails with `update_operation_already_active`; it does not cancel or replay the
+active check. Completion, cancellation and failure release the slot. This
+coordinates preparation in the app process; the persisted attended session
+and callback readback still own installation and wearer confirmation.
+Receipt reads and mutations share a short process-wide lock across store
+instances. A callback atomically captures its exact nonterminal session/token
+and reserves that receipt until its handler returns; a new session cannot
+replace it during callback effects. The single confirmation launch shares the
+short receipt lock with cancellation; downloads, readback, checkpoints and
+installer waiting remain outside it. Terminal duplicate callbacks have no effects. This preserves process-local
+attribution and does not claim cross-process coordination.
 A non-exported foreground data-sync service owns the potentially long
 download. `status` returns a Base64url-encoded JSON operation snapshot, and
 `cancel` cancels a run-owned download or exact persisted Package Installer

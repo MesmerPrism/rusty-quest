@@ -358,10 +358,8 @@ impl PackedSbsNormalizer {
                 vk::SubpassContents::INLINE,
             );
             let words = [eye_index, u32::from(self.source_bottom_up)];
-            let push = slice::from_raw_parts(
-                words.as_ptr().cast::<u8>(),
-                mem::size_of::<[u32; 2]>(),
-            );
+            let push =
+                slice::from_raw_parts(words.as_ptr().cast::<u8>(), mem::size_of::<[u32; 2]>());
             device.cmd_push_constants(
                 command_buffer,
                 self.pipeline_layout,

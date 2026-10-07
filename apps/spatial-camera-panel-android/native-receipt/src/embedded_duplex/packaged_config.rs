@@ -649,7 +649,8 @@ fn derive_capabilities(
                     && (capability.as_str() == "capability.media.session.observe"
                         || capability.starts_with("capability.sink.")))
                 || (peer && capability.as_str() == "capability.peer.session.observe")
-                || (media && peer
+                || (media
+                    && peer
                     && capability.as_str() == "capability.manifold.control_lease.renew")
         })
         .cloned()

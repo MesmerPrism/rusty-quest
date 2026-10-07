@@ -14,7 +14,6 @@ pub use broker_concurrent_renewal::QuestConcurrentAuthorityRenewalReceipt;
 mod broker_revoker_cleanup;
 pub use broker_revoker_cleanup::QuestConcurrentPeerRevokerCleanupReceipt;
 
-
 use rusty_manifold_admission::{
     ManifoldAdmissionRequest, ManifoldAdmissionRevocationRequest, ManifoldAdmissionUseRequest,
     ADMISSION_REQUEST_SCHEMA, ADMISSION_REVOCATION_REQUEST_SCHEMA, ADMISSION_USE_REQUEST_SCHEMA,
@@ -831,27 +830,44 @@ impl QuestBrokerRuntimeProvider {
 
     /// Reads an actual retained failed-Start obligation without granting an effect.
     pub fn has_retained_media_start_abort(
-        &self, client_id: &DottedId,
+        &self,
+        client_id: &DottedId,
     ) -> Result<bool, QuestBrokerRuntimeError> {
-        let runtime = self.runtime.as_ref().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
-        Ok(runtime.media_sessions.get(client_id)
-            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?.has_retained_start_abort())
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        Ok(runtime
+            .media_sessions
+            .get(client_id)
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+            .has_retained_start_abort())
     }
 
     /// Continues only the original failed Start under independently current
     /// trusted Revoke evidence. Completed reverse effects remain skipped.
     pub fn resume_revoked_media_start_abort_for_cleanup(
-        &mut self, client_id: &DottedId,
+        &mut self,
+        client_id: &DottedId,
         evidence: &rusty_quest_media_stream::MediaStreamTrustedRevokerCleanupEvidence,
         now_ms: u64,
     ) -> Result<Option<String>, QuestBrokerRuntimeError> {
-        let runtime = self.runtime.as_ref().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
-        let media = runtime.media_sessions.get(client_id)
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        let media = runtime
+            .media_sessions
+            .get(client_id)
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
-        let peer = runtime.peer_runtime_host.as_ref()
+        let peer = runtime
+            .peer_runtime_host
+            .as_ref()
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
-            .read().map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
-        let target = media.authorize_retained_start_abort(&peer, evidence, now_ms)
+            .read()
+            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let target = media
+            .authorize_retained_start_abort(&peer, evidence, now_ms)
             .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
         if target.client_id != client_id.as_str() {
             return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
@@ -859,8 +875,11 @@ impl QuestBrokerRuntimeProvider {
         let pending = media.pending_abort_action().is_some();
         drop(peer);
         if pending {
-            self.resume_media_start_abort_for_cleanup(client_id, &target.lease_id).map(Some)
-        } else { Ok(None) }
+            self.resume_media_start_abort_for_cleanup(client_id, &target.lease_id)
+                .map(Some)
+        } else {
+            Ok(None)
+        }
     }
 
     /// Continues an already retained failed-Start abort at its next owner.
@@ -1067,7 +1086,7 @@ impl QuestBrokerAuthorityRuntime {
             .clone()
             .ok_or(QuestBrokerRuntimeError::MediaProductNotSelected)?;
         Ok(QuestEmbeddedDuplexAuthority::new(
-            self.runtime.clone(),
+            Arc::clone(&self.runtime),
             peer,
         ))
     }
@@ -2500,7 +2519,8 @@ fn derive_grant_capabilities(
                         || capability.as_str().starts_with("capability.sink.")))
                 || (peer_session_selected
                     && capability.as_str() == "capability.peer.session.observe")
-                || (media_selected && peer_session_selected
+                || (media_selected
+                    && peer_session_selected
                     && capability.as_str() == "capability.manifold.control_lease.renew")
         })
         .cloned()
@@ -2546,12 +2566,17 @@ fn build_initial_control_lease_authority(
     let bootstrap_capabilities = capabilities.clone();
     if config.embedded_duplex.is_some() {
         for packaged in &config.packaged_authority.client_locks {
-            let client: QuestBrokerClientLockSpec = serde_json::from_str(&packaged.client_lock_json)
-                .map_err(|_| QuestBrokerRuntimeError::ClientLockInvalid)?;
-            if derive_grant_capabilities(&config.product_lock, &client).iter()
-                .any(|cap| cap.as_str() == "capability.manifold.control_lease.renew") {
-                capabilities.push(DottedId::new("capability.manifold.control_lease.renew")
-                    .expect("static renewal capability"));
+            let client: QuestBrokerClientLockSpec =
+                serde_json::from_str(&packaged.client_lock_json)
+                    .map_err(|_| QuestBrokerRuntimeError::ClientLockInvalid)?;
+            if derive_grant_capabilities(&config.product_lock, &client)
+                .iter()
+                .any(|cap| cap.as_str() == "capability.manifold.control_lease.renew")
+            {
+                capabilities.push(
+                    DottedId::new("capability.manifold.control_lease.renew")
+                        .expect("static renewal capability"),
+                );
                 break;
             }
         }
@@ -3091,9 +3116,17 @@ mod tests {
     include!("coupled_renewal_tests.rs");
     include!("broker_peer_routes_tests.rs");
     fn concurrent_provider() -> QuestBrokerRuntimeProvider {
-        let runtime = runtime_for(QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
-            vec![ManifoldBrokerFeature::MediaSession], "command.media.session.start", true, "91");
-        QuestBrokerRuntimeProvider { runtime: Some(runtime), ..Default::default() }
+        let runtime = runtime_for(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+            "91",
+        );
+        QuestBrokerRuntimeProvider {
+            runtime: Some(runtime),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -3102,16 +3135,39 @@ mod tests {
         let runtime = provider.runtime.as_mut().unwrap();
         // Prior real admission advances state without any media preparation.
         let (_, _) = admit(runtime, "command.session.list");
-        let before = runtime.evidence().unwrap().runtime.admission_snapshot.authority_revision;
+        let before = runtime
+            .evidence()
+            .unwrap()
+            .runtime
+            .admission_snapshot
+            .authority_revision;
         let c = caller();
-        let result = provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
-            c.sending_uid, &c.package_name, &c.signing_certificate_sha256, 4_000, &"92".repeat(32)).unwrap();
+        let result = provider
+            .apply_concurrent_peer_command(
+                QuestConcurrentPeerCommand::Start,
+                c.sending_uid,
+                &c.package_name,
+                &c.signing_certificate_sha256,
+                4_000,
+                &"92".repeat(32),
+            )
+            .unwrap();
         assert!(result.mutation.accepted);
         assert!(result.issue.receipt.applied && result.authorized_use.receipt.applied);
         assert!(result.issue.receipt.resulting_authority_revision > before);
         assert_eq!(result.client_id, identity().client_id);
-        assert_eq!(result.mutation.platform_action.unwrap().operation, MediaStreamPlatformOperation::Start);
-        assert!(provider.runtime.as_ref().unwrap().evidence().unwrap().media_pending_action.is_some());
+        assert_eq!(
+            result.mutation.platform_action.unwrap().operation,
+            MediaStreamPlatformOperation::Start
+        );
+        assert!(provider
+            .runtime
+            .as_ref()
+            .unwrap()
+            .evidence()
+            .unwrap()
+            .media_pending_action
+            .is_some());
     }
 
     #[test]
@@ -3119,8 +3175,16 @@ mod tests {
         let mut provider = concurrent_provider();
         let before = provider.evidence_json().unwrap();
         let c = caller();
-        assert!(provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
-            c.sending_uid, &c.package_name, &"ff".repeat(32), 4_000, &"93".repeat(32)).is_err());
+        assert!(provider
+            .apply_concurrent_peer_command(
+                QuestConcurrentPeerCommand::Start,
+                c.sending_uid,
+                &c.package_name,
+                &"ff".repeat(32),
+                4_000,
+                &"93".repeat(32)
+            )
+            .is_err());
         assert_eq!(before, provider.evidence_json().unwrap());
     }
 
@@ -3129,15 +3193,54 @@ mod tests {
         let mut provider = concurrent_provider();
         let c = caller();
         let before = provider.evidence_json().unwrap();
-        assert!(provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
-            c.sending_uid, &c.package_name, &c.signing_certificate_sha256, 60_001, &"94".repeat(32)).is_err());
+        assert!(provider
+            .apply_concurrent_peer_command(
+                QuestConcurrentPeerCommand::Start,
+                c.sending_uid,
+                &c.package_name,
+                &c.signing_certificate_sha256,
+                60_001,
+                &"94".repeat(32)
+            )
+            .is_err());
         assert_eq!(before, provider.evidence_json().unwrap());
-        provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
-            c.sending_uid, &c.package_name, &c.signing_certificate_sha256, 4_000, &"95".repeat(32)).unwrap();
-        let prepared = provider.runtime.as_ref().unwrap().evidence().unwrap().media_pending_action;
-        assert!(provider.apply_concurrent_peer_command(QuestConcurrentPeerCommand::Start,
-            c.sending_uid, &c.package_name, &c.signing_certificate_sha256, 4_001, &"95".repeat(32)).is_err());
-        assert_eq!(prepared, provider.runtime.as_ref().unwrap().evidence().unwrap().media_pending_action);
+        provider
+            .apply_concurrent_peer_command(
+                QuestConcurrentPeerCommand::Start,
+                c.sending_uid,
+                &c.package_name,
+                &c.signing_certificate_sha256,
+                4_000,
+                &"95".repeat(32),
+            )
+            .unwrap();
+        let prepared = provider
+            .runtime
+            .as_ref()
+            .unwrap()
+            .evidence()
+            .unwrap()
+            .media_pending_action;
+        assert!(provider
+            .apply_concurrent_peer_command(
+                QuestConcurrentPeerCommand::Start,
+                c.sending_uid,
+                &c.package_name,
+                &c.signing_certificate_sha256,
+                4_001,
+                &"95".repeat(32)
+            )
+            .is_err());
+        assert_eq!(
+            prepared,
+            provider
+                .runtime
+                .as_ref()
+                .unwrap()
+                .evidence()
+                .unwrap()
+                .media_pending_action
+        );
     }
 
     use super::*;
@@ -3924,7 +4027,11 @@ mod tests {
         // A's independently signed context outlives B's by the 821 ms seen
         // on Warm18. The accepted session must use the mutual signed bound.
         let request_a = reciprocal_request_with_expiry(
-            &authority_a, "request.reciprocal.host-a", &alpha, &beta, 50_821,
+            &authority_a,
+            "request.reciprocal.host-a",
+            &alpha,
+            &beta,
+            50_821,
         );
         let request_b =
             reciprocal_request(&authority_b, "request.reciprocal.host-b", &alpha, &beta);
@@ -4023,7 +4130,9 @@ mod tests {
         reverse.executor_peer_id = "peer.quest-a".to_owned();
         reverse.authority_runtime_host_id = "host.quest-b.media-runtime".to_owned();
         reverse.signed_topology_sha256 = format!(
-            "sha256:{}", sha256_hex(&serde_json::to_vec(&topology_b).expect("topology b")));
+            "sha256:{}",
+            sha256_hex(&serde_json::to_vec(&topology_b).expect("topology b"))
+        );
         authority_a
             .verify_remote_projection_for_test(&reverse, "key.peer.quest-b.1", 1_600)
             .expect("reverse signed source projection is within A topology");

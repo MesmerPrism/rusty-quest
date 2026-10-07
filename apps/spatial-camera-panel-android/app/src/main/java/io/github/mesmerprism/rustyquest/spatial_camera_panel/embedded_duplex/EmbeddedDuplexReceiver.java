@@ -30,6 +30,10 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     }
 
     interface RuntimeFactory {
+        /** Same native lifetime boundary as this factory's decoder/reader resources. */
+        default void retireNativeGeneration(long generation) {
+            EmbeddedDuplexNative.retireReceiverGeneration(generation);
+        }
         ProjectionResource stage(int width, int height, int imageCount, int fpsCap,
                 long routeGeneration);
         ReceiverRuntime create(ProjectionResource projection, String sourceHost, int sourcePort,
@@ -367,7 +371,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             throw new IllegalStateException("receiver still owns decoder resources");
         }
         if (!surfaceReleased) {
-            EmbeddedDuplexNative.retireReceiverGeneration(generation);
+            runtimeFactory.retireNativeGeneration(generation);
             if (!staged.release()) {
                 throw new IllegalStateException("embedded reader cleanup remains pending");
             }

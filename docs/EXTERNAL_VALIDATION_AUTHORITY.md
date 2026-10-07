@@ -361,3 +361,26 @@ Add environment reviewers where the release is intentionally attended. A
 workflow assessment, including a passing static assessment, never substitutes
 for branch, tag, environment, exact publisher/deployment lineage, or
 publication-owner controls.
+
+## Tuple envelope transport proposal
+
+A trusted base may explicitly opt into external-owner envelope v2 through
+`allowed_envelope_schemas`. Present artifacts use `[path, "present", mode,
+size_bytes, sha256]`; absent artifacts use `[path, "absent"]`. The decoder
+expands every tuple to the original closed v1 artifact object before comparing
+the full canonical payload and verifying its existing RSA-PSS signature. No
+artifact, authority field, time limit, key, or comment bound is removed. Policies
+without the opt-in retain v1 only; existing v1 envelopes are unchanged.
+
+A candidate cannot select this decoder for its own authorization. The policy,
+schema, module and adapter must first reach the trusted base through an ordinary
+reviewed source change with its own finite artifact inventory and admissible v1
+request. A later request can then use v2. Tests with ephemeral keys demonstrate
+representation and cryptographic behavior only; they issue no owner authority.
+
+The portable tuple regression runs by default inside the existing external
+validation static gate and the credential-free candidate workflow. It generates
+a deterministic NONAUTHORITY 270-artifact request with present and absent
+records crossing the v1 size limit. An optional `-RequestPath` permits an
+additional local regression against supplied evidence without making that file
+a CI prerequisite or embedding its path. Both routes use ephemeral test keys.

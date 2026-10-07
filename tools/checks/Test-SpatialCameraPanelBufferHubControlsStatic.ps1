@@ -72,7 +72,11 @@ Require ($surfaceClient.Contains('private val handler = ProviderHandler(workerTh
 Require ($surfaceClient.Contains('handler.post {') -and $surfaceClient.Contains('override fun onServiceConnected')) "Service callbacks must hand off to the Hub worker."
 Require (-not $surfaceClient.Contains('AVAILABILITY_RECONCILE_INTERVAL_MS')) "Inactive playlists must not retain an availability poll timer."
 Require ($surfaceClient.Contains('setHubSurfaceChangeObserver(surfaceChangeObserver)')) "Surface registration must be owner-change driven."
-Require ($surfaceClient.Contains('connectionHubSurfaceStatePublishDelayMs(surfaceAvailable = true, state)')) "Only the explicit active-state policy may retain progress publication cadence."
+$surfaceProfile = Read-Required "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ConnectionHubSurfaceProfile.kt"
+Require ($surfaceClient.Contains('profile.publishDelay(state)?.let { delayMs ->')) "Publication cadence must use the closed app-owned surface policy."
+Require ($surfaceProfile.Contains('LockedPlaylist -> connectionHubSurfaceStatePublishDelayMs(true,state)')) "Locked playlist publication must retain its explicit active-state policy."
+Require ($surfaceClient.Contains('state.optBoolean("running", false)') -and $surfaceClient.Contains('!state.optBoolean("paused", false)')) "Locked playlist progress publication must require running and not paused."
+Require ($surfaceProfile.Contains('ConcurrentStereo -> if(state.optBoolean("running",false)) 1000L else null')) "Concurrent stereo publication must stop its cadence when inactive."
 Require ($surfaceTarget.Contains('setHubSurfaceChangeObserver(observer: (() -> Unit)?) = Unit')) "Optional targets must default to an inert observer boundary."
 
 Write-Output "Spatial Camera Panel Buffer/Hub controls static checks passed."

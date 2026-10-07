@@ -123,8 +123,18 @@ impl QuestBrokerRuntimeProvider {
         }) {
             let mut recovery = prior.recovery.clone();
             recovery.cleanup_requester_adoption = Some(adoption.clone());
-            let peer = owner.peer_runtime_host.as_ref().ok_or_else(reject)?.read().map_err(|_| reject())?;
-            owner.media_sessions.get(client_id).ok_or_else(reject)?.validate_trusted_cleanup_authority(&peer, &recovery, now_ms).map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+            let peer = owner
+                .peer_runtime_host
+                .as_ref()
+                .ok_or_else(reject)?
+                .read()
+                .map_err(|_| reject())?;
+            owner
+                .media_sessions
+                .get(client_id)
+                .ok_or_else(reject)?
+                .validate_trusted_cleanup_authority(&peer, &recovery, now_ms)
+                .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
             return Ok(recovery);
         }
         let shared = owner
@@ -212,7 +222,10 @@ impl QuestBrokerRuntimeProvider {
             request: pending.request.clone(),
             termination: pending.termination.clone().ok_or_else(reject)?,
         };
-        owner.media_sessions.get(client_id).ok_or_else(reject)?
+        owner
+            .media_sessions
+            .get(client_id)
+            .ok_or_else(reject)?
             .validate_trusted_cleanup_authority(&peer, &recovery, now_ms)
             .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
         Ok(recovery)
@@ -221,29 +234,42 @@ impl QuestBrokerRuntimeProvider {
     /// Prepares the exact physical Stop after independently reviewed Revoke.
     /// A pending failed Start must first finish its retained rollback.
     pub fn prepare_concurrent_peer_revoker_cleanup(
-        &mut self, client_id: &DottedId,
+        &mut self,
+        client_id: &DottedId,
         adoption: &ManifoldPeerRuntimeTrustedMediaRevokerLeaseAdoptionReceipt,
-        now_ms: u64, entropy_hex: &str,
+        now_ms: u64,
+        entropy_hex: &str,
     ) -> Result<QuestConcurrentPeerRevokerCleanupReceipt, QuestBrokerRuntimeError> {
-        let recovery = self.review_concurrent_peer_revoker_cleanup(client_id, adoption, now_ms, entropy_hex)?;
-        let owner = self.runtime.as_mut().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
-        if let Some(prior) = owner.concurrent_revoker_cleanup.completed.iter().find(|receipt|
-            &receipt.client_id == client_id && receipt.recovery.request == recovery.request) {
+        let recovery =
+            self.review_concurrent_peer_revoker_cleanup(client_id, adoption, now_ms, entropy_hex)?;
+        let owner = self
+            .runtime
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        if let Some(prior) = owner
+            .concurrent_revoker_cleanup
+            .completed
+            .iter()
+            .find(|receipt| {
+                &receipt.client_id == client_id && receipt.recovery.request == recovery.request
+            })
+        {
             return Ok(prior.clone());
         }
         let shared = owner.peer_runtime_host.clone().ok_or_else(reject)?;
         let peer = shared.read().map_err(|_| reject())?;
-        let action_id = owner.concurrent_revoker_cleanup.pending.as_ref().ok_or_else(reject)?.action_id.clone();
+        let action_id = owner
+            .concurrent_revoker_cleanup
+            .pending
+            .as_ref()
+            .ok_or_else(reject)?
+            .action_id
+            .clone();
         let action = owner
             .media_sessions
             .get_mut(client_id)
             .ok_or_else(reject)?
-            .prepare_trusted_revoker_cleanup(
-                &peer,
-                recovery.clone(),
-                action_id,
-                now_ms,
-            )
+            .prepare_trusted_revoker_cleanup(&peer, recovery.clone(), action_id, now_ms)
             .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
         let receipt = QuestConcurrentPeerRevokerCleanupReceipt {
             schema_id: "rusty.quest.concurrent.peer_revoker_cleanup_receipt.v1".to_owned(),

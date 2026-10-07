@@ -145,10 +145,14 @@ pub(crate) fn projection_peer_binding_matches(
 /// Positive exact-reader stop proof, separate from a missing binding. A newer
 /// bound decoder prevents old cleanup from claiming the current source absent.
 pub(crate) fn projection_peer_reader_stopped(route: u64, decoder: u64, reader: u64) -> bool {
-    let Ok(binding) = PROJECTION_PEER_BINDING.lock() else { return false; };
-    binding.is_none() && PROJECTION_PEER_RETIRED_IDENTITY.lock().ok().is_some_and(|retired| {
-        *retired == Some((route, decoder, reader))
-    })
+    let Ok(binding) = PROJECTION_PEER_BINDING.lock() else {
+        return false;
+    };
+    binding.is_none()
+        && PROJECTION_PEER_RETIRED_IDENTITY
+            .lock()
+            .ok()
+            .is_some_and(|retired| *retired == Some((route, decoder, reader)))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -850,7 +854,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         }
     }
     if let Ok(mut retired) = PROJECTION_PEER_RETIRED_IDENTITY.lock() {
-        *retired = Some((route_generation as u64, decoder_token as u64, reader_generation));
+        *retired = Some((
+            route_generation as u64,
+            decoder_token as u64,
+            reader_generation,
+        ));
     }
     projection_peer_stop_result(true, false)
 }

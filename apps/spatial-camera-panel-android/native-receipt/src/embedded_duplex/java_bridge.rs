@@ -461,17 +461,31 @@ impl JavaOwnerCallbacks {
     }
     pub(crate) fn owner_failure_diagnostic_read(&self) -> serde_json::Value {
         match self.owner_failure_diagnostic_text() {
-            Ok(text) => super::owner_diagnostic_read::snapshot(&text, parse_owner_failure_diagnostic(&text)),
+            Ok(text) => {
+                super::owner_diagnostic_read::snapshot(&text, parse_owner_failure_diagnostic(&text))
+            }
             Err(error) => super::owner_diagnostic_read::unavailable(&error),
         }
     }
     fn owner_failure_diagnostic_text(&self) -> Result<String, String> {
         let mut env = self.attached()?;
-        let call = env.call_method(self.callback.as_obj(), "ownerFailureDiagnostic", "()Ljava/lang/String;", &[]);
-        let value = self.checked_call(&mut env, call, "java_bridge.owner_diagnostic_call")?
-            .l().map_err(|_| "java_bridge.owner_diagnostic_type")?;
-        if value.is_null() { return Err("java_bridge.owner_diagnostic_null".into()); }
-        let text: String = env.get_string(&JString::from(value)).map_err(|_| "java_bridge.owner_diagnostic_string")?.into();
+        let call = env.call_method(
+            self.callback.as_obj(),
+            "ownerFailureDiagnostic",
+            "()Ljava/lang/String;",
+            &[],
+        );
+        let value = self
+            .checked_call(&mut env, call, "java_bridge.owner_diagnostic_call")?
+            .l()
+            .map_err(|_| "java_bridge.owner_diagnostic_type")?;
+        if value.is_null() {
+            return Err("java_bridge.owner_diagnostic_null".into());
+        }
+        let text: String = env
+            .get_string(&JString::from(value))
+            .map_err(|_| "java_bridge.owner_diagnostic_string")?
+            .into();
         Ok(text)
     }
     pub(crate) fn load_cleanup_preparations(&self) -> Result<String, String> {
@@ -503,40 +517,150 @@ impl JavaOwnerCallbacks {
 }
 
 fn parse_owner_failure_diagnostic(text: &str) -> Result<serde_json::Value, String> {
-    if text.len() > 256 { return Err("java_bridge.owner_diagnostic_bounds".into()); }
-    let value: serde_json::Value = serde_json::from_str(text).map_err(|_| "java_bridge.owner_diagnostic_json")?;
-    let stage = value.get("stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_stage")?;
-    let sink = value.get("sink_stage").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_sink")?;
-    let action = value.get("action").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_action")?;
-    let code = value.get("code").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_code")?;
+    if text.len() > 256 {
+        return Err("java_bridge.owner_diagnostic_bounds".into());
+    }
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| "java_bridge.owner_diagnostic_json")?;
+    let stage = value
+        .get("stage")
+        .and_then(|v| v.as_str())
+        .ok_or("java_bridge.owner_diagnostic_stage")?;
+    let sink = value
+        .get("sink_stage")
+        .and_then(|v| v.as_str())
+        .ok_or("java_bridge.owner_diagnostic_sink")?;
+    let action = value
+        .get("action")
+        .and_then(|v| v.as_str())
+        .ok_or("java_bridge.owner_diagnostic_action")?;
+    let code = value
+        .get("code")
+        .and_then(|v| v.as_str())
+        .ok_or("java_bridge.owner_diagnostic_code")?;
     // Accept retained four/five-field diagnostics and the reviewed seven-field owner/cause producer.
     // This diagnostic compatibility is not a media/authority contract migration.
-    let fields = value.as_object().ok_or("java_bridge.owner_diagnostic_closed_values")?;
+    let fields = value
+        .as_object()
+        .ok_or("java_bridge.owner_diagnostic_closed_values")?;
     let reason = if matches!(fields.len(), 5 | 7) {
-        Some(value.get("provider_reason").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_reason")?)
-    } else if fields.len() == 4 { None } else { return Err("java_bridge.owner_diagnostic_closed_values".into()); };
+        Some(
+            value
+                .get("provider_reason")
+                .and_then(|v| v.as_str())
+                .ok_or("java_bridge.owner_diagnostic_reason")?,
+        )
+    } else if fields.len() == 4 {
+        None
+    } else {
+        return Err("java_bridge.owner_diagnostic_closed_values".into());
+    };
     if fields.len() == 7 {
-        let owner = value.get("owner").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_owner")?;
-        let cause = value.get("cause").and_then(|v|v.as_str()).ok_or("java_bridge.owner_diagnostic_cause")?;
-        if !matches!(owner,"NONE"|"source"|"processor"|"route"|"socket"|"codec"|"cleanup"|"sink")
-            || !matches!(cause,"NONE"|"CODEC"|"TIMEOUT"|"IO"|"SECURITY"|"ARGUMENT"|"STATE"|"OTHER")
-            || (stage == "NONE" && owner != "NONE")
+        let owner = value
+            .get("owner")
+            .and_then(|v| v.as_str())
+            .ok_or("java_bridge.owner_diagnostic_owner")?;
+        let cause = value
+            .get("cause")
+            .and_then(|v| v.as_str())
+            .ok_or("java_bridge.owner_diagnostic_cause")?;
+        if !matches!(
+            owner,
+            "NONE" | "source" | "processor" | "route" | "socket" | "codec" | "cleanup" | "sink"
+        ) || !matches!(
+            cause,
+            "NONE" | "CODEC" | "TIMEOUT" | "IO" | "SECURITY" | "ARGUMENT" | "STATE" | "OTHER"
+        ) || (stage == "NONE" && owner != "NONE")
             || (stage != "PROVIDER_EXECUTION" && cause != "NONE")
-            || (stage == "PROVIDER_EXECUTION" && cause == "NONE") {
+            || (stage == "PROVIDER_EXECUTION" && cause == "NONE")
+        {
             return Err("java_bridge.owner_diagnostic_closed_values".into());
         }
     }
     if reason.is_some_and(|r| {
-        let incoming = matches!(r,"INCOMING_ARM_ORDER"|"INCOMING_ARM_PROJECTION"|"INCOMING_ARM_EVIDENCE"|"INCOMING_ARM_UNAVAILABLE");
-        if incoming { return stage != "INCOMING_ARM_VERIFICATION" || fields.len() != 7
-            || action != "ARM_RECEIVER" || value.get("owner").and_then(|v|v.as_str()) != Some("sink"); }
-        !matches!(r,"NONE"|"TICKET_PARSE"|"STALE_GENERATION"|"UNDECLARED_BINDING"|"REGISTRY_CLOSED"|"PROVIDER_BUSY"|"CAPACITY"|"PREPARATION_ALREADY_ATTEMPTED"|"FOREIGN_READBACK"|"RECEIPT_COLLISION"|"DISPLAY_LOCAL_SHUTDOWN"|"DISPLAY_DISPATCH_FENCED"|"DISPLAY_TRANSITION_TIMEOUT"|"DISPLAY_ADMISSION_REJECTED"|"DISPLAY_NATIVE_ACTIVE_EPOCH"|"DISPLAY_NATIVE_ACTIVE_STATE"|"DISPLAY_NATIVE_BOUNDS"|"DISPLAY_NATIVE_CAPTURE"|"DISPLAY_NATIVE_CARRIER"|"DISPLAY_NATIVE_CLOCK"|"DISPLAY_NATIVE_FRAME_ABSENT"|"DISPLAY_NATIVE_FRAME_EPOCH"|"DISPLAY_NATIVE_FRAME_FUTURE"|"DISPLAY_NATIVE_FRAME_STALE"|"DISPLAY_NATIVE_INPUT"|"DISPLAY_NATIVE_LOCAL"|"DISPLAY_NATIVE_PROCESS_EPOCH"|"DISPLAY_NATIVE_SOURCE_STATE"|"DISPLAY_NATIVE_SUPERSEDED"|"DISPLAY_OWN_CAPTURE_STATE"|"DISPLAY_OWN_CAPTURE_FRESH"|"DISPLAY_OWN_CARRIER_SUPERSEDED"|"DISPLAY_NATIVE_SHAPE"|"DISPLAY_ROUTING_SUPERSEDED"|"OTHER")
-        || (stage != "PROVIDER_EXECUTION" && r != "NONE") }) { return Err("java_bridge.owner_diagnostic_closed_values".into()); }
-    if !matches!(stage,"NONE"|"CALLBACK_FENCE"|"PROJECTION_BINDING"|"REGISTRY_BINDING"|"INCOMING_FENCE"|"LOCAL_QUIESCENCE"|"PROVIDER_EXECUTION"|"RECEIPT_VERIFICATION"|"INCOMING_ARM_VERIFICATION")
-        || !matches!(sink,"NONE"|"PEER_PROJECTION"|"READER_STAGE"|"READER_IDENTITY"|"RECEIVER_CREATE"|"PROVIDER_GETTER"|"PEER_BIND"|"RECEIVER_EFFECT")
-        || !matches!(action,"NONE"|"ARM_RECEIVER"|"ARM_CLEANUP"|"START"|"STOP"|"CLEANUP"|"BEFORE_TICKET")
-        || !matches!(code,"NONE"|"OWNER_EFFECT_REJECTED")
-        || (stage=="NONE") != (code=="NONE") {return Err("java_bridge.owner_diagnostic_closed_values".into());}
+        let incoming = matches!(
+            r,
+            "INCOMING_ARM_ORDER"
+                | "INCOMING_ARM_PROJECTION"
+                | "INCOMING_ARM_EVIDENCE"
+                | "INCOMING_ARM_UNAVAILABLE"
+        );
+        if incoming {
+            return stage != "INCOMING_ARM_VERIFICATION"
+                || fields.len() != 7
+                || action != "ARM_RECEIVER"
+                || value.get("owner").and_then(|v| v.as_str()) != Some("sink");
+        }
+        !matches!(
+            r,
+            "NONE"
+                | "TICKET_PARSE"
+                | "STALE_GENERATION"
+                | "UNDECLARED_BINDING"
+                | "REGISTRY_CLOSED"
+                | "PROVIDER_BUSY"
+                | "CAPACITY"
+                | "PREPARATION_ALREADY_ATTEMPTED"
+                | "FOREIGN_READBACK"
+                | "RECEIPT_COLLISION"
+                | "DISPLAY_LOCAL_SHUTDOWN"
+                | "DISPLAY_DISPATCH_FENCED"
+                | "DISPLAY_TRANSITION_TIMEOUT"
+                | "DISPLAY_ADMISSION_REJECTED"
+                | "DISPLAY_NATIVE_ACTIVE_EPOCH"
+                | "DISPLAY_NATIVE_ACTIVE_STATE"
+                | "DISPLAY_NATIVE_BOUNDS"
+                | "DISPLAY_NATIVE_CAPTURE"
+                | "DISPLAY_NATIVE_CARRIER"
+                | "DISPLAY_NATIVE_CLOCK"
+                | "DISPLAY_NATIVE_FRAME_ABSENT"
+                | "DISPLAY_NATIVE_FRAME_EPOCH"
+                | "DISPLAY_NATIVE_FRAME_FUTURE"
+                | "DISPLAY_NATIVE_FRAME_STALE"
+                | "DISPLAY_NATIVE_INPUT"
+                | "DISPLAY_NATIVE_LOCAL"
+                | "DISPLAY_NATIVE_PROCESS_EPOCH"
+                | "DISPLAY_NATIVE_SOURCE_STATE"
+                | "DISPLAY_NATIVE_SUPERSEDED"
+                | "DISPLAY_OWN_CAPTURE_STATE"
+                | "DISPLAY_OWN_CAPTURE_FRESH"
+                | "DISPLAY_OWN_CARRIER_SUPERSEDED"
+                | "DISPLAY_NATIVE_SHAPE"
+                | "DISPLAY_ROUTING_SUPERSEDED"
+                | "OTHER"
+        ) || (stage != "PROVIDER_EXECUTION" && r != "NONE")
+    }) {
+        return Err("java_bridge.owner_diagnostic_closed_values".into());
+    }
+    if !matches!(
+        stage,
+        "NONE"
+            | "CALLBACK_FENCE"
+            | "PROJECTION_BINDING"
+            | "REGISTRY_BINDING"
+            | "INCOMING_FENCE"
+            | "LOCAL_QUIESCENCE"
+            | "PROVIDER_EXECUTION"
+            | "RECEIPT_VERIFICATION"
+            | "INCOMING_ARM_VERIFICATION"
+    ) || !matches!(
+        sink,
+        "NONE"
+            | "PEER_PROJECTION"
+            | "READER_STAGE"
+            | "READER_IDENTITY"
+            | "RECEIVER_CREATE"
+            | "PROVIDER_GETTER"
+            | "PEER_BIND"
+            | "RECEIVER_EFFECT"
+    ) || !matches!(
+        action,
+        "NONE" | "ARM_RECEIVER" | "ARM_CLEANUP" | "START" | "STOP" | "CLEANUP" | "BEFORE_TICKET"
+    ) || !matches!(code, "NONE" | "OWNER_EFFECT_REJECTED")
+        || (stage == "NONE") != (code == "NONE")
+    {
+        return Err("java_bridge.owner_diagnostic_closed_values".into());
+    }
     Ok(value)
 }
 
@@ -550,32 +674,47 @@ mod owner_diagnostic_tests {
     }
     #[test]
     fn incoming_arm_exact_reasons_are_diagnostic_only() {
-        for reason in ["INCOMING_ARM_ORDER","INCOMING_ARM_PROJECTION","INCOMING_ARM_EVIDENCE","INCOMING_ARM_UNAVAILABLE"] {
-            let value=receipt(reason);
-            assert_eq!(parse_owner_failure_diagnostic(&value.to_string()).unwrap(),value);
+        for reason in [
+            "INCOMING_ARM_ORDER",
+            "INCOMING_ARM_PROJECTION",
+            "INCOMING_ARM_EVIDENCE",
+            "INCOMING_ARM_UNAVAILABLE",
+        ] {
+            let value = receipt(reason);
+            assert_eq!(
+                parse_owner_failure_diagnostic(&value.to_string()).unwrap(),
+                value
+            );
         }
     }
     #[test]
     fn incoming_arm_reasons_cannot_masquerade_as_other_boundaries() {
-        for (key,value) in [("stage","PROVIDER_EXECUTION"),("owner","source"),
-            ("action","START"),("cause","STATE"),("provider_reason","INCOMING_ARM_ORDER;secret") ] {
-            let mut damaged=receipt("INCOMING_ARM_ORDER"); damaged[key]=value.into();
+        for (key, value) in [
+            ("stage", "PROVIDER_EXECUTION"),
+            ("owner", "source"),
+            ("action", "START"),
+            ("cause", "STATE"),
+            ("provider_reason", "INCOMING_ARM_ORDER;secret"),
+        ] {
+            let mut damaged = receipt("INCOMING_ARM_ORDER");
+            damaged[key] = value.into();
             assert!(parse_owner_failure_diagnostic(&damaged.to_string()).is_err());
         }
-        let mut damaged=receipt("INCOMING_ARM_ORDER");
+        let mut damaged = receipt("INCOMING_ARM_ORDER");
         damaged.as_object_mut().unwrap().remove("owner");
         damaged.as_object_mut().unwrap().remove("cause");
         assert!(parse_owner_failure_diagnostic(&damaged.to_string()).is_err());
     }
     #[test]
     fn retained_four_five_seven_field_diagnostics_stay_compatible() {
-        let mut value=receipt("NONE");
+        let mut value = receipt("NONE");
         assert!(parse_owner_failure_diagnostic(&value.to_string()).is_ok());
-        value.as_object_mut().unwrap().remove("owner"); value.as_object_mut().unwrap().remove("cause");
+        value.as_object_mut().unwrap().remove("owner");
+        value.as_object_mut().unwrap().remove("cause");
         assert!(parse_owner_failure_diagnostic(&value.to_string()).is_ok());
         value.as_object_mut().unwrap().remove("provider_reason");
         assert!(parse_owner_failure_diagnostic(&value.to_string()).is_ok());
-        value["secret"]="must not pass".into();
+        value["secret"] = "must not pass".into();
         assert!(parse_owner_failure_diagnostic(&value.to_string()).is_err());
     }
 }

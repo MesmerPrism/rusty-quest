@@ -5,7 +5,7 @@ $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $package = 'io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex'
 $app = Join-Path $RepoRoot 'apps/spatial-camera-panel-android/app'
 $main = Join-Path $app "src/main/java/$package"
-$test = Join-Path $app "src/test/java/$package/EmbeddedDuplexProcessFenceHostTest.java"
+$test = Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexProcessFenceHostTest.java'
 $output = Join-Path ([IO.Path]::GetTempPath()) ('duplex-fence-classes-' + [guid]::NewGuid().ToString('N'))
 [void](New-Item -ItemType Directory -Path $output)
 $javac = (Get-Command javac -ErrorAction Stop).Source

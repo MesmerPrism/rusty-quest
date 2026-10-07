@@ -934,7 +934,7 @@ contains only network plus notification/background data-sync lifecycle
 permissions. Generic `media_session` adds no camera permission; camera,
 direct-P2P, and BLE remain independent opt-ins. The build packages the accepted
 lock, registry, and projection as APK assets and emits
-`rusty.quest.manifold_broker_android.build_manifest.v2`. There is no ambient
+`rusty.quest.manifold_broker_android.build_manifest.v3`. There is no ambient
   app-local `AndroidManifest.xml` fallback. See
   [Broker Packaging](docs/BROKER_PACKAGING.md).
 

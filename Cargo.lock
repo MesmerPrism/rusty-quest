@@ -1129,6 +1129,7 @@ dependencies = [
  "rusty-quest-broker-authority",
  "rusty-quest-feature-activation",
  "rusty-quest-hand-adapter",
+ "rusty-quest-media-stream",
  "rusty-quest-media-stream-android",
  "rusty-quest-particle-adapter",
  "serde",

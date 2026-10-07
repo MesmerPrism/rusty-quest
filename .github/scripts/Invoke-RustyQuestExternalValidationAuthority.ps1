@@ -711,7 +711,7 @@ try {
             throw "External-owner authorization is required; the canonical request was emitted."
         }
         try {
-            $document = ConvertFrom-ExternalOwnerJsonStrict (([string]$markers[0].body -split "\r?\n", 2)[1])
+            $document = ConvertFrom-ExternalOwnerAuthorizationEnvelope -Json (([string]$markers[0].body -split "\r?\n", 2)[1]) -Policy $ownerPolicy -SchemaPath (Join-Path $script:TrustedBase $ExternalOwnerAuthorizationSchemaPath)
             $expected = New-ExternalOwnerAuthorizationPayload -Request $request -AuditId ([string]$document.payload.audit_id) -IssuedAt ([string]$document.payload.issued_at) -ExpiresAt ([string]$document.payload.expires_at)
             $payload = Test-ExternalOwnerAuthorizationComments -Comments $comments -ExpectedPayload $expected -Policy $ownerPolicy -SchemaPath (Join-Path $script:TrustedBase $ExternalOwnerAuthorizationSchemaPath)
             $assessment.decision = "external-owner-authorization"

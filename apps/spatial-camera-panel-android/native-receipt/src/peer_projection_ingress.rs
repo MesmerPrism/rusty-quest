@@ -279,18 +279,39 @@ mod jni_boundary {
                 if !concurrent_own {
                     return peer_projection_runtime::request_source(words, !window.is_null());
                 }
-                let bound = *BOUND_SURFACE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                let bound_matches = !window.is_null() && bound.is_none_or(|bound| {
-                    bound.window_address == window as usize && bound.launch_challenge == words[5]
-                        && bound.surface_generation == words[6]
-                });
-                let proof = bound_matches.then(|| peer_projection_runtime::current_carrier_for_selection(
-                    words[5],words[6])).flatten().and_then(|carrier| {
-                        crate::own_stereo_capture_runtime::concurrent_peer_admission(carrier[0],carrier[1],carrier[2])
+                let bound = *BOUND_SURFACE
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let bound_matches = !window.is_null()
+                    && bound.is_none_or(|bound| {
+                        bound.window_address == window as usize
+                            && bound.launch_challenge == words[5]
+                            && bound.surface_generation == words[6]
                     });
-                proof.and_then(|proof| crate::camera_hwb_probe::select_peer_source_with_own_actor(
-                    words, window as usize, proof))
-                    .unwrap_or_else(|| SourceReceipt::unavailable(words[1], peer_projection_runtime::REASON_CLEANUP_REQUIRED))
+                let proof = bound_matches
+                    .then(|| {
+                        peer_projection_runtime::current_carrier_for_selection(words[5], words[6])
+                    })
+                    .flatten()
+                    .and_then(|carrier| {
+                        crate::own_stereo_capture_runtime::concurrent_peer_admission(
+                            carrier[0], carrier[1], carrier[2],
+                        )
+                    });
+                proof
+                    .and_then(|proof| {
+                        crate::camera_hwb_probe::select_peer_source_with_own_actor(
+                            words,
+                            window as usize,
+                            proof,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        SourceReceipt::unavailable(
+                            words[1],
+                            peer_projection_runtime::REASON_CLEANUP_REQUIRED,
+                        )
+                    })
             })
             .unwrap_or_else(|| {
                 SourceReceipt::unavailable(0, peer_projection_runtime::REASON_MALFORMED)
@@ -321,7 +342,8 @@ mod jni_boundary {
                 }
             }
         }
-        if accepted && receipt.words[2] != peer_projection_runtime::SOURCE_LOCAL && !concurrent_own {
+        if accepted && receipt.words[2] != peer_projection_runtime::SOURCE_LOCAL && !concurrent_own
+        {
             crate::camera_hwb_probe::request_camera_hwb_probe_stop();
         }
         if receipt.words[2] == peer_projection_runtime::SOURCE_DISABLED

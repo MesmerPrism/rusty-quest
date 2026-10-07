@@ -18,23 +18,37 @@ pub(crate) struct PackedContents<L, M> {
 
 // This owner reference remains until the registry recycles the slot. AHB import
 // caches may retain L independently; only content refs pin the current bytes.
-pub(crate) struct ContentOwner<L, M> { record: Arc<PackedContents<L, M>> }
+pub(crate) struct ContentOwner<L, M> {
+    record: Arc<PackedContents<L, M>>,
+}
 // Opaque retained wrapper exposes contents, never Arc or Weak. This prevents
 // resurrection racing with a registry's exclusive reusable-content check.
-pub(crate) struct PinnedPackedLease<L, M> { record: Arc<PackedContents<L, M>> }
+pub(crate) struct PinnedPackedLease<L, M> {
+    record: Arc<PackedContents<L, M>>,
+}
 impl<L, M> Clone for PinnedPackedLease<L, M> {
-    fn clone(&self) -> Self { Self { record: Arc::clone(&self.record) } }
+    fn clone(&self) -> Self {
+        Self {
+            record: Arc::clone(&self.record),
+        }
+    }
 }
 impl<L, M> PinnedPackedLease<L, M> {
-    pub(crate) fn contents(&self) -> &PackedContents<L, M> { &self.record }
+    pub(crate) fn contents(&self) -> &PackedContents<L, M> {
+        &self.record
+    }
 }
 impl<L, M> ContentOwner<L, M> {
     pub(crate) fn from_observed_producer(record: PackedContents<L, M>) -> Self {
-        Self { record: Arc::new(record) }
+        Self {
+            record: Arc::new(record),
+        }
     }
     // Consumer adapter must require accepted exact epoch/quota before cloning.
     pub(crate) fn retain(&mut self) -> PinnedPackedLease<L, M> {
-        PinnedPackedLease { record: Arc::clone(&self.record) }
+        PinnedPackedLease {
+            record: Arc::clone(&self.record),
+        }
     }
     pub(crate) fn unreferenced(&mut self) -> bool {
         // Exclusive owner access covers new retain. Existing leases can clone
@@ -59,20 +73,33 @@ mod tests {
     use super::*;
     fn owner() -> ContentOwner<(), u64> {
         ContentOwner::from_observed_producer(PackedContents {
-            version: ContentVersion { process_generation: 1, source_generation: 1,
-                pool_generation: 1, slot_serial: 1 }, allocation: (), pair: 12 })
+            version: ContentVersion {
+                process_generation: 1,
+                source_generation: 1,
+                pool_generation: 1,
+                slot_serial: 1,
+            },
+            allocation: (),
+            pair: 12,
+        })
     }
-    #[test] fn gpu_table_pins_contents_after_worker_reference_drops() {
+    #[test]
+    fn gpu_table_pins_contents_after_worker_reference_drops() {
         let mut owner = owner();
         let worker = owner.retain();
-        let pending = PendingGpuUse { contents: owner.retain(), physical_fence: (), submission_serial: 1 };
+        let pending = PendingGpuUse {
+            contents: owner.retain(),
+            physical_fence: (),
+            submission_serial: 1,
+        };
         drop(worker);
         assert!(!owner.unreferenced());
         // Test means removal of mock table entry, NOT observed GPU completion.
         drop(pending);
         assert!(owner.unreferenced());
     }
-    #[test] fn every_retained_alias_keeps_content_pinned_until_last_release() {
+    #[test]
+    fn every_retained_alias_keeps_content_pinned_until_last_release() {
         let mut owner = owner();
         let frame = owner.retain();
         let retained_alias = frame.clone();

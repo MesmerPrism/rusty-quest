@@ -347,7 +347,10 @@ mod tests {
         value["expires_at_ms"] = json!(9_500 + 240_001);
         let too_long = serde_json::from_value(value).expect("overlong context shape");
         assert!(validate_common_lan_context_for_signing(
-            &route, &enrolled, &too_long, policy("peer.b")
+            &route,
+            &enrolled,
+            &too_long,
+            policy("peer.b")
         )
         .is_err());
     }

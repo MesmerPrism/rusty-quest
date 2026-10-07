@@ -172,19 +172,39 @@ struct PeerCommonGraphSessionOwner {
 // A concurrent Peer joins this exact retained source-set renderer. It cannot stop or
 // replace that actor. This lock covers only owner facts and pure source receipt selection.
 pub(crate) fn select_peer_source_with_own_actor(
-    words:[i64; crate::peer_projection_runtime::SOURCE_ABI_WORDS],
-    window_address:usize,
-    proof:[i64;5],
-)->Option<crate::peer_projection_runtime::SourceReceipt> {
-    if words[2]!=crate::peer_projection_runtime::SOURCE_PEER || words[5]!=proof[1]
-        || words[6]!=proof[2] || window_address==0 {return None;}
-    let owner=PEER_COMMON_GRAPH_SESSION.lock().ok()?;
-    let claim_generation=(u64::try_from(proof[3]).ok()? & i64::MAX as u64).max(1) as i64;
-    if owner.claim.generation()!=Some(claim_generation) || owner.window_address!=window_address
-        || !owner.worker.as_ref().is_some_and(|worker|!worker.is_finished())
-        || !owner.cancellation.as_ref().is_some_and(|cancel|!cancel.load(Ordering::Acquire))
-        || !crate::own_stereo_capture_runtime::concurrent_peer_epoch_is_current(proof) {return None;}
-    Some(crate::peer_projection_runtime::request_source_with_current_carrier(words,[proof[0],proof[1],proof[2]]))
+    words: [i64; crate::peer_projection_runtime::SOURCE_ABI_WORDS],
+    window_address: usize,
+    proof: [i64; 5],
+) -> Option<crate::peer_projection_runtime::SourceReceipt> {
+    if words[2] != crate::peer_projection_runtime::SOURCE_PEER
+        || words[5] != proof[1]
+        || words[6] != proof[2]
+        || window_address == 0
+    {
+        return None;
+    }
+    let owner = PEER_COMMON_GRAPH_SESSION.lock().ok()?;
+    let claim_generation = (u64::try_from(proof[3]).ok()? & i64::MAX as u64).max(1) as i64;
+    if owner.claim.generation() != Some(claim_generation)
+        || owner.window_address != window_address
+        || !owner
+            .worker
+            .as_ref()
+            .is_some_and(|worker| !worker.is_finished())
+        || !owner
+            .cancellation
+            .as_ref()
+            .is_some_and(|cancel| !cancel.load(Ordering::Acquire))
+        || !crate::own_stereo_capture_runtime::concurrent_peer_epoch_is_current(proof)
+    {
+        return None;
+    }
+    Some(
+        crate::peer_projection_runtime::request_source_with_current_carrier(
+            words,
+            [proof[0], proof[1], proof[2]],
+        ),
+    )
 }
 
 fn stop_peer_common_graph_session() {
@@ -1152,16 +1172,36 @@ pub(crate) unsafe fn start_peer_common_graph(
     route_generation: i64,
 ) -> i64 {
     if crate::own_stereo_capture_runtime::capture_route_selected() {
-        let pending=crate::peer_projection_runtime::read_source(route_generation);
-        if route_generation<=0 || pending.words[1]!=route_generation || pending.words[2]!=crate::peer_projection_runtime::SOURCE_PEER
-            || pending.words[11]!=crate::peer_projection_runtime::RESULT_PENDING || pending.words[3]<=0 || pending.words[4]<=0
-            || !projection_peer_binding_matches(route_generation as u64,pending.words[3] as u64,pending.words[4] as u64) {
-            if !window.is_null(){ACameraNativeWindow_release(window);}return 0;
+        let pending = crate::peer_projection_runtime::read_source(route_generation);
+        if route_generation <= 0
+            || pending.words[1] != route_generation
+            || pending.words[2] != crate::peer_projection_runtime::SOURCE_PEER
+            || pending.words[11] != crate::peer_projection_runtime::RESULT_PENDING
+            || pending.words[3] <= 0
+            || pending.words[4] <= 0
+            || !projection_peer_binding_matches(
+                route_generation as u64,
+                pending.words[3] as u64,
+                pending.words[4] as u64,
+            )
+        {
+            if !window.is_null() {
+                ACameraNativeWindow_release(window);
+            }
+            return 0;
         }
-        let result=start_source_set_common_graph(window,requested_width,requested_height,frame_count);
-        if result<=0 {return result;}
-        let attached=crate::peer_projection_runtime::record_peer_common_graph_attached(route_generation);
-        return if attached.words[11]==crate::peer_projection_runtime::RESULT_PENDING {result} else {0};
+        let result =
+            start_source_set_common_graph(window, requested_width, requested_height, frame_count);
+        if result <= 0 {
+            return result;
+        }
+        let attached =
+            crate::peer_projection_runtime::record_peer_common_graph_attached(route_generation);
+        return if attached.words[11] == crate::peer_projection_runtime::RESULT_PENDING {
+            result
+        } else {
+            0
+        };
     }
     if window.is_null() || route_generation <= 0 {
         return 0;
@@ -1458,13 +1498,23 @@ impl CameraHwbWsiParts {
             .queue_family_index(queue_family_index)
             .queue_priorities(&queue_priorities)];
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-        let foreign_queue_ownership_enabled = if crate::own_stereo_capture_runtime::capture_route_selected() {
-            let supported=instance.enumerate_device_extension_properties(physical_device)
-                .map_err(|e|format!("foreign-ownership-extension-query-{e:?}"))?.iter().any(|extension|
-                    std::ffi::CStr::from_ptr(extension.extension_name.as_ptr()).to_bytes()==b"VK_EXT_queue_family_foreign");
-            if !supported {return Err("own-source-foreign-ownership-extension-unavailable".into());}
-            true
-        } else {false};
+        let foreign_queue_ownership_enabled =
+            if crate::own_stereo_capture_runtime::capture_route_selected() {
+                let supported = instance
+                    .enumerate_device_extension_properties(physical_device)
+                    .map_err(|e| format!("foreign-ownership-extension-query-{e:?}"))?
+                    .iter()
+                    .any(|extension| {
+                        std::ffi::CStr::from_ptr(extension.extension_name.as_ptr()).to_bytes()
+                            == b"VK_EXT_queue_family_foreign"
+                    });
+                if !supported {
+                    return Err("own-source-foreign-ownership-extension-unavailable".into());
+                }
+                true
+            } else {
+                false
+            };
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
         let mut device_extensions = vec![
             ash::khr::swapchain::NAME.as_ptr(),
@@ -1472,10 +1522,13 @@ impl CameraHwbWsiParts {
             ash::khr::sampler_ycbcr_conversion::NAME.as_ptr(),
         ];
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-        if foreign_queue_ownership_enabled {device_extensions.push(c"VK_EXT_queue_family_foreign".as_ptr());}
+        if foreign_queue_ownership_enabled {
+            device_extensions.push(c"VK_EXT_queue_family_foreign".as_ptr());
+        }
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
-        let foreign_queue_ownership_enabled = sdk_binding.enabled_capability_mask &
-            crate::spatial_sdk_depth_handoff::SPATIAL_DEPTH_CAP_FOREIGN_QUEUE_OWNERSHIP_V2 != 0;
+        let foreign_queue_ownership_enabled = sdk_binding.enabled_capability_mask
+            & crate::spatial_sdk_depth_handoff::SPATIAL_DEPTH_CAP_FOREIGN_QUEUE_OWNERSHIP_V2
+            != 0;
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
         let mut sampler_ycbcr_enable = vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default()
             .sampler_ycbcr_conversion(true);
@@ -1763,15 +1816,21 @@ impl PeerCommonGraphResources {
             .device
             .device_wait_idle()
             .map_err(|error| format!("peer-device-wait-idle-{error:?}"));
-        if let Err(error)=idle_result {std::mem::forget(self);return Err(error);}
-        if let Some(graph)=self.processing_graph.as_mut() {
-            if let Some(targets)=graph.public_guide_targets.as_mut() {
-                if let Err(error)=targets.retire_stereo_banks_after_fence(&wsi.device) {
-                    std::mem::forget(self);return Err(error);
+        if let Err(error) = idle_result {
+            std::mem::forget(self);
+            return Err(error);
+        }
+        if let Some(graph) = self.processing_graph.as_mut() {
+            if let Some(targets) = graph.public_guide_targets.as_mut() {
+                if let Err(error) = targets.retire_stereo_banks_after_fence(&wsi.device) {
+                    std::mem::forget(self);
+                    return Err(error);
                 }
             }
         }
-        if let Some(mut renderer)=self.video_renderer.take(){renderer.destroy(&wsi.device);}
+        if let Some(mut renderer) = self.video_renderer.take() {
+            renderer.destroy(&wsi.device);
+        }
         if let Some(mut readback) = self.projection_readback.take() {
             readback.retire_after_fence(&wsi.device);
             readback.destroy(&wsi.device);
@@ -2594,7 +2653,7 @@ unsafe fn render_camera_hwb_probe(
             capture.retire_completed(&device)?;
         }
         projection_readback.retire_after_fence(&device);
-        if let Some(targets)=processing_graph.public_guide_targets.as_mut() {
+        if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
             targets.retire_stereo_banks_after_fence(&device)?;
         }
         device
@@ -3128,7 +3187,9 @@ unsafe fn render_camera_hwb_probe(
             .signal_semaphores(&signal_semaphores)];
         let submit_started = Instant::now();
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-        if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.mark_stereo_submission_entered()?;}
+        if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+            targets.mark_stereo_submission_entered()?;
+        }
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
         if let Err(error) = device.queue_submit(queue, &submit_info, frame_fence) {
             projection_readback.cancel_unsubmitted("queue-submit");
@@ -3832,18 +3893,37 @@ unsafe fn render_peer_common_graph(
         let mut guard_band = CameraReprojectionGuardBandController::default();
         let render_started = Instant::now();
         let mut freshness = PeerFrameFreshness::new(0, 0, 0, 1_000);
-        let mut stereo_source_imports = if crate::own_stereo_capture_runtime::capture_route_selected() {
-            if !source_bank_build::SOURCE_BANK_SHADER_COMPILED || !wsi.foreign_queue_ownership_enabled {
-                return Err("selected-source-bank-provider-or-foreign-owner-unavailable".into());
-            }
-            let targets=processing_graph.public_guide_targets.as_mut().ok_or("source-bank-guide-owner-unavailable")?;
-            targets.activate_stereo_banks(device,&wsi.instance,wsi.physical_device,&memory_properties,
-                processing_graph.camera_resources.descriptor_set_layout,2,
-                include_bytes!(concat!(env!("OUT_DIR"),"/spatial_source_bank.frag.spv")),
-                include_bytes!(concat!(env!("OUT_DIR"),"/spatial_source_bank.vert.spv")))?;
-            Some(crate::spatial_stereo_source_import::StereoSourceImports::create(device,
-                &processing_graph.camera_resources,Some(wsi.queue_family_index))?)
-        } else {None};
+        let mut stereo_source_imports =
+            if crate::own_stereo_capture_runtime::capture_route_selected() {
+                if !source_bank_build::SOURCE_BANK_SHADER_COMPILED
+                    || !wsi.foreign_queue_ownership_enabled
+                {
+                    return Err("selected-source-bank-provider-or-foreign-owner-unavailable".into());
+                }
+                let targets = processing_graph
+                    .public_guide_targets
+                    .as_mut()
+                    .ok_or("source-bank-guide-owner-unavailable")?;
+                targets.activate_stereo_banks(
+                    device,
+                    &wsi.instance,
+                    wsi.physical_device,
+                    &memory_properties,
+                    processing_graph.camera_resources.descriptor_set_layout,
+                    2,
+                    include_bytes!(concat!(env!("OUT_DIR"), "/spatial_source_bank.frag.spv")),
+                    include_bytes!(concat!(env!("OUT_DIR"), "/spatial_source_bank.vert.spv")),
+                )?;
+                Some(
+                    crate::spatial_stereo_source_import::StereoSourceImports::create(
+                        device,
+                        &processing_graph.camera_resources,
+                        Some(wsi.queue_family_index),
+                    )?,
+                )
+            } else {
+                None
+            };
         while max_frames == 0 || frames_presented < max_frames {
             if cancellation.load(Ordering::Acquire) {
                 break;
@@ -3940,14 +4020,20 @@ unsafe fn render_peer_common_graph(
             ) {
                 return Err("peer-exact-binding-lost-before-submit".to_string());
             }
-            if let Some(targets)=processing_graph.public_guide_targets.as_mut() {
+            if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
                 targets.retire_stereo_banks_after_fence(&device)?;
             }
-            if let Some(imports)=stereo_source_imports.as_mut() {
+            if let Some(imports) = stereo_source_imports.as_mut() {
                 imports.retire_after_fence(device)?;
                 crate::spatial_stereo_source_import::synchronize_peer_source()?;
-                imports.refresh(device,&memory_properties,ahb_device,&processing_graph.camera_resources,
-                    CameraHwbProbeMode::RawColorProjection,1_000_000_000)?;
+                imports.refresh(
+                    device,
+                    &memory_properties,
+                    ahb_device,
+                    &processing_graph.camera_resources,
+                    CameraHwbProbeMode::RawColorProjection,
+                    1_000_000_000,
+                )?;
             }
             device
                 .reset_fences(&[frame_fence])
@@ -3979,18 +4065,36 @@ unsafe fn render_peer_common_graph(
             );
             let normalized_images = normalizer.images();
             let video_settings = spatial_video_projection_settings();
-            let stereo_inputs=if let Some(imports)=stereo_source_imports.as_mut() {
-                let (words,revision)=crate::spatial_public_multistack_runtime::read_control_policy();
-                let policy=crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
-                    region_origins:[words[0],words[1],words[2],words[3]],
-                    guide_origins:[words[4],words[5],0,0],source_state:[0,0,1,0] };
+            let stereo_inputs = if let Some(imports) = stereo_source_imports.as_mut() {
+                let (words, revision) =
+                    crate::spatial_public_multistack_runtime::read_control_policy();
+                let policy = crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
+                    region_origins: [words[0], words[1], words[2], words[3]],
+                    guide_origins: [words[4], words[5], 0, 0],
+                    source_state: [0, 0, 1, 0],
+                };
                 // Conservative neutral demand covers every selected guide stage;
                 // private effect demand may later reduce this prefix explicitly.
-                let mut prefixes=[0usize;2];
-                for &origin in &words[..4]{prefixes[origin as usize]=6;}
-                for &origin in &words[4..]{if origin<2{prefixes[origin as usize]=6;}}
-                Some(imports.recording_inputs(policy,revision,prefixes,frame_fence,u64::from(frames_presented)+1,surface_generation)?)
-            } else {None};
+                let mut prefixes = [0usize; 2];
+                for &origin in &words[..4] {
+                    prefixes[origin as usize] = 6;
+                }
+                for &origin in &words[4..] {
+                    if origin < 2 {
+                        prefixes[origin as usize] = 6;
+                    }
+                }
+                Some(imports.recording_inputs(
+                    policy,
+                    revision,
+                    prefixes,
+                    frame_fence,
+                    u64::from(frames_presented) + 1,
+                    surface_generation,
+                )?)
+            } else {
+                None
+            };
             let record_result = record_camera_hwb_probe_command_buffer(
                 &device,
                 command_buffer,
@@ -3998,13 +4102,27 @@ unsafe fn render_peer_common_graph(
                 framebuffers[image_index as usize],
                 extent,
                 &processing_graph.camera_resources,
-                stereo_inputs.as_ref().and_then(|inputs|inputs.sources.iter().flatten().find(|source|inputs.demanded_prefixes[source.key.origin]>0))
-                    .map_or(processing_graph.descriptor_set,|source|source.descriptor_set),
+                stereo_inputs
+                    .as_ref()
+                    .and_then(|inputs| {
+                        inputs
+                            .sources
+                            .iter()
+                            .flatten()
+                            .find(|source| inputs.demanded_prefixes[source.key.origin] > 0)
+                    })
+                    .map_or(processing_graph.descriptor_set, |source| {
+                        source.descriptor_set
+                    }),
                 normalized_images[0],
                 Some(normalized_images[1]),
                 false,
                 false,
-                if stereo_inputs.is_some(){None}else{Some((normalizer, sampled_packed_image, transition_packed_source))},
+                if stereo_inputs.is_some() {
+                    None
+                } else {
+                    Some((normalizer, sampled_packed_image, transition_packed_source))
+                },
                 processing_graph.public_guide_targets.as_mut(),
                 stereo_inputs,
                 render_started.elapsed().as_secs_f32(),
@@ -4050,7 +4168,9 @@ unsafe fn render_peer_common_graph(
                     .wait_dst_stage_mask(&stages)
                     .command_buffers(&buffers)
                     .signal_semaphores(&signals)];
-                if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.mark_stereo_submission_entered()?;}
+                if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+                    targets.mark_stereo_submission_entered()?;
+                }
                 device
                     .queue_submit(queue, &submits, frame_fence)
                     .map_err(|error| format!("peer-queue-submit-{error:?}"))?;
@@ -4071,7 +4191,9 @@ unsafe fn render_peer_common_graph(
             #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
             {
                 let request_id = (surface_generation << 32) | u64::from(frames_presented + 1);
-                if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.mark_stereo_submission_entered()?;}
+                if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+                    targets.mark_stereo_submission_entered()?;
+                }
                 let enqueue = crate::spatial_sdk_depth_handoff::enqueue_spatial_submit_present(
                     sdk_binding,
                     request_id,
@@ -4256,10 +4378,15 @@ unsafe fn render_peer_common_graph(
             ));
             }
         }
-        if let Some(mut imports)=stereo_source_imports {
-            device.wait_for_fences(&[frame_fence],true,u64::MAX).map_err(|e|format!("stereo-final-retire-{e:?}"))?;
-            if let Some(targets)=processing_graph.public_guide_targets.as_mut(){targets.retire_stereo_banks_after_fence(device)?;}
-            imports.retire_after_fence(device)?;imports.destroy(device)?;
+        if let Some(mut imports) = stereo_source_imports {
+            device
+                .wait_for_fences(&[frame_fence], true, u64::MAX)
+                .map_err(|e| format!("stereo-final-retire-{e:?}"))?;
+            if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
+                targets.retire_stereo_banks_after_fence(device)?;
+            }
+            imports.retire_after_fence(device)?;
+            imports.destroy(device)?;
         }
         Ok(())
     })();
@@ -4290,7 +4417,10 @@ fn validate_peer_packed_frame(
     Ok(())
 }
 
-mod source_bank_build {include!(concat!(env!("OUT_DIR"),"/spatial_source_bank_build.rs"));}
+mod source_bank_build {
+    include!(concat!(env!("OUT_DIR"), "/spatial_source_bank_build.rs"));
+}
 
-#[path="camera_hwb_source_set.rs"] mod source_set;
+#[path = "camera_hwb_source_set.rs"]
+mod source_set;
 pub(crate) use source_set::start_source_set_common_graph;

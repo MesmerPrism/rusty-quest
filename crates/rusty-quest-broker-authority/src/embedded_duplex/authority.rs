@@ -268,17 +268,29 @@ impl QuestEmbeddedDuplexAuthority {
 
     /// Refreshes the same retained signing keys only from accepted current-key mutual proof.
     pub fn refresh_concurrent_pair_credentials(
-        &self, proof: &ManifoldCommonLanReciprocalEd25519Receipt, now_ms: u64,
-    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldConcurrentPairCredentialRefreshReceipt, String> {
-        write_peer(&self.peer)?.refresh_concurrent_pair_credentials(proof, now_ms).map_err(host_error)
+        &self,
+        proof: &ManifoldCommonLanReciprocalEd25519Receipt,
+        now_ms: u64,
+    ) -> Result<
+        rusty_manifold_peer_runtime_host::ManifoldConcurrentPairCredentialRefreshReceipt,
+        String,
+    > {
+        write_peer(&self.peer)?
+            .refresh_concurrent_pair_credentials(proof, now_ms)
+            .map_err(host_error)
     }
 
     /// Advances an accepted same-session signed scope without replacing its decision identity.
     pub fn apply_common_lan_session_renewal(
-        &self, proposal: &ManifoldCommonLanPeerSessionProposal,
-        reciprocal: &ManifoldCommonLanReciprocalEd25519Receipt, now_ms: u64,
-    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldConcurrentPairSessionRenewalReceipt, String> {
-        write_peer(&self.peer)?.apply_common_lan_session_renewal(proposal, reciprocal, now_ms).map_err(host_error)
+        &self,
+        proposal: &ManifoldCommonLanPeerSessionProposal,
+        reciprocal: &ManifoldCommonLanReciprocalEd25519Receipt,
+        now_ms: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldConcurrentPairSessionRenewalReceipt, String>
+    {
+        write_peer(&self.peer)?
+            .apply_common_lan_session_renewal(proposal, reciprocal, now_ms)
+            .map_err(host_error)
     }
 
     /// Revalidates an accepted pair session against live peer authority and time.
@@ -499,22 +511,48 @@ impl QuestEmbeddedDuplexAuthority {
         executor_peer_id: &DottedId,
         now_ms: u64,
     ) -> Result<RetainedCleanupAuthorityProjection, String> {
-        self.retained_cleanup_projection_inner(grant_id,requester_id,requester_lease_id,authority_peer_id,executor_peer_id,now_ms,false)
+        self.retained_cleanup_projection_inner(
+            grant_id,
+            requester_id,
+            requester_lease_id,
+            authority_peer_id,
+            executor_peer_id,
+            now_ms,
+            false,
+        )
     }
 
     /// Derives a local registry cleanup projection with both peer identities genuinely local.
     /// Remote retained-cleanup protocol validators continue to require distinct peers.
     pub fn retained_local_cleanup_projection(
-        &self,grant_id:&DottedId,requester_id:&DottedId,requester_lease_id:&DottedId,
-        local_peer_id:&DottedId,now_ms:u64,
-    )->Result<RetainedCleanupAuthorityProjection,String> {
-        self.retained_cleanup_projection_inner(grant_id,requester_id,requester_lease_id,local_peer_id,local_peer_id,now_ms,true)
+        &self,
+        grant_id: &DottedId,
+        requester_id: &DottedId,
+        requester_lease_id: &DottedId,
+        local_peer_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<RetainedCleanupAuthorityProjection, String> {
+        self.retained_cleanup_projection_inner(
+            grant_id,
+            requester_id,
+            requester_lease_id,
+            local_peer_id,
+            local_peer_id,
+            now_ms,
+            true,
+        )
     }
 
     fn retained_cleanup_projection_inner(
-        &self,grant_id:&DottedId,requester_id:&DottedId,requester_lease_id:&DottedId,
-        authority_peer_id:&DottedId,executor_peer_id:&DottedId,now_ms:u64,local:bool,
-    )->Result<RetainedCleanupAuthorityProjection,String> {
+        &self,
+        grant_id: &DottedId,
+        requester_id: &DottedId,
+        requester_lease_id: &DottedId,
+        authority_peer_id: &DottedId,
+        executor_peer_id: &DottedId,
+        now_ms: u64,
+        local: bool,
+    ) -> Result<RetainedCleanupAuthorityProjection, String> {
         let target =
             self.retained_cleanup_target(grant_id, requester_id, requester_lease_id, now_ms)?;
         let broker = read_broker(&self.broker)?;
@@ -596,19 +634,31 @@ impl QuestEmbeddedDuplexAuthority {
     ) -> Result<(), String> {
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
-        let credential = snapshot.enrollment.credentials.iter().find(|credential| {
-            credential.peer_id.to_string() == original.authority_peer_id
-                && credential.key_id.to_string() == signer_key_id
-                && matches!(credential.status, rusty_manifold_peer::ManifoldPeerCredentialStatus::Active)
-                && credential.valid_from_ms <= now_ms && credential.expires_at_ms > now_ms
-        }).ok_or("cleanup signer is not currently enrolled")?;
+        let credential = snapshot
+            .enrollment
+            .credentials
+            .iter()
+            .find(|credential| {
+                credential.peer_id.to_string() == original.authority_peer_id
+                    && credential.key_id.to_string() == signer_key_id
+                    && matches!(
+                        credential.status,
+                        rusty_manifold_peer::ManifoldPeerCredentialStatus::Active
+                    )
+                    && credential.valid_from_ms <= now_ms
+                    && credential.expires_at_ms > now_ms
+            })
+            .ok_or("cleanup signer is not currently enrolled")?;
         if decode_array::<32>(&credential.public_key_hex)? != *signer_key {
             return Err("cleanup enrolled signer changed".into());
         }
         let parties = if cleanup.trusted_revoker {
             cleanup.requester_id != cleanup.target_client_id
                 && cleanup.requester_runtime_lease_id != cleanup.target_runtime_lease_id
-                && snapshot.trust_policy.trusted_media_revoker_ids.iter()
+                && snapshot
+                    .trust_policy
+                    .trusted_media_revoker_ids
+                    .iter()
                     .any(|id| id.as_str() == cleanup.requester_id)
         } else {
             cleanup.requester_id == cleanup.target_client_id
@@ -633,7 +683,9 @@ impl QuestEmbeddedDuplexAuthority {
             || ticket.lease_id != cleanup.target_runtime_lease_id
             || !valid_sha256(&cleanup.cleanup_target_sha256)
             || !valid_sha256(&cleanup.terminal_route_sha256)
-            || !parties || now_ms == 0 || cleanup.expires_at_ms <= now_ms
+            || !parties
+            || now_ms == 0
+            || cleanup.expires_at_ms <= now_ms
             || cleanup.requester_expires_at_ms <= now_ms
             || cleanup.expires_at_ms > cleanup.requester_expires_at_ms
             || cleanup.expires_at_ms > now_ms.saturating_add(30_000)

@@ -193,6 +193,23 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
         assertEquals(2,factory.createCount);
     }
 
+    @Test public void nativeRetirementFailureRetainsReaderAndBlocksFreshArmUntilRetry() throws Exception {
+        FakeDisplay display = new FakeDisplay(); FakeFactory factory = new FakeFactory();
+        EmbeddedDuplexReceiver receiver = receiver(display, factory); arm(receiver);
+        factory.failNativeRetirement = true;
+        assertThrows(IllegalStateException.class, () -> receiver.execute(
+                action("stop", "stop", 2), new CancellationHandle(GENERATION)));
+        assertEquals(1, factory.nativeRetirements);
+        assertEquals(0, factory.projection.releaseCount);
+        assertFalse(receiver.snapshot().terminal());
+        assertThrows(IllegalStateException.class, () -> arm(receiver));
+        assertEquals(1, factory.stageCount);
+        factory.failNativeRetirement = false;
+        receiver.execute(action("cleanup", "stop", 3), new CancellationHandle(GENERATION));
+        assertEquals(2, factory.nativeRetirements);
+        assertEquals(1, factory.projection.releaseCount);
+        assertTrue(receiver.snapshot().terminal());
+    }
     private static PackedStereoMediaReceiver.Bounds bounds() {
         return new PackedStereoMediaReceiver.Bounds(
                 4096, 1024 * 1024, 4096, 4096, 4,
@@ -234,6 +251,13 @@ public final class EmbeddedDuplexReceiverLifecycleTest {
         int stageCount;
         int createCount;
         boolean failCreate;
+        int nativeRetirements;
+        boolean failNativeRetirement;
+        @Override public void retireNativeGeneration(long generation) {
+            assertEquals(GENERATION, generation);
+            nativeRetirements++;
+            if (failNativeRetirement) throw new IllegalStateException("native retirement pending");
+        }
 
         @Override public EmbeddedDuplexReceiver.ProjectionResource stage(int width, int height,
                 int imageCount, int fpsCap, long routeGeneration) {

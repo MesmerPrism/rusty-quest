@@ -1146,7 +1146,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let retained_unused_video_descriptor = video_renderer
         .as_deref()
         .and_then(SpatialVideoProjectionRenderer::retained_unused_descriptor_binding);
-    let stereo_selected=stereo_sources.is_some();
+    let stereo_selected = stereo_sources.is_some();
     let prepared_video = match (video_renderer, video_frame) {
         (Some(renderer), Some(frame))
             if video_settings.active()
@@ -1201,20 +1201,26 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         false
     } else if let Some(targets) = public_guide_targets.as_deref_mut() {
         if let Some(inputs) = stereo_sources {
-            guide_record = targets.record_stereo_source_banks(device,command_buffer,gpu_timestamps,
-                frame_slot,elapsed_seconds,inputs)?;
+            guide_record = targets.record_stereo_source_banks(
+                device,
+                command_buffer,
+                gpu_timestamps,
+                frame_slot,
+                elapsed_seconds,
+                inputs,
+            )?;
         } else {
-        guide_record = targets.record_spatial_public_guide_passes(
-            device,
-            command_buffer,
-            gpu_timestamps,
-            frame_slot,
-            descriptor_set,
-            elapsed_seconds,
-            camera_reprojection,
-            projection_guard_band.source_overscan_uv,
-            guide_plan,
-        )?;
+            guide_record = targets.record_spatial_public_guide_passes(
+                device,
+                command_buffer,
+                gpu_timestamps,
+                frame_slot,
+                descriptor_set,
+                elapsed_seconds,
+                camera_reprojection,
+                projection_guard_band.source_overscan_uv,
+                guide_plan,
+            )?;
         }
         let sampling_ready = guide_record.complete()
             && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
@@ -1293,7 +1299,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                     descriptor_set_layout,
                     resource_lease,
                 )?;
-                if prepare_status.ready() {targets.prepare_stereo_video_layout(device,descriptor_set_layout)?;}
+                if prepare_status.ready() {
+                    targets.prepare_stereo_video_layout(device, descriptor_set_layout)?;
+                }
                 projection_zone_prepare_status = prepare_status.marker_token();
                 projection_zone_ready = prepare_status.ready();
                 if projection_zone_ready {

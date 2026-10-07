@@ -136,16 +136,35 @@ fn main() {
         &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string()],
     );
     let source_bank_vertex = compile_optional_shader_env_with_args(
-        &glslc,&out_dir,"RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER",
-        "spatial_source_bank.vert.spv","vertex",
-        &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),"-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string()]);
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER",
+        "spatial_source_bank.vert.spv",
+        "vertex",
+        &[
+            "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
+            "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+        ],
+    );
     let source_bank_fragment = compile_optional_shader_env_with_args(
-        &glslc,&out_dir,"RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
-        "spatial_source_bank.frag.spv","fragment",
-        &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),"-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string()]);
-    fs::write(out_dir.join("spatial_source_bank_build.rs"),format!(
-        "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};",source_bank_vertex.compiled && source_bank_fragment.compiled))
-        .expect("write source bank shader metadata");
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
+        "spatial_source_bank.frag.spv",
+        "fragment",
+        &[
+            "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
+            "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+        ],
+    );
+    fs::write(
+        out_dir.join("spatial_source_bank_build.rs"),
+        format!(
+            "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};",
+            source_bank_vertex.compiled && source_bank_fragment.compiled
+        ),
+    )
+    .expect("write source bank shader metadata");
     let opaque_projection_effect =
         opaque_projection_effect_env("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT");
     let projection_surface_uniform_abi_version = projection_surface_uniform_abi_version_env(
@@ -1186,25 +1205,55 @@ fn env_path(key: &str) -> Option<PathBuf> {
 }
 
 fn write_own_capture_hold_contract(out_dir: &Path) {
-    let keys = ["RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS",
+    let keys = [
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS",
         "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES",
-        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES"];
-    for key in keys { println!("cargo:rerun-if-env-changed={key}"); }
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES",
+    ];
+    for key in keys {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
     let values: Vec<_> = keys.iter().map(|key| env::var(key).ok()).collect();
-    let source_keys = ["RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER",
-        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER"];
-    for key in source_keys { println!("cargo:rerun-if-env-changed={key}"); }
+    let source_keys = [
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER",
+    ];
+    for key in source_keys {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
     let providers: Vec<_> = source_keys.iter().map(|key| env::var_os(key)).collect();
-    assert!(providers.iter().all(Option::is_none) || providers.iter().all(Option::is_some),
-        "source bank shader provider must be an exact pair");
+    assert!(
+        providers.iter().all(Option::is_none) || providers.iter().all(Option::is_some),
+        "source bank shader provider must be an exact pair"
+    );
     let selected = providers.iter().all(Option::is_some);
-    let limits = if values.iter().all(Option::is_none) { "None".to_string() } else {
-        assert!(selected && values.iter().all(Option::is_some), "Own capture requires complete selected hold contract");
-        let numbers: Vec<u64> = values.iter().map(|value| value.as_ref().unwrap().parse::<u64>()
-            .expect("Own capture holds must be positive decimal integers")).collect();
-        assert!(numbers.iter().all(|value| *value > 0) && numbers[0] <= usize::MAX as u64
-            && numbers[2] <= usize::MAX as u64, "Own capture holds out of bounds");
-        format!("Some(({}usize,{}u64,{}usize))",numbers[0],numbers[1],numbers[2])
+    let limits = if values.iter().all(Option::is_none) {
+        "None".to_string()
+    } else {
+        assert!(
+            selected && values.iter().all(Option::is_some),
+            "Own capture requires complete selected hold contract"
+        );
+        let numbers: Vec<u64> = values
+            .iter()
+            .map(|value| {
+                value
+                    .as_ref()
+                    .unwrap()
+                    .parse::<u64>()
+                    .expect("Own capture holds must be positive decimal integers")
+            })
+            .collect();
+        assert!(
+            numbers.iter().all(|value| *value > 0)
+                && numbers[0] <= usize::MAX as u64
+                && numbers[2] <= usize::MAX as u64,
+            "Own capture holds out of bounds"
+        );
+        format!(
+            "Some(({}usize,{}u64,{}usize))",
+            numbers[0], numbers[1], numbers[2]
+        )
     };
     fs::write(out_dir.join("own_capture_build.rs"),format!(
         "pub(crate) const OWN_CAPTURE_PROVIDER_SELECTED: bool = {selected};\npub(crate) const OWN_CAPTURE_HOLD_LIMITS: Option<(usize,u64,usize)> = {limits};\n"))

@@ -1,0 +1,9 @@
+{
+  "name": "@rusty-quest/ble-browser-lifetime",
+  "version": "0.1.0",
+  "description": "Generation-bound serialized browser GATT operations and RQEC1 receipt correlation",
+  "license": "AGPL-3.0-or-later",
+  "main": "gatt-lifetime.js",
+  "files": ["gatt-lifetime.js", "README.md", "LICENSE"],
+  "scripts": { "test": "node --test gatt-lifetime.test.cjs" }
+}

@@ -540,7 +540,7 @@ Require (-not $timeoutCapture.CompletedWithinTimeout -and $timeoutCapture.DrainC
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("connection-hub-operator-test-" + [Guid]::NewGuid().ToString("N"))
 try {
-    $runText = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot
+    $runText = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('a'*64) -Serial SIMULATED123 -EvidenceRoot $tempRoot
     if ($LASTEXITCODE -ne 0) { throw "Operator simulation failed." }
     $run = $runText | ConvertFrom-Json
     Require ($run.result -eq 'passed' -and $run.secrets_in_output -eq $false) "Simulation run posture mismatch."
@@ -554,7 +554,9 @@ try {
     $checkpointPath = Join-Path (Split-Path -Parent $run.evidence_manifest) "checkpoint.json"
     $checkpoint = Get-Content -Raw -LiteralPath $checkpointPath | ConvertFrom-Json
     Require (@($checkpoint.completed_stages).Count -eq 23 -and $checkpoint.secrets_in_checkpoint -eq $false) "Simulation checkpoint closure mismatch."
-    $resumedText = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath
+    $changedSigner = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('b'*64) -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
+    Require ($LASTEXITCODE -ne 0 -and ($changedSigner -join "`n").Contains('identity/protocol/policy mismatch')) "Checkpoint accepted a different selected signer."
+    $resumedText = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('a'*64) -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath
     if ($LASTEXITCODE -ne 0) { throw "Operator resume simulation failed." }
     $resumed = $resumedText | ConvertFrom-Json
     $resumedManifest = Get-Content -Raw -LiteralPath $resumed.evidence_manifest | ConvertFrom-Json
@@ -567,7 +569,7 @@ try {
     $relabelled.stage_receipts.$firstStage = $relabelled.stage_receipts.$secondStage
     $relabelled.stage_receipts.$secondStage = $firstEntries
     [System.IO.File]::WriteAllText($checkpointPath, ($relabelled | ConvertTo-Json -Depth 30), (New-Object System.Text.UTF8Encoding($false)))
-    $relabelOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
+    $relabelOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('a'*64) -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
     Require ($LASTEXITCODE -ne 0 -and ($relabelOutput -join "`n") -match 'relabeled or substituted') "Resume accepted a valid receipt relabeled to another completed stage."
     [System.IO.File]::WriteAllText($checkpointPath, $checkpointJson, (New-Object System.Text.UTF8Encoding($false)))
     $duplicated = $checkpointJson | ConvertFrom-Json
@@ -575,18 +577,18 @@ try {
     $originalStageEntry = $duplicated.stage_receipts.$duplicateStage
     $duplicated.stage_receipts.$duplicateStage = @($originalStageEntry, $originalStageEntry)
     [System.IO.File]::WriteAllText($checkpointPath, ($duplicated | ConvertTo-Json -Depth 30), (New-Object System.Text.UTF8Encoding($false)))
-    $duplicateOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
+    $duplicateOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('a'*64) -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
     Require ($LASTEXITCODE -ne 0 -and ($duplicateOutput -join "`n") -match 'multiset is not exact') "Resume accepted duplicated stage receipt multiplicity."
     [System.IO.File]::WriteAllText($checkpointPath, $checkpointJson, (New-Object System.Text.UTF8Encoding($false)))
-    $wifiMismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath -RequireWifiRebindE2E 2>&1
+    $wifiMismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('a'*64) -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath -RequireWifiRebindE2E 2>&1
     Require ($LASTEXITCODE -ne 0 -and ($wifiMismatchOutput -join "`n") -match 'checkpoint identity') "Resume accepted a changed Wi-Fi-required policy."
-    $sessionMismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath -SessionFile (Join-Path $tempRoot 'substituted-session.json') 2>&1
+    $sessionMismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('a'*64) -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath -SessionFile (Join-Path $tempRoot 'substituted-session.json') 2>&1
     Require ($LASTEXITCODE -ne 0 -and ($sessionMismatchOutput -join "`n") -match 'session path mismatch') "Resume accepted a substituted Hostess session path."
     $tamperedReceiptPath = Join-Path (Split-Path -Parent $run.evidence_manifest) ([string]$manifest.receipts[0].name)
     [System.IO.File]::AppendAllText($tamperedReceiptPath, " ")
-    $tamperedOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
+    $tamperedOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('a'*64) -Serial SIMULATED123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
     Require ($LASTEXITCODE -ne 0 -and ($tamperedOutput -join "`n") -match 'receipt path or digest') "Resume accepted a tampered completed-stage receipt."
-    $mismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -Serial DIFFERENT123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
+    $mismatchOutput = & pwsh -NoProfile -File $cliPath -Action SimulateE2E -ExpectedSignerSha256 ('a'*64) -Serial DIFFERENT123 -EvidenceRoot $tempRoot -ResumeCheckpoint $checkpointPath 2>&1
     Require ($LASTEXITCODE -ne 0 -and ($mismatchOutput -join "`n") -match 'checkpoint identity') "Resume accepted a mismatched serial."
 } finally {
     if (Test-Path -LiteralPath $tempRoot) {

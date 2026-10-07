@@ -147,7 +147,7 @@ foreach ($token in @(
     "Get-ExactClientGrantCapabilities",
     "client_lock_sha256",
     "LegacyCameraP2pCompatibility",
-    "rusty.quest.manifold_broker_android.build_manifest.v2")) {
+    "rusty.quest.manifold_broker_android.build_manifest.v3")) {
     if ($build -notmatch [regex]::Escape($token)) {
         throw "Broker build is missing exact product packaging token '$token'."
     }

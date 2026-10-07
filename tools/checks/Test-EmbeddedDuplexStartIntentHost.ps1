@@ -5,7 +5,7 @@ $RepoRoot=(Resolve-Path -LiteralPath $RepoRoot).Path
 $package='io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex'
 $app=Join-Path $RepoRoot 'apps/spatial-camera-panel-android/app'
 $main=Join-Path $app ('src/main/java/'+$package)
-$test=Join-Path $app ('src/test/java/'+$package+'/EmbeddedDuplexStartIntentSlotHostTest.java')
+$test=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexStartIntentSlotHostTest.java'
 $jsonJar=Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json') -Recurse -Filter 'json-*.jar' | Sort-Object FullName -Descending | Select-Object -First 1
 if(-not$jsonJar){throw 'Host org.json test dependency unavailable'}
 $output=Join-Path ([IO.Path]::GetTempPath()) ('duplex-start-intent-'+[guid]::NewGuid().ToString('N'))

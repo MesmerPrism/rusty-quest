@@ -405,10 +405,12 @@ impl ProjectionReadback {
 
     pub(crate) fn observe_control(&mut self, settings: ProjectionZoneCompositorSettings) {
         let toggle = settings.outer_stretch_option_flags & PROJECTION_READBACK_TOGGLE != 0;
-        let requested=crate::spatial_stereo_qualification::take_requested_readback();
+        let requested = crate::spatial_stereo_qualification::take_requested_readback();
         let Some(serial) = self.toggle_edges.observe(toggle).or_else(|| {
-            if !requested{return None;}
-            self.toggle_edges.next_serial=self.toggle_edges.next_serial.checked_add(1)?;
+            if !requested {
+                return None;
+            }
+            self.toggle_edges.next_serial = self.toggle_edges.next_serial.checked_add(1)?;
             Some(self.toggle_edges.next_serial)
         }) else {
             return;
@@ -472,8 +474,19 @@ impl ProjectionReadback {
             core_rects,
             settings.center_corner_radius_uv,
         );
-        if self.width>=5 && crate::spatial_stereo_qualification::blend_oracle_requested(identity.frame_id,identity.surface_generation) {
-            for x in 0..5{plan.points.push(SamplePoint{x,y:0,kind:SampleKind::BlendOracle});}
+        if self.width >= 5
+            && crate::spatial_stereo_qualification::blend_oracle_requested(
+                identity.frame_id,
+                identity.surface_generation,
+            )
+        {
+            for x in 0..5 {
+                plan.points.push(SamplePoint {
+                    x,
+                    y: 0,
+                    kind: SampleKind::BlendOracle,
+                });
+            }
         }
         if plan.bytes() == 0 || plan.bytes() > MAX_STAGING_BYTES {
             self.log_unavailable(identity, "sample-plan-outside-staging-bound");
@@ -632,12 +645,29 @@ impl ProjectionReadback {
         }
         let bytes = std::slice::from_raw_parts(mapped, staging.bytes as usize);
         let format = self.format.expect("format validated before submission");
-        let hash=bytes.iter().fold(0xcbf29ce484222325u64,|value,byte|(value^u64::from(*byte)).wrapping_mul(0x100000001b3));
-        crate::spatial_stereo_qualification::readback_complete(identity.frame_id,identity.surface_generation,
-            plan.points.len() as u64,hash,match format{StoredPixelFormat::Rgba8=>1,StoredPixelFormat::Bgra8=>2},
-            self.width,self.height,identity.recorded_flags,identity.region_contract_version);
-        if let Some(samples)=extract_mask_strip(&plan,bytes,format) {
-            crate::spatial_stereo_qualification::blend_readback_complete(identity.frame_id,identity.surface_generation,samples);
+        let hash = bytes.iter().fold(0xcbf29ce484222325u64, |value, byte| {
+            (value ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+        crate::spatial_stereo_qualification::readback_complete(
+            identity.frame_id,
+            identity.surface_generation,
+            plan.points.len() as u64,
+            hash,
+            match format {
+                StoredPixelFormat::Rgba8 => 1,
+                StoredPixelFormat::Bgra8 => 2,
+            },
+            self.width,
+            self.height,
+            identity.recorded_flags,
+            identity.region_contract_version,
+        );
+        if let Some(samples) = extract_mask_strip(&plan, bytes, format) {
+            crate::spatial_stereo_qualification::blend_readback_complete(
+                identity.frame_id,
+                identity.surface_generation,
+                samples,
+            );
         }
         emit_samples(
             identity,
@@ -780,19 +810,59 @@ fn find_memory_type(
 // decoding code so its bounds are host-testable.
 
 /// Exact five diagnostic coordinates and format-decoded transferred bytes.
-fn extract_mask_strip(plan:&SamplePlan,bytes:&[u8],format:StoredPixelFormat)->Option<[[u8;4];5]> {
-    let entries:Vec<_>=plan.points.iter().enumerate().filter(|(_,p)|p.kind==SampleKind::BlendOracle).collect();
-    if entries.len()!=5{return None;}
-    let mut samples=[[0;4];5];
-    for (slot,(i,p)) in entries.into_iter().enumerate(){
-        if p.x!=slot as u32||p.y!=0{return None;}
-        let raw=bytes.get(i.checked_mul(4)?..i.checked_mul(4)?.checked_add(4)?)?;
-        samples[slot]=format.decode(raw.try_into().ok()?);
+fn extract_mask_strip(
+    plan: &SamplePlan,
+    bytes: &[u8],
+    format: StoredPixelFormat,
+) -> Option<[[u8; 4]; 5]> {
+    let entries: Vec<_> = plan
+        .points
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.kind == SampleKind::BlendOracle)
+        .collect();
+    if entries.len() != 5 {
+        return None;
+    }
+    let mut samples = [[0; 4]; 5];
+    for (slot, (i, p)) in entries.into_iter().enumerate() {
+        if p.x != slot as u32 || p.y != 0 {
+            return None;
+        }
+        let raw = bytes.get(i.checked_mul(4)?..i.checked_mul(4)?.checked_add(4)?)?;
+        samples[slot] = format.decode(raw.try_into().ok()?);
     }
     Some(samples)
 }
-#[cfg(test)]mod mask_readback_tests{use super::*;
- #[test]fn actual_copy_plan_extracts_five_coordinates_and_preserves_unorm_format(){let mut plan=SamplePlan{points:(0..5).map(|x|SamplePoint{x,y:0,kind:SampleKind::BlendOracle}).collect()};let bytes:Vec<_>=(0..5).flat_map(|_|[1,2,3,255]).collect();assert_eq!(extract_mask_strip(&plan,&bytes,StoredPixelFormat::Rgba8),Some([[1,2,3,255];5]));assert_eq!(extract_mask_strip(&plan,&bytes,StoredPixelFormat::Bgra8),Some([[3,2,1,255];5]));assert!(extract_mask_strip(&plan,&bytes[..19],StoredPixelFormat::Rgba8).is_none());plan.points[1].x=0;assert!(extract_mask_strip(&plan,&bytes,StoredPixelFormat::Rgba8).is_none());plan.points.pop();assert!(extract_mask_strip(&plan,&bytes,StoredPixelFormat::Rgba8).is_none());}
+#[cfg(test)]
+mod mask_readback_tests {
+    use super::*;
+    #[test]
+    fn actual_copy_plan_extracts_five_coordinates_and_preserves_unorm_format() {
+        let mut plan = SamplePlan {
+            points: (0..5)
+                .map(|x| SamplePoint {
+                    x,
+                    y: 0,
+                    kind: SampleKind::BlendOracle,
+                })
+                .collect(),
+        };
+        let bytes: Vec<_> = (0..5).flat_map(|_| [1, 2, 3, 255]).collect();
+        assert_eq!(
+            extract_mask_strip(&plan, &bytes, StoredPixelFormat::Rgba8),
+            Some([[1, 2, 3, 255]; 5])
+        );
+        assert_eq!(
+            extract_mask_strip(&plan, &bytes, StoredPixelFormat::Bgra8),
+            Some([[3, 2, 1, 255]; 5])
+        );
+        assert!(extract_mask_strip(&plan, &bytes[..19], StoredPixelFormat::Rgba8).is_none());
+        plan.points[1].x = 0;
+        assert!(extract_mask_strip(&plan, &bytes, StoredPixelFormat::Rgba8).is_none());
+        plan.points.pop();
+        assert!(extract_mask_strip(&plan, &bytes, StoredPixelFormat::Rgba8).is_none());
+    }
 }
 
 #[cfg(target_os = "android")]

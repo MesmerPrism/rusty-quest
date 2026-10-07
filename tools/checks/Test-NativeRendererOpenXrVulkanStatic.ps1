@@ -676,7 +676,7 @@ foreach ($cpuTimingBoundaryPattern in @(
         throw "CPU timing must attribute prior-slot fence ownership, retire/readback children, and reset separately before command recording"
     }
 }
-if ($xrVulkanSurface -notmatch '(?s)frame_stream.*?\.end\(.*?\)\?;\s*trace_startup_frame\(frame_count, "after-xr-end-frame"\);\s*frame_timings\.openxr_end_frame_ms = elapsed_ms\(stage_started\);\s*frame_timings\.submitted_frame_host_ms = elapsed_ms\(submitted_frame_host_started\);.*?scorecard::write_projection_scorecard\(.*?frame_timings,') {
+if ($xrVulkanSurface -notmatch '(?s)frame_stream.*?\.end\(.*?\)\?;\s*trace_startup_frame\(frame_count, "after-xr-end-frame"\);\s*control_panel_command_poller\.after_current_session_frame_submitted\(\s*app,\s*openxr_session_generation,\s*frame_count,\s*\);\s*frame_timings\.openxr_end_frame_ms = elapsed_ms\(stage_started\);\s*frame_timings\.submitted_frame_host_ms = elapsed_ms\(submitted_frame_host_started\);.*?scorecard::write_projection_scorecard\(.*?frame_timings,') {
     throw "Submitted-frame host CPU timing must end only after successful xrEndFrame and flow into the scorecard"
 }
 if ($xrVulkanSurface -notmatch '(?s)let swapchain_acquire_started = Instant::now\(\);\s*let image_index = swapchain.*?\.acquire_image\(\).*?frame_timings\.swapchain_acquire_ms = elapsed_ms\(swapchain_acquire_started\);') {

@@ -11,14 +11,11 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         InstallReceiptStore receiptStore = new InstallReceiptStore(context);
-        try {
-            if (!receiptStore.matchesCallback(intent)) {
+        try (InstallReceiptStore.CallbackReceipt captured = receiptStore.captureCallback(intent)) {
+            if (captured == null) {
                 return;
             }
-            JSONObject receipt = receiptStore.read();
-            if (receipt == null) {
-                return;
-            }
+            JSONObject receipt = captured.receipt;
             int sessionId = receipt.getInt("session_id");
             int status = intent.getIntExtra(
                     PackageInstaller.EXTRA_STATUS, Integer.MIN_VALUE);
@@ -34,7 +31,7 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
                 Intent confirmation =
                         intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
                 if (confirmation == null) {
-                    receiptStore.updateState(
+                    receiptStore.updateCallbackState(captured,
                             sessionId,
                             "install_failed_missing_confirmation_intent",
                             PackageInstaller.STATUS_FAILURE_INVALID,
@@ -42,13 +39,10 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
                     PackageInstallController.cleanupTerminalArtifacts(context, receipt);
                     return;
                 }
-                receiptStore.updateState(
-                        sessionId,
-                        "pending_user_confirmation",
-                        status,
-                        statusMessage);
                 confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                context.startActivity(confirmation);
+                receiptStore.dispatchPendingConfirmation(captured,
+                        sessionId, status, statusMessage,
+                        () -> context.startActivity(confirmation));
                 return;
             }
             if (status == PackageInstaller.STATUS_SUCCESS) {
@@ -56,7 +50,7 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
                     PackageInstallController.verifyInstalledReadback(
                             context, receipt);
                 } catch (Exception exception) {
-                    receiptStore.updateState(
+                    receiptStore.updateCallbackState(captured,
                             sessionId,
                             "readback_failed_after_installer_success",
                             PackageInstaller.STATUS_FAILURE_INVALID,
@@ -67,7 +61,7 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
                 try {
                     if (!PackageInstallController.commitInstalledCheckpoint(
                             context, receipt, System.currentTimeMillis())) {
-                        receiptStore.updateState(
+                        receiptStore.updateCallbackState(captured,
                                 sessionId,
                                 "installed_but_checkpoint_rejected_expired",
                                 PackageInstaller.STATUS_SUCCESS,
@@ -78,14 +72,14 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
                         return;
                     }
                 } catch (Exception exception) {
-                    receiptStore.updateState(
+                    receiptStore.updateCallbackState(captured,
                             sessionId,
                             "installed_readback_checkpoint_pending",
                             null,
                             exception.getMessage());
                     return;
                 }
-                receiptStore.updateState(
+                receiptStore.updateCallbackState(captured,
                         sessionId,
                         "installed_readback_ok",
                         status,
@@ -96,7 +90,7 @@ public final class PackageInstallCallbackReceiver extends BroadcastReceiver {
             String terminalState = status == PackageInstaller.STATUS_FAILURE_ABORTED
                     ? "install_cancelled_by_wearer"
                     : "install_failed_status_" + status;
-            receiptStore.updateState(
+            receiptStore.updateCallbackState(captured,
                     sessionId,
                     terminalState,
                     status,

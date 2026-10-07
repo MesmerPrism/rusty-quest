@@ -209,23 +209,45 @@ mod tests {
     fn remote_prepare_substages_are_finite_and_later_outer_errors_do_not_replace_them() {
         for (stage, code) in [
             (Stage::RemotePeerBind, "RETAINED_REMOTE_PEER_BIND"),
-            (Stage::RemoteRequesterAuthority, "RETAINED_REMOTE_REQUESTER_AUTHORITY"),
-            (Stage::RemotePendingCapacity, "RETAINED_REMOTE_PENDING_CAPACITY"),
+            (
+                Stage::RemoteRequesterAuthority,
+                "RETAINED_REMOTE_REQUESTER_AUTHORITY",
+            ),
+            (
+                Stage::RemotePendingCapacity,
+                "RETAINED_REMOTE_PENDING_CAPACITY",
+            ),
             (Stage::RemoteSequence, "RETAINED_REMOTE_SEQUENCE"),
             (Stage::RemoteEntropy, "RETAINED_REMOTE_ENTROPY"),
             (Stage::RemotePrepareEncode, "RETAINED_REMOTE_PREPARE_ENCODE"),
             (Stage::RemotePrepareSign, "RETAINED_REMOTE_PREPARE_SIGN"),
-            (Stage::RemotePrepareExchange, "RETAINED_REMOTE_PREPARE_EXCHANGE"),
+            (
+                Stage::RemotePrepareExchange,
+                "RETAINED_REMOTE_PREPARE_EXCHANGE",
+            ),
         ] {
             let slot = Mutex::new(None);
             // Successful preparation work cannot manufacture a failure or completion.
             assert_eq!(observe(Ok(7), &slot, stage), Ok(7));
             assert_eq!(*slot.lock().unwrap(), None);
             let private_error = "java_bridge.exchange: private remote payload".to_owned();
-            assert_eq!(observe::<()>(Err(private_error.clone()), &slot, stage), Err(private_error));
+            assert_eq!(
+                observe::<()>(Err(private_error.clone()), &slot, stage),
+                Err(private_error)
+            );
             assert_eq!(*slot.lock().unwrap(), Some(code));
-            assert!(observe::<()>(Err("outer retained prepare".into()), &slot, Stage::RemotePrepare).is_err());
-            assert!(observe::<()>(Err("later remote proof".into()), &slot, Stage::RemotePrepareProof).is_err());
+            assert!(observe::<()>(
+                Err("outer retained prepare".into()),
+                &slot,
+                Stage::RemotePrepare
+            )
+            .is_err());
+            assert!(observe::<()>(
+                Err("later remote proof".into()),
+                &slot,
+                Stage::RemotePrepareProof
+            )
+            .is_err());
             assert_eq!(*slot.lock().unwrap(), Some(code));
             assert!(!code.contains("java_bridge") && !code.contains("payload"));
         }

@@ -119,7 +119,7 @@ if ($unlistedAppSpec.Contains('"particles.private.breath_composition_driver"', [
     throw "The pre-existing four-way input shell must remain unlisted/inert for the particle driver adapter"
 }
 foreach ($text in @($driver, $integrator, $feature)) {
-    foreach ($forbidden in @(("viscere" + "ality"), "kuramoto", "icosphere", "orbit-radius", "sphere-radius", "shader tuning")) {
+    foreach ($forbidden in @(("viscere" + "ality"), ("kura" + "moto"), "icosphere", "orbit-radius", "sphere-radius", "shader tuning")) {
         if ($text.Contains($forbidden, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Public breath composition driver source contains downstream term: $forbidden"
         }

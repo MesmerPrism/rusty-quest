@@ -115,6 +115,7 @@ $expectedMandatory = @(
     "fixtures/validation-authority/adversarial-probe-receipt.hold.json",
     "fixtures/validation-authority/bootstrap-approval.valid.json",
     "schemas/rusty.quest.external_owner_authorization.v1.schema.json",
+    "schemas/rusty.quest.external_owner_authorization.v2.schema.json",
     "schemas/rusty.quest.external_owner_authorization_policy.v1.schema.json",
     "schemas/rusty.quest.external_owner_authorization_request.v1.schema.json",
     "schemas/rusty.quest.external_owner_bootstrap_authorization.v1.schema.json",
@@ -124,6 +125,7 @@ $expectedMandatory = @(
     "schemas/rusty.quest.external_validation_authority_settings.v1.schema.json",
     "tools/checks/Test-ExternalOwnerAuthorization.ps1",
     "tools/checks/Test-ExternalOwnerBootstrapAuthorization.ps1",
+    "tools/checks/Test-ExternalOwnerTupleEnvelope.ps1",
     "tools/checks/Test-ExternalValidationAuthorityPolicySelfTest.ps1",
     "tools/checks/Test-ExternalValidationAuthorityStatic.ps1"
 )
@@ -154,6 +156,7 @@ $sensitivePaths = @(
     "schemas/rusty.quest.external_validation_authority_probe_receipt.v1.schema.json",
     "schemas/rusty.quest.external_validation_authority_settings.v1.schema.json",
     "schemas/rusty.quest.external_owner_authorization.v1.schema.json",
+    "schemas/rusty.quest.external_owner_authorization.v2.schema.json",
     "schemas/rusty.quest.external_owner_authorization_policy.v1.schema.json",
     "schemas/rusty.quest.external_owner_authorization_request.v1.schema.json",
     "schemas/rusty.quest.external_owner_bootstrap_authorization.v1.schema.json",
@@ -171,6 +174,7 @@ $sensitivePaths = @(
     "tools/checks/Test-ExternalValidationAuthorityPolicySelfTest.ps1",
     "tools/checks/Test-ExternalOwnerAuthorization.ps1",
     "tools/checks/Test-ExternalOwnerBootstrapAuthorization.ps1",
+    "tools/checks/Test-ExternalOwnerTupleEnvelope.ps1",
     "tools/checks/Test-ExternalValidationAuthorityStatic.ps1",
     "tools/checks/Test-PackageUpdateLabsPagesWorkflow.ps1",
     "tools/checks/Test-PackageUpdatePublicationContract.ps1",

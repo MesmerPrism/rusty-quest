@@ -155,7 +155,7 @@ $build = Get-Content -Raw -LiteralPath $buildManifestPath | ConvertFrom-Json
 $rollback = Get-Content -Raw -LiteralPath $rollbackEvidencePath | ConvertFrom-Json
 $lock = Get-Content -Raw -LiteralPath $featureLock | ConvertFrom-Json
 
-if ([string]$build.'$schema' -cne "rusty.quest.manifold_broker_android.build_manifest.v2" -or
+if ([string]$build.'$schema' -cne "rusty.quest.manifold_broker_android.build_manifest.v3" -or
     [string]$build.package_name -cne $ExpectedPackageName -or
     [int64]$build.version_code -ne $ExpectedVersionCode -or
     [string]$build.version_name -cne $ExpectedVersionName -or
@@ -164,9 +164,9 @@ if ([string]$build.'$schema' -cne "rusty.quest.manifold_broker_android.build_man
     -not $build.legacy_camera_p2p_compatibility -or
     $build.remote_camera_debug_operator -isnot [bool] -or
     -not $build.remote_camera_debug_operator -or
-    $build.shared_morphovision_signer_required -isnot [bool] -or
-    -not $build.shared_morphovision_signer_required -or
-    [string]$build.expected_shared_morphovision_signer_sha256 -cne
+    $build.shared_signer_required -isnot [bool] -or
+    -not $build.shared_signer_required -or
+    [string]$build.expected_shared_signer_sha256 -cne
         $ExpectedSignerCertificateSha256 -or
     [string]$build.artifact_signer_sha256 -cne $ExpectedSignerCertificateSha256 -or
     [string]$build.spatial_camera_panel_package_name -cne

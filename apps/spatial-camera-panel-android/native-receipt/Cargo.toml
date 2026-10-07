@@ -28,6 +28,9 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 zeroize = "=1.9.0"
 
+[dev-dependencies]
+rusty-quest-media-stream = { path = "../../../crates/rusty-quest-media-stream" }
+
 [build-dependencies]
 serde_json = "1"
 

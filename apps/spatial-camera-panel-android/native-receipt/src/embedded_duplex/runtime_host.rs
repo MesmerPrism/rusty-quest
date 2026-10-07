@@ -8,8 +8,8 @@ use super::common_lan_signing::{
     CommonLanSigningPolicy,
 };
 use super::java_bridge::JavaOwnerCallbacks;
-use super::owner_failure::{self, Stage as OwnerFailureStage};
 use super::native_fence_jni;
+use super::owner_failure::{self, Stage as OwnerFailureStage};
 use super::packaged_config::assemble_packaged_config_request_json;
 use super::packaged_route::PackagedDuplexRoute;
 use super::process_fence::NativeCapability;
@@ -36,7 +36,7 @@ use rusty_quest_media_stream_android::{
     ProductActivationServer, RemoteOwnerDispatchExecutor, PRODUCT_ACTIVATION_REQUEST_SCHEMA,
 };
 use serde::Deserialize;
-use serde_json::{json,Value};
+use serde_json::{json, Value};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -106,10 +106,16 @@ impl CurrentOwnerProjectionSource for ConfiguredProjectionSource {
         mode: AndroidMediaExecutionMode,
         now_ms: u64,
     ) -> Result<OwnerDispatchAuthorityProjection, String> {
-        let grant = self.route_grant_id.lock().map_err(|_| "current route binding poisoned")?.clone();
-        let source = QuestEmbeddedDuplexProjectionSource::new(self.authority.clone(),
+        let grant = self
+            .route_grant_id
+            .lock()
+            .map_err(|_| "current route binding poisoned")?
+            .clone();
+        let source = QuestEmbeddedDuplexProjectionSource::new(
+            self.authority.clone(),
             serde_json::from_value(json!(grant)).map_err(safe_decode)?,
-            serde_json::from_value(json!(self.authority_peer_id)).map_err(safe_decode)?);
+            serde_json::from_value(json!(self.authority_peer_id)).map_err(safe_decode)?,
+        );
         let current = source.current_projection(ticket, target_peer_id, mode, now_ms)?;
         if current.route_configuration_sha256 != self.route_configuration_sha256 {
             return Err("current route differs from packaged control/media configuration".into());
@@ -148,8 +154,11 @@ struct Host {
 }
 
 impl Host {
-    fn current_grant_id(&self) -> Result<String,String> {
-        self.route_grant_id.lock().map(|id| id.clone()).map_err(|_| "current route binding poisoned".into())
+    fn current_grant_id(&self) -> Result<String, String> {
+        self.route_grant_id
+            .lock()
+            .map(|id| id.clone())
+            .map_err(|_| "current route binding poisoned".into())
     }
 }
 
@@ -348,10 +357,7 @@ fn close_no_media_runtime_with_capability(
             Some(_) => return Err("packaged route identity differs".into()),
             None if state.host.is_some() => return Err("packaged route absent during close".into()),
             None if state.last_closed_sha256.as_deref() == Some(expected_sha) => {
-                return Ok(
-                    no_media_close_receipt(expected_sha,"already_closed")
-                    .to_string(),
-                );
+                return Ok(no_media_close_receipt(expected_sha, "already_closed").to_string());
             }
             None => return Err("packaged route absent during close".into()),
         }
@@ -447,20 +453,18 @@ fn close_no_media_runtime_with_capability(
     };
     drop(removed);
     capability.require_live()?;
-    Ok(
-        no_media_close_receipt(expected_sha,disposition)
-        .to_string(),
-    )
+    Ok(no_media_close_receipt(expected_sha, disposition).to_string())
 }
 
-fn no_media_close_receipt(expected_sha:&str,disposition:&str)->serde_json::Value {
- let mut receipt=json!({"$schema":"rusty.quest.embedded_duplex.no_media_closed.v1",
+fn no_media_close_receipt(expected_sha: &str, disposition: &str) -> serde_json::Value {
+    let mut receipt = json!({"$schema":"rusty.quest.embedded_duplex.no_media_closed.v1",
      "config_sha256":expected_sha,"disposition":disposition});
- if crate::own_stereo_capture_runtime::capture_route_selected() {
-     receipt["cleanup_scope"]=json!("peer_subscription_only");
-     receipt["own_app_capture_retained"]=json!(crate::own_stereo_capture_runtime::capture_claimed());
- }
- receipt
+    if crate::own_stereo_capture_runtime::capture_route_selected() {
+        receipt["cleanup_scope"] = json!("peer_subscription_only");
+        receipt["own_app_capture_retained"] =
+            json!(crate::own_stereo_capture_runtime::capture_claimed());
+    }
+    receipt
 }
 
 fn process_idle_for_enrollment() -> bool {
@@ -545,40 +549,97 @@ fn initialize_with_capability<T, R>(
     publish(&mut state, built?)
 }
 
-fn authenticate_own_capture_lock(config:&QuestBrokerRuntimeConfig)->Result<Option<String>,String> {
-    use rusty_quest_feature_activation::{inspect_feature_lock_v2,FeatureLockV2Effect};
-    let compiled=crate::own_stereo_capture_runtime::own_capture_provider_requested();
-    let mut admitted:Option<String>=None;
-    for authority in config.packaged_authority.client_locks.iter().filter_map(|client|client.media_lifecycle_authority.as_ref()) {
-        let lock:Value=serde_json::from_str(&authority.app_feature_lock_json).map_err(safe_decode)?;
-        let rows:Vec<_>=lock.get("features").and_then(Value::as_array).into_iter().flatten()
-            .filter(|row|row.get("module_id").and_then(Value::as_str)==Some("quest-stereo-input-set")).collect();
-        if rows.is_empty() {continue;}
-        if rows.len()!=1 {return Err("Own feature module duplicated".into());}
-        let row=rows[0];
-        if row.get("selected").and_then(Value::as_bool)!=Some(true) {
-            if compiled {return Err("compiled Own provider feature unselected".into());}continue;
+fn authenticate_own_capture_lock(
+    config: &QuestBrokerRuntimeConfig,
+) -> Result<Option<String>, String> {
+    use rusty_quest_feature_activation::{inspect_feature_lock_v2, FeatureLockV2Effect};
+    let compiled = crate::own_stereo_capture_runtime::own_capture_provider_requested();
+    let mut admitted: Option<String> = None;
+    for authority in config
+        .packaged_authority
+        .client_locks
+        .iter()
+        .filter_map(|client| client.media_lifecycle_authority.as_ref())
+    {
+        let lock: Value =
+            serde_json::from_str(&authority.app_feature_lock_json).map_err(safe_decode)?;
+        let rows: Vec<_> = lock
+            .get("features")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                row.get("module_id").and_then(Value::as_str) == Some("quest-stereo-input-set")
+            })
+            .collect();
+        if rows.is_empty() {
+            continue;
         }
-        if !compiled {return Err("selected Own feature provider unavailable".into());}
-        let feature=row.get("feature_id").and_then(Value::as_str).ok_or("Own feature identity absent")?;
-        let listed=lock.get("selected_features").and_then(Value::as_array).is_some_and(|values|values.iter().filter(|v|v.as_str()==Some(feature)).count()==1);
-        if !listed || row.get("owner_lane").and_then(Value::as_str)!=Some("quest-adapter")
-            || row.get("run_activation_default").and_then(Value::as_str)!=Some("disabled")
-            || row.pointer("/activation/rule").and_then(Value::as_str)!=Some("selected-lock-and-runtime-input") {
+        if rows.len() != 1 {
+            return Err("Own feature module duplicated".into());
+        }
+        let row = rows[0];
+        if row.get("selected").and_then(Value::as_bool) != Some(true) {
+            if compiled {
+                return Err("compiled Own provider feature unselected".into());
+            }
+            continue;
+        }
+        if !compiled {
+            return Err("selected Own feature provider unavailable".into());
+        }
+        let feature = row
+            .get("feature_id")
+            .and_then(Value::as_str)
+            .ok_or("Own feature identity absent")?;
+        let listed = lock
+            .get("selected_features")
+            .and_then(Value::as_array)
+            .is_some_and(|values| {
+                values
+                    .iter()
+                    .filter(|v| v.as_str() == Some(feature))
+                    .count()
+                    == 1
+            });
+        if !listed
+            || row.get("owner_lane").and_then(Value::as_str) != Some("quest-adapter")
+            || row.get("run_activation_default").and_then(Value::as_str) != Some("disabled")
+            || row.pointer("/activation/rule").and_then(Value::as_str)
+                != Some("selected-lock-and-runtime-input")
+        {
             return Err("Own feature activation scope rejected".into());
         }
-        let inspected=inspect_feature_lock_v2(&authority.app_feature_lock_json,&authority.app_feature_lock_sha256,feature)
-            .map_err(|_|"Own feature exact lock authentication rejected")?;
-        if inspected.module_id!="quest-stereo-input-set" || inspected.receipt_schema!="rusty.quest.stereo_input_set.activation_receipt.v1"
-            || !inspected.runtime_inputs.iter().any(|input|input=="quest.stereo.concurrent-inputs")
-            || !inspected.selected_has_effect(FeatureLockV2Effect::Input,"quest.stereo.concurrent-inputs")
-            || !inspected.union_has_effect(FeatureLockV2Effect::Input,"quest.stereo.concurrent-inputs") {
+        let inspected = inspect_feature_lock_v2(
+            &authority.app_feature_lock_json,
+            &authority.app_feature_lock_sha256,
+            feature,
+        )
+        .map_err(|_| "Own feature exact lock authentication rejected")?;
+        if inspected.module_id != "quest-stereo-input-set"
+            || inspected.receipt_schema != "rusty.quest.stereo_input_set.activation_receipt.v1"
+            || !inspected
+                .runtime_inputs
+                .iter()
+                .any(|input| input == "quest.stereo.concurrent-inputs")
+            || !inspected
+                .selected_has_effect(FeatureLockV2Effect::Input, "quest.stereo.concurrent-inputs")
+            || !inspected
+                .union_has_effect(FeatureLockV2Effect::Input, "quest.stereo.concurrent-inputs")
+        {
             return Err("Own feature runtime input rejected".into());
         }
-        if admitted.as_ref().is_some_and(|sha|sha!=&inspected.raw_sha256) {return Err("Own feature client locks disagree".into());}
-        admitted=Some(inspected.raw_sha256);
+        if admitted
+            .as_ref()
+            .is_some_and(|sha| sha != &inspected.raw_sha256)
+        {
+            return Err("Own feature client locks disagree".into());
+        }
+        admitted = Some(inspected.raw_sha256);
     }
-    if compiled && admitted.is_none() {return Err("compiled Own provider authenticated feature absent".into());}
+    if compiled && admitted.is_none() {
+        return Err("compiled Own provider authenticated feature absent".into());
+    }
     Ok(admitted)
 }
 
@@ -593,15 +654,33 @@ fn build_host(
     let capability = native_fence_jni::active()?;
     let config: QuestBrokerRuntimeConfig =
         serde_json::from_str(&config_json).map_err(safe_decode)?;
-    let own_capture_lock=authenticate_own_capture_lock(&config)?;
+    let own_capture_lock = authenticate_own_capture_lock(&config)?;
     let installed_signing_certificate_sha256 = {
-        let grants: Vec<_> = config.admission.snapshot.grants.iter()
-            .filter(|g| g.identity.platform_subject == exact_staged_route(&expected_sha)
-                .map(|r| r.package_name).unwrap_or_default()).collect();
-        let [grant] = grants.as_slice() else { return Err("installed product identity ambiguous".into()); };
-        let fingerprint = grant.identity.signing_fingerprint.strip_prefix("sha256:")
+        let grants: Vec<_> = config
+            .admission
+            .snapshot
+            .grants
+            .iter()
+            .filter(|g| {
+                g.identity.platform_subject
+                    == exact_staged_route(&expected_sha)
+                        .map(|r| r.package_name)
+                        .unwrap_or_default()
+            })
+            .collect();
+        let [grant] = grants.as_slice() else {
+            return Err("installed product identity ambiguous".into());
+        };
+        let fingerprint = grant
+            .identity
+            .signing_fingerprint
+            .strip_prefix("sha256:")
             .ok_or("installed signing certificate prefix")?;
-        if fingerprint.len()!=64 || !fingerprint.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        if fingerprint.len() != 64
+            || !fingerprint
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
             return Err("installed signing certificate bounds".into());
         }
         fingerprint.to_owned()
@@ -702,14 +781,29 @@ fn build_host(
     let remote_public_key = decode_key(&bootstrap.remote_public_key_hex)?;
     let local_public_key = callbacks.local_public_key()?;
     let owner_dispatch_failure = Arc::new(Mutex::new(None));
-    let cleanup = retained_cleanup_host::Cleanup::new(authority.clone(),callbacks.clone(),clock.clone(),
-        bootstrap.local_peer_id.clone(),bootstrap.remote_peer_id.clone(),bootstrap.remote_key_id.clone(),
-        remote_public_key,capability.generation,owner_dispatch_failure.clone())?;
+    let cleanup = retained_cleanup_host::Cleanup::new(
+        authority.clone(),
+        callbacks.clone(),
+        clock.clone(),
+        bootstrap.local_peer_id.clone(),
+        bootstrap.remote_peer_id.clone(),
+        bootstrap.remote_key_id.clone(),
+        remote_public_key,
+        capability.generation,
+        owner_dispatch_failure.clone(),
+    )?;
     let cleanup_replay = serde_json::from_str(&callbacks.load_retained_cleanup_replay()?)
         .map_err(|_| "retained cleanup replay decode")?;
-    let cleanup_server = retained_cleanup_host::Server::restore(bootstrap.local_peer_id.clone(),
-        callbacks.key_id().to_owned(),cleanup.clone(),callbacks.clone(),callbacks.clone(),clock.clone(),
-        cleanup_replay,callbacks.clone())?;
+    let cleanup_server = retained_cleanup_host::Server::restore(
+        bootstrap.local_peer_id.clone(),
+        callbacks.key_id().to_owned(),
+        cleanup.clone(),
+        callbacks.clone(),
+        callbacks.clone(),
+        clock.clone(),
+        cleanup_replay,
+        callbacks.clone(),
+    )?;
     let remote = RemoteOwnerDispatchExecutor::new(
         callbacks.clone(),
         callbacks.clone(),
@@ -727,12 +821,20 @@ fn build_host(
         capability.generation,
         bootstrap.local_peer_id.clone(),
         placements.clone(),
-        Box::new(retained_cleanup_host::RetainingRegistry {cleanup:cleanup.clone(),callbacks:callbacks.clone()}),
+        Box::new(retained_cleanup_host::RetainingRegistry {
+            cleanup: cleanup.clone(),
+            callbacks: callbacks.clone(),
+        }),
         Box::new(remote),
         Box::new(projections),
         Box::new(clock.clone()),
     )?;
-    let executor=retained_cleanup_host::Executor::new(executor,cleanup.clone(),placements.clone(),route_grant_binding.clone());
+    let executor = retained_cleanup_host::Executor::new(
+        executor,
+        cleanup.clone(),
+        placements.clone(),
+        route_grant_binding.clone(),
+    );
     provider
         .install_media_owner_executor(Box::new(executor))
         .map_err(|_| "owner executor rejected")?;
@@ -741,7 +843,10 @@ fn build_host(
     let server = OwnerDispatchServer::restore(
         bootstrap.local_peer_id.clone(),
         verifier.clone(),
-        retained_cleanup_host::RetainingRegistry {cleanup:cleanup.clone(),callbacks:callbacks.clone()},
+        retained_cleanup_host::RetainingRegistry {
+            cleanup: cleanup.clone(),
+            callbacks: callbacks.clone(),
+        },
         callbacks.clone(),
         Box::new(clock.clone()),
         bootstrap.replay,
@@ -756,7 +861,11 @@ fn build_host(
         bootstrap.activation_replay,
         Box::new(callbacks.clone()),
     )?;
-    let own_capture_enabled=if own_capture_lock.is_some() {crate::own_stereo_capture_runtime::prepare_capture_bootstrap()?} else {false};
+    let own_capture_enabled = if own_capture_lock.is_some() {
+        crate::own_stereo_capture_runtime::prepare_capture_bootstrap()?
+    } else {
+        false
+    };
     let mut result = json!({"$schema":"rusty.quest.embedded_duplex.runtime_initialized.v1",
         "runtime": status, "owner_placements": placements,
         "incoming_owner_placements": incoming_placements,
@@ -765,11 +874,11 @@ fn build_host(
         "app_process_generation":capability.binding.generation,
         "app_record_sha256":capability.binding.record_sha256});
     if own_capture_enabled {
-          result["own_stereo_capture_enabled"]=json!(true);
-          result["own_capture_bootstrap"]=json!({"scope":"app_owned_capture_bootstrap","app_feature_lock_sha256":own_capture_lock,
+        result["own_stereo_capture_enabled"] = json!(true);
+        result["own_capture_bootstrap"] = json!({"scope":"app_owned_capture_bootstrap","app_feature_lock_sha256":own_capture_lock,
               "runtime_input":"quest.stereo.concurrent-inputs","renderer_effective":false});
-      }
-    let result=result.to_string();
+    }
+    let result = result.to_string();
     Ok((
         Host {
             capability,
@@ -835,16 +944,27 @@ fn read_string(env: &mut JNIEnv<'_>, input: &JString<'_>, max: usize) -> Result<
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_selectLocalAfterTerminal(
- mut env:JNIEnv<'_>,_class:JClass<'_>,expected_sha:JString<'_>)->jstring {
- let result=(|| {
-  let sha=read_string(&mut env,&expected_sha,64)?;
-  let state=process().lock().map_err(|_|"process state poisoned")?;
-  let closed=!state.initializing&&!state.closing&&!state.lease_integrity_failed&&state.host.is_none()
-   &&state.host_leases==0&&state.last_closed_sha256.as_deref()==Some(sha.as_str());
-  crate::own_stereo_capture_runtime::select_local_after_terminal(closed)?;
-  Ok(serde_json::json!({"schema":"rusty.quest.local_rollback_native.v1","config_sha256":sha,
-   "feature_enabled":false,"physical_cleanup":"terminal","scope":"route-selection-only"}).to_string())
- })(); return_string(&mut env,result)
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    expected_sha: JString<'_>,
+) -> jstring {
+    let result = (|| {
+        let sha = read_string(&mut env, &expected_sha, 64)?;
+        let state = process().lock().map_err(|_| "process state poisoned")?;
+        let closed = !state.initializing
+            && !state.closing
+            && !state.lease_integrity_failed
+            && state.host.is_none()
+            && state.host_leases == 0
+            && state.last_closed_sha256.as_deref() == Some(sha.as_str());
+        crate::own_stereo_capture_runtime::select_local_after_terminal(closed)?;
+        Ok(
+            serde_json::json!({"schema":"rusty.quest.local_rollback_native.v1","config_sha256":sha,
+   "feature_enabled":false,"physical_cleanup":"terminal","scope":"route-selection-only"})
+            .to_string(),
+        )
+    })();
+    return_string(&mut env, result)
 }
 
 fn return_string(env: &mut JNIEnv<'_>, result: Result<String, String>) -> jstring {
@@ -983,14 +1103,37 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             return result;
         }
         if bytes.starts_with(retained_cleanup_host::PREPARE_MAGIC) {
-            let result=owner_failure::observe(host.cleanup.prepare_frame(&bytes), &host.owner_dispatch_failure, OwnerFailureStage::Prepare);
-            owner_failure::observe(host.capability.require_live(), &host.owner_dispatch_failure, OwnerFailureStage::Capability)?;
+            let result = owner_failure::observe(
+                host.cleanup.prepare_frame(&bytes),
+                &host.owner_dispatch_failure,
+                OwnerFailureStage::Prepare,
+            );
+            owner_failure::observe(
+                host.capability.require_live(),
+                &host.owner_dispatch_failure,
+                OwnerFailureStage::Capability,
+            )?;
             return result;
         }
-        if let Ok(request)=serde_json::from_slice::<rusty_quest_media_stream_android::RetainedCleanupDispatchRequest>(&bytes) {
-            host.owner_effect_attempted.store(true,Ordering::SeqCst);
-            let result=owner_failure::observe((||{Checkout::take(host.cleanup_server.clone())?.get().handle(&request)})(), &host.owner_dispatch_failure, OwnerFailureStage::Dispatch);
-            owner_failure::observe(host.capability.require_live(), &host.owner_dispatch_failure, OwnerFailureStage::Capability)?;
+        if let Ok(request) = serde_json::from_slice::<
+            rusty_quest_media_stream_android::RetainedCleanupDispatchRequest,
+        >(&bytes)
+        {
+            host.owner_effect_attempted.store(true, Ordering::SeqCst);
+            let result = owner_failure::observe(
+                (|| {
+                    Checkout::take(host.cleanup_server.clone())?
+                        .get()
+                        .handle(&request)
+                })(),
+                &host.owner_dispatch_failure,
+                OwnerFailureStage::Dispatch,
+            );
+            owner_failure::observe(
+                host.capability.require_live(),
+                &host.owner_dispatch_failure,
+                OwnerFailureStage::Capability,
+            )?;
             return result;
         }
         host.owner_effect_attempted.store(true, Ordering::SeqCst);
@@ -1106,7 +1249,12 @@ fn complete_start(host: &Host, input: &str) -> Result<String, String> {
             provider
                 .get()
                 .complete_media_start_for_activation(&client, host.clock.now_ms()?)
-                .map_err(|error| crate::embedded_duplex::cleanup_failure::describe(crate::embedded_duplex::cleanup_failure::Stage::Start, &error))?
+                .map_err(|error| {
+                    crate::embedded_duplex::cleanup_failure::describe(
+                        crate::embedded_duplex::cleanup_failure::Stage::Start,
+                        &error,
+                    )
+                })?
         }; // Provider restored before signing, transport or graph callbacks.
         sender.get().pending = Some(PendingActivation {
             client_id: request.client_id,
@@ -1166,8 +1314,7 @@ fn complete_start(host: &Host, input: &str) -> Result<String, String> {
         let expected_grant = host.current_grant_id()?;
         if response.status == OwnerDispatchStatus::Completed
             && response.readback.as_ref().map_or(true, |readback| {
-                readback.route_grant_id != expected_grant
-                    || readback.resulting_state_revision == 0
+                readback.route_grant_id != expected_grant || readback.resulting_state_revision == 0
             })
         {
             return Err("activation acknowledgement route differs".into());
@@ -1256,7 +1403,8 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
         }
         "resume_media_start_abort" => {
             let request: AbortInput = serde_json::from_str(input).map_err(safe_decode)?;
-            let grant = serde_json::from_value(json!(host.current_grant_id()?)).map_err(safe_decode)?;
+            let grant =
+                serde_json::from_value(json!(host.current_grant_id()?)).map_err(safe_decode)?;
             let local = serde_json::from_value(json!(host.local_peer_id)).map_err(safe_decode)?;
             let remote = serde_json::from_value(json!(host.remote_peer_id)).map_err(safe_decode)?;
             let current = host
@@ -1277,7 +1425,8 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
         }
         "inspect_retained_cleanup_target" => {
             let request: CleanupTargetInput = serde_json::from_str(input).map_err(safe_decode)?;
-            let grant = serde_json::from_value(json!(host.current_grant_id()?)).map_err(safe_decode)?;
+            let grant =
+                serde_json::from_value(json!(host.current_grant_id()?)).map_err(safe_decode)?;
             let requester =
                 serde_json::from_value(json!(request.requester_id)).map_err(safe_decode)?;
             let lease =
@@ -1661,16 +1810,28 @@ mod no_media_close_tests {
 }
 
 /// Typed caller is the process-held native Peer cleanup operation; IDs are never shell inputs.
-fn install_retained_cleanup_requester(host:&Host, requester_id:&str, requester_lease_id:&str)->Result<(),String>{
+fn install_retained_cleanup_requester(
+    host: &Host,
+    requester_id: &str,
+    requester_lease_id: &str,
+) -> Result<(), String> {
     host.capability.require_live()?;
-    let grant=host.current_grant_id()?;
+    let grant = host.current_grant_id()?;
     // Derive actual local cleanup authority before installing this source-bound requester.
     host.authority.retained_local_cleanup_projection(
         &serde_json::from_value(json!(grant)).map_err(safe_decode)?,
         &serde_json::from_value(json!(requester_id)).map_err(safe_decode)?,
         &serde_json::from_value(json!(requester_lease_id)).map_err(safe_decode)?,
-        &serde_json::from_value(json!(host.local_peer_id)).map_err(safe_decode)?,host.clock.now_ms()?)?;
-    *host.cleanup.requester.lock().map_err(|_| "cleanup requester poisoned")?=Some(retained_cleanup_host::Requester {
-        id:requester_id.to_owned(),lease:requester_lease_id.to_owned()});
+        &serde_json::from_value(json!(host.local_peer_id)).map_err(safe_decode)?,
+        host.clock.now_ms()?,
+    )?;
+    *host
+        .cleanup
+        .requester
+        .lock()
+        .map_err(|_| "cleanup requester poisoned")? = Some(retained_cleanup_host::Requester {
+        id: requester_id.to_owned(),
+        lease: requester_lease_id.to_owned(),
+    });
     Ok(())
 }

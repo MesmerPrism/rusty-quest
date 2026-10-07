@@ -22,6 +22,7 @@ function New-IsolatedBrokerCargoMaterialization {
     $questCrates = @(
         "rusty-quest-broker-product", "rusty-quest-broker-authority",
         "rusty-quest-broker-admission", "rusty-quest-broker-contracts",
+        "rusty-quest-feature-activation",
         "rusty-quest-media-stream", "rusty-quest-media-stream-android", "rusty-quest-device-link")
     foreach ($crate in $questCrates) {
         Copy-Item -LiteralPath (Join-Path $RepoRoot "crates\$crate") `
@@ -52,6 +53,7 @@ members = [
   "crates/rusty-quest-broker-authority",
   "crates/rusty-quest-broker-admission",
   "crates/rusty-quest-broker-contracts",
+  "crates/rusty-quest-feature-activation",
   "crates/rusty-quest-media-stream",
   "crates/rusty-quest-media-stream-android",
   "crates/rusty-quest-device-link",
