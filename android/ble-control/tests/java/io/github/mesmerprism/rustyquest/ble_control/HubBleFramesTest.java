@@ -27,4 +27,3 @@ public final class HubBleFramesTest {
         System.out.println("HubBleFramesTest PASS "+cases+" production cases; no device/authority proof");
     }
 }
-

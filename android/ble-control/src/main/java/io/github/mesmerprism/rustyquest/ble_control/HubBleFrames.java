@@ -49,4 +49,3 @@ public final class HubBleFrames {
     private static int u16(byte[] b,int i) {return (b[i]&255)*256+(b[i+1]&255);}
     private static void put16(byte[] b,int i,int value) {b[i]=(byte)(value>>8);b[i+1]=(byte)value;}
 }
-
