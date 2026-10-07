@@ -71,7 +71,9 @@ pub(crate) fn observe<T>(
             if first.is_none() {
                 *first = Some(if matches!(stage, Stage::OrdinaryCallback) {
                     ordinary_cause(error).unwrap_or(stage.code())
-                } else { stage.code() });
+                } else {
+                    stage.code()
+                });
             }
         }
     }
@@ -88,7 +90,9 @@ fn ordinary_cause(error: &str) -> Option<&'static str> {
         "verified readback JSON is invalid" => "ORDINARY_READBACK_INVALID",
         "runtime busy" => "ORDINARY_RUNTIME_BUSY",
         "runtime slot poisoned" => "ORDINARY_RUNTIME_POISONED",
-        "java_bridge.execute_call" | "java_bridge.execute_call.exception" => "ORDINARY_JAVA_CALLBACK_REJECTED",
+        "java_bridge.execute_call" | "java_bridge.execute_call.exception" => {
+            "ORDINARY_JAVA_CALLBACK_REJECTED"
+        }
         "java_bridge.attach" => "ORDINARY_JAVA_ATTACH_UNAVAILABLE",
         _ => return None,
     })
@@ -122,25 +126,49 @@ mod tests {
     use super::*;
     #[test]
     fn ordinary_cause_is_exact_closed_first_and_never_rewrites_result() {
-        for error in ["remote platform effect uncertain", "remote owner dispatch rejected",
-            "verified owner effect mismatch", "verified readback JSON is invalid",
-            "runtime busy", "runtime slot poisoned", "java_bridge.execute_call",
-            "java_bridge.execute_call.exception", "java_bridge.attach"] {
+        for error in [
+            "remote platform effect uncertain",
+            "remote owner dispatch rejected",
+            "verified owner effect mismatch",
+            "verified readback JSON is invalid",
+            "runtime busy",
+            "runtime slot poisoned",
+            "java_bridge.execute_call",
+            "java_bridge.execute_call.exception",
+            "java_bridge.attach",
+        ] {
             let slot = Mutex::new(None);
-            assert_eq!(observe::<()>(Err(error.into()), &slot, Stage::OrdinaryCallback), Err(error.into()));
+            assert_eq!(
+                observe::<()>(Err(error.into()), &slot, Stage::OrdinaryCallback),
+                Err(error.into())
+            );
             let first = ordinary_cause(error).unwrap();
             assert_eq!(*slot.lock().unwrap(), Some(first));
-            assert!(observe::<()>(Err("later private cleanup".into()), &slot, Stage::SourceReadback).is_err());
+            assert!(observe::<()>(
+                Err("later private cleanup".into()),
+                &slot,
+                Stage::SourceReadback
+            )
+            .is_err());
             assert_eq!(*slot.lock().unwrap(), Some(first));
             assert_eq!(observe(Ok(7), &slot, Stage::OrdinaryCallback), Ok(7));
         }
-        for error in ["private payload", "remote platform effect uncertain SECRET", ""] {
+        for error in [
+            "private payload",
+            "remote platform effect uncertain SECRET",
+            "",
+        ] {
             let slot = Mutex::new(None);
             assert!(observe::<()>(Err(error.into()), &slot, Stage::OrdinaryCallback).is_err());
             assert_eq!(*slot.lock().unwrap(), Some("RETAINED_ORDINARY_CALLBACK"));
         }
         let slot = Mutex::new(None);
-        assert!(observe::<()>(Err("remote platform effect uncertain".into()), &slot, Stage::RemoteProof).is_err());
+        assert!(observe::<()>(
+            Err("remote platform effect uncertain".into()),
+            &slot,
+            Stage::RemoteProof
+        )
+        .is_err());
         assert_eq!(*slot.lock().unwrap(), Some("RETAINED_REMOTE_PROOF"));
     }
     #[test]

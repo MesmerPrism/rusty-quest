@@ -495,10 +495,12 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
         // Abort carriers retain operation=Start, but Stop/Cleanup must never
         // replace the forward ticket/projection needed to authenticate cleanup.
         let retain_forward = ticket.operation == MediaStreamPlatformOperation::Start
-            && matches!(ticket.action_kind,
+            && matches!(
+                ticket.action_kind,
                 rusty_quest_media_stream::MediaStreamOwnerActionKind::ArmCleanup
-                | rusty_quest_media_stream::MediaStreamOwnerActionKind::ArmReceiver
-                | rusty_quest_media_stream::MediaStreamOwnerActionKind::Start);
+                    | rusty_quest_media_stream::MediaStreamOwnerActionKind::ArmReceiver
+                    | rusty_quest_media_stream::MediaStreamOwnerActionKind::Start
+            );
         if retain_forward {
             let mut next = self
                 .cleanup

@@ -142,6 +142,15 @@ owners through distinct signed retained-abort v2 preparation/effect domains.
 The actual target ticket remains Stop and its registry readback is verified
 before projection onto the original Start rollback carrier. Existing retained
 cleanup v1 remains Stop-only. Missing remote original state stays Pending.
+
+Forward Start retention includes only ArmCleanup, ArmReceiver and Start owners.
+A rollback carrier keeps operation Start but has Stop/Cleanup action kinds;
+executing it must preserve the original forward ticket, projection and any
+verified forward effect. An unprepared receiver's terminal Stop reports and
+retains `stopped`; Cleanup reports and retains `cleaned`, after the same reader
+release and projection retirement barriers. The packaged registry still joins
+the readback to its fresh physical snapshot. These source contracts cannot
+reconstruct an original already overwritten by an older installed candidate.
 No owner is absent merely because Start never reached its ticket: local cleanup
 must enter the exact packaged registry, stop any independent resources and
 verify its current terminal snapshot. Unknown or stale snapshots remain Pending.

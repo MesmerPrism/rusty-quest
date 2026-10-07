@@ -19,5 +19,5 @@ $exe=Join-Path $OutputRoot 'prepare-host.exe'
 if($LASTEXITCODE-ne0){throw 'Actual production-block host compilation failed'}
 & $exe --test-threads=1
 if($LASTEXITCODE-ne0){throw 'Actual production-block host controls failed'}
-$result=@{schema='rusty.quest.retained_prepare_diagnostic_host.v1';status='passed';tests=6;production_block_executed=$true;source_path=$sourcePath;source_sha256=(Get-FileHash $sourcePath).Hash.ToLowerInvariant();limits='Exact outgoing production block and production first-failure latch; authority/callback/entropy/serialization seams explicitly modeled. No JNI/Android native typecheck, real peer exchange, lifecycle completion, APK or device effect.';device_calls=0}
+$result=@{schema='rusty.quest.retained_prepare_diagnostic_host.v1';status='passed';tests=7;production_block_executed=$true;source_path=$sourcePath;source_sha256=(Get-FileHash $sourcePath).Hash.ToLowerInvariant();limits='Exact outgoing production block and production first-failure latch; authority/callback/entropy/serialization seams explicitly modeled. No JNI/Android native typecheck, real peer exchange, lifecycle completion, APK or device effect.';device_calls=0}
 [IO.File]::WriteAllText((Join-Path $OutputRoot 'RESULT.json'),($result|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))

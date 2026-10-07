@@ -16,10 +16,11 @@ def main():
     paths += [root/'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexPlatform.java',Path(v.rustc).resolve(),Path(__file__).resolve()]
     pins=[pin(p) for p in paths]
     runtime=(native/'runtime_host.rs').read_text();executor=(native/'retained_cleanup_host.rs').read_text();life=(native/'peer_lifecycle.rs').read_text();bridge=(native/'java_bridge.rs').read_text();java=paths[7].read_text()
-    assert 'owner_failure::observe(host.cleanup.prepare_frame(&bytes)' in runtime
-    assert 'owner_failure::observe((||{Checkout::take(host.cleanup_server.clone())?.get().handle(&request)})()' in runtime
-    assert 'owner_failure::observe(result, &self.cleanup.failure, failure_stage)' in executor
-    assert 'owner_failure_diagnostic().ok()' not in life and '"owner_failure_diagnostic_status":owner_diagnostic_status' in life
+    compact=lambda value: ''.join(value.split())
+    assert 'owner_failure::observe(host.cleanup.prepare_frame(&bytes)' in compact(runtime)
+    assert 'owner_failure::observe((||{Checkout::take(host.cleanup_server.clone())?.get().handle(&request)})()' in compact(runtime)
+    assert compact('owner_failure::observe(result, &self.cleanup.failure, failure_stage)') in compact(executor)
+    assert 'owner_failure_diagnostic().ok()' not in compact(life) and '"owner_failure_diagnostic_status":owner_diagnostic_status' in compact(life)
     for stage in ['OrdinaryCallback','LocalProjection','LocalCallback','RemotePrepare','RemotePrepareProof','RemoteProjection','RemoteCommit','RemoteExchange','RemoteProof','SourceReadback']:
         assert 'failure_stage = OwnerFailureStage::'+stage+';' in executor
     retained=java[java.index('public String executeRetainedCleanupAndVerify'):java.index('public synchronized void persistCleanupPreparations')]
