@@ -1,0 +1,73 @@
+{
+  "schema": "rusty.morphospace.workflow.feature_descriptor.v1",
+  "feature_id": "quest-hub-ble-helper-v2",
+  "module_id": "quest-hub-ble-helper",
+  "version": "2.0.0",
+  "owner_lane": "rusty-quest",
+  "source": {
+    "repo_id": "rusty-quest",
+    "revision": "b269d6bab40a6da1c17afb079c26a967584e18d5",
+    "path": "apps/connection-hub-ble-bridge-android/AndroidManifest.xml",
+    "sha256": "34a276b547f0bb2ead68e3e6cfae38c5cef7d6275f55c8922859d131ff4a0374"
+  },
+  "dependencies": [
+    "quest-ble-carrier-v1"
+  ],
+  "conflicts": [],
+  "exclusive_group": "quest-hub-ble-helper",
+  "effects": {
+    "activities": [
+      "io.github.mesmerprism.rustyquest.connection_hub_ble_bridge.BridgeActivity"
+    ],
+    "assets": [],
+    "commands": [
+      "enable",
+      "disable",
+      "status",
+      "io.github.mesmerprism.rustyquest.connection_hub_ble_bridge.SHELL_START"
+    ],
+    "inputs": [
+      "quest.hub.ble.helper.manual-enable"
+    ],
+    "markers": [
+      "carrier_ready_now"
+    ],
+    "native_libraries": [],
+    "permissions": [
+      "android.permission.INTERNET",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
+      "android.permission.BLUETOOTH",
+      "android.permission.BLUETOOTH_ADMIN",
+      "android.permission.BLUETOOTH_CONNECT",
+      "android.permission.BLUETOOTH_ADVERTISE",
+      "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"
+    ],
+    "queries": [
+      "io.github.mesmerprism.rustymanifold.broker"
+    ],
+    "routes": [],
+    "scenes": [],
+    "services": [
+      "io.github.mesmerprism.rustyquest.connection_hub_ble_bridge.BridgeService"
+    ],
+    "shaders": [],
+    "streams": [],
+    "tools": [
+      "tools/Build-ConnectionHubBleBridgeAndroid.ps1",
+      "tools/Test-ConnectionHubBleBridgeAndroid.ps1",
+      "tools/Test-ConnectionHubBleServiceReject.ps1"
+    ]
+  },
+  "parameter_authorities": [],
+  "activation": {
+    "rule": "selected-lock-and-runtime-input",
+    "runtime_inputs": [
+      "quest.hub.ble.helper.manual-enable"
+    ],
+    "receipt_schema": "rusty.quest.hub_ble_carrier_control_receipt.v2",
+    "effective_marker": "carrier_ready_now"
+  },
+  "validation_profile": "ble-helper-host-conformance",
+  "rollback_profile": "rollback"
+}
