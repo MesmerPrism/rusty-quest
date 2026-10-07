@@ -21,6 +21,7 @@ class SpatialVideoProjectionSettingsTest {
   @Test
   fun defaultRemainsThirtyAndLegacyCapsMapWithoutChangingExistingLaunches() {
     val defaults = SpatialVideoProjectionSettings.disabled()
+    assertEquals(3, defaults.maxImages)
     assertEquals(SpatialVideoCadenceMode.Fps30, defaults.cadenceMode)
     assertEquals(30, defaults.fpsCap)
     assertEquals(30, defaults.surfaceOutputCadenceFps)
@@ -71,5 +72,27 @@ class SpatialVideoProjectionSettingsTest {
     assertFalse(marker.contains("private-runtime-only"))
     assertFalse(marker.contains("relay.invalid"))
     assertFalse(marker.contains("accepted-session"))
+  }
+
+  @Test
+  fun peerSelectionNeverReplacesColdOrHotCompositorVideoSettings() {
+    val peer =
+        SpatialVideoProjectionSettings.disabled().copy(
+            enabled = true,
+            source = "peer-packed-stereo",
+            brokerPort = 9079,
+            peerSessionId = "peer",
+        )
+    val cold = SpatialVideoProjectionSettings.disabled()
+    val hot =
+        cold.copy(
+            enabled = true,
+            source = "shared-plain-video",
+            path = "content://baseline/file",
+        )
+
+    assertEquals(cold, SpatialFixedDecoderRoleSettingsPolicy.compositorSettings(peer, cold))
+    assertEquals(hot, SpatialFixedDecoderRoleSettingsPolicy.compositorSettings(peer, hot))
+    assertEquals(hot, SpatialFixedDecoderRoleSettingsPolicy.compositorSettings(hot, cold))
   }
 }

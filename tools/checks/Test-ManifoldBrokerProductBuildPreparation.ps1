@@ -1,10 +1,13 @@
-param([string]$RepoRoot = ".")
+param(
+    [string]$RepoRoot = ".",
+    [string]$LegacyManifoldSourceRoot = $env:RUSTY_QUEST_LEGACY_COMPATIBILITY_SOURCE_ROOT
+)
 
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path -LiteralPath $RepoRoot).Path
 $build = Join-Path $repo "tools\Build-ManifoldBrokerAndroid.ps1"
 $manifoldFixtures = Join-Path $repo "..\rusty-manifold\fixtures\broker-product"
-$testRoot = Join-Path $repo "target\broker-product-build-preparation-test"
+$testRoot = Join-Path $repo ("target\broker-product-build-preparation-test-" + [guid]::NewGuid().ToString('N'))
 $buildSource = Get-Content -Raw -LiteralPath $build
 if ($buildSource -notmatch '\$schema''\s*=\s*"rusty\.manifold\.broker\.adapter_config\.v2"' -or
     $buildSource -notmatch 'product_lock_sha256\s*=\s*"sha256:\$\(\[string\]\$productInputs\.manifold_lock_sha256\)"') {
@@ -91,7 +94,22 @@ Assert-Rejected -Label "sensitive product without compatibility switch" -Action 
 }
 
 $legacyOut = Join-Path $testRoot "legacy"
-& $build -LegacyCameraP2pCompatibility -OutDir $legacyOut -PrepareOnly | Out-Null
+$legacySupplierArguments = @{}
+if (-not [string]::IsNullOrWhiteSpace($LegacyManifoldSourceRoot)) {
+    # Only this inert compatibility fixture uses its separately approved source.
+    # The builder still authenticates the clean Git tuple and exact spec/lock bytes.
+    $legacySupplierArguments.ManifoldSourceRoot = (Resolve-Path -LiteralPath $LegacyManifoldSourceRoot).Path
+    $currentManifoldRoot = (Resolve-Path -LiteralPath (Join-Path $repo "..\rusty-manifold")).Path
+    $currentRevision = (& git -C $currentManifoldRoot rev-parse HEAD).Trim()
+    $legacyRevision = (& git -C $legacySupplierArguments.ManifoldSourceRoot rev-parse HEAD).Trim()
+    if ($currentRevision -cne $legacyRevision) {
+        Assert-Rejected -Label "current development supplier as legacy compatibility authority" -Action {
+            & $build -LegacyCameraP2pCompatibility -ManifoldSourceRoot $currentManifoldRoot `
+                -OutDir (Join-Path $testRoot "wrong-compatibility-supplier") -PrepareOnly
+        }
+    }
+}
+& $build -LegacyCameraP2pCompatibility @legacySupplierArguments -OutDir $legacyOut -PrepareOnly | Out-Null
 $legacyReceipt = Get-Content -Raw -LiteralPath (Join-Path $legacyOut "product-inputs\product-package-inputs.json") | ConvertFrom-Json
 if ($legacyReceipt.product_id -ne "broker.legacy_camera_p2p.standalone" -or
     @($legacyReceipt.features) -notcontains "camera_media" -or

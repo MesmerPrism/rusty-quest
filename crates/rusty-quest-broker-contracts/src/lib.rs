@@ -7,6 +7,7 @@ use std::{collections::BTreeSet, path::Path};
 
 use rusty_manifold_broker_product::{ManifoldBrokerFeature, ManifoldBrokerProductLock};
 use rusty_manifold_media_session::ManifoldMediaSessionProductBinding;
+use rusty_quest_feature_activation::{inspect_feature_lock_v2, FeatureLockV2Effect};
 use rusty_quest_media_stream::{MediaStreamOwnerKind, MediaStreamRuntimeProductBinding};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -128,6 +129,21 @@ pub struct BrokerMediaLifecycleLock {
     pub app_feature_lock_sha256: String,
     /// Exact feature-lock revision.
     pub app_feature_lock_revision: u64,
+    /// Selected app feature, present for a v2 feature lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_id: Option<String>,
+    /// Selected module identity carried by a v2 feature lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_module_id: Option<String>,
+    /// Project revision carried by a v2 feature lock, independent of its lock revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_project_revision: Option<u64>,
+    /// Resolver fingerprint of a v2 feature lock, distinct from its raw byte digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_resolver_fingerprint: Option<String>,
+    /// Selected feature's activation receipt schema in a v2 lock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_feature_activation_receipt_schema: Option<String>,
     /// Dotted effective activation marker, distinct from the log namespace.
     pub activation_effective_marker: String,
     /// Repo-relative canonical media-binding path.
@@ -464,6 +480,86 @@ fn validate_lifecycle_closure(
 }
 
 fn validate_feature_lock(bytes: &[u8], lock: &BrokerMediaLifecycleLock, errors: &mut Vec<String>) {
+    let is_v2 = serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("schema")
+                .and_then(|schema| schema.as_str())
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some("rusty.morphospace.workflow.feature_lock.v2");
+    if is_v2 {
+        validate_feature_lock_v2(bytes, lock, errors);
+    } else {
+        validate_feature_lock_v1(bytes, lock, errors);
+    }
+}
+
+fn validate_feature_lock_v2(
+    bytes: &[u8],
+    lock: &BrokerMediaLifecycleLock,
+    errors: &mut Vec<String>,
+) {
+    let (
+        Some(feature_id),
+        Some(module_id),
+        Some(project_revision),
+        Some(resolver_fingerprint),
+        Some(receipt_schema),
+    ) = (
+        lock.app_feature_id.as_deref(),
+        lock.app_feature_module_id.as_deref(),
+        lock.app_feature_project_revision,
+        lock.app_feature_resolver_fingerprint.as_deref(),
+        lock.app_feature_activation_receipt_schema.as_deref(),
+    )
+    else {
+        errors.push("v2 app feature lifecycle bindings missing".to_string());
+        return;
+    };
+    let Ok(json) = std::str::from_utf8(bytes) else {
+        errors.push("app feature lock v2 UTF-8 invalid".to_string());
+        return;
+    };
+    let Some(raw_sha256) = lock.app_feature_lock_sha256.strip_prefix("sha256:") else {
+        errors.push("v2 app feature raw digest invalid".to_string());
+        return;
+    };
+    let Ok(inspected) = inspect_feature_lock_v2(json, raw_sha256, feature_id) else {
+        errors.push("app feature lock v2 inspection rejected".to_string());
+        return;
+    };
+    let expected_resolver = resolver_fingerprint.strip_prefix("sha256:");
+    let required_effects = [
+        (FeatureLockV2Effect::Command, "command.media.session.start"),
+        (FeatureLockV2Effect::Command, "command.media.session.stop"),
+        (FeatureLockV2Effect::Stream, "stream.media.video"),
+    ];
+    if inspected.generation != 2
+        || inspected.project_id != lock.project_id
+        || inspected.project_revision != project_revision
+        || inspected.lock_revision != lock.app_feature_lock_revision
+        || inspected.feature_id != feature_id
+        || inspected.module_id != module_id
+        || inspected.receipt_schema != receipt_schema
+        || inspected.effective_marker != lock.activation_effective_marker
+        || expected_resolver != Some(inspected.resolver_fingerprint.as_str())
+        || required_effects.iter().any(|(kind, value)| {
+            !inspected.selected_has_effect(*kind, value)
+                || !inspected.union_has_effect(*kind, value)
+        })
+    {
+        errors.push("app feature lock v2 lifecycle/effect join invalid".to_string());
+    }
+}
+
+fn validate_feature_lock_v1(
+    bytes: &[u8],
+    lock: &BrokerMediaLifecycleLock,
+    errors: &mut Vec<String>,
+) {
     let Ok(value) = serde_json::from_slice::<WorkflowFeatureLock>(bytes) else {
         errors.push("app feature lock JSON invalid".to_string());
         return;
@@ -565,4 +661,101 @@ fn valid_relative_path(value: &str) -> bool {
         && !Path::new(value).is_absolute()
         && !value.contains(':')
         && !value.split(['/', '\\']).any(|part| part == "..")
+}
+
+#[cfg(test)]
+mod v2_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn fixture() -> (String, BrokerMediaLifecycleLock) {
+        let effects = json!({
+            "permissions": [], "services": [], "activities": [], "queries": [],
+            "tools": [], "assets": [], "shaders": [], "native_libraries": [],
+            "commands": ["command.media.session.start", "command.media.session.stop"],
+            "routes": [], "streams": ["stream.media.video"],
+            "inputs": ["profile:neutral"], "scenes": [],
+            "markers": ["rusty.quest.neutral.effective"]
+        });
+        let mut feature = json!({
+            "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/feature-lock-v2.schema.json",
+            "schema": "rusty.morphospace.workflow.feature_lock.v2",
+            "project_id": "neutral-project", "project_revision": 12, "revision": 9,
+            "generated_at": "2026-09-16T05:34:34.4375593Z",
+            "resolver_version": "rusty-morphospace-feature-resolver/2",
+            "lock_fingerprint": "0".repeat(64),
+            "default_activation": "disabled",
+            "activation_rule": "selected-lock-and-runtime-input",
+            "selected_features": ["neutral-peer-input"], "denied_features": ["other-feature"],
+            "features": [{
+                "feature_id": "neutral-peer-input", "module_id": "neutral-media-module",
+                "version": "1.0.0", "owner_lane": "quest-adapter", "selected": true,
+                "run_activation_default": "disabled",
+                "descriptor": {"path":"features/neutral-peer-input.json", "sha256":"a".repeat(64),
+                    "source_repo":"neutral-repo", "source_revision":"b".repeat(40),
+                    "source_path":"docs/NEUTRAL.md", "source_sha256":"c".repeat(64)},
+                "dependencies": [], "conflicts": ["other-feature"], "exclusive_group": null,
+                "effects": effects, "parameter_authorities": [{"parameter":"media.route", "owner":"rusty-manifold"}],
+                "activation": {"rule":"selected-lock-and-runtime-input",
+                    "runtime_inputs":["profile:neutral"],
+                    "receipt_schema":"rusty.quest.neutral.receipt.v1",
+                    "effective_marker":"rusty.quest.neutral.effective"},
+                "validation_profile":"host", "rollback_profile":"rollback"
+            }],
+            "effect_union": effects
+        });
+        let projected = serde_json::to_string(&feature).expect("canonical fixture");
+        let resolver = format!("{:x}", Sha256::digest(projected.as_bytes()));
+        feature["lock_fingerprint"] = json!(resolver);
+        let text = serde_json::to_string(&feature).expect("bound fixture");
+        let raw = sha256(text.as_bytes());
+        let lifecycle = serde_json::from_value(json!({
+            "$schema":"rusty.quest.broker_media_lifecycle_lock.v2",
+            "client_id":"client.neutral", "package_name":"io.github.example.neutral",
+            "broker_client_lock_id":"client.lock", "marker_namespace":"neutral.log",
+            "project_id":"neutral-project", "product_ids":["neutral-product"],
+            "app_feature_lock_id":"feature.lock", "app_feature_lock_path":"feature.lock.json",
+            "app_feature_lock_fingerprint":raw, "app_feature_lock_sha256":raw,
+            "app_feature_lock_revision":9, "app_feature_id":"neutral-peer-input",
+            "app_feature_module_id":"neutral-media-module", "app_feature_project_revision":12,
+            "app_feature_resolver_fingerprint":format!("sha256:{resolver}"),
+            "app_feature_activation_receipt_schema":"rusty.quest.neutral.receipt.v1",
+            "activation_effective_marker":"rusty.quest.neutral.effective",
+            "media_binding_path":"media.json", "broker_runtime_lease_id":"lease.outer",
+            "media_runtime_lease_id":"lease.inner", "session_id":"session.neutral",
+            "stream_id":"stream.neutral", "render_sink_id":"sink.neutral",
+            "render_sink_capability":"capability.sink.neutral", "runtime_spec_id":"runtime.neutral",
+            "runtime_spec_canonical_sha256":"sha256:".to_owned()+&"1".repeat(64),
+            "manifold_descriptor_canonical_sha256":"sha256:".to_owned()+&"2".repeat(64)
+        }))
+        .expect("lifecycle fixture");
+        (text, lifecycle)
+    }
+
+    #[test]
+    fn v2_lifecycle_joins_selected_feature_and_independent_fingerprint() {
+        let (text, lifecycle) = fixture();
+        let mut errors = Vec::new();
+        validate_feature_lock(text.as_bytes(), &lifecycle, &mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+
+        for case in 0..4 {
+            let mut damaged = lifecycle.clone();
+            match case {
+                0 => damaged.app_feature_module_id = Some("other-module".into()),
+                1 => damaged.app_feature_project_revision = Some(9),
+                2 => damaged.app_feature_resolver_fingerprint = Some(sha256(text.as_bytes())),
+                _ => {
+                    damaged.app_feature_activation_receipt_schema =
+                        Some("rusty.quest.other.receipt.v1".into())
+                }
+            }
+            let mut errors = Vec::new();
+            validate_feature_lock(text.as_bytes(), &damaged, &mut errors);
+            assert_eq!(
+                errors,
+                ["app feature lock v2 lifecycle/effect join invalid"]
+            );
+        }
+    }
 }

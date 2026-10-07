@@ -29,6 +29,7 @@ use crate::camera_latency_diagnostics::{
 };
 use crate::camera_replay_capture::{CameraReplayCaptureRecorder, CameraReplayFrameMetadata};
 use crate::camera_reprojection_guard_band::CameraReprojectionGuardBandFrame;
+use crate::packed_sbs_normalizer::PackedSbsNormalizer;
 use crate::spatial_guide_processing::current_spatial_guide_processing_policy;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
@@ -1045,11 +1046,13 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     extent: vk::Extent2D,
     resources: &CameraHwbProbeResources,
     descriptor_set: vk::DescriptorSet,
-    sampled_left_image: &AhbVulkanSampledImage,
-    sampled_right_image: Option<&AhbVulkanSampledImage>,
+    sampled_left_image: vk::Image,
+    sampled_right_image: Option<vk::Image>,
     transition_left_camera_image: bool,
     transition_right_camera_image: bool,
+    packed_normalizer: Option<(&mut PackedSbsNormalizer, &AhbVulkanSampledImage, bool)>,
     public_guide_targets: Option<&mut SpatialPublicGuideTargets>,
+    stereo_sources: Option<crate::spatial_public_multistack_runtime::StereoRecordingInputs<'_>>,
     elapsed_seconds: f32,
     video_renderer: Option<&mut SpatialVideoProjectionRenderer>,
     video_frame: Option<&SpatialVideoProjectionFrame>,
@@ -1075,19 +1078,18 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
         .map_err(|error| format!("begin-command-buffer-{error:?}"))?;
     gpu_timestamps.begin_frame(device, command_buffer, frame_slot, frame_id);
+    if let Some((normalizer, packed_source, transition_source)) = packed_normalizer {
+        normalizer.record(device, command_buffer, packed_source, transition_source);
+    }
     if transition_left_camera_image {
-        transition_ahb_sampled_image_to_shader_read(
-            device,
-            command_buffer,
-            sampled_left_image.image,
-        );
+        transition_ahb_sampled_image_to_shader_read(device, command_buffer, sampled_left_image);
     }
     if transition_right_camera_image {
         if let Some(sampled_right_image) = sampled_right_image {
             transition_ahb_sampled_image_to_shader_read(
                 device,
                 command_buffer,
-                sampled_right_image.image,
+                sampled_right_image,
             );
         }
     }
@@ -1144,6 +1146,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let retained_unused_video_descriptor = video_renderer
         .as_deref()
         .and_then(SpatialVideoProjectionRenderer::retained_unused_descriptor_binding);
+    let stereo_selected = stereo_sources.is_some();
     let prepared_video = match (video_renderer, video_frame) {
         (Some(renderer), Some(frame))
             if video_settings.active()
@@ -1197,17 +1200,28 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     {
         false
     } else if let Some(targets) = public_guide_targets.as_deref_mut() {
-        guide_record = targets.record_spatial_public_guide_passes(
-            device,
-            command_buffer,
-            gpu_timestamps,
-            frame_slot,
-            descriptor_set,
-            elapsed_seconds,
-            camera_reprojection,
-            projection_guard_band.source_overscan_uv,
-            guide_plan,
-        )?;
+        if let Some(inputs) = stereo_sources {
+            guide_record = targets.record_stereo_source_banks(
+                device,
+                command_buffer,
+                gpu_timestamps,
+                frame_slot,
+                elapsed_seconds,
+                inputs,
+            )?;
+        } else {
+            guide_record = targets.record_spatial_public_guide_passes(
+                device,
+                command_buffer,
+                gpu_timestamps,
+                frame_slot,
+                descriptor_set,
+                elapsed_seconds,
+                camera_reprojection,
+                projection_guard_band.source_overscan_uv,
+                guide_plan,
+            )?;
+        }
         let sampling_ready = guide_record.complete()
             && targets.prepare_spatial_public_projection_sampling(device, command_buffer);
         if sampling_ready {
@@ -1285,6 +1299,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                     descriptor_set_layout,
                     resource_lease,
                 )?;
+                if prepare_status.ready() {
+                    targets.prepare_stereo_video_layout(device, descriptor_set_layout)?;
+                }
                 projection_zone_prepare_status = prepare_status.marker_token();
                 projection_zone_ready = prepare_status.ready();
                 if projection_zone_ready {
@@ -1415,7 +1432,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 );
         }
         rendered
-    } else if public_projection_ready {
+    } else if public_projection_ready && !stereo_selected {
         public_guide_targets
             .as_deref()
             .ok_or_else(|| "public-guide-targets-missing-after-ready".to_string())?
@@ -1432,7 +1449,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     } else {
         false
     };
-    if camera_projection_visible && !projected_by_public_stack {
+    if camera_projection_visible && !projected_by_public_stack && !stereo_selected {
         record_camera_hwb_fallback_projection(
             device,
             command_buffer,

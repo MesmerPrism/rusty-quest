@@ -34,7 +34,8 @@ foreach ($token in @(
     '$gradleUserHome = Join-Path $BuildCacheRoot "gu"',
     '$gradleProjectCacheDir = Join-Path $BuildCacheRoot "gp"',
     '$appBuildDir = Join-Path $productBuildRoot "a"',
-    'if ($BuildMode -eq "DevFast") { "--daemon" } else { "--no-daemon" }',
+    '"--no-daemon"',
+    'gradle_daemon = $false',
     'android.aapt2FromMavenOverride=$shortAapt2',
     'Invoke-SmokeChecked -Name "aapt2"',
     'Invoke-SmokeChecked -Name "android-clang"',
@@ -66,7 +67,7 @@ foreach ($token in @(
     'plaintext video media',
     'private_path_recorded = $false'
 )) {
-    Require $build $token "Morphovision build workflow is missing: $token"
+    Require $build $token "Spatial Camera Panel build workflow is missing: $token"
 }
 
 if ($build.Contains('$intermediateRoot = Join-Path $targetRoot ("apk-i\{0}" -f $buildInputFingerprint', [StringComparison]::Ordinal)) {

@@ -1,5 +1,8 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import android.os.Handler
+import android.os.Looper
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +49,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import java.io.Closeable
+import java.util.concurrent.CompletableFuture
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartPreflight
 import kotlinx.coroutines.delay
 
 internal val LayerPanelBackground = Color(0xFF141820)
@@ -125,6 +130,7 @@ internal fun PrivateLayerControlPanel(
     passthroughLutSettings: () -> SpatialPassthroughLutSettings,
     backgroundVideoSession: () -> SpatialImmersiveVideoSessionSnapshot,
     videoSession: () -> SpatialImmersiveVideoSessionSnapshot,
+    projectionSource: () -> SpatialVideoSourceRoutingState,
     sharedMediaLibraryStatus: () -> SharedOfflineImmersiveMediaLibrarySnapshot,
     observeSharedMediaLibrary:
         ((SharedOfflineImmersiveMediaLibrarySnapshot) -> Unit) -> Closeable,
@@ -135,6 +141,8 @@ internal fun PrivateLayerControlPanel(
     refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    prepareEmbeddedDuplexStartPreflight: () -> CompletableFuture<EmbeddedDuplexStartPreflight>,
+    embeddedDuplexStartPreflightLive: (EmbeddedDuplexStartPreflight) -> Boolean,
     environmentDepthUnavailableWarning: () -> String?,
     environmentDepthRecoveryPolicy: () -> SpatialEnvironmentDepthRecoveryPolicy,
     updateEnvironmentDepthRecoveryPolicy:
@@ -143,6 +151,7 @@ internal fun PrivateLayerControlPanel(
     setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     setVideoPlaybackEnabled: (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
     setBackgroundVideoPlaybackEnabled: (Boolean) -> SpatialImmersiveVideoSessionSnapshot,
+    requestProjectionSource: (SpatialVideoSource) -> SpatialVideoSourceRoutingState,
     updateProjectionScale: (Float, String) -> Float,
     updateDepthLayerPolicy: (Int, String) -> Int,
     updateDepthAlignment: (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
@@ -216,9 +225,28 @@ internal fun PrivateLayerControlPanel(
   }
   var localBackgroundVideoSession by remember { mutableStateOf(backgroundVideoSession()) }
   var localVideoSession by remember { mutableStateOf(videoSession()) }
+  var localProjectionSource by remember { mutableStateOf(projectionSource()) }
+  var localStereoBanks by remember { mutableStateOf(StereoBankControls.snapshot()) }
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibraryStatus()) }
   var localConnectionHub by remember { mutableStateOf(connectionHubStatus()) }
+  var duplexPreflight by remember { mutableStateOf<EmbeddedDuplexStartPreflight?>(null) }
+  var duplexPreflightPending by remember { mutableStateOf(false) }
+  var duplexPreflightUnavailable by remember { mutableStateOf(false) }
+  var duplexPreflightSecondsRemaining by remember { mutableStateOf(0L) }
+  LaunchedEffect(duplexPreflight) {
+    while (duplexPreflight != null) {
+      delay(500)
+      val observed = duplexPreflight ?: break
+      if (!embeddedDuplexStartPreflightLive(observed)) {
+        duplexPreflight = null
+        duplexPreflightSecondsRemaining = 0L
+        break
+      }
+      duplexPreflightSecondsRemaining =
+          ((observed.sessionExpiresAtMs - System.currentTimeMillis()) / 1000L).coerceAtLeast(0L)
+    }
+  }
   var localEnvironmentDepthUnavailableWarning by
       remember { mutableStateOf(environmentDepthUnavailableWarning()) }
   var localEnvironmentDepthRecoveryPolicy by
@@ -268,6 +296,11 @@ internal fun PrivateLayerControlPanel(
       val latestVideoCadenceMode = SpatialVideoCadencePanelBridge.current()
       if (latestVideoCadenceMode != localVideoCadenceMode) {
         localVideoCadenceMode = latestVideoCadenceMode
+      }
+      localStereoBanks = StereoBankControls.snapshot()
+      val latestProjectionSource = projectionSource()
+      if (latestProjectionSource != localProjectionSource) {
+        localProjectionSource = latestProjectionSource
       }
       val latestEnvironmentDepthUnavailableWarning = environmentDepthUnavailableWarning()
       if (latestEnvironmentDepthUnavailableWarning !=
@@ -811,6 +844,111 @@ internal fun PrivateLayerControlPanel(
               style = MaterialTheme.typography.bodyMedium,
               color = LayerPanelAccent,
           )
+          if (localStereoBanks.enabled) {
+            HelpLabel("Render camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("All Own", localStereoBanks.policy.words().all { it == 0L }) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(
+                    center = StereoImageOrigin.Own, middle = StereoImageOrigin.Own,
+                    outer = StereoImageOrigin.Own, geometry = StereoImageOrigin.Own,
+                    brightness = StereoGuideOrigin.Own, strength = StereoGuideOrigin.Own))
+              }
+              ChoiceButton("All Peer", localStereoBanks.policy.words().all { it == 1L }) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(
+                    center = StereoImageOrigin.Peer, middle = StereoImageOrigin.Peer,
+                    outer = StereoImageOrigin.Peer, geometry = StereoImageOrigin.Peer,
+                    brightness = StereoGuideOrigin.Peer, strength = StereoGuideOrigin.Peer))
+              }
+            }
+            HelpLabel("Center camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.center == StereoImageOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(center = StereoImageOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.center == StereoImageOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(center = StereoImageOrigin.Peer))
+              }
+            }
+            HelpLabel("Middle camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.middle == StereoImageOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(middle = StereoImageOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.middle == StereoImageOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(middle = StereoImageOrigin.Peer))
+              }
+            }
+            HelpLabel("Outer camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.outer == StereoImageOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(outer = StereoImageOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.outer == StereoImageOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(outer = StereoImageOrigin.Peer))
+              }
+            }
+            HelpLabel("Geometry camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.geometry == StereoImageOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(geometry = StereoImageOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.geometry == StereoImageOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(geometry = StereoImageOrigin.Peer))
+              }
+            }
+            HelpLabel("Brightness camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.brightness == StereoGuideOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(brightness = StereoGuideOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.brightness == StereoGuideOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(brightness = StereoGuideOrigin.Peer))
+              }
+              ChoiceButton("Follow region", localStereoBanks.policy.brightness == StereoGuideOrigin.FollowRegion) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(brightness = StereoGuideOrigin.FollowRegion))
+              }
+            }
+            HelpLabel("Strength camera")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              ChoiceButton("Own", localStereoBanks.policy.strength == StereoGuideOrigin.Own) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(strength = StereoGuideOrigin.Own))
+              }
+              ChoiceButton("Peer", localStereoBanks.policy.strength == StereoGuideOrigin.Peer) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(strength = StereoGuideOrigin.Peer))
+              }
+              ChoiceButton("Follow region", localStereoBanks.policy.strength == StereoGuideOrigin.FollowRegion) {
+                localStereoBanks = StereoBankControls.update(localStereoBanks.policy.copy(strength = StereoGuideOrigin.FollowRegion))
+              }
+            }
+            Text("A selected camera can be unavailable while its stream starts or stops. The other camera stays independent.",
+                style = MaterialTheme.typography.bodySmall, color = LayerPanelMuted)
+          } else {
+          HelpLabel("Projection source")
+          Row(
+              horizontalArrangement = Arrangement.spacedBy(10.dp),
+              modifier = Modifier.fillMaxWidth(),
+          ) {
+            ChoiceButton("Local", localProjectionSource.requested == SpatialVideoSource.Local) {
+              localProjectionSource = requestProjectionSource(SpatialVideoSource.Local)
+            }
+            ChoiceButton("Peer", localProjectionSource.requested == SpatialVideoSource.Peer) {
+              localProjectionSource = requestProjectionSource(SpatialVideoSource.Peer)
+            }
+            ChoiceButton("Disabled", localProjectionSource.requested == SpatialVideoSource.Disabled) {
+              localProjectionSource = requestProjectionSource(SpatialVideoSource.Disabled)
+            }
+          }
+          Text(
+              "Requested ${localProjectionSource.requested.token} · effective " +
+                  "${localProjectionSource.effective.token}" +
+                  (localProjectionSource.pending?.let { " · pending ${it.token}" } ?: "") +
+                  (localProjectionSource.failed?.let {
+                    " · ${it.token} failed (${localProjectionSource.failureReason.token})"
+                  } ?: ""),
+              style = MaterialTheme.typography.bodySmall,
+              color = if (localProjectionSource.failed == null) LayerPanelAccent else LayerPanelWarm,
+          )
+          }
           Text(
               "Targets and relay credentials are run-owned inputs and are never saved in profiles, playlists, Hub, or Fleet. Broker route endpoints remain private run evidence and are redacted from this UI and log markers.",
               style = MaterialTheme.typography.bodySmall,
@@ -1149,6 +1287,48 @@ internal fun PrivateLayerControlPanel(
       }
 
       if (currentPage == PrivateLayerPanelPage.ExternalControl) {
+        if (BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED) {
+          Section("Embedded duplex preflight") {
+            Text(
+                "Checks the current signed pair session and retains this display's pre-Start intent. No route or media starts.",
+                style = MaterialTheme.typography.bodySmall,
+                color = LayerPanelMuted,
+            )
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !duplexPreflightPending,
+                onClick = {
+                  duplexPreflightPending = true
+                  duplexPreflightUnavailable = false
+                  prepareEmbeddedDuplexStartPreflight().whenComplete { result, failure ->
+                    Handler(Looper.getMainLooper()).post {
+                      val accepted = if (failure == null && result != null &&
+                          embeddedDuplexStartPreflightLive(result)) result else null
+                      duplexPreflight = accepted
+                      duplexPreflightSecondsRemaining = accepted?.let {
+                        ((it.sessionExpiresAtMs - System.currentTimeMillis()) / 1000L)
+                            .coerceAtLeast(0L)
+                      } ?: 0L
+                      duplexPreflightUnavailable = accepted == null
+                      duplexPreflightPending = false
+                    }
+                  }
+                },
+            ) { Text("Check signed session for Start") }
+            if (duplexPreflightPending) {
+              Text("Checking current session…", color = LayerPanelMuted)
+            } else if (duplexPreflightUnavailable) {
+              Text("Preflight unavailable. Check enrollment, pair session, and display.",
+                  color = LayerPanelWarm)
+            }
+            duplexPreflight?.let { result ->
+              Text("Signed session checked · expires in ${duplexPreflightSecondsRemaining}s",
+                  color = LayerPanelAccent)
+              Text("Route ready: ${result.peerRouteProven} · media started: ${result.mediaEffectProven}",
+                  color = LayerPanelMuted)
+            }
+          }
+        }
         Section("Connection Hub") {
           Text(
               when {

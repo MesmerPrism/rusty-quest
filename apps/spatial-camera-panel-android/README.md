@@ -131,6 +131,29 @@ starts with explicit OpenXR handles. It emits a `channel=hand-adapter` receipt;
 Spatial SDK scene mapping, hand rendering, capture, and product policy remain
 app-local. Stopping the bridge is the rollback and leaves the adapter inert.
 
+## Concurrent Own and Peer stereo inputs
+
+The explicitly selected concurrent-input route uses one app-owned stereo camera
+capture actor. Own is its retained local packed image; Peer is a separately
+retained decoded subscription. Peer Start, Stop, Revoke and restart preserve
+Own capture and the common renderer. Whole-app close separately joins actual
+camera callbacks, consumer fences, media owners and control-endpoint teardown.
+An uncertain callback or fence remains Pending; a stop request is not terminal
+cleanup.
+
+The selected profile requests 60 Hz capture. Sensor, renderer and encoder rates
+must be observed separately; configured cadence and successful submission do
+not prove delivered frames. Each origin retains its actual process/source
+identity, pair timestamps and content version. CPU leases and observed GPU
+holds are independent, with explicit finite slot, byte and GPU-use limits.
+
+Center, Middle, Outer and geometry can select Own or Peer independently, while
+brightness and strength policies remain separate. Each bank retains its exact
+source and policy revision until the real submission fence retires. The
+unselected route retains the existing single-source shader/uniform ABI and
+capture behavior. Source compilation and host protocol checks establish no
+headset, mapped-pixel, sustained-rate or physical-cleanup acceptance.
+
 ## Public Scope
 
 - Spatial SDK panel registration, placement, scaling, and headlock controls.
@@ -1928,3 +1951,97 @@ tick performs no Hub refresh. The private locked-playlist owner signals only
 availability or revision changes; advancing unpaused progress is coalesced at
 one update per second on the Hub worker, while paused or unavailable surfaces
 retain no publication timer.
+## Embedded duplex debug operator route
+
+When the debug qualification APK includes embedded duplex inputs, its
+`${applicationId}.embedded-duplex-operator` provider accepts shell UID and
+`android.permission.DUMP` callers. The typed `status`, `review`, and `confirm`
+methods inspect or replace a verified local enrollment. The fixed
+`runtime_status`, `bootstrap_real_peer`, and `close_no_media` methods accept a
+fresh 32-character lowercase hex challenge and no extras. Mutations require a
+resumed Activity and use the same process-owned handlers as the private panel.
+The app selects its authenticated role and peer key and generates session
+inputs. Bootstrap returns `bootstrapped_route_unverified`; it does not prove
+peer possession, admitted media, rendered frames, Stop, or Revoke. A no-media
+close is terminal only after the native no-effect proof, Java resources, and
+display barrier all succeed. A rejected close keeps that exact host for retry.
+While the Activity remains started, its lifecycle poll installs a fresh display
+generation after a successful close. Operators can wait for `display_attached`
+in `runtime_status` before another bootstrap.
+
+After both Quests bootstrap, the lower packaged peer ID can invoke the fixed
+`pair_session` operator action or the panel's **Pair peer session** button.
+The other Quest answers over the existing control endpoint with signed,
+challenge-bound frames. Each Runtime Host independently enrolls the two
+verified public keys, accepts current peer status, applies two signatures
+over its own host-bound Common-LAN context, and revalidates its Manifold peer
+session. `pair_status` reports the local native current-session receipt;
+`pair_session` also reports the other Quest's signed current-session receipt.
+Both actions reject caller JSON, role, peer, key, endpoint, or native operation
+selection. The ceremony does not call `media_command`, issue a media route, or
+start an owner. `close_no_media` is the terminal retry path after a rejected or
+expired ceremony. These peer-session receipts are not a current media route
+or reciprocal rendered-frame acceptance.
+
+The frame-window source slice adds a separate native 19-word readback: the
+existing exact 17 frame words plus `CLOCK_MONOTONIC` observed-at and oldest
+register/render/acquire witness age. `EmbeddedDuplexFrameWindow` samples in
+process every 250 ms, retains sticky continuity failures, and can produce a
+challenge-bound 110-second receipt. It is not connected to Start or the debug
+provider yet. The Start owner must supply live route and activation fences
+before and after each native sample and at receipt readback, arm only after
+verified activation, and cancel before Stop/cleanup. Until that shared handler
+exists, `frame_status` and reciprocal frame qualification remain unavailable.
+
+## Embedded duplex app process fence
+
+`EmbeddedDuplexProcessFence` owns a fixed app-private FileChannel lock for the
+ProcessHost singleton lifetime. Every queued app handler acquires or checks it;
+bootstrap records a synced app generation, random process nonce, pending marker,
+and exact checkpoint/evidence byte digests before native route preparation.
+Platform JNI callbacks and authenticated ingress use a generation-bound app
+callback guard. Successful no-media native closure plus Java/display barriers
+retire that callback object and clear the app pending marker; releasing a lock
+alone never clears it. The lock inode and initialization witness are permanent
+private state and must never be replaced or deleted during ordinary operation.
+
+A restarted pending writer remains cleanup-only. There is currently no native
+cleanup restoration handler, so this state cannot bootstrap, enroll, sign, or
+claim terminal via an empty in-memory registry. Existing journals without a
+fence binding, changed bound journal bytes, missing state/witness, malformed
+records, and interrupted fence initialization fail closed. Migration requires
+separate reviewed recovery; no reboot clock continuity is inferred or restored.
+These digest bindings capture app startup and before-effect snapshots; they do
+not attest a native journal writer or a native executor process generation.
+
+`tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1` tests actual competing
+host processes, abrupt process death/reacquisition, durable generation,
+retired/stale callbacks, journal digest mismatch, and missing/corrupt state.
+This gate proves app writer exclusion only. JNI executor-generation binding,
+physical provider teardown, device force-stop behavior, and reciprocal media
+remain unverified. UI and debug typed operator calls retain the same app handlers
+and existing pre-Start boundary; this slice adds no Start operation.
+
+The native capability candidate and initialization unwind contract are routed in
+[Embedded duplex finite authority and native fencing](../../docs/EMBEDDED_DUPLEX_R5_CONTINUITY.md).
+Its separate native lock and executor counter do not provide durable restoration
+or physical cleanup evidence.
+
+### Optional source version metadata
+
+`Build-SpatialCameraPanelAndroid.ps1 -UseSourceCompositionVersionName` derives
+`versionName` as `0.1.0+src.<source-composition fingerprint>` from the existing
+resolved source composition. The default remains `0.1.0`, with `versionCode` 1.
+The wrapper supplies the Gradle property explicitly, including an empty default,
+so ambient Gradle properties cannot choose a different identifier.
+
+Enabled metadata enters the build input lock and Android shell/package cache
+identity. The native cache does not depend on this option. APK badging must return
+the exact package, version code and derived version name before the builder records
+a passed inspection and build manifest. This supports cheap development metadata
+comparison; it proves no installed APK byte equality, signer or provenance.
+
+`tools/checks/Test-SpatialSourceVersion.ps1` exercises manifest rejection controls
+and the actual cache/property producer statements without building an APK. Supplying
+an explicit JDK and Kotlin compiler classpath additionally compiles and executes
+the exact version-name function extracted from the Gradle source.

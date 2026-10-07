@@ -46,6 +46,8 @@ import com.meta.spatial.toolkit.Transform
 import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 import com.meta.spatial.toolkit.Visible
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 internal class SpatialImmersiveVideoPanelCoordinator(
     private val context: Context,
@@ -257,6 +259,15 @@ internal class SpatialImmersiveVideoPanelCoordinator(
   }
 
   fun directDecoderActive(): Boolean = directDecoderActive
+
+  /** Worker-only fence proving the queued direct decoder release completed before Peer starts. */
+  fun revokeDirectVideoConsumerAndAwait(source: String, timeoutMs: Long = 2_000L): Boolean {
+    setDirectVideoConsumerRequired(false, source)
+    val released = CountDownLatch(1)
+    directPlayerHandler.post { released.countDown() }
+    return runCatching { released.await(timeoutMs, TimeUnit.MILLISECONDS) }.getOrDefault(false) &&
+        !directDecoderActive
+  }
 
   fun selectPrevious(source: String): SpatialImmersiveVideoSelection =
       selectIndex(activeIndex - 1, source)

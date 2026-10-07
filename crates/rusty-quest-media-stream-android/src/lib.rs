@@ -1,9 +1,20 @@
 //! Authenticated, fail-closed contracts between the Rust media authority and
 //! one process-local Android owner registry.
 
+mod owner_dispatch;
+mod remote_cleanup_proof;
+mod retained_cleanup;
+mod retained_cleanup_server;
+
+pub use owner_dispatch::*;
+pub use remote_cleanup_proof::*;
+pub use retained_cleanup::*;
+pub use retained_cleanup_server::*;
+
+pub use rusty_quest_media_stream::MediaStreamPlatformOperation;
 use rusty_quest_media_stream::{
     MediaStreamOwnerAction, MediaStreamOwnerActionKind, MediaStreamOwnerKind,
-    MediaStreamOwnerProviderReadback, MediaStreamPlatformAction, MediaStreamPlatformOperation,
+    MediaStreamOwnerProviderReadback, MediaStreamPlatformAction,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -72,6 +83,9 @@ pub struct AndroidMediaExecutionTicket {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AndroidMediaOwnerReadback {
+    /// Authenticated target-owned Stop effect, separate from source action identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_cleanup: Option<Box<RemoteRetainedCleanupEffect>>,
     /// Schema identifier.
     #[serde(rename = "$schema")]
     pub schema_id: String,
@@ -219,6 +233,7 @@ impl AndroidMediaOwnerExecutor for DeterministicAndroidMediaOwnerExecutor {
         }
         .to_owned();
         let readback = AndroidMediaOwnerReadback {
+            remote_cleanup: None,
             schema_id: ANDROID_MEDIA_READBACK_SCHEMA.to_owned(),
             capability: ticket.capability.clone(),
             executor_generation: ticket.executor_generation,
@@ -644,6 +659,11 @@ pub fn validate_readback(
     {
         return Err(AndroidMediaContractError::InvalidProviderEvidence);
     }
+    if let Some(proof) = &readback.remote_cleanup {
+        proof
+            .validate_source_readback(ticket, readback)
+            .map_err(|_| AndroidMediaContractError::InvalidProviderEvidence)?;
+    }
     Ok(MediaStreamOwnerProviderReadback {
         action_id: readback.action_id.clone(),
         authority_epoch_id: readback.authority_epoch_id.clone(),
@@ -673,6 +693,7 @@ mod tests {
             action_id: "action.test".to_owned(),
             authority_epoch_id: "epoch.test".to_owned(),
             operation: MediaStreamPlatformOperation::Start,
+            trusted_revoker_cleanup: None,
             client_authority: MediaStreamClientAuthorityBinding {
                 client_id: "client.test".to_owned(),
                 lease_id: "lease.test".to_owned(),
@@ -707,6 +728,7 @@ mod tests {
 
     fn readback(ticket: &AndroidMediaExecutionTicket) -> AndroidMediaOwnerReadback {
         AndroidMediaOwnerReadback {
+            remote_cleanup: None,
             schema_id: ANDROID_MEDIA_READBACK_SCHEMA.to_owned(),
             capability: ticket.capability.clone(),
             executor_generation: ticket.executor_generation,

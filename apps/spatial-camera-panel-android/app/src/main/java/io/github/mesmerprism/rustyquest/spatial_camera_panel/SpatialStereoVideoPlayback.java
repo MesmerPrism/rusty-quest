@@ -15,6 +15,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class SpatialStereoVideoPlayback {
     public interface LifecycleListener {
@@ -44,11 +45,19 @@ public final class SpatialStereoVideoPlayback {
     private static final int EVENT_HANDOFF_BLOCKED = 8;
     private static final long DEQUEUE_TIMEOUT_US = 10_000L;
     private static final long DECODER_STOP_JOIN_TIMEOUT_MS = 1_500L;
+    private static final AtomicLong NEXT_DECODER_TOKEN = new AtomicLong(1L);
 
     private static final Object LOCK = new Object();
     private static volatile boolean stopRequested;
     private static volatile Thread playbackThread;
     private static volatile Surface playbackSurface;
+    private static final Object PROJECTION_PEER_LOCK = new Object();
+    private static volatile boolean projectionPeerStopRequested;
+    private static volatile Thread projectionPeerThread;
+    private static volatile Surface projectionPeerSurface;
+    private static volatile long projectionPeerRouteGeneration;
+    private static volatile long projectionPeerDecoderToken;
+    private static volatile boolean projectionPeerExternalDecoder;
     private static boolean nativeBridgeLoaded;
 
     static {
@@ -61,6 +70,30 @@ public final class SpatialStereoVideoPlayback {
     }
 
     private SpatialStereoVideoPlayback() {}
+
+    public static final class ProjectionPeerStartResult {
+        private final boolean dispatched;
+        private final long routeGeneration;
+        private final long decoderToken;
+        private final long readerGeneration;
+
+        ProjectionPeerStartResult(
+            boolean dispatched,
+            long routeGeneration,
+            long decoderToken,
+            long readerGeneration
+        ) {
+            this.dispatched = dispatched;
+            this.routeGeneration = routeGeneration;
+            this.decoderToken = decoderToken;
+            this.readerGeneration = readerGeneration;
+        }
+
+        public boolean isDispatched() { return dispatched; }
+        public long getRouteGeneration() { return routeGeneration; }
+        public long getDecoderToken() { return decoderToken; }
+        public long getReaderGeneration() { return readerGeneration; }
+    }
 
     public static boolean start(
         Context context,
@@ -131,7 +164,7 @@ public final class SpatialStereoVideoPlayback {
             : lifecycleListener;
         int requestedWidth = clamp(width, 320, 4096);
         int requestedHeight = clamp(height, 240, 4096);
-        int requestedMaxImages = clamp(maxImages, 2, 6);
+        int requestedMaxImages = normalizeMaxImages(maxImages);
         int requestedSurfaceCadenceFps = normalizeSurfaceCadenceFps(fpsCap);
         int requestedFpsCap =
             nativeFallbackFpsForSurfaceCadence(requestedSurfaceCadenceFps);
@@ -223,11 +256,14 @@ public final class SpatialStereoVideoPlayback {
             return false;
         }
 
+        long decoderToken = nextDecoderToken();
         Surface surface = nativeCreateStereoVideoSurface(
             requestedWidth,
             requestedHeight,
             requestedMaxImages,
-            requestedFpsCap
+            requestedFpsCap,
+            decoderToken,
+            brokerSource
         );
         if (surface == null) {
             closeQuietly(encryptedMediaSource);
@@ -264,6 +300,7 @@ public final class SpatialStereoVideoPlayback {
                             requestedHeight,
                             requestedMaxImages,
                             requestedFpsCap,
+                            decoderToken,
                             listener
                         );
                     } else if (encryptedOfflinePackSource) {
@@ -318,6 +355,201 @@ public final class SpatialStereoVideoPlayback {
         synchronized (LOCK) {
             return stopLocked();
         }
+    }
+
+    public static ProjectionPeerStartResult startProjectionPeer(
+        Context context,
+        String source,
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap,
+        String brokerHost,
+        int brokerPort,
+        int brokerConnectTimeoutMs,
+        String mediaLayout,
+        String peerRouteKind,
+        String peerSessionId,
+        String peerRelayChannel,
+        String peerTlsServerName,
+        String peerAuthToken,
+        long routeGeneration,
+        LifecycleListener lifecycleListener
+    ) {
+        LifecycleListener listener = lifecycleListener == null
+            ? NO_OP_LIFECYCLE_LISTENER : lifecycleListener;
+        if (!SOURCE_PEER_PACKED_STEREO.equals(source) || routeGeneration <= 0L
+            || !nativeBridgeLoaded || brokerPort <= 0 || brokerPort > 65535) {
+            listener.onError("projection-peer-stage-invalid");
+            return new ProjectionPeerStartResult(false, routeGeneration, 0L, 0L);
+        }
+        int requestedWidth = clamp(width, 320, 4096);
+        int requestedHeight = clamp(height, 240, 4096);
+        int requestedMaxImages = normalizeMaxImages(maxImages);
+        int requestedFpsCap = nativeFallbackFpsForSurfaceCadence(
+            normalizeSurfaceCadenceFps(fpsCap));
+        synchronized (PROJECTION_PEER_LOCK) {
+            if (projectionPeerExternalDecoder) {
+                listener.onError("projection-peer-owned-by-embedded-receiver");
+                return new ProjectionPeerStartResult(false, routeGeneration, 0L, 0L);
+            }
+            if (!stopProjectionPeerLocked(
+                    projectionPeerRouteGeneration, projectionPeerDecoderToken, true)) {
+                listener.onError("projection-peer-handoff-blocked");
+                return new ProjectionPeerStartResult(false, routeGeneration, 0L, 0L);
+            }
+            projectionPeerStopRequested = false;
+        }
+        long decoderToken = nextDecoderToken();
+        Surface surface = nativeCreateProjectionPeerVideoSurface(
+            requestedWidth, requestedHeight, requestedMaxImages, requestedFpsCap,
+            decoderToken, routeGeneration);
+        if (surface == null) {
+            listener.onError("projection-peer-surface-unavailable");
+            return new ProjectionPeerStartResult(false, routeGeneration, decoderToken, 0L);
+        }
+        long readerGeneration = nativeProjectionPeerReaderGeneration(
+            routeGeneration, decoderToken);
+        if (readerGeneration <= 0L) {
+            nativeStopProjectionPeerVideoStream(routeGeneration, decoderToken);
+            surface.release();
+            listener.onError("projection-peer-reader-unavailable");
+            return new ProjectionPeerStartResult(false, routeGeneration, decoderToken, 0L);
+        }
+        Thread thread = new Thread(() -> runProjectionPeerBrokerPlayback(
+            brokerHost, brokerPort, brokerConnectTimeoutMs, mediaLayout, peerRouteKind,
+            peerSessionId, peerRelayChannel, peerTlsServerName, peerAuthToken, surface,
+            requestedWidth, requestedHeight, requestedMaxImages, requestedFpsCap,
+            routeGeneration, decoderToken, listener), "RQSpatialProjectionPeer");
+        thread.setPriority(Math.min(Thread.MAX_PRIORITY, Thread.NORM_PRIORITY + 1));
+        synchronized (PROJECTION_PEER_LOCK) {
+            projectionPeerRouteGeneration = routeGeneration;
+            projectionPeerDecoderToken = decoderToken;
+            projectionPeerSurface = surface;
+            projectionPeerThread = thread;
+        }
+        thread.start();
+        return new ProjectionPeerStartResult(
+            true, routeGeneration, decoderToken, readerGeneration);
+    }
+
+    public static boolean stopProjectionPeer(long routeGeneration, long decoderToken) {
+        synchronized (PROJECTION_PEER_LOCK) {
+            if (projectionPeerExternalDecoder) return false;
+            return stopProjectionPeerLocked(routeGeneration, decoderToken, false);
+        }
+    }
+
+    /** A host reader only. The embedded media module owns its sole decoder and socket. */
+    public static final class EmbeddedProjectionPeerSurface {
+        public final Surface surface;
+        public final long routeGeneration;
+        public final long decoderToken;
+        public final long readerGeneration;
+
+        private EmbeddedProjectionPeerSurface(Surface surface, long routeGeneration,
+                long decoderToken, long readerGeneration) {
+            this.surface = surface;
+            this.routeGeneration = routeGeneration;
+            this.decoderToken = decoderToken;
+            this.readerGeneration = readerGeneration;
+        }
+    }
+
+    /** Stages the reader inside SinkArmReceiver; creates no playback worker. */
+    public static EmbeddedProjectionPeerSurface stageEmbeddedProjectionPeerSurface(
+            int width, int height, int maxImages, int fpsCap, long routeGeneration) {
+        if (!nativeBridgeLoaded || routeGeneration <= 0L || width < 320 || width > 4096
+                || height < 240 || height > 4096 || maxImages < 2 || maxImages > 8
+                || fpsCap <= 0 || fpsCap > 120) {
+            throw new IllegalArgumentException("embedded projection reader binding");
+        }
+        synchronized (PROJECTION_PEER_LOCK) {
+            if (projectionPeerThread != null || projectionPeerSurface != null
+                    || projectionPeerRouteGeneration != 0L || projectionPeerDecoderToken != 0L) {
+                throw new IllegalStateException("projection peer reader already owned");
+            }
+            long token = nextDecoderToken();
+            Surface surface = nativeCreateProjectionPeerVideoSurface(width, height, maxImages,
+                    fpsCap, token, routeGeneration);
+            if (surface == null) throw new IllegalStateException("embedded reader unavailable");
+            projectionPeerStopRequested = false;
+            projectionPeerRouteGeneration = routeGeneration;
+            projectionPeerDecoderToken = token;
+            projectionPeerSurface = surface;
+            projectionPeerExternalDecoder = true;
+            // Publish ownership before inspecting reader readiness. Even a failed
+            // generation query returns the exact handle for compensating cleanup.
+            long reader;
+            try {
+                reader = nativeProjectionPeerReaderGeneration(routeGeneration, token);
+            } catch (RuntimeException failedReadback) {
+                reader = 0L;
+            }
+            return new EmbeddedProjectionPeerSurface(surface, routeGeneration, token, reader);
+        }
+    }
+
+    /** The caller must first verify that its receiver decoder and callbacks terminated. */
+    public static boolean releaseEmbeddedProjectionPeerSurface(EmbeddedProjectionPeerSurface staged) {
+        if (staged == null) return false;
+        synchronized (PROJECTION_PEER_LOCK) {
+            if (!projectionPeerExternalDecoder || projectionPeerSurface != staged.surface) return false;
+            if (!stopProjectionPeerLocked(staged.routeGeneration, staged.decoderToken, false)) return false;
+            projectionPeerExternalDecoder = false;
+            return true;
+        }
+    }
+
+    private static boolean stopProjectionPeerLocked(
+        long routeGeneration,
+        long decoderToken,
+        boolean allowEmptyOrCurrent
+    ) {
+        if (projectionPeerThread == null && allowEmptyOrCurrent
+            && projectionPeerRouteGeneration == 0L && projectionPeerDecoderToken == 0L) return true;
+        if (!projectionPeerStopMatches(
+                projectionPeerRouteGeneration,
+                projectionPeerDecoderToken,
+                routeGeneration,
+                decoderToken)) return false;
+        projectionPeerStopRequested = true;
+        Thread thread = projectionPeerThread;
+        if (thread != null && thread != Thread.currentThread()) {
+            thread.interrupt();
+            try {
+                thread.join(DECODER_STOP_JOIN_TIMEOUT_MS);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (thread != null && thread != Thread.currentThread() && thread.isAlive()) return false;
+        int nativeStopResult = nativeStopProjectionPeerVideoStream(routeGeneration, decoderToken);
+        if (!projectionPeerNativeStopAccepted(nativeStopResult)) return false;
+        if (projectionPeerThread == thread) projectionPeerThread = null;
+        if (projectionPeerSurface != null) {
+            projectionPeerSurface.release();
+            projectionPeerSurface = null;
+        }
+        projectionPeerRouteGeneration = 0L;
+        projectionPeerDecoderToken = 0L;
+        return true;
+    }
+
+    static boolean projectionPeerStopMatches(
+        long activeRouteGeneration,
+        long activeDecoderToken,
+        long requestedRouteGeneration,
+        long requestedDecoderToken
+    ) {
+        return activeRouteGeneration > 0L
+            && activeDecoderToken > 0L
+            && activeRouteGeneration == requestedRouteGeneration
+            && activeDecoderToken == requestedDecoderToken;
+    }
+
+    static boolean projectionPeerNativeStopAccepted(int resultCode) {
+        return resultCode == 1 || resultCode == 2;
     }
 
     private static boolean stopLocked() {
@@ -544,6 +776,7 @@ public final class SpatialStereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
+        long decoderToken,
         LifecycleListener listener
     ) {
         try {
@@ -563,6 +796,8 @@ public final class SpatialStereoVideoPlayback {
                 height,
                 maxImages,
                 fpsCap,
+                decoderToken,
+                SpatialStereoVideoPlayback::isStopRequested,
                 listener::onFirstFrame
             );
             nativeStereoVideoLifecycleEvent(EVENT_STOPPED, 0, width, height, maxImages, fpsCap, 0);
@@ -582,6 +817,67 @@ public final class SpatialStereoVideoPlayback {
         } finally {
             releasePlaybackOwnershipWithoutLock(surface);
         }
+    }
+
+    private static void runProjectionPeerBrokerPlayback(
+        String host,
+        int port,
+        int connectTimeoutMs,
+        String mediaLayout,
+        String peerRouteKind,
+        String peerSessionId,
+        String peerRelayChannel,
+        String peerTlsServerName,
+        String peerAuthToken,
+        Surface surface,
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap,
+        long routeGeneration,
+        long decoderToken,
+        LifecycleListener listener
+    ) {
+        try {
+            SpatialPackedStereoBrokerPlayback.run(
+                host, port, connectTimeoutMs, mediaLayout, peerRouteKind, peerSessionId,
+                peerRelayChannel, peerTlsServerName, peerAuthToken, surface, width, height,
+                maxImages, fpsCap, decoderToken,
+                () -> projectionPeerStopRequested,
+                listener::onFirstFrame
+            );
+        } catch (RuntimeException | IOException error) {
+            listener.onError(lifecycleFailureReason(error));
+        } finally {
+            if (releaseProjectionPeerOwnershipWithoutLock(
+                    surface, routeGeneration, decoderToken)) {
+                listener.onStopped();
+            } else {
+                listener.onError("projection-peer-native-stop-unconfirmed");
+            }
+        }
+    }
+
+    private static boolean releaseProjectionPeerOwnershipWithoutLock(
+        Surface surface,
+        long routeGeneration,
+        long decoderToken
+    ) {
+        boolean exactOwner = projectionPeerRouteGeneration == routeGeneration
+            && projectionPeerDecoderToken == decoderToken;
+        if (exactOwner) {
+            int nativeStopResult = nativeStopProjectionPeerVideoStream(routeGeneration, decoderToken);
+            if (projectionPeerSurface == surface) projectionPeerSurface = null;
+            if (projectionPeerThread == Thread.currentThread()) projectionPeerThread = null;
+            if (projectionPeerNativeStopAccepted(nativeStopResult)) {
+                projectionPeerRouteGeneration = 0L;
+                projectionPeerDecoderToken = 0L;
+            }
+            surface.release();
+            return projectionPeerNativeStopAccepted(nativeStopResult);
+        }
+        surface.release();
+        return false;
     }
 
     private static String safeBrokerPlaybackFailureDetail(Throwable error) {
@@ -1112,14 +1408,51 @@ public final class SpatialStereoVideoPlayback {
         return Math.max(minValue, Math.min(maxValue, value));
     }
 
+    static int normalizeMaxImages(int maxImages) {
+        return clamp(maxImages, 4, 6);
+    }
+
+    static long nextDecoderToken() {
+        while (true) {
+            long current = NEXT_DECODER_TOKEN.get();
+            if (current <= 0L || current == Long.MAX_VALUE) {
+                throw new IllegalStateException("Spatial video decoder token space exhausted");
+            }
+            if (NEXT_DECODER_TOKEN.compareAndSet(current, current + 1L)) {
+                return current;
+            }
+        }
+    }
+
     private static native Surface nativeCreateStereoVideoSurface(
         int width,
         int height,
         int maxImages,
-        int fpsCap
+        int fpsCap,
+        long decoderToken,
+        boolean packedIdentityRequired
     );
 
     private static native void nativeStopStereoVideoStream();
+
+    private static native Surface nativeCreateProjectionPeerVideoSurface(
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap,
+        long decoderToken,
+        long routeGeneration
+    );
+
+    private static native long nativeProjectionPeerReaderGeneration(
+        long routeGeneration,
+        long decoderToken
+    );
+
+    private static native int nativeStopProjectionPeerVideoStream(
+        long routeGeneration,
+        long decoderToken
+    );
 
     private static native void nativeStereoVideoLifecycleEvent(
         int eventCode,

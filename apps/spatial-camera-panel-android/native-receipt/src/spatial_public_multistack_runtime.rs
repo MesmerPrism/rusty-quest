@@ -420,7 +420,16 @@ impl ProjectionZoneCompositorPrepareStatus {
     }
 }
 
+#[path = "spatial_stereo_banks.rs"]
+mod stereo_banks;
+pub(crate) use stereo_banks::{
+    read_control_policy, read_mask_policy, source_banks_enabled, update_control_policy,
+    update_mask_policy, StereoGuideKey,
+};
+#[cfg(target_os = "android")]
+pub(crate) use stereo_banks::{StereoRecordingInputs, StereoRecordingSource};
 pub(crate) struct SpatialPublicGuideTargets {
+    stereo_banks: Option<Box<stereo_banks::StereoBankResources>>,
     targets: Vec<SpatialPublicGuideTarget>,
     extent: vk::Extent2D,
     format: vk::Format,
@@ -729,7 +738,10 @@ impl SpatialPublicGuideTargets {
         )
     }
 
-    pub(crate) unsafe fn destroy(self, device: &ash::Device) {
+    pub(crate) unsafe fn destroy(mut self, device: &ash::Device) {
+        if let Some(state) = self.stereo_banks.take() {
+            state.destroy(device);
+        }
         // Teardown alone may join unfinished work. All input layouts and the render
         // pass remain alive until the worker has returned.
         if let Some(build) = self.projection_zone_pipeline_build {
@@ -1043,6 +1055,32 @@ impl SpatialPublicGuideTargets {
         source_overscan_uv: f32,
         plan: SpatialPublicGuidePassPlan,
     ) -> Result<SpatialPublicGuidePassRecord, String> {
+        self.record_spatial_public_guide_passes_with_profiling(
+            device,
+            command_buffer,
+            gpu_timestamps,
+            frame_slot,
+            camera_descriptor_set,
+            elapsed_seconds,
+            camera_reprojection,
+            source_overscan_uv,
+            plan,
+            true,
+        )
+    }
+    unsafe fn record_spatial_public_guide_passes_with_profiling(
+        &self,
+        device: &ash::Device,
+        command_buffer: vk::CommandBuffer,
+        gpu_timestamps: &mut CameraHwbGpuTimestampTracker,
+        frame_slot: usize,
+        camera_descriptor_set: vk::DescriptorSet,
+        elapsed_seconds: f32,
+        camera_reprojection: CameraLatencyStereoReprojection,
+        source_overscan_uv: f32,
+        plan: SpatialPublicGuidePassPlan,
+        profile_stages: bool,
+    ) -> Result<SpatialPublicGuidePassRecord, String> {
         if plan.edge_window_selected() {
             return Ok(SpatialPublicGuidePassRecord::not_recorded(
                 plan,
@@ -1063,7 +1101,14 @@ impl SpatialPublicGuideTargets {
         {
             let timestamp_stage = CameraHwbGpuTimestampStage::from_guide_pass_index(pass_index)
                 .expect("six-pass guide schedule has one timestamp stage per pass");
-            gpu_timestamps.write_stage_start(device, command_buffer, frame_slot, timestamp_stage);
+            if profile_stages {
+                gpu_timestamps.write_stage_start(
+                    device,
+                    command_buffer,
+                    frame_slot,
+                    timestamp_stage,
+                );
+            }
             match step.kind {
                 SpatialPublicGuidePassKind::Opaque { pipeline_index } => {
                     self.record_opaque_guide_pass_for_stereo(
@@ -1092,7 +1137,9 @@ impl SpatialPublicGuideTargets {
                     )?;
                 }
             }
-            gpu_timestamps.write_stage_end(device, command_buffer, frame_slot, timestamp_stage);
+            if profile_stages {
+                gpu_timestamps.write_stage_end(device, command_buffer, frame_slot, timestamp_stage);
+            }
             recorded_pass_count += 1;
         }
         Ok(SpatialPublicGuidePassRecord::recorded(
@@ -1390,6 +1437,16 @@ impl SpatialPublicGuideTargets {
         camera_content_only: bool,
         layer_override: f32,
     ) -> Result<bool, String> {
+        let stereo = self.stereo_banks.as_deref();
+        if let Some(stereo) = stereo {
+            if self
+                .projection_zone_video_pipeline
+                .as_ref()
+                .is_some_and(|p| p.video_descriptor_set_layout != stereo.video_layout)
+            {
+                return Err("stereo-video-layout-changed".into());
+            }
+        }
         let pipeline = self
             .projection_zone_video_pipeline
             .as_ref()
@@ -1427,7 +1484,13 @@ impl SpatialPublicGuideTargets {
             device.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                if tessellated_effective {
+                if let Some(stereo) = stereo {
+                    if tessellated_effective {
+                        stereo.displacement_pipeline
+                    } else {
+                        stereo.pipeline
+                    }
+                } else if tessellated_effective {
                     pipeline.displacement_pipeline.ok_or_else(|| {
                         "projection-zone-displacement-pipeline-missing".to_string()
                     })?
@@ -1435,21 +1498,32 @@ impl SpatialPublicGuideTargets {
                     pipeline.pipeline
                 },
             );
-            device.cmd_bind_descriptor_sets(
-                command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline.pipeline_layout,
-                0,
-                &[
-                    camera_descriptor_set,
-                    self.opaque_guide_descriptor_set,
+            let final_layout = stereo.map_or(pipeline.pipeline_layout, |s| s.pipeline_layout);
+            if let Some(stereo) = stereo {
+                stereo.bind(
+                    device,
+                    command_buffer,
                     self.depth_resources.current_binding().descriptor_set,
                     self.rgb_channel_transform_uniform.descriptor_set,
                     video_descriptor_set,
-                    self.projection_zone_uniform.descriptor_set,
-                ],
-                &[],
-            );
+                );
+            } else {
+                device.cmd_bind_descriptor_sets(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline.pipeline_layout,
+                    0,
+                    &[
+                        camera_descriptor_set,
+                        self.opaque_guide_descriptor_set,
+                        self.depth_resources.current_binding().descriptor_set,
+                        self.rgb_channel_transform_uniform.descriptor_set,
+                        video_descriptor_set,
+                        self.projection_zone_uniform.descriptor_set,
+                    ],
+                    &[],
+                );
+            }
             let push = OpaqueProjectionPush::for_packed_eye(
                 eye_index,
                 elapsed_seconds,
@@ -1458,7 +1532,10 @@ impl SpatialPublicGuideTargets {
                 footprint_scale,
                 layer_override,
             );
-            push_projection_constants(device, command_buffer, pipeline.pipeline_layout, &push);
+            push_projection_constants(device, command_buffer, final_layout, &push);
+            if stereo.is_some() {
+                crate::spatial_stereo_qualification::observe_final_draw(tessellated_effective);
+            }
             device.cmd_draw(
                 command_buffer,
                 if tessellated_effective {
@@ -1470,6 +1547,61 @@ impl SpatialPublicGuideTargets {
                 0,
                 0,
             );
+        }
+        // One diagnostic-only5x1 draw after both normal eyes, inside this same
+        // render pass/submission. Exact source leases and UBO are still held.
+        if let Some((stereo, plan)) =
+            stereo.and_then(|s| s.mask_diagnostic_plan(extent).map(|p| (s, p)))
+        {
+            device.cmd_set_viewport(
+                command_buffer,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: plan.extent[0] as f32,
+                    height: plan.extent[1] as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            device.cmd_set_scissor(
+                command_buffer,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D {
+                        x: plan.scissor[0] as i32,
+                        y: plan.scissor[1] as i32,
+                    },
+                    extent: vk::Extent2D {
+                        width: plan.scissor[2],
+                        height: plan.scissor[3],
+                    },
+                }],
+            );
+            device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                stereo.pipeline,
+            );
+            stereo.bind(
+                device,
+                command_buffer,
+                self.depth_resources.current_binding().descriptor_set,
+                self.rgb_channel_transform_uniform.descriptor_set,
+                video_descriptor_set,
+            );
+            let mut push = OpaqueProjectionPush::for_packed_eye(
+                0,
+                elapsed_seconds,
+                strength_cycle_phase_turns,
+                self.depth_resources.current_binding(),
+                footprint_scale,
+                layer_override,
+            );
+            push.params0[1] = -1.0; // explicitly opted neutral diagnostic raster selection
+            push_projection_constants(device, command_buffer, stereo.pipeline_layout, &push);
+            device.cmd_draw(command_buffer, plan.vertices, 1, 0, 0);
         }
         Ok(true)
     }
@@ -3672,6 +3804,7 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
             }
         };
     Ok(SpatialPublicGuideTargets {
+        stereo_banks: None,
         targets,
         extent,
         format,

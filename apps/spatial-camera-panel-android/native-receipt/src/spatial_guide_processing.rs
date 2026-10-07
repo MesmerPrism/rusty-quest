@@ -287,6 +287,9 @@ pub(crate) fn update_spatial_guide_processing_policy(
 }
 
 pub(crate) fn current_spatial_guide_processing_policy() -> SpatialGuideProcessingPolicy {
+    if let Some(policy) = SOURCE_BANK_PROCESSING_SNAPSHOT.with(|cell| cell.get()) {
+        return policy;
+    }
     SpatialGuideProcessingPolicy::from_codes(
         PREBLUR_KERNEL.load(Ordering::Acquire),
         PREBLUR_INPUT.load(Ordering::Acquire),
@@ -416,4 +419,21 @@ mod tests {
             SpatialCameraSampling::Linear
         );
     }
+}
+
+thread_local! {static SOURCE_BANK_PROCESSING_SNAPSHOT:std::cell::Cell<Option<SpatialGuideProcessingPolicy>>=const{std::cell::Cell::new(None)};}
+pub(crate) fn with_source_bank_processing_policy<R>(
+    policy: SpatialGuideProcessingPolicy,
+    f: impl FnOnce() -> R,
+) -> R {
+    struct Restore(Option<SpatialGuideProcessingPolicy>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SOURCE_BANK_PROCESSING_SNAPSHOT.with(|cell| cell.set(self.0));
+        }
+    }
+    let restore = Restore(SOURCE_BANK_PROCESSING_SNAPSHOT.with(|cell| cell.replace(Some(policy))));
+    let result = f();
+    drop(restore);
+    result
 }

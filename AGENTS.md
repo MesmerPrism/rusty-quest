@@ -12,6 +12,11 @@ Use `docs/MEDIA_SESSION_RUNTIME.md` for the executor boundary and
 `docs/MEDIA_STREAM_RUNTIME.md` for host tests and two-consumer build checks.
 Those checks do not establish device, camera, codec, LAN, or duplex readiness.
 
+For embedded duplex native execution fencing, read
+`docs/EMBEDDED_DUPLEX_R5_CONTINUITY.md`. The focused native-fence runner binds
+an explicit supplier composition; its Android typecheck and API34 source
+checks remain separate from app compilation, physical cleanup and streaming.
+
 ## Debug host receipt boundary
 
 The Spatial Camera Panel debug host receipt provider is debug-source-set only.
@@ -27,6 +32,44 @@ or device-performance inference.
 
 For work on the P70 or LSLC-005S/-005L/-005H Rusty LSL Android test packages,
 read [Rusty LSL Android test package notes](docs/agent-instructions/lsl-android-test-packages.md).
+
+The embedded duplex local diagnostic provider is also debug-source-set only,
+requires DUMP plus the runtime shell UID, and accepts only a challenge-bound
+arm, fixed local-fixture provision, Activity-owned Run request, and receipt
+read. The caller supplies no role, peer key, authority ID, TTL, JSON, Intent,
+component, path, or generic command. Production peer enrollment remains with
+the private application's reviewed enrollment surface. The local fixture
+proves no peer possession, Sink arm, stereo frames, or reciprocal duplex.
+
+The separate embedded duplex operator provider is debug-source-set only,
+requires DUMP plus the runtime shell UID, and accepts only the named typed
+operator calls. Enrollment status returns verified installed facts and sealed
+record state. Review accepts bounded role, peer public key, policy IDs, and TTL
+fields, then uses the same app-owned review handler as the panel. Confirm
+consumes that exact process-held review object once under an expiry and record
+revision fence. It accepts no caller JSON, native command, fixture selection,
+URI, Intent, component, or private key. This transport does not itself prove
+peer possession, media start, stereo frames, or reciprocal duplex.
+
+Its fixed `runtime_status`, `bootstrap_real_peer`, and `close_no_media` calls
+use the same process-owned handler as the panel and require a resumed Activity
+for mutations. They accept no role, key, policy, JSON, or native operation.
+Bootstrap constructs fresh inputs from the authenticated enrollment and exact
+APK, but leaves peer route and media effects unverified. `close_no_media` proves
+terminal only when the native and Java no-effect barrier succeeds; a rejected
+close retains the host for later typed cleanup. These calls are not Start,
+Stop, Revoke, rendered-frame evidence, or reciprocal acceptance.
+
+The fixed `pair_session` and `pair_status` calls have no caller fields beyond
+the shell challenge. The lower packaged peer ID initiates; both bootstrapped
+Quests use the same app-owned signed control ceremony and private enrollment.
+Manifold independently accepts each host's reciprocal signatures and peer
+session. A current peer-session receipt proves neither a Broker/media lease
+nor a current route, Start, stereo frames, Stop, or Revoke. A failed ceremony
+requires typed no-media close before retry from fresh process authority. Keep
+the two-Quest media runner guarded until the full Start, route, terminal
+cleanup, and exact frame receipt adapter is reviewed.
+
 
 This is the clean source repository for Rusty Quest. Keep committed content
 self-contained and free of local-only planning paths, downstream app names, and

@@ -43,7 +43,7 @@ or embedded locks fail before Android compilation.
 
 The APK packages the accepted lock, command registry, and manifest projection
 under `assets/manifold/`. The final
-`rusty.quest.manifold_broker_android.build_manifest.v2` repeats their hashes and
+`rusty.quest.manifold_broker_android.build_manifest.v3` repeats their hashes and
 asset paths beside the APK hash and signing/admission evidence.
 After the signing certificate is known, the build also generates and packages
 `runtime-config.json`, embeds the same exact config in
@@ -114,7 +114,7 @@ same build:
   `fixtures/media-runtime-products/camera2-surface.binding.json` and
   `fixtures/media-runtime-products/spatial-camera-panel-display.binding.json`;
 - `-EnableRemoteCameraDebugOperator` and
-  `-RequireSharedMorphovisionSigner` with the reviewed keystore;
+  `-RequireSharedSigner -ExpectedSignerSha256 <reviewed-certificate-sha256>` with the reviewed explicit keystore;
 - an explicit version and content-addressed output directory.
 
 The build manifest records the exact Manifold commit/tree, both binding
@@ -184,3 +184,7 @@ enable the server transport but cannot supply or expand authority config.
 Remaining product work is generic media adoption: map accepted and leased
 commands to the source-neutral Quest media runtime. Legacy remote-camera source
 remains an effect adapter, not a second acceptance path.
+
+## Explicit shared signer migration
+
+Manifest v3 records neutral shared_signer_required and expected_shared_signer_sha256 fields plus the actual artifact_signer_sha256. Shared mode requires an explicit canonical expected certificate fingerprint, keystore and RUSTY_QUEST_SHARED_SIGNING_* local credential bindings. The exported certificate must match before compilation. Connection Hub requires the selected expected digest for non-dry-run actions and independently checks all three inspected APK signers before install. Application certificate/secret policy belongs to its private composer. No old switch, ambient application fingerprint or receipt-field alias is accepted; preserved v2 receipts remain bound to their original source and must not be relabelled.

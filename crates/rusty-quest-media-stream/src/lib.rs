@@ -384,6 +384,446 @@ mod tests {
         }
     }
 
+    struct TrustedRecoveryReceipts;
+
+    impl MediaStreamRecoveryReceiptVerifier for TrustedRecoveryReceipts {
+        fn verify_retained_receipt(
+            &self,
+            _action: &MediaStreamPlatformAction,
+            receipt: &MediaStreamOwnerCompletionReceipt,
+        ) -> bool {
+            receipt.receipt_id.starts_with("receipt.")
+        }
+    }
+
+    struct AmbiguousRecoveryJournal {
+        latest: std::sync::Mutex<Option<MediaStreamSessionProductRecoverySnapshot>>,
+        fail_after_write: std::sync::atomic::AtomicBool,
+    }
+
+    impl AmbiguousRecoveryJournal {
+        fn new() -> Self {
+            Self {
+                latest: std::sync::Mutex::new(None),
+                fail_after_write: std::sync::atomic::AtomicBool::new(false),
+            }
+        }
+    }
+
+    impl MediaStreamRecoveryJournal for AmbiguousRecoveryJournal {
+        fn commit(
+            &self,
+            snapshot: &MediaStreamSessionProductRecoverySnapshot,
+        ) -> Result<(), String> {
+            *self.latest.lock().map_err(|_| "journal lock")? = Some(snapshot.clone());
+            if self
+                .fail_after_write
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                Err("commit returned error after durable replacement".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    struct CountingOwnerProvider {
+        owner_kind: MediaStreamOwnerKind,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl MediaStreamTrustedOwnerProvider for CountingOwnerProvider {
+        fn owner_kind(&self) -> MediaStreamOwnerKind {
+            self.owner_kind
+        }
+        fn execute_and_readback(
+            &mut self,
+            _action: &MediaStreamPlatformAction,
+            _owner_action: &MediaStreamOwnerAction,
+        ) -> Result<MediaStreamOwnerProviderReadback, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err("provider entered".into())
+        }
+        fn compensate_uncertain_attempt(
+            &mut self,
+            _action: &MediaStreamPlatformAction,
+            _owner_action: &MediaStreamOwnerAction,
+        ) -> Result<MediaStreamOwnerProviderReadback, String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err("provider entered".into())
+        }
+        fn verify_readback(
+            &self,
+            _action: &MediaStreamPlatformAction,
+            _owner_action: &MediaStreamOwnerAction,
+            _readback: &MediaStreamOwnerProviderReadback,
+        ) -> bool {
+            false
+        }
+    }
+
+    fn expired_recovery_subject(
+        prior: &rusty_manifold_media_session::ManifoldMediaSessionCurrentReceipt,
+    ) -> rusty_manifold_media_session::ManifoldMediaSessionCurrentReceipt {
+        let mut value = serde_json::to_value(prior).expect("subject serializes");
+        value["current"] = serde_json::json!(false);
+        value["validated_at_ms"] = serde_json::json!(70_000);
+        value["session"]["lifecycle_status"] = serde_json::json!("expired");
+        serde_json::from_value(value).expect("expired historical subject")
+    }
+
+    #[test]
+    fn recovery_restores_expired_original_stop_only_with_exact_cursor() {
+        let binding = product_binding();
+        let accepted = product_acceptance("epoch.media.recovery", "recovery-stop");
+        let mut runtime = MediaStreamSessionProductRuntime::new_for_test(
+            binding.clone(),
+            accepted.clone(),
+            "epoch.media.recovery".into(),
+        )
+        .expect("runtime");
+        let start = runtime
+            .prepare(
+                "action.recovery.start".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                2_000,
+            )
+            .expect("start");
+        record_all(&mut runtime, &start);
+        runtime
+            .apply_recorded_owner_completions(2_000)
+            .expect("verified start");
+        let stop = runtime
+            .prepare(
+                "action.recovery.stop".into(),
+                MediaStreamPlatformOperation::Stop,
+                client_authority(MediaStreamPlatformOperation::Stop),
+                2_000,
+            )
+            .expect("stop");
+        record_owner(
+            &mut runtime,
+            &stop.owner_actions[0],
+            readback_for(&stop, &stop.owner_actions[0], 0),
+        )
+        .expect("first stop owner");
+        let mut uncertain = UncertainTestOwnerProvider {
+            owner_kind: stop.owner_actions[1].selection.owner_kind,
+            mode: UncertainAttemptMode::SideEffectThenError,
+            attempted_readback: readback_for(&stop, &stop.owner_actions[1], 1),
+            compensation_readback: None,
+        };
+        assert!(complete_owner_with(
+            &mut runtime,
+            stop.owner_actions[1].selection.owner_kind,
+            &mut uncertain,
+        )
+        .is_err());
+        let json = runtime.recovery_snapshot_json().expect("bounded journal");
+        let snapshot = MediaStreamSessionProductRuntime::decode_recovery_snapshot_json(&json)
+            .expect("typed journal");
+        let expired = expired_recovery_subject(&accepted);
+        let mut restored = MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+            binding.clone(),
+            snapshot.clone(),
+            expired.clone(),
+            70_000,
+        )
+        .expect("historical expiry retains cleanup obligation");
+        let cursor = restored.recovery_cleanup_cursor().expect("next owner");
+        assert_eq!(cursor.original_action_id, stop.action_id);
+        assert_eq!(cursor.owner, stop.owner_actions[1]);
+        assert_eq!(cursor.sequence, 2);
+        assert!(cursor.uncertain_attempt);
+        assert!(!cursor.partial_start_abort);
+        assert!(matches!(
+            restored.apply_recorded_owner_completions(70_000),
+            Err(MediaStreamProductRuntimeError::RecoveryReceiptsUnverified)
+        ));
+        assert!(matches!(
+            restored.prepare(
+                "action.recovery.replay-start".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                70_000,
+            ),
+            Err(MediaStreamProductRuntimeError::RecoveryStartForbidden)
+        ));
+        restored
+            .revalidate_recovered_receipts(&TrustedRecoveryReceipts)
+            .expect("independent journal revalidation gate");
+        assert!(matches!(
+            restored.apply_recorded_owner_completions(70_000),
+            Err(MediaStreamProductRuntimeError::OwnerCallbacksIncomplete)
+        ));
+
+        let mut wrong_epoch = snapshot.clone();
+        wrong_epoch.provider_epoch_id = "epoch.media.fresh".into();
+        assert!(
+            MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+                binding.clone(),
+                wrong_epoch,
+                expired.clone(),
+                70_000,
+            )
+            .is_err()
+        );
+        let mut duplicate = snapshot.clone();
+        duplicate.pending_owner_receipts[0].receipt_id =
+            duplicate.active_start_receipts[0].receipt_id.clone();
+        assert!(
+            MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+                binding.clone(),
+                duplicate,
+                expired.clone(),
+                70_000,
+            )
+            .is_err()
+        );
+        let mut swapped_handle = snapshot.clone();
+        swapped_handle.active_provider_handles[0].provider_handle_id = "handle.foreign".into();
+        assert!(
+            MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+                binding.clone(),
+                swapped_handle,
+                expired.clone(),
+                70_000,
+            )
+            .is_err()
+        );
+        let mut forged_aggregate = snapshot;
+        forged_aggregate.pending_owner_receipts = stop
+            .owner_actions
+            .iter()
+            .enumerate()
+            .map(|(index, owner)| MediaStreamOwnerCompletionReceipt {
+                selection: owner.selection.clone(),
+                action_kind: owner.action_kind,
+                receipt_id: format!("receipt.forged.{index}"),
+                completion_sequence: u32::try_from(index + 1).unwrap(),
+                provider_handle_id: format!("handle.forged.{index}"),
+                provider_state_revision: 999,
+                observed_state: if owner.action_kind == MediaStreamOwnerActionKind::Cleanup {
+                    "cleaned"
+                } else {
+                    "stopped"
+                }
+                .into(),
+            })
+            .collect();
+        forged_aggregate.pending_uncertain_owner = None;
+        // Even a syntactically complete journal cannot self-authorize a
+        // platform completion. The independent provider journal must recheck it.
+        if let Ok(mut forged) = MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+            binding,
+            forged_aggregate,
+            expired,
+            70_000,
+        ) {
+            assert!(matches!(
+                forged.apply_recorded_owner_completions(70_000),
+                Err(MediaStreamProductRuntimeError::RecoveryReceiptsUnverified)
+            ));
+        }
+    }
+
+    #[test]
+    fn recovery_forces_partial_start_abort_and_blocks_fresh_stop_without_target() {
+        let binding = product_binding();
+        let accepted = product_acceptance("epoch.media.abort-recovery", "abort-recovery");
+        let mut runtime = MediaStreamSessionProductRuntime::new_for_test(
+            binding.clone(),
+            accepted.clone(),
+            "epoch.media.abort-recovery".into(),
+        )
+        .unwrap();
+        let start = runtime
+            .prepare(
+                "action.recovery.partial".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                2_000,
+            )
+            .unwrap();
+        record_owner(
+            &mut runtime,
+            &start.owner_actions[0],
+            readback_for(&start, &start.owner_actions[0], 0),
+        )
+        .unwrap();
+        let snapshot = runtime.recovery_snapshot().unwrap();
+        let mut restored = MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+            binding.clone(),
+            snapshot,
+            accepted.clone(),
+            2_000,
+        )
+        .unwrap();
+        let cursor = restored.recovery_cleanup_cursor().expect("abort target");
+        assert!(cursor.partial_start_abort);
+        assert_eq!(
+            cursor.owner.action_kind,
+            MediaStreamOwnerActionKind::Cleanup
+        );
+        assert!(matches!(
+            restored.apply_recorded_owner_completions(2_000),
+            Err(MediaStreamProductRuntimeError::RecoveryStartForbidden)
+        ));
+        let mut active = MediaStreamSessionProductRuntime::new_for_test(
+            binding.clone(),
+            accepted.clone(),
+            "epoch.media.abort-recovery".into(),
+        )
+        .unwrap();
+        let action = active
+            .prepare(
+                "action.recovery.active".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                2_000,
+            )
+            .unwrap();
+        record_all(&mut active, &action);
+        active.apply_recorded_owner_completions(2_000).unwrap();
+        let mut active_restored = MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+            binding,
+            active.recovery_snapshot().unwrap(),
+            accepted,
+            2_000,
+        )
+        .unwrap();
+        assert!(active_restored.recovery_cleanup_cursor().is_none());
+        assert!(matches!(
+            active_restored.prepare(
+                "action.recovery.unsafe-stop".into(),
+                MediaStreamPlatformOperation::Stop,
+                client_authority(MediaStreamPlatformOperation::Stop),
+                2_000,
+            ),
+            Err(MediaStreamProductRuntimeError::RecoveryRequiresTargetedStop)
+        ));
+    }
+
+    #[test]
+    fn recovery_journal_ambiguous_commit_blocks_owner_and_retains_abort_cursor() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let binding = product_binding();
+        let accepted = product_acceptance("epoch.media.journal", "journal");
+        let mut runtime = MediaStreamSessionProductRuntime::new_for_test(
+            binding.clone(),
+            accepted.clone(),
+            "epoch.media.journal".into(),
+        )
+        .unwrap();
+        let journal = Arc::new(AmbiguousRecoveryJournal::new());
+        runtime.install_recovery_journal(journal.clone()).unwrap();
+        let start = runtime
+            .prepare(
+                "action.recovery.journal".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                2_000,
+            )
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut provider = CountingOwnerProvider {
+            owner_kind: start.owner_actions[0].selection.owner_kind,
+            calls: calls.clone(),
+        };
+        journal.fail_after_write.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            complete_owner_with(&mut runtime, provider.owner_kind, &mut provider),
+            Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let durable = journal.latest.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            durable.pending_uncertain_owner,
+            Some(start.owner_actions[0].clone())
+        );
+        assert!(matches!(
+            runtime.begin_partial_start_abort(),
+            Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)
+        ));
+        let mut restored = MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+            binding, durable, accepted, 2_000,
+        )
+        .expect("durable marked journal restores only cleanup");
+        let cursor = restored
+            .recovery_cleanup_cursor()
+            .expect("uncertain abort owner");
+        assert!(cursor.partial_start_abort && cursor.uncertain_attempt);
+        let mut abort_provider = CountingOwnerProvider {
+            owner_kind: cursor.owner.selection.owner_kind,
+            calls: calls.clone(),
+        };
+        assert!(matches!(
+            restored.complete_next_abort_owner(&mut abort_provider),
+            Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn recovery_journal_marks_reverse_abort_before_provider_entry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let binding = product_binding();
+        let accepted = product_acceptance("epoch.media.abort-journal", "abort-journal");
+        let mut runtime = MediaStreamSessionProductRuntime::new_for_test(
+            binding.clone(),
+            accepted.clone(),
+            "epoch.media.abort-journal".into(),
+        )
+        .unwrap();
+        let journal = Arc::new(AmbiguousRecoveryJournal::new());
+        runtime.install_recovery_journal(journal.clone()).unwrap();
+        let start = runtime
+            .prepare(
+                "action.recovery.abort-journal".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                2_000,
+            )
+            .unwrap();
+        record_owner(
+            &mut runtime,
+            &start.owner_actions[0],
+            readback_for(&start, &start.owner_actions[0], 0),
+        )
+        .unwrap();
+        let abort = runtime.begin_partial_start_abort().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut provider = CountingOwnerProvider {
+            owner_kind: abort.owner_actions[0].selection.owner_kind,
+            calls: calls.clone(),
+        };
+        journal.fail_after_write.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            runtime.complete_next_abort_owner(&mut provider),
+            Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let durable = journal.latest.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            durable.pending_abort_uncertain_owner,
+            Some(abort.owner_actions[0].clone())
+        );
+        let restored = MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+            binding, durable, accepted, 2_000,
+        )
+        .expect("durable abort marker restores");
+        let cursor = restored
+            .recovery_cleanup_cursor()
+            .expect("reverse abort cursor");
+        assert_eq!(cursor.owner, abort.owner_actions[0]);
+        assert!(cursor.partial_start_abort && cursor.uncertain_attempt);
+    }
+
     #[test]
     fn display_composite_fixture_validates() {
         let plan = parse_fixture(include_str!(
@@ -775,6 +1215,102 @@ mod tests {
             assert_eq!(receipt.resulting_runtime_revision, 1);
             assert_eq!(receipt.rollback_receipts.len(), boundary);
             assert!(runtime.pending_action().is_none());
+            let snapshot = runtime
+                .recovery_snapshot()
+                .expect("completed rollback journal");
+            assert_eq!(
+                snapshot.schema_id,
+                MEDIA_STREAM_PRODUCT_ABORT_RECOVERY_SCHEMA
+            );
+            assert_eq!(
+                snapshot
+                    .completed_start_abort
+                    .as_ref()
+                    .unwrap()
+                    .original_action,
+                action
+            );
+            let restore = |candidate| {
+                MediaStreamSessionProductRuntime::restore_cleanup_only_for_test(
+                    product_binding(),
+                    candidate,
+                    runtime.current_acceptance().clone(),
+                    2_000,
+                )
+            };
+            let mut restored =
+                restore(snapshot.clone()).expect("completed rollback restores cleanup only");
+            restored
+                .revalidate_recovered_receipts(&TrustedRecoveryReceipts)
+                .expect("independent retained receipts");
+            assert!(matches!(
+                restored.prepare(
+                    "action.new-start".into(),
+                    MediaStreamPlatformOperation::Start,
+                    client_authority(MediaStreamPlatformOperation::Start),
+                    2_000
+                ),
+                Err(MediaStreamProductRuntimeError::RecoveryStartForbidden)
+            ));
+            let mut legacy = snapshot.clone();
+            legacy.schema_id = MEDIA_STREAM_PRODUCT_RECOVERY_SCHEMA.into();
+            assert!(
+                restore(legacy).is_err(),
+                "v1 cannot reinterpret a v2 rollback record"
+            );
+            let mut foreign = snapshot.clone();
+            foreign
+                .completed_start_abort
+                .as_mut()
+                .unwrap()
+                .original_action
+                .client_authority
+                .lease_id = "lease.foreign".into();
+            assert!(restore(foreign).is_err(), "original lease remains exact");
+            let mut relabeled = snapshot.clone();
+            relabeled
+                .completed_start_abort
+                .as_mut()
+                .unwrap()
+                .rollback_action
+                .action_id = "action.foreign.abort".into();
+            assert!(
+                restore(relabeled).is_err(),
+                "rollback must derive from original action"
+            );
+            if boundary > 0 {
+                let mut missing = snapshot.clone();
+                missing
+                    .completed_start_abort
+                    .as_mut()
+                    .unwrap()
+                    .rollback_receipts
+                    .pop();
+                assert!(
+                    restore(missing).is_err(),
+                    "every retained effect needs terminal readback"
+                );
+                let mut stale = snapshot.clone();
+                let record = stale.completed_start_abort.as_mut().unwrap();
+                record.rollback_receipts[0].provider_state_revision = record
+                    .started_receipts
+                    .last()
+                    .unwrap()
+                    .provider_state_revision;
+                assert!(
+                    restore(stale).is_err(),
+                    "rollback cannot reuse pre-cleanup revision"
+                );
+            }
+            let mut terminal = snapshot.clone();
+            terminal.lifecycle.phase = MediaStreamRuntimePhase::Stopped;
+            terminal.lifecycle.runtime_revision = 2;
+            terminal.lifecycle.applied_request_ids = vec!["action.fake.cleanup".into()];
+            terminal.applied_action_ids = vec!["action.fake".into()];
+            assert!(
+                restore(terminal).is_err(),
+                "lifecycle label cannot establish restored terminal effects"
+            );
             assert!(matches!(
                 runtime.prepare(
                     action_id,
@@ -785,6 +1321,48 @@ mod tests {
                 Err(MediaStreamProductRuntimeError::ReplayedAction)
             ));
         }
+    }
+
+    #[test]
+    fn completed_start_abort_journal_ambiguity_never_authorizes_stop() {
+        let mut runtime = MediaStreamSessionProductRuntime::new_for_test(
+            product_binding(),
+            product_acceptance("epoch.abort.journal", "abort-journal"),
+            "epoch.abort.journal".into(),
+        )
+        .unwrap();
+        let journal = std::sync::Arc::new(AmbiguousRecoveryJournal::new());
+        runtime.install_recovery_journal(journal.clone()).unwrap();
+        runtime
+            .prepare(
+                "action.abort.journal".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                2_000,
+            )
+            .unwrap();
+        runtime.begin_partial_start_abort().unwrap();
+        journal
+            .fail_after_write
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(
+            runtime.finalize_partial_start_abort(),
+            Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)
+        ));
+        let recorded = journal.latest.lock().unwrap().clone().unwrap();
+        assert!(
+            recorded.completed_start_abort.is_some(),
+            "ambiguous durable record retained"
+        );
+        assert!(matches!(
+            runtime.prepare(
+                "action.stop.after.ambiguous".into(),
+                MediaStreamPlatformOperation::Stop,
+                client_authority(MediaStreamPlatformOperation::Stop),
+                2_000
+            ),
+            Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)
+        ));
     }
 
     #[test]

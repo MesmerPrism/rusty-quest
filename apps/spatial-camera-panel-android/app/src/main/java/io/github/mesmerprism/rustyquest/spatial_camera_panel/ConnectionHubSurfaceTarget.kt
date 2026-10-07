@@ -8,6 +8,13 @@ import org.json.JSONObject
  * Implementations expose only effective low-rate state and return the revision they applied.
  */
 internal interface ConnectionHubSurfaceTarget {
+  val hubSurfaceProfile: ConnectionHubSurfaceProfile get() = ConnectionHubSurfaceProfile.LockedPlaylist
+
+  fun applyHubAuthorizedCommandAsync(requestId: String, surfaceId: String, command: String, args: JSONObject, authorityReceipt: JSONObject, cancelled: java.util.concurrent.atomic.AtomicBoolean = java.util.concurrent.atomic.AtomicBoolean(false)): java.util.concurrent.CompletableFuture<Long> {
+    check(!cancelled.get()) { "hub_session_retired" }
+    return java.util.concurrent.CompletableFuture.completedFuture(applyHubAuthorizedCommand(requestId, surfaceId, command, args, authorityReceipt))
+  }
+
   fun hubSurfaceAvailable(): Boolean
 
   fun hubSurfaceState(): JSONObject
@@ -26,6 +33,28 @@ internal interface ConnectionHubSurfaceTarget {
       args: JSONObject,
       authorityReceipt: JSONObject,
   ): Long
+}
+
+/** Negative-only lifetime fence: tokens never grant authority and cannot be reactivated. */
+internal class ConnectionHubCommandLifetimes {
+  private val tokens = mutableMapOf<java.util.concurrent.atomic.AtomicBoolean, Long>()
+  private val retiredBindings = mutableSetOf<Long>()
+  private var closed = false
+  @Synchronized fun issue(bindingGeneration: Long): java.util.concurrent.atomic.AtomicBoolean {
+    check(bindingGeneration > 0)
+    val retired = closed || bindingGeneration in retiredBindings
+    return java.util.concurrent.atomic.AtomicBoolean(retired).also { if (!retired) tokens[it] = bindingGeneration }
+  }
+  @Synchronized fun release(token: java.util.concurrent.atomic.AtomicBoolean) { tokens.remove(token) }
+  @Synchronized fun retireBinding(bindingGeneration: Long) {
+    retiredBindings.add(bindingGeneration)
+    val retired = tokens.filterValues { it == bindingGeneration }.keys.toList()
+    retired.forEach { it.set(true); tokens.remove(it) }
+  }
+  fun transition(before: io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducer.State, after: io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducer.State) {
+    if (before.isRegistered && (!after.isRegistered || before.bindingGeneration != after.bindingGeneration || before.sessionGeneration != after.sessionGeneration)) retireBinding(before.bindingGeneration)
+  }
+  @Synchronized fun close() { closed = true; tokens.keys.forEach { it.set(true) }; tokens.clear() }
 }
 
 internal object ConnectionHubLockedPlaylistContract {
@@ -71,9 +100,11 @@ internal fun requireConnectionHubCommandAuthorization(
     command: String,
     args: JSONObject,
     authorityReceipt: JSONObject,
-) {
-  require(surfaceId == ConnectionHubLockedPlaylistContract.SURFACE_ID)
-  require(command in ConnectionHubLockedPlaylistContract.commands)
+) = requireConnectionHubProfileCommandAuthorization(requestId, surfaceId, command, args, authorityReceipt, ConnectionHubSurfaceProfile.LockedPlaylist)
+
+internal fun requireConnectionHubProfileCommandAuthorization(requestId: String, surfaceId: String, command: String, args: JSONObject, authorityReceipt: JSONObject, profile: ConnectionHubSurfaceProfile) {
+  require(surfaceId == profile.surfaceId)
+  require(command in profile.commands)
   require(authorityReceipt.optString("\$schema") == "rusty.manifold.connection_hub.receipt.v3")
   require(authorityReceipt.optBoolean("applied", false))
   require(authorityReceipt.optString("operation") == "authorize_surface_command")
@@ -94,9 +125,9 @@ internal fun requireConnectionHubCommandAuthorization(
   require(isConnectionHubDottedIdentifier(providerInstanceId))
   require(
       authorization.optString("surface_id") ==
-          "$providerInstanceId.surface-instance.${ConnectionHubLockedPlaylistContract.SURFACE_ID}"
+          "$providerInstanceId.surface-instance.${profile.surfaceId}"
   )
-  require(authorization.optString("provider_id") == ConnectionHubLockedPlaylistContract.PROVIDER_ID)
+  require(authorization.optString("provider_id") == profile.providerId)
   require(authorization.optString("command_id") == command)
   require(authorization.optString("typed_params_sha256") == EMPTY_OBJECT_SHA256)
   require(authorization.optString("typed_params_schema_id") == EMPTY_TYPED_PARAMS_SCHEMA_ID)

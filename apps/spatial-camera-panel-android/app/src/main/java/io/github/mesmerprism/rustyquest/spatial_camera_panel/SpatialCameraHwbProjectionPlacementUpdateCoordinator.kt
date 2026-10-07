@@ -45,7 +45,8 @@ internal class SpatialCameraHwbProjectionPlacementUpdateCoordinator(
 
   fun update(reason: String, forceLog: Boolean) {
     bindings.pollLatencyDiagnostics(reason, forceLog)
-    if (!bindings.routeActive()) {
+    val routeActive = bindings.routeActive()
+    if (!routeActive && bindings.resources.withLayer { true } != true) {
       return
     }
     val entity = bindings.projectionEntity() ?: return
@@ -59,8 +60,10 @@ internal class SpatialCameraHwbProjectionPlacementUpdateCoordinator(
     }
     entity.setComponent(Visible(true))
     val layerUpdateStatus = updateRawLayer(plane, reason)
-    val panelCarrierUpdateStatus = bindings.updatePanelCarrierLayer(plane, reason)
-    val nativePanelPoseUpdateMask = updateNativePanelPose(plane, reason, forceLog)
+    val panelCarrierUpdateStatus = if (routeActive) bindings.updatePanelCarrierLayer(plane, reason)
+        else "inactive-retained-raw-layer"
+    val nativePanelPoseUpdateMask = if (routeActive) updateNativePanelPose(plane, reason, forceLog)
+        else 0L
     val now = SystemClock.elapsedRealtime()
     val shouldLog =
         forceLog ||

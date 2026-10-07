@@ -1,4 +1,4 @@
-# Morphovision fast Android build workflow
+# Spatial Camera Panel fast Android build workflow
 
 `tools/Build-SpatialCameraPanelAndroid.ps1` has two independent identity
 contracts:
@@ -50,7 +50,7 @@ same complete content-addressed output/evidence contract.
 The build does not provision signing secrets. Supply the keystore with the
 parameter or local environment binding and supply alias/store/key passwords in
 the local `RUSTY_QUEST_SPATIAL_SIGNING_*` environment variables. Receipts
-record only the public certificate fingerprint. A shared Morphovision package
+record only the public certificate fingerprint. A shared client package
 cannot compile with the ambient default debug signer, and a mismatched explicit
 signer is rejected before Cargo or Gradle runs.
 

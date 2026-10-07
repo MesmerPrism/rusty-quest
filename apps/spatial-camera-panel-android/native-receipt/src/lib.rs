@@ -43,12 +43,24 @@ mod camera_latency_diagnostics;
 mod camera_replay_capture;
 #[cfg(any(target_os = "android", test))]
 mod camera_reprojection_guard_band;
+#[cfg(any(target_os = "android", test))]
+mod embedded_duplex;
+#[cfg(any(target_os = "android", test))]
+mod frame_lease_slots;
 mod hand_adapter_consumer;
 #[cfg(target_os = "android")]
 mod live_hand_joint_bridge;
 #[cfg(any(target_os = "android", test))]
 mod live_hand_joints;
+#[cfg(target_os = "android")]
+mod packed_sbs_normalizer;
 mod particle_adapter_consumer;
+#[cfg(any(target_os = "android", test))]
+mod peer_projection_ingress;
+#[cfg(any(target_os = "android", test))]
+mod peer_projection_runtime;
+#[cfg(any(target_os = "android", test))]
+mod projection_frame_source;
 mod projection_surface_displacement;
 mod projection_surface_features;
 #[cfg(any(target_os = "android", test))]
@@ -84,6 +96,8 @@ mod spatial_video_projection_settings;
 #[cfg(any(target_os = "android", test))]
 mod surface_particle_layer;
 mod surface_particle_projection;
+#[cfg(any(target_os = "android", test))]
+mod video_import_cache_policy;
 
 #[cfg(target_os = "android")]
 const ANDROID_LOG_INFO: c_int = 4;
@@ -801,3 +815,31 @@ fn append_native_marker_file(message: &str) {
         let _ = writeln!(file, "{} {}", timestamp_ms, message);
     }
 }
+
+#[cfg(target_os = "android")]
+mod own_packed_encoder;
+#[cfg(target_os = "android")]
+mod own_packed_gpu_holds;
+#[cfg(target_os = "android")]
+mod own_packed_pool;
+#[cfg(target_os = "android")]
+mod own_packed_pool_jni;
+#[cfg(target_os = "android")]
+mod own_packed_pool_policy;
+#[cfg(target_os = "android")]
+mod own_stereo_capture_runtime;
+#[cfg(target_os = "android")]
+mod packed_ahb_gl_primitives;
+#[cfg(target_os = "android")]
+mod pinned_packed_contents;
+mod spatial_stereo_dropouts;
+mod spatial_stereo_qualification;
+#[cfg(target_os = "android")]
+mod spatial_stereo_source_import;
+#[cfg(target_os = "android")]
+mod stereo_bank_control_jni;
+mod stereo_bank_mask_v1;
+mod stereo_bank_transport_v1;
+mod stereo_input_set;
+#[cfg(target_os = "android")]
+mod stereo_source_payload;
