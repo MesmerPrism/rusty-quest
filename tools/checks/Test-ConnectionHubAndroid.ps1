@@ -606,11 +606,13 @@ final class GeneratedConnectionHubConfig { static final String JSON="{}"; static
 '@)
 $androidOut = Join-Path $out "android-classes"
 New-Item -ItemType Directory -Force -Path $androidOut | Out-Null
-$androidSources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java | ForEach-Object { $_.FullName }) +
+$sharedMediaJavaRoot = Join-Path $RepoRoot "crates/rusty-quest-media-stream-android/android/library/src/main/java"
+$androidSources = @(Get-ChildItem -Path $sharedMediaJavaRoot -Recurse -Filter *.java | ForEach-Object { $_.FullName }) +
+    @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java | ForEach-Object { $_.FullName }) +
     @(Get-ChildItem -Path $sharedAdmissionRoot -Recurse -Filter *.java | ForEach-Object { $_.FullName }) +
     @(Get-ChildItem -Path $javaRoot -Filter *.java | ForEach-Object { $_.FullName }) +
     @(Get-ChildItem -Path $generatedDir -Filter *.java | ForEach-Object { $_.FullName })
-& $javac -encoding UTF-8 -source 8 -target 8 -bootclasspath $androidJar -d $androidOut $androidSources
+& $javac -encoding UTF-8 --release 8 -classpath $androidJar -d $androidOut $androidSources
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub complete Android Java source compile failed." }
 & pwsh -NoProfile -File (Join-Path $RepoRoot "tools\checks\Test-ConnectionHubOperator.ps1") -RepoRoot $RepoRoot
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub operator CLI validation failed." }
