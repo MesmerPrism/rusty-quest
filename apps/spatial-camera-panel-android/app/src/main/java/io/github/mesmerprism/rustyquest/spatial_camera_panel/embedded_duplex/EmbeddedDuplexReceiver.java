@@ -92,7 +92,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     // Allocate only inside the authenticated Sink effect, after this retryable owner
     // has already been installed in the registry. A failed preparation retains it.
     private void prepare() {
-        if("cleaned".equals(preparationState)) {
+        if("cleaned".equals(preparationState) || "stopped".equals(preparationState)) {
             if(!surfaceReleased || !projectionRetired || !snapshot().terminal())
                 throw new IllegalStateException("prior receiver cleanup unresolved");
             staged=null;receiver=null;provider=null;
@@ -332,7 +332,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
 
     /** Closes only the receiver that has never entered an owner Sink effect. */
     synchronized void closeUnstartedAndVerify() {
-        if ("cleaned".equals(preparationState) && surfaceReleased && projectionRetired) return;
+        if (("cleaned".equals(preparationState) || "stopped".equals(preparationState))
+                && surfaceReleased && projectionRetired) return;
         if (!"unprepared".equals(preparationState) || staged != null || receiver != null
                 || provider != null || connectionGeneration != 0L) {
             throw new IllegalStateException("receiver needs typed owner cleanup");
@@ -353,7 +354,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         }
         surfaceReleased = true;
         retireProjection();
-        preparationState = "cleaned";
+        preparationState = "stop".equals(action.actionKind()) ? "stopped" : "cleaned";
         preparationRevision++;
         return new MediaProviderReadback(action, "embedded-receiver." + generation,
                 preparationRevision, preparationState,

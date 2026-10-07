@@ -58,8 +58,8 @@ impl JNIEnv<'_> {
     source=output/'actual-checked-call-modeled-env.rs';source.write_text(harness);binary=output/'diagnostic-controls.exe';results=[]
     for name,argv in [('rustc',[v.rustc,'--edition','2021','--test',str(source),'-o',str(binary)]),('controls',[str(binary),'--nocapture'])]:
         process=subprocess.run(argv,capture_output=True,timeout=60);stdout=output/(name+'.stdout');stderr=output/(name+'.stderr');stdout.write_bytes(process.stdout);stderr.write_bytes(process.stderr);results.append({'name':name,'exit':process.returncode,'stdout':pin(stdout),'stderr':pin(stderr)});assert process.returncode==0,process.stderr.decode(errors='replace')
-    assert b'6 passed;' in (output/'controls.stdout').read_bytes()
+    assert b'8 passed;' in (output/'controls.stdout').read_bytes()
     assert pins==[pin(p) for p in paths]
     result={'schema':'rusty.quest.retained_owner_diagnostic_host_controls.v1','status':'passed','production_source_pins':pins,'checks':results,'device_calls':0,'apk_built':False,'source_admission':False,'limits':['Exact production pure diagnostic/exception functions with modeled JNI environment; no actual JNI attachment or Android callback execution','Call-site joins are static assertions, not retained executor effect execution','No Android native crate typecheck, APK, installed behavior or terminal cleanup claim']}
-    (output/'RESULT.json').write_text(json.dumps(result,indent=2));print('six production diagnostic/JNI-body host controls passed; Android typecheck not claimed')
+    (output/'RESULT.json').write_text(json.dumps(result,indent=2));print('eight production diagnostic/JNI-body host controls passed; Android typecheck not claimed')
 if __name__=='__main__':main()

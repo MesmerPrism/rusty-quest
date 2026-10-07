@@ -66,14 +66,32 @@ pub(crate) fn observe<T>(
     slot: &Mutex<Option<&'static str>>,
     stage: Stage,
 ) -> Result<T, String> {
-    if result.is_err() {
+    if let Err(error) = &result {
         if let Ok(mut first) = slot.lock() {
             if first.is_none() {
-                *first = Some(stage.code());
+                *first = Some(if matches!(stage, Stage::OrdinaryCallback) {
+                    ordinary_cause(error).unwrap_or(stage.code())
+                } else { stage.code() });
             }
         }
     }
     result
+}
+// Exact known errors only; arbitrary exception/payload text never becomes an
+// observation. The original Result is returned unchanged and the first cause
+// remains latched through subsequent compensation and cleanup failures.
+fn ordinary_cause(error: &str) -> Option<&'static str> {
+    Some(match error {
+        "remote platform effect uncertain" => "ORDINARY_REMOTE_EFFECT_UNCERTAIN",
+        "remote owner dispatch rejected" => "ORDINARY_REMOTE_DISPATCH_REJECTED",
+        "verified owner effect mismatch" => "ORDINARY_VERIFIED_EFFECT_MISMATCH",
+        "verified readback JSON is invalid" => "ORDINARY_READBACK_INVALID",
+        "runtime busy" => "ORDINARY_RUNTIME_BUSY",
+        "runtime slot poisoned" => "ORDINARY_RUNTIME_POISONED",
+        "java_bridge.execute_call" | "java_bridge.execute_call.exception" => "ORDINARY_JAVA_CALLBACK_REJECTED",
+        "java_bridge.attach" => "ORDINARY_JAVA_ATTACH_UNAVAILABLE",
+        _ => return None,
+    })
 }
 /// Preserve successful Java diagnostics; represent failure with a finite closed code.
 /// No arbitrary exception text, identity, payload, ticket or path escapes this boundary.
@@ -102,6 +120,29 @@ pub(crate) fn diagnostic<T>(result: Result<T, String>) -> (Option<T>, &'static s
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn ordinary_cause_is_exact_closed_first_and_never_rewrites_result() {
+        for error in ["remote platform effect uncertain", "remote owner dispatch rejected",
+            "verified owner effect mismatch", "verified readback JSON is invalid",
+            "runtime busy", "runtime slot poisoned", "java_bridge.execute_call",
+            "java_bridge.execute_call.exception", "java_bridge.attach"] {
+            let slot = Mutex::new(None);
+            assert_eq!(observe::<()>(Err(error.into()), &slot, Stage::OrdinaryCallback), Err(error.into()));
+            let first = ordinary_cause(error).unwrap();
+            assert_eq!(*slot.lock().unwrap(), Some(first));
+            assert!(observe::<()>(Err("later private cleanup".into()), &slot, Stage::SourceReadback).is_err());
+            assert_eq!(*slot.lock().unwrap(), Some(first));
+            assert_eq!(observe(Ok(7), &slot, Stage::OrdinaryCallback), Ok(7));
+        }
+        for error in ["private payload", "remote platform effect uncertain SECRET", ""] {
+            let slot = Mutex::new(None);
+            assert!(observe::<()>(Err(error.into()), &slot, Stage::OrdinaryCallback).is_err());
+            assert_eq!(*slot.lock().unwrap(), Some("RETAINED_ORDINARY_CALLBACK"));
+        }
+        let slot = Mutex::new(None);
+        assert!(observe::<()>(Err("remote platform effect uncertain".into()), &slot, Stage::RemoteProof).is_err());
+        assert_eq!(*slot.lock().unwrap(), Some("RETAINED_REMOTE_PROOF"));
+    }
     #[test]
     fn every_retained_boundary_preserves_original_error_and_no_completion() {
         for stage in [
