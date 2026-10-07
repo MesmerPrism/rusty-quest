@@ -124,3 +124,11 @@ within the original deadline. `FOREGROUND_SERVICE_CONNECTED_DEVICE` and the
 Bluetooth permissions belong to this helper manifest, never the framing JAR.
 The exact manifest remains the permission authority; host compilation requests
 none of these Android permissions and performs no device effects.
+
+For a reviewed source-only consumer check, keep the accepted carrier capsule
+unchanged and supply its `artifact.json` together with `quest-ble-control.jar`.
+The helper builder verifies the artifact schema, name and JAR digest before
+compilation; the broad host runner seals the same artifact receipt and JAR in
+its source/tool inventory. Changing the library input requires a fresh consumer
+capsule. A previously passing private import projection cannot replace this
+actual app compile or the later separately admitted APK/runtime qualification.
