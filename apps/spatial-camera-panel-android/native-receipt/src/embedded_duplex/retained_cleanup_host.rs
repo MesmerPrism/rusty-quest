@@ -492,7 +492,16 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
     ) -> Result<AuthenticatedOwnerEffect, String> {
         self.cleanup.require_state()?;
         let _mutation = Checkout::take(self.cleanup.serial.clone())?;
-        if ticket.operation == MediaStreamPlatformOperation::Start {
+        // Abort carriers retain operation=Start, but Stop/Cleanup must never
+        // replace the forward ticket/projection needed to authenticate cleanup.
+        let retain_forward = ticket.operation == MediaStreamPlatformOperation::Start
+            && matches!(
+                ticket.action_kind,
+                MediaStreamOwnerActionKind::ArmCleanup
+                    | MediaStreamOwnerActionKind::ArmReceiver
+                    | MediaStreamOwnerActionKind::Start
+            );
+        if retain_forward {
             let mut next = self
                 .cleanup
                 .state
@@ -518,7 +527,7 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
             ticket,
             mode,
         )?;
-        if ticket.operation == MediaStreamPlatformOperation::Start {
+        if retain_forward {
             let mut next = self
                 .cleanup
                 .state

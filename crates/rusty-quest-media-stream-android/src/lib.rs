@@ -11,11 +11,11 @@ pub use remote_cleanup_proof::*;
 pub use retained_cleanup::*;
 pub use retained_cleanup_server::*;
 
-pub use rusty_quest_media_stream::MediaStreamPlatformOperation;
 use rusty_quest_media_stream::{
-    MediaStreamOwnerAction, MediaStreamOwnerActionKind, MediaStreamOwnerKind,
-    MediaStreamOwnerProviderReadback, MediaStreamPlatformAction,
+    MediaStreamOwnerAction, MediaStreamOwnerKind, MediaStreamOwnerProviderReadback,
+    MediaStreamPlatformAction,
 };
+pub use rusty_quest_media_stream::{MediaStreamOwnerActionKind, MediaStreamPlatformOperation};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
