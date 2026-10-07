@@ -270,6 +270,27 @@ if ($nativeLock -notmatch 'd9d060f8c67199135a4c3e0a699ca408f6c64095' -or
     $nativeHub -notmatch 'authorize_use_not_newer_than_floor') {
     throw "Connection Hub JNI is not bound to the sealed v3 Manifold owner/epoch/typed-schema authority."
 }
+$buildAst = [Management.Automation.Language.Parser]::ParseInput($buildScript, [ref]$null, [ref]$null)
+$sourceGuard = $buildAst.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -ceq 'Assert-ConnectionHubNativeSourceRoot'
+}, $true)
+if ($null -eq $sourceGuard -or $buildScript -notmatch 'if \(\$null -eq \$isolatedCargo\) \{\s+Assert-ConnectionHubNativeSourceRoot -NativeRoot \$connectionHubNativeRoot -ManifoldRoot \$manifoldSourceRoot') {
+    throw 'Normal Connection Hub native compilation must join its consumed dependency root to the validated source.'
+}
+Invoke-Expression $sourceGuard.Extent.Text
+$guardRoot = Join-Path $RepoRoot 'target/connection-hub-source-guard'
+$guardNative = Join-Path $guardRoot 'quest/apps/manifold-broker-android/connection-hub-native'
+$guardManifold = Join-Path $guardRoot 'rusty-manifold'
+[void][IO.Directory]::CreateDirectory($guardNative)
+[void][IO.Directory]::CreateDirectory($guardManifold)
+Assert-ConnectionHubNativeSourceRoot -NativeRoot $guardNative -ManifoldRoot (Resolve-Path $guardManifold).Path
+try {
+    Assert-ConnectionHubNativeSourceRoot -NativeRoot $guardNative -ManifoldRoot $RepoRoot
+    throw 'Different validated source root was accepted.'
+} catch {
+    if ($_.Exception.Message -cne 'Connection Hub native dependency path does not equal the validated Manifold source root.') { throw }
+}
 if (Test-Path -LiteralPath (Join-Path $javaRoot "UnavailableManifoldConnectionHubAuthority.java")) { throw "Fail-closed development authority stub remains in product source." }
 if ($buildScript -notmatch '\$connectionHubSelected' -or $buildScript -notmatch 'connectionHubPackagedAssets' -or $buildScript -notmatch 'ConnectionHub\*\.java' -or $productSource -notmatch '\.ConnectionHubStartActivity' -or $productSource -notmatch '\.BrokerStartActivity') { throw "Product lock does not gate Hub classes/assets/components while preserving legacy components." }
 if ($buildScript -notmatch 'connection-hub-typed-params-empty\.schema\.json' -or

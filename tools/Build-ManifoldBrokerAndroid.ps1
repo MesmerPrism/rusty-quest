@@ -51,6 +51,15 @@ function Assert-SharedSignerCertificate {
     }
 }
 
+function Assert-ConnectionHubNativeSourceRoot {
+    param([string]$NativeRoot, [string]$ManifoldRoot)
+    $nativeManifoldSourceRoot = (Resolve-Path -LiteralPath (
+        Join-Path $NativeRoot "../../../../rusty-manifold"
+    )).Path
+    if ($nativeManifoldSourceRoot -cne $ManifoldRoot) {
+        throw "Connection Hub native dependency path does not equal the validated Manifold source root."
+    }
+}
 function Get-LatestDirectory {
     param(
         [Parameter(Mandatory=$true)]
@@ -812,6 +821,9 @@ if ($connectionHubSelected) {
     }
     $manifoldSourceRoot = (Resolve-Path -LiteralPath $manifoldSourceCandidate).Path
     $connectionHubNativeRoot = Join-Path $appRoot "connection-hub-native"
+    if ($null -eq $isolatedCargo) {
+        Assert-ConnectionHubNativeSourceRoot -NativeRoot $connectionHubNativeRoot -ManifoldRoot $manifoldSourceRoot
+    }
     $manifoldSourceLockPath = Join-Path $appRoot "native\manifold-source.lock.json"
     $manifoldSourceLock = Get-Content -Raw -LiteralPath $manifoldSourceLockPath | ConvertFrom-Json
     $manifoldRevision = (& git -C $manifoldSourceRoot rev-parse HEAD).Trim()
