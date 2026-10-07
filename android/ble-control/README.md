@@ -38,8 +38,8 @@ to an isolated test projection and verifies that the original test bytes did
 not change. This proves compatibility with that supplier's tests; actual host
 source compilation and JAR packaging are separate consumer evidence.
 
-This extraction preserves the original supplier framing bytes except its
-package declaration. The host still owns Bluetooth permissions, advertising,
+This extraction retains the supplier framing implementation in its canonical
+Java package. The host still owns Bluetooth permissions, advertising,
 GATT service lifetime, connection generations, challenges, admission, command
 dispatch and completion receipts. Neither successful frame reassembly nor a
 successful GATT write confirms an app effect. Library conformance does not
