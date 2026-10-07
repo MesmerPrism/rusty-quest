@@ -1,0 +1,43 @@
+{
+  "schema": "rusty.morphospace.workflow.feature_descriptor.v1",
+  "feature_id": "quest-ble-carrier-v1",
+  "module_id": "quest-ble-carrier",
+  "version": "0.1.0",
+  "owner_lane": "rusty-quest",
+  "source": {
+    "repo_id": "rusty-quest",
+    "revision": "884d198fd6b5a31ec29d0501cb70636045c16ee3",
+    "path": "android/ble-control/src/main/java/io/github/mesmerprism/rustyquest/ble_control/HubBleFrames.java",
+    "sha256": "63147fec8a3670af1403b9bb5c350070c4f79525c400b107fd3952b0ba200508"
+  },
+  "dependencies": [],
+  "conflicts": [],
+  "exclusive_group": "quest-ble-carrier",
+  "effects": {
+    "activities": [],
+    "assets": [],
+    "commands": [],
+    "inputs": [],
+    "markers": [],
+    "native_libraries": [],
+    "permissions": [],
+    "queries": [],
+    "routes": [],
+    "scenes": [],
+    "services": [],
+    "shaders": [],
+    "streams": [],
+    "tools": []
+  },
+  "parameter_authorities": [],
+  "activation": {
+    "rule": "selected-lock-and-runtime-input",
+    "runtime_inputs": [
+      "quest.ble.carrier.host-selected"
+    ],
+    "receipt_schema": "rusty.quest.ble_carrier.artifact.v1",
+    "effective_marker": "rusty.quest.ble_carrier.host_selected"
+  },
+  "validation_profile": "ble-carrier-conformance",
+  "rollback_profile": "rollback"
+}
