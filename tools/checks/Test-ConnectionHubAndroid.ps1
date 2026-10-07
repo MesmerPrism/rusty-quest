@@ -255,8 +255,8 @@ if ($process -notmatch 'provider_effect_binding\.v1' -or
     $server -notmatch 'command_receipt_enqueue_failed') {
     throw "Provider effect receipts are not process-owned, exact, lifecycle bounded, and observable."
 }
-if ($nativeLock -notmatch 'd9d060f8c67199135a4c3e0a699ca408f6c64095' -or
-    $nativeLock -notmatch '23126eb8b6d0127dfbfa7b968c95ea8b8c7174be' -or
+if ($nativeLock -notmatch '004ec0939edf564b693788f411f86d45df25d394' -or
+    $nativeLock -notmatch 'f011b7fd9d062a34b25f7c7e1b5b95eb007dd6c8' -or
     $nativeHubManifest -notmatch '(?m)^\[workspace\]$' -or
     $nativeHubManifest -notmatch 'name = "rusty_quest_manifold_broker_authority"' -or
     $buildScript -notmatch 'isolated Connection Hub native' -or
@@ -574,7 +574,8 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducerTest
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub admission-session reducer tests failed." }
 
-& cargo test --locked --manifest-path (Join-Path $nativeHubRoot "Cargo.toml")
+# These JNI tests intentionally share one process-local owner slot.
+& cargo test --locked --manifest-path (Join-Path $nativeHubRoot "Cargo.toml") -- --test-threads=1
 if ($LASTEXITCODE -ne 0) { throw "Isolated Connection Hub native tests failed." }
 
 & cargo test --locked --manifest-path (Join-Path $RepoRoot "crates\rusty-quest-broker-product\Cargo.toml")
