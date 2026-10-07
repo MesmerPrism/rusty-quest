@@ -497,9 +497,9 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
         let retain_forward = ticket.operation == MediaStreamPlatformOperation::Start
             && matches!(
                 ticket.action_kind,
-                rusty_quest_media_stream::MediaStreamOwnerActionKind::ArmCleanup
-                    | rusty_quest_media_stream::MediaStreamOwnerActionKind::ArmReceiver
-                    | rusty_quest_media_stream::MediaStreamOwnerActionKind::Start
+                MediaStreamOwnerActionKind::ArmCleanup
+                    | MediaStreamOwnerActionKind::ArmReceiver
+                    | MediaStreamOwnerActionKind::Start
             );
         if retain_forward {
             let mut next = self

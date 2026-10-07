@@ -21,10 +21,15 @@ out.mkdir(parents=True,exist_ok=False)
 native=root/'apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex'
 retained=native/'retained_cleanup_host.rs'; receiver=root/'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexReceiver.java'
 registry=method(retained.read_text(),'fn execute_and_verify(')
+# This seam must not synthesize an undeclared production dependency. Android's
+# public owner API supplies the action kind through the existing wildcard import.
+android_api=root/'crates/rusty-quest-media-stream-android/src/lib.rs'
+assert 'pub use rusty_quest_media_stream::{MediaStreamOwnerActionKind, MediaStreamPlatformOperation};' in android_api.read_text()
+assert 'rusty_quest_media_stream::' not in registry
 rust=r'''
 use std::{collections::BTreeMap,sync::{Arc,Mutex}};
-mod rusty_quest_media_stream { #[derive(Clone,Copy,PartialEq,Debug)] pub enum MediaStreamOwnerActionKind {ArmCleanup,ArmReceiver,Start,Stop,Cleanup} }
-use rusty_quest_media_stream::MediaStreamOwnerActionKind as Kind;
+#[derive(Clone,Copy,PartialEq,Debug)] enum MediaStreamOwnerActionKind {ArmCleanup,ArmReceiver,Start,Stop,Cleanup}
+use MediaStreamOwnerActionKind as Kind;
 #[derive(Clone,Copy,PartialEq)] enum MediaStreamPlatformOperation {Start,Stop}
 #[derive(Clone)] struct AndroidMediaExecutionTicket {operation:MediaStreamPlatformOperation,action_kind:Kind,action_id:String}
 #[derive(Clone,PartialEq,Debug)] struct OwnerDispatchAuthorityProjection(u8);
