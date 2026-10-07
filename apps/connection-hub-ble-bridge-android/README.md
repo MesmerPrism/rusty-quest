@@ -104,3 +104,23 @@ must qualify those effects. The build script's `-CompileOnly` route performs no
 APK packaging, signing, installation or device calls.
 
 The helper consumes the exact canonical Quest carrier JAR via -CarrierCapsule. Its Android manifest, service, controller admission and app effects remain helper-owned; the packaged framing library contains no permissions or activation. Build/Test scripts verify and pin the artifact receipt and put the JAR on the compiler/runtime/D8 dependency path. The app contains no private source copy of HubBleFrames.
+
+### Selected helper package
+
+`feature.json` declares this separate app-local helper, its dependency on
+`quest-ble-carrier-v1`, and the existing manifest permissions. The library's
+permission-free selection does not select this app. The helper is independently
+packaged as `io.github.mesmerprism.rustyquest.connection_hub_ble_bridge`; it does
+not replace or modify the streaming application. Launcher presence is inert.
+Explicit visible Enable or the closed shell admission is required for each
+process/generation scope. Descriptor selection alone proves no runtime activation.
+
+The helper must use the current Hub signing certificate for its existing
+signature-scoped admission/status read. It additionally requires an already
+wearer-started Hub listener, actual Bluetooth runtime permissions, and the
+existing Manifold controller/provider grants for native effects. Its receipt's
+`carrier_ready_now` field requires the matching Service and advertising callbacks
+within the original deadline. `FOREGROUND_SERVICE_CONNECTED_DEVICE` and the
+Bluetooth permissions belong to this helper manifest, never the framing JAR.
+The exact manifest remains the permission authority; host compilation requests
+none of these Android permissions and performs no device effects.
