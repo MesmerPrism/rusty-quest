@@ -19,7 +19,7 @@ $hostInputs=@($PSCommandPath,$carrier,(Join-Path $CarrierCapsule 'artifact.json'
 $hostPins=@($hostInputs|Sort-Object -Unique|ForEach-Object {@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant();size_bytes=(Get-Item -LiteralPath $_).Length}})
 & $javac -encoding UTF-8 -source 17 -target 17 -cp "$JsonJar;$AndroidJar;$carrier" -sourcepath $hub -d $classes "@$arguments" *> (Join-Path $OutDir 'host-compile.log')
 if($LASTEXITCODE-ne 0){throw 'Actual host source compile failed.'}
-$cases=@();foreach($test in @('HubBleFramesTest','HubLoopbackClientTest','BridgeControllerTest','BridgeAdmissionLifetimeTest')){
+$cases=@();foreach($test in @('HubBleFramesTest','HubLoopbackClientTest','BridgeControllerTest','BridgeAdmissionLifetimeTest','HubAdvertisementNameTest')){
     $log=Join-Path $OutDir "$test.log";& $java -cp "$classes;$JsonJar;$AndroidJar;$carrier" "io.github.mesmerprism.rustyquest.connection_hub_ble_bridge.$test" *> $log
     if($LASTEXITCODE-ne 0){throw "Production host check failed: $test"}
     $match=[regex]::Match([IO.File]::ReadAllText($log),'PASS (\d+) production cases');if(-not $match.Success){throw 'No actual focused completion.'}

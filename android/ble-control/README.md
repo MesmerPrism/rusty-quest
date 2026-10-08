@@ -1,7 +1,7 @@
 # Quest Bluetooth carrier library
 
 This dependency-free Java library owns the existing Hub BLE fragmentation
-profile. It packages as a JAR, usable by Android hosts without an Android
+profile and bounded peer/input-queue lifetimes. It packages as a JAR, usable by Android hosts without an Android
 manifest, service, permission, command registry, or Rust authority library.
 Pure Java needs no additional rlib; an Android host keeps its existing one.
 
@@ -44,3 +44,17 @@ GATT service lifetime, connection generations, challenges, admission, command
 dispatch and completion receipts. Neither successful frame reassembly nor a
 successful GATT write confirms an app effect. Library conformance does not
 establish Android lifecycle, physical Bluetooth behavior or owner acceptance.
+
+`GattPeer` owns fragment assembly, MTU bounds, the sixteen-message copied output
+queue, read deadlines, byte clearing and terminal retirement. Its narrow
+endpoint factory receives a byte sink; the host supplies its current-owner
+guard, elapsed clock and retirement callback. The endpoint owns protocol
+validation, authentication and effects. Borrowed incoming bytes must be copied
+by endpoints that retain them. `GattInputQueue` preserves the single worker,
+four pending writes, input copying, clearing and shutdown disposal.
+
+The Hub adapter keeps its UUIDs, Android permissions, advertising/service
+lifecycle, readiness and native authority checks. Its closed Own/Peer loopback
+policy remains app-owned. The peer library does not select commands or merge
+the separate RQEC1 protocol. Packaged conformance exercises the actual JAR;
+consumer compilation and host controls are separate from physical BLE proof.
