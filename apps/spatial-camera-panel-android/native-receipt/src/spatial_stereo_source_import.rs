@@ -1,4 +1,7 @@
 //! Actual retained source-set adapter; two bounded scalar normalizers, one WSI final.
+use crate::stereo_normalizer_reuse_policy::{
+    refresh_disposition, NormalizerCompatibility, RefreshDisposition,
+};
 use crate::{
     ahardware_buffer_vulkan::{
         self as ahb, AhbVulkanSampledImage, AhbVulkanSampledImageCreateInfo,
@@ -20,6 +23,15 @@ use crate::{
 use ash::vk;
 
 type Frame = RetainedStereoFrame<StereoSourceLease<PackedLease, SpatialVideoProjectionFrame>>;
+fn normalizer_processing_policy() -> [u32; 4] {
+    let policy = crate::spatial_guide_processing::current_spatial_guide_processing_policy();
+    [
+        policy.preblur_kernel as u32,
+        policy.preblur_input as u32,
+        policy.postblur_kernel as u32,
+        policy.camera_sampling as u32,
+    ]
+}
 pub(crate) struct SourceCarrierSeed {
     pub(crate) hardware_buffer: crate::android_hardware_buffer::AndroidHardwareBufferHandle,
     pub(crate) descriptor: crate::android_hardware_buffer::AndroidHardwareBufferDescriptor,
@@ -176,6 +188,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 }
 
 struct ImportedSource {
+    compatibility: NormalizerCompatibility,
     normalizer: PackedSbsNormalizer,
     image: AhbVulkanSampledImage,
     frame: Frame,
@@ -186,6 +199,8 @@ pub(crate) struct StereoSourceImports {
     sources: [Option<ImportedSource>; 2],
     pending: Option<vk::Fence>,
     foreign_queue_family: Option<u32>,
+    control_revision: u64,
+    processing_policy: [u32; 4],
 }
 impl StereoSourceImports {
     pub(crate) unsafe fn create(
@@ -232,6 +247,8 @@ impl StereoSourceImports {
             sources: [None, None],
             pending: None,
             foreign_queue_family,
+            control_revision: 0,
+            processing_policy: [0; 4],
         })
     }
     pub(crate) unsafe fn retire_after_fence(&mut self, device: &ash::Device) -> Result<(), String> {
@@ -273,22 +290,64 @@ impl StereoSourceImports {
         resources: &CameraHwbProbeResources,
         mode: CameraHwbProbeMode,
         maximum_age_ns: u64,
+        control_revision: u64,
     ) -> Result<(), String> {
         if self.pending.is_some() {
             return Err("stereo-import-replacement-before-retirement".into());
         }
+        // The caller has proven common-fence retirement. Any refresh failure
+        // clears both bindings rather than leaving a partial stale source set.
+        let result = self.refresh_retired(
+            device,
+            memory,
+            ahb_device,
+            resources,
+            mode,
+            maximum_age_ns,
+            control_revision,
+        );
+        if result.is_err() {
+            self.clear_retired_sources(device);
+        }
+        result
+    }
+    unsafe fn clear_retired_sources(&mut self, device: &ash::Device) {
+        debug_assert!(self.pending.is_none());
+        for slot in &mut self.sources {
+            if let Some(previous) = slot.take() {
+                previous.image.destroy(device);
+                previous.normalizer.destroy(device);
+            }
+        }
+        self.control_revision = 0;
+    }
+    unsafe fn refresh_retired(
+        &mut self,
+        device: &ash::Device,
+        memory: &vk::PhysicalDeviceMemoryProperties,
+        ahb_device: &ahb::AhbVulkanDevice,
+        resources: &CameraHwbProbeResources,
+        mode: CameraHwbProbeMode,
+        maximum_age_ns: u64,
+        control_revision: u64,
+    ) -> Result<(), String> {
+        if control_revision == 0 {
+            return Err("stereo-normalizer-control-unavailable".into());
+        }
+        let processing_policy = normalizer_processing_policy();
         if mode.descriptor_binding_count() != 2 || resources.sampler_ycbcr_conversion.is_some() {
             return Err("stereo-normalized-layout-invalid".into());
         }
         let frames = crate::own_stereo_capture_runtime::shared_sources()
             .snapshot(monotonic_ns()?, maximum_age_ns)?;
         for (origin, frame) in frames.into_iter().enumerate() {
-            let previous = self.sources[origin].take();
-            if let Some(previous) = previous {
-                previous.image.destroy(device);
-                previous.normalizer.destroy(device);
-            }
-            let Some(frame) = frame else { continue };
+            let Some(frame) = frame else {
+                if let Some(previous) = self.sources[origin].take() {
+                    previous.image.destroy(device);
+                    previous.normalizer.destroy(device);
+                }
+                continue;
+            };
             if matches!(&frame.lease, StereoSourceLease::Own(_))
                 && self.foreign_queue_family.is_none()
             {
@@ -303,15 +362,76 @@ impl StereoSourceImports {
             };
             let (properties, format) =
                 ahb::query_ahb_vulkan_import_properties(ahb_device, &hardware)?;
-            let mut normalizer = PackedSbsNormalizer::create(
-                device,
-                memory,
-                descriptor.width,
-                descriptor.height,
-                properties.format_key,
-                &format,
-            )?;
-            normalizer.set_source_bottom_up(matches!(&frame.lease, StereoSourceLease::Own(_)));
+            let bottom_up = matches!(&frame.lease, StereoSourceLease::Own(_));
+            let producer_generations = match &frame.lease {
+                StereoSourceLease::Own(own) => [own.contents().version.pool_generation, 0, 0],
+                StereoSourceLease::Peer(peer) => [
+                    peer.route_generation,
+                    peer.decoder_token,
+                    peer.reader_generation,
+                ],
+            };
+            let compatibility = NormalizerCompatibility {
+                epoch: [
+                    frame.identity.epoch.process_generation,
+                    frame.identity.epoch.source_generation,
+                ],
+                producer_generations,
+                control_revision,
+                processing_policy,
+                descriptor: [
+                    descriptor.width as u64,
+                    descriptor.height as u64,
+                    descriptor.layers as u64,
+                    descriptor.format as u64,
+                    descriptor.usage,
+                    descriptor.stride as u64,
+                ],
+                format: [
+                    properties.format_key.format.as_raw() as u64,
+                    properties.format_key.external_format,
+                ],
+                conversion: [
+                    format.format_features.as_raw() as i32,
+                    format.suggested_ycbcr_model.as_raw(),
+                    format.suggested_ycbcr_range.as_raw(),
+                    format.sampler_ycbcr_conversion_components.r.as_raw(),
+                    format.sampler_ycbcr_conversion_components.g.as_raw(),
+                    format.sampler_ycbcr_conversion_components.b.as_raw(),
+                    format.sampler_ycbcr_conversion_components.a.as_raw(),
+                    format.suggested_x_chroma_offset.as_raw(),
+                    format.suggested_y_chroma_offset.as_raw(),
+                ],
+                bottom_up,
+            };
+            let reuse = refresh_disposition(
+                true,
+                self.sources[origin].as_ref().map(|s| &s.compatibility),
+                Some(&compatibility),
+            ) == RefreshDisposition::Reuse;
+            // Reuse only normalization storage; import the exact fresh leased
+            // AHB on every refresh. No AHB address is cached as frame identity.
+            let mut normalizer = if reuse {
+                let previous = self.sources[origin]
+                    .take()
+                    .expect("compatible source present");
+                previous.image.destroy(device);
+                previous.normalizer
+            } else {
+                if let Some(previous) = self.sources[origin].take() {
+                    previous.image.destroy(device);
+                    previous.normalizer.destroy(device);
+                }
+                PackedSbsNormalizer::create(
+                    device,
+                    memory,
+                    descriptor.width,
+                    descriptor.height,
+                    properties.format_key,
+                    &format,
+                )?
+            };
+            normalizer.set_source_bottom_up(bottom_up);
             let image = match ahb::import_ahb_sampled_image(
                 device,
                 memory,
@@ -343,11 +463,19 @@ impl StereoSourceImports {
                 mode,
             );
             self.sources[origin] = Some(ImportedSource {
+                compatibility,
                 normalizer,
                 image,
                 frame,
             });
         }
+        if normalizer_processing_policy() != processing_policy
+            || crate::spatial_public_multistack_runtime::read_mask_policy().1 != control_revision
+        {
+            return Err("stereo-normalizer-control-changed-during-refresh".into());
+        }
+        self.control_revision = control_revision;
+        self.processing_policy = processing_policy;
         Ok(())
     }
     pub(crate) fn recording_inputs(
@@ -359,7 +487,12 @@ impl StereoSourceImports {
         frame_ordinal: u64,
         surface_generation: u64,
     ) -> Result<StereoRecordingInputs<'_>, String> {
-        if self.pending.is_some() || fence == vk::Fence::null() || processing_revision == 0 {
+        if self.pending.is_some()
+            || fence == vk::Fence::null()
+            || processing_revision == 0
+            || processing_revision != self.control_revision
+            || normalizer_processing_policy() != self.processing_policy
+        {
             return Err("stereo-recording-admission-invalid".into());
         }
         self.pending = Some(fence);

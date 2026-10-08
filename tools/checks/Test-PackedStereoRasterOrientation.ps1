@@ -17,8 +17,18 @@ if(-not$normalizer.Contains('height: self.extent.height as f32')){throw 'Actual 
 $fixed=$shader.Contains('pc.sourceBottomUp != 0u ? 1.0 - localUv.y : localUv.y')
 if(-not$fixed){throw 'Own GL bottom-up source raster is not normalized before common processing'}
 if(-not$fixed-and-not$shader.Contains('vec2 packedUv = vec2(halfOrigin + localUv.x * 0.5, localUv.y)')){throw 'Actual normalize mapping differs'}
-if($fixed-and(-not$import.Contains('normalizer.set_source_bottom_up(matches!(&frame.lease,StereoSourceLease::Own(_)))'))){throw 'Own/Peer origin selection absent'}
-if(-not$import.Contains('let previous=self.sources[origin].take()')-or-not$import.Contains('previous.normalizer.destroy(device)')-or-not$import.Contains('self.sources[origin]=Some(ImportedSource{normalizer,image,frame})')){throw 'Per-origin normalizer lifetime is not freshly bound'}
+$importCompact=$import -replace '\s',''
+if($fixed-and(-not$importCompact.Contains('letbottom_up=matches!(&frame.lease,StereoSourceLease::Own(_));')-or-not$importCompact.Contains('normalizer.set_source_bottom_up(bottom_up)'))){throw 'Own/Peer origin selection absent'}
+# Resource reuse must not reuse stale AHB content or bypass common-fence retirement.
+if(-not$importCompact.Contains('ifself.pending.is_some()')-or-not$importCompact.Contains('self.clear_retired_sources(device)')-or-not$importCompact.Contains('previous.image.destroy(device)')-or-not$importCompact.Contains('refresh_disposition(true,')-or-not$importCompact.Contains('ahb::import_ahb_sampled_image(')-or-not$importCompact.Contains('normalizer.update_source(device,image.image_view)')){throw 'Fence-bound fresh content/normalizer ownership route absent'}
+# Exercise the actual pure resource compatibility policy and retained lease lifetime.
+foreach($test in @('stereo_normalizer_reuse_policy','frame_lease_slots')){
+ $exe=Join-Path $EvidenceRoot ($test+'.exe')
+ & rustc --edition 2021 --test (Join-Path $native ('src/'+$test+'.rs')) -o $exe
+ if($LASTEXITCODE-ne0){throw "Native policy test compilation failed: $test"}
+ & $exe
+ if($LASTEXITCODE-ne0){throw "Native policy controls failed: $test"}
+}
 $cases=@()
 # Source cells encode eye, X and canonical top-down Y. Android SurfaceTexture
 # matrix is represented by a supported flip-Y fixture. Applying it renders a
