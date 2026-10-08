@@ -111,6 +111,11 @@ fn retained_prepare_latest_start_after_long_session_prefix() {
     run_coupled_owner_graph_with_projection_probe(false, true, 16, true);
 }
 
+#[test]
+fn retained_prepare_renewal_after_supported_media_restart() {
+    run_coupled_owner_graph_with_projection_probe(false, true, 22, true);
+}
+
 fn run_coupled_owner_graph_with_projection_probe(
     retained_abort: bool,
     cross_authority_probe: bool,
@@ -581,6 +586,76 @@ fn run_coupled_owner_graph_with_projection_probe(
                         )
                         .unwrap();
                     assert!(actual.media_authority.applied && actual.outer_lifecycle.applied);
+                    if restart_after_prefix && round == 16 {
+                        let before = authority.snapshot_json().unwrap();
+                        let actual:rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot=serde_json::from_str(&before).unwrap();
+                        authority.restore_snapshot_json(&before).unwrap();
+                        let mut missing_release = actual.clone();
+                        let old_binding = &actual.concurrent_media_renewals[0]
+                            .prior_inner_lease
+                            .derivative_binding;
+                        missing_release
+                            .broker_lease_admissions
+                            .iter_mut()
+                            .find(|a| &a.runtime_lease.derivative_binding == old_binding)
+                            .unwrap()
+                            .released_at_ms = None;
+                        let old_decision =
+                            &actual.concurrent_media_renewals[0].prior_media.decision_id;
+                        let mut missing_end = actual.clone();
+                        missing_end
+                            .media_sessions
+                            .sessions
+                            .iter_mut()
+                            .find(|m| &m.decision_id == old_decision)
+                            .unwrap()
+                            .ended_at_ms = None;
+                        let mut live_old_graph = actual.clone();
+                        live_old_graph.media_sessions.sessions.iter_mut().find(|m|&m.decision_id==old_decision).unwrap().lifecycle_status=rusty_manifold_media_session::ManifoldMediaSessionLifecycleStatus::Current;
+                        let mut pending_cleanup = actual.clone();
+                        let old_route =
+                            &actual.concurrent_media_renewals[0].prior_routes[0].grant_id;
+                        for route in &mut pending_cleanup.pair_media_routes.routes {
+                            if let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(route)=route {
+                                if &route.grant_id==old_route { route.cleanup_status=rusty_manifold_peer::ManifoldPairMediaRouteCleanupStatus::Pending; }
+                            }
+                        }
+                        let mut altered_old_lease = actual.clone();
+                        altered_old_lease.concurrent_media_renewals[0]
+                            .renewed_inner_lease
+                            .expires_at_ms -= 1;
+                        let mut lost_middle = actual.clone();
+                        lost_middle.concurrent_media_renewals.remove(1);
+                        let mut reordered = actual.clone();
+                        reordered.concurrent_media_renewals.swap(0, 16);
+                        let mut old_graph_damage = actual.clone();
+                        old_graph_damage.concurrent_media_renewals[15]
+                            .renewed_media
+                            .accepted_at_ms += 1;
+                        for damaged in [
+                            missing_release,
+                            missing_end,
+                            live_old_graph,
+                            pending_cleanup,
+                            altered_old_lease,
+                            lost_middle,
+                            reordered,
+                            old_graph_damage,
+                        ] {
+                            assert!(
+                                authority
+                                    .restore_snapshot_json(
+                                        &serde_json::to_string(&damaged).unwrap()
+                                    )
+                                    .is_err(),
+                                "Damaged released/new-admitted graph history must fail closed"
+                            );
+                            assert_eq!(authority.snapshot_json().unwrap(), before);
+                        }
+                        println!(
+                            "ACTUAL_RESTART_HISTORY_CONTROLS peer{index} count=8 rejected=true unchanged=true"
+                        );
+                    }
                     *current = renewal.topology;
                     if restart_after_prefix && round == 15 {
                         // Genuine supported Stop/route completion and a fresh Start,
@@ -885,7 +960,7 @@ fn run_coupled_owner_graph_with_projection_probe(
             }
             let ancestry = sender.retained_cleanup_renewal_ancestry(&cleanup).unwrap();
             if renewed_probe > 0 {
-                if restart_after_prefix {
+                if restart_after_prefix && renewed_probe == 16 {
                     assert_eq!(
                         cleanup.signed_topology_sha256,
                         original.0.signed_topology_sha256
@@ -904,7 +979,7 @@ fn run_coupled_owner_graph_with_projection_probe(
                     ancestry.len(),
                     encoded.len()
                 );
-                if restart_after_prefix {
+                if restart_after_prefix && renewed_probe == 16 {
                     assert_ne!(
                         original.1.action_id, initial_originals[index].1.action_id,
                         "Latest anchor must come from a genuine new Start"
@@ -918,7 +993,7 @@ fn run_coupled_owner_graph_with_projection_probe(
                     &key,
                     late + 10,
                 );
-                if restart_after_prefix {
+                if restart_after_prefix && renewed_probe == 16 {
                     assert!(
                         legacy.is_ok(),
                         "A latest Start with no later renewals preserves direct-digest cleanup"
@@ -929,12 +1004,25 @@ fn run_coupled_owner_graph_with_projection_probe(
                         "Legacy no-ancestry receiver must not accept renewed topology"
                     );
                 }
+                if restart_after_prefix && renewed_probe > 16 {
+                    receiver
+                        .validate_remote_retained_cleanup_projection_with_renewals(
+                            &cleanup,
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &key,
+                            late + 10,
+                            &ancestry[16..],
+                        )
+                        .unwrap();
+                }
                 let mut damaged = Vec::new();
-                if !restart_after_prefix {
+                if !restart_after_prefix || renewed_probe > 16 {
                     damaged.push(Vec::new());
                 }
-                if !restart_after_prefix {
-                    damaged.push(ancestry[1..].to_vec());
+                if !restart_after_prefix || renewed_probe > 16 {
+                    damaged.push(ancestry[if restart_after_prefix { 17 } else { 1 }..].to_vec());
                 }
                 damaged.push(ancestry[..1].to_vec());
                 let mut reordered = ancestry.clone();
@@ -1266,7 +1354,9 @@ fn run_coupled_owner_graph_with_projection_probe(
                 .len(),
             1
         );
-        println!("ACTUAL_091_FAILED_START_CLEANUP: original target retained; independent live Revoke; verified reverse cursor then seven owner Stop readbacks");
+        println!(
+            "ACTUAL_091_FAILED_START_CLEANUP: original target retained; independent live Revoke; verified reverse cursor then seven owner Stop readbacks"
+        );
         return;
     }
     let active_a = provider_a.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
