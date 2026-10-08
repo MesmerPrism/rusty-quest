@@ -12,6 +12,22 @@ import java.util.Arrays;
 import org.junit.Test;
 
 public final class EmbeddedDuplexIdentityDomainTest {
+    @Test public void retainedCleanupSignerKeepsClosedPrepareVersions() {
+        for (String domain : new String[] {
+                "rusty.quest.android.media.retained_cleanup_prepare.v1",
+                "rusty.quest.android.media.retained_abort_prepare.v2",
+                "rusty.quest.android.media.retained_cleanup_prepare.v3",
+                "rusty.quest.android.media.retained_abort_prepare.v4" }) {
+            assertTrue(EmbeddedDuplexIdentity.hasSupportedAuthorityDomain(bytes(domain + "\0{}")));
+            assertFalse(EmbeddedDuplexIdentity.hasSupportedAuthorityDomain(bytes(domain + "\0")));
+            assertFalse(EmbeddedDuplexIdentity.hasSupportedAuthorityDomain(bytes(domain + ".extra\0{}")));
+        }
+        assertFalse(EmbeddedDuplexIdentity.hasSupportedAuthorityDomain(bytes(
+                "rusty.quest.android.media.retained_cleanup_prepare.v5\0{}")));
+        assertFalse(EmbeddedDuplexIdentity.hasSupportedAuthorityDomain(bytes(
+                "rusty.quest.android.media.retained_abort_prepare.v3\0{}")));
+    }
+
     @Test public void genericOwnerSignerCannotSignCommonLanContext() {
         assertFalse(EmbeddedDuplexIdentity.hasSupportedAuthorityDomain(bytes(
                 "rusty.manifold.peer.common_lan_reciprocal_ed25519_context.v1\0context")));
