@@ -51,6 +51,11 @@ receipts, shell history, and evidence manifests. Receipts contain
 `caller_selected_capability=false`. The optional debug provider remains a
 separate non-release E2E aid and is not a substitute for this published route.
 
+If durable authority restoration is rejected, the runtime preserves the retained
+state and pending operation for owner recovery. Mutations fail with
+`manifold_state_restore_rejected_recovery_required`; an already-stopped
+listener cannot confirm a rejected Stop. Read-only Status remains available.
+
 `PublishedBrowserE2E` is the corresponding published-product browser harness.
 It starts and reads the Hub only through that normal operator, preserves an
 already-running Hub, and never calls the debug operator. It retrieves the

@@ -22,8 +22,8 @@ const EXPECTED_PRODUCT_ID: &str = "broker.connection-hub.standalone";
 const VERIFIED_WEARER_EVIDENCE: &str = "evidence.operator.wearer-action";
 const EMPTY_TYPED_PARAMS_SCHEMA_SHA256: &str =
     "sha256:7eedc1ccca80b83dbd121d1e4bae4f6a6c9c1561e1a08d6d5919c668d5406a51";
-const EXPECTED_MANIFOLD_REVISION: &str = "d9d060f8c67199135a4c3e0a699ca408f6c64095";
-const EXPECTED_MANIFOLD_TREE: &str = "23126eb8b6d0127dfbfa7b968c95ea8b8c7174be";
+const EXPECTED_MANIFOLD_REVISION: &str = "004ec0939edf564b693788f411f86d45df25d394";
+const EXPECTED_MANIFOLD_TREE: &str = "f011b7fd9d062a34b25f7c7e1b5b95eb007dd6c8";
 const ORDINARY_AUDIT_ROLLOVER_THRESHOLD: usize = 3_800;
 
 #[derive(Deserialize)]
