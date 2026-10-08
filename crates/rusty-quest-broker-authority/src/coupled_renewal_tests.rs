@@ -88,17 +88,23 @@ fn retained_failed_start_uses_live_revoker_and_original_target_stop() {
 }
 
 fn run_coupled_owner_graph(retained_abort: bool) {
-    run_coupled_owner_graph_with_projection_probe(retained_abort, false);
+    run_coupled_owner_graph_with_projection_probe(retained_abort, false, false);
 }
 
 #[test]
 fn retained_prepare_sender_grant_and_requester_are_not_receiver_local_authority() {
-    run_coupled_owner_graph_with_projection_probe(false, true);
+    run_coupled_owner_graph_with_projection_probe(false, true, false);
+}
+
+#[test]
+fn retained_prepare_authenticates_original_after_coupled_renewal_and_expiry() {
+    run_coupled_owner_graph_with_projection_probe(false, true, true);
 }
 
 fn run_coupled_owner_graph_with_projection_probe(
     retained_abort: bool,
     cross_authority_probe: bool,
+    renewed_probe: bool,
 ) {
     struct FailStopOnce {
         inner: DeterministicAndroidMediaOwnerExecutor,
@@ -476,7 +482,77 @@ fn run_coupled_owner_graph_with_projection_probe(
             .unwrap();
             originals.push((projection, ticket));
         }
-        let late = 250_000;
+        if renewed_probe {
+            for round in 0..2 {
+                let now = 64_000 + round;
+                for (index, authority, current) in [
+                    (0, &authority_a, &topology_a),
+                    (1, &authority_b, &topology_b),
+                ] {
+                    let first = renewal_reciprocal_request(
+                        authority,
+                        &format!("request.cleanup-renew.r{round}.h{index}.credentials"),
+                        &alpha,
+                        &beta,
+                        now,
+                        (now + 20_000).min(current.expires_at_ms),
+                        41 + index as u8 * 4 + round as u8 * 8,
+                    );
+                    let proof = authority.apply_common_lan_reciprocal(&first, now).unwrap();
+                    authority
+                        .refresh_concurrent_pair_credentials(&proof, now)
+                        .unwrap();
+                    let fresh = renewal_reciprocal_request(
+                        authority,
+                        &format!("request.cleanup-renew.r{round}.h{index}.session"),
+                        &alpha,
+                        &beta,
+                        now + 1,
+                        now + 235_000,
+                        43 + index as u8 * 4 + round as u8 * 8,
+                    );
+                    let signed = authority
+                        .apply_common_lan_reciprocal(&fresh, now + 1)
+                        .unwrap();
+                    let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
+                    serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
+                    let mut next = proposal(&format!("cleanup-renew.r{round}.h{index}"));
+                    next.expected_authority_revision = snapshot.peer_sessions.authority_revision;
+                    next.expires_at_ms = now + 235_000;
+                    let renewal = authority
+                        .apply_common_lan_session_renewal(&next, &signed, now + 1)
+                        .unwrap();
+                    let provider = if index == 0 {
+                        &mut provider_a
+                    } else {
+                        &mut provider_b
+                    };
+                    let mut clock = provider
+                        .runtime
+                        .as_ref()
+                        .unwrap()
+                        .runtime
+                        .read()
+                        .unwrap()
+                        .control_lease_authority_snapshot()
+                        .clock_snapshot
+                        .clone();
+                    clock.sequence += 1;
+                    clock.wall_unix_ms = (now + 1) as i64;
+                    clock.monotonic_elapsed_ns = 1_000_000_000 + (now + 1 - 1000) * 1_000_000;
+                    let actual = provider
+                        .renew_concurrent_peer_authority(
+                            &clock,
+                            &renewal,
+                            now + 1,
+                            &format!("{:02x}", 70 + index + round as usize * 2).repeat(32),
+                        )
+                        .unwrap();
+                    assert!(actual.media_authority.applied && actual.outer_lifecycle.applied);
+                }
+            }
+        }
+        let late = if renewed_probe { 330_000 } else { 250_000 };
         let mut requests = Vec::new();
         for (index, provider) in [&mut provider_a, &mut provider_b].into_iter().enumerate() {
             let mut clock = provider
@@ -598,7 +674,7 @@ fn run_coupled_owner_graph_with_projection_probe(
                         &sender.2,
                         &id(sender_peer),
                         &id(receiver_peer),
-                        late + 10
+                        late + 10,
                     )
                     .unwrap_err(),
                 "cleanup route is absent"
@@ -611,7 +687,7 @@ fn run_coupled_owner_graph_with_projection_probe(
                         &sender.2,
                         &id(sender_peer),
                         &id(receiver_peer),
-                        late + 10
+                        late + 10,
                     )
                     .unwrap_err(),
                 "cleanup requester lease is absent"
@@ -654,24 +730,105 @@ fn run_coupled_owner_graph_with_projection_probe(
                 )
                 .unwrap();
             let key = signer.verifying_key().to_bytes();
+            let ancestry = sender.retained_cleanup_renewal_ancestry(&cleanup).unwrap();
+            if renewed_probe {
+                assert_ne!(
+                    cleanup.signed_topology_sha256,
+                    original.0.signed_topology_sha256
+                );
+                assert_eq!(ancestry.len(), 2);
+                assert!(
+                    receiver
+                        .validate_remote_retained_cleanup_projection(
+                            &cleanup,
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &key,
+                            late + 10,
+                        )
+                        .is_err(),
+                    "Legacy no-ancestry receiver must not accept renewed topology"
+                );
+                let mut damaged = Vec::new();
+                damaged.push(Vec::new());
+                damaged.push(ancestry[1..].to_vec());
+                damaged.push(ancestry[..1].to_vec());
+                let mut reordered = ancestry.clone();
+                reordered.reverse();
+                damaged.push(reordered);
+                let mut repeated = ancestry.clone();
+                repeated.push(ancestry[0].clone());
+                damaged.push(repeated);
+                let mut unrelated = ancestry.clone();
+                unrelated[0].session_id = id("session.foreign");
+                damaged.push(unrelated);
+                let mut altered = ancestry.clone();
+                altered[0].topology.transport.route_configuration_sha256 =
+                    format!("sha256:{}", "f".repeat(64));
+                damaged.push(altered);
+                let mut unapplied = ancestry.clone();
+                unapplied[0].applied = false;
+                damaged.push(unapplied);
+                let mut unaccepted = ancestry.clone();
+                unaccepted[0].reciprocal.accepted = false;
+                damaged.push(unaccepted);
+                let mut at_expiry = ancestry.clone();
+                at_expiry[0].observed_at_ms = at_expiry[0].prior_expires_at_ms;
+                damaged.push(at_expiry);
+                let mut past_expiry = ancestry.clone();
+                past_expiry[0].observed_at_ms = past_expiry[0].prior_expires_at_ms + 1;
+                damaged.push(past_expiry);
+                let mut duplicate_request = ancestry.clone();
+                duplicate_request[1].request_id = duplicate_request[0].request_id.clone();
+                duplicate_request[1].renewal_proposal.proposal_id =
+                    duplicate_request[0].request_id.clone();
+                damaged.push(duplicate_request);
+                damaged.push(vec![ancestry[0].clone(); 65]);
+                let mut oversized = ancestry.clone();
+                oversized[0].reciprocal.context_sha256 = "f".repeat(65_536);
+                damaged.push(oversized);
+                for changed in damaged {
+                    assert!(
+                        receiver
+                            .validate_remote_retained_cleanup_projection_with_renewals(
+                                &cleanup,
+                                &original.0,
+                                &original.1,
+                                key_id,
+                                &key,
+                                late + 10,
+                                &changed,
+                            )
+                            .is_err(),
+                        "Missing, reordered, repeated, unrelated or damaged ancestry admitted"
+                    );
+                }
+                if let Ok(directory) = std::env::var("RQ_RETAINED_ANCESTRY_TEST_OUTPUT") {
+                    std::fs::write(std::path::Path::new(&directory).join(format!("ancestry-{local}.json")),
+                        serde_json::to_vec(&serde_json::json!({"cleanup":cleanup,"ticket":original.1,"ancestry":ancestry})).unwrap()).unwrap();
+                }
+            }
             receiver
-                .validate_remote_retained_cleanup_projection(
+                .validate_remote_retained_cleanup_projection_with_renewals(
                     &cleanup,
                     &original.0,
                     &original.1,
                     key_id,
                     &key,
                     late + 10,
+                    &ancestry,
                 )
                 .unwrap();
             receiver
-                .validate_remote_retained_cleanup_projection(
+                .validate_remote_retained_cleanup_projection_with_renewals(
                     &cleanup,
                     &original.0,
                     &original.1,
                     key_id,
                     &key,
                     late + 11,
+                    &ancestry,
                 )
                 .unwrap();
             for changed in [
@@ -742,44 +899,48 @@ fn run_coupled_owner_graph_with_projection_probe(
                 },
             ] {
                 assert!(receiver
-                    .validate_remote_retained_cleanup_projection(
+                    .validate_remote_retained_cleanup_projection_with_renewals(
                         &changed,
                         &original.0,
                         &original.1,
                         key_id,
                         &key,
-                        late + 10
+                        late + 10,
+                        &ancestry,
                     )
                     .is_err());
             }
             assert!(receiver
-                .validate_remote_retained_cleanup_projection(
+                .validate_remote_retained_cleanup_projection_with_renewals(
                     &cleanup,
                     &original.0,
                     &original.1,
                     "key.foreign",
                     &key,
-                    late + 10
+                    late + 10,
+                    &ancestry,
                 )
                 .is_err());
             assert!(receiver
-                .validate_remote_retained_cleanup_projection(
+                .validate_remote_retained_cleanup_projection_with_renewals(
                     &cleanup,
                     &original.0,
                     &original.1,
                     key_id,
                     &[0; 32],
-                    late + 10
+                    late + 10,
+                    &ancestry,
                 )
                 .is_err());
             assert!(receiver
-                .validate_remote_retained_cleanup_projection(
+                .validate_remote_retained_cleanup_projection_with_renewals(
                     &cleanup,
                     &original.0,
                     &original.1,
                     key_id,
                     &key,
-                    cleanup.expires_at_ms
+                    cleanup.expires_at_ms,
+                    &ancestry,
                 )
                 .is_err());
         }

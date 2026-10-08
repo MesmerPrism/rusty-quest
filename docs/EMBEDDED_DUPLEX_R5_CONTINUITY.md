@@ -74,6 +74,26 @@ APIs to check local and foreign grant/requester lookup. Its platform executors
 are modeled. Neither test observes an actual incoming headset packet, JNI
 execution, or completed remote cleanup.
 
+### Cleanup after coupled session renewal
+
+Retained remote cleanup keeps the exact original forward Start target. A native
+sender may attach its accepted same-session renewal history to the completely
+signed Prepare: at most 64 transitions and 64 KiB of serialized ancestry, within
+the existing 128 KiB frame bound. The receiver anchors the ordered, noncyclic
+transitions to its retained original topology and the exact current cleanup
+topology. It does not import the sender's Broker or infer foreign ancestry from
+its own authority history. Signer, original grant/client/lease/provider, current
+requester expiry, native capability and physical owner guards remain mandatory.
+
+Empty ancestry preserves the original serialized Prepare shape. An old receiver
+rejects the new ancestry field; there is no downgrade fallback. Updated sender
+and receiver are needed before selecting renewed cleanup. The focused
+`retained_prepare_authenticates_original_after_coupled_renewal_and_expiry` test
+uses two distinct production authority stores and two coupled renewals before
+expired-holder cleanup. `tools/checks/Test-RetainedCleanupAncestryHost.py` tests
+the exact native Prepare serde and signature verification with real Ed25519.
+These host tests do not prove JNI, exchange or physical cleanup.
+
 ### Process-local installed APK digest
 
 The process host owns one non-persisted installed-base-APK digest entry. Each

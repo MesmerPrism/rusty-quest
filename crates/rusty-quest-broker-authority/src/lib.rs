@@ -10,3 +10,6 @@ mod runtime;
 
 pub use embedded_duplex::*;
 pub use runtime::*;
+
+/// Accepted owner renewal evidence carried only inside signed retained cleanup.
+pub use rusty_manifold_peer_runtime_host::ManifoldConcurrentPairSessionRenewalReceipt as QuestRetainedCleanupSessionRenewal;
