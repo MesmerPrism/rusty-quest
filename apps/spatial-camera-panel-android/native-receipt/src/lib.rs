@@ -54,8 +54,6 @@ mod live_hand_joint_bridge;
 mod live_hand_joints;
 #[cfg(target_os = "android")]
 mod packed_sbs_normalizer;
-#[cfg(any(target_os = "android", test))]
-mod stereo_normalizer_reuse_policy;
 mod particle_adapter_consumer;
 #[cfg(any(target_os = "android", test))]
 mod peer_projection_ingress;
@@ -95,6 +93,8 @@ mod spatial_video_projection_native_stream;
 mod spatial_video_projection_probe;
 mod spatial_video_projection_qualification;
 mod spatial_video_projection_settings;
+#[cfg(any(target_os = "android", test))]
+mod stereo_normalizer_reuse_policy;
 #[cfg(any(target_os = "android", test))]
 mod surface_particle_layer;
 mod surface_particle_projection;
