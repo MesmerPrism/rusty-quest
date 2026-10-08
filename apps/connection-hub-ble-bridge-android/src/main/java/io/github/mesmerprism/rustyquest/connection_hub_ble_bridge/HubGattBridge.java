@@ -1,5 +1,7 @@
 package io.github.mesmerprism.rustyquest.connection_hub_ble_bridge;
 import io.github.mesmerprism.rustyquest.ble_control.HubBleFrames;
+import io.github.mesmerprism.rustyquest.ble_control.GattPeer;
+import io.github.mesmerprism.rustyquest.ble_control.GattInputQueue;
 
 import android.bluetooth.*;
 import android.bluetooth.le.*;
@@ -19,13 +21,8 @@ final class HubGattBridge implements Closeable {
     private final Observer observer;
     private final Context context;private final HubReadiness readiness;private final long deadline;
     private final Object gate=new Object();private final Map<BluetoothDevice,Peer> peers=new HashMap<>();
-    private final ExecutorService worker=new ThreadPoolExecutor(1,1,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<Runnable>(4));private BluetoothGattServer gatt;private BluetoothLeAdvertiser advertiser;
+    private final GattInputQueue worker=new GattInputQueue();private BluetoothGattServer gatt;private BluetoothLeAdvertiser advertiser;
     private volatile boolean closed;private long nextGeneration;
-    private abstract static class InputTask implements Runnable {
-        final byte[] held;
-        InputTask(byte[] held){this.held=held;}
-        final void clear(){Arrays.fill(held,(byte)0);}
-    }
     private final UUID service=UUID.fromString(HubBleFrames.SERVICE),write=UUID.fromString(HubBleFrames.WRITE),read=UUID.fromString(HubBleFrames.READ),status=UUID.fromString(HubBleFrames.STATUS);
     HubGattBridge(Context context,long deadline) {this(context,deadline,SILENT);}
     HubGattBridge(Context context,long deadline,Observer observer) {this.context=context.getApplicationContext();this.readiness=new HubReadiness(context);this.deadline=deadline;this.observer=observer;}
@@ -55,46 +52,40 @@ final class HubGattBridge implements Closeable {
             synchronized(gate){if(closed)return;if(result==BluetoothGatt.GATT_SUCCESS&&state==BluetoothProfile.STATE_CONNECTED){if(peers.isEmpty())peers.put(device,new Peer(++nextGeneration));}else retired=peers.remove(device);}
             if(retired!=null)retired.close();
         }
-        @Override public void onMtuChanged(BluetoothDevice device,int mtu){synchronized(gate){Peer p=peers.get(device);if(!closed&&p!=null&&mtu>=23&&mtu<=517)p.mtu=mtu;}}
+        @Override public void onMtuChanged(BluetoothDevice device,int mtu){synchronized(gate){Peer p=peers.get(device);if(!closed&&p!=null&&mtu>=23&&mtu<=517)p.carrier.mtu(mtu);}}
         @Override public void onCharacteristicWriteRequest(final BluetoothDevice device,final int requestId,BluetoothGattCharacteristic characteristic,boolean prepared,final boolean responseNeeded,int offset,byte[] value){
             final Peer p;synchronized(gate){p=peers.get(device);}
-            if(closed||p==null||!write.equals(characteristic.getUuid())||prepared||offset!=0||!responseNeeded||value==null||value.length<=HubBleFrames.HEADER||value.length>Math.min(p.mtu-3,244)){respond(device,requestId,BluetoothGatt.GATT_FAILURE,0,null);return;}
-            final byte[] copy=value.clone();
-            try{worker.execute(new InputTask(copy){public void run(){byte[] complete=null;try{requireCurrent(device,p);readiness.requireCurrent();complete=p.frames.accept(copy,p.mtu,SystemClock.elapsedRealtime());
-                if(complete!=null){requireCurrent(device,p);p.client.send(complete);}
+            if(closed||p==null||!write.equals(characteristic.getUuid())||prepared||offset!=0||!responseNeeded||value==null||value.length<=HubBleFrames.HEADER||value.length>Math.min(p.carrier.mtu()-3,244)){respond(device,requestId,BluetoothGatt.GATT_FAILURE,0,null);return;}
+            if(!worker.submit(value,new GattInputQueue.Action(){public void accept(byte[] copy){try{requireCurrent(device,p);readiness.requireCurrent();p.carrier.accept(copy);
                 requireCurrent(device,p);respond(device,requestId,BluetoothGatt.GATT_SUCCESS,0,null);
                 // GATT success acknowledges carrier bytes only; native Hub receipts arrive separately.
-            }catch(Exception denied){retire(device,p);respond(device,requestId,BluetoothGatt.GATT_FAILURE,0,null);}finally{Arrays.fill(copy,(byte)0);if(complete!=null)Arrays.fill(complete,(byte)0);}}});}catch(RejectedExecutionException denied){Arrays.fill(copy,(byte)0);respond(device,requestId,BluetoothGatt.GATT_FAILURE,0,null);}
+            }catch(Exception denied){retire(device,p);respond(device,requestId,BluetoothGatt.GATT_FAILURE,0,null);}}}))respond(device,requestId,BluetoothGatt.GATT_FAILURE,0,null);
         }
         @Override public void onCharacteristicReadRequest(BluetoothDevice device,int requestId,int offset,BluetoothGattCharacteristic characteristic){
             Peer p;synchronized(gate){p=peers.get(device);}try{requireCurrent(device,p);readiness.requireCurrent();byte[] bytes;
-                if(status.equals(characteristic.getUuid())){JSONObject s=new JSONObject().put("v",1).put("carrier","ble_gatt_to_loopback_hub").put("mtu",p.mtu).put("listener_observed",true).put("controller_authority","not_claimed").put("production_eligible",false);bytes=s.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);if(offset<0||offset>bytes.length)throw new IOException("status offset");bytes=Arrays.copyOfRange(bytes,offset,Math.min(bytes.length,offset+p.mtu-1));}
-                else if(read.equals(characteristic.getUuid())&&offset==0){bytes=p.next();}
+                if(status.equals(characteristic.getUuid())){JSONObject s=new JSONObject().put("v",1).put("carrier","ble_gatt_to_loopback_hub").put("mtu",p.carrier.mtu()).put("listener_observed",true).put("controller_authority","not_claimed").put("production_eligible",false);bytes=s.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);if(offset<0||offset>bytes.length)throw new IOException("status offset");bytes=Arrays.copyOfRange(bytes,offset,Math.min(bytes.length,offset+p.carrier.mtu()-1));}
+                else if(read.equals(characteristic.getUuid())&&offset==0){bytes=p.carrier.next();}
                 else throw new IOException("unknown carrier read");
                 respond(device,requestId,BluetoothGatt.GATT_SUCCESS,offset,bytes);
             }catch(Exception denied){if(p!=null)retire(device,p);respond(device,requestId,BluetoothGatt.GATT_FAILURE,offset,null);}
         }
     };
     private final class Peer implements Closeable {
-        final long generation;volatile int mtu=23;final HubBleFrames frames=new HubBleFrames();final ArrayDeque<byte[]> outgoing=new ArrayDeque<>();
-        final HubLoopbackClient client;private int outputId=1,offset;private long outputDeadline;private volatile boolean retired;
-        Peer(long generation){this.generation=generation;client=new HubLoopbackClient(new HubLoopbackClient.Readiness(){public void requireCurrent()throws Exception{requirePeer(Peer.this);readiness.requireCurrent();}},new HubLoopbackClient.Sink(){public void frame(byte[] bytes)throws Exception{enqueue(bytes);}public void unavailable(){retirePeer(Peer.this);}},System.nanoTime()+Math.max(0,deadline-SystemClock.elapsedRealtime())*1_000_000L);}
-        synchronized void enqueue(byte[] bytes)throws Exception{if(retired||bytes.length<1||bytes.length>HubBleFrames.MAX_BYTES||outgoing.size()>=16)throw new IOException("carrier output unavailable");outgoing.add(bytes.clone());}
-        synchronized byte[] next()throws Exception{
-            if(retired)throw new IOException("carrier retired");if(outgoing.isEmpty())return new byte[0];
-            long now=SystemClock.elapsedRealtime();if(offset==0)outputDeadline=now+HubBleFrames.ASSEMBLY_MS;
-            if(now>=outputDeadline)throw new IOException("carrier read deadline");byte[] body=outgoing.peek();byte[] result=HubBleFrames.chunk(body,outputId,offset,mtu);offset+=result.length-HubBleFrames.HEADER;
-            if(offset==body.length){Arrays.fill(outgoing.remove(),(byte)0);offset=0;if(outputId==65535)throw new IOException("carrier sequence exhausted");outputId++;}return result;
-        }
-        public void close(){synchronized(this){if(retired)return;retired=true;frames.close();for(byte[] bytes:outgoing)Arrays.fill(bytes,(byte)0);outgoing.clear();}client.close();}
+        final long generation;final GattPeer carrier;
+        Peer(long generation){this.generation=generation;carrier=new GattPeer(new GattPeer.Clock(){public long now(){return SystemClock.elapsedRealtime();}},new GattPeer.Guard(){public void requireCurrent()throws Exception{requirePeer(Peer.this);}},new GattPeer.EndpointFactory(){public GattPeer.Endpoint open(final GattPeer.Sink sink){
+            final HubLoopbackClient client=new HubLoopbackClient(new HubLoopbackClient.Readiness(){public void requireCurrent()throws Exception{requirePeer(Peer.this);readiness.requireCurrent();}},new HubLoopbackClient.Sink(){public void frame(byte[] bytes)throws Exception{sink.frame(bytes);}public void unavailable(){sink.unavailable();}},System.nanoTime()+Math.max(0,deadline-SystemClock.elapsedRealtime())*1_000_000L);
+            return endpoint(client);
+        }},new Runnable(){public void run(){retirePeer(Peer.this);}});}
+        public void close(){carrier.close();}
     }
-    private void requirePeer(Peer p)throws Exception{requireBudget();synchronized(gate){if(p==null||p.retired||!peers.containsValue(p))throw new IOException("retired carrier connection");}}
+    static GattPeer.Endpoint endpoint(final HubLoopbackClient client){return new GattPeer.Endpoint(){public void send(byte[] bytes)throws Exception{client.send(bytes);}public void close(){client.close();}};}
+    private void requirePeer(Peer p)throws Exception{requireBudget();synchronized(gate){if(p==null||p.carrier.retired()||!peers.containsValue(p))throw new IOException("retired carrier connection");}}
     // Identity-only lifetime removal, also exercised without Android effects by the host runner.
-    static <K,V> boolean removeCurrentValue(Map<K,V> current,V expected){Iterator<Map.Entry<K,V>> entries=current.entrySet().iterator();while(entries.hasNext())if(entries.next().getValue()==expected){entries.remove();return true;}return false;}
+    static <K,V> boolean removeCurrentValue(Map<K,V> current,V expected){return GattPeer.removeCurrentValue(current,expected);}
     private void retirePeer(Peer p){synchronized(gate){removeCurrentValue(peers,p);}p.close();}
-    private void requireCurrent(BluetoothDevice d,Peer p)throws Exception{requireBudget();synchronized(gate){if(p==null||p.retired||peers.get(d)!=p)throw new IOException("retired carrier connection");}}
+    private void requireCurrent(BluetoothDevice d,Peer p)throws Exception{requireBudget();synchronized(gate){if(p==null||p.carrier.retired()||peers.get(d)!=p)throw new IOException("retired carrier connection");}}
     private void requireBudget()throws IOException{if(closed||SystemClock.elapsedRealtime()>=deadline)throw new IOException("foreground carrier expired");}
     private void respond(BluetoothDevice d,int request,int result,int offset,byte[] data){BluetoothGattServer current=gatt;if(!closed&&current!=null)try{current.sendResponse(d,request,result,offset,data);}catch(RuntimeException ignored){}}
     private void retire(BluetoothDevice d,Peer p){synchronized(gate){if(peers.get(d)==p)peers.remove(d);}p.close();}
-    public void close(){List<Peer> retired;synchronized(gate){if(closed)return;closed=true;retired=new ArrayList<>(peers.values());peers.clear();}for(Peer p:retired)p.close();for(Runnable pending:worker.shutdownNow())if(pending instanceof InputTask)((InputTask)pending).clear();if(advertiser!=null)try{advertiser.stopAdvertising(advertisement);}catch(RuntimeException ignored){}if(gatt!=null)try{gatt.close();}catch(RuntimeException ignored){}gatt=null;}
+    public void close(){List<Peer> retired;synchronized(gate){if(closed)return;closed=true;retired=new ArrayList<>(peers.values());peers.clear();}for(Peer p:retired)p.close();worker.close();if(advertiser!=null)try{advertiser.stopAdvertising(advertisement);}catch(RuntimeException ignored){}if(gatt!=null)try{gatt.close();}catch(RuntimeException ignored){}gatt=null;}
 }

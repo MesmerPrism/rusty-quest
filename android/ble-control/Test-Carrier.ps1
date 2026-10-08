@@ -9,8 +9,11 @@ $java=if($JavaHome){Join-Path $JavaHome 'bin/java.exe'}else{(Get-Command java -E
 $tests=Join-Path $output 'test-classes'
 if(Test-Path -LiteralPath $tests){throw 'Tests require a fresh capsule.'}
 [void][IO.Directory]::CreateDirectory($tests)
-$source=Join-Path $PSScriptRoot 'tests/java/io/github/mesmerprism/rustyquest/ble_control/HubBleFramesTest.java'
-& $javac --release 8 -encoding UTF-8 -cp $artifact -d $tests $source
+$sources=@('HubBleFramesTest.java','GattPeerTest.java'|ForEach-Object {Join-Path $PSScriptRoot ('tests/java/io/github/mesmerprism/rustyquest/ble_control/'+$_)})
+& $javac --release 8 -encoding UTF-8 -cp $artifact -d $tests @sources
 if($LASTEXITCODE -ne 0){throw 'Packaged carrier conformance compilation failed.'}
 & $java -cp "$artifact$([IO.Path]::PathSeparator)$tests" io.github.mesmerprism.rustyquest.ble_control.HubBleFramesTest
 if($LASTEXITCODE -ne 0){throw 'Packaged carrier conformance failed.'}
+
+& $java -cp "$artifact$([IO.Path]::PathSeparator)$tests" io.github.mesmerprism.rustyquest.ble_control.GattPeerTest
+if($LASTEXITCODE -ne 0){throw 'Packaged peer lifetime conformance failed.'}
