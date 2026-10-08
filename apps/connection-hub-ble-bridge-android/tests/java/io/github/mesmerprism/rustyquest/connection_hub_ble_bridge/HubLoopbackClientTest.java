@@ -51,13 +51,14 @@ public final class HubLoopbackClientTest {
         final ConnectionHubHttpServer server=new ConnectionHubHttpServer(runtime,new ConnectionHubHttpServer.AssetLoader(){public ConnectionHubHttpServer.Asset load(String p){return null;}});
         final int port=server.start(0);final BlockingQueue<JSONObject> output=new LinkedBlockingQueue<>();final CountDownLatch closed=new CountDownLatch(1);
         final HubLoopbackClient client=new HubLoopbackClient(new HubLoopbackClient.Readiness(){public void requireCurrent(){if(!runtime.listenerEnabled())throw new SecurityException("retired actual host listener");}},new HubLoopbackClient.Sink(){public void frame(byte[] b)throws Exception{output.add(new JSONObject(HubBleFrames.text(b)));}public void unavailable(){HubGattBridge.removeCurrentValue(controllerSlots,oldPeer);closed.countDown();}},System.nanoTime()+10_000_000_000L,new HubLoopbackClient.Connector(){public Socket open()throws Exception{Socket s=new Socket(InetAddress.getLoopbackAddress(),port);s.setSoTimeout(250);return s;}});
+        final io.github.mesmerprism.rustyquest.ble_control.GattPeer.Endpoint endpoint=HubGattBridge.endpoint(client);
         try{
-            client.send(auth(cookie));JSONObject receipt=output.poll(3,TimeUnit.SECONDS);check(receipt!=null&&"authentication_receipt".equals(receipt.getString("type")));check(receipt.getLong("transport_epoch")==2);check(runtime.requireSession(cookie).transportEpoch==2);
+            endpoint.send(auth(cookie));JSONObject receipt=output.poll(3,TimeUnit.SECONDS);check(receipt!=null&&"authentication_receipt".equals(receipt.getString("type")));check(receipt.getLong("transport_epoch")==2);check(runtime.requireSession(cookie).transportEpoch==2);
             JSONObject snapshot=output.poll(3,TimeUnit.SECONDS);check(snapshot!=null&&"surface_snapshot".equals(snapshot.getString("type")));
-            client.send(command.toString().getBytes(StandardCharsets.UTF_8));JSONObject denied=output.poll(3,TimeUnit.SECONDS);check(denied!=null&&!denied.optBoolean("provider_applied",false));
-            runtime.stopRequested();check(closed.await(3,TimeUnit.SECONDS));denied(new Action(){public void run()throws Exception{client.send(command.toString().getBytes(StandardCharsets.UTF_8));}});
+            endpoint.send(command.toString().getBytes(StandardCharsets.UTF_8));JSONObject denied=output.poll(3,TimeUnit.SECONDS);check(denied!=null&&!denied.optBoolean("provider_applied",false));
+            runtime.stopRequested();check(closed.await(3,TimeUnit.SECONDS));denied(new Action(){public void run()throws Exception{endpoint.send(command.toString().getBytes(StandardCharsets.UTF_8));}});
             check(controllerSlots.isEmpty());controllerSlots.put("device",replacementPeer);check(!HubGattBridge.removeCurrentValue(controllerSlots,oldPeer));check(controllerSlots.get("device")==replacementPeer);
-        }finally{client.close();server.close();}
+        }finally{endpoint.close();server.close();}
         System.out.println("HubLoopbackClientTest PASS "+cases+" production cases; modeled native authority, no devices");
     }
 }
