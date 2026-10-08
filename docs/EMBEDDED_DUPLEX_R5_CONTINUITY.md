@@ -77,11 +77,15 @@ execution, or completed remote cleanup.
 ### Cleanup after coupled session renewal
 
 Retained remote cleanup keeps the exact original forward Start target. A native
-sender may attach its accepted same-session renewal history to the completely
-signed Prepare: at most 64 transitions and 64 KiB of serialized ancestry, within
+sender validates its complete canonical owner snapshot before projecting compact
+same-session transition certificates into the completely signed Prepare. The
+last 64 accepted linked transitions may be carried, at most 64 KiB, within
 the existing 128 KiB frame bound. The receiver anchors the ordered, noncyclic
 transitions to its retained original topology and the exact current cleanup
-topology. It does not import the sender's Broker or infer foreign ancestry from
+topology; a missing original anchor fails closed. Each signed certificate retains
+the accepted receipt digest, session/decision/peer/transport/configuration joins,
+request, revision and observed/expiry bounds. It does not import the sender's
+Broker or infer foreign ancestry from
 its own authority history. Signer, original grant/client/lease/provider, current
 requester expiry, native capability and physical owner guards remain mandatory.
 
@@ -89,8 +93,13 @@ Empty ancestry preserves the original serialized Prepare shape. An old receiver
 rejects the new ancestry field; there is no downgrade fallback. Updated sender
 and receiver are needed before selecting renewed cleanup. The focused
 `retained_prepare_authenticates_original_after_coupled_renewal_and_expiry` test
-uses two distinct production authority stores and two coupled renewals before
-expired-holder cleanup. `tools/checks/Test-RetainedCleanupAncestryHost.py` tests
+uses two distinct production authority stores. Focused controls also exercise 22
+continuous coupled renewals before expired-holder cleanup and a later Start
+after 16 renewals without further renewal. Coupled owner history remains bounded
+at 32 completed renewals; a 64-certificate serialization specimen tests wire
+size only. Post-restart coupled renewal currently rejects changed media/route
+lineage and remains a separate unresolved owner issue.
+`tools/checks/Test-RetainedCleanupAncestryHost.py` tests
 the exact native Prepare serde and signature verification with real Ed25519.
 These host tests do not prove JNI, exchange or physical cleanup.
 

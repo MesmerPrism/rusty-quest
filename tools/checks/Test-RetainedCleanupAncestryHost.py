@@ -44,7 +44,7 @@ def main():
 use ed25519_dalek::{Signature,VerifyingKey,SigningKey,Signer};
 use rusty_quest_media_stream_android::*;
 #[derive(Clone,Serialize,Deserialize)] #[serde(deny_unknown_fields)]
-''' + prepare + "\n" + constants + "\n" + item(source, "fn prepare_domain(") + "\n" + item(source, "fn encode<T:") + '''
+''' + prepare + "\n" + constants + '\n' + re.search(r'const PREPARE_MAGIC:.*?;', source).group(0) + '\n' + item(source, "fn prepare_domain(") + "\n" + item(source, "fn encode<T:") + '''
 struct Verifier { remote_key:[u8;32] }
 impl Verifier { fn verify(&self,request:&Prepare)->Result<(),String> {
 ''' + verification + ''' Ok(()) } }
@@ -63,8 +63,25 @@ pub fn accepts(bytes:&[u8])->bool {serde_json::from_slice::<Prepare>(bytes).is_o
  let mut bytes=prepare_domain(&request.schema_id).unwrap().to_vec();bytes.extend(encode(&request).unwrap());
  request.signature_base64=encode_signature_base64(&key.sign(&bytes).to_bytes());
  verifier.verify(&request).unwrap();
+ let ancestry_bytes=serde_json::to_vec(&request.renewal_ancestry).unwrap().len();
+ let signed_frame_bytes=encode(&request).unwrap().len()+PREPARE_MAGIC.len();
+ assert!(request.renewal_ancestry.len()<=64 && ancestry_bytes<=65536 && signed_frame_bytes<=128*1024);
+ let mut size_only=request.clone();
+ let accepted_shapes=request.renewal_ancestry.clone();
+ while size_only.renewal_ancestry.len()<64 { size_only.renewal_ancestry.extend(accepted_shapes.clone()); }
+ size_only.renewal_ancestry.truncate(64);
+ size_only.signature_base64.clear();let mut unsigned=prepare_domain(&size_only.schema_id).unwrap().to_vec();unsigned.extend(encode(&size_only).unwrap());
+ size_only.signature_base64=encode_signature_base64(&key.sign(&unsigned).to_bytes());
+ verifier.verify(&size_only).unwrap();
+ let size_only_ancestry_bytes=serde_json::to_vec(&size_only.renewal_ancestry).unwrap().len();
+ let size_only_frame_bytes=encode(&size_only).unwrap().len()+PREPARE_MAGIC.len();
+ assert!(size_only_ancestry_bytes<=65536 && size_only_frame_bytes<=128*1024);
+ assert!(size_only.renewal_ancestry.iter().map(|hop| &hop.request_id).collect::<std::collections::BTreeSet<_>>().len()<64,
+ "The 64-hop byte specimen is intentionally NOT valid owner ancestry");
+ println!("ACTUAL_NATIVE_WIRE_FITNESS {}", serde_json::json!({"hops":request.renewal_ancestry.len(),"ancestry_bytes":ancestry_bytes,"signed_frame_bytes":signed_frame_bytes,
+ "size_only_64_ancestry_bytes":size_only_ancestry_bytes,"size_only_64_signed_frame_bytes":size_only_frame_bytes,"size_only_64_invalid_duplicate_history":true}));
  assert!(!legacy::accepts(&encode(&request).unwrap()),"Old receiver must reject new ancestry; no downgrade fallback");
- request.renewal_ancestry[0].applied=false;assert!(verifier.verify(&request).is_err());request.renewal_ancestry[0].applied=true;
+ request.renewal_ancestry[0].expires_at_ms+=1;assert!(verifier.verify(&request).is_err());request.renewal_ancestry[0].expires_at_ms-=1;
  request.renewal_ancestry.reverse();assert!(verifier.verify(&request).is_err());request.renewal_ancestry.reverse();
  request.renewal_ancestry.clear();assert!(verifier.verify(&request).is_err());
  request.signature_base64.clear();let mut bytes=prepare_domain(&request.schema_id).unwrap().to_vec();bytes.extend(encode(&request).unwrap());
@@ -90,10 +107,11 @@ rusty-quest-broker-authority={path=''' + json.dumps((root / "crates/rusty-quest-
     import os
     env = os.environ.copy()
     env["RQ_ANCESTRY_FIXTURE"] = str(args.fixture.resolve())
-    run = subprocess.run([args.cargo, "test", "--offline", "--manifest-path", str(out / "Cargo.toml")], capture_output=True, text=True, env=env)
+    run = subprocess.run([args.cargo, "test", "--offline", "--manifest-path", str(out / "Cargo.toml"), "--", "--nocapture"], capture_output=True, text=True, env=env)
     (out / "execution.log").write_text(run.stdout + run.stderr, encoding="utf-8")
     run.check_returncode()
-    result = {"status":"passed", "device_calls":0, "production_native_serde_and_verifier_extracted":True,
+    fitness = json.loads(re.search(r"ACTUAL_NATIVE_WIRE_FITNESS (\{[^\n]+\})", run.stdout).group(1))
+    result = {"status":"passed", "device_calls":0, "production_native_serde_and_verifier_extracted":True, "actual_typed_signed_frame_fitness": fitness,
         "native_source_sha256":hashlib.sha256(native.read_bytes()).hexdigest(),
         "limits":"Real Ed25519 over exact native Prepare type/domain/verification block. Key and surrounding state are host fixtures; no JNI, current requester, exchange, physical cleanup, APK or device execution."}
     (out / "RESULT.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
