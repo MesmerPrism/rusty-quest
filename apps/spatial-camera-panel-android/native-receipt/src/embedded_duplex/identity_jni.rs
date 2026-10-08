@@ -83,16 +83,20 @@ mod tests {
     fn retained_cleanup_domains_sign_exact_bytes_with_seed() {
         let seed = [0x37; 32];
         let key = VerifyingKey::from_bytes(&public_from_seed(&seed)).unwrap();
-        for domain in super::SIGNING_DOMAINS.iter().filter(|d| {
-            d.starts_with(b"rusty.quest.android.media.retained_")
-        }) {
+        for domain in super::SIGNING_DOMAINS
+            .iter()
+            .filter(|d| d.starts_with(b"rusty.quest.android.media.retained_"))
+        {
             assert!(sign_checked(&seed, domain).is_none());
             let mut bytes = domain.to_vec();
             bytes.extend_from_slice(b"{}");
             let signature = sign_checked(&seed, &bytes).expect("closed retained cleanup domain");
-            key.verify(&bytes, &Signature::from_bytes(&signature)).unwrap();
+            key.verify(&bytes, &Signature::from_bytes(&signature))
+                .unwrap();
             bytes.push(b'x');
-            assert!(key.verify(&bytes, &Signature::from_bytes(&signature)).is_err());
+            assert!(key
+                .verify(&bytes, &Signature::from_bytes(&signature))
+                .is_err());
         }
         for bytes in [
             b"rusty.quest.android.media.retained_cleanup_prepare.v5\0{}".as_slice(),
