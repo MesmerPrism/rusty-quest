@@ -3,7 +3,7 @@
 use std::{cell::Cell, collections::{BTreeMap, BTreeSet}, sync::Mutex};
 #[path = "OWNER_FAILURE_SOURCE"] mod owner_failure;
 use owner_failure::Stage as OwnerFailureStage;
-#[derive(Clone, Copy, PartialEq)] enum Fault { None, Authority, Entropy, Encode, Sign, Exchange }
+#[derive(Clone, Copy, PartialEq)] enum Fault { None, Authority, Ancestry, Entropy, Encode, Sign, Exchange }
 thread_local! { static FAULT: Cell<Fault> = const { Cell::new(Fault::None) }; }
 fn fault() -> Fault { FAULT.with(Cell::get) }
 fn fresh() -> Result<String,String> { if fault()==Fault::Entropy {Err("original entropy error".into())} else {Ok("modeled nonce".into())} }
@@ -18,7 +18,7 @@ struct Requester {id:String,lease:String}
 #[allow(dead_code)] struct Prepare {
  schema_id:String,dispatch_id:String,source_ticket:Ticket,requester_id:String,
  requester_lease_id:String,route_grant_id:String,sequence:u64,issued_at_ms:u64,
- signer_key_id:String,signature_base64:String,authority:Option<()>,
+ signer_key_id:String,signature_base64:String,authority:Option<()>,renewal_ancestry:Vec<()>,
 }
 struct PendingRemote {request:Prepare,prepared:Option<()>,commit:Option<()>,response:Option<Vec<u8>>}
 struct Callbacks;
@@ -27,11 +27,13 @@ impl Callbacks {
  fn sign(&self,_:&[u8])->Result<Vec<u8>,String> {if fault()==Fault::Sign {Err("original sign error".into())}else{Ok(vec![])}}
  fn exchange(&self,_:&[u8],_:usize)->Result<Vec<u8>,String> {if fault()==Fault::Exchange {Err("original exchange error".into())}else{Ok(vec![])}}
 }
-struct Cleanup {local:String,remote:String,callbacks:Callbacks}
+struct Authority;
+impl Authority {fn retained_cleanup_renewal_ancestry(&self,_:&())->Result<Vec<()>,String>{if fault()==Fault::Ancestry{Err("original ancestry error".into())}else{Ok(vec![])}}}
+struct Cleanup {local:String,remote:String,callbacks:Callbacks,authority:Authority}
 impl Cleanup {fn projection(&self,_:&str,_:&str,_:&str,_:&str,_:&str,_:u64)->Result<(),String>{if fault()==Fault::Authority{Err("original authority error".into())}else{Ok(())}}}
 struct Executor {cleanup:Cleanup,active:BTreeMap<String,String>,pending:BTreeMap<String,PendingRemote>,uncertain:BTreeSet<String>,sequence:u64}
 impl Executor {
- fn new()->Self {Self{cleanup:Cleanup{local:"local".into(),remote:"remote".into(),callbacks:Callbacks},active:BTreeMap::new(),pending:BTreeMap::new(),uncertain:BTreeSet::new(),sequence:0}}
+ fn new()->Self {Self{cleanup:Cleanup{local:"local".into(),remote:"remote".into(),callbacks:Callbacks,authority:Authority},active:BTreeMap::new(),pending:BTreeMap::new(),uncertain:BTreeSet::new(),sequence:0}}
  fn execute_prepare(&mut self,peer_id:&String,slot:&Mutex<Option<&'static str>>)->Result<(),String> {
   let ticket=&Ticket{capability:"capability".into()};let requester=Requester{id:"requester".into(),lease:"lease".into()};
   let grant="grant".to_owned();let now:u64=1;let mode=AndroidMediaExecutionMode::Ordinary;
@@ -48,6 +50,7 @@ PRODUCTION_PREPARE_BLOCK
 #[test] fn exact_production_prepare_failures_preserve_errors_and_first_stage() {
  for (fault_value,expected_error,expected_stage) in [
   (Fault::Authority,"original authority error","RETAINED_REMOTE_REQUESTER_AUTHORITY"),
+  (Fault::Ancestry,"original ancestry error","RETAINED_REMOTE_REQUESTER_AUTHORITY"),
   (Fault::Entropy,"original entropy error","RETAINED_REMOTE_ENTROPY"),
   (Fault::Encode,"original encode error","RETAINED_REMOTE_PREPARE_ENCODE"),
   (Fault::Sign,"original sign error","RETAINED_REMOTE_PREPARE_SIGN"),

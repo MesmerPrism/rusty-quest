@@ -35,6 +35,8 @@ struct Prepare {
     signature_base64: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     authority: Option<RetainedCleanupAuthorityProjection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    renewal_ancestry: Vec<rusty_quest_broker_authority::QuestRetainedCleanupSessionRenewal>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 struct Original {
@@ -231,14 +233,16 @@ impl Cleanup {
         {
             return Err("remote cleanup request source differs".into());
         }
-        self.authority.validate_remote_retained_cleanup_projection(
-            authority,
-            retained,
-            &original.ticket,
-            &request.signer_key_id,
-            &self.remote_key,
-            now,
-        )?;
+        self.authority
+            .validate_remote_retained_cleanup_projection_with_renewals(
+                authority,
+                retained,
+                &original.ticket,
+                &request.signer_key_id,
+                &self.remote_key,
+                now,
+                &request.renewal_ancestry,
+            )?;
         Ok(authority.clone())
     }
     pub(super) fn prepare_frame(&self, bytes: &[u8]) -> Result<Vec<u8>, String> {
@@ -269,6 +273,7 @@ impl Cleanup {
                         | "rusty.quest.android.media.retained_cleanup_prepare_request.v3"
                 ) && request.source_ticket.operation == MediaStreamPlatformOperation::Stop))
                 || remote_projection != request.authority.is_some()
+                || (!remote_projection && !request.renewal_ancestry.is_empty())
                 || request.sequence == 0
                 || request.signer_key_id != self.remote_key_id
                 || request.issued_at_ms > now.saturating_add(2000)
@@ -703,6 +708,10 @@ impl AndroidMediaOwnerExecutor for Executor {
                             &self.cleanup.remote,
                             now,
                         )?;
+                        let renewal_ancestry = self
+                            .cleanup
+                            .authority
+                            .retained_cleanup_renewal_ancestry(&authority)?;
                         failure_stage = OwnerFailureStage::RemoteEntropy;
                         let mut request = Prepare {
                             schema_id: if is_retained_start_abort_ticket(ticket) {
@@ -721,10 +730,14 @@ impl AndroidMediaOwnerExecutor for Executor {
                             signer_key_id: self.cleanup.callbacks.key_id().into(),
                             signature_base64: String::new(),
                             authority: Some(authority),
+                            renewal_ancestry,
                         };
                         failure_stage = OwnerFailureStage::RemotePrepareEncode;
                         let mut bytes = prepare_domain(&request.schema_id)?.to_vec();
                         bytes.extend(encode(&request)?);
+                        if bytes.len() > 128 * 1024 - 128 {
+                            return Err("cleanup signed Prepare frame bounds".into());
+                        }
                         failure_stage = OwnerFailureStage::RemotePrepareSign;
                         request.signature_base64 =
                             encode_signature_base64(&self.cleanup.callbacks.sign(&bytes)?);

@@ -46,6 +46,45 @@ pub const QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA: &str =
 pub const QUEST_RETAINED_CLEANUP_TARGET_SCHEMA: &str =
     "rusty.quest.embedded_duplex.retained_cleanup_target.v1";
 
+/// Compact certificate projected only from canonically validated sender history.
+/// The complete native Prepare signature authenticates every field.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestRetainedCleanupSessionRenewal {
+    /// Unique accepted renewal request.
+    pub request_id: String,
+    /// Stable session.
+    pub session_id: String,
+    /// Stable decision.
+    pub decision_id: String,
+    /// Stable initiator.
+    pub initiator_peer_id: String,
+    /// Stable responder.
+    pub responder_peer_id: String,
+    /// Digest of the complete immutable transport.
+    pub transport_sha256: String,
+    /// Original route configuration.
+    pub route_configuration_sha256: String,
+    /// Exact prior signed topology digest.
+    pub prior_topology_sha256: String,
+    /// Exact renewed signed topology digest.
+    pub topology_sha256: String,
+    /// Prior session owner revision.
+    pub prior_authority_revision: u64,
+    /// Resulting session owner revision.
+    pub resulting_authority_revision: u64,
+    /// Accepted observation, strictly before prior expiry.
+    pub observed_at_ms: u64,
+    /// Prior expiry.
+    pub prior_expires_at_ms: u64,
+    /// Advancing expiry.
+    pub expires_at_ms: u64,
+    /// Accepted reciprocal coverage.
+    pub reciprocal_expires_at_ms: u64,
+    /// Digest of the complete canonical accepted receipt.
+    pub receipt_sha256: String,
+}
+
 /// Separates the immutable media target from the live cleanup requester.
 /// This is a preflight projection, never an owner-effect completion receipt.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -632,6 +671,29 @@ impl QuestEmbeddedDuplexAuthority {
         signer_key: &[u8; 32],
         now_ms: u64,
     ) -> Result<(), String> {
+        self.validate_remote_retained_cleanup_projection_with_renewals(
+            cleanup,
+            original,
+            ticket,
+            signer_key_id,
+            signer_key,
+            now_ms,
+            &[],
+        )
+    }
+
+    /// Validates bounded sender-owned renewal ancestry inside the already fully
+    /// signature-authenticated cleanup frame; foreign authority is never imported.
+    pub fn validate_remote_retained_cleanup_projection_with_renewals(
+        &self,
+        cleanup: &RetainedCleanupAuthorityProjection,
+        original: &OwnerDispatchAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket,
+        signer_key_id: &str,
+        signer_key: &[u8; 32],
+        now_ms: u64,
+        renewals: &[QuestRetainedCleanupSessionRenewal],
+    ) -> Result<(), String> {
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
         let credential = snapshot
@@ -677,7 +739,7 @@ impl QuestEmbeddedDuplexAuthority {
             || cleanup.platform_runtime_spec_id != original.platform_runtime_spec_id
             || cleanup.target_client_id != original.authority_client_id
             || cleanup.target_runtime_lease_id != original.authority_runtime_lease_id
-            || cleanup.signed_topology_sha256 != original.signed_topology_sha256
+            || !retained_cleanup_topology_matches(renewals, original, cleanup, now_ms)?
             || ticket.authority_epoch_id != cleanup.provider_epoch_id
             || ticket.client_id != cleanup.target_client_id
             || ticket.lease_id != cleanup.target_runtime_lease_id
@@ -693,6 +755,78 @@ impl QuestEmbeddedDuplexAuthority {
             return Err("remote cleanup retained source differs".into());
         }
         Ok(())
+    }
+
+    /// Returns only this native authority's accepted same-session renewal history
+    /// for signing into a cleanup Prepare. It grants no foreign-store authority.
+    pub fn retained_cleanup_renewal_ancestry(
+        &self,
+        cleanup: &RetainedCleanupAuthorityProjection,
+    ) -> Result<Vec<QuestRetainedCleanupSessionRenewal>, String> {
+        let broker = read_broker(&self.broker)?;
+        let peer = read_peer(&self.peer)?;
+        let snapshot = peer.snapshot();
+        // Read-only canonical validation includes applied requests, reciprocal
+        // receipts and every full session transition; the restored value is not installed.
+        ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(
+            snapshot.clone(),
+            &snapshot.trust_policy,
+            &snapshot.provider_epoch_id,
+            &broker,
+        )
+        .map_err(host_error)?;
+        let route = snapshot
+            .pair_media_routes
+            .routes
+            .iter()
+            .find(|route| route.grant_id().as_str() == cleanup.route_grant_id)
+            .ok_or("cleanup ancestry route absent")?;
+        let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(route) = route else {
+            return Err("cleanup ancestry requires common-LAN route".into());
+        };
+        if route.peer_session_id.as_str() != cleanup.peer_session_id
+            || typed_sha256(&route.signed_topology_evidence)? != cleanup.signed_topology_sha256
+        {
+            return Err("cleanup ancestry current target differs".into());
+        }
+        let accepted: Vec<_> = snapshot
+            .concurrent_session_renewals
+            .iter()
+            .filter(|receipt| receipt.session_id.as_str() == cleanup.peer_session_id)
+            .collect();
+        let renewals: Vec<_> = accepted
+            .iter()
+            .skip(accepted.len().saturating_sub(64))
+            .map(|receipt| {
+                let prior = &receipt.prior_topology;
+                Ok(QuestRetainedCleanupSessionRenewal {
+                    request_id: receipt.request_id.to_string(),
+                    session_id: receipt.session_id.to_string(),
+                    decision_id: receipt.decision_id.to_string(),
+                    initiator_peer_id: prior.initiator_peer_id.to_string(),
+                    responder_peer_id: prior.responder_peer_id.to_string(),
+                    transport_sha256: typed_sha256(&prior.transport)?,
+                    route_configuration_sha256: prior.transport.route_configuration_sha256.clone(),
+                    prior_topology_sha256: typed_sha256(prior)?,
+                    topology_sha256: typed_sha256(&receipt.topology)?,
+                    prior_authority_revision: receipt.prior_authority_revision.get(),
+                    resulting_authority_revision: receipt.resulting_authority_revision.get(),
+                    observed_at_ms: receipt.observed_at_ms,
+                    prior_expires_at_ms: receipt.prior_expires_at_ms,
+                    expires_at_ms: receipt.expires_at_ms,
+                    reciprocal_expires_at_ms: receipt.reciprocal.expires_at_ms,
+                    receipt_sha256: typed_sha256(receipt)?,
+                })
+            })
+            .collect::<Result<_, String>>()?;
+        if serde_json::to_vec(&renewals)
+            .map_err(|error| error.to_string())?
+            .len()
+            > 65_536
+        {
+            return Err("cleanup ancestry bounds".into());
+        }
+        Ok(renewals)
     }
 
     /// Returns the complete durable v5 Runtime Host snapshot JSON.
@@ -1185,6 +1319,72 @@ fn host_error(error: ManifoldPeerRuntimeHostError) -> String {
 fn typed_sha256<T: Serialize>(value: &T) -> Result<String, String> {
     let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
     Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+}
+
+// The native sender signs its accepted transitions into the complete Prepare.
+// The receiver anchors that bounded history to its own authenticated Start.
+fn retained_cleanup_topology_matches(
+    renewals: &[QuestRetainedCleanupSessionRenewal],
+    original: &OwnerDispatchAuthorityProjection,
+    cleanup: &RetainedCleanupAuthorityProjection,
+    now_ms: u64,
+) -> Result<bool, String> {
+    if renewals.is_empty() {
+        return Ok(cleanup.signed_topology_sha256 == original.signed_topology_sha256);
+    }
+    if renewals.len() > 64
+        || serde_json::to_vec(renewals)
+            .map_err(|error| error.to_string())?
+            .len()
+            > 65_536
+    {
+        return Ok(false);
+    }
+    let first = &renewals[0];
+    let mut digest = first.prior_topology_sha256.clone();
+    let mut anchored = digest == original.signed_topology_sha256;
+    let mut seen = std::collections::BTreeSet::from([digest.clone()]);
+    let mut requests = std::collections::BTreeSet::new();
+    for renewal in renewals {
+        if renewal.session_id != original.peer_session_id
+            || renewal.decision_id != first.decision_id
+            || renewal.initiator_peer_id != first.initiator_peer_id
+            || renewal.responder_peer_id != first.responder_peer_id
+            || ![
+                renewal.initiator_peer_id.as_str(),
+                renewal.responder_peer_id.as_str(),
+            ]
+            .contains(&original.authority_peer_id.as_str())
+            || ![
+                renewal.initiator_peer_id.as_str(),
+                renewal.responder_peer_id.as_str(),
+            ]
+            .contains(&original.executor_peer_id.as_str())
+            || renewal.transport_sha256 != first.transport_sha256
+            || renewal.route_configuration_sha256 != original.route_configuration_sha256
+            || renewal.prior_topology_sha256 != digest
+            || !valid_sha256(&renewal.prior_topology_sha256)
+            || !valid_sha256(&renewal.topology_sha256)
+            || !valid_sha256(&renewal.transport_sha256)
+            || !valid_sha256(&renewal.receipt_sha256)
+            || !requests.insert(&renewal.request_id)
+            || DottedId::new(&renewal.request_id).is_err()
+            || renewal.observed_at_ms > now_ms
+            || renewal.prior_expires_at_ms <= renewal.observed_at_ms
+            || renewal.prior_expires_at_ms >= renewal.expires_at_ms
+            || renewal.expires_at_ms > renewal.reciprocal_expires_at_ms
+            || renewal.prior_authority_revision.checked_add(1)
+                != Some(renewal.resulting_authority_revision)
+        {
+            return Ok(false);
+        }
+        digest = renewal.topology_sha256.clone();
+        if !seen.insert(digest.clone()) {
+            return Ok(false);
+        }
+        anchored |= digest == original.signed_topology_sha256;
+    }
+    Ok(anchored && digest == cleanup.signed_topology_sha256)
 }
 fn valid_sha256(value: &str) -> bool {
     value.len() == 71
