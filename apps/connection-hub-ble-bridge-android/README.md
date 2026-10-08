@@ -90,6 +90,17 @@ tests, which now use explicit cancellation rather than guessed admission expiry.
 
 ### Compile-only validation
 
+Legacy advertising keeps the Hub service UUID in the primary payload and includes
+the existing Bluetooth adapter name in a separate name-only scan response. The
+helper never changes the shared adapter name. Missing/blank names or names over
+29 UTF-8 bytes preserve the existing UUID-only advertisement, with no retry;
+the length/type field uses the remaining two bytes of the 31-byte scan response.
+The success callback logs only `advertisement_identity=existing_device_name` or
+`advertisement_identity=uuid_only`, never the name. The existing platform
+advertising failure callback still closes the carrier if the name changes or
+the platform rejects the packet. A recognizable actual Edge
+chooser label still requires physical observation; source checks prove no label.
+
 `tools/Test-ConnectionHubBleBridgeAndroid.ps1` requires explicit Android, Java
 and JSON runtimes, the JSON JAR SHA-256, a create-new output directory and
 `-CarrierCapsule` pointing to the accepted carrier package. It compiles the actual

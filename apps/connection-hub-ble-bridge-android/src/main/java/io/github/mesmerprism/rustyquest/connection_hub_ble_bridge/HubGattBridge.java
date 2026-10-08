@@ -22,7 +22,7 @@ final class HubGattBridge implements Closeable {
     private final Context context;private final HubReadiness readiness;private final long deadline;
     private final Object gate=new Object();private final Map<BluetoothDevice,Peer> peers=new HashMap<>();
     private final GattInputQueue worker=new GattInputQueue();private BluetoothGattServer gatt;private BluetoothLeAdvertiser advertiser;
-    private volatile boolean closed;private long nextGeneration;
+    private volatile boolean closed;private long nextGeneration;private String identityMode="uuid_only";
     private final UUID service=UUID.fromString(HubBleFrames.SERVICE),write=UUID.fromString(HubBleFrames.WRITE),read=UUID.fromString(HubBleFrames.READ),status=UUID.fromString(HubBleFrames.STATUS);
     HubGattBridge(Context context,long deadline) {this(context,deadline,SILENT);}
     HubGattBridge(Context context,long deadline,Observer observer) {this.context=context.getApplicationContext();this.readiness=new HubReadiness(context);this.deadline=deadline;this.observer=observer;}
@@ -37,15 +37,31 @@ final class HubGattBridge implements Closeable {
         definition.addCharacteristic(new BluetoothGattCharacteristic(status,BluetoothGattCharacteristic.PROPERTY_READ,BluetoothGattCharacteristic.PERMISSION_READ));
         if(!gatt.addService(definition))throw new IOException("GATT service unavailable");
     }
+    // Complete Local Name is one AD field: length/type consume two of 31 bytes.
+    // Use only the existing adapter name; this helper never renames a shared radio.
+    static boolean useScanResponseName(String name) {
+        return name!=null&&!name.trim().isEmpty()&&name.getBytes(java.nio.charset.StandardCharsets.UTF_8).length<=29;
+    }
+    private void advertise() throws Exception {
+        BluetoothManager manager=context.getSystemService(BluetoothManager.class);
+        if(manager==null||manager.getAdapter()==null)throw new IOException("Bluetooth unavailable");
+        boolean named=useScanResponseName(manager.getAdapter().getName());
+        // Keep the 128-bit service UUID in primary data (21 bytes with flags).
+        // Name-only scan response has its own 31-byte legacy budget.
+        AdvertiseData data=new AdvertiseData.Builder().addServiceUuid(new ParcelUuid(service)).build();
+        AdvertiseData scanResponse=new AdvertiseData.Builder().setIncludeDeviceName(named).build();
+        identityMode=named?"existing_device_name":"uuid_only";
+        advertiser.startAdvertising(new AdvertiseSettings.Builder().setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).setConnectable(true).setTimeout(0).build(),data,scanResponse,advertisement);
+    }
     private final AdvertiseCallback advertisement=new AdvertiseCallback(){
-        @Override public void onStartSuccess(AdvertiseSettings settings){if(closed)return;try{requireBudget();observer.advertising();}catch(Exception denied){observer.failed("advertising_deadline_expired");close();}}
+        @Override public void onStartSuccess(AdvertiseSettings settings){if(closed)return;try{requireBudget();android.util.Log.i("RQConnectionHubBLE","advertisement_identity="+identityMode);observer.advertising();}catch(Exception denied){observer.failed("advertising_deadline_expired");close();}}
         @Override public void onStartFailure(int error){if(closed)return;observer.failed("advertising_failed");close();}
     };
     private final BluetoothGattServerCallback callback=new BluetoothGattServerCallback(){
         @Override public void onServiceAdded(int result,BluetoothGattService definition){
             if(closed||!service.equals(definition.getUuid()))return;
             if(result!=BluetoothGatt.GATT_SUCCESS){observer.failed("gatt_service_failed");close();return;}
-            try{requireBudget();readiness.requireCurrent();advertiser.startAdvertising(new AdvertiseSettings.Builder().setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY).setConnectable(true).setTimeout(0).build(),new AdvertiseData.Builder().addServiceUuid(new ParcelUuid(service)).build(),advertisement);}catch(Exception denied){observer.failed("advertising_start_failed");close();}
+            try{requireBudget();readiness.requireCurrent();advertise();}catch(Exception denied){observer.failed("advertising_start_failed");close();}
         }
         @Override public void onConnectionStateChange(BluetoothDevice device,int result,int state){
             Peer retired=null;
