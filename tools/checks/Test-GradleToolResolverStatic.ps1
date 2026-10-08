@@ -20,6 +20,9 @@ if ($manifest.expected_top_level_directory -cne 'gradle-9.4.1' -or @($manifest.r
 if (@($manifest.allowed_redirect_hosts) -notcontains 'services.gradle.org' -or @($manifest.allowed_redirect_hosts) -notcontains 'downloads.gradle.org') { throw 'Gradle identity redirect policy drifted.' }
 
 $resolver = Get-Content -LiteralPath $resolverPath -Raw
+foreach ($deadlineCall in @('ResponseHeadersRead,$deadline.Token', 'ReadAsStreamAsync($deadline.Token)', 'Copy-GradleDownloadBody $inputStream $out ([int64]$Identity.max_archive_bytes) $deadline.Token', 'ReadAsync($buffer,0,$buffer.Length,$CancellationToken)')) {
+    if (-not $resolver.Contains($deadlineCall)) { throw 'HTTP headers and async body reads must share the download deadline.' }
+}
 foreach ($needle in @('VerifyCache', 'Get-ArchiveTree', 'Test-InstalledTree', 'Assert-NoHardLink', 'Get-NormalArchivePath', 'Get-ResolverMutexName', 'HttpClientHandler', 'AllowAutoRedirect=$false', 'SslProtocols', 'Threading.Mutex', 'Write-AtomicJson', 'tool_download_record.v2', 'gradle_cache_receipt.v2', 'tree_sha256', 'SelfTest')) {
     if (-not $resolver.Contains($needle)) { throw "Gradle resolver is missing required safety control: $needle" }
 }

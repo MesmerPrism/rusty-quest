@@ -6,6 +6,10 @@ SHA-256, archive-derived tree digest, archive name, expected top-level
 directory, required executable and launcher paths, redirect allow-list, and
 download/extraction bounds.
 
+One cancellation deadline (at most 55 seconds) covers the HTTP request,
+redirects, and asynchronous response-body reads. A stalled body fails without
+promoting its partial archive; this is not a total cache-validation/build budget.
+
 Prepare this cache explicitly when a selected Spatial Camera Panel build or
 JVM test needs Gradle:
 

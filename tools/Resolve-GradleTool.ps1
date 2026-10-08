@@ -104,10 +104,20 @@ function Write-AtomicJson {
     param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)]$Value,[Parameter(Mandatory)][string]$Parent)
     Assert-NotReparse $Parent 'resolver parent';$canonical=$Value|ConvertTo-Json -Depth 10 -Compress;if(Test-Path -LiteralPath $Path){Assert-NotReparse $Path 'immutable resolver record';Assert-NoHardLink $Path;$existing=Get-Content -LiteralPath $Path -Raw|ConvertFrom-Json|ConvertTo-Json -Depth 10 -Compress;if($existing -cne $canonical){throw "Immutable resolver record conflicts: $Path"};return};$tmp=Join-Path $Parent (".$([IO.Path]::GetFileName($Path)).$([Guid]::NewGuid().ToString('N')).tmp");try{[IO.File]::WriteAllText($tmp,$canonical,[Text.UTF8Encoding]::new($false));Assert-NoHardLink $tmp;Assert-NotReparse $Parent 'resolver parent';[IO.File]::Move($tmp,$Path,$false)}finally{if(Test-Path -LiteralPath $tmp){Remove-Item -LiteralPath $tmp -Force}}
 }
+function Copy-GradleDownloadBody {
+    param([IO.Stream]$InputStream,[IO.Stream]$OutputStream,[int64]$MaxBytes,[Threading.CancellationToken]$CancellationToken)
+    $buffer=New-Object byte[] 65536;[int64]$bytes=0
+    while(($read=$InputStream.ReadAsync($buffer,0,$buffer.Length,$CancellationToken).GetAwaiter().GetResult()) -gt 0){
+        $CancellationToken.ThrowIfCancellationRequested();$bytes += $read
+        if($bytes -gt $MaxBytes){throw 'Gradle response exceeds byte bound.'}
+        [void]$OutputStream.WriteAsync($buffer,0,$read,$CancellationToken).GetAwaiter().GetResult()
+    }
+    $CancellationToken.ThrowIfCancellationRequested();return $bytes
+}
 function Invoke-Download {
     param([Parameter(Mandatory)][Uri]$Uri,[Parameter(Mandatory)][string]$Part,[Parameter(Mandatory)]$Identity,[int]$Timeout,[switch]$Fail)
-    if($Fail){[IO.File]::WriteAllText($Part,'simulated-provider-partial');$script:SelfTestObservedPart=$Part;if(-not(Test-Path -LiteralPath $Part -PathType Leaf) -or [IO.Path]::GetFileName($Part) -notmatch '^\.gradle-9\.4\.1-bin\.zip\.[0-9a-f]{32}\.part$'){throw 'Simulated provider did not create the expected GUID temporary archive.'};throw 'Simulated Gradle provider failure.'};$h=[Net.Http.HttpClientHandler]::new();$h.AllowAutoRedirect=$false;$h.SslProtocols=[Security.Authentication.SslProtocols]::Tls12 -bor [Security.Authentication.SslProtocols]::Tls13;$c=[Net.Http.HttpClient]::new($h);$c.Timeout=[TimeSpan]::FromSeconds($Timeout);$chain=@();try{$u=$Uri;for($n=0;$n -le 3;$n++){if($u.Scheme -cne 'https' -or @($Identity.allowed_redirect_hosts) -notcontains $u.Host.ToLowerInvariant()){throw "Gradle redirect violates HTTPS allow-list: $($u.GetLeftPart([UriPartial]::Path))"};$chain += $u.GetLeftPart([UriPartial]::Path);$r=$c.GetAsync($u,[Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult();if([int]$r.StatusCode -in 301,302,303,307,308){$l=$r.Headers.Location;$r.Dispose();if($null -eq $l){throw 'Gradle redirect lacks Location.'};$u=if($l.IsAbsoluteUri){$l}else{[Uri]::new($u,$l)};continue};if(-not $r.IsSuccessStatusCode){$s=[int]$r.StatusCode;$r.Dispose();throw "Gradle provider returned HTTP $s."};if($r.Content.Headers.ContentLength -and [int64]$r.Content.Headers.ContentLength -gt [int64]$Identity.max_archive_bytes){$r.Dispose();throw 'Gradle response exceeds byte bound.'};$input=$r.Content.ReadAsStream();$out=[IO.FileStream]::new($Part,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$buffer=New-Object byte[] 65536;[int64]$bytes=0;while(($read=$input.Read($buffer,0,$buffer.Length)) -gt 0){$bytes += $read;if($bytes -gt [int64]$Identity.max_archive_bytes){throw 'Gradle response exceeds byte bound.'};$out.Write($buffer,0,$read)};$out.Flush($true)}finally{$out.Dispose();$input.Dispose()};$headers=[ordered]@{etag=[string]$r.Headers.ETag;last_modified=[string]$r.Content.Headers.LastModified;content_length=[string]$r.Content.Headers.ContentLength;content_type=[string]$r.Content.Headers.ContentType};$r.Dispose();return [pscustomobject]@{uri_chain=$chain;bytes=$bytes;headers=$headers}}
-        throw 'Gradle redirect limit exceeded.'}finally{$c.Dispose();$h.Dispose()}
+    if($Fail){[IO.File]::WriteAllText($Part,'simulated-provider-partial');$script:SelfTestObservedPart=$Part;if(-not(Test-Path -LiteralPath $Part -PathType Leaf) -or [IO.Path]::GetFileName($Part) -notmatch '^\.gradle-9\.4\.1-bin\.zip\.[0-9a-f]{32}\.part$'){throw 'Simulated provider did not create the expected GUID temporary archive.'};throw 'Simulated Gradle provider failure.'};$h=[Net.Http.HttpClientHandler]::new();$h.AllowAutoRedirect=$false;$h.SslProtocols=[Security.Authentication.SslProtocols]::Tls12 -bor [Security.Authentication.SslProtocols]::Tls13;$c=[Net.Http.HttpClient]::new($h);$deadline=[Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($Timeout));$chain=@();try{$u=$Uri;for($n=0;$n -le 3;$n++){if($u.Scheme -cne 'https' -or @($Identity.allowed_redirect_hosts) -notcontains $u.Host.ToLowerInvariant()){throw "Gradle redirect violates HTTPS allow-list: $($u.GetLeftPart([UriPartial]::Path))"};$chain += $u.GetLeftPart([UriPartial]::Path);$r=$c.GetAsync($u,[Net.Http.HttpCompletionOption]::ResponseHeadersRead,$deadline.Token).GetAwaiter().GetResult();try{if([int]$r.StatusCode -in 301,302,303,307,308){$l=$r.Headers.Location;if($null -eq $l){throw 'Gradle redirect lacks Location.'};$u=if($l.IsAbsoluteUri){$l}else{[Uri]::new($u,$l)};continue};if(-not $r.IsSuccessStatusCode){$s=[int]$r.StatusCode;throw "Gradle provider returned HTTP $s."};if($r.Content.Headers.ContentLength -and [int64]$r.Content.Headers.ContentLength -gt [int64]$Identity.max_archive_bytes){throw 'Gradle response exceeds byte bound.'};$inputStream=$r.Content.ReadAsStreamAsync($deadline.Token).GetAwaiter().GetResult();try{$out=[IO.FileStream]::new($Part,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$bytes=Copy-GradleDownloadBody $inputStream $out ([int64]$Identity.max_archive_bytes) $deadline.Token;$out.Flush($true)}finally{$out.Dispose()}}finally{$inputStream.Dispose()};$headers=[ordered]@{etag=[string]$r.Headers.ETag;last_modified=[string]$r.Content.Headers.LastModified;content_length=[string]$r.Content.Headers.ContentLength;content_type=[string]$r.Content.Headers.ContentType};return [pscustomobject]@{uri_chain=$chain;bytes=$bytes;headers=$headers}}finally{$r.Dispose()}}
+        throw 'Gradle redirect limit exceeded.'}finally{$deadline.Dispose();$c.Dispose();$h.Dispose()}
 }
 function Invoke-Resolver {
     param([Parameter(Mandatory)][string]$Repo,[ValidateSet('Resolve','VerifyCache')][string]$RequestedMode,[int]$Timeout,[object]$TestIdentity=$null,[string]$Fixture='',[switch]$ProviderFailure)
@@ -161,6 +171,33 @@ function Invoke-Resolver {
     }finally{if($held){$mutex.ReleaseMutex()};$mutex.Dispose()}
 }
 function Invoke-SelfTest {
+    if(-not ('GradleStalledBody' -as [type])){Add-Type @'
+using System;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+public sealed class GradleStalledBody : Stream {
+    public override bool CanRead => true;
+    public override bool CanWrite => false;
+    public override bool CanSeek => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+    public override int Read(byte[] b,int o,int c) => throw new InvalidOperationException("Synchronous body read is forbidden.");
+    public override async Task<int> ReadAsync(byte[] b,int o,int c,CancellationToken token) {
+        await Task.Delay(Timeout.Infinite,token); return 0;
+    }
+    public override void Flush() { }
+    public override long Seek(long o,SeekOrigin s) => throw new NotSupportedException();
+    public override void SetLength(long v) => throw new NotSupportedException();
+    public override void Write(byte[] b,int o,int c) => throw new NotSupportedException();
+}
+'@}
+    $body=[IO.MemoryStream]::new([byte[]](1,2,3));$sink=[IO.MemoryStream]::new()
+    try{if((Copy-GradleDownloadBody $body $sink 3 ([Threading.CancellationToken]::None)) -ne 3 -or [Convert]::ToHexString($sink.ToArray()) -cne '010203'){throw 'Async body copy changed bytes.'};$body.Position=0;$sink.SetLength(0);$rejected=$false;try{Copy-GradleDownloadBody $body $sink 2 ([Threading.CancellationToken]::None)|Out-Null}catch{if($_.Exception.Message -notlike '*exceeds byte bound*'){throw};$rejected=$true};if(-not $rejected -or $sink.Length -ne 0){throw 'Oversized body was not rejected before write.'}}finally{$body.Dispose();$sink.Dispose()}
+    $body=[IO.MemoryStream]::new([byte[]](1,2,3));$sink=[IO.MemoryStream]::new();$deadline=[Threading.CancellationTokenSource]::new();$deadline.Cancel()
+    try{$cancelled=$false;try{Copy-GradleDownloadBody $body $sink 3 $deadline.Token|Out-Null}catch{if($_.Exception.ToString() -notmatch 'canceled|cancelled'){throw};$cancelled=$true};if(-not $cancelled -or $sink.Length -ne 0){throw 'Expired shared deadline permitted body writes.'}}finally{$deadline.Dispose();$body.Dispose();$sink.Dispose()}
+    $body=[GradleStalledBody]::new();$sink=[IO.MemoryStream]::new();$deadline=[Threading.CancellationTokenSource]::new([TimeSpan]::FromMilliseconds(150));$clock=[Diagnostics.Stopwatch]::StartNew()
+    try{$cancelled=$false;try{Copy-GradleDownloadBody $body $sink 3 $deadline.Token|Out-Null}catch{if(-not $deadline.IsCancellationRequested -or $_.Exception.ToString() -notmatch 'canceled|cancelled'){throw};$cancelled=$true};if(-not $cancelled -or $clock.Elapsed.TotalSeconds -gt 3 -or $sink.Length -ne 0){throw 'Stalled body did not obey cancellation without writes.'}}finally{$deadline.Dispose();$body.Dispose();$sink.Dispose()}
     $root=Join-Path ([IO.Path]::GetTempPath()) ('rusty-quest-gradle-'+[Guid]::NewGuid().ToString('N'))
     try {
         New-Item -ItemType Directory -Path (Join-Path $root 'config') -Force|Out-Null
