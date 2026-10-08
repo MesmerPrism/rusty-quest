@@ -97,8 +97,13 @@ uses two distinct production authority stores. Focused controls also exercise 22
 continuous coupled renewals before expired-holder cleanup and a later Start
 after 16 renewals without further renewal. Coupled owner history remains bounded
 at 32 completed renewals; a 64-certificate serialization specimen tests wire
-size only. Post-restart coupled renewal currently rejects changed media/route
-lineage and remains a separate unresolved owner issue.
+size only. The focused `retained_prepare_renewal_after_supported_media_restart`
+regression exercises 16 renewals, completed Stop/release and a separately admitted
+new Start, then six further renewals and expired-holder cleanup in both directions.
+The Manifold owner validates continuous inner-lease history within each admitted
+derivative lifetime, authenticates the terminal release/new-admission boundary,
+and checks every retained old and new media/route graph. Altered historical
+release, terminal, cleanup, lease-chain and graph records fail closed.
 `tools/checks/Test-RetainedCleanupAncestryHost.py` tests
 the exact native Prepare serde and signature verification with real Ed25519.
 These host tests do not prove JNI, exchange or physical cleanup.
