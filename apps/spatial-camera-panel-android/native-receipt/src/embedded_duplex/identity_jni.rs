@@ -3,13 +3,19 @@
 use ed25519_dalek::{Signer, SigningKey};
 
 const MAX_AUTHORITY_BYTES: usize = 131_142;
-const SIGNING_DOMAINS: [&[u8]; 6] = [
+const SIGNING_DOMAINS: [&[u8]; 12] = [
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0request\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0terminal_response\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0product_activation\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0product_activation_ack\0",
     b"rusty.manifold.peer.common_lan_reciprocal_ed25519_context.v1\0",
     b"rusty.quest.embedded_duplex.pair_ceremony.v1\0",
+    b"rusty.quest.android.media.retained_cleanup_dispatch.v2\0request\0",
+    b"rusty.quest.android.media.retained_cleanup_dispatch.v2\0response\0",
+    b"rusty.quest.android.media.retained_cleanup_prepare.v1\0",
+    b"rusty.quest.android.media.retained_abort_prepare.v2\0",
+    b"rusty.quest.android.media.retained_cleanup_prepare.v3\0",
+    b"rusty.quest.android.media.retained_abort_prepare.v4\0",
 ];
 
 fn public_from_seed(seed: &[u8; 32]) -> [u8; 32] {
@@ -72,6 +78,33 @@ mod android {
 mod tests {
     use super::{public_from_seed, sign_checked, Signer, SigningKey};
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    #[test]
+    fn retained_cleanup_domains_sign_exact_bytes_with_seed() {
+        let seed = [0x37; 32];
+        let key = VerifyingKey::from_bytes(&public_from_seed(&seed)).unwrap();
+        for domain in super::SIGNING_DOMAINS.iter().filter(|d| {
+            d.starts_with(b"rusty.quest.android.media.retained_")
+        }) {
+            assert!(sign_checked(&seed, domain).is_none());
+            let mut bytes = domain.to_vec();
+            bytes.extend_from_slice(b"{}");
+            let signature = sign_checked(&seed, &bytes).expect("closed retained cleanup domain");
+            key.verify(&bytes, &Signature::from_bytes(&signature)).unwrap();
+            bytes.push(b'x');
+            assert!(key.verify(&bytes, &Signature::from_bytes(&signature)).is_err());
+        }
+        for bytes in [
+            b"rusty.quest.android.media.retained_cleanup_prepare.v5\0{}".as_slice(),
+            b"rusty.quest.android.media.retained_abort_prepare.v3\0{}".as_slice(),
+            b"rusty.quest.android.media.retained_cleanup_prepare.v3.extra\0{}".as_slice(),
+        ] {
+            assert!(sign_checked(&seed, bytes).is_none());
+        }
+        let mut oversized = b"rusty.quest.android.media.retained_cleanup_prepare.v3\0".to_vec();
+        oversized.resize(super::MAX_AUTHORITY_BYTES + 1, b'x');
+        assert!(sign_checked(&seed, &oversized).is_none());
+    }
 
     #[test]
     fn rfc8032_first_vector_and_closed_signing_domain() {

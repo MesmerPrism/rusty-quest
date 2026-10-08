@@ -44,6 +44,7 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--javac", required=True)
     parser.add_argument("--java", required=True)
+    parser.add_argument("--cargo", required=True)
     args = parser.parse_args()
     root, out = Path(args.root).resolve(), Path(args.output).resolve()
     out.relative_to(root / "target")
@@ -51,6 +52,7 @@ def main():
     java_path = root / "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexIdentity.java"
     rust_path = root / "apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex/retained_cleanup_host.rs"
     proof_path = root / "crates/rusty-quest-media-stream-android/src/remote_cleanup_proof.rs"
+    native_signer = root / "apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex/identity_jni.rs"
     source, rust, proof = java_path.read_text(), rust_path.read_text(), proof_path.read_text()
     constants = []
     for name in ("OWNER_DISPATCH_REQUEST_DOMAIN", "OWNER_DISPATCH_RESPONSE_DOMAIN",
@@ -72,6 +74,11 @@ def main():
                 domains.append(value)
     if len(domains) != 4:
         raise ValueError("four closed native cleanup prepare domains required")
+    native_source = native_signer.read_text()
+    for domain in domains:
+        literal = domain.replace("\0", "\\0")
+        if 'b"' + literal + '"' not in native_source:
+            raise ValueError("native seed signer omits a production preparation domain")
     domains.sort(key=lambda value: not value.startswith("rusty.quest.android.media.retained_cleanup_prepare.v3\0"))
     domain_rows = ",\n".join(json.dumps(value).replace("\\u0000", "\\0") for value in domains)
     harness = "import java.nio.charset.StandardCharsets; import java.security.*;\nclass CleanupSigningHost {\n" + "\n".join(constants + methods) + r'''
@@ -120,11 +127,28 @@ def main():
     run = subprocess.run([args.java, "-cp", str(out), "CleanupSigningHost"], capture_output=True, text=True)
     (out / "execution.log").write_text(run.stdout + run.stderr, encoding="utf-8")
     run.check_returncode()
+    native_root = out / "native-signer"
+    native_root.mkdir()
+    (native_root / "Cargo.toml").write_text('''[package]
+name = "retained-cleanup-signing-host"
+version = "0.0.0"
+edition = "2021"
+[workspace]
+[dependencies]
+ed25519-dalek = { version = "=2.1.1", default-features = false, features = ["std", "zeroize"] }
+[lib]
+path = "lib.rs"
+''', encoding="utf-8")
+    (native_root / "lib.rs").write_text('#[path = ' + json.dumps(native_signer.as_posix()) + ']\nmod identity;\n', encoding="utf-8")
+    native_run = subprocess.run([args.cargo, "test", "--offline", "--manifest-path", str(native_root / "Cargo.toml")], capture_output=True, text=True)
+    (out / "native-execution.log").write_text(native_run.stdout + native_run.stderr, encoding="utf-8")
+    native_run.check_returncode()
     pins = [{"path": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
-            for p in (java_path, rust_path, proof_path, generated, Path(args.javac), Path(args.java), Path(__file__))]
+            for p in (java_path, rust_path, proof_path, native_signer, generated, Path(args.javac), Path(args.java), Path(args.cargo), Path(__file__))]
     result = {"status": "passed", "tests": 25, "production_java_methods_executed": True,
               "native_domain_sources": [str(rust_path), str(proof_path)], "source_pins": pins,
-              "limits": "Exact Java signing/domain methods and Rust constructor domain bytes; real JCA Ed25519 sign/verify. Identity fixture uses a fresh JCA key. No JNI seed signer, Android callback capability, full Rust prepare serialization, remote exchange, lifecycle completion, APK, or device effect."}
+              "native_seed_signer_tests": 2, "native_production_module_executed": True,
+              "limits": "Exact Java signing/domain methods and Rust constructor domain bytes; real JCA Ed25519 sign/verify plus the complete production Rust seed-signing module and its two Ed25519 tests. Java identity fixture uses a fresh JCA key. No JNI boundary, Android callback capability, full Rust prepare serialization, remote exchange, lifecycle completion, APK, or device effect."}
     (out / "RESULT.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(run.stdout, end="")
 

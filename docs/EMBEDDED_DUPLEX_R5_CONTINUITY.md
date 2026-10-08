@@ -43,12 +43,17 @@ a nonempty payload. The callback capability, current cleanup requester and
 lease, enrolled target signature, and physical owner barriers still apply;
 signing a preparation never proves cleanup. Common-LAN context and pair
 ceremony bytes retain their separate validated signing routes.
+The native seed signer admits these same retained domains and the existing
+cleanup dispatch request/response domains; it preserves its closed allowlist
+and byte bounds.
 
 `tools/checks/Test-RetainedCleanupSigningHost.py` executes the production Java
 domain guard and signing methods against domain bytes from both Rust
 constructors. It checks real JCA Ed25519 signatures, payload tampering, missing
 payloads, adjacent versions/domains, and existing bounds. Its identity key is a
-host fixture; it does not exercise the Android/JNI callback or remote effects.
+host fixture. The same check executes the complete production Rust seed signer
+and real Ed25519 signature controls; it does not exercise the Android/JNI
+callback or remote effects.
 
 The native first-failure latch distinguishes outgoing peer binding, pending
 capacity, sequence, entropy, preparation encoding, signing and exchange using
