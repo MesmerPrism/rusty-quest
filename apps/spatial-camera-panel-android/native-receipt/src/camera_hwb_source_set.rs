@@ -260,6 +260,7 @@ unsafe fn render_source_set_common_graph(
                     &processing_graph.camera_resources,
                     CameraHwbProbeMode::RawColorProjection,
                     1_000_000_000,
+                    crate::spatial_public_multistack_runtime::read_mask_policy().1,
                 )?;
             }
             device
