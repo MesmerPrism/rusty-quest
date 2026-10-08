@@ -1,0 +1,35 @@
+{
+  "schema": "rusty.quest.tool_identity.v1",
+  "tool_id": "gradle",
+  "version": "9.4.1",
+  "distribution_url": "https://services.gradle.org/distributions/gradle-9.4.1-bin.zip",
+  "official_checksum_url": "https://services.gradle.org/distributions/gradle-9.4.1-bin.zip.sha256",
+  "allowed_redirect_hosts": [
+    "services.gradle.org",
+    "downloads.gradle.org",
+    "github.com",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com"
+  ],
+  "archive_file_name": "gradle-9.4.1-bin.zip",
+  "sha256": "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
+  "tree_sha256": "5c94e8204be25e0c18c94780cf4cf768fefa92e73f8c7b1617c483f33ca088db",
+  "max_archive_bytes": 268435456,
+  "max_extract_bytes": 1073741824,
+  "max_entries": 100000,
+  "max_path_chars": 512,
+  "max_path_depth": 20,
+  "expected_top_level_directory": "gradle-9.4.1",
+  "required_relative_paths": [
+    "bin/gradle.bat",
+    "lib/gradle-launcher-9.4.1.jar"
+  ],
+  "resolver_contract": "explicit-network-resolve-only; build-and-test-verify-cache-only; pinned-archive-sha256-and-exact-tree-manifest; https-only-bounded-redirect-download; atomic-promotion; no-global-toolchain-mutation",
+  "checksum_provenance": {
+    "source": "Gradle official distribution checksum endpoint",
+    "observed_utc": "2026-08-25T19:56:33Z",
+    "official_checksum_sha256": "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
+    "official_response_identity": "services.gradle.org redirected to downloads.gradle.org; ETag 6a4ea45911c99b1f281e6f8c517c5e6b; 64 bytes",
+    "verification": "The checksum was independently retrieved from the official Gradle checksum endpoint and is now repository-pinned; the resolver verifies every cached or downloaded archive against that immutable value."
+  }
+}
