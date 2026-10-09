@@ -222,6 +222,29 @@ final class ExperimentSessionPanelCoordinator {
         }
     }
 
+    static final class NativeStatusSnapshot {
+        final ExperimentSessionPanelState state;
+        final String observationJson;
+        NativeStatusSnapshot(ExperimentSessionPanelState state, String observationJson) {
+            this.state = state;
+            this.observationJson = observationJson;
+        }
+    }
+
+    // One lock binds the read-only extension to the exact outer state projection.
+    synchronized NativeStatusSnapshot nativeStatusSnapshot(long nowNanos) {
+        NativeReadbackObservation observation = nativeReadbackObservation(nowNanos);
+        String json = "{\"v\":1,\"s\":\"unknown\"}";
+        final long maxSafeInteger = 9007199254740991L;
+        if (observation.available && state.generation <= maxSafeInteger
+                && state.revision <= maxSafeInteger) {
+            // Positive Java longs are canonical int64 strings. Floor is a lower bound.
+            json = "{\"v\":1,\"s\":\"observed\",\"e\":\"" + runtimeEpoch
+                + "\",\"i\":\"" + nativeReadCompletedNanos + "\",\"g\":" + state.generation
+                + ",\"r\":" + state.revision + ",\"a\":" + (observation.ageNanos / 1000000L) + "}";
+        }
+        return new NativeStatusSnapshot(state, json);
+    }
     // Same command/state behavior as the existing two calls, with the witness join atomic.
     synchronized boolean acceptNativeReadback(long epoch, NativeReceipt receipt,
             long completedNanos, long nowNanos) {

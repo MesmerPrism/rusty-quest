@@ -348,8 +348,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     lastRemoteStatusPollMs = now;
                     EXPERIMENT_SESSION_SHELL.requestStatus(REMOTE_SINK);
                 }
-                ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
+                ExperimentSessionPanelCoordinator.NativeStatusSnapshot observed =
+                    EXPERIMENT_SESSION_PANEL.nativeStatusSnapshot(SystemClock.elapsedRealtimeNanos());
+                ExperimentSessionPanelState state = observed.state;
                 JSONObject status = new JSONObject()
+                    .put("o", new JSONObject(observed.observationJson))
                     .put("f", NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext))
                     .put("p", state.phase.name())
                     .put("g", state.generation)

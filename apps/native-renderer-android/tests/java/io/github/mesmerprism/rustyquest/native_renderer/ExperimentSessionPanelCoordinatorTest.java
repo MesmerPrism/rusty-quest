@@ -3,6 +3,7 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 public final class ExperimentSessionPanelCoordinatorTest {
     public static void main(String[] args) {
         nativeReadbackObservationPolicy();
+        nativeStatusSnapshotPolicy();
         launchAndRoutePolicy();
         armControlStatePolicy();
         rejectedArmRemainsVisibleAndRetryable();
@@ -16,6 +17,30 @@ public final class ExperimentSessionPanelCoordinatorTest {
         System.out.println("ExperimentSessionPanelCoordinatorTest PASS");
     }
 
+    private static void nativeStatusSnapshotPolicy() {
+        ExperimentSessionPanelCoordinator c = new ExperimentSessionPanelCoordinator();
+        check("{\"v\":1,\"s\":\"unknown\"}".equals(c.nativeStatusSnapshot(1L).observationJson),
+            "legacy/no read witness emits closed unknown extension");
+        ExperimentSessionPanelCoordinator.NativeReceipt receipt = receipt(
+            "", true, true, 1L, 2L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        c.acceptNativeReadback(Long.MAX_VALUE, receipt, 1000000L, 1000000L);
+        ExperimentSessionPanelCoordinator.NativeStatusSnapshot snapshot = c.nativeStatusSnapshot(1999999L);
+        check(snapshot.state == c.snapshot() && snapshot.observationJson.equals(
+            "{\"v\":1,\"s\":\"observed\",\"e\":\"9223372036854775807\",\"i\":\"1000000\",\"g\":1,\"r\":2,\"a\":0}"),
+            "atomic outer state join, int64 string identity and fractional millisecond floor");
+        check(c.nativeStatusSnapshot(2999999L).observationJson.endsWith("\"a\":1}"),
+            "poll age advances without allocating a new read identifier");
+        c.openDeveloper(c.allocateRouteEvent());
+        check(c.nativeStatusSnapshot(3000000L).observationJson.equals("{\"v\":1,\"s\":\"unknown\"}"),
+            "local state replacement cannot retain metadata for a different state object");
+        ExperimentSessionPanelCoordinator.NativeReceipt unsafe = receipt(
+            "", true, true, 9007199254740992L, 9007199254740992L, "idle", false,
+            "none", 0L, 0L, 0L, 0L, 0L);
+        c.acceptNativeReadback(Long.MAX_VALUE, unsafe, 4000000L, 4000000L);
+        check(c.nativeStatusSnapshot(5000000L).observationJson.equals("{\"v\":1,\"s\":\"unknown\"}"),
+            "unsafe outer JavaScript integer joins are unavailable, not rounded");
+        System.out.println("NativeStatusSnapshotPolicy PASS closed projection / int64 / floor / atomic state");
+    }
     private static void nativeReadbackObservationPolicy() {
         ExperimentSessionPanelCoordinator c = new ExperimentSessionPanelCoordinator();
         check(!c.nativeReadbackObservation(10L).available, "no synthetic initial observation");
