@@ -263,7 +263,8 @@ final class EmbeddedDuplexPlatform {
     }
     private synchronized void observeLatestAttempt(long sequence, OwnerStage stage,
             MediaOwnerAction ticket, String outcome, Exception failure) {
-        if (sequence == 0 || sequence != latestAttemptSequence) return;
+        if (sequence == 0 || sequence != latestAttemptSequence
+                || "UNAVAILABLE".equals(latestAttemptOutcome)) return;
         latestAttemptStage = stage;
         latestAttemptOutcome = outcome;
         String kind = ticket == null ? "NONE" : ticket.actionKind();

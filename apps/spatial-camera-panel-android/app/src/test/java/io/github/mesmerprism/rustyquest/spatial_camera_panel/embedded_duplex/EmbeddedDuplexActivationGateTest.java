@@ -403,6 +403,50 @@ public final class EmbeddedDuplexActivationGateTest {
         }
     }
 
+    @Test public void delayedMaxAttemptCannotOverwriteStickyExhaustion() throws Exception {
+        for (boolean failDelayed : new boolean[] {false, true}) {
+        try (RetainedCallbackFixture fixture = new RetainedCallbackFixture("stop")) {
+            setPlatformField(fixture.platform, "latestAttemptSequence", 9_007_199_254_740_990L);
+            java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
+            java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+            fixture.cleanup.beforeExecute = () -> {
+                entered.countDown();
+                try {
+                    if (!release.await(5, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release timeout");
+                } catch (InterruptedException e) { throw new AssertionError(e); }
+            };
+            if (failDelayed) fixture.cleanup.failure = new IllegalStateException("private delayed failure");
+            java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+            try {
+                java.util.concurrent.Future<String> delayed = executor.submit(() -> fixture.invoke(false));
+                assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+                JSONObject inProgress = new JSONObject(fixture.platform.ownerLatestAttemptDiagnostic());
+                assertEquals(9_007_199_254_740_991L, inProgress.getLong("attempt_sequence"));
+                assertEquals("IN_PROGRESS", inProgress.getString("outcome"));
+                assertEquals("PROVIDER_EXECUTION", inProgress.getString("stage"));
+                fixture.authority.put("target_runtime_lease_id", "foreign.lease");
+                assertThrows(IllegalStateException.class, () -> fixture.invoke(true));
+                String exhausted = fixture.platform.ownerLatestAttemptDiagnostic();
+                assertEquals("UNAVAILABLE", new JSONObject(exhausted).getString("outcome"));
+                release.countDown();
+                if (failDelayed) {
+                    java.util.concurrent.ExecutionException failure = assertThrows(java.util.concurrent.ExecutionException.class,
+                            () -> delayed.get(5, java.util.concurrent.TimeUnit.SECONDS));
+                    assertTrue(failure.getCause() == fixture.cleanup.failure);
+                } else {
+                    assertTrue(new JSONObject(delayed.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                            .getJSONObject("verified").getBoolean("terminal"));
+                }
+                assertEquals(exhausted, fixture.platform.ownerLatestAttemptDiagnostic());
+                assertEquals(1, fixture.cleanup.providerCalls);
+            } finally {
+                release.countDown(); executor.shutdownNow();
+                assertTrue(executor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS));
+            }
+        }
+        }
+    }
+
     @Test public void wrongFreshTicketSubjectDeniesBeforeProvider() throws Exception {
         for (String field : new String[] {"authority_client_id", "authority_runtime_lease_id",
                 "authority_provider_epoch_id", "platform_runtime_spec_id"}) {
@@ -538,6 +582,7 @@ public final class EmbeddedDuplexActivationGateTest {
         int providerCalls, compensationCalls;
         RuntimeException failure;
         boolean staleSnapshot, allowCompensation;
+        Runnable beforeExecute;
         CleanupFixture(String lease, String handle, long revision, String kind) throws Exception {
             io.github.mesmerprism.rustyquest.media.MediaOwnerProvider provider =
                     new io.github.mesmerprism.rustyquest.media.MediaOwnerProvider() {
@@ -545,6 +590,7 @@ public final class EmbeddedDuplexActivationGateTest {
                         io.github.mesmerprism.rustyquest.media.MediaOwnerAction action,
                         io.github.mesmerprism.rustyquest.media.CancellationHandle cancellation) {
                     providerCalls++;
+                    if (beforeExecute != null) beforeExecute.run();
                     if (failure != null) throw failure;
                     return new io.github.mesmerprism.rustyquest.media.MediaProviderReadback(
                             action, handle, revision, "stopped", "receipt.cleanup.fixture");
