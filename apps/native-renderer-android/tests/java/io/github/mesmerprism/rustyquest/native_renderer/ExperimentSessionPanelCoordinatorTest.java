@@ -2,6 +2,8 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 
 public final class ExperimentSessionPanelCoordinatorTest {
     public static void main(String[] args) {
+        nativeReadbackObservationPolicy();
+        nativeStatusSnapshotPolicy();
         launchAndRoutePolicy();
         armControlStatePolicy();
         rejectedArmRemainsVisibleAndRetryable();
@@ -15,6 +17,100 @@ public final class ExperimentSessionPanelCoordinatorTest {
         System.out.println("ExperimentSessionPanelCoordinatorTest PASS");
     }
 
+    private static void nativeStatusSnapshotPolicy() {
+        ExperimentSessionPanelCoordinator c = new ExperimentSessionPanelCoordinator();
+        check("{\"v\":1,\"s\":\"unknown\"}".equals(c.nativeStatusSnapshot(1L).observationJson),
+            "legacy/no read witness emits closed unknown extension");
+        ExperimentSessionPanelCoordinator.NativeReceipt receipt = receipt(
+            "", true, true, 1L, 2L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        c.acceptNativeReadback(Long.MAX_VALUE, receipt, 1000000L, 1000000L);
+        ExperimentSessionPanelCoordinator.NativeStatusSnapshot snapshot = c.nativeStatusSnapshot(1999999L);
+        check(snapshot.state == c.snapshot() && snapshot.observationJson.equals(
+            "{\"v\":1,\"s\":\"observed\",\"e\":\"9223372036854775807\",\"i\":\"1000000\",\"g\":1,\"r\":2,\"a\":0}"),
+            "atomic outer state join, int64 string identity and fractional millisecond floor");
+        check(c.nativeStatusSnapshot(2999999L).observationJson.endsWith("\"a\":1}"),
+            "poll age advances without allocating a new read identifier");
+        c.openDeveloper(c.allocateRouteEvent());
+        check(c.nativeStatusSnapshot(3000000L).observationJson.equals("{\"v\":1,\"s\":\"unknown\"}"),
+            "local state replacement cannot retain metadata for a different state object");
+        ExperimentSessionPanelCoordinator.NativeReceipt unsafe = receipt(
+            "", true, true, 9007199254740992L, 9007199254740992L, "idle", false,
+            "none", 0L, 0L, 0L, 0L, 0L);
+        c.acceptNativeReadback(Long.MAX_VALUE, unsafe, 4000000L, 4000000L);
+        check(c.nativeStatusSnapshot(5000000L).observationJson.equals("{\"v\":1,\"s\":\"unknown\"}"),
+            "unsafe outer JavaScript integer joins are unavailable, not rounded");
+        System.out.println("NativeStatusSnapshotPolicy PASS closed projection / int64 / floor / atomic state");
+    }
+    private static void nativeReadbackObservationPolicy() {
+        ExperimentSessionPanelCoordinator c = new ExperimentSessionPanelCoordinator();
+        check(!c.nativeReadbackObservation(10L).available, "no synthetic initial observation");
+        c.admitTrustedColdLaunch(1L); c.acceptRuntimeEpoch(100L);
+        ExperimentSessionPanelCoordinator.NativeReceipt first = receipt(
+            "", true, true, 1L, 1L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        boolean accepted = c.accept(first);
+        c.observeNativeStatusReadback(100L, first, accepted, 20L, 30L);
+        check(c.nativeReadbackObservation(40L).ageNanos == 20L,
+            "age starts at actual read completion, before delayed UI delivery");
+        c.snapshot(); c.snapshot();
+        check(c.nativeReadbackObservation(50L).ageNanos == 30L,
+            "polling cached coordinator snapshots never refreshes native age");
+        c.observeNativeStatusReadback(100L, first, true, 20L, 60L);
+        check(c.nativeReadbackObservation(60L).ageNanos == 40L,
+            "repeated callback cannot refresh source time");
+        c.observeNativeStatusReadback(99L, first, true, 65L, 70L);
+        check(c.nativeReadbackObservation(70L).ageNanos == 50L,
+            "wrong runtime epoch does not refresh witness");
+        ExperimentSessionPanelCoordinator.NativeReceipt old = receipt(
+            "", true, true, 0L, 0L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        c.observeNativeStatusReadback(100L, old, c.accept(old), 75L, 80L);
+        check(c.nativeReadbackObservation(80L).ageNanos == 60L,
+            "rejected old generation/revision does not refresh witness");
+        for (long invalid : new long[] {-1L, 0L, 101L, Long.MAX_VALUE}) {
+            c.observeNativeStatusReadback(100L, first, true, invalid, 100L);
+            check(c.nativeReadbackObservation(100L).ageNanos == 80L,
+                "nonpositive/future timestamp cannot refresh witness");
+        }
+        check(!c.nativeReadbackObservation(99L).available,
+            "clock regression clears observation");
+        check(!c.nativeReadbackObservation(110L).available,
+            "clock recovery does not resurrect old observation");
+        c.observeNativeStatusReadback(100L, first, true, 105L, 120L);
+        check(c.nativeReadbackObservation(130L).ageNanos == 25L,
+            "a genuinely newer matching read restores observation");
+        ExperimentSessionPanelCoordinator.NativeReceipt next = receipt(
+            "", true, true, 2L, 2L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        accepted = c.accept(next);
+        check(!c.nativeReadbackObservation(140L).available,
+            "changed session is unknown until its own status witness");
+        c.observeNativeStatusReadback(100L, next, accepted, 135L, 150L);
+        check(c.nativeReadbackObservation(160L).generation == 2L,
+            "new session witness joins exact generation and revision");
+        c.admitTrustedColdLaunch(2L);
+        c.observeNativeStatusReadback(100L, next, true, 165L, 170L);
+        check(!c.nativeReadbackObservation(170L).available,
+            "pending runtime replacement excludes old-epoch callbacks");
+        c.acceptRuntimeEpoch(101L);
+        check(!c.nativeReadbackObservation(180L).available, "new runtime clears old witness");
+        c.observeNativeStatusReadback(100L, next, true, 185L, 190L);
+        check(!c.nativeReadbackObservation(190L).available, "old runtime cannot resurrect witness");
+        ExperimentSessionPanelCoordinator.NativeReceipt fresh = receipt(
+            "", true, true, 0L, 0L, "idle", false, "none", 0L, 0L, 0L, 0L, 0L);
+        accepted = c.accept(fresh);
+        c.observeNativeStatusReadback(101L, fresh, accepted, 195L, 200L);
+        check(c.nativeReadbackObservation(Long.MAX_VALUE).ageNanos == Long.MAX_VALUE - 195L,
+            "positive monotonic ages cannot wrap into fresh values");
+        ExperimentSessionPanelCoordinator malformed = new ExperimentSessionPanelCoordinator();
+        malformed.acceptRuntimeEpoch(200L);
+        ExperimentSessionPanelCoordinator.NativeReceipt unknownPhase = receipt(
+            "", true, true, 0L, 0L, "future-phase", false, "none", 0L, 0L, 0L, 0L, 0L);
+        malformed.acceptNativeReadback(200L, unknownPhase, 10L, 20L);
+        check(!malformed.nativeReadbackObservation(20L).available,
+            "existing fallback phase cannot mint a status witness");
+        malformed.acceptNativeReadback(200L, null, 25L, 30L);
+        check(!malformed.nativeReadbackObservation(30L).available,
+            "null native receipt cannot mint a status witness");
+        System.out.println("NativeReadbackObservationPolicy PASS poll/callback/session/epoch/clock controls");
+    }
     private static void guidanceBiasPendingPolicy() {
         ExperimentSessionPanelCoordinator coordinator = new ExperimentSessionPanelCoordinator();
         check(coordinator.pendingBreathGuidanceBiasPercent() == -1,

@@ -100,17 +100,19 @@ final class ExperimentSessionPackagedClosure {
 
     static final class Result {
         final boolean active;
+        final boolean openControlDefault;
         final String providerId;
         final String inventorySha256;
         final String nonAudioProfileSha256;
         final AudioEntry[] audioEntries;
         final GuidanceEntry[] guidanceEntries;
 
-        private Result(boolean active, String providerId, String inventorySha256,
+        private Result(boolean active, boolean openControlDefault, String providerId, String inventorySha256,
                 String nonAudioProfileSha256,
                 AudioEntry[] audioEntries,
                 GuidanceEntry[] guidanceEntries) {
             this.active = active;
+            this.openControlDefault = active && openControlDefault;
             this.providerId = safe(providerId);
             this.inventorySha256 = safe(inventorySha256);
             this.nonAudioProfileSha256 = safe(nonAudioProfileSha256);
@@ -120,7 +122,7 @@ final class ExperimentSessionPackagedClosure {
         }
 
         static Result inactive() {
-            return new Result(false, "", "", "", new AudioEntry[0], new GuidanceEntry[0]);
+            return new Result(false, false, "", "", "", new AudioEntry[0], new GuidanceEntry[0]);
         }
 
         GuidanceEntry guidanceFor(String conditionId) {
@@ -305,7 +307,13 @@ final class ExperimentSessionPackagedClosure {
         }
         String profileText = strictUtf8(profileBytes, "experiment-session-profile");
         Map<String, Object> profile = object(parse(profileText), "experiment-session-profile");
-        requireExactFields(profile, "schema_id", "profile_id", "visibility",
+        Map<String, Object> profileFields = new LinkedHashMap<String, Object>(profile);
+        Object openDefault = profileFields.remove("open_control_default");
+        if (profile.containsKey("open_control_default") && !(openDefault instanceof Boolean)) {
+            fail("experiment-session-open-control-default-invalid");
+        }
+        boolean openControlDefault = Boolean.TRUE.equals(openDefault);
+        requireExactFields(profileFields, "schema_id", "profile_id", "visibility",
             "recording_default", "kiosk_requested_default", "non_audio_profile",
             "non_audio_profile_sha256", "radius_observation", "runtime_projection",
             "conditions");
@@ -360,7 +368,7 @@ final class ExperimentSessionPackagedClosure {
             materializeGuidance(filesRoot, "condition-b", bytes);
             guidanceEntries.add(new GuidanceEntry("condition-b", guidanceB));
         }
-        return new Result(true, providerId, inventorySha256, nonAudioProfileSha256,
+        return new Result(true, openControlDefault, providerId, inventorySha256, nonAudioProfileSha256,
             new AudioEntry[] {
             new AudioEntry("condition-a", packagedA),
             new AudioEntry("condition-b", packagedB)
