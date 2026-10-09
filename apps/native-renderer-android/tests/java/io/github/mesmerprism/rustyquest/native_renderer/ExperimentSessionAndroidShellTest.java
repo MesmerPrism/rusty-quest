@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
+        explicitStatusReadCompletionIsNotAnAck();
         restartWaitsForAudioStopBeforeFinalizing();
         idleGenerationZeroCanFinishOnlyAfterExactShutdownReceipt();
         shutdownErrorMayCloseButNeverClaimsSaved();
@@ -24,6 +25,51 @@ public final class ExperimentSessionAndroidShellTest {
         System.out.println("ExperimentSessionAndroidShellTest PASS");
     }
 
+    private static void explicitStatusReadCompletionIsNotAnAck() throws Exception {
+        FakeBridge bridge = new FakeBridge(false);
+        FakeClock clock = new FakeClock();
+        java.util.concurrent.LinkedBlockingQueue<Runnable> callbacks =
+            new java.util.concurrent.LinkedBlockingQueue<Runnable>();
+        java.util.concurrent.LinkedBlockingQueue<ExperimentSessionAndroidShell.SessionReadback> received =
+            new java.util.concurrent.LinkedBlockingQueue<ExperimentSessionAndroidShell.SessionReadback>();
+        ExperimentSessionPanelCoordinator observed = new ExperimentSessionPanelCoordinator();
+        ExperimentSessionAndroidShell.UiSink sink = new ExperimentSessionAndroidShell.UiSink() {
+            public boolean acceptsExperimentSessionCallbacks(long epoch) { return epoch == 1L; }
+            public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback value) {
+                observed.acceptNativeReadback(value.runtimeEpoch, value.receipt,
+                    value.statusReadCompletedNanos, clock.elapsedRealtimeNanos());
+                received.add(value);
+            }
+            public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult value) {}
+        };
+        ExperimentSessionAndroidShell shell = ExperimentSessionAndroidShell.createForTest(
+            bridge, new FakeCodec(), clock, new ExperimentSessionAndroidShell.UiDispatcher() {
+                public void post(Runnable callback) { callbacks.add(callback); }
+                public boolean isUiThread() { return false; }
+            });
+        try {
+            shell.beginExplicitLaunchEpoch(1L); shell.attach(sink);
+            shell.requestStatus(sink);
+            Runnable callback = callbacks.poll(2L, TimeUnit.SECONDS); require(callback != null);
+            clock.nanos = 2_000_000_000L;
+            callback.run();
+            ExperimentSessionAndroidShell.SessionReadback status = received.poll(1L, TimeUnit.SECONDS);
+            require(status != null); equal(1_000_000_000L, status.statusReadCompletedNanos);
+            equal(1_000_000_000L, observed.nativeReadbackObservation(clock.nanos).ageNanos);
+            shell.submit(new ExperimentSessionPanelCoordinator.NativeCommand(
+                "arm", "observation-arm", 0L, ""), false, sink);
+            callback = callbacks.poll(2L, TimeUnit.SECONDS); require(callback != null); callback.run();
+            ExperimentSessionAndroidShell.SessionReadback ack = received.poll(1L, TimeUnit.SECONDS);
+            require(ack != null); equal(-1L, ack.statusReadCompletedNanos);
+            require(!observed.nativeReadbackObservation(clock.nanos).available);
+            // This new status callback is held, then fenced by an actual shell launch replacement.
+            shell.requestStatus(sink);
+            callback = callbacks.poll(2L, TimeUnit.SECONDS); require(callback != null);
+            shell.beginExplicitLaunchEpoch(2L); callback.run();
+            require(received.isEmpty());
+            System.out.println("NativeStatusReadCompletion PASS worker timestamp / ACK excluded / launch fence");
+        } finally { shell.closeForTest(); }
+    }
     private static void restartWaitsForAudioStopBeforeFinalizing() throws Exception {
         FakeBridge bridge = new FakeBridge(false);
         bridge.delayRestartAudio = true;

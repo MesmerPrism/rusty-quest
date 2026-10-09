@@ -284,8 +284,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 if (panel != null && !panel.experimentShellDestroyed) {
                     panel.onExperimentSessionReadback(readback);
                 } else {
-                    EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
-                    EXPERIMENT_SESSION_PANEL.accept(readback.receipt);
+                    EXPERIMENT_SESSION_PANEL.acceptNativeReadback(
+                        readback.runtimeEpoch, readback.receipt,
+                        readback.statusReadCompletedNanos, android.os.SystemClock.elapsedRealtimeNanos());
                     ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
                     if (state.phase == ExperimentSessionPanelState.Phase.ARMING
                             && state.recording) {
@@ -3006,7 +3007,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (readback == null || readback.receipt == null) return;
         EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
         ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
-        boolean changed = EXPERIMENT_SESSION_PANEL.accept(readback.receipt);
+        boolean changed = EXPERIMENT_SESSION_PANEL.acceptNativeReadback(
+            readback.runtimeEpoch, readback.receipt,
+            readback.statusReadCompletedNanos, android.os.SystemClock.elapsedRealtimeNanos());
         ExperimentSessionPanelState after = EXPERIMENT_SESSION_PANEL.snapshot();
         // Audio preparation is an idempotent arm-stage effect. Reassert it from
         // every authoritative arming readback so a reordered status callback or

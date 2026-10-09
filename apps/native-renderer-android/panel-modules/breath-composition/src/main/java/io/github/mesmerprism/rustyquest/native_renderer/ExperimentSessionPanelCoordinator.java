@@ -205,6 +205,63 @@ final class ExperimentSessionPanelCoordinator {
     private long trustedLaunchEpoch;
     private long runtimeEpoch;
     private boolean freshRuntimeExpected;
+    private ExperimentSessionPanelState nativeObservedState;
+    private long nativeReadCompletedNanos;
+    private long nativeObservationClock;
+
+    static final class NativeReadbackObservation {
+        final boolean available;
+        final long runtimeEpoch, generation, revision, ageNanos;
+        NativeReadbackObservation(boolean available, long runtimeEpoch,
+                long generation, long revision, long ageNanos) {
+            this.available = available;
+            this.runtimeEpoch = runtimeEpoch;
+            this.generation = generation;
+            this.revision = revision;
+            this.ageNanos = ageNanos;
+        }
+    }
+
+    // Same command/state behavior as the existing two calls, with the witness join atomic.
+    synchronized boolean acceptNativeReadback(long epoch, NativeReceipt receipt,
+            long completedNanos, long nowNanos) {
+        acceptRuntimeEpoch(epoch);
+        boolean acceptedState = accept(receipt);
+        observeNativeStatusReadback(epoch, receipt, acceptedState, completedNanos, nowNanos);
+        return acceptedState;
+    }
+    // Observation only: never command completion, authority or physical freshness.
+    synchronized void observeNativeStatusReadback(long epoch, NativeReceipt receipt,
+            boolean acceptedState, long completedNanos, long nowNanos) {
+        if (!observeClock(nowNanos)) return;
+        if (!acceptedState || receipt == null || !receipt.accepted
+                || parsePhase(receipt.phase, receipt.controlState, null) == null
+                || freshRuntimeExpected || epoch <= 0L || epoch != runtimeEpoch
+                || receipt.generation != state.generation || receipt.revision != state.revision
+                || completedNanos <= 0L || completedNanos > nowNanos
+                || completedNanos <= nativeReadCompletedNanos) return;
+        nativeReadCompletedNanos = completedNanos;
+        nativeObservedState = state;
+    }
+
+    synchronized NativeReadbackObservation nativeReadbackObservation(long nowNanos) {
+        if (!observeClock(nowNanos) || nativeObservedState == null
+                || nativeObservedState != state || freshRuntimeExpected || runtimeEpoch <= 0L
+                || nativeReadCompletedNanos <= 0L || nativeReadCompletedNanos > nowNanos) {
+            return new NativeReadbackObservation(false, 0L, 0L, 0L, -1L);
+        }
+        return new NativeReadbackObservation(true, runtimeEpoch, state.generation,
+            state.revision, nowNanos - nativeReadCompletedNanos);
+    }
+
+    private boolean observeClock(long nowNanos) {
+        if (nowNanos <= 0L || nowNanos < nativeObservationClock) {
+            nativeObservedState = null;
+            return false;
+        }
+        nativeObservationClock = nowNanos;
+        return true;
+    }
     private String lastRejectedOperationId = "";
     private String panelRestartOperationId = "";
     private long panelRestartGeneration;
@@ -216,6 +273,8 @@ final class ExperimentSessionPanelCoordinator {
         if (epoch <= 0L || epoch == runtimeEpoch) return false;
         if (runtimeEpoch != 0L && (!freshRuntimeExpected || epoch < runtimeEpoch)) return false;
         runtimeEpoch = epoch;
+        nativeObservedState = null;
+        nativeReadCompletedNanos = 0L;
         freshRuntimeExpected = false;
         state = ExperimentSessionPanelState.initial();
         lastRejectedOperationId = "";

@@ -76,6 +76,8 @@ final class ExperimentSessionAndroidShell {
         final String recordingResult;
         final String recordingError;
         final long runtimeEpoch;
+        // Local explicit status-read completion, not command ACK or physical evidence.
+        final long statusReadCompletedNanos;
         final String lastOperationStatus;
         final String lastOperationReason;
 
@@ -92,6 +94,23 @@ final class ExperimentSessionAndroidShell {
             String detail, String recordingResult, String recordingError, long runtimeEpoch,
             String lastOperationStatus, String lastOperationReason
         ) {
+            this(receipt, commandStatus, initializationStatus, inventoryStatus,
+                recordingRootStatus, shutdownStatus, shutdownAckRevision,
+                finalizedSessionGeneration, finalizedOperationId, detail,
+                recordingResult, recordingError, runtimeEpoch,
+                lastOperationStatus, lastOperationReason, -1L);
+        }
+
+        private SessionReadback(
+            ExperimentSessionPanelCoordinator.NativeReceipt receipt,
+            String commandStatus, String initializationStatus, String inventoryStatus,
+            String recordingRootStatus, String shutdownStatus, long shutdownAckRevision,
+            long finalizedSessionGeneration, String finalizedOperationId,
+            String detail, String recordingResult, String recordingError, long runtimeEpoch,
+            String lastOperationStatus, String lastOperationReason,
+            long statusReadCompletedNanos
+        ) {
+            this.statusReadCompletedNanos = statusReadCompletedNanos;
             this.receipt = receipt;
             this.commandStatus = safe(commandStatus);
             this.initializationStatus = safe(initializationStatus);
@@ -111,6 +130,13 @@ final class ExperimentSessionAndroidShell {
             this.lastOperationReason = safe(lastOperationReason);
         }
 
+        private SessionReadback afterStatusRead(long completedNanos) {
+            return new SessionReadback(receipt, commandStatus, initializationStatus,
+                inventoryStatus, recordingRootStatus, shutdownStatus, shutdownAckRevision,
+                finalizedSessionGeneration, finalizedOperationId, detail,
+                recordingResult, recordingError, runtimeEpoch,
+                lastOperationStatus, lastOperationReason, completedNanos);
+        }
         boolean initializationPending() {
             return "initializing".equals(initializationStatus);
         }
@@ -668,7 +694,10 @@ final class ExperimentSessionAndroidShell {
 
     private SessionReadback readStatus() {
         requireWorkerThread();
-        return codec.parse(nativeBridge.apply(codec.statusCommand()), null, false);
+        String response = nativeBridge.apply(codec.statusCommand());
+        long completedNanos = clock.elapsedRealtimeNanos();
+        SessionReadback readback = codec.parse(response, null, false);
+        return readback == null ? null : readback.afterStatusRead(completedNanos);
     }
 
     private SessionReadback apply(
