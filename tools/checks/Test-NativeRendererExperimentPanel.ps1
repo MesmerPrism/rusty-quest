@@ -194,6 +194,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     static boolean admitTerminalSaveAndExit(android.app.Activity activity, android.content.Intent intent) { return false; }
     static void finishTerminalSaveAndExit(android.app.Activity activity, boolean saved, long generation, String operationId, long revision) {}
     static String conditionAudioReadiness(String condition) { return "audio-track-not-ready"; }
+    static boolean experimentSessionOpenControlDefault() { return false; }
     static String conditionBreathGuidanceReadiness(String condition) { return "no-pattern"; }
     static int conditionBreathGuidanceDefaultBias(String condition) { return 0; }
     static boolean startConditionAudio(long generation, String operationId, String condition) { return false; }
@@ -227,6 +228,10 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'PanelImmersiveHandoffProofPolicy.java'),
         (Join-Path $panelRoot 'BreathCompositionCommandReceiver.java'),
         (Join-Path $panelRoot 'BreathCompositionPanelModule.java'),
+        (Join-Path $panelRoot 'ExperimentSessionBleNamePolicy.java'),
+        (Join-Path $panelRoot 'ExperimentSessionBleProtocol.java'),
+        (Join-Path $panelRoot 'ExperimentSessionBleServer.java'),
+        (Join-Path $panelRoot 'ExperimentSessionPanelRenderReceipt.java'),
         (Join-Path $panelRoot 'ExperimentSessionAndroidShell.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelState.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelCoordinator.java'),

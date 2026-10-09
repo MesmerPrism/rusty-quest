@@ -14,6 +14,7 @@ public final class ExperimentSessionPackagedClosureTest {
 
     public static void main(String[] args) throws Exception {
         validClosureMaterializesExactBytesAndBuildsOnlyAudio();
+        validatedOpenControlDefaults();
         validGuidanceClosureMaterializesAndBindsAudio();
         inactiveClosureDoesNotMaterialize();
         rejectsWrongAssetCardinalityAndIds();
@@ -77,6 +78,7 @@ public final class ExperimentSessionPackagedClosureTest {
         try {
             ExperimentSessionPackagedClosure.Result result = fixture.prepare();
             check(result.active, "linked closure is active");
+            check(!result.openControlDefault, "older absent policy remains gated");
             check(result.audioEntries.length == 2, "profile entry is excluded from audio");
             check("condition-a".equals(result.audioEntries[0].conditionId)
                 && "condition-b".equals(result.audioEntries[1].conditionId),
@@ -87,6 +89,25 @@ public final class ExperimentSessionPackagedClosureTest {
             check(java.util.Arrays.equals(profile, Files.readAllBytes(fixture.target())),
                 "matching later start preserves existing bytes");
         } finally { fixture.close(); }
+    }
+
+    private static void validatedOpenControlDefaults() throws Exception {
+        String baseline = profile("provider.one", audio("session-audio/condition-a.mp3",
+            AUDIO_A_SHA, 101L), audio("session-audio/condition-b.mp3", AUDIO_B_SHA, 202L), false);
+        for (String policy : new String[] {"true", "false", "null", "\"true\"", "1"}) {
+            byte[] bytes = baseline.replace("\"recording_default\":true,",
+                "\"open_control_default\":" + policy + ",\"recording_default\":true,")
+                .getBytes(StandardCharsets.UTF_8);
+            Fixture fixture = fixture(bytes, "provider.one", entries(bytes, "", false));
+            try {
+                if ("true".equals(policy) || "false".equals(policy)) {
+                    check(fixture.prepare().openControlDefault == "true".equals(policy),
+                        "validated profile policy is projected exactly");
+                } else {
+                    expectRejected(fixture, "nonboolean default policy");
+                }
+            } finally { fixture.close(); }
+        }
     }
 
     private static void inactiveClosureDoesNotMaterialize() throws Exception {

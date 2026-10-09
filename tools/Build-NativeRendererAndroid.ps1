@@ -1035,6 +1035,11 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
             ? "track-ready" : readiness.reason;
     }
 
+    static boolean experimentSessionOpenControlDefault() {
+        ExperimentSessionPackagedClosure.Result closure = experimentSessionClosure;
+        return closure != null && closure.active && closure.openControlDefault;
+    }
+
     static String conditionBreathGuidanceReadiness(String conditionId) {
         ExperimentSessionPackagedClosure.Result closure = experimentSessionClosure;
         if (closure == null || !closure.active) return "pattern-inventory-unavailable";
