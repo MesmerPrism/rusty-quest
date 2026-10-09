@@ -47,6 +47,27 @@ explicit signer and expected certificate fingerprint, disables the Gradle
 daemon/configuration cache for a detailed task-timing pass, and retains the
 same complete content-addressed output/evidence contract.
 
+Testing precedes publication. Candidate accepts an exact clean local commit
+that has never been pushed or merged; no remote, pull request, or merge is a
+build prerequisite. Commit only when a reproducible clean Candidate pin is
+useful. DevFast also accepts reviewed working-tree changes, binding the complete
+tracked diff and nonignored untracked file hashes in its source composition.
+Re-observe those inputs before and after the build. Source publication and
+required PR checks follow testing; a build or inspection pass does not prove
+device behavior or authorize installation.
+
+Keep the task's stable compiler cache root across candidate revisions and choose
+a fresh final output namespace separately. A new checkout still needs its
+repository-local pinned Gradle cache. Prepare it through
+`pwsh -NoProfile -File tools/Resolve-GradleTool.ps1 -RepoRoot . -Mode Resolve`,
+then use `-Mode VerifyCache` for read-only verification. The resolver retains
+archive/tree hashes and executable checks; do not replace them with an ambient
+Gradle installation or repeatedly download an unchanged verified tool.
+
+The focused regression `tools/checks/Test-SourceCompositionPremerge.ps1` creates
+real local Git repositories with no remotes and verifies unpublished source,
+working-tree overlays, dependency drift, and publication rejection.
+
 The build does not provision signing secrets. Supply the keystore with the
 parameter or local environment binding and supply alias/store/key passwords in
 the local `RUSTY_QUEST_SPATIAL_SIGNING_*` environment variables. Receipts

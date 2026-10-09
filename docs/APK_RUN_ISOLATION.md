@@ -145,3 +145,14 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 The gate validates source guardrails plus valid and damaged capsule fixtures.
 It does not contact a headset.
+
+## Premerge iteration
+
+A clean unmerged local commit is sufficient for Candidate source identity.
+Publication is a later action; neither merge nor push is required to compile,
+inspect, or test a selected candidate. DevFast may use an exact working-tree
+overlay. Preserve its complete source fingerprint, build lock, signer, package
+isolation and hashed run capsule, plus every selected live device/authority
+guard. A candidate with an existing package ID is not a co-installable package
+and must not replace a retained APK without explicit runtime authorization.
+See [the fast build workflow](SPATIAL_CAMERA_PANEL_FAST_BUILD_WORKFLOW.md).
