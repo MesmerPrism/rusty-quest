@@ -34,6 +34,29 @@ registry and stale callback suppression cannot prove old provider teardown.
 
 ## Validation boundaries
 
+### Verified terminal Stop projection
+
+The incoming Sink gate accepts the existing C1 `retained_cleanup` projection
+only at the registry-verified terminal Stop callback. It retains the exact
+armed provider epoch, client, lease, runtime spec, live expiry, handle and newer
+provider revision checks before recording a reopening fence. A subsequent arm
+and activation still require a separately authenticated `current_route`;
+cleanup or compensation cannot authorize either. The older retained cleanup
+v2 projection remains supported by its existing callback.
+
+The closed native diagnostic parser also admits Sink terminal Stop failures
+with `INCOMING_ARM_PROJECTION` or `INCOMING_ARM_EVIDENCE` at the incoming
+verification stage. These bounded diagnostic fields confer no completion or
+authority. The first-failure latch remains unchanged: an old Stop diagnostic
+does not identify a later compensation failure. A rejected gate callback may
+follow actual provider execution and registry evidence consumption, so neither
+that rejection nor a source fix proves physical cleanup or permits replay.
+
+Production Java gate/registry controls and the focused
+`Test-OwnerDiagnosticReadHost.ps1` parser controls exercise these joins on the
+host. They do not prove Android/JNI execution, a remote compensation outcome,
+an installed APK change or terminal cleanup on a headset.
+
 ### Retained prepare failure observations
 
 The generic app identity signer admits the four closed retained preparation

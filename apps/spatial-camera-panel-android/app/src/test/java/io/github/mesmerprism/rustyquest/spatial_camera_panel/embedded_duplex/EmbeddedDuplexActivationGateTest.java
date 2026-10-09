@@ -218,6 +218,115 @@ public final class EmbeddedDuplexActivationGateTest {
         assertEquals(1, target.providerCalls);
     }
 
+    @Test public void c1RetainedCleanupVerifiedStopUsesActualRegistryEvidence() throws Exception {
+        FakeTarget target = new FakeTarget();
+        EmbeddedDuplexActivationGate gate = armed(target);
+        JSONObject retained = authority().put("authorization_kind", "retained_cleanup");
+        try (CleanupFixture cleanup = new CleanupFixture("lease.1", "receiver.7", 3, "stop")) {
+            cleanup.executeAndVerify(gate, retained);
+            assertEquals(1, cleanup.providerCalls);
+            assertEquals(0, cleanup.compensationCalls);
+        }
+        target.nextReceiver();
+        // The terminal cleanup only permits a new authenticated current-route arm.
+        assertThrows(IllegalStateException.class, () -> dispatchArm(
+                gate, target, freshAuthority().put("authorization_kind", "retained_cleanup"),
+                freshTicket(), freshVerified()));
+        assertEquals(0, target.providerCalls);
+        dispatchArm(gate, target, freshAuthority(), freshTicket(), freshVerified());
+        assertEquals(1, target.providerCalls);
+    }
+
+    @Test public void c1RetainedCleanupCannotReopenWithoutExactTerminalArmBinding() throws Exception {
+        for (int damage = 0; damage < 6; damage++) {
+            FakeTarget target = new FakeTarget();
+            EmbeddedDuplexActivationGate gate = armed(target);
+            JSONObject retained = authority().put("authorization_kind", "retained_cleanup");
+            JSONObject terminal = stopped();
+            if (damage == 0) retained.put("authority_client_id", "foreign.client");
+            if (damage == 1) retained.put("authority_runtime_lease_id", "foreign.lease");
+            if (damage == 2) retained.put("expires_at_ms", 1000);
+            if (damage == 3) terminal.put("provider_handle_id", "foreign.handle");
+            if (damage == 4) terminal.put("provider_state_revision", 2);
+            if (damage == 5) terminal.put("terminal", false);
+            verifyStop(gate, stop(), retained, terminal);
+            target.nextReceiver();
+            assertThrows(IllegalStateException.class, () -> dispatchArm(
+                    gate, target, freshAuthority(), freshTicket(), freshVerified()));
+            assertEquals(0, target.providerCalls);
+        }
+    }
+
+    @Test public void compensationAfterVerifiedRegistryButRejectedGateDoesNotGrantRestart() throws Exception {
+        FakeTarget target = new FakeTarget();
+        EmbeddedDuplexActivationGate gate = armed(target);
+        try (CleanupFixture cleanup = new CleanupFixture("lease.1", "receiver.7", 3, "stop")) {
+            // Model the installed gate failure after real registry evidence consumption.
+            assertThrows(IllegalStateException.class, () -> cleanup.executeAndVerify(
+                    gate, authority().put("authorization_kind", "foreign")));
+            cleanup.allowCompensation = true;
+            JSONObject retained = authority().put("authorization_kind", "retained_cleanup");
+            gate.beforeOwnerEffect(retained, cleanup.ticket, true);
+            String raw = cleanup.registry.execute(cleanup.action, true);
+            String verified = cleanup.registry.verifyAndReadEvidence(cleanup.action, raw);
+            assertTrue(verified != null);
+            gate.afterVerifiedOwnerEffect(retained, cleanup.ticket,
+                    new JSONObject(raw), new JSONObject(verified), true);
+            assertEquals(1, cleanup.providerCalls);
+            assertEquals(1, cleanup.compensationCalls);
+            assertTrue(cleanup.registry.verifyAndReadEvidence(cleanup.action, raw) == null);
+            target.nextReceiver();
+            assertThrows(IllegalStateException.class, () -> dispatchArm(
+                    gate, target, freshAuthority(), freshTicket(), freshVerified()));
+            assertEquals(0, target.providerCalls);
+        }
+    }
+
+    @Test public void actualC1TerminalCallbackCompletesWithRetainedCleanupProjection() throws Exception {
+        try (RetainedCallbackFixture fixture = new RetainedCallbackFixture("stop")) {
+            setPlatformField(fixture.platform, "routeConfigurationSha256", digest('2'));
+            JSONObject retained = authority().put("authorization_kind", "retained_cleanup")
+                    .put("expires_at_ms", Long.MAX_VALUE);
+            JSONObject result = new JSONObject(fixture.platform.executeAndVerify(
+                    retained.toString(), fixture.cleanup.action, false));
+            assertTrue(result.getJSONObject("verified").getBoolean("terminal"));
+            assertEquals(1, fixture.cleanup.providerCalls);
+            assertEquals(0, fixture.cleanup.compensationCalls);
+            assertEquals("NONE", new JSONObject(fixture.platform.ownerFailureDiagnostic()).getString("stage"));
+            fixture.target.nextReceiver();
+            dispatchArm(fixture.gate, fixture.target, freshAuthority(), freshTicket(), freshVerified());
+            assertEquals(1, fixture.target.providerCalls);
+        }
+    }
+
+    @Test public void actualC1CompensationKeepsPrimaryFailureAndCannotReopen() throws Exception {
+        try (RetainedCallbackFixture fixture = new RetainedCallbackFixture("stop")) {
+            setPlatformField(fixture.platform, "routeConfigurationSha256", digest('2'));
+            JSONObject retained = authority().put("expires_at_ms", Long.MAX_VALUE);
+            // Registry consumes valid terminal evidence before the unknown kind is rejected at the gate.
+            // Android's host Log stub may throw after the production first-failure
+            // recorder. The closed record below, not that host exception, binds the gate failure.
+            assertThrows(RuntimeException.class, () -> fixture.platform.executeAndVerify(
+                    retained.put("authorization_kind", "foreign").toString(), fixture.cleanup.action, false));
+            String primary = fixture.platform.ownerFailureDiagnostic();
+            JSONObject diagnostic = new JSONObject(primary);
+            assertEquals("STOP", diagnostic.getString("action"));
+            assertEquals("INCOMING_ARM_PROJECTION", diagnostic.getString("provider_reason"));
+            fixture.cleanup.allowCompensation = true;
+            JSONObject result = new JSONObject(fixture.platform.executeAndVerify(
+                    retained.put("authorization_kind", "retained_cleanup").toString(),
+                    fixture.cleanup.action, true));
+            assertTrue(result.getJSONObject("verified").getBoolean("terminal"));
+            assertEquals(1, fixture.cleanup.providerCalls);
+            assertEquals(1, fixture.cleanup.compensationCalls);
+            assertEquals(primary, fixture.platform.ownerFailureDiagnostic());
+            fixture.target.nextReceiver();
+            assertThrows(IllegalStateException.class, () -> dispatchArm(fixture.gate,
+                    fixture.target, freshAuthority(), freshTicket(), freshVerified()));
+            assertEquals(0, fixture.target.providerCalls);
+        }
+    }
+
     @Test public void wrongFreshTicketSubjectDeniesBeforeProvider() throws Exception {
         for (String field : new String[] {"authority_client_id", "authority_runtime_lease_id",
                 "authority_provider_epoch_id", "platform_runtime_spec_id"}) {

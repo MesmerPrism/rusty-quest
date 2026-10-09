@@ -159,7 +159,7 @@ final class EmbeddedDuplexActivationGate {
         String epoch = authority.getString(retained ? "provider_epoch_id" : "authority_provider_epoch_id");
         String client = authority.getString(retained ? "target_client_id" : "authority_client_id");
         String lease = authority.getString(retained ? "target_runtime_lease_id" : "authority_runtime_lease_id");
-        if (!retained) requireProjection(authority);
+        if (!retained) requireProjection(authority, true);
         requireExactFields(verified, "$schema", "receipt_id", "readback_sha256",
                 "executor_generation", "provider_state_revision", "observed_state", "terminal",
                 "provider_handle_id", "detail_sha256");
@@ -461,6 +461,12 @@ final class EmbeddedDuplexActivationGate {
     }
 
     private static void requireProjection(JSONObject value) throws Exception {
+        requireProjection(value, false);
+    }
+
+    // A verified terminal Stop may carry the C1 cleanup projection. Arm and
+    // activation still require current_route; cleanup never grants either.
+    private static void requireProjection(JSONObject value, boolean terminalStop) throws Exception {
         requireExactFields(value, "$schema", "authority_peer_id", "executor_peer_id",
                 "peer_session_id", "route_grant_id", "route_authority_revision",
                 "authority_runtime_host_id", "authority_provider_epoch_id",
@@ -468,7 +474,8 @@ final class EmbeddedDuplexActivationGate {
                 "signed_topology_sha256", "route_configuration_sha256",
                 "route_authority_evidence_sha256", "expires_at_ms", "authorization_kind");
         if (!PROJECTION_SCHEMA.equals(value.getString("$schema"))
-                || !"current_route".equals(value.getString("authorization_kind"))
+                || !("current_route".equals(value.getString("authorization_kind"))
+                    || (terminalStop && "retained_cleanup".equals(value.getString("authorization_kind"))))
                 || value.getLong("route_authority_revision") <= 0L
                 || !sha256(value.getString("signed_topology_sha256"))
                 || !sha256(value.getString("route_configuration_sha256"))

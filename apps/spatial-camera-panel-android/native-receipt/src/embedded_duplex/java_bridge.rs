@@ -588,7 +588,9 @@ fn parse_owner_failure_diagnostic(text: &str) -> Result<serde_json::Value, Strin
         if incoming {
             return stage != "INCOMING_ARM_VERIFICATION"
                 || fields.len() != 7
-                || action != "ARM_RECEIVER"
+                || !(action == "ARM_RECEIVER"
+                    || (action == "STOP"
+                        && matches!(r, "INCOMING_ARM_PROJECTION" | "INCOMING_ARM_EVIDENCE")))
                 || value.get("owner").and_then(|v| v.as_str()) != Some("sink");
         }
         !matches!(
@@ -704,6 +706,32 @@ mod owner_diagnostic_tests {
         damaged.as_object_mut().unwrap().remove("owner");
         damaged.as_object_mut().unwrap().remove("cause");
         assert!(parse_owner_failure_diagnostic(&damaged.to_string()).is_err());
+    }
+    #[test]
+    fn terminal_stop_projection_and_evidence_diagnostics_are_not_authority() {
+        for reason in ["INCOMING_ARM_PROJECTION", "INCOMING_ARM_EVIDENCE"] {
+            let mut value = receipt(reason);
+            value["action"] = "STOP".into();
+            assert_eq!(
+                parse_owner_failure_diagnostic(&value.to_string()).unwrap(),
+                value
+            );
+            for (key, damage) in [
+                ("stage", "PROVIDER_EXECUTION"),
+                ("owner", "source"),
+                ("cause", "STATE"),
+                ("action", "CLEANUP"),
+            ] {
+                let mut damaged = value.clone();
+                damaged[key] = damage.into();
+                assert!(parse_owner_failure_diagnostic(&damaged.to_string()).is_err());
+            }
+        }
+        for reason in ["INCOMING_ARM_ORDER", "INCOMING_ARM_UNAVAILABLE"] {
+            let mut value = receipt(reason);
+            value["action"] = "STOP".into();
+            assert!(parse_owner_failure_diagnostic(&value.to_string()).is_err());
+        }
     }
     #[test]
     fn retained_four_five_seven_field_diagnostics_stay_compatible() {

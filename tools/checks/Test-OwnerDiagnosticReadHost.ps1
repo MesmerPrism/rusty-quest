@@ -7,6 +7,8 @@ $rustRoot=Join-Path $RepoRoot 'apps/spatial-camera-panel-android/native-receipt/
 $bridge=[IO.File]::ReadAllText((Join-Path $rustRoot 'java_bridge.rs'));$start=$bridge.IndexOf('fn parse_owner_failure_diagnostic(');$end=$bridge.IndexOf('#[cfg(test)]',$start)
 if($start-lt0-or$end-lt$start){throw 'Strict production parser boundaries missing'}
 $parser=$bridge.Substring($start,$end-$start)
+$productionParserTests=$bridge.Substring($end)
+if(-not$productionParserTests.Contains('mod owner_diagnostic_tests {')){throw 'Production parser controls missing'}
 $source=[IO.File]::ReadAllText((Join-Path $rustRoot 'owner_diagnostic_read.rs'))
 $null=New-Item -ItemType Directory (Join-Path $OutputRoot 'src')
 [IO.File]::WriteAllText((Join-Path $OutputRoot 'Cargo.toml'),"[workspace]`n[package]`nname = `"owner-diagnostic-read-host`"`nversion = `"0.1.0`"`nedition = `"2021`"`n[dependencies]`nserde_json = `"=1.0.151`"`n",[Text.UTF8Encoding]::new($false))
@@ -49,8 +51,8 @@ fn main() {}
     }
 }
 '@
-[IO.File]::WriteAllText((Join-Path $OutputRoot 'src/main.rs'),$tests.Replace('PARSER',$parser),[Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $OutputRoot 'src/main.rs'),$tests.Replace('PARSER',$parser+$productionParserTests),[Text.UTF8Encoding]::new($false))
 & cargo test --offline --jobs 1 --manifest-path (Join-Path $OutputRoot 'Cargo.toml') 2>&1|Tee-Object -FilePath (Join-Path $OutputRoot 'cargo-test.txt')
 if($LASTEXITCODE-ne0){throw 'Pure production-parser/projection host tests failed'}
-$report=@{schema='rusty.quest.owner_diagnostic_read_host_result.v1';status='passed';production_parser_sha256=(Get-FileHash (Join-Path $rustRoot 'java_bridge.rs')).Hash.ToLowerInvariant();production_projection_sha256=(Get-FileHash (Join-Path $rustRoot 'owner_diagnostic_read.rs')).Hash.ToLowerInvariant();test_cases=6;invalid_enum_controls=7;callback_error_controls=5;limits=@('Extracted actual strict parser and projection; no Android JNI callback/typecheck, full JVM, APK or hardware invocation');device_effects=0}
+$report=@{schema='rusty.quest.owner_diagnostic_read_host_result.v1';status='passed';production_parser_sha256=(Get-FileHash (Join-Path $rustRoot 'java_bridge.rs')).Hash.ToLowerInvariant();production_projection_sha256=(Get-FileHash (Join-Path $rustRoot 'owner_diagnostic_read.rs')).Hash.ToLowerInvariant();test_cases=10;invalid_enum_controls=7;callback_error_controls=5;limits=@('Extracted actual strict parser, its production unit controls and projection; no Android JNI callback/typecheck, full JVM, APK or hardware invocation');device_effects=0}
 [IO.File]::WriteAllText((Join-Path $OutputRoot 'RESULT.json'),($report|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))
