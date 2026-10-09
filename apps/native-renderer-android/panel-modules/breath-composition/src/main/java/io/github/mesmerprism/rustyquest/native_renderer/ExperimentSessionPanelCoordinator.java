@@ -225,9 +225,16 @@ final class ExperimentSessionPanelCoordinator {
     static final class NativeStatusSnapshot {
         final ExperimentSessionPanelState state;
         final String observationJson;
-        NativeStatusSnapshot(ExperimentSessionPanelState state, String observationJson) {
+        final boolean observed;
+        final long runtimeEpoch, readId, ageMs;
+        NativeStatusSnapshot(ExperimentSessionPanelState state, String observationJson,
+                boolean observed, long runtimeEpoch, long readId, long ageMs) {
             this.state = state;
             this.observationJson = observationJson;
+            this.observed = observed;
+            this.runtimeEpoch = runtimeEpoch;
+            this.readId = readId;
+            this.ageMs = ageMs;
         }
     }
 
@@ -243,7 +250,11 @@ final class ExperimentSessionPanelCoordinator {
                 + "\",\"i\":\"" + nativeReadCompletedNanos + "\",\"g\":" + state.generation
                 + ",\"r\":" + state.revision + ",\"a\":" + (observation.ageNanos / 1000000L) + "}";
         }
-        return new NativeStatusSnapshot(state, json);
+        boolean available = observation.available && state.generation <= maxSafeInteger
+            && state.revision <= maxSafeInteger;
+        return new NativeStatusSnapshot(state, json, available,
+            available ? runtimeEpoch : 0L, available ? nativeReadCompletedNanos : 0L,
+            available ? observation.ageNanos / 1000000L : -1L);
     }
     // Same command/state behavior as the existing two calls, with the witness join atomic.
     synchronized boolean acceptNativeReadback(long epoch, NativeReceipt receipt,
