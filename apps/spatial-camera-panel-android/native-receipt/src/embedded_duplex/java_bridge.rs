@@ -460,12 +460,41 @@ impl JavaOwnerCallbacks {
         parse_owner_failure_diagnostic(&self.owner_failure_diagnostic_text()?)
     }
     pub(crate) fn owner_failure_diagnostic_read(&self) -> serde_json::Value {
-        match self.owner_failure_diagnostic_text() {
+        let mut observation = match self.owner_failure_diagnostic_text() {
             Ok(text) => {
                 super::owner_diagnostic_read::snapshot(&text, parse_owner_failure_diagnostic(&text))
             }
             Err(error) => super::owner_diagnostic_read::unavailable(&error),
+        };
+        observation["latest_attempt"] = match self.owner_latest_attempt_text() {
+            Ok(text) => super::owner_latest_attempt_read::snapshot(&text),
+            Err(_) => super::owner_latest_attempt_read::unavailable(),
+        };
+        observation
+    }
+    fn owner_latest_attempt_text(&self) -> Result<String, String> {
+        let mut env = self.attached()?;
+        let call = env.call_method(
+            self.callback.as_obj(),
+            "ownerLatestAttemptDiagnostic",
+            "()Ljava/lang/String;",
+            &[],
+        );
+        let value = self
+            .checked_call(&mut env, call, "java_bridge.owner_latest_attempt_call")?
+            .l()
+            .map_err(|_| "java_bridge.owner_latest_attempt_type")?;
+        if value.is_null() {
+            return Err("java_bridge.owner_latest_attempt_null".into());
         }
+        let text: String = env
+            .get_string(&JString::from(value))
+            .map_err(|_| "java_bridge.owner_latest_attempt_string")?
+            .into();
+        if text.len() > 512 {
+            return Err("java_bridge.owner_latest_attempt_bounds".into());
+        }
+        Ok(text)
     }
     fn owner_failure_diagnostic_text(&self) -> Result<String, String> {
         let mut env = self.attached()?;

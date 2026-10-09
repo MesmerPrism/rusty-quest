@@ -12,6 +12,7 @@ mod identity_jni;
 mod java_bridge;
 #[cfg(any(target_os = "android", test))]
 mod owner_diagnostic_read;
+mod owner_latest_attempt_read;
 #[cfg(any(target_os = "android", test))]
 mod owner_failure;
 pub(crate) mod packaged_config;

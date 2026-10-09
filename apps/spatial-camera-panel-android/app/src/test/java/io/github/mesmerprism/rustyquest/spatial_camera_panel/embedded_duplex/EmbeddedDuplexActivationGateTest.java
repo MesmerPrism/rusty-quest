@@ -1,6 +1,7 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
@@ -284,6 +285,9 @@ public final class EmbeddedDuplexActivationGateTest {
 
     @Test public void actualC1TerminalCallbackCompletesWithRetainedCleanupProjection() throws Exception {
         try (RetainedCallbackFixture fixture = new RetainedCallbackFixture("stop")) {
+            JSONObject initial = new JSONObject(fixture.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(0, initial.getLong("attempt_sequence"));
+            assertEquals("NONE", initial.getString("outcome"));
             setPlatformField(fixture.platform, "routeConfigurationSha256", digest('2'));
             JSONObject retained = authority().put("authorization_kind", "retained_cleanup")
                     .put("expires_at_ms", Long.MAX_VALUE);
@@ -293,6 +297,12 @@ public final class EmbeddedDuplexActivationGateTest {
             assertEquals(1, fixture.cleanup.providerCalls);
             assertEquals(0, fixture.cleanup.compensationCalls);
             assertEquals("NONE", new JSONObject(fixture.platform.ownerFailureDiagnostic()).getString("stage"));
+            JSONObject latest = new JSONObject(fixture.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(1, latest.getLong("attempt_sequence"));
+            assertEquals("SUCCEEDED", latest.getString("outcome"));
+            assertEquals("INCOMING_ARM_VERIFICATION", latest.getString("stage"));
+            assertEquals("STOP", latest.getString("action"));
+            assertFalse(latest.getBoolean("compensate"));
             fixture.target.nextReceiver();
             dispatchArm(fixture.gate, fixture.target, freshAuthority(), freshTicket(), freshVerified());
             assertEquals(1, fixture.target.providerCalls);
@@ -320,10 +330,76 @@ public final class EmbeddedDuplexActivationGateTest {
             assertEquals(1, fixture.cleanup.providerCalls);
             assertEquals(1, fixture.cleanup.compensationCalls);
             assertEquals(primary, fixture.platform.ownerFailureDiagnostic());
+            JSONObject latest = new JSONObject(fixture.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(2, latest.getLong("attempt_sequence"));
+            assertEquals("SUCCEEDED", latest.getString("outcome"));
+            assertTrue(latest.getBoolean("compensate"));
+            assertEquals("NONE", latest.getString("provider_reason"));
             fixture.target.nextReceiver();
             assertThrows(IllegalStateException.class, () -> dispatchArm(fixture.gate,
                     fixture.target, freshAuthority(), freshTicket(), freshVerified()));
             assertEquals(0, fixture.target.providerCalls);
+        }
+    }
+
+    @Test public void latestFailureChangesWhileFirstFailureRemainsByteExact() throws Exception {
+        try (RetainedCallbackFixture fixture = new RetainedCallbackFixture("stop")) {
+            setPlatformField(fixture.platform, "routeConfigurationSha256", digest('2'));
+            JSONObject retained = authority().put("expires_at_ms", Long.MAX_VALUE)
+                    .put("authorization_kind", "foreign");
+            assertThrows(RuntimeException.class, () -> fixture.platform.executeAndVerify(
+                    retained.toString(), fixture.cleanup.action, false));
+            String primary = fixture.platform.ownerFailureDiagnostic();
+            JSONObject first = new JSONObject(fixture.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(1, first.getLong("attempt_sequence"));
+            assertEquals("FAILED", first.getString("outcome"));
+            assertEquals("INCOMING_ARM_VERIFICATION", first.getString("stage"));
+            assertEquals("INCOMING_ARM_PROJECTION", first.getString("provider_reason"));
+            JSONObject wrongRoute = new JSONObject(retained.toString())
+                    .put("authorization_kind", "retained_cleanup")
+                    .put("route_configuration_sha256", digest('3'));
+            assertThrows(RuntimeException.class, () -> fixture.platform.executeAndVerify(
+                    wrongRoute.toString(), fixture.cleanup.action, true));
+            JSONObject second = new JSONObject(fixture.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(2, second.getLong("attempt_sequence"));
+            assertEquals("FAILED", second.getString("outcome"));
+            assertTrue(second.getBoolean("compensate"));
+            assertEquals("PROJECTION_BINDING", second.getString("stage"));
+            assertEquals("STOP", second.getString("action"));
+            assertEquals("sink", second.getString("owner"));
+            assertEquals("NONE", second.getString("cause"));
+            assertEquals("NONE", second.getString("provider_reason"));
+            assertEquals(primary, fixture.platform.ownerFailureDiagnostic());
+            assertEquals(0, fixture.cleanup.compensationCalls);
+            fixture.cleanup.allowCompensation = true;
+            fixture.platform.executeAndVerify(retained.put("authorization_kind", "retained_cleanup")
+                    .toString(), fixture.cleanup.action, true);
+            JSONObject third = new JSONObject(fixture.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(3, third.getLong("attempt_sequence"));
+            assertEquals("SUCCEEDED", third.getString("outcome"));
+            assertEquals(primary, fixture.platform.ownerFailureDiagnostic());
+            fixture.target.nextReceiver();
+            assertThrows(IllegalStateException.class, () -> dispatchArm(fixture.gate,
+                    fixture.target, freshAuthority(), freshTicket(), freshVerified()));
+            assertEquals(0, fixture.target.providerCalls);
+        }
+    }
+
+    @Test public void diagnosticSequenceExhaustionDoesNotDenyActualCallback() throws Exception {
+        try (RetainedCallbackFixture fixture = new RetainedCallbackFixture("stop")) {
+            setPlatformField(fixture.platform, "routeConfigurationSha256", digest('2'));
+            setPlatformField(fixture.platform, "latestAttemptSequence", 9_007_199_254_740_991L);
+            JSONObject retained = authority().put("authorization_kind", "retained_cleanup")
+                    .put("expires_at_ms", Long.MAX_VALUE);
+            JSONObject result = new JSONObject(fixture.platform.executeAndVerify(
+                    retained.toString(), fixture.cleanup.action, false));
+            assertTrue(result.getJSONObject("verified").getBoolean("terminal"));
+            JSONObject latest = new JSONObject(fixture.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(9_007_199_254_740_991L, latest.getLong("attempt_sequence"));
+            assertEquals("UNAVAILABLE", latest.getString("outcome"));
+            assertEquals("NONE", latest.getString("stage"));
+            assertFalse(latest.getBoolean("compensate"));
+            assertEquals(1, fixture.cleanup.providerCalls);
         }
     }
 
@@ -642,13 +718,50 @@ public final class EmbeddedDuplexActivationGateTest {
                     assertEquals("ProviderBusy".equals(message) ? "PROVIDER_BUSY" : "OTHER",
                             d.getString("provider_reason"));
                     assertTrue(!raw.contains("secret") && !raw.contains("private") && !raw.contains("client.1"));
+                    JSONObject latest = new JSONObject(f.platform.ownerLatestAttemptDiagnostic());
+                    assertEquals(1, latest.getLong("attempt_sequence"));
+                    assertEquals("FAILED", latest.getString("outcome"));
+                    assertEquals(d.getString("provider_reason"), latest.getString("provider_reason"));
+                    assertEquals(d.getString("cause"), latest.getString("cause"));
+                    assertTrue(!latest.toString().contains("secret") && !latest.toString().contains("private"));
                     f.platform.retireProcessCallbacks();
+                    assertThrows(IllegalStateException.class, () -> f.platform.ownerLatestAttemptDiagnostic());
                     assertThrows(IllegalStateException.class, () -> f.invoke(true));
                     assertEquals(raw, f.platform.ownerFailureDiagnostic());
                     assertEquals(1, f.cleanup.providerCalls);
                     assertEquals(message, original.getMessage());
                 }
             }
+        }
+    }
+
+    @Test public void retainedCompensationLatestAttemptDoesNotEraseFirstOrReopen() throws Exception {
+        try (RetainedCallbackFixture f = new RetainedCallbackFixture("stop")) {
+            f.cleanup.failure = new IllegalStateException("ProviderBusy");
+            assertThrows(IllegalStateException.class, () -> f.invoke(false));
+            String first = f.platform.ownerFailureDiagnostic();
+            f.cleanup.failure = null;
+            f.authority.put("target_runtime_lease_id", "foreign.lease");
+            assertThrows(IllegalStateException.class, () -> f.invoke(true));
+            JSONObject latest = new JSONObject(f.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(2, latest.getLong("attempt_sequence"));
+            assertEquals("FAILED", latest.getString("outcome"));
+            assertEquals("PROJECTION_BINDING", latest.getString("stage"));
+            assertTrue(latest.getBoolean("compensate"));
+            assertEquals(first, f.platform.ownerFailureDiagnostic());
+            f.authority.put("target_runtime_lease_id", "lease.1");
+            f.cleanup.allowCompensation = true;
+            JSONObject result = new JSONObject(f.invoke(true));
+            assertTrue(result.getJSONObject("verified").getBoolean("terminal"));
+            latest = new JSONObject(f.platform.ownerLatestAttemptDiagnostic());
+            assertEquals(3, latest.getLong("attempt_sequence"));
+            assertEquals("SUCCEEDED", latest.getString("outcome"));
+            assertTrue(latest.getBoolean("compensate"));
+            assertEquals(first, f.platform.ownerFailureDiagnostic());
+            f.target.nextReceiver();
+            assertThrows(IllegalStateException.class, () -> dispatchArm(f.gate, f.target,
+                    freshAuthority(), freshTicket(), freshVerified()));
+            assertEquals(0, f.target.providerCalls);
         }
     }
 
@@ -751,7 +864,8 @@ public final class EmbeddedDuplexActivationGateTest {
         singleton.setAccessible(true);
         EmbeddedDuplexPlatform platform = (EmbeddedDuplexPlatform) type.getMethod("allocateInstance", Class.class)
                 .invoke(singleton.get(null), EmbeddedDuplexPlatform.class);
-        for (String name : new String[] {"failedOwnerAction", "failedSinkStage", "failedOwnerKind", "failedCause"}) {
+        for (String name : new String[] {"failedOwnerAction", "failedSinkStage", "failedOwnerKind", "failedCause",
+                "latestAttemptAction", "latestAttemptOwner", "latestAttemptCause", "latestAttemptOutcome"}) {
             java.lang.reflect.Field field = EmbeddedDuplexPlatform.class.getDeclaredField(name);
             field.setAccessible(true); field.set(platform, "NONE");
         }
@@ -759,6 +873,8 @@ public final class EmbeddedDuplexActivationGateTest {
         stage.setAccessible(true); stage.set(platform, EmbeddedDuplexPlatform.OwnerStage.NONE);
         java.lang.reflect.Field reason = EmbeddedDuplexPlatform.class.getDeclaredField("failedProviderReason");
         reason.setAccessible(true); reason.set(platform, EmbeddedDuplexPlatform.ProviderReason.NONE);
+        setPlatformField(platform, "latestAttemptStage", EmbeddedDuplexPlatform.OwnerStage.NONE);
+        setPlatformField(platform, "latestAttemptReason", EmbeddedDuplexPlatform.ProviderReason.NONE);
         return platform;
     }
 

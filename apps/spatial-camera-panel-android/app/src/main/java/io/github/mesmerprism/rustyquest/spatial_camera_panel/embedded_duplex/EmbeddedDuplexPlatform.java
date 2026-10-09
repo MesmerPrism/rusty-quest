@@ -226,7 +226,59 @@ final class EmbeddedDuplexPlatform {
                 .put("cause", failedCause).put("code", failedOwnerStage == OwnerStage.NONE
                         ? "NONE" : "OWNER_EFFECT_REJECTED").toString();
     }
+    // Separate bounded observation. Never replace the first failure or affect dispatch admission.
+    private static final long MAX_ATTEMPT_SEQUENCE = 9_007_199_254_740_991L;
+    private long latestAttemptSequence;
+    private String latestAttemptOutcome = "NONE";
+    private boolean latestAttemptCompensate;
+    private OwnerStage latestAttemptStage = OwnerStage.NONE;
+    private String latestAttemptAction = "NONE", latestAttemptOwner = "NONE", latestAttemptCause = "NONE";
+    private ProviderReason latestAttemptReason = ProviderReason.NONE;
+
+    public synchronized String ownerLatestAttemptDiagnostic() throws Exception {
+        requireProcessCallback();
+        return new JSONObject().put("attempt_sequence", latestAttemptSequence)
+                .put("outcome", latestAttemptOutcome).put("compensate", latestAttemptCompensate)
+                .put("stage", latestAttemptStage.name()).put("action", latestAttemptAction)
+                .put("owner", latestAttemptOwner).put("cause", latestAttemptCause)
+                .put("provider_reason", latestAttemptReason.name()).toString();
+    }
+    private synchronized long beginLatestAttempt(boolean compensate) {
+        if (latestAttemptSequence == MAX_ATTEMPT_SEQUENCE) {
+            latestAttemptOutcome = "UNAVAILABLE";
+            latestAttemptCompensate = false;
+            latestAttemptStage = OwnerStage.NONE;
+            latestAttemptAction = latestAttemptOwner = latestAttemptCause = "NONE";
+            latestAttemptReason = ProviderReason.NONE;
+            return 0; // Diagnostic exhaustion cannot deny or replay the actual effect.
+        }
+        long sequence = ++latestAttemptSequence;
+        latestAttemptCompensate = compensate;
+        latestAttemptOutcome = "IN_PROGRESS";
+        latestAttemptStage = OwnerStage.CALLBACK_FENCE;
+        latestAttemptAction = "BEFORE_TICKET";
+        latestAttemptOwner = latestAttemptCause = "NONE";
+        latestAttemptReason = ProviderReason.NONE;
+        return sequence;
+    }
+    private synchronized void observeLatestAttempt(long sequence, OwnerStage stage,
+            MediaOwnerAction ticket, String outcome, Exception failure) {
+        if (sequence == 0 || sequence != latestAttemptSequence) return;
+        latestAttemptStage = stage;
+        latestAttemptOutcome = outcome;
+        String kind = ticket == null ? "NONE" : ticket.actionKind();
+        latestAttemptAction = "arm_receiver".equals(kind) ? "ARM_RECEIVER"
+                : "arm_cleanup".equals(kind) ? "ARM_CLEANUP" : "start".equals(kind) ? "START"
+                : "stop".equals(kind) ? "STOP" : "cleanup".equals(kind) ? "CLEANUP" : "BEFORE_TICKET";
+        latestAttemptOwner = ticket == null ? "NONE" : ticket.ownerKind();
+        latestAttemptReason = failure == null ? ProviderReason.NONE : stage == OwnerStage.PROVIDER_EXECUTION
+                ? providerReason(failure) : stage == OwnerStage.INCOMING_ARM_VERIFICATION
+                        ? incomingArmReason(failure) : ProviderReason.NONE;
+        latestAttemptCause = failure != null && stage == OwnerStage.PROVIDER_EXECUTION
+                ? failureCategory(failure) : "NONE";
+    }
     public String executeAndVerify(String authorityJson, String ticketJson, boolean compensate) throws Exception {
+        final long attempt = beginLatestAttempt(compensate);
         OwnerStage stage = OwnerStage.CALLBACK_FENCE;
         MediaOwnerAction ticket = null;
         try {
@@ -234,6 +286,7 @@ final class EmbeddedDuplexPlatform {
         JSONObject authority = new JSONObject(authorityJson);
         ticket = MediaOwnerAction.parse(ticketJson);
         stage = OwnerStage.PROJECTION_BINDING;
+        observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
         if (!"rusty.quest.c1.owner_projection.v1".equals(authority.getString("$schema"))
                 || !localPeerId.equals(authority.getString("executor_peer_id"))
                 || !routeConfigurationSha256.equals(authority.getString("route_configuration_sha256"))
@@ -244,27 +297,33 @@ final class EmbeddedDuplexPlatform {
             throw new IllegalStateException("platform projection binding rejected");
         }
         stage = OwnerStage.REGISTRY_BINDING;
+        observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
         PackagedAndroidMediaOwnerRegistry current = registry;
         if (current == null) throw new IllegalStateException("platform registry absent");
         requireProcessCallback();
         EmbeddedDuplexActivationGate gate = activationGate;
         EmbeddedDuplexActivationGate.MediaTicket activationTicket = activationTicket(ticket);
         stage = OwnerStage.INCOMING_FENCE;
+        observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
         if (gate != null) gate.beforeOwnerEffect(authority, activationTicket, compensate);
         if (!compensate && "source".equals(ticket.ownerKind()) && "start".equals(ticket.actionKind())) {
             stage = OwnerStage.LOCAL_QUIESCENCE;
+            observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
             display.ensureLocalCaptureStopped();
             if (!EmbeddedDuplexNative.localCameraQuiescent()) {
                 throw new IllegalStateException("local Camera2 ownership remains live");
             }
         }
         stage = OwnerStage.PROVIDER_EXECUTION;
+        observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
         String readback = current.execute(ticketJson, compensate);
         stage = OwnerStage.RECEIPT_VERIFICATION;
+        observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
         if (verified == null) throw new IllegalStateException("live provider evidence rejected");
         if (gate != null) {
             stage = OwnerStage.INCOMING_ARM_VERIFICATION;
+            observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
             gate.afterVerifiedOwnerEffect(authority, activationTicket,
                     new JSONObject(readback), new JSONObject(verified), compensate);
         }
@@ -272,8 +331,10 @@ final class EmbeddedDuplexPlatform {
         result.put("readback", new JSONObject(readback));
         result.put("readback_json", readback);
         result.put("verified", new JSONObject(verified));
+        observeLatestAttempt(attempt, stage, ticket, "SUCCEEDED", null);
         return result.toString();
         } catch (Exception failure) {
+            observeLatestAttempt(attempt, stage, ticket, "FAILED", failure);
             // Retain the primary failure within this incarnation. Cleanup failures must not erase it.
             recordOwnerFailure(stage, ticket, failure);
             android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=owner-effect-rejected stage="
@@ -347,13 +408,18 @@ final class EmbeddedDuplexPlatform {
     /** Fixed native v2 callback; target identity is preserved independently of requester. */
     public String executeRetainedCleanupAndVerify(String authorityJson, String ticketJson,
             boolean compensate) throws Exception {
+        final long attempt = beginLatestAttempt(compensate);
         OwnerStage stage = OwnerStage.CALLBACK_FENCE;
+        OwnerStage diagnosticStage = stage;
         MediaOwnerAction ticket = null;
         try {
         requireProcessCallback();
         stage = OwnerStage.PROJECTION_BINDING;
+        diagnosticStage = stage;
+        observeLatestAttempt(attempt, diagnosticStage, null, "IN_PROGRESS", null);
         JSONObject authority = new JSONObject(authorityJson);
         ticket = MediaOwnerAction.parse(ticketJson);
+        observeLatestAttempt(attempt, diagnosticStage, ticket, "IN_PROGRESS", null);
         if (!"rusty.quest.android.media.retained_cleanup_projection.v2".equals(authority.getString("$schema"))
                 || !localPeerId.equals(authority.getString("executor_peer_id"))
                 || authority.getLong("expires_at_ms") <= System.currentTimeMillis()
@@ -371,24 +437,39 @@ final class EmbeddedDuplexPlatform {
             throw new IllegalStateException("retained cleanup requester binding rejected");
         }
         stage = OwnerStage.REGISTRY_BINDING;
+        diagnosticStage = stage;
+        observeLatestAttempt(attempt, diagnosticStage, ticket, "IN_PROGRESS", null);
         PackagedAndroidMediaOwnerRegistry current = registry;
         if (current == null) throw new IllegalStateException("platform registry absent");
         EmbeddedDuplexActivationGate gate = activationGate;
         EmbeddedDuplexActivationGate.MediaTicket activationTicket = activationTicket(ticket);
         stage = OwnerStage.INCOMING_FENCE;
+        diagnosticStage = stage;
+        observeLatestAttempt(attempt, diagnosticStage, ticket, "IN_PROGRESS", null);
         if (gate != null) gate.beforeOwnerEffect(authority, activationTicket, compensate);
         requireProcessCallback();
         stage = OwnerStage.PROVIDER_EXECUTION;
+        diagnosticStage = stage;
+        observeLatestAttempt(attempt, diagnosticStage, ticket, "IN_PROGRESS", null);
         String readback = current.execute(ticketJson, compensate);
         stage = OwnerStage.RECEIPT_VERIFICATION;
+        diagnosticStage = stage;
+        observeLatestAttempt(attempt, diagnosticStage, ticket, "IN_PROGRESS", null);
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
         if (verified == null) throw new IllegalStateException("retained cleanup live evidence rejected");
         // Terminal eligibility remains receipt verification, never an incoming Arm effect.
-        if (gate != null) gate.afterVerifiedOwnerEffect(authority, activationTicket,
-                new JSONObject(readback), new JSONObject(verified), compensate);
-        return new JSONObject().put("readback", new JSONObject(readback))
+        if (gate != null) {
+            diagnosticStage = OwnerStage.INCOMING_ARM_VERIFICATION;
+            observeLatestAttempt(attempt, diagnosticStage, ticket, "IN_PROGRESS", null);
+            gate.afterVerifiedOwnerEffect(authority, activationTicket,
+                    new JSONObject(readback), new JSONObject(verified), compensate);
+        }
+        String result = new JSONObject().put("readback", new JSONObject(readback))
                 .put("readback_json", readback).put("verified", new JSONObject(verified)).toString();
+        observeLatestAttempt(attempt, diagnosticStage, ticket, "SUCCEEDED", null);
+        return result;
         } catch (Exception failure) {
+            observeLatestAttempt(attempt, diagnosticStage, ticket, "FAILED", failure);
             recordOwnerFailure(stage, ticket, failure);
             throw failure;
         }

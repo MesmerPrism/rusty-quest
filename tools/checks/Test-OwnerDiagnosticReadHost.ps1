@@ -11,10 +11,13 @@ $productionParserTests=$bridge.Substring($end)
 if(-not$productionParserTests.Contains('mod owner_diagnostic_tests {')){throw 'Production parser controls missing'}
 $source=[IO.File]::ReadAllText((Join-Path $rustRoot 'owner_diagnostic_read.rs'))
 $null=New-Item -ItemType Directory (Join-Path $OutputRoot 'src')
-[IO.File]::WriteAllText((Join-Path $OutputRoot 'Cargo.toml'),"[workspace]`n[package]`nname = `"owner-diagnostic-read-host`"`nversion = `"0.1.0`"`nedition = `"2021`"`n[dependencies]`nserde_json = `"=1.0.151`"`n",[Text.UTF8Encoding]::new($false))
-[IO.File]::WriteAllText((Join-Path $OutputRoot 'src/observation.rs'),$source,[Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $OutputRoot 'Cargo.toml'),"[workspace]`n[package]`nname = `"owner-diagnostic-read-host`"`nversion = `"0.1.0`"`nedition = `"2021`"`n[dependencies]`nserde_json = `"=1.0.151`"`nserde = { version = `"=1.0.228`", features = [`"derive`"] }`n",[Text.UTF8Encoding]::new($false))
+[IO.File]::WriteAllText((Join-Path $OutputRoot 'src/owner_diagnostic_read.rs'),$source,[Text.UTF8Encoding]::new($false))
+Copy-Item -LiteralPath (Join-Path $rustRoot 'owner_latest_attempt_read.rs') -Destination (Join-Path $OutputRoot 'src/owner_latest_attempt_read.rs')
 $tests=@'
-mod observation;
+mod owner_diagnostic_read;
+mod owner_latest_attempt_read;
+use owner_diagnostic_read as observation;
 PARSER
 fn main() {}
 #[cfg(test)] mod tests {
@@ -54,5 +57,5 @@ fn main() {}
 [IO.File]::WriteAllText((Join-Path $OutputRoot 'src/main.rs'),$tests.Replace('PARSER',$parser+$productionParserTests),[Text.UTF8Encoding]::new($false))
 & cargo test --offline --jobs 1 --manifest-path (Join-Path $OutputRoot 'Cargo.toml') 2>&1|Tee-Object -FilePath (Join-Path $OutputRoot 'cargo-test.txt')
 if($LASTEXITCODE-ne0){throw 'Pure production-parser/projection host tests failed'}
-$report=@{schema='rusty.quest.owner_diagnostic_read_host_result.v1';status='passed';production_parser_sha256=(Get-FileHash (Join-Path $rustRoot 'java_bridge.rs')).Hash.ToLowerInvariant();production_projection_sha256=(Get-FileHash (Join-Path $rustRoot 'owner_diagnostic_read.rs')).Hash.ToLowerInvariant();test_cases=10;invalid_enum_controls=7;callback_error_controls=5;limits=@('Extracted actual strict parser, its production unit controls and projection; no Android JNI callback/typecheck, full JVM, APK or hardware invocation');device_effects=0}
+$report=@{schema='rusty.quest.owner_diagnostic_read_host_result.v1';status='passed';production_parser_sha256=(Get-FileHash (Join-Path $rustRoot 'java_bridge.rs')).Hash.ToLowerInvariant();production_projection_sha256=(Get-FileHash (Join-Path $rustRoot 'owner_diagnostic_read.rs')).Hash.ToLowerInvariant();production_latest_attempt_sha256=(Get-FileHash (Join-Path $rustRoot 'owner_latest_attempt_read.rs')).Hash.ToLowerInvariant();test_cases=15;invalid_enum_controls=7;callback_error_controls=5;limits=@('Extracted actual strict parsers, their production unit controls and projections; no Android JNI callback/typecheck, full JVM, APK or hardware invocation');device_effects=0}
 [IO.File]::WriteAllText((Join-Path $OutputRoot 'RESULT.json'),($report|ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($false))

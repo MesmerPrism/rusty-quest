@@ -1,6 +1,6 @@
 //! Diagnostic projection only; never owner-effect, cleanup or readiness evidence.
 use serde_json::{json, Value};
-fn closed(key: &str, value: &str) -> bool {
+pub(super) fn closed(key: &str, value: &str) -> bool {
     match key {
         "stage" => matches!(
             value,
