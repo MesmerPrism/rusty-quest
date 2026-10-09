@@ -1596,3 +1596,8 @@ The compact status check reports:
 This is direct TCP self-loop broker evidence on one Quest. It does not replace
 future two-headset LAN validation, Quest-to-Android-phone validation, TLS relay
 validation, or Quest Makepad projection validation.
+
+The source-only premerge build contract has a focused actual Git/Cargo check:
+`pwsh -NoProfile -File tools/checks/Test-SourceCompositionPremerge.ps1`.
+It uses local repositories without remotes and no Android compilation or device
+access; the same check is included in `tools/check_all.ps1`.
