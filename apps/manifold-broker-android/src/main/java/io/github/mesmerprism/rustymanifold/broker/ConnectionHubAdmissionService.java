@@ -128,15 +128,11 @@ public final class ConnectionHubAdmissionService extends Service {
                         "authority_returned");
                 progress("reply_enqueued", message.sendingUid, caller.packageName, correlationId,
                         sessionGeneration);
-                JSONObject receipt = response.optJSONObject("receipt");
                 JSONObject mutationReceipt = response.optJSONObject("mutation_receipt");
                 Log.i(TAG, "status=receipt operation=" + operation.optString("operation", "runtime")
-                        + " applied=" + (receipt != null
-                                ? receipt.optBoolean("applied", false)
-                                : response.optBoolean("accepted", false))
-                        + " rejection=" + (receipt != null
-                                ? receipt.optString("rejection_reason", "none")
-                                : response.optString("status", "none"))
+                        + " applied=" + ConnectionHubReceiptLogProjection.applied(response)
+                        + " rejection=" + ConnectionHubReceiptLogProjection.rejection(response)
+                        + " outcome=" + response.optString("status", "none")
                         + " mutationReceipt=" + (mutationReceipt != null)
                         + " callerPackage=" + caller.packageName
                         + " sendingUid=" + caller.uid);

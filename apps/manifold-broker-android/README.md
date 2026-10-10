@@ -118,6 +118,12 @@ unauthenticated compatibility behavior.
 
 ## Connection Hub wire authority
 
+Binder receipt logs preserve nested admission verdicts and flat provider
+`applied` verdicts, including explicit false. Successful provider outcome names
+appear as `outcome`, with `rejection=none`; logging never changes the response,
+admission or registry effects. The Android source gate exercises both receipt
+shapes and checks that diagnostics leave their inputs unchanged.
+
 `contracts/connection-hub-protocol-v1.json` remains the byte-frozen legacy
 compatibility vector (SHA-256
 `fa00d34511b2ee5576eebdd815e58ae032e37b10c209e41289cfd876c78c9c78`).
