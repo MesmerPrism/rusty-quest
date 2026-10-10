@@ -86,6 +86,17 @@ the delegate call, then checks them again before publishing bytes or scheduling
 another refresh. No carrier lock is held across delegate/JNI work; an in-flight
 retired snapshot cannot republish or reschedule after stop or replacement.
 
+The asynchronous native status query delivers to its explicit weak observation
+sink even before a panel is attached. Detached/collected sinks and retired launch
+or carrier generations cannot receive a held callback. This route does not replace
+the attached panel or alter command and terminal fallback delivery. A BLE carrier
+uses a carrier-private read-only projection for accepted status-response completion
+joined to its exact generation and native epoch. It cannot change panel state or
+start condition audio; current app-context Polar fields remain separate.
+its supplier denies a retained prior-carrier witness until a new completed query
+has joined. A mutation acknowledgement or rejected/future completion cannot qualify
+that witness. Hub status expiry and re-admission policy are separate.
+
 `tools/checks/Test-NativeRendererBleAppBridge.ps1` executes the production-generated
 BLE-only and inert/no-panel bridge with modeled Android boundaries. The panel
 gate also compiles production-generated BLE-only and BLE-plus-Hub closures

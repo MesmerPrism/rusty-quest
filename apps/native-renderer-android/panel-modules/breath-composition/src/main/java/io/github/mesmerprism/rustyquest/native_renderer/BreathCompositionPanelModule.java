@@ -248,6 +248,18 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private static volatile Context remoteContext;
     private static volatile RemotePending remotePending;
     private static volatile long lastRemoteStatusPollMs;
+    private static volatile RemoteStatusObserver remoteStatusObserver;
+    private static final class RemoteStatusObserver {
+        final long generation, epoch;
+        final ExperimentSessionAndroidShell.StatusObservationTarget target;
+        RemoteStatusObserver(ExperimentSessionBleServer carrier, long generation, long epoch) {
+            this.generation=generation; this.epoch=epoch;
+            target=new ExperimentSessionAndroidShell.StatusObservationTarget(epoch,
+                () -> carrier.acceptsStatusRead(generation, epoch), SystemClock::elapsedRealtimeNanos,
+                marker -> android.util.Log.i("RQNativeRenderer",
+                    "RUSTY_QUEST_NATIVE_RENDERER channel=ble-status carrier_generation="+generation+" "+marker));
+        }
+    }
     private static final String EXTRA_REMOTE_OPEN_POLAR = "experiment_session_remote_open_polar";
 
     private static final class RemotePending {
@@ -282,6 +294,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         boolean changed = live ? server.nativeOwnerStarted(identity, epoch)
             : server.nativeOwnerEnded(identity, epoch);
         if (changed) {
+            RemoteStatusObserver old=remoteStatusObserver;
+            remoteStatusObserver=null;
+            if (old != null) old.target.retire();
             remotePending = null;
             lastRemoteStatusPollMs = 0L;
         }
@@ -361,18 +376,30 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             @Override public JSONObject snapshot() throws Exception {
                 refreshExperimenterPolarProjection();
                 long now = SystemClock.elapsedRealtime();
+                final ExperimentSessionBleServer carrier = remoteServer();
+                final long generation = carrier == null ? 0L : carrier.currentGeneration();
+                final long epoch = carrier == null ? 0L : carrier.currentNativeEpoch();
+                if (carrier == null || !carrier.acceptsStatusRead(generation, epoch)) {
+                    throw new IllegalStateException("native-owner-status-read-unavailable");
+                }
+                RemoteStatusObserver observer=remoteStatusObserver;
+                if (observer == null || observer.generation != generation || observer.epoch != epoch) {
+                    if (observer != null) observer.target.retire();
+                    observer=new RemoteStatusObserver(carrier,generation,epoch);
+                    remoteStatusObserver=observer;
+                    lastRemoteStatusPollMs=0L;
+                }
                 if (now - lastRemoteStatusPollMs >= 1200L) {
                     lastRemoteStatusPollMs = now;
-                    EXPERIMENT_SESSION_SHELL.requestStatus(REMOTE_SINK);
+                    EXPERIMENT_SESSION_SHELL.requestStatus(observer.target);
                 }
                 ExperimentSessionPanelCoordinator.NativeStatusSnapshot observed =
-                    EXPERIMENT_SESSION_PANEL.nativeStatusSnapshot(SystemClock.elapsedRealtimeNanos());
-                ExperimentSessionBleServer ownerServer = remoteServer();
-                if (observed.observed && ownerServer != null
-                        && !ownerServer.acceptsNativeEpoch(observed.runtimeEpoch)) {
-                    throw new IllegalStateException("native-owner-status-epoch-mismatch");
+                    observer.target.snapshot();
+                if (observed == null) {
+                    throw new IllegalStateException("native-owner-status-read-unavailable");
                 }
                 ExperimentSessionPanelState state = observed.state;
+                ExperimentSessionPanelState polarState = EXPERIMENT_SESSION_PANEL.snapshot();
                 JSONObject status = new JSONObject()
                     .put("o", new JSONObject(observed.observationJson))
                     .put("f", NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext))
@@ -385,11 +412,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     .put("ms", state.activeTimeMs)
                     .put("st", state.storageStatus)
                     .put("k", remoteKioskState())
-                    .put("bt", state.polar.bluetooth.name())
-                    .put("po", state.polar.polar.name())
-                    .put("pf", state.polar.fresh
-                        && state.polar.observedAtUnixMs > 0L
-                        && System.currentTimeMillis() - state.polar.observedAtUnixMs < 5000L)
+                    .put("bt", polarState.polar.bluetooth.name())
+                    .put("po", polarState.polar.polar.name())
+                    .put("pf", polarState.polar.fresh
+                        && polarState.polar.observedAtUnixMs > 0L
+                        && System.currentTimeMillis() - polarState.polar.observedAtUnixMs < 5000L)
                     .put("done", state.counts.totalsAvailable
                         ? state.counts.completedTotal() : JSONObject.NULL)
                     .put("early", state.counts.totalsAvailable

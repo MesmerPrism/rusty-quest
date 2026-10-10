@@ -125,6 +125,11 @@ final class ExperimentSessionBleServer {
     }
     synchronized boolean active() { return active; }
     synchronized long currentGeneration() { return active ? serverGeneration : 0L; }
+    synchronized long currentNativeEpoch() { return active ? nativeOwnerEpoch : 0L; }
+    synchronized boolean acceptsStatusRead(long generation, long epoch) {
+        return active && generation > 0L && generation == serverGeneration
+            && epoch > 0L && epoch == nativeOwnerEpoch;
+    }
     synchronized boolean acceptsNativeEpoch(long epoch) {
         return active && epoch > 0L && epoch == nativeOwnerEpoch;
     }

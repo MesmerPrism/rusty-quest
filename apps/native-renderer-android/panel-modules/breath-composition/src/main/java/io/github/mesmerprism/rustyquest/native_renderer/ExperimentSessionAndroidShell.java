@@ -15,6 +15,50 @@ import java.util.concurrent.atomic.AtomicLong;
  * dead Activity. The native session runtime remains the sole state and durability authority.</p>
  */
 final class ExperimentSessionAndroidShell {
+    /** A carrier-scoped read-only projection; it never owns panel or command effects. */
+    static final class StatusObservationTarget implements UiSink {
+        private final long nativeEpoch;
+        private final java.util.function.BooleanSupplier current;
+        private final java.util.function.LongSupplier now;
+        private final java.util.function.Consumer<String> observer;
+        private final ExperimentSessionPanelCoordinator projection = new ExperimentSessionPanelCoordinator();
+        private boolean retired;
+        private int markers;
+        StatusObservationTarget(long nativeEpoch, java.util.function.BooleanSupplier current,
+                java.util.function.LongSupplier now) {
+            this(nativeEpoch,current,now,null);
+        }
+        StatusObservationTarget(long nativeEpoch, java.util.function.BooleanSupplier current,
+                java.util.function.LongSupplier now, java.util.function.Consumer<String> observer) {
+            this.nativeEpoch=nativeEpoch; this.current=current; this.now=now; this.observer=observer;
+        }
+        synchronized void retire() { retired=true; }
+        public synchronized boolean acceptsExperimentSessionCallbacks(long launchEpoch) {
+            return !retired && current.getAsBoolean();
+        }
+        public void onExperimentSessionReadback(SessionReadback value) {
+            String marker=null;
+            synchronized (this) {
+            long time=now.getAsLong();
+            if (retired || !current.getAsBoolean() || value == null || value.receipt == null
+                    || value.runtimeEpoch != nativeEpoch || !"accepted".equals(value.commandStatus)
+                    || !"ready".equals(value.initializationStatus)
+                    || value.statusReadCompletedNanos <= 0L || value.statusReadCompletedNanos > time) return;
+            projection.acceptNativeReadback(value.runtimeEpoch, value.receipt,
+                value.statusReadCompletedNanos, time, true);
+            ExperimentSessionPanelCoordinator.NativeStatusSnapshot snapshot=projection.nativeStatusSnapshot(time);
+            if (snapshot.observed && snapshot.readId==value.statusReadCompletedNanos && markers++<8)
+                marker="status_response_accepted=true epoch="+nativeEpoch+" completed_nanos="+snapshot.readId;
+            }
+            if (marker!=null && observer!=null) {
+                try { observer.accept(marker); } catch (RuntimeException unavailable) { }
+            }
+        }
+        public void onExperimentSessionTerminal(TerminalResult value) { }
+        synchronized ExperimentSessionPanelCoordinator.NativeStatusSnapshot snapshot() {
+            return retired || !current.getAsBoolean() ? null : projection.nativeStatusSnapshot(now.getAsLong());
+        }
+    }
     private static final long POLL_INTERVAL_MS = 250L;
     private static final long POLL_TIMEOUT_MS = 20_000L;
     private static final int MAX_TERMINAL_REBASES = 2;
@@ -372,9 +416,27 @@ final class ExperimentSessionAndroidShell {
                 requireWorkerThread();
                 if (!isCurrentEpoch(epoch)) return;
                 try {
-                    dispatchReadback(weakSink, epoch, readStatus());
+                    dispatchStatusReadback(weakSink, epoch, readStatus());
                 } catch (Throwable error) {
                     dispatchFailure(weakSink, epoch, "status", error);
+                }
+            }
+        });
+    }
+
+    private void dispatchStatusReadback(WeakReference<UiSink> sink, long epoch,
+            SessionReadback readback) {
+        if (readback == null) return;
+        uiDispatcher.post(new Runnable() {
+            @Override public void run() {
+                UiSink target = sink.get();
+                synchronized (admissionLock) {
+                    if (!isCurrentEpoch(epoch) || terminalAdmitted || cleanupConsumed
+                            || target == null || retiredSinks.containsKey(target)) return;
+                }
+                // No authority lock is held across caller eligibility or callbacks.
+                if (target.acceptsExperimentSessionCallbacks(epoch)) {
+                    target.onExperimentSessionReadback(readback);
                 }
             }
         });

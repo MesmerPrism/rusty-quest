@@ -25,44 +25,45 @@ class ControlPanelActivity {static String conditionAudioReadiness(String c){retu
 class BreathCompositionPanelModule {
  static final ExperimentSessionPanelCoordinator EXPERIMENT_SESSION_PANEL=new ExperimentSessionPanelCoordinator();
  static final Object REMOTE_SINK=new Object(),remoteContext=new Object();static long lastRemoteStatusPollMs;static int polls;
- static class Shell {void requestStatus(Object sink){polls++;}}static final Shell EXPERIMENT_SESSION_SHELL=new Shell();
+ static class Shell {void requestStatus(ExperimentSessionAndroidShell.UiSink sink){polls++;}}static final Shell EXPERIMENT_SESSION_SHELL=new Shell();
+ static RemoteStatusObserver remoteStatusObserver;
+ OBSERVER
  static class RemotePending {long startedAtElapsedMs,serverGeneration;String browserId,operation;}static RemotePending remotePending;
  static void refreshExperimenterPolarProjection() {} // Other owner projection is modeled; actual full module compiles in panel gate.
  static WeakReference<BreathCompositionPanelModule> remotePanel=new WeakReference<>(null);static ExperimentSessionBleServer owner;
  static ExperimentSessionBleServer remoteServer(){return owner;}static String remoteKioskState(){return "pending";}
  BODY
 }'''
-HARNESS = '''package io.github.mesmerprism.rustyquest.native_renderer;
+HARNESS = r'''package io.github.mesmerprism.rustyquest.native_renderer;
 import android.bluetooth.*;import android.os.*;import org.json.*;import java.nio.charset.StandardCharsets;
 public class NativeAgeHostTest {
  static int passed,dispatches;static void check(boolean x,String label){if(!x)throw new AssertionError(label);passed++;}
  static Object field(Object o,String n)throws Exception{java.lang.reflect.Field f=o.getClass().getDeclaredField(n);f.setAccessible(true);return f.get(o);}
  static ExperimentSessionPanelCoordinator.NativeReceipt receipt(long g,long r,long count){return new ExperimentSessionPanelCoordinator.NativeReceipt("",true,true,g,r,"active","running","condition-a",true,"persistence-pending",count,false,"unavailable",false,count,0,count,0,true,true,false,count,count,0,"",0,"");}
+ static ExperimentSessionAndroidShell.SessionReadback read(long epoch,long g,long r,long count,long completed,String status)throws Exception{ExperimentSessionAndroidShell.SessionReadback result=new ExperimentSessionAndroidShell.SessionReadback(receipt(g,r,count),status,"ready","inventory-unavailable","ready","not-requested",0L,-1L,"","none","none","",epoch,"accepted","none");java.lang.reflect.Method method=ExperimentSessionAndroidShell.SessionReadback.class.getDeclaredMethod("afterStatusRead",long.class,String.class);method.setAccessible(true);return (ExperimentSessionAndroidShell.SessionReadback)method.invoke(result,completed,"none");}
  public static void main(String[] args)throws Exception{
   BreathCompositionPanelModule surface=new BreathCompositionPanelModule();ExperimentSessionPanelCoordinator c=surface.EXPERIMENT_SESSION_PANEL;
-  SystemClock.nanos=1000001; c.acceptNativeReadback(Long.MAX_VALUE,receipt(1,2,10),1000000,SystemClock.nanos);
-  JSONObject normal=surface.snapshot();String original=normal.toString();check(original.contains("\\\"a\\\":0"),"full producer rounds down");
-  check(original.contains("\\\"g\\\":1,\\\"r\\\":2"),"full producer state and witness join");
-  SystemClock.nanos=2099999;SystemClock.millis=2000;String polled=surface.snapshot().toString();
-  check(surface.polls==1,"actual producer requested status without native callback");
-  check(polled.contains("\\\"i\\\":\\\"1000000\\\"")&&polled.contains("\\\"a\\\":1"),"poll cannot refresh witness ID or age");
+  SystemClock.nanos=1000001;c.acceptNativeReadback(Long.MAX_VALUE,receipt(1,2,10),1000000,SystemClock.nanos);
   android.app.Activity context=new android.app.Activity();ExperimentSessionBleServer owner=ExperimentSessionBleServer.process(context,new ExperimentSessionBleServer.Delegate(){public boolean openControlDefault(){return false;}public JSONObject snapshot()throws Exception{return surface.snapshot();}public void dispatch(ExperimentSessionBleServer.CommandRequest request){dispatches++;}});
-  surface.owner=owner;owner.nativeOwnerStarted(1L,Long.MAX_VALUE);BluetoothGattServer server=context.manager.servers.get(0);BluetoothDevice peer=new BluetoothDevice();server.callback.onConnectionStateChange(peer,0,2);
-  BluetoothGattCharacteristic status=new BluetoothGattCharacteristic(java.util.UUID.fromString(ExperimentSessionBleProtocol.STATUS),2,1);Runnable refresh=(Runnable)field(owner,"statusRefresh");
-  refresh.run();server.callback.onCharacteristicReadRequest(peer,1,0,status);String served=new String(server.lastBytes,StandardCharsets.UTF_8);
-  String expected=surface.snapshot().put("v",1).put("m","gated").toString();check(expected.getBytes(StandardCharsets.UTF_8).length<=480,"real full normal snapshot fits");check(served.equals(expected),"actual server serves full serialized extension");System.out.println("NORMAL="+served);
-  long safe=9007199254740991L;SystemClock.nanos=Long.MAX_VALUE;c.acceptNativeReadback(Long.MAX_VALUE,receipt(safe,safe,Long.MAX_VALUE),1000000000000000000L,SystemClock.nanos);
-  String worst=surface.snapshot().put("v",1).put("m","gated").toString();System.out.println("WORST="+worst);refresh.run();server.callback.onCharacteristicReadRequest(peer,2,0,status);served=new String(server.lastBytes,StandardCharsets.UTF_8);
-  check(worst.contains("9223372036854775807")&&worst.contains("1000000000000000000"),"full worst case contains exact int64 witnesses");
-  int bytes=worst.getBytes(StandardCharsets.UTF_8).length;check(bytes>480,"actual complete worst-case snapshot exceeds bound");
-  check(served.equals("{\\\"v\\\":1,\\\"m\\\":\\\"gated\\\",\\\"f\\\":\\\"unknown\\\",\\\"p\\\":\\\"UNAVAILABLE\\\"}"),"actual server denies complete oversized snapshot with existing unavailable shape");
-  check(server.lastBytes.length<=480,"fallback bounded");check(dispatches==0,"readback never dispatched effects");
-  owner.nativeOwnerStarted(2L,1L);boolean wrongEpoch=false;
-  try{surface.snapshot();}catch(IllegalStateException rejected){wrongEpoch="native-owner-status-epoch-mismatch".equals(rejected.getMessage());}
-  check(wrongEpoch,"complete production supplier rejects retained positive witness from other native epoch");
-  owner.stop();System.out.println("Native age full producer/server controls PASS: "+passed);
+  surface.owner=owner;owner.nativeOwnerStarted(1L,Long.MAX_VALUE);surface.snapshot();
+  check(!surface.remoteStatusObserver.target.snapshot().observed,"prior attached/shared coordinator cache cannot qualify new carrier");
+  ExperimentSessionAndroidShell.StatusObservationTarget first=surface.remoteStatusObserver.target;
+  first.onExperimentSessionReadback(read(Long.MAX_VALUE,1,2,10,1000000,"accepted"));
+  String original=surface.snapshot().toString();check(original.contains("\"a\":0"),"full producer rounds down");check(original.contains("\"g\":1,\"r\":2"),"private source joins current native product state");
+  c.updatePolar(new ExperimentSessionPanelState.PolarProjection(ExperimentSessionPanelState.Bluetooth.ON,ExperimentSessionPanelState.Polar.CONNECTED,1,1,System.currentTimeMillis(),1,true,"fixture"));String polar=surface.snapshot().toString();check(polar.contains("\"bt\":\"ON\"")&&polar.contains("\"po\":\"CONNECTED\"")&&polar.contains("\"pf\":true"),"current app-context Polar remains independent of private native projection");
+  SystemClock.nanos=2099999;SystemClock.millis=2000;String polled=surface.snapshot().toString();check(surface.polls==1,"producer requested asynchronous status");check(polled.contains("\"i\":\"1000000\"")&&polled.contains("\"a\":1"),"poll alone cannot refresh witness");
+  first.onExperimentSessionReadback(read(1L,1,2,10,2000000,"accepted"));check(first.snapshot().readId==1000000,"wrong native epoch cannot refresh");
+  first.onExperimentSessionReadback(read(Long.MAX_VALUE,1,2,10,2000000,"queued"));check(first.snapshot().readId==1000000,"queue ack cannot refresh");
+  first.onExperimentSessionReadback(read(Long.MAX_VALUE,1,2,10,SystemClock.nanos+1,"accepted"));check(first.snapshot().readId==1000000,"future completion cannot refresh");
+  c.acceptNativeReadback(Long.MAX_VALUE,receipt(1,3,10),2000000,SystemClock.nanos);check(first.snapshot().readId==1000000,"panel poll cannot claim carrier witness");
+  BluetoothGattServer server=context.manager.servers.get(0);BluetoothDevice peer=new BluetoothDevice();server.callback.onConnectionStateChange(peer,0,2);BluetoothGattCharacteristic status=new BluetoothGattCharacteristic(java.util.UUID.fromString(ExperimentSessionBleProtocol.STATUS),2,1);Runnable refresh=(Runnable)field(owner,"statusRefresh");
+  refresh.run();server.callback.onCharacteristicReadRequest(peer,1,0,status);String served=new String(server.lastBytes,StandardCharsets.UTF_8);String expected=surface.snapshot().put("v",1).put("m","gated").toString();check(expected.getBytes(StandardCharsets.UTF_8).length<=480,"normal bytes bounded");check(served.equals(expected),"actual server serves complete producer");System.out.println("NORMAL="+served);
+  long safe=9007199254740991L;SystemClock.nanos=Long.MAX_VALUE;first.onExperimentSessionReadback(read(Long.MAX_VALUE,safe,safe,Long.MAX_VALUE,1000000000000000000L,"accepted"));String worst=surface.snapshot().put("v",1).put("m","gated").toString();System.out.println("WORST="+worst);refresh.run();server.callback.onCharacteristicReadRequest(peer,2,0,status);served=new String(server.lastBytes,StandardCharsets.UTF_8);check(worst.contains("1000000000000000000"),"exact int64 completion preserved");check(worst.getBytes(StandardCharsets.UTF_8).length>480,"worst full status exceeds bound");check(served.contains("UNAVAILABLE")&&server.lastBytes.length<=480,"oversized producer fails bounded unavailable");
+  owner.nativeOwnerStarted(2L,Long.MAX_VALUE);surface.snapshot();ExperimentSessionAndroidShell.StatusObservationTarget second=surface.remoteStatusObserver.target;check(!second.snapshot().observed,"same epoch carrier replacement cannot reuse old cache");first.onExperimentSessionReadback(read(Long.MAX_VALUE,safe,safe,Long.MAX_VALUE,1000000000000000001L,"accepted"));check(first.snapshot()==null&&!second.snapshot().observed,"held old read cannot affect replacement projection");
+  second.onExperimentSessionReadback(read(Long.MAX_VALUE,safe,safe,Long.MAX_VALUE,1000000000000000001L,"accepted"));check(surface.snapshot().toString().contains("1000000000000000001"),"replacement fresh query qualifies its own projection");owner.nativeOwnerEnded(2L,Long.MAX_VALUE);check(second.snapshot()==null,"exact end invalidates read-only source");check(dispatches==0,"status targets never dispatch command effects");System.out.println("Native age full producer/server controls PASS: "+passed);
  }
 }'''
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -76,6 +77,9 @@ def main():
     end = source.index('                return status;', start)
     end = source.index('\n            }', end) + len('\n            }')
     body = source[start:end].replace('@Override ', '', 1)
+    observer_start = source.index('    private static final class RemoteStatusObserver {')
+    observer_end = source.index('\n    }', observer_start) + len('\n    }')
+    observer = source[observer_start:observer_end].replace('private static', 'static', 1)
     print('Actual full snapshot method SHA256=' + hashlib.sha256(source[start:end].encode()).hexdigest(), flush=True)
     stubs = dict(STUBS)
     stubs['org/json/JSONObject.java'] = JSON_OBJECT
@@ -87,12 +91,13 @@ def main():
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding='utf-8')
-        for name, content in [('BreathCompositionPanelModule.java', SURFACE.replace('BODY', body)), ('NativeAgeHostTest.java', HARNESS)]:
+        for name, content in [('BreathCompositionPanelModule.java', SURFACE.replace('BODY', body).replace('OBSERVER', observer)), ('NativeAgeHostTest.java', HARNESS)]:
             path = root / package / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding='utf-8')
         sources = [str(path) for path in root.rglob('*.java')]
-        sources += [str(production / name) for name in ('ExperimentSessionBleServer.java', 'ExperimentSessionBleProtocol.java', 'ExperimentSessionBleNamePolicy.java', 'ExperimentSessionPanelCoordinator.java', 'ExperimentSessionPanelState.java')]
+        sources += [str(production / name) for name in ('ExperimentSessionBleServer.java', 'ExperimentSessionBleProtocol.java', 'ExperimentSessionBleNamePolicy.java', 'ExperimentSessionPanelCoordinator.java', 'ExperimentSessionPanelState.java', 'ExperimentSessionAndroidShell.java')]
+        sources.append(str(args.repo_root / 'apps/native-renderer-android/src/main/java' / package / 'NativeRendererWriterAcknowledgedExitPolicy.java'))
         subprocess.run([str(args.jdk / 'bin/javac.exe'), '-d', str(root / 'classes'), *sources], check=True, timeout=60)
         result = subprocess.run([str(args.jdk / 'bin/java.exe'), '-cp', str(root / 'classes'), 'io.github.mesmerprism.rustyquest.native_renderer.NativeAgeHostTest'], check=False, timeout=15, capture_output=True, text=True)
         print(result.stdout, end='')
