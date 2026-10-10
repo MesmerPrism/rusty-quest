@@ -17,6 +17,7 @@ $providerReplyTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanif
 $operatorControllerTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubOperatorControllerTest.java"
 $spatialCompositionTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubSpatialCompositionTest.java"
 $runtimeEvidenceProjectionTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubRuntimeEvidenceProjectionTest.java"
+$receiptLogProjectionTest = Join-Path $app "tests\java\io\github\mesmerprism\rustymanifold\broker\ConnectionHubReceiptLogProjectionTest.java"
 $browserTest = Join-Path $app "tests\js\connection-hub-browser-protocol.test.js"
 $vectors = Join-Path $app "contracts\connection-hub-protocol-v1.json"
 $vectorsV2 = Join-Path $app "contracts\connection-hub-protocol-v2.json"
@@ -42,6 +43,8 @@ $required = @(
     $operatorControllerTest,
     $spatialCompositionTest,
     $runtimeEvidenceProjectionTest,
+    $receiptLogProjectionTest,
+    (Join-Path $javaRoot "ConnectionHubReceiptLogProjection.java"),
     $sharedAdmissionReducer,
     $sharedAdmissionTest,
     $browserTest,
@@ -548,7 +551,9 @@ $sources = @(Get-ChildItem -Path $sharedTransportRoot -Recurse -Filter *.java |
     $providerReplyTest,
     $operatorControllerTest,
     $spatialCompositionTest,
-    $runtimeEvidenceProjectionTest
+    $runtimeEvidenceProjectionTest,
+    $receiptLogProjectionTest,
+    (Join-Path $javaRoot "ConnectionHubReceiptLogProjection.java")
 ) + @(Get-ChildItem -Path $sharedAdmissionRoot -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }) + @($sharedAdmissionTest)
 $javac = (Get-Command javac -ErrorAction Stop).Source
@@ -569,6 +574,8 @@ if ($LASTEXITCODE -ne 0) { throw "Connection Hub operator controller tests faile
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub Spatial composition tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubRuntimeEvidenceProjectionTest
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub runtime-evidence projection tests failed." }
+& $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubReceiptLogProjectionTest
+if ($LASTEXITCODE -ne 0) { throw "Connection Hub receipt log projection tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustymanifold.broker.ConnectionHubCoreTest $vectors
 if ($LASTEXITCODE -ne 0) { throw "Connection Hub host tests failed." }
 & $java -cp "$out;$($jsonJar.FullName)" io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducerTest
