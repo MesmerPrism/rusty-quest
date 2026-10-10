@@ -796,6 +796,11 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
                 public ExperimentSessionPanelCoordinator.NativeStatusSnapshot get() {
                     return ControlPanelActivity.this.hubNativeStatusSnapshot();
                 }
+            }, new java.util.function.Consumer<String>() {
+                @Override public void accept(String marker) {
+                    android.util.Log.i("RQNativeRenderer",
+                        "RUSTY_QUEST_NATIVE_RENDERER channel=hub-status " + marker);
+                }
             });
     }
 '@

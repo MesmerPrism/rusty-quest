@@ -12,11 +12,13 @@ public final class ExperimentSessionHubProviderTest {
     static final class Port implements ExperimentSessionHubProvider.Platform {
         ExperimentSessionHubProvider p; long time; int binds, unbinds, links;
         final List<Integer> sent = new ArrayList<>();
+        final List<String> markers = new ArrayList<>();
+        public void marker(String code) { if(markerThrows) throw new IllegalStateException("observer only"); markers.add(code); }
         final List<Map<String,Object>> fields = new ArrayList<>();
         final Map<String,Runnable> tasks = new HashMap<>();
-        boolean sendWorks = true;
+        boolean sendWorks = true, bindWorks = true, markerThrows;
         public long now() { return time; }
-        public void bind(long g) { binds++; p.event(Event.bindReturned(g,true,time)); p.event(Event.connected(g,time)); }
+        public void bind(long g) { binds++; p.event(Event.bindReturned(g,bindWorks,time)); if(bindWorks) p.event(Event.connected(g,time)); }
         public void link(long g) { links++; p.event(Event.deathLinked(g,time)); }
         public void unlink(long g) { }
         public void unbind(long g) { unbinds++; tasks.clear(); }
@@ -134,6 +136,29 @@ public final class ExperimentSessionHubProviderTest {
             "local change propagates explicit unavailable typed projection");
         runtime.updateSurfaceState(identity,ExperimentSessionHubProvider.SURFACE,unavailable);
         check(new JSONObject(registry.snapshot().get(0).stateJson).similar(unavailable),"actual Runtime accepts unavailable producer update");
+        check(p.markers.contains("registration_applied") && p.markers.contains("reply_REGISTER_SURFACE"),
+            "only actual fenced register reply produces applied marker");
+        Port markerRejected=create();markerRejected.p.start();
+        markerRejected.answer("secret-sentinel");
+        check(markerRejected.markers.contains("reply_rejected") && markerRejected.markers.stream().noneMatch(m->m.contains("secret")),
+            "malformed response yields closed marker without raw response");
+        Port arbitrary=create();arbitrary.p.start();
+        io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducer.PendingOperation pending=arbitrary.p.state().getPending();
+        arbitrary.p.event(Event.reply(arbitrary.p.state().getBindingGeneration(),pending.getCorrelationId(),false,
+            "secret-sentinel","provider.epoch.test",arbitrary.time));
+        check(arbitrary.markers.contains("reducer_marker_other") && arbitrary.markers.stream().noneMatch(m->m.contains("secret")),
+            "arbitrary reducer reason never logs caller text");
+        int markerSize=arbitrary.markers.size();arbitrary.answer("secret-sentinel");
+        check(arbitrary.markers.size()==markerSize,"closed stale reply produces no misleading reply marker");
+        Port failedBind=create();failedBind.bindWorks=false;failedBind.p.start();failedBind.p.start();
+        check(failedBind.binds==1 && failedBind.markers.contains("terminal_bind_rejected")
+            && !failedBind.sent.contains(20),"actual failed bind marker preserves no retry and no registration");
+        Port throwingMarker=create();throwingMarker.markerThrows=true;throwingMarker.p.start();admitted(throwingMarker);
+        throwingMarker.answer("{\"applied\":true}");throwingMarker.p.close();
+        check(throwingMarker.unbinds==1&&throwingMarker.sent.contains(20),"diagnostic exception cannot change reducer behavior");
+        Port bounded=create();bounded.p.start();
+        for(int i=0;i<100;i++) bounded.p.event(Event.start(bounded.time));
+        check(bounded.markers.size()<=32,"repeated reducer observations have bounded marker count");
         System.out.println("ExperimentSessionHubProviderTest PASS controls="+checks+" actual reducer and driver; modeled Binder owner replies, no grant/network/device");
     }
 }

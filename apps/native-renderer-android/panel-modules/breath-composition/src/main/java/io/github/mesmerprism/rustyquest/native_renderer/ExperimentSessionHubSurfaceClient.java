@@ -19,6 +19,13 @@ final class ExperimentSessionHubSurfaceClient implements Closeable, ExperimentSe
     private final Map<String, Runnable> timers = new HashMap<>();
     private final ExperimentSessionHubProvider provider;
     private Connection connection;
+    private int markerCount;
+    public void marker(String code) {
+        if (markerCount >= 32) return;
+        markerCount++;
+        try { android.util.Log.i("RQNativeRenderer", "RUSTY_QUEST_NATIVE_RENDERER channel=hub-status " + code); }
+        catch (RuntimeException unavailable) { }
+    }
     ExperimentSessionHubSurfaceClient(Context context, String channel, long epoch,
             Supplier<ExperimentSessionPanelCoordinator.NativeStatusSnapshot> source) {
         requireMain();
@@ -73,6 +80,7 @@ final class ExperimentSessionHubSurfaceClient implements Closeable, ExperimentSe
         }
         public void onServiceConnected(ComponentName name, IBinder binder) {
             if (connection != this) return;
+            marker("binder_connected");
             this.binder = binder; remote = new Messenger(binder);
             provider.event(Event.connected(generation, now()));
         }
@@ -89,13 +97,14 @@ final class ExperimentSessionHubSurfaceClient implements Closeable, ExperimentSe
     public void bind(long generation) {
         Connection next;
         try { next = new Connection(generation); }
-        catch (RuntimeException unavailable) { provider.event(Event.bindReturned(generation, false, now())); return; }
+        catch (RuntimeException unavailable) { marker("broker_lookup_unavailable"); provider.event(Event.bindReturned(generation, false, now())); return; }
         connection = next;
         boolean accepted;
         try { accepted = context.bindService(new Intent().setComponent(new ComponentName(
             "io.github.mesmerprism.rustymanifold.broker",
             "io.github.mesmerprism.rustymanifold.broker.ConnectionHubAdmissionService")), next, Context.BIND_AUTO_CREATE); }
         catch (RuntimeException denied) { accepted = false; }
+        marker(accepted ? "bind_accepted" : "bind_rejected");
         provider.event(Event.bindReturned(generation, accepted, now()));
     }
     public void link(long generation) {

@@ -26,6 +26,7 @@ final class ExperimentSessionHubProvider {
         boolean send(long generation, int what, Map<String, Object> data);
         void schedule(String key, long deadline, Runnable task);
         void cancel(String key);
+        default void marker(String code) { }
     }
     private final Platform platform;
     private final ExperimentSessionStatusObservation projection;
@@ -34,6 +35,7 @@ final class ExperimentSessionHubProvider {
     private long admissionRevision;
     private String token = "", authorizationCorrelation = "", registrationId = "", registration = "";
     private boolean started;
+    private int diagnosticCount;
     private static final String POLL = "observation_poll";
 
     ExperimentSessionHubProvider(Platform platform, long processGeneration, String channel, long epoch,
@@ -70,7 +72,16 @@ final class ExperimentSessionHubProvider {
                 Map<String, Object> cleanup = data(e);
                 cleanup.put("surface_id", SURFACE);
                 platform.send(e.getBindingGeneration(), UNREGISTER, cleanup); return;
-            case MARKER: return;
+            case MARKER:
+                // Reducer reasons may originate from an event: never log arbitrary text.
+                String marker = e.getMarker();
+                if (java.util.Arrays.asList("bind_returned", "registration_applied",
+                        "terminal_bind_rejected", "terminal_null_binding", "terminal_binding_died",
+                        "terminal_binder_died", "terminal_service_disconnected", "terminal_eligibility_lost",
+                        "terminal_closed", "terminal_provider_reply_rejected", "terminal_operation_rejected",
+                        "terminal_runtime_evidence_timeout").contains(marker)) diagnostic(marker);
+                else diagnostic("reducer_marker_other");
+                return;
             default: break;
         }
         Map<String, Object> fields = data(e);
@@ -116,6 +127,7 @@ final class ExperimentSessionHubProvider {
             : pending.getKind() == OperationKind.ISSUE_TOKEN ? ISSUE
             : pending.getKind() == OperationKind.AUTHORIZE_USE ? USE : REGISTER;
         if (what != expected) return;
+        diagnostic("reply_" + pending.getKind().name());
         boolean applied = false;
         long decidedAt = platform.now();
         try {
@@ -155,7 +167,13 @@ final class ExperimentSessionHubProvider {
                 }
             }
         } catch (Exception invalid) { applied = false; }
+        diagnostic(applied ? "reply_applied" : "reply_rejected");
         dispatch(Event.reply(generation, correlation, applied, "provider_reply_rejected", epoch, decidedAt));
+    }
+    private void diagnostic(String code) {
+        if (diagnosticCount >= 32) return;
+        diagnosticCount++;
+        try { platform.marker(code); } catch (RuntimeException unavailable) { }
     }
     private Map<String, Object> data(Effect e) {
         Map<String, Object> map = new LinkedHashMap<>();

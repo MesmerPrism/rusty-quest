@@ -95,3 +95,26 @@ pure driver with the public reducer and Hub descriptor, and separately compiles
 the real Android adapter against android.jar. Synthetic callback replies prove
 protocol/lifetime behavior, not actual Binder credentials or owner issuance.
 No test starts a listener, contacts a broker, builds an APK or touches a device.
+
+## Bounded lifecycle diagnostics
+
+The explicitly selected provider emits observation-only `hub-status` markers
+under the existing `RQNativeRenderer` tag. A resumed panel reports at most eight
+native callbacks (accepted boolean, numeric runtime epoch, and whether a real
+status-read timestamp exists). Its Hub lifetime reports at most sixteen creation,
+witness eligibility, factory/start, and closure markers. The provider and Android
+adapter each cap their markers at thirty-two. Repeated unknown witnesses are
+deduplicated. Ordinary packages without the selected lifetime emit none of these.
+
+Reply markers follow existing generation/session/correlation/deadline fences.
+`registration_applied` requires the reducer's actual positive registration reply;
+bind accepted and start returned describe only those local operations. Arbitrary
+reducer reasons map to a closed `reducer_marker_other` code. Raw JSON, subjects,
+UIDs, tokens, correlations, secrets and exception messages are excluded. Logging
+failures cannot alter admission, cleanup or retry behavior. Marker caps can leave
+later events unreported; an empty log is not proof that a stage never occurred.
+
+Initialization alone has no status-read timestamp. Idle generation zero is valid,
+but eligibility still requires a genuine accepted status read and the coordinator's
+exact epoch/state/monotonic witness. No marker substitutes for that witness, physical
+XR readiness, live Binder evidence or authenticated browser status.

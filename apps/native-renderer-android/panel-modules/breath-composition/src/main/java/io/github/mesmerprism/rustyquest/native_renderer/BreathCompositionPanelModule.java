@@ -846,6 +846,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     protected void onResume() {
         super.onResume();
         closeHubStatusLifetime();
+        hubStatusMarkerCount = 0;
         hubStatusLifetime = createHubStatusLifetime();
         refreshHubStatusLifetime();
         remotePanelResumed = true;
@@ -3013,6 +3014,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     public void onExperimentSessionReadback(
             ExperimentSessionAndroidShell.SessionReadback readback) {
         if (readback == null || readback.receipt == null) return;
+        hubStatusMarker("native_readback accepted=" + readback.receipt.accepted
+            + " epoch=" + readback.runtimeEpoch
+            + " status_read_completed=" + (readback.statusReadCompletedNanos > 0L));
         EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
         ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
         boolean changed = EXPERIMENT_SESSION_PANEL.acceptNativeReadback(
@@ -3051,6 +3055,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     public void onExperimentSessionTerminal(
             ExperimentSessionAndroidShell.TerminalResult result) {
         if (result == null) return;
+        hubStatusMarker("native_terminal_callback");
         RemotePending remote = remotePending;
         if (remote != null && "save-exit".equals(remote.operation)) {
             ExperimentSessionBleServer server = remoteServer();
@@ -3094,6 +3099,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private ExperimentSessionPanelCoordinator.StatusLifetime hubStatusLifetime;
+    private int hubStatusMarkerCount;
+    private void hubStatusMarker(String code) {
+        if (hubStatusLifetime == null || hubStatusMarkerCount >= 8) return;
+        hubStatusMarkerCount++;
+        try { android.util.Log.i(TAG, MARKER_PREFIX + " channel=hub-status " + code); }
+        catch (RuntimeException unavailable) { }
+    }
     protected ExperimentSessionPanelCoordinator.StatusLifetime createHubStatusLifetime() { return null; }
     protected final ExperimentSessionPanelCoordinator.NativeStatusSnapshot hubNativeStatusSnapshot() {
         return EXPERIMENT_SESSION_PANEL.nativeStatusSnapshot(SystemClock.elapsedRealtimeNanos());

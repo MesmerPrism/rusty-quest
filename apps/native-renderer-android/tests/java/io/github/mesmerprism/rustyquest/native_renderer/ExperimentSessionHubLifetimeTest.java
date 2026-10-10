@@ -20,6 +20,43 @@ public final class ExperimentSessionHubLifetimeTest {
             0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"host"),time,time);
     }
     public static void main(String[] args) {
+        java.util.List<String> markers = new java.util.ArrayList<>();
+        ExperimentSessionPanelCoordinator observedIdle = new ExperimentSessionPanelCoordinator();
+        Port observedPort = new Port();
+        final long[] observationNow = {1L};
+        ExperimentSessionHubLifetime diagnostic = new ExperimentSessionHubLifetime(observedPort,
+            () -> observedIdle.nativeStatusSnapshot(observationNow[0]), markers::add);
+        for(int i=0;i<100;i++) diagnostic.refresh();
+        check(markers.size()==2 && markers.get(1).contains("observed=false epoch=0 read=0"),
+            "unknown witness marker deduplicates without binding");
+        observedIdle.acceptNativeReadback(1L,new ExperimentSessionPanelCoordinator.NativeReceipt(
+            "",true,true,0L,0L,"idle","none",false,false,"ready",true,
+            0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"secret-sentinel"),0L,1L);
+        diagnostic.refresh();
+        check(observedPort.creates==0,"initialize-only idle with no actual status timestamp remains dormant");
+        observedIdle.acceptNativeReadback(1L,new ExperimentSessionPanelCoordinator.NativeReceipt(
+            "",true,true,0L,0L,"idle","none",false,false,"ready",true,
+            0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"secret-sentinel"),1L,1L);
+        diagnostic.refresh();
+        check(observedPort.starts==1 && markers.contains("driver_created")
+            && markers.contains("start_returned"),"actual idle0/0 timestamped witness creates/starts exactly once");
+        observedIdle.openDeveloper(observedIdle.allocateRouteEvent());diagnostic.refresh();
+        check(observedPort.closes==1 && markers.contains("witness_lost")
+            && markers.contains("lifetime_closed"),"witness loss is distinguished from bind failure");
+        check(markers.stream().noneMatch(m->m.contains("secret-sentinel")),"readback details never reach markers");
+        Port throwingPort=new Port();throwingPort.fails=true;
+        java.util.List<String> failureMarkers=new java.util.ArrayList<>();
+        ExperimentSessionPanelCoordinator failureIdle=new ExperimentSessionPanelCoordinator();nativeRead(failureIdle,1L,1L);
+        ExperimentSessionHubLifetime markedFailure=new ExperimentSessionHubLifetime(throwingPort,
+            ()->failureIdle.nativeStatusSnapshot(1L),failureMarkers::add);
+        markedFailure.refresh();markedFailure.refresh();
+        check(throwingPort.starts==1&&throwingPort.closes==1&&failureMarkers.contains("factory_or_start_failed"),
+            "failed start marker changes no retry or cleanup semantics");
+        Port observerThrows=new Port();
+        ExperimentSessionHubLifetime noisy=new ExperimentSessionHubLifetime(observerThrows,
+            ()->failureIdle.nativeStatusSnapshot(1L),m->{throw new IllegalStateException("observer only");});
+        noisy.refresh();noisy.close();check(observerThrows.starts==1&&observerThrows.closes==1,
+            "observer failure cannot alter effect lifecycle");
         final ExperimentSessionPanelCoordinator c=new ExperimentSessionPanelCoordinator();
         final long[] now={1L}; Port p=new Port();
         ExperimentSessionHubLifetime life=new ExperimentSessionHubLifetime(p,()->c.nativeStatusSnapshot(now[0]));
