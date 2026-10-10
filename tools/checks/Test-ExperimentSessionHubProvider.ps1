@@ -27,6 +27,22 @@ $hubSources=@('ConnectionHubProtocol','HubProviderIdentity','HubSurfaceDescripto
 RunHost 'host-compile' 'javac' (@('--release','8','-cp',$JsonJar,'-d',$hostOut)+$sources+$hubSources+@($test,(Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionHubLifetimeTest.java")))
 RunHost 'host-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionHubProviderTest')
 RunHost 'lifetime-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionHubLifetimeTest')
+
+# Test the actual codec, not a synthesized already-accepted NativeReceipt.
+$panelText=[IO.File]::ReadAllText((Join-Path $panel 'BreathCompositionPanelModule.java'))
+$codecStart=$panelText.IndexOf('    private static final class ExperimentSessionJsonCodec')
+$codecEnd=$panelText.IndexOf('    private final class SliderControl {',$codecStart)
+if($codecStart-lt0-or$codecEnd-lt0){throw 'Production codec extraction missing'}
+$codec=$panelText.Substring($codecStart,$codecEnd-$codecStart)
+$template=Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionStatusReadCodecTest.java"
+$hostCodec=Join-Path $OutputRoot 'ExperimentSessionStatusReadCodecTest.java'
+$templateText=[IO.File]::ReadAllText($template)
+if(([regex]::Matches($templateText,'// PRODUCTION_CODEC')).Count-ne1){throw 'Codec insertion must be unique'}
+[IO.File]::WriteAllText($hostCodec,$templateText.Replace('// PRODUCTION_CODEC',$codec),[Text.UTF8Encoding]::new($false))
+$shell=Join-Path $panel 'ExperimentSessionAndroidShell.java'
+$exitPolicy=Join-Path $repo "apps/native-renderer-android/src/main/java/$pkg/NativeRendererWriterAcknowledgedExitPolicy.java"
+RunHost 'codec-compile' 'javac' @('--release','8','-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'-d',$hostOut,$shell,$exitPolicy,$hostCodec)
+RunHost 'codec-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionStatusReadCodecTest')
 RunHost 'android-compile'  'javac' (@('--release','8','-cp',$AndroidJar,'-d',$androidOut)+$sources+@(Join-Path $panel 'ExperimentSessionHubSurfaceClient.java'))
 if ($ResolvedJavaSourceListPath -or $ResolvedSourceRepoRoot) {
     if (-not $ResolvedJavaSourceListPath -or -not $ResolvedSourceRepoRoot) { throw 'Both resolved source inputs are required.' }

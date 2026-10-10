@@ -261,16 +261,30 @@ final class ExperimentSessionPanelCoordinator {
     // Same command/state behavior as the existing two calls, with the witness join atomic.
     synchronized boolean acceptNativeReadback(long epoch, NativeReceipt receipt,
             long completedNanos, long nowNanos) {
+        return acceptNativeReadback(epoch, receipt, completedNanos, nowNanos,
+            receipt != null && receipt.accepted);
+    }
+    // A successful status read is independent of the last product command's result.
+    // Preserve that result for pending-command reduction; it is never upgraded here.
+    synchronized boolean acceptNativeReadback(long epoch, NativeReceipt receipt,
+            long completedNanos, long nowNanos, boolean statusResponseAccepted) {
         acceptRuntimeEpoch(epoch);
         boolean acceptedState = accept(receipt);
-        observeNativeStatusReadback(epoch, receipt, acceptedState, completedNanos, nowNanos);
+        observeNativeStatusReadback(epoch, receipt, acceptedState, completedNanos, nowNanos,
+            statusResponseAccepted);
         return acceptedState;
     }
     // Observation only: never command completion, authority or physical freshness.
     synchronized void observeNativeStatusReadback(long epoch, NativeReceipt receipt,
             boolean acceptedState, long completedNanos, long nowNanos) {
+        observeNativeStatusReadback(epoch, receipt, acceptedState, completedNanos, nowNanos,
+            receipt != null && receipt.accepted);
+    }
+    private void observeNativeStatusReadback(long epoch, NativeReceipt receipt,
+            boolean acceptedState, long completedNanos, long nowNanos,
+            boolean statusResponseAccepted) {
         if (!observeClock(nowNanos)) return;
-        if (!acceptedState || receipt == null || !receipt.accepted
+        if (!acceptedState || receipt == null || !statusResponseAccepted
                 || parsePhase(receipt.phase, receipt.controlState, null) == null
                 || freshRuntimeExpected || epoch <= 0L || epoch != runtimeEpoch
                 || receipt.generation != state.generation || receipt.revision != state.revision

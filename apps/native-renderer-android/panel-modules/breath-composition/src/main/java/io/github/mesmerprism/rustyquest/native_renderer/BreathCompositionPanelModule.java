@@ -3021,7 +3021,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
         boolean changed = EXPERIMENT_SESSION_PANEL.acceptNativeReadback(
             readback.runtimeEpoch, readback.receipt,
-            readback.statusReadCompletedNanos, android.os.SystemClock.elapsedRealtimeNanos());
+            readback.statusReadCompletedNanos, android.os.SystemClock.elapsedRealtimeNanos(),
+            "accepted".equals(readback.commandStatus));
         ExperimentSessionPanelState after = EXPERIMENT_SESSION_PANEL.snapshot();
         refreshHubStatusLifetime();
         // Audio preparation is an idempotent arm-stage effect. Reassert it from
