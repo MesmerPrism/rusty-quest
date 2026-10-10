@@ -305,6 +305,32 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output "@$javaResponse"
     if ($LASTEXITCODE -ne 0) { throw "Generated Android shell javac failed: $LASTEXITCODE" }
 
+    # Compile the real production-generated independent BLE composition and
+    # both selected owners. Use descriptor-owned source closure, not mocked JNI
+    # lifecycle functions or a hand-written bridge.
+    $ownerHook = [regex]::Match($buildText, '(?s)\$experimentSessionHubHook = @''\r?\n(.*?)\r?\n''@')
+    if (-not $ownerHook.Success) { throw 'Actual application owner preparation hook unavailable.' }
+    $ownerShell = $generatedShell.Insert($generatedShell.LastIndexOf('}'), $ownerHook.Groups[1].Value + [Environment]::NewLine)
+    [IO.File]::WriteAllText($stub,$ownerShell,[Text.UTF8Encoding]::new($false))
+    $hubDescriptor = Get-Content (Join-Path $repo 'fixtures/native-app-features/ui/experiment-session-hub-status-provider/ui.experiment_session_hub_status_provider.feature.json') -Raw | ConvertFrom-Json
+    foreach ($selection in @(@{hub=$false;ble=$true},@{hub=$true;ble=$true},@{hub=$true;ble=$false})) {
+        $hubOn = $selection.hub
+        $bleOn = $selection.ble
+        [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource -Selected:$hubOn -BleSelected:$bleOn),[Text.UTF8Encoding]::new($false))
+        $ownerSources = @($androidSources)
+        if ($hubOn) {
+            $ownerSources += @($hubDescriptor.panel_source_module.source_files | ForEach-Object {Join-Path $repo $_})
+            $ownerSources += (Join-Path $panelRoot 'ExperimentSessionStatusObservation.java')
+        }
+        $javaResponse = Join-Path $output "ble-owner-hub-$hubOn-ble-$bleOn.rsp"
+        $null = Write-NativeRendererJavaSourceResponse -SourceFiles $ownerSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
+        & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output "@$javaResponse"
+        if ($LASTEXITCODE -ne 0) { throw "Selected BLE native/application owner compilation failed: Hub=$hubOn" }
+        Write-Host "Production BLE owner bridge Android compilation passed: Hub=$hubOn BLE=$bleOn"
+    }
+    [IO.File]::WriteAllText($stub,$generatedShell,[Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($bridge,$offBridge,[Text.UTF8Encoding]::new($false))
+
     if (-not [string]::IsNullOrWhiteSpace($HubFeatureLock)) {
         $hubLock = Get-Content -LiteralPath $HubFeatureLock -Raw | ConvertFrom-Json
         if (@($hubLock.selected_feature_ids) -cnotcontains 'ui.experiment_session_hub_status_provider') { throw 'Actual optional feature lock required.' }

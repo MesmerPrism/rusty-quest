@@ -15,9 +15,10 @@ STUBS = {
       public final android.bluetooth.BluetoothManager manager=new android.bluetooth.BluetoothManager();
       public Context getApplicationContext(){return this;} public SharedPreferences getSharedPreferences(String n,int m){return prefs;}
       public <T>T getSystemService(Class<T> c){return c.cast(manager);} public String getPackageName(){return "example.app";}
+      public int permission=0; public boolean permissionThrows; public int checkSelfPermission(String p){if(permissionThrows)throw new SecurityException();return permission;}
       public android.content.pm.PackageManager getPackageManager(){return new android.content.pm.PackageManager();}}''',
     "android/app/Activity.java": '''package android.app; public class Activity extends android.content.Context {
-      public int checkSelfPermission(String p){return 0;} public void requestPermissions(String[] p,int n){}}''',
+      public int requests; public void requestPermissions(String[] p,int n){requests++;}}''',
     "android/content/pm/PackageInfo.java": 'package android.content.pm; public class PackageInfo {public String[] requestedPermissions={android.Manifest.permission.BLUETOOTH_ADVERTISE};}',
     "android/content/pm/PackageManager.java": 'package android.content.pm; public class PackageManager {public static final int GET_PERMISSIONS=1,PERMISSION_GRANTED=0; public PackageInfo getPackageInfo(String n,int f){return new PackageInfo();}}',
     "android/os/Build.java": 'package android.os; public class Build {public static class VERSION {public static int SDK_INT=31;} public static class VERSION_CODES {public static final int S=31;}}',
@@ -94,7 +95,7 @@ public class GenerationHostTest {
   context.prefs.values.put("open-control",false);check(!owner.openControl(),"explicit stored gated choice wins over open default");
   openDefault=false;context.prefs.values.put("open-control",true);check(owner.openControl(),"explicit stored open choice wins over gated default");
   context.prefs.values.clear();check(!owner.openControl(),"absent optional policy stays gated");
-  owner.startFromPanel(context);BluetoothGattServer a=context.manager.servers.get(0);BluetoothDevice peer=new BluetoothDevice();
+  owner.nativeOwnerStarted(1L,1L);BluetoothGattServer a=context.manager.servers.get(0);BluetoothDevice peer=new BluetoothDevice();
   a.callback.onServiceAdded(0,a.service);BluetoothLeAdvertiser adv=context.manager.adapter.advertiser;
   check(adv.callbacks.size()==1,"current service advertises");AdvertiseCallback oldAd=adv.callbacks.get(0);
   a.callback.onConnectionStateChange(peer,0,2);check(((java.util.Map<?,?>)field(owner,"peers")).size()==1,"current peer added");
@@ -139,6 +140,36 @@ public class GenerationHostTest {
   c.callback.onCharacteristicReadRequest(peer,12,0,status);
   check(c.responses==priorResponses,"stopped producer cannot serve a current source read");
   check(dispatches==priorDispatches,"status failure and recovery never replay effects");
+  int servers=context.manager.servers.size();
+  check(owner.nativeOwnerEnded(1L,1L),"exact native end accepted");
+  check(!owner.active(),"native stop while Java owner survives");
+  check(!owner.updateReceiptForGeneration(1L,"0123456789abcdef","confirmed","late final receipt"),"retired native carrier cannot publish terminal confirmation");
+  owner.onPermissionResult(context,9401);owner.startFromPanel(context);
+  check(context.manager.servers.size()==servers,"late permission/panel cannot reopen retired owner");
+  check(!owner.nativeOwnerStarted(1L,1L),"retired start cannot reopen same owner");
+  context.permission=-1;
+  check(owner.nativeOwnerStarted(2L,1L),"new owner recorded with unavailable grant");
+  check(!owner.active()&&context.requests==0,"native start fails closed without Activity permission request");
+  context.permission=0;owner.onPermissionResult(context,9401);
+  check(owner.active(),"visible grant callback activates only current owner");
+  int replacementCount=context.manager.servers.size();
+  owner.startFromPanel(context);owner.startFromPanel(context);
+  check(context.manager.servers.size()==replacementCount,"repeated panel transitions do not recreate GATT");
+  check(!owner.nativeOwnerEnded(1L,1L)&&owner.active(),"old native Drop cannot stop replacement");
+  check(!owner.nativeOwnerEnded(2L,2L)&&owner.active(),"wrong epoch end cannot stop current owner");
+  owner.setEnabled(false,context);owner.nativeOwnerEnded(2L,1L);
+  owner.nativeOwnerStarted(3L,2L);
+  check(!owner.active(),"stored disabled respected on new native owner");
+  owner.setEnabled(true,context);check(owner.active(),"explicit enabled action activates current owner");
+  owner.nativeOwnerEnded(3L,2L);Handler.drain();
+  check(!owner.active()&&((java.util.Map<?,?>)field(owner,"peers")).isEmpty(),"native terminal clears peers and refresh remains retired");
+  check(!owner.nativeOwnerStarted(0L,2L)&&!owner.nativeOwnerStarted(4L,0L),"invalid identity/epoch cannot activate");
+  context.permissionThrows=true;owner.nativeOwnerStarted(4L,2L);
+  check(!owner.active(),"platform permission exception fails closed without escaping native bridge");
+  context.permissionThrows=false;owner.onPermissionResult(context,9401);
+  check(owner.active(),"current eligible owner may fulfill grants after unavailable platform");
+  check(new String((byte[])field(owner,"statusBytes"),java.nio.charset.StandardCharsets.UTF_8).contains("UNAVAILABLE"),"new native owner cannot inherit stopped raw status bytes");
+  owner.nativeOwnerEnded(4L,2L);
   System.out.println("Production BLE generation controls PASS: "+passed);
  }
 }'''

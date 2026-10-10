@@ -109,6 +109,9 @@ final class ExperimentSessionBleServer {
     private long blockedUntilMs;
     private boolean active;
     private long serverGeneration;
+    private long nativeOwnerIdentity;
+    private long nativeOwnerEpoch;
+    private long nativeOwnerHighWater;
 
     private ExperimentSessionBleServer(Context context) {
         this.context = context;
@@ -122,11 +125,49 @@ final class ExperimentSessionBleServer {
     }
     synchronized boolean active() { return active; }
     synchronized long currentGeneration() { return active ? serverGeneration : 0L; }
+    synchronized boolean acceptsNativeEpoch(long epoch) {
+        return active && epoch > 0L && epoch == nativeOwnerEpoch;
+    }
     synchronized boolean updateReceiptForGeneration(long generation,String id,String state,String detail) {
         if(!active || generation!=serverGeneration) return false;
         updateReceipt(id,state,detail);return true;
     }
     synchronized String pairingCode() { return active && !openControl() ? code : ""; }
+
+    /** Actual initialized native owner only; preparation creates no transport. */
+    synchronized boolean nativeOwnerStarted(long identity, long epoch) {
+        if (identity <= 0L || epoch <= 0L || identity <= nativeOwnerHighWater) return false;
+        stop();
+        nativeOwnerHighWater = identity;
+        nativeOwnerIdentity = identity;
+        nativeOwnerEpoch = epoch;
+        startFromNativeOwner();
+        return true;
+    }
+
+    synchronized boolean nativeOwnerEnded(long identity, long epoch) {
+        if (identity <= 0L || identity != nativeOwnerIdentity || epoch != nativeOwnerEpoch) return false;
+        nativeOwnerIdentity = 0L;
+        nativeOwnerEpoch = 0L;
+        stop();
+        return true;
+    }
+
+    private synchronized void startFromNativeOwner() {
+        if (nativeOwnerIdentity <= 0L || nativeOwnerEpoch <= 0L
+                || !featurePackaged(context) || !enabled()) return;
+        try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                && (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                    != PackageManager.PERMISSION_GRANTED
+                    || context.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
+                    != PackageManager.PERMISSION_GRANTED)) return;
+        start();
+        } catch (RuntimeException unavailable) {
+            stop();
+            Log.w(TAG, "status=unavailable reason=native-owner-platform-unavailable", unavailable);
+        }
+    }
 
     void setEnabled(boolean value, Activity activity) {
         prefs.edit().putBoolean(ENABLED, value).apply();
@@ -143,7 +184,8 @@ final class ExperimentSessionBleServer {
     }
 
     void startFromPanel(Activity activity) {
-        if (activity == null || !featurePackaged(activity) || !enabled()) return;
+        if (activity == null || !featurePackaged(activity) || !enabled()
+                || !hasNativeOwner()) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
                     != PackageManager.PERMISSION_GRANTED
@@ -156,7 +198,7 @@ final class ExperimentSessionBleServer {
                 return;
             }
         }
-        start();
+        startFromNativeOwner();
     }
 
     void onPermissionResult(Activity activity, int requestCode) {
@@ -166,7 +208,11 @@ final class ExperimentSessionBleServer {
                     != PackageManager.PERMISSION_GRANTED
                     || activity.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE)
                     != PackageManager.PERMISSION_GRANTED)) return;
-        if (enabled()) start();
+        startFromNativeOwner();
+    }
+
+    private synchronized boolean hasNativeOwner() {
+        return nativeOwnerIdentity > 0L && nativeOwnerEpoch > 0L;
     }
 
     private synchronized void start() {
@@ -216,6 +262,7 @@ final class ExperimentSessionBleServer {
             try { gatt.close(); } catch (RuntimeException ignored) { }
         }
         peers.clear();
+        statusBytes = jsonBytes("{\"v\":1,\"m\":\"gated\",\"f\":\"unknown\",\"p\":\"UNAVAILABLE\"}");
         advertiser = null;
         advertiseCallback = null;
         gatt = null;

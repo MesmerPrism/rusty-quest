@@ -26,7 +26,8 @@ class BreathCompositionPanelModule {
  static final ExperimentSessionPanelCoordinator EXPERIMENT_SESSION_PANEL=new ExperimentSessionPanelCoordinator();
  static final Object REMOTE_SINK=new Object(),remoteContext=new Object();static long lastRemoteStatusPollMs;static int polls;
  static class Shell {void requestStatus(Object sink){polls++;}}static final Shell EXPERIMENT_SESSION_SHELL=new Shell();
- static class RemotePending {long startedAtElapsedMs;String browserId,operation;}static RemotePending remotePending;
+ static class RemotePending {long startedAtElapsedMs,serverGeneration;String browserId,operation;}static RemotePending remotePending;
+ static void refreshExperimenterPolarProjection() {} // Other owner projection is modeled; actual full module compiles in panel gate.
  static WeakReference<BreathCompositionPanelModule> remotePanel=new WeakReference<>(null);static ExperimentSessionBleServer owner;
  static ExperimentSessionBleServer remoteServer(){return owner;}static String remoteKioskState(){return "pending";}
  BODY
@@ -46,7 +47,7 @@ public class NativeAgeHostTest {
   check(surface.polls==1,"actual producer requested status without native callback");
   check(polled.contains("\\\"i\\\":\\\"1000000\\\"")&&polled.contains("\\\"a\\\":1"),"poll cannot refresh witness ID or age");
   android.app.Activity context=new android.app.Activity();ExperimentSessionBleServer owner=ExperimentSessionBleServer.process(context,new ExperimentSessionBleServer.Delegate(){public boolean openControlDefault(){return false;}public JSONObject snapshot()throws Exception{return surface.snapshot();}public void dispatch(ExperimentSessionBleServer.CommandRequest request){dispatches++;}});
-  surface.owner=owner;owner.startFromPanel(context);BluetoothGattServer server=context.manager.servers.get(0);BluetoothDevice peer=new BluetoothDevice();server.callback.onConnectionStateChange(peer,0,2);
+  surface.owner=owner;owner.nativeOwnerStarted(1L,Long.MAX_VALUE);BluetoothGattServer server=context.manager.servers.get(0);BluetoothDevice peer=new BluetoothDevice();server.callback.onConnectionStateChange(peer,0,2);
   BluetoothGattCharacteristic status=new BluetoothGattCharacteristic(java.util.UUID.fromString(ExperimentSessionBleProtocol.STATUS),2,1);Runnable refresh=(Runnable)field(owner,"statusRefresh");
   refresh.run();server.callback.onCharacteristicReadRequest(peer,1,0,status);String served=new String(server.lastBytes,StandardCharsets.UTF_8);
   String expected=surface.snapshot().put("v",1).put("m","gated").toString();check(expected.getBytes(StandardCharsets.UTF_8).length<=480,"real full normal snapshot fits");check(served.equals(expected),"actual server serves full serialized extension");System.out.println("NORMAL="+served);
@@ -55,7 +56,11 @@ public class NativeAgeHostTest {
   check(worst.contains("9223372036854775807")&&worst.contains("1000000000000000000"),"full worst case contains exact int64 witnesses");
   int bytes=worst.getBytes(StandardCharsets.UTF_8).length;check(bytes>480,"actual complete worst-case snapshot exceeds bound");
   check(served.equals("{\\\"v\\\":1,\\\"m\\\":\\\"gated\\\",\\\"f\\\":\\\"unknown\\\",\\\"p\\\":\\\"UNAVAILABLE\\\"}"),"actual server denies complete oversized snapshot with existing unavailable shape");
-  check(server.lastBytes.length<=480,"fallback bounded");check(dispatches==0,"readback never dispatched effects");owner.stop();System.out.println("Native age full producer/server controls PASS: "+passed);
+  check(server.lastBytes.length<=480,"fallback bounded");check(dispatches==0,"readback never dispatched effects");
+  owner.nativeOwnerStarted(2L,1L);boolean wrongEpoch=false;
+  try{surface.snapshot();}catch(IllegalStateException rejected){wrongEpoch="native-owner-status-epoch-mismatch".equals(rejected.getMessage());}
+  check(wrongEpoch,"complete production supplier rejects retained positive witness from other native epoch");
+  owner.stop();System.out.println("Native age full producer/server controls PASS: "+passed);
  }
 }'''
 
