@@ -3014,15 +3014,23 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     public void onExperimentSessionReadback(
             ExperimentSessionAndroidShell.SessionReadback readback) {
         if (readback == null || readback.receipt == null) return;
-        hubStatusMarker("native_readback accepted=" + readback.receipt.accepted
-            + " epoch=" + readback.runtimeEpoch
-            + " status_read_completed=" + (readback.statusReadCompletedNanos > 0L));
         EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
         ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
+        long statusObservedAtNanos = android.os.SystemClock.elapsedRealtimeNanos();
         boolean changed = EXPERIMENT_SESSION_PANEL.acceptNativeReadback(
             readback.runtimeEpoch, readback.receipt,
-            readback.statusReadCompletedNanos, android.os.SystemClock.elapsedRealtimeNanos(),
+            readback.statusReadCompletedNanos, statusObservedAtNanos,
             "accepted".equals(readback.commandStatus));
+        hubStatusMarker("native_readback accepted=" + readback.receipt.accepted
+            + " epoch=" + readback.runtimeEpoch
+            + " status_read_completed=" + (readback.statusReadCompletedNanos > 0L)
+            + " status_response_accepted=" + "accepted".equals(readback.commandStatus)
+            + " initialization_ready=" + "ready".equals(readback.initializationStatus)
+            + " receipt_generation=" + readback.receipt.generation
+            + " receipt_revision=" + readback.receipt.revision
+            + " completed_nanos=" + readback.statusReadCompletedNanos
+            + " observed_at_nanos=" + statusObservedAtNanos
+            + " " + EXPERIMENT_SESSION_PANEL.nativeStatusReadbackDiagnostic());
         ExperimentSessionPanelState after = EXPERIMENT_SESSION_PANEL.snapshot();
         refreshHubStatusLifetime();
         // Audio preparation is an idempotent arm-stage effect. Reassert it from
