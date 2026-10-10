@@ -252,3 +252,42 @@ physical retirement barrier unresolved. The separate-store host controls execute
 the exact native prepare/current-source code with real signatures and production
 Broker validators; Java persistence, clock and platform completion are modeled.
 No host result identifies the incoming packet or cause of a prior device failure.
+
+### Current-process remote receiver closure
+
+A peer that only received an authenticated receiver Arm and Stop does not own
+a local seven-owner media transaction. Its `whole_app_close` can authenticate
+the current, unrestored dispatch replay and verify that every receiver handle's
+latest signed registry readback is stopped after its Arm. Pending, uncertain,
+rejected, malformed, foreign-generation or restored histories remain unresolved.
+Local media mutations and retained cleanup-server history use their existing
+typed cleanup routes instead. `close_no_media` still refuses prior owner effects.
+
+This branch reports `rusty.quest.embedded_duplex.remote_owner_cleanup.v1` with
+`peer_physical_cleanup=not_locally_started`. Its authenticated receiver history
+explicitly makes no physical cleanup claim. Native resource, Own capture and
+renderer retirement are still required before removing the native host; Java
+then checks the same process/config/executor, resources, control callbacks,
+journals and process fence before reporting whole-app terminal. Polling or
+repeating closure cannot promote a pending physical barrier to terminal.
+
+`tools/checks/test_remote_owner_close_host.py` takes explicit repository,
+supplier Quest root, tool and JSON jar paths and an absent output directory.
+It runs the real signed replay predicate and the actual extracted Java
+completion method with modeled platform barriers. These controls do not build
+an APK or attest Android resource retirement, device state or media acceptance.
+
+### Unused incoming receiver during whole-product closure
+
+A successfully installed duplex host retains both directional resource sets.
+Outgoing-only Start/Stop leaves the local incoming receiver unprepared. Explicit
+`whole_app_close` retires that unused receiver with the existing synchronized
+`closeUnstartedAndVerify` guard before observing the product resource barrier.
+Staged, armed or used receivers require their typed owner cleanup; this step
+neither stops them nor manufactures a local media Stop. Pipeline, outgoing
+registry, Own capture, renderer, native host and process-fence barriers remain
+mandatory. `close_no_media` is unchanged.
+
+The focused unused-incoming host control extracts the actual receiver and
+resource methods with modeled remaining platform members. It proves source
+behavior only, not Android JNI integration, physical cleanup or acceptance.

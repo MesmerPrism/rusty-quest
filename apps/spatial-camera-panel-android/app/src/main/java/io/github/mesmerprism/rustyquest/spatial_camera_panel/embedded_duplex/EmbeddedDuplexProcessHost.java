@@ -428,6 +428,8 @@ final class EmbeddedDuplexProcessHost {
                     } else {
                         if (own != null) own.requestStopOwn();
                         display.requestWholeProjectionStop();
+                        EmbeddedDuplexResources retained = resources;
+                        if (retained != null) retained.closeUnusedIncomingForWholeProduct();
                     }
                 }
                 if (peerAction == EmbeddedDuplexPeerAction.START) startIntent.dispatch(starting);
@@ -1015,7 +1017,9 @@ final class EmbeddedDuplexProcessHost {
             throw new IllegalStateException("whole cleanup owner binding differs");
         if (!rendererTerminal || !"terminal".equals(proof.optString("java_own_capture_cleanup"))
                 || !"terminal".equals(proof.optString("native_host_physical_cleanup"))) return;
-        if (!noMedia && (!"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(proof.getString("$schema"))
+        boolean remoteOwner = !noMedia && "rusty.quest.embedded_duplex.remote_owner_cleanup.v1".equals(proof.getString("$schema"));
+        if (remoteOwner && !remoteOwnerClosureVerified(proof, nativeExecutorGeneration)) return;
+        if (!noMedia && !remoteOwner && (!"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(proof.getString("$schema"))
                 || !"terminal".equals(proof.optString("peer_physical_cleanup"))
                 || !(proof.opt("media_stop_effect_receipt") instanceof JSONObject)
                 || !(proof.opt("route_cleanup") instanceof org.json.JSONArray)
@@ -1047,6 +1051,25 @@ final class EmbeddedDuplexProcessHost {
         nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; startIntent.afterVerifiedCleanup();
         ownNoMediaStopTarget = null;
         synchronized (attachmentGate) { attachmentGeneration = 0L; displayDetaching = false; phase.set(Phase.NEW); }
+    }
+
+    /** A native authenticated remote closure never becomes a local seven-owner Stop. */
+    static boolean remoteOwnerClosureVerified(JSONObject proof, long expectedExecutor) throws Exception {
+        if (!"rusty.quest.embedded_duplex.remote_owner_cleanup.v1".equals(proof.getString("$schema"))
+                || !"whole_app_close".equals(proof.getString("action"))
+                || !"not_locally_started".equals(proof.getString("peer_physical_cleanup"))) return false;
+        JSONObject history = proof.getJSONObject("remote_receiver_terminal_history");
+        org.json.JSONArray ids = history.getJSONArray("receiver_stop_receipt_ids");
+        if (expectedExecutor <= 0L || history.getLong("executor_generation") != expectedExecutor
+                || !"rusty.quest.embedded_duplex.remote_receiver_terminal_history.v1".equals(history.getString("$schema"))
+                || history.getBoolean("physical_cleanup_claimed") || ids.length() == 0
+                || history.getInt("verified_response_count") < 2 * ids.length()) return false;
+        java.util.HashSet<String> unique = new java.util.HashSet<>();
+        for (int i = 0; i < ids.length(); i++) {
+            String id = ids.getString(i);
+            if (id.isEmpty() || !unique.add(id)) return false;
+        }
+        return true;
     }
 
     private String checkpointSnapshot() throws Exception {

@@ -865,6 +865,11 @@ where
         })
     }
 
+    /// Returns current activation replay state without dispatching or mutating effects.
+    pub fn replay_snapshot(&self) -> ProductActivationReplaySnapshot {
+        self.replay.clone()
+    }
+
     /// Handles one activation frame. Pending is committed before the callback;
     /// an uncertain callback or failed terminal commit leaves the staged graph retained.
     ///
@@ -2333,6 +2338,7 @@ mod tests {
             }),
         )
         .expect("activation server");
+        assert_eq!(server.replay_snapshot(), ProductActivationReplaySnapshot::default());
         let response_frame = server.handle_frame(&frame).expect("activation");
         let response = decode_product_activation_response(&response_frame).expect("response");
         assert_eq!(response.status, OwnerDispatchStatus::Completed);
@@ -2355,8 +2361,15 @@ mod tests {
             .expect("terminal")
             .terminal
             .contains_key("activation.independent-identity.7"));
+        let durable = commits.last().expect("terminal").clone();
+        assert_eq!(server.replay_snapshot(), durable);
+        let mut detached = server.replay_snapshot();
+        detached.terminal.clear();
+        detached.pending_request_sha256.insert("caller.mutation".to_owned(), "sha256:caller".to_owned());
+        assert_eq!(server.replay_snapshot(), durable);
         drop(commits);
         assert_eq!(server.handle_frame(&frame).expect("retry"), response_frame);
+        assert_eq!(server.replay_snapshot(), durable);
         assert_eq!(*calls.lock().expect("calls"), 1);
     }
 

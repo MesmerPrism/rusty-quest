@@ -225,6 +225,15 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     }
     @Override public long[] currentProjection() { return display.currentProjection(routeGeneration()); }
 
+    /** Whole-product close may retire an incoming route that never entered a Sink effect. */
+    void closeUnusedIncomingForWholeProduct() {
+        if ("unprepared".equals(incoming.snapshot().state())) {
+            // The synchronized typed method rechecks every never-started identity.
+            // A staged/armed race is rejected rather than credited as cleanup.
+            incoming.closeUnstartedAndVerify();
+        }
+    }
+
     boolean productResourcesTerminal() {
         if (!incoming.snapshot().terminal()) return false;
         // A pipeline is retained immediately on return from its factory. Its

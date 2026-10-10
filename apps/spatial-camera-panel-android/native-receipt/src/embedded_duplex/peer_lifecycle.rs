@@ -680,6 +680,40 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
     }
     let mut checked = Checkout::take(host.peer_lifecycle.clone())?;
     let state = checked.get();
+    if word == 6 && state.client.is_none() {
+        // A remote receiver is not a local seven-owner media transaction.
+        // Never route its effect history through close_no_media.
+        let broker = json_value(&Checkout::take(host.provider.clone())?.get().evidence_json()
+            .map_err(|_| "remote-owner local media observation unavailable")?)?;
+        let local_media_attempted = state.start_mutation.is_some() || state.stop_mutation.is_some()
+            || state.stop_completion.is_some() || state.activation.is_some()
+            || !broker.get("media_pending_action").is_some_and(Value::is_null)
+            || !broker.get("media_runtime_state").is_some_and(|value| value.is_null()
+                || value.get("phase").and_then(Value::as_str) == Some("planned")
+                && value.get("applied_request_ids").and_then(Value::as_array).is_some_and(Vec::is_empty));
+        if !host.owner_effect_attempted.load(Ordering::SeqCst) {
+            return Err("remote-owner effect history absent; use scoped no-media closure".into());
+        }
+        let cleanup = Checkout::take(host.cleanup_server.clone())?.get().replay_snapshot();
+        if !cleanup.pending_request_sha256.is_empty() || !cleanup.terminal.is_empty() {
+            return Err("retained cleanup history requires its typed owner recovery".into());
+        }
+        let proof = super::super::remote_owner_close::verified_receivers(
+            &Checkout::take(host.server.clone())?.get().replay_snapshot(),
+            &Checkout::take(host.activation_server.clone())?.get().replay_snapshot(),
+            &host.local_public_key, host.callbacks.key_id(), host.capability.generation,
+            host.restored_owner_replay, local_media_attempted)?;
+        let value = json!({"$schema":"rusty.quest.embedded_duplex.remote_owner_cleanup.v1",
+            "action":"whole_app_close","config_sha256":host.config_sha256,
+            "native_executor_generation":host.capability.generation,
+            "app_process_generation":host.capability.binding.generation,
+            "local_peer_id":host.local_peer_id,"remote_peer_id":host.remote_peer_id,
+            "remote_receiver_terminal_history":proof,"peer_physical_cleanup":"not_locally_started",
+            "native_host_physical_cleanup":"pending","whole_app_physical_cleanup":"pending","status":"pending"});
+        host.capability.require_live()?;
+        if actual_java_cleanup(env)? { return close_host(value, host, checked); }
+        return Ok(value.to_string());
+    }
     let operation = match word {
         1 => start(&host, state),
         2 => renew(&host, state),

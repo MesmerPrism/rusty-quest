@@ -23,13 +23,11 @@ rusty-quest-hand-adapter = { path = "../../../crates/rusty-quest-hand-adapter" }
 rusty-quest-feature-activation = { path = "../../../crates/rusty-quest-feature-activation" }
 rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-authority" }
 rusty-quest-media-stream-android = { path = "../../../crates/rusty-quest-media-stream-android" }
+rusty-quest-media-stream = { path = "../../../crates/rusty-quest-media-stream" }
 rusty-manifold-peer = { path = "../../../../rusty-manifold/crates/rusty-manifold-peer" }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 zeroize = "=1.9.0"
-
-[dev-dependencies]
-rusty-quest-media-stream = { path = "../../../crates/rusty-quest-media-stream" }
 
 [build-dependencies]
 serde_json = "1"
