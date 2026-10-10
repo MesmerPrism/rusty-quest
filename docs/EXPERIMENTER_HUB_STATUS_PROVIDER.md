@@ -100,8 +100,14 @@ No test starts a listener, contacts a broker, builds an APK or touches a device.
 
 The explicitly selected provider emits observation-only `hub-status` markers
 under the existing `RQNativeRenderer` tag. A resumed panel reports at most eight
-native callbacks (accepted boolean, numeric runtime epoch, and whether a real
-status-read timestamp exists). Its Hub lifetime reports at most sixteen creation,
+native callbacks. The `accepted` field remains the last product receipt result;
+`status_response_accepted` and `state_accepted` separately describe the status
+envelope and coordinator reduction. Closed `state_reason` and `witness_reason`
+codes identify the existing rejection predicate without changing it. Numeric
+receipt/coordinator epoch, generation, revision and completion/observation clocks,
+plus initialization readiness and fresh-runtime expectation, bind that immediate
+callback diagnostic. These fields do not grant command success or witness admission.
+Its Hub lifetime reports at most sixteen creation,
 witness eligibility, factory/start, and closure markers. The provider and Android
 adapter each cap their markers at thirty-two. Repeated unknown witnesses are
 deduplicated. Ordinary packages without the selected lifetime emit none of these.
@@ -118,3 +124,13 @@ Initialization alone has no status-read timestamp. Idle generation zero is valid
 but eligibility still requires a genuine accepted status read and the coordinator's
 exact epoch/state/monotonic witness. No marker substitutes for that witness, physical
 XR readiness, live Binder evidence or authenticated browser status.
+
+The exact two-field native status command reads the current cached projection
+without entering the mutation queue. Its accepted status envelope does not change
+the last product receipt. Malformed or extended commands retain normal command
+validation, and a busy readback cache remains rejected. Mutations retain queued
+acknowledgements and their existing actor validation and terminal admission.
+An unavailable worker observation or unexpected completed worker rejects the
+query. A normal Closed projection remains readable only after complete shutdown
+and a positive shutdown acknowledgement; direct retained status inspection keeps
+its existing semantics.
