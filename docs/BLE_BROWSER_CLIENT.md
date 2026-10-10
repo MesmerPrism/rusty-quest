@@ -81,6 +81,10 @@ native/writer acknowledgment; never retry a command to obtain confirmation.
 Status snapshots refresh the app-context Polar projection without starting sensor
 connection or requesting permissions. Its Bluetooth field still describes the
 Polar permission/adapter policy, not GATT advertising or native worker health.
+Each status refresh captures server generation and native identity/epoch before
+the delegate call, then checks them again before publishing bytes or scheduling
+another refresh. No carrier lock is held across delegate/JNI work; an in-flight
+retired snapshot cannot republish or reschedule after stop or replacement.
 
 `tools/checks/Test-NativeRendererBleAppBridge.ps1` executes the production-generated
 BLE-only and inert/no-panel bridge with modeled Android boundaries. The panel

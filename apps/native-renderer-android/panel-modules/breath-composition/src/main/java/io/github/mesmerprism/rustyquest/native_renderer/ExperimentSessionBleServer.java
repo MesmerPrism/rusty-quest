@@ -295,21 +295,34 @@ final class ExperimentSessionBleServer {
 
     private final Runnable statusRefresh = new Runnable() {
         @Override public void run() {
-            if (!active()) return;
-            Delegate target = delegate;
+            final long generation, identity, epoch;
+            final Delegate target;
+            final boolean open;
+            synchronized (ExperimentSessionBleServer.this) {
+                if (!active) return;
+                generation = serverGeneration;
+                identity = nativeOwnerIdentity;
+                epoch = nativeOwnerEpoch;
+                target = delegate;
+                open = openControl();
+            }
+            byte[] next = jsonBytes("{\"v\":1,\"m\":\"gated\",\"f\":\"unknown\",\"p\":\"UNAVAILABLE\"}");
             if (target != null) {
                 try {
                     JSONObject status = target.snapshot();
-                    status.put("v", 1).put("m", openControl() ? "open" : "gated");
+                    status.put("v", 1).put("m", open ? "open" : "gated");
                     byte[] bytes = jsonBytes(status.toString());
-                    if (bytes.length <= 480) statusBytes = bytes;
-                    else statusBytes = jsonBytes("{\"v\":1,\"m\":\"gated\",\"f\":\"unknown\",\"p\":\"UNAVAILABLE\"}");
+                    if (bytes.length <= 480) next = bytes;
                 } catch (Exception error) {
-                    statusBytes = jsonBytes("{\"v\":1,\"m\":\"gated\",\"f\":\"unknown\",\"p\":\"UNAVAILABLE\"}");
                     Log.w(TAG, "status=snapshot-unavailable", error);
                 }
             }
-            main.postDelayed(this, 750L);
+            synchronized (ExperimentSessionBleServer.this) {
+                if (!active || generation != serverGeneration
+                        || identity != nativeOwnerIdentity || epoch != nativeOwnerEpoch) return;
+                statusBytes = next;
+                main.postDelayed(this, 750L);
+            }
         }
     };
 

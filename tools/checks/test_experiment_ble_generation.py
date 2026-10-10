@@ -25,7 +25,8 @@ STUBS = {
     "android/os/Looper.java": 'package android.os; public class Looper {public static Looper getMainLooper(){return new Looper();}}',
     "android/os/Handler.java": '''package android.os; import java.util.*; public class Handler {
       public static final List<Runnable> queued=new ArrayList<>(); public Handler(Looper l){}
-      public boolean post(Runnable r){queued.add(r);return true;} public boolean postDelayed(Runnable r,long t){return true;}
+      public static int delayedPosts;
+      public boolean post(Runnable r){queued.add(r);return true;} public boolean postDelayed(Runnable r,long t){delayedPosts++;return true;}
       public void removeCallbacks(Runnable r){queued.removeIf(x->x==r);}
       public static void drain(){List<Runnable> q=new ArrayList<>(queued);queued.clear();for(Runnable r:q)r.run();}}''',
     "android/os/ParcelUuid.java": 'package android.os; public class ParcelUuid {public ParcelUuid(java.util.UUID u){}}',
@@ -79,12 +80,15 @@ STUBS = {
 HARNESS = '''package io.github.mesmerprism.rustyquest.native_renderer;
 import android.bluetooth.*;import android.bluetooth.le.*;import android.os.*;import android.util.Log;import org.json.JSONObject;
 public class GenerationHostTest {
- static boolean openDefault;static int snapshotMode;static int passed,dispatches;static void check(boolean ok,String name){if(!ok)throw new AssertionError(name);passed++;}
+ static boolean openDefault;static int snapshotMode;static int passed,dispatches;
+ static java.util.concurrent.CountDownLatch snapshotEntered,snapshotRelease;
+ static void check(boolean ok,String name){if(!ok)throw new AssertionError(name);passed++;}
  static Object field(Object o,String name)throws Exception{java.lang.reflect.Field f=o.getClass().getDeclaredField(name);f.setAccessible(true);return f.get(o);}
  public static void main(String[]args)throws Exception{
   android.app.Activity context=new android.app.Activity();
   ExperimentSessionBleServer owner=ExperimentSessionBleServer.process(context,new ExperimentSessionBleServer.Delegate(){
    public boolean openControlDefault(){return openDefault;}public JSONObject snapshot()throws Exception{
+    if(snapshotEntered!=null){snapshotEntered.countDown();snapshotRelease.await();}
     if(snapshotMode==1)throw new Exception("modeled-private-snapshot-error");
     if(snapshotMode==2)return null;
     return new JSONObject().put("p",snapshotMode==3?"x".repeat(500):"RUNNING");
@@ -170,6 +174,24 @@ public class GenerationHostTest {
   check(owner.active(),"current eligible owner may fulfill grants after unavailable platform");
   check(new String((byte[])field(owner,"statusBytes"),java.nio.charset.StandardCharsets.UTF_8).contains("UNAVAILABLE"),"new native owner cannot inherit stopped raw status bytes");
   owner.nativeOwnerEnded(4L,2L);
+  for(boolean replacement:new boolean[]{false,true}){
+   long identity=replacement?7L:5L;
+   owner.nativeOwnerStarted(identity,3L);
+   snapshotEntered=new java.util.concurrent.CountDownLatch(1);snapshotRelease=new java.util.concurrent.CountDownLatch(1);
+   Thread oldRefresh=new Thread(refresh);oldRefresh.start();
+   try{
+    check(snapshotEntered.await(1,java.util.concurrent.TimeUnit.SECONDS),"actual supplier snapshot blocked");
+    owner.nativeOwnerEnded(identity,3L);
+    if(replacement)owner.nativeOwnerStarted(identity+1L,4L);
+    int delayed=Handler.delayedPosts;
+    snapshotRelease.countDown();oldRefresh.join(1000L);
+    check(!oldRefresh.isAlive(),"retired supplier completes without lock inversion");
+    check(new String((byte[])field(owner,"statusBytes"),java.nio.charset.StandardCharsets.UTF_8).contains("UNAVAILABLE"),"retired snapshot cannot overwrite stopped/replacement bytes");
+    check(Handler.delayedPosts==delayed,"retired snapshot cannot requeue refresh");
+    check(Handler.queued.size()==(replacement?1:0),"only current owner initial refresh survives");
+   }finally{snapshotRelease.countDown();oldRefresh.join(1000L);snapshotEntered=null;snapshotRelease=null;}
+   if(replacement)owner.nativeOwnerEnded(identity+1L,4L);
+  }
   System.out.println("Production BLE generation controls PASS: "+passed);
  }
 }'''
