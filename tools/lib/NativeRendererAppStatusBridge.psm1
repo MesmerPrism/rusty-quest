@@ -56,4 +56,15 @@ function New-NativeRendererAppStatusBridgeSource {
     }
     return "package io.github.mesmerprism.rustyquest.native_renderer;`n/** Selected application composition; feature off is inert. */`npublic final class NativeRendererAppStatusBridge {`n" + $body + "`n}"
 }
-Export-ModuleMember -Function New-NativeRendererAppStatusBridgeSource
+function Write-NativeRendererJavaSourceResponse {
+    param([Parameter(Mandatory)][string[]]$SourceFiles,
+        [Parameter(Mandatory)][string]$GeneratedAppStatusBridgePath,
+        [Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $GeneratedAppStatusBridgePath -PathType Leaf)) {
+        throw 'Generated app-status bridge is required for every native renderer Java compilation.'
+    }
+    $sources = @(@($SourceFiles) + @($GeneratedAppStatusBridgePath) | Select-Object -Unique)
+    $sources | Set-Content -Encoding ASCII -LiteralPath $Path
+    return $sources
+}
+Export-ModuleMember -Function New-NativeRendererAppStatusBridgeSource, Write-NativeRendererJavaSourceResponse

@@ -716,7 +716,8 @@ final class GeneratedEmbeddedManifoldRuntimeConfig {
 $generatedControlPanelActivityPath = ""
 # Generate the inert bridge before panel selection, including no-panel APKs.
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererAppStatusBridge.psm1') -Force
-[System.IO.File]::WriteAllText((Join-Path $generatedEmbeddedPackageDir 'NativeRendererAppStatusBridge.java'), (New-NativeRendererAppStatusBridgeSource), [System.Text.UTF8Encoding]::new($false))
+$generatedAppStatusBridgePath = Join-Path $generatedEmbeddedPackageDir 'NativeRendererAppStatusBridge.java'
+[System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource), [System.Text.UTF8Encoding]::new($false))
 if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     # The experiment-session shell is an owning breath-composition concern.  Do
     # not let its audio/profile/native dependencies leak into another panel's
@@ -788,7 +789,7 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
         installConditionAudioFromPackagedClosure(ownerApplicationContext.getFilesDir().toString());
     }
 '@
-        [System.IO.File]::WriteAllText((Join-Path $generatedEmbeddedPackageDir 'NativeRendererAppStatusBridge.java'), (New-NativeRendererAppStatusBridgeSource -Selected), [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource -Selected), [System.Text.UTF8Encoding]::new($false))
     }
     $generatedControlPanelActivitySource = @"
 package io.github.mesmerprism.rustyquest.native_renderer;
@@ -1698,7 +1699,7 @@ if ($sourceFiles.Count -eq 0) {
 }
 $sourceList = Join-Path $OutDir "sources.rsp"
 $sourceFiles = @($sourceFiles | Select-Object -Unique)
-$sourceFiles | Set-Content -Encoding ASCII -Path $sourceList
+$sourceFiles = @(Write-NativeRendererJavaSourceResponse -SourceFiles $sourceFiles -GeneratedAppStatusBridgePath $generatedAppStatusBridgePath -Path $sourceList)
 
 Invoke-Checked "javac" $javac @(
     "-encoding", "UTF-8",
