@@ -1808,6 +1808,18 @@ impl ExperimentSessionRuntime {
         if raw.len() > MAX_COMMAND_BYTES {
             return self.cached(|cache| &cache.command_too_large);
         }
+        // A read-only query observes the current projection; a mutation queue
+        // acknowledgement cannot establish that a status snapshot was read.
+        if is_status_command(raw) {
+            let worker_finished = match self.worker.try_lock() {
+                Ok(worker) => worker.as_ref().map_or(true, JoinHandle::is_finished),
+                Err(_) => return self.cached(|cache| &cache.worker_closed),
+            };
+            if worker_finished && !self.rearmable_after_shutdown() {
+                return self.cached(|cache| &cache.worker_closed);
+            }
+            return self.status_json();
+        }
         let terminal_generation = terminal_command_generation(raw);
         let mut terminal_gate = if let Some(generation) = terminal_generation {
             let mut gate = match self.producer_gate.try_write() {
@@ -3822,6 +3834,101 @@ mod tests {
     }
 
     #[test]
+    fn status_query_reads_current_snapshot_without_mutation_queue_ack() {
+        let root = temp_root("status-query-snapshot");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        let status = json!({
+            "schema": EXPERIMENT_SESSION_COMMAND_SCHEMA,
+            "operation": "status"
+        })
+        .to_string();
+        let response: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+        assert_eq!(response["command_status"], "accepted");
+        assert_eq!(response["readback"]["runtime_epoch"], 1);
+        assert_eq!(response["readback"]["phase"], "idle");
+        assert_eq!(response["readback"]["last_operation_status"], "none");
+        runtime.shutdown_for_test().unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn status_query_preserves_product_rejection_and_rejects_unavailable_readback() {
+        let root = temp_root("status-query-rejection");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        let status =
+            json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        for (raw, reason) in [
+            ("{".to_owned(), "malformed-json"),
+            (json!({"schema":"unknown","operation":"status"}).to_string(), "unsupported-schema"),
+            (json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status","extra":true}).to_string(), "operation-id-invalid"),
+        ] {
+            assert!(runtime.apply_command_json(&raw).contains("\"command_status\":\"queued\""));
+            wait_for(&runtime, reason);
+            let before: Value = serde_json::from_str(&runtime.status_json()).unwrap();
+            let response: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+            assert_eq!(response["command_status"], "accepted");
+            assert_eq!(response["readback"], before["readback"]);
+            assert_eq!(response["readback"]["last_operation_status"], "rejected");
+        }
+        {
+            let _busy = runtime.readback_cache.write().unwrap();
+            let response: Value =
+                serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+            assert_eq!(response["command_status"], "rejected");
+            assert_eq!(response["reason_code"], "readback-busy");
+            assert_eq!(response["readback"], json!({}));
+        }
+        {
+            let _busy = runtime.worker.lock().unwrap();
+            let response: Value =
+                serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+            assert_eq!(response["command_status"], "rejected");
+            assert_eq!(response["reason_code"], "session-worker-closed");
+        }
+        runtime.shutdown_for_test().unwrap();
+        let response: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+        assert_eq!(response["command_status"], "rejected");
+        assert_eq!(response["reason_code"], "session-worker-closed");
+        assert!(runtime
+            .apply_command_json(&command("tick", "after-close", 1, 1_000))
+            .contains("session-worker-closed"));
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn status_query_retains_normal_closed_snapshot_after_shutdown_ack() {
+        let root = temp_root("status-query-closed");
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        runtime.apply_command_json(&start_command(&root, "status-closed-start"));
+        wait_for(&runtime, "\"phase\":\"active\"");
+        runtime.apply_command_json(&command("save-and-exit", "status-closed-exit", 1, 8_000));
+        wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        runtime.shutdown_for_test().unwrap();
+        let status =
+            json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        let response: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+        assert_eq!(response["command_status"], "accepted");
+        assert_eq!(response["readback"]["phase"], "closed");
+        assert_eq!(response["readback"]["shutdown_status"], "complete");
+        assert!(
+            response["readback"]["shutdown_ack_revision"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        assert_eq!(
+            response["readback"]["last_operation_id"],
+            "status-closed-exit"
+        );
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
     fn explicit_control_events_are_durable_once_and_audio_errors_hold_timing() {
         let root = temp_root("explicit-control");
         let runtime = runtime(&root);
@@ -4285,12 +4392,20 @@ mod tests {
         })
         .to_string();
         let mut regular_full = false;
-        for _ in 0..(COMMAND_QUEUE_CAPACITY * 2) {
+        for index in 0..(COMMAND_QUEUE_CAPACITY * 2) {
             regular_full |= runtime
-                .apply_command_json(&status)
+                .apply_command_json(&command(
+                    "tick",
+                    &format!("queued-tick-{index}"),
+                    1,
+                    2_000 + index as u64,
+                ))
                 .contains("command-queue-full");
         }
         assert!(regular_full);
+        assert!(runtime
+            .apply_command_json(&status)
+            .contains("\"command_status\":\"accepted\""));
         let terminal = runtime.apply_command_json(&command(
             "restart-to-experimenter",
             "terminal-priority",

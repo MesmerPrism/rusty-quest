@@ -124,3 +124,13 @@ Initialization alone has no status-read timestamp. Idle generation zero is valid
 but eligibility still requires a genuine accepted status read and the coordinator's
 exact epoch/state/monotonic witness. No marker substitutes for that witness, physical
 XR readiness, live Binder evidence or authenticated browser status.
+
+The exact two-field native status command reads the current cached projection
+without entering the mutation queue. Its accepted status envelope does not change
+the last product receipt. Malformed or extended commands retain normal command
+validation, and a busy readback cache remains rejected. Mutations retain queued
+acknowledgements and their existing actor validation and terminal admission.
+An unavailable worker observation or unexpected completed worker rejects the
+query. A normal Closed projection remains readable only after complete shutdown
+and a positive shutdown acknowledgement; direct retained status inspection keeps
+its existing semantics.
