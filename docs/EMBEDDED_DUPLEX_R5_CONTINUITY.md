@@ -6,6 +6,23 @@ do not establish camera, codec, reciprocal rendering, renewal or teardown.
 See [the retained cleanup contract](EMBEDDED_DUPLEX_R4_RECOVERY.md) for the
 remaining app transaction and restoration obligations.
 
+For an already Peer-terminal started route, the selected whole-close request
+retains its own completion future while actual Own, renderer and resource
+barriers retire. The existing Own lifetime observer only schedules readiness
+checks on the process command lane. Native host completion rechecks the exact
+configuration and app/native incarnation, the selected whole-close and retained
+Peer-terminal history, then every existing physical barrier. It does not repeat
+Stop, route termination, projection stop or an owner dispatch. Duplicate calls
+on that same challenge observe the held completion instead of issuing effects.
+
+Elapsed time and callback arrival never imply cleanup. A changed identity or
+failed continuation stops observation and retains the failure/objects; missing
+owners and incomplete barriers remain Pending. The operator's wait may expire
+without canceling the held cleanup. The existing same-challenge whole-close
+receipt remains available after completion. No-media-only/remote-owner closure
+keeps its existing route; this completion seam selects a started local client
+only. Host controls are not Android physical teardown evidence.
+
 ## App and native execution ownership
 
 The app holds its private FileChannel writer lock and a synced generation,

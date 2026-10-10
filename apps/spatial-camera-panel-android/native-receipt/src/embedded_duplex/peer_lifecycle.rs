@@ -24,6 +24,7 @@ pub(super) struct State {
     renewal_pending: bool,
     last_failure: Option<String>,
     last_failure_action: Option<&'static str>,
+    whole_close_requested: bool,
 }
 
 fn entropy() -> Result<String, String> {
@@ -714,6 +715,7 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
         if actual_java_cleanup(env)? { return close_host(value, host, checked); }
         return Ok(value.to_string());
     }
+    if word == 6 { state.whole_close_requested = true; }
     let operation = match word {
         1 => start(&host, state),
         2 => renew(&host, state),
@@ -741,6 +743,57 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
         return close_host(value, host, checked);
     }
     Ok(value.to_string())
+}
+
+/// Continue only host retirement for the already selected whole-close. This
+/// never re-enters Stop, route termination, owner dispatch or projection stop.
+fn require_retained_whole_close_binding(
+    expected: &str, actual: &str, executor: i64, app: i64,
+    actual_executor: u64, actual_app: u64,
+) -> Result<(), String> {
+    if executor <= 0 || app <= 0 || actual != expected
+        || actual_executor != executor as u64 || actual_app != app as u64 {
+        return Err("retained whole-close incarnation differs".into());
+    }
+    Ok(())
+}
+
+fn complete_retained_whole_close(
+    env: &mut JNIEnv<'_>, expected: &str, executor: i64, app: i64,
+) -> Result<Option<String>, String> {
+    let host = host()?;
+    host.capability.require_live()?;
+    require_retained_whole_close_binding(expected, &host.config_sha256, executor, app,
+        host.capability.generation, host.capability.binding.generation)?;
+    let mut checked = Checkout::take(host.peer_lifecycle.clone())?;
+    let state = checked.get();
+    if !state.whole_close_requested || state.client.is_none() {
+        return Err("retained whole-close request absent".into());
+    }
+    let value = receipt(&host, state, "whole_app_close")?;
+    if value.get("peer_physical_cleanup").and_then(Value::as_str) != Some("terminal")
+        || state.last_failure.is_some() {
+        return Err("retained Peer cleanup is not terminal".into());
+    }
+    if !actual_java_cleanup(env)? { return Ok(None); }
+    close_host(value, host, checked).map(Some)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_completeRetainedWholeClose(
+    mut env: JNIEnv<'_>, _: JClass<'_>, expected: JString<'_>, executor: jni::sys::jlong,
+    app: jni::sys::jlong,
+) -> jstring {
+    let result = read_string(&mut env, &expected, 64)
+        .and_then(|expected| complete_retained_whole_close(&mut env, &expected, executor, app));
+    if env.exception_check().unwrap_or(true) {
+        let _ = env.exception_clear();
+    }
+    match result {
+        Ok(None) => std::ptr::null_mut(),
+        Ok(Some(receipt)) => return_string(&mut env, Ok(receipt)),
+        Err(reason) => return_string(&mut env, Err(reason)),
+    }
 }
 
 #[no_mangle]

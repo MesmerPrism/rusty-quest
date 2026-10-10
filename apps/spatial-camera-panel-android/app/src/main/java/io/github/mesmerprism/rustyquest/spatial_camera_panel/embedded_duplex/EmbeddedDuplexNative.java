@@ -57,6 +57,9 @@ public final class EmbeddedDuplexNative {
 
     static native String runtimeCommand(String operation, String input);
     static native String peerLifecycle(int action);
+    /** Cleanup-only continuation of an already selected whole-close; null means still Pending. */
+    static native String completeRetainedWholeClose(String configSha256, long executorGeneration,
+            long appGeneration);
 
     static native String ownerFailureDiagnosticRead();
     static native String closeNoMediaRuntime(String expectedConfigSha256);

@@ -55,6 +55,24 @@ final class EmbeddedDuplexProcessHost {
     private volatile EmbeddedDuplexResources resources;
     private String runtimeConfigSha256;
     private volatile EmbeddedDuplexBootstrap.Failure lastBootstrapFailure;
+    private volatile RetainedWholeClose retainedWholeClose;
+    static final class RetainedWholeClose {
+        final String challenge, epoch, config, feature, apk, initialReceipt;
+        final long appGeneration, executorGeneration, attachment;
+        final EmbeddedDuplexResources resources;
+        final EmbeddedDuplexPlatform platform;
+        final CompletableFuture<String> completion = new CompletableFuture<>();
+        final java.util.concurrent.atomic.AtomicBoolean queued = new java.util.concurrent.atomic.AtomicBoolean();
+        AutoCloseable observer;
+        RetainedWholeClose(String challenge, String epoch, String config, String feature, String apk,
+                String receipt, long app, long executor, long attachment,
+                EmbeddedDuplexResources resources, EmbeddedDuplexPlatform platform) {
+            this.challenge=challenge; this.epoch=epoch; this.config=config; this.feature=feature;
+            this.apk=apk; this.initialReceipt=receipt; this.appGeneration=app;
+            this.executorGeneration=executor; this.attachment=attachment;
+            this.resources=resources; this.platform=platform;
+        }
+    }
     private String ownFeatureLockSha256;
     private String ownNoMediaConfigSha256;
     private String ownNoMediaFeatureSha256;
@@ -204,6 +222,7 @@ final class EmbeddedDuplexProcessHost {
                 // Supersede retained cleanup facts only after the new authenticated host owns real resources/control.
                 ownNoMediaCloseProof = null; ownNoMediaStopTarget = null;
                 terminalWholeReceipt = null; terminalWholeChallenge = null; retainedWholeNativeReceipt = null;
+                retainedWholeClose = null;
                 phase.set(Phase.READY);
                 return initialized;
             } catch (Exception failure) {
@@ -368,7 +387,82 @@ final class EmbeddedDuplexProcessHost {
     }
     CompletableFuture<String> peerLifecycle(EmbeddedDuplexPeerAction action, String challenge) {
         if (action == null) return failed(new IllegalArgumentException("peer action required"));
-        return concurrentQualificationOnLane(false, challenge, false, null, action);
+        CompletableFuture<String> observed = concurrentQualificationOnLane(false, challenge, false, null, action);
+        if (action != EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE) return observed;
+        return observed.thenCompose(receipt -> {
+            RetainedWholeClose held = retainedWholeClose;
+            return held != null && held.challenge.equals(challenge)
+                    ? held.completion : CompletableFuture.completedFuture(receipt);
+        });
+    }
+    private void retainWholeClose(String challenge, String epoch, String apk, String receipt) {
+        OwnStereoCaptureRuntime own = OwnStereoCaptureRuntime.currentForApplication();
+        if (own == null) return; // Missing physical owner is unknown, never completion.
+        final RetainedWholeClose held = new RetainedWholeClose(challenge, epoch, runtimeConfigSha256,
+                ownFeatureLockSha256, apk, receipt, processFence.generation(), nativeExecutorGeneration,
+                attachmentGeneration, resources, platform);
+        retainedWholeClose = held;
+        phase.set(Phase.CLOSING);
+        try { held.observer = own.observePhysicalCleanup(new Runnable() {
+            @Override public void run() {
+                if (held.completion.isDone() || !held.queued.compareAndSet(false, true)) return;
+                try {
+                    commands.execute(new Runnable() {
+                        @Override public void run() {
+                            try { continueWholeClose(held); }
+                            catch (Throwable failure) { held.completion.completeExceptionally(failure); }
+                            finally {
+                                held.queued.set(false);
+                                if (held.completion.isDone()) releaseWholeCloseObserver(held);
+                            }
+                        }
+                    });
+                } catch (RuntimeException rejected) {
+                    held.queued.set(false);
+                    held.completion.completeExceptionally(rejected);
+                    releaseWholeCloseObserver(held);
+                }
+            }
+        }); } catch (RuntimeException failure) {
+            held.completion.completeExceptionally(failure);
+            throw failure;
+        }
+    }
+    private void releaseWholeCloseObserver(RetainedWholeClose held) {
+        AutoCloseable observer = held.observer;
+        if (observer != null) {
+            try { observer.close(); }
+            catch (Exception ignored) { /* A done future fences any stale observer callback. */ }
+        }
+    }
+    private void continueWholeClose(RetainedWholeClose held) throws Exception {
+        if (held.completion.isDone()) return;
+        requireFreshProcess();
+        if (retainedWholeClose != held || phase.get() != Phase.CLOSING
+                || processFence.generation() != held.appGeneration || !processFence.epochId().equals(held.epoch)
+                || !held.config.equals(runtimeConfigSha256) || !held.feature.equals(ownFeatureLockSha256)
+                || nativeExecutorGeneration != held.executorGeneration || attachmentGeneration != held.attachment
+                || resources != held.resources || platform != held.platform
+                || !held.apk.equals(installedApkDigest.read(applicationContext)))
+            throw new IllegalStateException("retained whole-close owner changed");
+        processFence.requireLive(held.appGeneration);
+        OwnStereoCaptureRuntime own = OwnStereoCaptureRuntime.currentForApplication();
+        if (own == null || !"terminal".equals(own.physicalCleanupState())) return;
+        // Same arm is checked before native retirement. No Stop, route or projection action is repeated.
+        ConcurrentStereoQualification.status(held.challenge, held.epoch, held.config, held.feature, held.apk);
+        String nativeReceipt = retainedWholeNativeReceipt != null ? retainedWholeNativeReceipt
+                : EmbeddedDuplexNative.completeRetainedWholeClose(held.config, held.executorGeneration, held.appGeneration);
+        if (nativeReceipt == null) return;
+        JSONObject physical = new JSONObject(nativeReceipt);
+        if (!"terminal".equals(physical.optString("native_host_physical_cleanup"))) return;
+        retainedWholeNativeReceipt = nativeReceipt;
+        physical.put("java_own_capture_cleanup", own.physicalCleanupState());
+        finishWholeAppProof(physical, held.config, false);
+        if (!"terminal".equals(physical.optString("whole_app_physical_cleanup"))) return;
+        String completed = ConcurrentStereoQualification.lifecycle("whole_app_close", held.challenge,
+                held.epoch, held.config, held.feature, held.apk, physical.toString());
+        terminalWholeReceipt = completed; terminalWholeChallenge = held.challenge;
+        held.completion.complete(completed);
     }
     private CompletableFuture<String> concurrentQualificationOnLane(boolean arm, String challenge, boolean policyAction, long[] policy, EmbeddedDuplexPeerAction peerAction) {
         return concurrentQualificationOnLane(arm,challenge,policyAction,policy,peerAction,false);
@@ -383,6 +477,10 @@ final class EmbeddedDuplexProcessHost {
                 if (!challenge.equals(terminalWholeChallenge)) throw new IllegalStateException("closed challenge differs");
                 processFence.requireLive(processFence.generation());
                 return terminalWholeReceipt;
+            }
+            if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE && retainedWholeClose != null) {
+                if (!retainedWholeClose.challenge.equals(challenge)) throw new IllegalStateException("retained whole-close challenge differs");
+                return retainedWholeClose.initialReceipt;
             }
             Phase observedPhase = phase.get();
             boolean cleanupObservation = !policyAction && (peerAction == null
@@ -451,6 +549,12 @@ final class EmbeddedDuplexProcessHost {
                 if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
                         && "terminal".equals(new JSONObject(nativeReceipt).optString("whole_app_physical_cleanup"))) {
                     terminalWholeReceipt = receipt; terminalWholeChallenge = challenge;
+                }
+                if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE && !noMediaFallback
+                        && "terminal".equals(new JSONObject(nativeReceipt).optString("peer_physical_cleanup"))
+                        && new JSONObject(nativeReceipt).isNull("last_failure")
+                        && !"terminal".equals(new JSONObject(nativeReceipt).optString("whole_app_physical_cleanup"))) {
+                    retainWholeClose(challenge, epoch, apk, receipt);
                 }
                 return receipt;
             }

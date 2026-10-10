@@ -25,6 +25,7 @@ class OwnStereoCaptureRuntime private constructor(context: Context) {
     private var lastCleanupStatus: PackedStereoCaptureOwner.CleanupStatus? = null
     @Volatile private var captureEverOwned = false
     private var startup: CompletableFuture<PackedStereoCaptureOwner>? = null
+    @Volatile private var cleanupObserver: Runnable? = null
 
     init {
         control.scheduleWithFixedDelay({
@@ -37,6 +38,8 @@ class OwnStereoCaptureRuntime private constructor(context: Context) {
                     }
                 }
             } catch (error: Throwable) { failure = error }
+            // Observe the same held whole-close lifetime, never dispatch Stop again.
+            if (phase == Phase.Idle) cleanupObserver?.run()
         }, 50, 50, TimeUnit.MILLISECONDS)
     }
 
@@ -88,6 +91,15 @@ class OwnStereoCaptureRuntime private constructor(context: Context) {
         control.execute { owner?.requestStop() }
     }
     fun pollStopped(): Boolean = phase == Phase.Idle
+    fun observePhysicalCleanup(observer: Runnable): AutoCloseable {
+        synchronized(lock) {
+            check(cleanupObserver == null) { "prior whole-close observer retained" }
+            cleanupObserver = observer
+        }
+        return AutoCloseable {
+            synchronized(lock) { if (cleanupObserver === observer) cleanupObserver = null }
+        }
+    }
     fun physicalCleanupState(): String = if (!captureEverOwned) "unknown" else if (phase == Phase.Idle) "terminal" else "pending"
     fun cleanupStatus(): PackedStereoCaptureOwner.CleanupStatus? = synchronized(lock) {
         capture?.cleanupStatus() ?: lastCleanupStatus
