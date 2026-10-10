@@ -478,7 +478,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let plan = match load_public_plan() {
@@ -488,7 +488,7 @@ fn android_main(app: android_activity::AndroidApp) {
                 "plan-load",
                 format!("status=error reason={}", sanitize(&error)),
             );
-            keep_activity_alive_after_error(app);
+            keep_activity_alive_after_error(&app);
             return;
         }
     };
@@ -539,7 +539,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=simultaneous-hands-controllers-activation-rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let particle_effect_request = particle_adapter_effect_request(&runtime_options);
@@ -552,7 +552,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=particle-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     if !hand_adapter_consumer::effects_authorized(&hand_adapter_decision, hand_effect_request) {
@@ -560,7 +560,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=hand-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let xr_vulkan_readiness = xr_vulkan::probe(&app, simultaneous_hands_controllers_decision);
@@ -571,7 +571,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "simultaneous-hands-controllers",
             "status=rejected reason=probe-preconditions-failed effectsStarted=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let embedded_manifold_broker_settings =
@@ -816,12 +816,12 @@ fn run_counter_fallback_loop(
 }
 
 #[cfg(target_os = "android")]
-fn keep_activity_alive_after_error(app: android_activity::AndroidApp) {
+fn keep_activity_alive_after_error(app: &android_activity::AndroidApp) {
     use std::time::Duration;
 
     let mut running = true;
     while running {
-        android_events::pump_activity_events(&app, Duration::from_millis(250), &mut running);
+        android_events::pump_activity_events(app, Duration::from_millis(250), &mut running);
     }
 }
 

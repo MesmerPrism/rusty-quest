@@ -1069,7 +1069,7 @@ pub(crate) fn notify_app_status_owner(app: &android_activity::AndroidApp,
         let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererAppStatusBridge")?;
         let class = JClass::for_name_with_loader(env, name, true, loader)?;
         env.call_static_method(class, jni_str!("changed"), jni_sig!("(JJZ)V"),
-            &[JValue::Long(identity as i64), JValue::Long(epoch as i64), JValue::Bool(u8::from(live))])?;
+            &[JValue::Long(identity as i64), JValue::Long(epoch as i64), JValue::Bool(live)])?;
         Ok(())
     }).map_err(|_| "app-status-owner-jni-unavailable".to_owned())
 }
