@@ -131,9 +131,7 @@ public final class ConnectionHubAdmissionService extends Service {
                 JSONObject receipt = response.optJSONObject("receipt");
                 JSONObject mutationReceipt = response.optJSONObject("mutation_receipt");
                 Log.i(TAG, "status=receipt operation=" + operation.optString("operation", "runtime")
-                        + " applied=" + (receipt != null
-                                ? receipt.optBoolean("applied", false)
-                                : response.optBoolean("accepted", false))
+                        + " applied=" + ConnectionHubRuntimeEvidenceProjection.operationApplied(response)
                         + " rejection=" + (receipt != null
                                 ? receipt.optString("rejection_reason", "none")
                                 : response.optString("status", "none"))

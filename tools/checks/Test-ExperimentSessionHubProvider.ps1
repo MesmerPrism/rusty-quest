@@ -23,7 +23,7 @@ $hostOut=Join-Path $OutputRoot 'host';$androidOut=Join-Path $OutputRoot 'android
 $null=New-Item -ItemType Directory $hostOut,$androidOut
 $test=Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionHubProviderTest.java"
 $hubRoot=Join-Path $repo 'apps/manifold-broker-android/src/main/java/io/github/mesmerprism/rustymanifold/broker'
-$hubSources=@('ConnectionHubProtocol','HubProviderIdentity','HubSurfaceDescriptor')|ForEach-Object{Join-Path $hubRoot "$_.java"}
+$hubSources=@('ConnectionHubProtocol','HubProviderIdentity','HubSurfaceDescriptor','HubSurfaceRegistry','ConnectionHubAuthorityPort','ConnectionHubStateStore','ConnectionHubRuntime')|ForEach-Object{Join-Path $hubRoot "$_.java"}
 RunHost 'host-compile' 'javac' (@('--release','8','-cp',$JsonJar,'-d',$hostOut)+$sources+$hubSources+@($test,(Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionHubLifetimeTest.java")))
 RunHost 'host-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionHubProviderTest')
 RunHost 'lifetime-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionHubLifetimeTest')

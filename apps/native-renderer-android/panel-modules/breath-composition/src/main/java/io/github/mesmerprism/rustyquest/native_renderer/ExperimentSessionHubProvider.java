@@ -166,7 +166,18 @@ final class ExperimentSessionHubProvider {
         String observation;
         try { observation = projection.project(source.get()); }
         catch (RuntimeException unavailable) { observation = projection.project(null); }
-        return new JSONObject().put("experiment_status_observation", observation);
+        JSONObject envelope = new JSONObject(observation);
+        JSONObject flat = new JSONObject();
+        // Preserve producer types and freshness fences; Hub state is scalar-only.
+        for (String key : new String[] {"schema", "channel", "epoch", "sequence",
+                "generation", "revision", "source_state", "source_age_ms"}) {
+            flat.put(key, envelope.get(key));
+        }
+        JSONObject status = envelope.optJSONObject("status");
+        for (String key : new String[] {"phase", "foreground", "recording", "active_ms", "completion"}) {
+            flat.put(key, status == null ? JSONObject.NULL : status.get(key));
+        }
+        return flat;
     }
     private JSONObject registration() throws org.json.JSONException {
         return new JSONObject().put("$schema", "rusty.quest.connection_hub.surface_registration.v1")

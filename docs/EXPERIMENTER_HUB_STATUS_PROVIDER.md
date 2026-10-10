@@ -30,8 +30,14 @@ description `Read-only application status observation; no physical readiness cla
 Its exact Hub canonical digest is computed over `v1`, those three strings, and
 their newline delimiters with no command records. Host controls compare the
 digest to the actual HubSurfaceDescriptor implementation. `commands` is exactly
-`[]`. The only state key is `experiment_status_observation`, a scalar containing
-the existing closed <=1024-byte observation. The application supplies the
+`[]`. State contains thirteen typed scalars: schema, channel, epoch, sequence,
+generation, revision, source_state, source_age_ms, phase, foreground, recording,
+active_ms and completion. The existing closed observation producer supplies
+these exact values; an unavailable status has null age and status fields. No
+Boolean or numeric value is converted to a string. This representation fits
+the Hub's scalar-only update contract (sixteen keys, 256 characters per string,
+4096 UTF-8 bytes), unlike wrapping the observation JSON in one oversized string.
+The application supplies the
 same-lock NativeStatusSnapshot, selected channel and native runtime epoch to
 the existing producer. Polling once per second does not synthesize native
 readbacks or refresh sequence. Unavailable source publishes a null status

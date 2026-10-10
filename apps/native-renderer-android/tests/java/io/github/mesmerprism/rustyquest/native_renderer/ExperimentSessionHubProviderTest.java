@@ -4,6 +4,7 @@ import io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionS
 import java.util.*;
 import org.json.JSONObject;
 import io.github.mesmerprism.rustymanifold.broker.HubSurfaceDescriptor;
+import io.github.mesmerprism.rustymanifold.broker.*;
 
 public final class ExperimentSessionHubProviderTest {
     static int checks;
@@ -55,8 +56,8 @@ public final class ExperimentSessionHubProviderTest {
             ExperimentSessionHubProvider.SURFACE,ExperimentSessionHubProvider.LABEL,
             ExperimentSessionHubProvider.DESCRIPTION,Collections.emptyList())),"actual Hub canonical contract agrees");
         check(registration.getString("surface_id").equals("surface.experimenter.status"),"distinct owned identity");
-        check(registration.getJSONObject("state").length()==1,"one fixed state scalar");
-        check(registration.getJSONObject("state").getString("experiment_status_observation").contains("\"status\":null"),"unavailable snapshot stays unavailable");
+        check(registration.getJSONObject("state").length()==13,"thirteen fixed state scalars");
+        check(registration.getJSONObject("state").isNull("phase"),"unavailable snapshot stays unavailable");
         check(p.fields.stream().noneMatch(f->f.containsKey("package")||f.containsKey("signer")||f.containsKey("uid")),"no fabricated OS subject");
         p.answer("{\"applied\":true}"); check(p.p.state().isRegistered(),"only registration reply starts publishing");
         Runnable poll=p.tasks.get("observation_poll"); p.time=1000;poll.run();
@@ -91,15 +92,48 @@ public final class ExperimentSessionHubProviderTest {
             "idle","none",false,false,"ready",true,0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"host"),1000000L,1000000L);
         Port status=create(coordinator);admitted(status);status.answer("{\"applied\":true}");
         status.time=1000;status.tasks.get("observation_poll").run();
-        String firstObservation=new JSONObject((String)status.fields.get(status.fields.size()-1).get("state_json"))
-            .getString("experiment_status_observation");
-        check(firstObservation.contains("\"source_state\":\"fresh\""),"actual same-lock producer composed into provider state");
+        JSONObject firstObservation=new JSONObject((String)status.fields.get(status.fields.size()-1).get("state_json"));
+        check(firstObservation.getString("source_state").equals("fresh"),"actual same-lock producer composed into provider state");
+        check(firstObservation.length()==13 && firstObservation.get("recording") instanceof Boolean
+            && firstObservation.get("active_ms") instanceof Number && firstObservation.get("epoch") instanceof String,
+            "flat projection retains real producer types");
+        ConnectionHubAuthorityPort authority=(ConnectionHubAuthorityPort)java.lang.reflect.Proxy.newProxyInstance(
+            ConnectionHubAuthorityPort.class.getClassLoader(),new Class<?>[]{ConnectionHubAuthorityPort.class},
+            (proxy,method,arguments)->{
+                if(method.getName().equals("exportOpaqueState"))return "modeled.authority";
+                if(method.getName().equals("registerProvider")||method.getName().equals("registerSurface"))
+                    return new ConnectionHubAuthorityPort.Receipt(true,"applied","{}",null,0,0,null);
+                throw new AssertionError("unexpected authority operation "+method.getName());
+            });
+        ConnectionHubStateStore store=new ConnectionHubStateStore(){
+            public State load(){return State.stopped();} public void save(State state){} public void clear(){}
+        };
+        HubSurfaceRegistry registry=new HubSurfaceRegistry();
+        ConnectionHubRuntime runtime=new ConnectionHubRuntime(authority,store,registry,new java.security.SecureRandom());
+        HubProviderIdentity identity=new HubProviderIdentity(10082,"io.github.example.experimenter",String.join("",Collections.nCopies(32,"ab")));
+        JSONObject actualRegistration=new JSONObject((String)status.fields.get(3).get("surface_registration_json"));
+        check(runtime.registerSurface(identity,"instance.real.fixture","use.modeled",actualRegistration,
+            (dispatch,callback)->{throw new AssertionError("read-only surface cannot dispatch");}).applied,
+            "actual production Runtime accepts actual producer registration");
+        runtime.updateSurfaceState(identity,ExperimentSessionHubProvider.SURFACE,firstObservation);
+        check(new JSONObject(registry.snapshot().get(0).stateJson).similar(firstObservation),
+            "actual Runtime update stores same-lock producer state");
+        JSONObject oversized=new JSONObject().put("experiment_status_observation",new JSONObject()
+            .put("schema","experiment.status.observation.v1").put("padding",String.join("",Collections.nCopies(257,"x"))).toString());
+        try {runtime.updateSurfaceState(identity,ExperimentSessionHubProvider.SURFACE,oversized);
+            throw new AssertionError("oversized former scalar accepted");}
+        catch(IllegalArgumentException expected){check(registry.snapshot().size()==1,"actual Hub bound rejects old oversized scalar without removal");}
         status.time=2000;status.tasks.get("observation_poll").run();
-        String nextObservation=new JSONObject((String)status.fields.get(status.fields.size()-1).get("state_json"))
-            .getString("experiment_status_observation");
-        check(new JSONObject(firstObservation).getLong("sequence")==new JSONObject(nextObservation).getLong("sequence"),"poll does not fabricate new native sequence");
+        JSONObject nextObservation=new JSONObject((String)status.fields.get(status.fields.size()-1).get("state_json"));
+        check(firstObservation.getLong("sequence")==nextObservation.getLong("sequence"),"poll does not fabricate new native sequence");
+        runtime.updateSurfaceState(identity,ExperimentSessionHubProvider.SURFACE,nextObservation);
         coordinator.openDeveloper(coordinator.allocateRouteEvent());status.time=3000;status.tasks.get("observation_poll").run();
-        check(((String)status.fields.get(status.fields.size()-1).get("state_json")).contains("\\\"status\\\":null"),"local change propagates unavailable projection");
+        JSONObject unavailable=new JSONObject((String)status.fields.get(status.fields.size()-1).get("state_json"));
+        check(unavailable.getString("source_state").equals("unknown")&&unavailable.isNull("phase")
+            &&unavailable.isNull("recording")&&unavailable.isNull("active_ms")&&unavailable.isNull("source_age_ms"),
+            "local change propagates explicit unavailable typed projection");
+        runtime.updateSurfaceState(identity,ExperimentSessionHubProvider.SURFACE,unavailable);
+        check(new JSONObject(registry.snapshot().get(0).stateJson).similar(unavailable),"actual Runtime accepts unavailable producer update");
         System.out.println("ExperimentSessionHubProviderTest PASS controls="+checks+" actual reducer and driver; modeled Binder owner replies, no grant/network/device");
     }
 }

@@ -9,6 +9,14 @@ import java.security.MessageDigest;
 /** Host fixture for the bounded Binder runtime-evidence compatibility projection. */
 public final class ConnectionHubRuntimeEvidenceProjectionTest {
     public static void main(String[] args) throws Exception {
+        require(ConnectionHubRuntimeEvidenceProjection.operationApplied(new JSONObject().put("applied",true).put("status","applied")),"real Hub top-level applied receipt logged");
+        require(!ConnectionHubRuntimeEvidenceProjection.operationApplied(new JSONObject().put("applied",false).put("accepted",true)),"top-level false precedes accepted");
+        require(!ConnectionHubRuntimeEvidenceProjection.operationApplied(new JSONObject().put("receipt",new JSONObject().put("applied",false)).put("applied",true)),"nested admission precedence preserved");
+        require(ConnectionHubRuntimeEvidenceProjection.operationApplied(new JSONObject().put("receipt",new JSONObject().put("applied",true))),"admission Boolean true retained");
+        require(ConnectionHubRuntimeEvidenceProjection.operationApplied(new JSONObject().put("accepted",true)),"legacy accepted retained");
+        for(Object malformed:new Object[]{"true",1,JSONObject.NULL})
+            require(!ConnectionHubRuntimeEvidenceProjection.operationApplied(new JSONObject().put("applied",malformed).put("accepted",true)),"diagnostic no Boolean coercion");
+        require(!ConnectionHubRuntimeEvidenceProjection.operationApplied(new JSONObject()),"missing diagnostic outcome false");
         JSONObject full = largeAuthorityEvidence();
         byte[] fullBytes = full.toString().getBytes(StandardCharsets.UTF_8);
         require(fullBytes.length > 522_144, "large retained-history fixture is too small");
