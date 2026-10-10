@@ -255,9 +255,20 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         RemoteStatusObserver(ExperimentSessionBleServer carrier, long generation, long epoch) {
             this.generation=generation; this.epoch=epoch;
             target=new ExperimentSessionAndroidShell.StatusObservationTarget(epoch,
-                () -> carrier.acceptsStatusRead(generation, epoch), SystemClock::elapsedRealtimeNanos,
-                marker -> android.util.Log.i("RQNativeRenderer",
-                    "RUSTY_QUEST_NATIVE_RENDERER channel=ble-status carrier_generation="+generation+" "+marker));
+                new java.util.function.BooleanSupplier() {
+                    @Override public boolean getAsBoolean() {
+                        return carrier.acceptsStatusRead(generation, epoch);
+                    }
+                },
+                new java.util.function.LongSupplier() {
+                    @Override public long getAsLong() { return SystemClock.elapsedRealtimeNanos(); }
+                },
+                new java.util.function.Consumer<String>() {
+                    @Override public void accept(String marker) {
+                        android.util.Log.i("RQNativeRenderer",
+                            "RUSTY_QUEST_NATIVE_RENDERER channel=ble-status carrier_generation="+generation+" "+marker);
+                    }
+                });
         }
     }
     private static final String EXTRA_REMOTE_OPEN_POLAR = "experiment_session_remote_open_polar";

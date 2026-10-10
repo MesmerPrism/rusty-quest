@@ -260,7 +260,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     )
     $javaResponse = Join-Path $output 'androidSources.rsp'
     $null = Write-NativeRendererJavaSourceResponse -SourceFiles $androidSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
-    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output "@$javaResponse"
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
     if ($LASTEXITCODE -ne 0) { throw "Android panel javac failed: $LASTEXITCODE" }
     & $javaCommand.Source '-cp' ("$output$([IO.Path]::PathSeparator)$androidJar") 'io.github.mesmerprism.rustyquest.native_renderer.PolarAutoConnectionPolicyTest'
     if ($LASTEXITCODE -ne 0) { throw "Polar auto-connection policy test failed: $LASTEXITCODE" }
@@ -302,7 +302,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     )
     $javaResponse = Join-Path $output 'androidSources.rsp'
     $null = Write-NativeRendererJavaSourceResponse -SourceFiles $androidSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
-    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output "@$javaResponse"
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
     if ($LASTEXITCODE -ne 0) { throw "Generated Android shell javac failed: $LASTEXITCODE" }
 
     # Compile the real production-generated independent BLE composition and
@@ -324,7 +324,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         }
         $javaResponse = Join-Path $output "ble-owner-hub-$hubOn-ble-$bleOn.rsp"
         $null = Write-NativeRendererJavaSourceResponse -SourceFiles $ownerSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
-        & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output "@$javaResponse"
+        & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
         if ($LASTEXITCODE -ne 0) { throw "Selected BLE native/application owner compilation failed: Hub=$hubOn" }
         Write-Host "Production BLE owner bridge Android compilation passed: Hub=$hubOn BLE=$bleOn"
     }
@@ -348,7 +348,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         $hubSources = @($androidSources + $closureSources | Select-Object -Unique)
         $javaResponse = Join-Path $output 'hubSources.rsp'
     $null = Write-NativeRendererJavaSourceResponse -SourceFiles $hubSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
-    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output "@$javaResponse"
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
         if ($LASTEXITCODE -ne 0) { throw "Optional actual-closure Android shell javac failed: $LASTEXITCODE" }
         Write-Host 'Optional Hub actual source closure and generated shell Android compilation passed.'
         [IO.File]::WriteAllText($bridge,$offBridge,[Text.UTF8Encoding]::new($false))
@@ -418,7 +418,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     )
     $javaResponse = Join-Path $output 'unrelatedSources.rsp'
     $null = Write-NativeRendererJavaSourceResponse -SourceFiles $unrelatedSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
-    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output "@$javaResponse"
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
     if ($LASTEXITCODE -ne 0) { throw "Generated non-breath shell javac failed: $LASTEXITCODE" }
 } finally {
     if (Test-Path -LiteralPath $output) {
