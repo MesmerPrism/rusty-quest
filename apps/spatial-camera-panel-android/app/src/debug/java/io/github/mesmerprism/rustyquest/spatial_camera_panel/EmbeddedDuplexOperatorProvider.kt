@@ -33,6 +33,12 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     val app = requireNotNull(context).applicationContext
     return try {
       when (request.route) {
+        EmbeddedDuplexOperatorContract.Route.RECOVERY_STATUS, EmbeddedDuplexOperatorContract.Route.ABANDON_RETAINED_SCOPE -> {
+          val receipt = if(request.route == EmbeddedDuplexOperatorContract.Route.RECOVERY_STATUS)
+            EmbeddedDuplexRuntimeService.recoveryStatus(app,request.challenge).get(30,TimeUnit.SECONDS)
+          else EmbeddedDuplexRuntimeService.abandonRetainedScope(app,request.challenge,requireNotNull(request.abandonment)).get(30,TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge",request.challenge); putString("receipt",receipt) }
+        }
         EmbeddedDuplexOperatorContract.Route.START, EmbeddedDuplexOperatorContract.Route.RENEW_AUTHORITY,
         EmbeddedDuplexOperatorContract.Route.PEER_STOP, EmbeddedDuplexOperatorContract.Route.PEER_REVOKE,
         EmbeddedDuplexOperatorContract.Route.PEER_STATUS, EmbeddedDuplexOperatorContract.Route.WHOLE_APP_CLOSE -> {

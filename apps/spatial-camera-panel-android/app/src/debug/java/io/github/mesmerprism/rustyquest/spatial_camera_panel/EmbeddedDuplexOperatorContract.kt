@@ -37,7 +37,7 @@ internal object EmbeddedDuplexOperatorContract {
   private val reviewKeys = setOf(KEY_ROLE, KEY_REMOTE_KEY, KEY_RUNTIME_HOST,
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
-  enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
+  enum class Route { RECOVERY_STATUS, ABANDON_RETAINED_SCOPE, STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
     CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
   data class Request(
       val route: Route,
@@ -47,6 +47,7 @@ internal object EmbeddedDuplexOperatorContract {
       val reviewSha256: String? = null,
       val policy: LongArray? = null,
       val mask: LongArray? = null,
+      val abandonment: io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAbandonmentRequest? = null,
   )
 
   fun callerIsShell(uid: Int): Boolean = uid == Process.SHELL_UID
@@ -59,6 +60,8 @@ internal object EmbeddedDuplexOperatorContract {
   internal fun parseFields(method: String, argument: String?, fields: Map<String, Any?>): Request {
     require(argument != null && nonce.matches(argument)) { "operator-challenge-invalid" }
     val route = when (method) {
+      "recovery_status" -> Route.RECOVERY_STATUS
+      "abandon_retained_scope" -> Route.ABANDON_RETAINED_SCOPE
       METHOD_STATUS -> Route.STATUS
       METHOD_REVIEW -> Route.REVIEW
       METHOD_CONFIRM -> Route.CONFIRM
@@ -86,6 +89,8 @@ internal object EmbeddedDuplexOperatorContract {
       else -> throw IllegalArgumentException("operator-method-invalid")
     }
     val expected = when (route) {
+      Route.RECOVERY_STATUS -> emptySet()
+      Route.ABANDON_RETAINED_SCOPE -> setOf("authorization_json")
       Route.STATUS -> setOf(KEY_ROLE)
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
@@ -95,6 +100,10 @@ internal object EmbeddedDuplexOperatorContract {
       Route.POLICY_UPDATE -> setOf("center", "middle", "outer", "geometry", "brightness", "strength")
     }
     require(fields.keys == expected) { "operator-fields-invalid" }
+    if (route == Route.RECOVERY_STATUS) return Request(route,argument)
+    if (route == Route.ABANDON_RETAINED_SCOPE) return Request(route,argument,abandonment=
+        io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAbandonmentRequest(
+            fields["authorization_json"] as? String ?: throw IllegalArgumentException("abandonment type")))
     if (route == Route.BLEND_UPDATE) {
       fun flag(name: String) = fields[name] as? Boolean ?: throw IllegalArgumentException("mask flag type")
       fun value(name: String) = fields[name] as? Float ?: throw IllegalArgumentException("mask float type")

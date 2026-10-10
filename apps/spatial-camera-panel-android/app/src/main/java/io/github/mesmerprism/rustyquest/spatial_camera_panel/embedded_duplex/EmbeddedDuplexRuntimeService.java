@@ -7,6 +7,14 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
 
+    public static CompletableFuture<String> recoveryStatus(Context context,String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).recoveryStatus(challenge);
+    }
+    public static CompletableFuture<String> abandonRetainedScope(Context context,String challenge,
+            EmbeddedDuplexAbandonmentRequest request) {
+        return EmbeddedDuplexProcessHost.forApplication(context).abandonRetainedScope(challenge,request);
+    }
+
     public static CompletableFuture<String> armConcurrentQualification(Context context, String challenge) {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentQualification(true, challenge);
     }

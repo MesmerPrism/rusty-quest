@@ -124,3 +124,13 @@ The current `rusty-quest-media-stream` test
 epoch readbacks. The current embedded authority test
 `retained_cleanup_ticket_never_relabels_original_target_as_revoker` already
 rejects relabeling. Both invariants remain required in the new cleanup path.
+
+## Nonaccepting scope abandonment
+
+An explicitly authorized operator may choose the separate
+[R5 abandonment disposition](EMBEDDED_DUPLEX_R5_CONTINUITY.md#explicit-nonaccepting-abandonment-after-process-absence)
+after genuine identity-bound process absence. That path archives the old scope
+with cleanup unknown, transfers no authority, and permits only an independent
+new scope through normal admission. It does not satisfy the terminal condition
+above or turn process death into a physical teardown receipt. Cleanup-only
+restoration and retained-target revocation keep their existing guards.

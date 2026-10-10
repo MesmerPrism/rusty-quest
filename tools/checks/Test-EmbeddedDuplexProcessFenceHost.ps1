@@ -10,11 +10,65 @@ $output = Join-Path ([IO.Path]::GetTempPath()) ('duplex-fence-classes-' + [guid]
 [void](New-Item -ItemType Directory -Path $output)
 $javac = (Get-Command javac -ErrorAction Stop).Source
 $java = Join-Path (Split-Path $javac -Parent) 'java.exe'
-& $javac '--release' '17' '-encoding' 'UTF-8' '-d' $output (Join-Path $main 'EmbeddedDuplexProcessFence.java') $test
+$jsonJar=Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json') -Recurse -Filter 'json-*.jar' | Sort-Object FullName -Descending | Select-Object -First 1
+if(-not $jsonJar){throw 'Host org.json test dependency unavailable'}
+& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') $test
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host compilation failed' }
-& $java '-cp' $output 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexProcessFenceHostTest'
+& $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexProcessFenceHostTest'
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host regressions failed' }
 $hostSource = Get-Content -Raw -LiteralPath (Join-Path $main 'EmbeddedDuplexProcessHost.java')
+# Execute the production predicate; platform observations are explicitly modeled.
+$begin=$hostSource.IndexOf('    private void requireAbandonmentEffectFree() {')
+$end=$hostSource.IndexOf('    CompletableFuture<String> recoveryStatus(', $begin)
+if($begin-lt0-or$end-le$begin){throw 'Production abandonment effect predicate missing'}
+$guard=$hostSource.Substring($begin,$end-$begin)
+$harness=@'
+package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
+import java.util.concurrent.atomic.AtomicReference;
+final class AbandonmentEffectHost {
+ enum Phase { NEW, READY, CLOSING, FAILED }
+ AtomicReference<Phase> phase=new AtomicReference<>(Phase.NEW);
+ long attachmentGeneration,nativeExecutorGeneration;
+ boolean displayDetaching,closeInFlight;
+ Object platform,resources,pendingReview;
+ String runtimeConfigSha256;
+ public static void main(String[] argv) {
+  new AbandonmentEffectHost().requireAbandonmentEffectFree();
+  java.util.List<java.util.function.Consumer<AbandonmentEffectHost>> edits=java.util.List.of(
+   h->h.phase.set(Phase.READY),h->h.phase.set(Phase.CLOSING),h->h.phase.set(Phase.FAILED),
+   h->h.attachmentGeneration=1,h->h.displayDetaching=true,h->h.closeInFlight=true,
+   h->h.platform=new Object(),h->h.resources=new Object(),h->h.runtimeConfigSha256="retained",
+   h->h.nativeExecutorGeneration=1,h->h.pendingReview=new Object());
+  for(java.util.function.Consumer<AbandonmentEffectHost> edit:edits) {
+   AbandonmentEffectHost h=new AbandonmentEffectHost();edit.accept(h);
+   try{h.requireAbandonmentEffectFree();throw new AssertionError("live effect admitted");}
+   catch(IllegalStateException expected){}
+  }
+  OwnStereoCaptureRuntime.current=new OwnStereoCaptureRuntime();
+  try{new AbandonmentEffectHost().requireAbandonmentEffectFree();throw new AssertionError("Own capture admitted");}
+  catch(IllegalStateException expected){}
+  OwnStereoCaptureRuntime.current.stopped=true;new AbandonmentEffectHost().requireAbandonmentEffectFree();
+  EmbeddedDuplexNative.idle=false;
+  try{new AbandonmentEffectHost().requireAbandonmentEffectFree();throw new AssertionError("native host admitted");}
+  catch(IllegalStateException expected){}
+  System.out.println("Production effect-free predicate: 13 denials and 2 positives PASS; platform observations modeled.");
+ }
+'@
+$tail=@'
+}
+final class OwnStereoCaptureRuntime {
+ static OwnStereoCaptureRuntime current;boolean stopped;
+ static OwnStereoCaptureRuntime currentForApplication(){return current;}
+ boolean pollStopped(){return stopped;}
+}
+final class EmbeddedDuplexNative {static boolean idle=true;static boolean processIdleForEnrollment(){return idle;}}
+'@
+$harnessPath=Join-Path $output 'AbandonmentEffectHost.java'
+[IO.File]::WriteAllText($harnessPath,$harness+"`n"+$guard+"`n"+$tail,[Text.UTF8Encoding]::new($false))
+& $javac '--release' '17' '-encoding' 'UTF-8' '-d' $output $harnessPath
+if($LASTEXITCODE-ne0){throw 'Abandonment production predicate compilation failed'}
+& $java '-cp' $output 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.AbandonmentEffectHost'
+if($LASTEXITCODE-ne0){throw 'Abandonment production predicate controls failed'}
 $platformSource = Get-Content -Raw -LiteralPath (Join-Path $main 'EmbeddedDuplexPlatform.java')
 foreach ($required in @('ensureProcessFence(); result.complete(action.run())', 'beforeRuntimeEffects(checkpointSnapshot(), evidenceSnapshot())', 'callbacks.bindProcessFence(processFence)', 'afterVerifiedNoMediaCleanup(checkpointSnapshot(), evidenceSnapshot())', 'platform.retireProcessCallbacks()')) {
     if (-not $hostSource.Contains($required)) { throw "App host fence integration missing: $required" }

@@ -291,3 +291,51 @@ mandatory. `close_no_media` is unchanged.
 The focused unused-incoming host control extracts the actual receiver and
 resource methods with modeled remaining platform members. It proves source
 behavior only, not Android JNI integration, physical cleanup or acceptance.
+
+### Explicit nonaccepting abandonment after process absence
+
+The debug-only DUMP/shell operator has two separate fixed calls:
+`recovery_status` reads the retained fence/journal digests; `abandon_retained_scope`
+accepts one bounded, closed `authorization_json` of schema
+`rusty.quest.embedded_duplex.abandonment_authorization.v1`. This is deliberate
+operator authorization, not a cleanup, Start, grant, or native-operation input.
+
+The operator must first authenticate genuine complete process-absence evidence
+for the selected old package UID/PID/start-birth on the exact physical device,
+boot and user, including the other affected peer when applicable. It must join
+that evidence's exact SHA to the old installed actor and fresh signed candidate,
+and guard these facts immediately before dispatch. The app records this
+external attestation honestly; it cannot recover the old PID/boot from the
+process fence, and a digest alone is not self-authenticating absence evidence.
+The existing debug shell/DUMP boundary supplies the explicit operator authority.
+The app independently checks its current package, packaged signer, installed
+APK digest, component, UID/user, a different current PID, and exact current and
+predecessor fence digests. No generic paths, keys, grants or operation strings
+are accepted. Operator attestation must never be populated from `pidof` absence alone.
+
+Invoke before attaching a new Activity. Only a live exclusive recovery-only
+fence in a NEW process with no native Host, platform/resources, display,
+review, or live Own capture can accept it. The archive retains exact predecessor
+and recovery fence bytes, checkpoint and evidence bytes, plus a synced receipt
+`old_scope_abandoned_cleanup_unknown`. It states `old_cleanup_confirmed=false`
+and `old_authority_transferred=false`. Neither peer nor whole-app terminal is
+published and the old checkpoint's phase is never relabeled terminal.
+
+The marker is flushed before clearing only the successor app fence. A crash
+before that fence commit remains recovery-only; a torn fence fails closed.
+Journal readers hide only exact archived abandoned records from the fresh
+active scope. After archive and fence commit, the owner retires only the
+verified duplicate active journal files; the exact archive bytes remain
+preserved and rechecked. Unarchived AtomicFile sidecars or drift deny the
+operation. A partial retirement is reconciled solely against that exact archive.
+Fresh bootstrap still constructs new Manifold authority and must pass ordinary
+enrollment, process, display, pair, finite expiry and Start checks. No retained
+snapshot, lease, replay, callback or grant is restored or transferred. A later
+fresh-effect crash is a new recovery obligation. Successful abandonment means
+permission to attempt an independent scope, not accepted media or old cleanup.
+
+This extends the older cleanup-only recovery contract with an explicit
+nonaccepting disposition. Actual recovery-only restoration continues to require
+its original exact authority/owner joins. Host controls model external absence
+and Android chmod/platform observations; they prove neither Android execution,
+actual process absence, physical cleanup, APK qualification nor device recovery.

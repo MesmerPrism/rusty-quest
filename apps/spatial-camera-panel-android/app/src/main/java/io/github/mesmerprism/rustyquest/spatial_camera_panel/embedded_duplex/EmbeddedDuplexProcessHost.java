@@ -1078,6 +1078,40 @@ final class EmbeddedDuplexProcessHost {
     private String evidenceSnapshot() throws Exception {
         return new EmbeddedDuplexRecoveryEvidenceJournal(applicationContext).readValidated();
     }
+    private void requireAbandonmentEffectFree() {
+        // Invoke before Activity attachment; this operation never closes a current effect.
+        OwnStereoCaptureRuntime own = OwnStereoCaptureRuntime.currentForApplication();
+        if(phase.get()!=Phase.NEW || attachmentGeneration!=0L || displayDetaching || closeInFlight
+                || platform!=null || resources!=null || runtimeConfigSha256!=null || nativeExecutorGeneration!=0L
+                || pendingReview!=null || (own!=null && !own.pollStopped())
+                || !EmbeddedDuplexNative.processIdleForEnrollment())
+            throw new IllegalStateException("abandonment requires fresh effect-free process");
+    }
+    CompletableFuture<String> recoveryStatus(String challenge) {
+        return submit(() -> new JSONObject(processFence.recoveryStatus()).put("challenge",challenge).toString());
+    }
+    CompletableFuture<String> abandonRetainedScope(String challenge,EmbeddedDuplexAbandonmentRequest request) {
+        return submit(() -> {
+            synchronized(attachmentGate) {
+                requireAbandonmentEffectFree();
+                EmbeddedDuplexEnrollmentRequest installed=EmbeddedDuplexEnrollmentRequest.localSnapshot(applicationContext,request.role());
+                String component=applicationContext.getPackageName()+"/io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity";
+                request.requireInstalled(installed.packageId,installed.signerSha256,installedApkDigest.read(applicationContext),
+                        component,android.os.Process.myUid(),android.os.Process.myPid());
+                String receipt=processFence.abandon(checkpointSnapshot(),evidenceSnapshot(),request,
+                        (path,directory)->{
+                            android.system.Os.chmod(path.getAbsolutePath(),directory?0700:0600);
+                            if(directory) {
+                                java.io.FileDescriptor fd=android.system.Os.open(path.getAbsolutePath(),
+                                        android.system.OsConstants.O_RDONLY|android.system.OsConstants.O_CLOEXEC,0);
+                                try { android.system.Os.fsync(fd); } finally { android.system.Os.close(fd); }
+                            }
+                        });
+                // No runtime initialization, callbacks, grants, sessions, or media command runs here.
+                return new JSONObject(receipt).put("challenge",challenge).toString();
+            }
+        });
+    }
     private void requireFreshProcess() {
         if (processFence == null) throw new IllegalStateException("process fence unavailable");
         processFence.requireFresh();
@@ -1088,8 +1122,8 @@ final class EmbeddedDuplexProcessHost {
             return;
         }
         // Journal constructors validate the private directory and file types.
-        String checkpoint = checkpointSnapshot();
-        String evidence = evidenceSnapshot();
+        String checkpoint = new EmbeddedDuplexStartJournal(applicationContext).readRaw();
+        String evidence = new EmbeddedDuplexRecoveryEvidenceJournal(applicationContext).readRaw();
         java.io.File directory = new java.io.File(applicationContext.getNoBackupFilesDir(),
                 "embedded-duplex-replay");
         processFence = EmbeddedDuplexProcessFence.acquire(directory, checkpoint, evidence, () -> {

@@ -24,7 +24,8 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private final DirectorySync directorySync;
     private final long generation;
     private final String nonce;
-    private final boolean recoveryOnly;
+    private boolean recoveryOnly;
+    private String predecessorRecord;
     private boolean pending;
     private String checkpointDigest;
     private String evidenceDigest;
@@ -65,6 +66,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             if (lock == null) throw new IllegalStateException("embedded process writer already held");
             long priorGeneration = 0;
             boolean pending = false;
+            String predecessorRecord = null;
             String checkpointHash = digest(checkpoint), evidenceHash = digest(evidence);
             if (created) {
                 if (checkpoint != null || evidence != null) {
@@ -96,7 +98,11 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                         || !fields[7].isEmpty()) {
                     throw new IllegalStateException("process fence record corrupt");
                 }
+                predecessorRecord = record;
                 priorGeneration = Long.parseLong(fields[1]);
+                if (EmbeddedDuplexAbandonment.restore(directory, record, checkpoint, evidence)) {
+                    checkpointHash = "-"; evidenceHash = "-";
+                }
                 pending = "pending".equals(fields[3]);
                 if (!fields[4].equals(checkpointHash) || !fields[5].equals(evidenceHash)) {
                     throw new IllegalStateException("process fence journal binding differs; migration unsupported");
@@ -104,6 +110,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             }
             EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, channel, lock,
                     sync, Math.addExact(priorGeneration, 1), pending, checkpointHash, evidenceHash);
+            result.predecessorRecord = predecessorRecord;
             result.persist();
             return result;
         } catch (Throwable failure) {
@@ -176,6 +183,32 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     }
     private void bind(String checkpoint, String evidence) throws Exception {
         checkpointDigest = digest(checkpoint); evidenceDigest = digest(evidence);
+    }
+    synchronized String retainedRecord() throws Exception { requireLive(generation); return serializedRecord(); }
+    synchronized String recoveryStatus() throws Exception {
+        requireLive(generation);
+        return new org.json.JSONObject().put("$schema","rusty.quest.embedded_duplex.recovery_status.v1")
+                .put("recovery_only",recoveryOnly).put("generation",generation)
+                .put("predecessor_sha256",digest(predecessorRecord)).put("current_fence_sha256",digest(serializedRecord()))
+                .put("checkpoint_sha256",checkpointDigest).put("evidence_sha256",evidenceDigest).toString();
+    }
+    /** Explicit shell-authorized nonaccepting disposition; never a cleanup receipt. */
+    synchronized String abandon(String checkpoint,String evidence,EmbeddedDuplexAbandonmentRequest request,EmbeddedDuplexAbandonment.Protection protection) throws Exception {
+        requireLive(generation);
+        org.json.JSONObject authorization=request.json();
+        if (!digest(serializedRecord()).equals(authorization.getString("expected_current_fence_sha256"))
+                || !recoveryOnly || !pending || predecessorRecord == null
+                || !checkpointDigest.equals(digest(checkpoint)) || !evidenceDigest.equals(digest(evidence)))
+            throw new IllegalStateException("retained abandonment scope unavailable");
+        org.json.JSONObject receipt = EmbeddedDuplexAbandonment.prepare(directory,predecessorRecord,
+                serializedRecord(),checkpoint,evidence,generation,authorization,directorySync,protection);
+        // Archive and disposition are flushed first. A torn fence remains poisoned.
+        checkpointDigest="-"; evidenceDigest="-"; pending=false;
+        persist();
+        EmbeddedDuplexAbandonment.committed(directory,receipt);
+        directorySync.sync();
+        recoveryOnly=false;
+        return receipt.toString();
     }
     /** Called only by the captured native owner; reads the already held channel.
      * Opening/closing another descriptor for Java's fcntl inode could release it. */

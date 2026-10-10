@@ -51,6 +51,10 @@ final class EmbeddedDuplexStartJournal {
     }
 
     synchronized String read() throws Exception {
+        return EmbeddedDuplexAbandonment.visible(directory, readRaw(), true);
+    }
+
+    synchronized String readRaw() throws Exception {
         File base = file.getBaseFile();
         if (!base.exists() && !new File(base.getPath() + ".bak").exists()) return null;
         try (FileInputStream input = file.openRead()) {
