@@ -6,6 +6,7 @@ import java.util.concurrent.TimeUnit;
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
         explicitStatusReadCompletionIsNotAnAck();
+        appObserverDoesNotReplacePanelAndRequiresNewNativeOwner();
         restartWaitsForAudioStopBeforeFinalizing();
         idleGenerationZeroCanFinishOnlyAfterExactShutdownReceipt();
         shutdownErrorMayCloseButNeverClaimsSaved();
@@ -23,6 +24,36 @@ public final class ExperimentSessionAndroidShellTest {
         definitiveClockRejectionRecoversWithFreshAttempt(true);
         definitiveRejectionRecoveryIsBoundedAndReasonSpecific();
         System.out.println("ExperimentSessionAndroidShellTest PASS");
+    }
+
+    private static void appObserverDoesNotReplacePanelAndRequiresNewNativeOwner() throws Exception {
+        FakeClock clock=new FakeClock();
+        java.util.concurrent.LinkedBlockingQueue<Runnable> callbacks=new java.util.concurrent.LinkedBlockingQueue<>();
+        java.util.concurrent.LinkedBlockingQueue<ExperimentSessionAndroidShell.SessionReadback> reads=new java.util.concurrent.LinkedBlockingQueue<>();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(new FakeBridge(false),new FakeCodec(),clock,
+            new ExperimentSessionAndroidShell.UiDispatcher(){
+                public void post(Runnable action){callbacks.add(action);}
+                public boolean isUiThread(){return false;}
+            });
+        ExperimentSessionAndroidShell.UiSink panel=new ExperimentSessionAndroidShell.UiSink(){
+            public boolean acceptsExperimentSessionCallbacks(long epoch){return true;}
+            public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback value){throw new AssertionError("app observation reached panel");}
+            public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult value){throw new AssertionError("app observation changed terminal UI");}
+        };
+        try {
+            shell.attach(panel);shell.openStatusObserver(1);
+            shell.observeStatus(value->{require(value!=null);reads.add(value);});
+            Runnable callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);callback.run();
+            equal(clock.nanos,reads.poll(1,TimeUnit.SECONDS).statusReadCompletedNanos);
+            shell.closeStatusObserver(1);shell.openStatusObserver(1);
+            final boolean[] unavailable={false};shell.observeStatus(value->{unavailable[0]=value==null;});
+            require(unavailable[0]);
+            shell.openStatusObserver(2);shell.closeStatusObserver(1);
+            shell.observeStatus(value->{require(value!=null);reads.add(value);});
+            callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);callback.run();
+            require(reads.poll(1,TimeUnit.SECONDS)!=null);
+            shell.closeStatusObserver(2);
+        } finally {shell.closeForTest();}
     }
 
     private static void explicitStatusReadCompletionIsNotAnAck() throws Exception {

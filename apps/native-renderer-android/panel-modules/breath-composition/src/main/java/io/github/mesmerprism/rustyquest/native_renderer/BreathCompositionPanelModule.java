@@ -4972,6 +4972,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
 
         @Override
+        public String statusResponseReason(String responseJson) {
+            try { return new JSONObject(responseJson).optString("reason_code", "unknown"); }
+            catch (Exception unavailable) { return "unknown"; }
+        }
+
+        @Override
         public ExperimentSessionAndroidShell.SessionReadback parse(
                 String responseJson,
                 ExperimentSessionPanelCoordinator.NativeCommand expected,

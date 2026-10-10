@@ -21,6 +21,7 @@ public final class NativeRendererSelfKioskApplication extends Application {
 
     @Override public void onCreate() {
         super.onCreate();
+        NativeRendererAppStatusBridge.prepare(this);
         NativeRendererSoftKioskCoordinator.process().useSelfWatchdog();
         PanelImmersiveHandoff.setImmersiveForegroundProbe(
             new PanelImmersiveHandoff.ImmersiveForegroundProbe() {

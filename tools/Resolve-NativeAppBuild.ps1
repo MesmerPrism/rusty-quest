@@ -926,11 +926,12 @@ function Resolve-NativePanelComposition {
         $hubPanelRoot = 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/'
         $exactHubSources = @(
             ($hubPanelRoot + 'ExperimentSessionHubLifetime.java'),
+            ($hubPanelRoot + 'ExperimentSessionAppStatusOwner.java'),
             ($hubPanelRoot + 'ExperimentSessionHubProvider.java'),
             ($hubPanelRoot + 'ExperimentSessionHubSurfaceClient.java'),
             'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java'
         )
-        if (@($hubModule.source_files).Count -ne 4 -or
+        if (@($hubModule.source_files).Count -ne 5 -or
             [string]::Join([Environment]::NewLine, @($hubModule.source_files | Sort-Object)) -cne [string]::Join([Environment]::NewLine, @($exactHubSources | Sort-Object))) {
             throw 'Exact Hub driver and public reducer source closure required.'
         }

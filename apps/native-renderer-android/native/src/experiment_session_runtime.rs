@@ -365,6 +365,7 @@ struct ReadbackCache {
     terminal_queue_full: String,
     terminal_admission_busy: String,
     worker_closed: String,
+    observation_unavailable: String,
 }
 
 impl ReadbackCache {
@@ -378,6 +379,7 @@ impl ReadbackCache {
             terminal_admission_busy: projection
                 .response_json("rejected", "terminal-admission-busy"),
             worker_closed: projection.response_json("rejected", "session-worker-closed"),
+            observation_unavailable: projection.response_json("rejected", "status-observation-unavailable"),
         }
     }
 }
@@ -1619,6 +1621,10 @@ fn request_particle_packaged_defaults_reset() -> u64 {
     RESET.fetch_add(1, Ordering::AcqRel).saturating_add(1)
 }
 
+struct StatusObservation {
+    acknowledgement: SyncSender<String>,
+}
+
 enum WorkerMessage {
     Command {
         raw: String,
@@ -1638,9 +1644,11 @@ enum WorkerMessage {
 
 pub(crate) struct ExperimentSessionRuntime {
     runtime_epoch: u64,
+    immersive_owner_identity: AtomicU64,
     recording_root: PathBuf,
     command_sender: SyncSender<WorkerMessage>,
     terminal_sender: SyncSender<WorkerMessage>,
+    observation_sender: SyncSender<StatusObservation>,
     retry_sender: SyncSender<RetryOffer>,
     projection: Arc<RwLock<Projection>>,
     readback_cache: Arc<RwLock<ReadbackCache>>,
@@ -1690,6 +1698,7 @@ impl ExperimentSessionRuntime {
         }
         let (command_sender, command_receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
         let (terminal_sender, terminal_receiver) = mpsc::sync_channel(TERMINAL_QUEUE_CAPACITY);
+        let (observation_sender, observation_receiver) = mpsc::sync_channel(4);
         let (retry_sender, retry_receiver) = mpsc::sync_channel(RETRY_QUEUE_CAPACITY);
         let initial_projection = Projection {
             runtime_epoch,
@@ -1736,6 +1745,7 @@ impl ExperimentSessionRuntime {
                 run_worker(
                     command_receiver,
                     terminal_receiver,
+                    observation_receiver,
                     SessionWorker::new(
                         backend,
                         worker_projection,
@@ -1761,9 +1771,11 @@ impl ExperimentSessionRuntime {
             .map_err(|error| format!("experiment-session-worker-spawn:{error}"))?;
         Ok(Self {
             runtime_epoch,
+            immersive_owner_identity: AtomicU64::new(0),
             recording_root: runtime_recording_root,
             command_sender,
             terminal_sender,
+            observation_sender,
             retry_sender,
             projection,
             readback_cache,
@@ -1818,7 +1830,15 @@ impl ExperimentSessionRuntime {
             if worker_finished && !self.rearmable_after_shutdown() {
                 return self.cached(|cache| &cache.worker_closed);
             }
-            return self.status_json();
+            if worker_finished { return self.status_json(); }
+            // A live handle and a cached projection are not worker progress. Drop
+            // every authority/worker lock before the bounded read-only request.
+            let (acknowledgement, response) = mpsc::sync_channel(1);
+            if self.observation_sender.try_send(StatusObservation { acknowledgement }).is_err() {
+                return self.cached(|cache| &cache.observation_unavailable);
+            }
+            return response.recv_timeout(Duration::from_millis(250))
+                .unwrap_or_else(|_| self.cached(|cache| &cache.observation_unavailable));
         }
         let terminal_generation = terminal_command_generation(raw);
         let mut terminal_gate = if let Some(generation) = terminal_generation {
@@ -1925,6 +1945,27 @@ impl ExperimentSessionRuntime {
         handle
             .join()
             .map_err(|_| "experiment-session-worker-panicked".to_owned())
+    }
+
+    fn claim_immersive_owner(&self, identity: u64) -> Result<(), String> {
+        if identity == 0 || identity >= i64::MAX as u64 { return Err("native-owner-invalid".to_owned()); }
+        let mut prior = self.immersive_owner_identity.load(Ordering::Acquire);
+        loop {
+            if prior == u64::MAX || self.worker_finished() { return Err("native-owner-retiring".to_owned()); }
+            if prior >= identity { return Err("native-owner-stale".to_owned()); }
+            match self.immersive_owner_identity.compare_exchange_weak(prior, identity, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Ok(()), Err(current) => prior=current,
+            }
+        }
+    }
+
+    pub(crate) fn shutdown_captured_immersive_owner(&self, identity: u64) -> Result<bool, String> {
+        // This claim fences the exact captured runtime. A former owner cannot
+        // shut down a replacement on this Arc, and retirement cannot acquire a
+        // new owner while its terminal request/acknowledgement is pending.
+        if self.immersive_owner_identity.compare_exchange(identity, u64::MAX,
+                Ordering::AcqRel, Ordering::Acquire).is_err() { return Ok(false); }
+        self.shutdown_for_immersive_owner_destroyed().map(|()| true)
     }
 
     fn shutdown_for_immersive_owner_destroyed(&self) -> Result<(), String> {
@@ -2090,9 +2131,9 @@ impl ExperimentSessionRuntime {
     #[cfg(test)]
     fn shutdown_for_test(&self) -> Result<(), String> {
         if !self.worker_finished() {
-            self.command_sender
-                .send(WorkerMessage::Shutdown)
-                .map_err(|_| "session-worker-closed".to_owned())?;
+            // Receiver closure can race the finished-handle observation after
+            // normal terminal shutdown. The join below remains the test proof.
+            let _ = self.command_sender.send(WorkerMessage::Shutdown);
         }
         self.worker
             .lock()
@@ -2107,6 +2148,7 @@ impl ExperimentSessionRuntime {
 fn run_worker(
     command_receiver: Receiver<WorkerMessage>,
     terminal_receiver: Receiver<WorkerMessage>,
+    observation_receiver: Receiver<StatusObservation>,
     mut worker: SessionWorker,
 ) {
     if !worker.initialize() {
@@ -2158,6 +2200,15 @@ fn run_worker(
                 continue;
             }
             _ => {}
+        }
+        // Terminal work is always checked first. One read acknowledgement per
+        // iteration cannot consume the mutation lane or alter its product receipt.
+        if let Ok(observation) = observation_receiver.try_recv() {
+            let response = match worker.readback_cache.try_read() {
+                Ok(cache) => cache.accepted.clone(),
+                Err(_) => "{\"schema\":\"rusty.quest.experiment_session.response.v1\",\"command_status\":\"rejected\",\"reason_code\":\"readback-busy\",\"readback\":{}}".to_owned(),
+            };
+            let _ = observation.acknowledgement.try_send(response);
         }
         worker.drain_pending_retries();
         match command_receiver.recv_timeout(Duration::from_millis(10)) {
@@ -2563,6 +2614,16 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
         }
     };
     jni_response(env, response)
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn capture_immersive_owner_runtime(identity: u64) -> Result<(u64, Arc<ExperimentSessionRuntime>), String> {
+    let runtime = runtime().map_err(str::to_owned)?;
+    if runtime.runtime_epoch == 0 || runtime.runtime_epoch > i64::MAX as u64 {
+        return Err("native-owner-epoch-unrepresentable".to_owned());
+    }
+    runtime.claim_immersive_owner(identity)?;
+    Ok((runtime.runtime_epoch, runtime))
 }
 
 pub(crate) fn apply_command_json(raw: &str) -> String {
@@ -4364,56 +4425,112 @@ mod tests {
     #[test]
     fn terminal_lane_remains_admitted_when_regular_command_lane_is_full() {
         let root = temp_root("terminal-lane");
-        let prepare_entered = Arc::new(AtomicBool::new(false));
-        let backend_entered = Arc::clone(&prepare_entered);
-        let runtime = ExperimentSessionRuntime::spawn(
-            root.clone(),
-            Some(trusted_inventory()),
-            move |slot, loss| {
-                let mut backend = DamageBackend::new(slot, loss);
-                backend.prepare_delay = Duration::from_millis(250);
-                backend.prepare_entered = Some(backend_entered);
-                Box::new(backend)
-            },
-        )
-        .unwrap();
+        let runtime = runtime(&root);
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         runtime.apply_command_json(&start_command(&root, "start-terminal-lane"));
-        for _ in 0..100 {
-            if prepare_entered.load(Ordering::Acquire) {
-                break;
-            }
-            thread::sleep(Duration::from_millis(2));
-        }
-        assert!(prepare_entered.load(Ordering::Acquire));
-        let status = json!({
-            "schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
-            "operation":"status"
-        })
-        .to_string();
+        wait_for(&runtime, "\"phase\":\"active\"");
+        let (entered, entered_rx) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::channel();
+        runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let status = json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
         let mut regular_full = false;
         for index in 0..(COMMAND_QUEUE_CAPACITY * 2) {
-            regular_full |= runtime
-                .apply_command_json(&command(
-                    "tick",
-                    &format!("queued-tick-{index}"),
-                    1,
-                    2_000 + index as u64,
-                ))
-                .contains("command-queue-full");
+            regular_full |= runtime.apply_command_json(&command("tick", &format!("queued-tick-{index}"),
+                1, 2_000 + index as u64)).contains("command-queue-full");
         }
         assert!(regular_full);
-        assert!(runtime
-            .apply_command_json(&status)
-            .contains("\"command_status\":\"accepted\""));
-        let terminal = runtime.apply_command_json(&command(
-            "restart-to-experimenter",
-            "terminal-priority",
-            1,
-            2_000,
-        ));
+        assert!(runtime.apply_command_json(&status).contains("status-observation-unavailable"));
+        let terminal = runtime.apply_command_json(&command("restart-to-experimenter", "terminal-priority", 1, 2_000));
         assert!(terminal.contains("\"command_status\":\"queued\""));
+        resume.send(()).unwrap();
         wait_for(&runtime, "\"route_action\":\"show-experimenter\"");
+        assert!(runtime.apply_command_json(&status).contains("\"command_status\":\"accepted\""));
+        runtime.shutdown_for_test().unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn captured_native_owner_cannot_shutdown_replacement_or_new_epoch() {
+        let root = temp_root("native-owner-captured");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
+        let first = Arc::new(runtime(&root));
+        wait_for(&first, "\"initialization_status\":\"ready\"");
+        first.claim_immersive_owner(10).unwrap();
+        first.claim_immersive_owner(11).unwrap();
+        assert!(!first.shutdown_captured_immersive_owner(10).unwrap());
+        assert!(!first.worker_finished());
+        assert!(first.shutdown_captured_immersive_owner(11).unwrap());
+        assert!(first.claim_immersive_owner(12).is_err());
+        let second = ExperimentSessionRuntime::spawn_with_epoch(root.clone(), Some(trusted_inventory()), 2,
+            |slot, loss| Box::new(DamageBackend::new(slot, loss))).unwrap();
+        wait_for(&second, "\"initialization_status\":\"ready\"");
+        second.claim_immersive_owner(12).unwrap();
+        assert!(!first.shutdown_captured_immersive_owner(11).unwrap());
+        let status=json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        let read:Value=serde_json::from_str(&second.apply_command_json(&status)).unwrap();
+        assert_eq!(read["command_status"], "accepted");
+        assert_eq!(read["readback"]["runtime_epoch"], 2);
+        assert!(second.shutdown_captured_immersive_owner(12).unwrap());
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn native_owner_retirement_fences_replacement_before_worker_ack() {
+        let root=temp_root("native-owner-retirement");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
+        let runtime=Arc::new(runtime(&root));
+        wait_for(&runtime,"\"initialization_status\":\"ready\"");
+        runtime.claim_immersive_owner(1).unwrap();
+        let (entered,entered_rx)=mpsc::sync_channel(1);
+        let (resume,resume_rx)=mpsc::channel();
+        runtime.command_sender.send(WorkerMessage::PauseForTest { entered,resume:resume_rx }).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let captured=Arc::clone(&runtime);
+        let shutdown=thread::spawn(move||captured.shutdown_captured_immersive_owner(1));
+        let deadline=Instant::now()+Duration::from_secs(2);
+        while runtime.immersive_owner_identity.load(Ordering::Acquire)!=u64::MAX && Instant::now()<deadline {thread::yield_now();}
+        assert_eq!(runtime.immersive_owner_identity.load(Ordering::Acquire),u64::MAX);
+        assert!(runtime.claim_immersive_owner(2).is_err());
+        // No mutex is retained across the shutdown wait: a current observation
+        // reaches the bounded lane and fails honestly while the worker is paused.
+        let status=json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        assert!(runtime.apply_command_json(&status).contains("status-observation-unavailable"));
+        resume.send(()).unwrap();
+        assert!(shutdown.join().unwrap().unwrap());
+        assert!(runtime.worker_finished());
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn read_only_observation_requires_worker_progress_and_does_not_change_revision() {
+        let root = temp_root("status-worker-progress");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        let status = json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,"operation":"status"}).to_string();
+        let before: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+        assert_eq!(before["command_status"], "accepted");
+        let (entered, entered_rx) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::channel();
+        runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!runtime.worker_finished());
+        assert!(runtime.status_json().contains("\"command_status\":\"accepted\""));
+        for _ in 0..5 {
+            let unavailable: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+            assert_eq!(unavailable["command_status"], "rejected");
+            assert_eq!(unavailable["reason_code"], "status-observation-unavailable");
+            assert_eq!(unavailable["readback"], before["readback"]);
+        }
+        resume.send(()).unwrap();
+        let after: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+        // The first call can find the bounded queue still draining. It cannot be
+        // accepted until the worker actually acknowledges this request.
+        if after["command_status"] != "accepted" { thread::sleep(Duration::from_millis(60)); }
+        let after: Value = serde_json::from_str(&runtime.apply_command_json(&status)).unwrap();
+        assert_eq!(after["command_status"], "accepted");
+        assert_eq!(after["readback"], before["readback"]);
         runtime.shutdown_for_test().unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }

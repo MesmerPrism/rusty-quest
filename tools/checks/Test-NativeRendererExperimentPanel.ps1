@@ -212,7 +212,16 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     static String nativeSubmitLivePrivateParticleDynamics(String value) { return "{}"; }
 }
 '@, (New-Object Text.UTF8Encoding($false)))
+    $bridge = Join-Path $stubDir 'NativeRendererAppStatusBridge.java'
+    $builderText = [IO.File]::ReadAllText((Join-Path $repo 'tools/Build-NativeRendererAndroid.ps1'))
+    Import-Module (Join-Path $repo 'tools/lib/NativeRendererAppStatusBridge.psm1') -Force
+    $offBridge = New-NativeRendererAppStatusBridgeSource
+    if ($builderText.IndexOf('(New-NativeRendererAppStatusBridgeSource)') -gt $builderText.IndexOf('if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {', $builderText.IndexOf('$generatedEmbeddedPackageDir ='))) {
+        throw 'No-panel composition must generate the inert bridge before panel selection.'
+    }
+    [IO.File]::WriteAllText($bridge,$offBridge,[Text.UTF8Encoding]::new($false))
     $androidSources = @(
+        $bridge,
         (Join-Path $mainRoot 'PanelModule.java'),
         (Join-Path $mainRoot 'DisplayCompositeProjectionService.java'),
         (Join-Path $mainRoot 'NativeAppSettingsReader.java'),
@@ -298,17 +307,19 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         $hookMatch = [regex]::Match($buildText, '(?s)\$experimentSessionHubHook = @''\r?\n(.*?)\r?\n''@')
         if (-not $hookMatch.Success) { throw 'Actual optional generated hook unavailable.' }
         $hubShell = $generatedShell.Insert($generatedShell.LastIndexOf('}'), $hookMatch.Groups[1].Value + [Environment]::NewLine)
-        if (-not $hubShell.Contains('new ExperimentSessionHubLifetime(')) { throw 'Optional generated hook was not inserted.' }
+        if (-not $hubShell.Contains('prepareExperimentSessionAppOwner(')) { throw 'Optional generated hook was not inserted.' }
         $closureSources = @($hubLock.panel_source_closure.source_files | ForEach-Object {
             $path = Join-Path $repo ([string]$_.path)
             if ((Get-FileHash $path).Hash.ToLowerInvariant() -cne [string]$_.sha256) { throw 'Actual closure source drift.' }
             $path
         })
         [IO.File]::WriteAllText($stub, $hubShell, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource -Selected),[Text.UTF8Encoding]::new($false))
         $hubSources = @($androidSources + $closureSources | Select-Object -Unique)
         & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output @hubSources
         if ($LASTEXITCODE -ne 0) { throw "Optional actual-closure Android shell javac failed: $LASTEXITCODE" }
         Write-Host 'Optional Hub actual source closure and generated shell Android compilation passed.'
+        [IO.File]::WriteAllText($bridge,$offBridge,[Text.UTF8Encoding]::new($false))
     }
 
     # A non-breath selected panel must compile from its own closure.  In
@@ -355,6 +366,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     }
     [IO.File]::WriteAllText($stub, $unrelatedShell, (New-Object Text.UTF8Encoding($false)))
     $unrelatedSources = @(
+        $bridge,
         (Join-Path $mainRoot 'PanelModule.java'),
         (Join-Path $mainRoot 'PanelModuleRegistry.java'),
         (Join-Path $mainRoot 'NativeRendererForegroundGuardPolicy.java'),

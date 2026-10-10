@@ -18,7 +18,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Worker-only verifier/materializer for the packaged experiment-session trust closure. */
+/** Verifier/materializer for the packaged experiment-session trust closure.
+ * The selected app initializer materializes it before native cold startup; panel
+ * initialization re-verifies the same exact closure on its session worker. */
 final class ExperimentSessionPackagedClosure {
     static final String PROFILE_ASSET_ID = "experiment-session-profile";
     static final String PROFILE_DESTINATION = "session-config/experiment-session.json";

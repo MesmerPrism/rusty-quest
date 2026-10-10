@@ -31,6 +31,7 @@ final class ExperimentSessionAndroidShell {
     }
 
     interface Codec {
+        default String statusResponseReason(String responseJson) { return "unknown"; }
         String statusCommand();
         String command(
             ExperimentSessionPanelCoordinator.NativeCommand command,
@@ -65,6 +66,7 @@ final class ExperimentSessionAndroidShell {
     static final class SessionReadback {
         final ExperimentSessionPanelCoordinator.NativeReceipt receipt;
         final String commandStatus;
+        final String statusResponseReason;
         final String initializationStatus;
         final String inventoryStatus;
         final String recordingRootStatus;
@@ -98,7 +100,7 @@ final class ExperimentSessionAndroidShell {
                 recordingRootStatus, shutdownStatus, shutdownAckRevision,
                 finalizedSessionGeneration, finalizedOperationId, detail,
                 recordingResult, recordingError, runtimeEpoch,
-                lastOperationStatus, lastOperationReason, -1L);
+                lastOperationStatus, lastOperationReason, -1L, "unknown");
         }
 
         private SessionReadback(
@@ -108,9 +110,10 @@ final class ExperimentSessionAndroidShell {
             long finalizedSessionGeneration, String finalizedOperationId,
             String detail, String recordingResult, String recordingError, long runtimeEpoch,
             String lastOperationStatus, String lastOperationReason,
-            long statusReadCompletedNanos
+            long statusReadCompletedNanos, String statusResponseReason
         ) {
             this.statusReadCompletedNanos = statusReadCompletedNanos;
+            this.statusResponseReason = safe(statusResponseReason);
             this.receipt = receipt;
             this.commandStatus = safe(commandStatus);
             this.initializationStatus = safe(initializationStatus);
@@ -130,12 +133,12 @@ final class ExperimentSessionAndroidShell {
             this.lastOperationReason = safe(lastOperationReason);
         }
 
-        private SessionReadback afterStatusRead(long completedNanos) {
+        private SessionReadback afterStatusRead(long completedNanos, String responseReason) {
             return new SessionReadback(receipt, commandStatus, initializationStatus,
                 inventoryStatus, recordingRootStatus, shutdownStatus, shutdownAckRevision,
                 finalizedSessionGeneration, finalizedOperationId, detail,
                 recordingResult, recordingError, runtimeEpoch,
-                lastOperationStatus, lastOperationReason, completedNanos);
+                lastOperationStatus, lastOperationReason, completedNanos, responseReason);
         }
         boolean initializationPending() {
             return "initializing".equals(initializationStatus);
@@ -171,6 +174,8 @@ final class ExperimentSessionAndroidShell {
     private final Clock clock;
     private final UiDispatcher uiDispatcher;
     private volatile ScheduledExecutorService owner;
+    private ScheduledExecutorService statusObserver;
+    private long statusObserverIdentity;
     private final AtomicLong terminalOperationSequence = new AtomicLong();
     private final Object admissionLock = new Object();
     private long launchEpoch;
@@ -232,6 +237,11 @@ final class ExperimentSessionAndroidShell {
             processInstance = new ExperimentSessionAndroidShell(
                 nativeBridge, codec, clock, uiDispatcher, newOwner());
         }
+        return processInstance;
+    }
+
+    static synchronized ExperimentSessionAndroidShell process() {
+        if (processInstance == null) throw new IllegalStateException("selected shell not installed");
         return processInstance;
     }
 
@@ -320,6 +330,37 @@ final class ExperimentSessionAndroidShell {
                 }
             }
         });
+    }
+
+    /** Exact native lifetime opens an independent read-only executor. */
+    synchronized void openStatusObserver(long identity) {
+        if (identity <= statusObserverIdentity) return;
+        if (statusObserver != null) statusObserver.shutdown();
+        statusObserverIdentity=identity;
+        statusObserver=newOwner();
+    }
+    synchronized void closeStatusObserver(long identity) {
+        if (identity != statusObserverIdentity || statusObserver == null) return;
+        statusObserver.shutdown(); statusObserver=null;
+    }
+    /** Does not install/replace a UI sink or reopen mutation/terminal authority. */
+    void observeStatus(final java.util.function.Consumer<SessionReadback> observer) {
+        if (observer == null) throw new IllegalArgumentException("observer required");
+        final ScheduledExecutorService reader;
+        synchronized (this) { reader=statusObserver; }
+        if (reader == null) { observer.accept(null); return; }
+        try {
+            reader.execute(new Runnable() {
+                @Override public void run() {
+                    SessionReadback value;
+                    try { value = readStatus(); } catch (Throwable unavailable) { value = null; }
+                    final SessionReadback result = value;
+                    uiDispatcher.post(new Runnable() {
+                        @Override public void run() { observer.accept(result); }
+                    });
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException unavailable) { observer.accept(null); }
     }
 
     void requestStatus(UiSink sink) {
@@ -648,6 +689,7 @@ final class ExperimentSessionAndroidShell {
             readback.shutdownAckRevision,
             saved ? "shutdown-complete" : "shutdown-error-unsaved"));
         owner.shutdownNow();
+        synchronized (this) { if (statusObserver != null) statusObserver.shutdownNow(); }
         return finish;
     }
 
@@ -697,7 +739,7 @@ final class ExperimentSessionAndroidShell {
         String response = nativeBridge.apply(codec.statusCommand());
         long completedNanos = clock.elapsedRealtimeNanos();
         SessionReadback readback = codec.parse(response, null, false);
-        return readback == null ? null : readback.afterStatusRead(completedNanos);
+        return readback == null ? null : readback.afterStatusRead(completedNanos, codec.statusResponseReason(response));
     }
 
     private SessionReadback apply(

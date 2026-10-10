@@ -44,7 +44,7 @@ $onLockPath=(Get-ChildItem (Join-Path $OutputRoot 'on') -Recurse -Filter feature
 $offLock=Get-Content $offLockPath -Raw|ConvertFrom-Json; $onLock=Get-Content $onLockPath -Raw|ConvertFrom-Json
 Check (@($offLock.panel_source_closure.modules|Where-Object module_id -CEQ 'experiment-session-hub-status-provider').Count -eq 0) 'Feature off compiles Hub module'
 $module=@($onLock.panel_source_closure.modules|Where-Object module_id -CEQ 'experiment-session-hub-status-provider')
-Check ($module.Count -eq 1 -and @($module[0].source_files).Count -eq 4) 'Exact four-source optional closure missing'
+Check ($module.Count -eq 1 -and @($module[0].source_files).Count -eq 5) 'Exact five-source optional closure missing'
 foreach($row in $module[0].source_files) { Check ((Get-FileHash (Join-Path $repo $row.path)).Hash.ToLowerInvariant() -ceq $row.sha256) 'Actual source closure hash mismatch' }
 $featureSchema=Join-Path $repo 'schemas/rusty.quest.native_app_feature.v1.schema.json'
 $descriptor=Join-Path $repo 'fixtures/native-app-features/ui/experiment-session-hub-status-provider/ui.experiment_session_hub_status_provider.feature.json'

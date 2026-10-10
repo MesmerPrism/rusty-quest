@@ -54,14 +54,45 @@ reducer to the hashed optional module. The compile list deduplicates the reducer
 already present in the shared admission supplier. The exact broker package
 query and signature admission permission are explicitly selected.
 
-The generated breath panel shell creates a status lifetime only while resumed.
-It waits for an actual same-lock coordinator native observation with positive
-epoch, then starts one real Binder client. Pause/destroy, unavailable witness,
-clock regression, local state invalidation, or epoch replacement closes that
-lifetime. Neither a later poll nor a recovered witness reopens it. A subsequent
-resumed panel gets a fresh lifetime and must again supply an eligible native
-readback. No listener or application command is dispatched. Existing BLE status,
-commands and navigation remain separate.
+The selected Application initializer composes with the existing self-kiosk
+Application; it does not replace its lifecycle callbacks or foreground probe.
+It materializes and verifies the exact packaged experiment closure before cold
+`android.app.NativeActivity` startup. Feature-off and no-panel compositions have
+an inert generated bridge. No listener, token request or application command is
+started by materialization.
+
+The actual native AndroidApp owner starts one application-context status owner
+only after a positive initialized runtime epoch exists. JNI start/Drop hooks
+carry an exact process-local owner identity and runtime epoch. Synchronous desired
+identity fencing precedes queued main-looper work: former starts, callbacks and
+Drop cannot start or close a replacement. Drop retires the Java provider before
+attempting native shutdown, including failed shutdown acknowledgement. Shutdown
+targets its captured runtime Arc and an atomic owner claim, never a later registry
+lookup. A replacement on the same Arc fences former shutdown; a claimed retiring
+Arc refuses new ownership until existing Closed/rearm produces a new runtime.
+Concurrent startup during retirement remains ineligible rather than retrying. The
+Application status owner retains no Activity. Panel resume/pause/destroy changes
+UI subscription only; it does not create a Binder lifetime or reopen failure.
+
+A separate read-only shell executor polls the exact status command, with only
+one request in flight. Live status queries use a dedicated capacity-four worker
+request/acknowledgement lane, bounded to 250 ms. The worker checks terminal work
+first and acknowledges a current projection without changing product revision,
+last product receipt or mutation admission. No authority lock is held while
+waiting. A live JoinHandle, cached projection or Java timestamp alone is not
+worker responsiveness. Healthy idle revisions can remain unchanged while actual
+worker acknowledgements advance observation identity.
+
+Accepted matching-epoch acknowledgements retain the existing coordinator
+state/epoch/monotonic witness guards. Future, nonadvancing or rejected responses
+cannot refresh it. Transient query unavailability retains only the prior aged
+observation; a supplier age bound and an independent watchdog retire it after
+1500 ms without a valid acknowledgement, even if the poll callback never arrives.
+Closed completion, exact worker loss, clock regression, native Drop and terminal
+Binder/admission failure retire the owner and read executor. Neither a later ACK
+nor panel reopening retries a retired owner. Only an actual eligible new native
+owner may attempt a new lifetime. Existing BLE status, commands and navigation
+remain separate.
 
 tools/Prepare-NativeRendererBrokerClient.ps1 -AppSpec <spec> -OutputRoot <new>
 runs the real source-only resolver and writes one generated client lock using
@@ -81,7 +112,7 @@ policy. This document supplies no token, client/provider identity, grant or
 authenticated subscription. Older owners reject empty-command registration.
 
 The caller must start only in its expressly selected lifetime and close when
-that eligibility ends; no automatic reopen or background lifecycle is added.
+that native eligibility ends; no same-owner retry or persistent service is added.
 Browser consumption requires a genuine authenticated Hub snapshot/event route
 and matching selected surface/channel/epoch before admitting observation bytes.
 LAN listening, plaintext security posture, wearer opt-in, same-origin assets,
@@ -125,7 +156,7 @@ but eligibility still requires a genuine accepted status read and the coordinato
 exact epoch/state/monotonic witness. No marker substitutes for that witness, physical
 XR readiness, live Binder evidence or authenticated browser status.
 
-The exact two-field native status command reads the current cached projection
+The exact two-field native status command obtains a current worker acknowledgement
 without entering the mutation queue. Its accepted status envelope does not change
 the last product receipt. Malformed or extended commands retain normal command
 validation, and a busy readback cache remains rejected. Mutations retain queued

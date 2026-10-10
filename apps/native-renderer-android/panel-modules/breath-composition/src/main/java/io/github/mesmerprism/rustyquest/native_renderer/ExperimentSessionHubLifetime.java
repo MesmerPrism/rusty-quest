@@ -2,9 +2,9 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 
 import java.util.function.Supplier;
 
-/** One selected resumed panel lifetime, admitted only by an actual native witness. */
+/** One selected native owner lifetime, admitted only by an actual native witness. */
 final class ExperimentSessionHubLifetime implements ExperimentSessionPanelCoordinator.StatusLifetime {
-    interface Driver { void start(); void close(); }
+    interface Driver { void start(); void close(); default boolean isClosed() { return false; } }
     interface Factory {
         Driver create(long epoch, Supplier<ExperimentSessionPanelCoordinator.NativeStatusSnapshot> source);
     }
@@ -33,6 +33,7 @@ final class ExperimentSessionHubLifetime implements ExperimentSessionPanelCoordi
         markers++;
         try { observer.accept(marker); } catch (RuntimeException unavailable) { }
     }
+    boolean isClosed() { return closed || (driver != null && driver.isClosed()); }
     public void refresh() {
         if (closed) return;
         ExperimentSessionPanelCoordinator.NativeStatusSnapshot snapshot = source.get();
@@ -43,8 +44,8 @@ final class ExperimentSessionHubLifetime implements ExperimentSessionPanelCoordi
                 + " read=" + (eligible ? snapshot.readId : 0L));
         }
         if (snapshot == null || !snapshot.observed || snapshot.runtimeEpoch <= 0L) {
-            // Once admitted, loss of eligibility retires this lifetime. A new resumed
-            // panel lifetime is required; polling must not reopen a failed session.
+            // Once admitted, loss of eligibility retires this lifetime. A new native
+            // owner lifetime is required; polling must not reopen a failed session.
             if (attempted) { mark("witness_lost"); close(); }
             return;
         }
