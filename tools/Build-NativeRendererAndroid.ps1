@@ -783,8 +783,20 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     @Override
     protected ExperimentSessionPanelCoordinator.StatusLifetime createHubStatusLifetime() {
         return new ExperimentSessionHubLifetime(
-            (epoch, source) -> new ExperimentSessionHubSurfaceClient(this, "experimenter-status", epoch, source),
-            () -> hubNativeStatusSnapshot());
+            new ExperimentSessionHubLifetime.Factory() {
+                @Override
+                public ExperimentSessionHubLifetime.Driver create(long epoch,
+                        java.util.function.Supplier<ExperimentSessionPanelCoordinator.NativeStatusSnapshot> source) {
+                    return new ExperimentSessionHubSurfaceClient(ControlPanelActivity.this,
+                        "experimenter-status", epoch, source);
+                }
+            },
+            new java.util.function.Supplier<ExperimentSessionPanelCoordinator.NativeStatusSnapshot>() {
+                @Override
+                public ExperimentSessionPanelCoordinator.NativeStatusSnapshot get() {
+                    return ControlPanelActivity.this.hubNativeStatusSnapshot();
+                }
+            });
     }
 '@
     }
