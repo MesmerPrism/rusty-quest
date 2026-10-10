@@ -210,6 +210,20 @@ final class ExperimentSessionPanelCoordinator {
     private ExperimentSessionPanelState nativeObservedState;
     private long nativeReadCompletedNanos;
     private long nativeObservationClock;
+    // Closed diagnostic codes only; these fields never participate in admission.
+    private boolean nativeStateAccepted;
+    private String nativeStateAcceptanceReason = "not_read";
+    private String nativeObservationReason = "not_read";
+
+    synchronized String nativeStatusReadbackDiagnostic() {
+        return "state_accepted=" + nativeStateAccepted
+            + " state_reason=" + nativeStateAcceptanceReason
+            + " witness_reason=" + nativeObservationReason
+            + " fresh_runtime_expected=" + freshRuntimeExpected
+            + " coordinator_epoch=" + runtimeEpoch
+            + " coordinator_generation=" + state.generation
+            + " coordinator_revision=" + state.revision;
+    }
 
     static final class NativeReadbackObservation {
         final boolean available;
@@ -270,6 +284,7 @@ final class ExperimentSessionPanelCoordinator {
             long completedNanos, long nowNanos, boolean statusResponseAccepted) {
         acceptRuntimeEpoch(epoch);
         boolean acceptedState = accept(receipt);
+        nativeStateAccepted = acceptedState;
         observeNativeStatusReadback(epoch, receipt, acceptedState, completedNanos, nowNanos,
             statusResponseAccepted);
         return acceptedState;
@@ -283,13 +298,22 @@ final class ExperimentSessionPanelCoordinator {
     private void observeNativeStatusReadback(long epoch, NativeReceipt receipt,
             boolean acceptedState, long completedNanos, long nowNanos,
             boolean statusResponseAccepted) {
-        if (!observeClock(nowNanos)) return;
-        if (!acceptedState || receipt == null || !statusResponseAccepted
-                || parsePhase(receipt.phase, receipt.controlState, null) == null
-                || freshRuntimeExpected || epoch <= 0L || epoch != runtimeEpoch
-                || receipt.generation != state.generation || receipt.revision != state.revision
-                || completedNanos <= 0L || completedNanos > nowNanos
-                || completedNanos <= nativeReadCompletedNanos) return;
+        nativeObservationReason = "observed";
+        if (!observeClock(nowNanos)) { nativeObservationReason = "clock_invalid"; return; }
+        if (!acceptedState) { nativeObservationReason = "state_rejected"; return; }
+        if (receipt == null) { nativeObservationReason = "receipt_null"; return; }
+        if (!statusResponseAccepted) { nativeObservationReason = "status_response_rejected"; return; }
+        if (parsePhase(receipt.phase, receipt.controlState, null) == null) {
+            nativeObservationReason = "phase_unknown"; return;
+        }
+        if (freshRuntimeExpected) { nativeObservationReason = "fresh_runtime_expected"; return; }
+        if (epoch <= 0L) { nativeObservationReason = "epoch_invalid"; return; }
+        if (epoch != runtimeEpoch) { nativeObservationReason = "epoch_mismatch"; return; }
+        if (receipt.generation != state.generation) { nativeObservationReason = "generation_mismatch"; return; }
+        if (receipt.revision != state.revision) { nativeObservationReason = "revision_mismatch"; return; }
+        if (completedNanos <= 0L) { nativeObservationReason = "completion_invalid"; return; }
+        if (completedNanos > nowNanos) { nativeObservationReason = "completion_future"; return; }
+        if (completedNanos <= nativeReadCompletedNanos) { nativeObservationReason = "completion_not_advancing"; return; }
         nativeReadCompletedNanos = completedNanos;
         nativeObservedState = state;
     }
@@ -575,9 +599,10 @@ final class ExperimentSessionPanelCoordinator {
     }
 
     synchronized boolean accept(NativeReceipt receipt) {
-        if (receipt == null || receipt.revision < state.revision || receipt.generation < state.generation) {
-            return false;
-        }
+        nativeStateAcceptanceReason = "accepted";
+        if (receipt == null) { nativeStateAcceptanceReason = "receipt_null"; return false; }
+        if (receipt.revision < state.revision) { nativeStateAcceptanceReason = "revision_regression"; return false; }
+        if (receipt.generation < state.generation) { nativeStateAcceptanceReason = "generation_regression"; return false; }
         boolean pendingMatch = !state.pendingOperationId.isEmpty()
             && state.pendingOperationId.equals(receipt.operationId);
         boolean repeatedRejectedOperation = state.phase == ExperimentSessionPanelState.Phase.ERROR
@@ -609,9 +634,11 @@ final class ExperimentSessionPanelCoordinator {
         if (state.phase == ExperimentSessionPanelState.Phase.SAVING
                 && !state.pendingOperationId.isEmpty()
                 && receipt.generation != state.generation) {
+            nativeStateAcceptanceReason = "saving_generation_mismatch";
             return false;
         }
         if (!state.pendingOperationId.isEmpty() && !pendingMatch) {
+            nativeStateAcceptanceReason = "pending_operation_mismatch";
             return false;
         }
         if (pendingMatch && !receipt.accepted) {
@@ -643,6 +670,7 @@ final class ExperimentSessionPanelCoordinator {
                 && "show-experimenter".equals(receipt.routeAction)
                 && receipt.routeActionRevision > state.routeActionRevision;
             if (!exactRoute || (!state.pendingOperationId.isEmpty() && !pendingMatch)) {
+                nativeStateAcceptanceReason = "saving_route_not_durable";
                 return false;
             }
         }
@@ -651,6 +679,7 @@ final class ExperimentSessionPanelCoordinator {
             boolean exactActive = receipt.accepted
                 && ("active".equals(receipt.phase) || "recording".equals(receipt.phase));
             if (!exactActive) {
+                nativeStateAcceptanceReason = "starting_not_active";
                 return false;
             }
         }

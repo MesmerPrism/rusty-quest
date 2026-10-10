@@ -10,7 +10,7 @@ $null=New-Item -ItemType Directory $OutputRoot
 $repo=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $pkg='io/github/mesmerprism/rustyquest/native_renderer'
 $panel=Join-Path $repo "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/$pkg"
-$sources=@('ExperimentSessionPanelState','ExperimentSessionPanelCoordinator','ExperimentSessionPanelViewPolicy','ExperimentSessionStatusObservation','ExperimentSessionHubProvider','ExperimentSessionHubLifetime')|ForEach-Object{Join-Path $panel "$_.java"}
+$sources=@('ExperimentSessionPanelState','ExperimentSessionPanelCoordinator','ExperimentSessionPanelViewPolicy','ExperimentSessionStatusObservation','ExperimentSessionHubProvider','ExperimentSessionHubLifetime','ExperimentSessionAppStatusOwner')|ForEach-Object{Join-Path $panel "$_.java"}
 $sources+=Join-Path $repo 'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java'
 function RunHost($name,$exe,[string[]]$arguments){
  & $exe @arguments 1> (Join-Path $OutputRoot "$name.stdout") 2> (Join-Path $OutputRoot "$name.stderr")
@@ -24,8 +24,9 @@ $null=New-Item -ItemType Directory $hostOut,$androidOut
 $test=Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionHubProviderTest.java"
 $hubRoot=Join-Path $repo 'apps/manifold-broker-android/src/main/java/io/github/mesmerprism/rustymanifold/broker'
 $hubSources=@('ConnectionHubProtocol','HubProviderIdentity','HubSurfaceDescriptor','HubSurfaceRegistry','ConnectionHubAuthorityPort','ConnectionHubStateStore','ConnectionHubRuntime')|ForEach-Object{Join-Path $hubRoot "$_.java"}
-RunHost 'host-compile' 'javac' (@('--release','8','-cp',$JsonJar,'-d',$hostOut)+$sources+$hubSources+@($test,(Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionHubLifetimeTest.java")))
+RunHost 'host-compile' 'javac' (@('--release','8','-cp',$JsonJar,'-d',$hostOut)+$sources+$hubSources+@($test,(Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionHubLifetimeTest.java"),(Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionAppStatusOwnerTest.java")))
 RunHost 'host-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionHubProviderTest')
+RunHost 'app-owner-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionAppStatusOwnerTest')
 RunHost 'lifetime-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionHubLifetimeTest')
 
 # Test the actual codec, not a synthesized already-accepted NativeReceipt.
@@ -80,6 +81,11 @@ if ($ResolvedJavaSourceListPath -or $ResolvedSourceRepoRoot) {
         }
     }
     if ($shellCount -ne 1) { throw 'Exactly one real generated panel shell required.' }
+    Import-Module (Join-Path $repo 'tools/lib/NativeRendererAppStatusBridge.psm1') -Force
+    $bridge = Join-Path $OutputRoot 'NativeRendererAppStatusBridge.java'
+    [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource -Selected),[Text.UTF8Encoding]::new($false))
+    $fullSources += @($bridge,(Join-Path $panel 'ExperimentSessionAppStatusOwner.java'))
+    $fullSources = @($fullSources | Select-Object -Unique)
     $fullOut = Join-Path $OutputRoot 'resolved-android'; $null = New-Item -ItemType Directory $fullOut
     $rsp = Join-Path $OutputRoot 'resolved-sources.rsp'; $fullSources | Set-Content -Encoding ASCII -LiteralPath $rsp
     RunHost 'resolved-android-compile' 'javac' @('-encoding','UTF-8','-source','1.8','-target','1.8','-bootclasspath',$AndroidJar,'-d',$fullOut,"@$rsp")

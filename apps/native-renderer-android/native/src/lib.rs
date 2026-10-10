@@ -393,13 +393,30 @@ fn request_runtime_permissions(
 }
 
 #[cfg(target_os = "android")]
-struct ExperimentSessionImmersiveOwner;
+struct ExperimentSessionImmersiveOwner<'a> {
+    app: &'a android_activity::AndroidApp,
+    identity: u64,
+    epoch: u64,
+    runtime: Option<std::sync::Arc<experiment_session_runtime::ExperimentSessionRuntime>>,
+}
+#[cfg(target_os = "android")]
+static NEXT_IMMERSIVE_OWNER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 
 #[cfg(target_os = "android")]
-impl Drop for ExperimentSessionImmersiveOwner {
+impl Drop for ExperimentSessionImmersiveOwner<'_> {
     fn drop(&mut self) {
-        match experiment_session_runtime::shutdown_for_immersive_owner_destroyed() {
-            Ok(()) => marker(
+        if self.identity == 0 { return; }
+        if self.identity > 0 {
+            let _ = native_renderer_panel_bridge::notify_app_status_owner(self.app,
+                self.identity, self.epoch, false);
+        }
+        // Provider retirement precedes shutdown, including failed shutdown ACK.
+
+        match self.runtime.as_ref().expect("positive native identity owns a captured runtime")
+                .shutdown_captured_immersive_owner(self.identity) {
+            Ok(false) => marker("experiment-session-runtime", "status=former-immersive-owner-dropped shutdownDispatched=false"),
+            Ok(true) => marker(
                 "experiment-session-runtime",
                 "status=immersive-owner-destroyed recordingFinalized=true nextLaunchFresh=true",
             ),
@@ -417,7 +434,9 @@ impl Drop for ExperimentSessionImmersiveOwner {
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
-    match experiment_session_runtime::initialize_from_android_app(&app) {
+    let initialization = experiment_session_runtime::initialize_from_android_app(&app);
+    let initialized = initialization.is_ok();
+    match initialization {
         Err(error) => marker(
             "experiment-session-runtime",
             format!("status=error reason={}", sanitize(&error)),
@@ -427,7 +446,20 @@ fn android_main(app: android_activity::AndroidApp) {
             "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
         ),
     }
-    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner;
+    let proposed_identity = NEXT_IMMERSIVE_OWNER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let claimed = if initialized {
+        experiment_session_runtime::capture_immersive_owner_runtime(proposed_identity)
+    } else { Err("native-owner-initialization-failed".to_owned()) };
+    let (identity, epoch, runtime) = match claimed {
+        Ok((epoch, runtime)) if epoch > 0 && epoch <= i64::MAX as u64 => (proposed_identity, epoch, Some(runtime)),
+        _ => { marker("hub-status", "app_owner_start_ineligible"); (0, 0, None) }
+    };
+    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner { app: &app, identity, epoch, runtime };
+    if identity > 0 {
+        if let Err(reason) = native_renderer_panel_bridge::notify_app_status_owner(&app, identity, epoch, true) {
+            marker("hub-status", format!("app_owner_start_failed reason={reason}"));
+        }
+    }
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());
@@ -446,7 +478,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let plan = match load_public_plan() {
@@ -456,7 +488,7 @@ fn android_main(app: android_activity::AndroidApp) {
                 "plan-load",
                 format!("status=error reason={}", sanitize(&error)),
             );
-            keep_activity_alive_after_error(app);
+            keep_activity_alive_after_error(&app);
             return;
         }
     };
@@ -507,7 +539,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=simultaneous-hands-controllers-activation-rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let particle_effect_request = particle_adapter_effect_request(&runtime_options);
@@ -520,7 +552,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=particle-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     if !hand_adapter_consumer::effects_authorized(&hand_adapter_decision, hand_effect_request) {
@@ -528,7 +560,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "adapter-lock-admission",
             "status=rejected reason=hand-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let xr_vulkan_readiness = xr_vulkan::probe(&app, simultaneous_hands_controllers_decision);
@@ -539,7 +571,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "simultaneous-hands-controllers",
             "status=rejected reason=probe-preconditions-failed effectsStarted=false sceneStarted=false inputStarted=false mediaStarted=false",
         );
-        keep_activity_alive_after_error(app);
+        keep_activity_alive_after_error(&app);
         return;
     }
     let embedded_manifold_broker_settings =
@@ -784,12 +816,12 @@ fn run_counter_fallback_loop(
 }
 
 #[cfg(target_os = "android")]
-fn keep_activity_alive_after_error(app: android_activity::AndroidApp) {
+fn keep_activity_alive_after_error(app: &android_activity::AndroidApp) {
     use std::time::Duration;
 
     let mut running = true;
     while running {
-        android_events::pump_activity_events(&app, Duration::from_millis(250), &mut running);
+        android_events::pump_activity_events(app, Duration::from_millis(250), &mut running);
     }
 }
 

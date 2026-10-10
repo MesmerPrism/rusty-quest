@@ -714,6 +714,10 @@ final class GeneratedEmbeddedManifoldRuntimeConfig {
     $generatedEmbeddedRuntimeConfigSource,
     (New-Object System.Text.UTF8Encoding($false)))
 $generatedControlPanelActivityPath = ""
+# Generate the inert bridge before panel selection, including no-panel APKs.
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererAppStatusBridge.psm1') -Force
+$generatedAppStatusBridgePath = Join-Path $generatedEmbeddedPackageDir 'NativeRendererAppStatusBridge.java'
+[System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource), [System.Text.UTF8Encoding]::new($false))
 if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     # The experiment-session shell is an owning breath-composition concern.  Do
     # not let its audio/profile/native dependencies leak into another panel's
@@ -780,30 +784,12 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     if ($null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider') {
         if (-not $isExperimentSessionPanel) { throw 'Hub provider requires the breath composition panel.' }
         $experimentSessionHubHook = @'
-    @Override
-    protected ExperimentSessionPanelCoordinator.StatusLifetime createHubStatusLifetime() {
-        return new ExperimentSessionHubLifetime(
-            new ExperimentSessionHubLifetime.Factory() {
-                @Override
-                public ExperimentSessionHubLifetime.Driver create(long epoch,
-                        java.util.function.Supplier<ExperimentSessionPanelCoordinator.NativeStatusSnapshot> source) {
-                    return new ExperimentSessionHubSurfaceClient(ControlPanelActivity.this,
-                        "experimenter-status", epoch, source);
-                }
-            },
-            new java.util.function.Supplier<ExperimentSessionPanelCoordinator.NativeStatusSnapshot>() {
-                @Override
-                public ExperimentSessionPanelCoordinator.NativeStatusSnapshot get() {
-                    return ControlPanelActivity.this.hubNativeStatusSnapshot();
-                }
-            }, new java.util.function.Consumer<String>() {
-                @Override public void accept(String marker) {
-                    android.util.Log.i("RQNativeRenderer",
-                        "RUSTY_QUEST_NATIVE_RENDERER channel=hub-status " + marker);
-                }
-            });
+    static void prepareExperimentSessionAppOwner(android.content.Context context) {
+        ownerApplicationContext = context.getApplicationContext();
+        installConditionAudioFromPackagedClosure(ownerApplicationContext.getFilesDir().toString());
     }
 '@
+        [System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource -Selected), [System.Text.UTF8Encoding]::new($false))
     }
     $generatedControlPanelActivitySource = @"
 package io.github.mesmerprism.rustyquest.native_renderer;
@@ -1713,7 +1699,7 @@ if ($sourceFiles.Count -eq 0) {
 }
 $sourceList = Join-Path $OutDir "sources.rsp"
 $sourceFiles = @($sourceFiles | Select-Object -Unique)
-$sourceFiles | Set-Content -Encoding ASCII -Path $sourceList
+$sourceFiles = @(Write-NativeRendererJavaSourceResponse -SourceFiles $sourceFiles -GeneratedAppStatusBridgePath $generatedAppStatusBridgePath -Path $sourceList)
 
 Invoke-Checked "javac" $javac @(
     "-encoding", "UTF-8",

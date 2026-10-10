@@ -33,6 +33,8 @@ final class ExperimentSessionHubSurfaceClient implements Closeable, ExperimentSe
         long generation = new SecureRandom().nextLong() & Long.MAX_VALUE;
         provider = new ExperimentSessionHubProvider(this, Math.max(1L, generation), channel, epoch, source);
     }
+    public boolean isClosed() { requireMain(); return provider.state().getPhase() ==
+        io.github.mesmerprism.rustyquest.broker_admission.ConnectionHubAdmissionSessionReducer.Phase.CLOSED; }
     public void start() { requireMain(); provider.start(); }
     @Override public void close() { requireMain(); provider.close(); }
     private static void requireMain() {
