@@ -8,6 +8,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * object never starts a session or writes settings.
  */
 final class ExperimentSessionPanelCoordinator {
+    interface StatusLifetime { void refresh(); void close(); }
+
     static final String SCHEMA = "rusty.quest.experiment_session.command.v1";
     static final String CONDITION_ONE = "condition-a";
     static final String CONDITION_TWO = "condition-b";

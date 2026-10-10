@@ -812,6 +812,10 @@ function New-GeneratedAndroidManifestText {
             [void]$lines.Add('        <provider android:name="x" android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />')
         }
         foreach ($query in $Queries) {
+            if ($query -ceq "io.github.mesmerprism.rustymanifold.broker") {
+                [void]$lines.Add('        <package android:name="io.github.mesmerprism.rustymanifold.broker" />')
+                continue
+            }
             if ($query -in @("org.khronos.openxr.runtime_broker", "org.khronos.openxr.system_runtime_broker")) {
                 continue
             }
@@ -913,6 +917,26 @@ function Resolve-NativePanelComposition {
             source_files = $sourceFiles
         }
     }
+    if ($SelectedFeatureIds -ccontains 'ui.experiment_session_hub_status_provider') {
+        if ($selectedModuleId -cne 'breath-composition-controls') { throw 'Hub provider requires breath composition controls.' }
+        $hubModule = $Features['ui.experiment_session_hub_status_provider'].descriptor.panel_source_module
+        if ($hubModule.module_id -cne 'experiment-session-hub-status-provider' -or
+            [string]$hubModule.entry_class -cne '' -or @($hubModule.dependencies).Count -ne 0 -or
+            $modulesById.ContainsKey('experiment-session-hub-status-provider')) { throw 'Exact optional Hub module required.' }
+        $hubPanelRoot = 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/'
+        $exactHubSources = @(
+            ($hubPanelRoot + 'ExperimentSessionHubLifetime.java'),
+            ($hubPanelRoot + 'ExperimentSessionHubProvider.java'),
+            ($hubPanelRoot + 'ExperimentSessionHubSurfaceClient.java'),
+            'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java'
+        )
+        if (@($hubModule.source_files).Count -ne 4 -or
+            [string]::Join([Environment]::NewLine, @($hubModule.source_files | Sort-Object)) -cne [string]::Join([Environment]::NewLine, @($exactHubSources | Sort-Object))) {
+            throw 'Exact Hub driver and public reducer source closure required.'
+        }
+        $modulesById['experiment-session-hub-status-provider'] = $hubModule
+        $modulesById[$selectedModuleId].dependencies = @($modulesById[$selectedModuleId].dependencies) + 'experiment-session-hub-status-provider'
+    }
     if (-not $modulesById.ContainsKey($selectedModuleId)) {
         throw "Unknown selected panel module: $selectedModuleId"
     }
@@ -964,7 +988,8 @@ function Resolve-NativePanelComposition {
         $moduleSourceRecords = @()
         foreach ($relativePath in @($module.source_files)) {
             $normalizedPath = ([string]$relativePath).Replace("\", "/")
-            if (-not $normalizedPath.StartsWith("apps/native-renderer-android/panel-modules/", [System.StringComparison]::Ordinal)) {
+            if (-not $normalizedPath.StartsWith("apps/native-renderer-android/panel-modules/", [System.StringComparison]::Ordinal) -and
+                -not ($moduleId -ceq 'experiment-session-hub-status-provider' -and $normalizedPath -ceq 'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java')) {
                 throw "Panel source must live in the declared panel-modules owner root: $normalizedPath"
             }
             if ($sourcePathSet.ContainsKey($normalizedPath)) {

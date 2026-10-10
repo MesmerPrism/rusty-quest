@@ -40,16 +40,32 @@ freshness, application readiness or physical observation.
 
 ## Deliberate packaging and caller prerequisites
 
-This increment adds no current feature selection or panel lifecycle hookup.
-Existing V9/private source selection stays unchanged. Before a future candidate
-calls it, its owner must deliberately select an optional status-provider feature
-and declare the exact Java source closure: ExperimentSessionHubSurfaceClient,
-ExperimentSessionHubProvider, existing ExperimentSessionStatusObservation,
-ExperimentSessionPanelCoordinator, ExperimentSessionPanelState,
-ExperimentSessionPanelViewPolicy, and the public
-`crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java`.
-Update the private exact Java allowlist and source binding together; these new
-files are not implicitly compiled by the current panel feature.
+The public optional feature ui.experiment_session_hub_status_provider depends
+on the breath composition panel. Feature off retains the established client
+JSON specialization, has no Hub Java module or package query, and generates no
+Hub caller. Feature on adds the exact three panel drivers and public admission
+reducer to the hashed optional module. The compile list deduplicates the reducer
+already present in the shared admission supplier. The exact broker package
+query and signature admission permission are explicitly selected.
+
+The generated breath panel shell creates a status lifetime only while resumed.
+It waits for an actual same-lock coordinator native observation with positive
+epoch, then starts one real Binder client. Pause/destroy, unavailable witness,
+clock regression, local state invalidation, or epoch replacement closes that
+lifetime. Neither a later poll nor a recovered witness reopens it. A subsequent
+resumed panel gets a fresh lifetime and must again supply an eligible native
+readback. No listener or application command is dispatched. Existing BLE status,
+commands and navigation remain separate.
+
+tools/Prepare-NativeRendererBrokerClient.ps1 -AppSpec <spec> -OutputRoot <new>
+runs the real source-only resolver and writes one generated client lock using
+the same specialization function as the APK builder. The optional feature adds
+only provider-register capability and surface-registration contract family to
+the existing media client. Its actual app/package/client/marker identity is
+preserved; it creates no second subject. Output is packaged input, not a grant,
+signer, token or runtime admission. Caller must select the private exact Java
+allowlist and source binding separately; current installed candidates are not
+changed by this source implementation.
 
 The broker product must separately select reviewed empty-command support in
 both Quest and Manifold, and a canonical owner-packaged provider grant/client

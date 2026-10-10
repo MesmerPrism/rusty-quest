@@ -355,7 +355,8 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         foreach ($sourceRecord in @($panelSourceClosure.source_files)) {
             $relativeSource = ([string]$sourceRecord.path).Replace('\', '/')
             if ([string]::IsNullOrWhiteSpace($relativeSource) -or
-                -not $relativeSource.StartsWith('apps/native-renderer-android/panel-modules/', [System.StringComparison]::Ordinal) -or
+                (-not $relativeSource.StartsWith('apps/native-renderer-android/panel-modules/', [System.StringComparison]::Ordinal) -and
+                 -not (@($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider' -and $relativeSource -ceq 'crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java')) -or
                 -not $relativeSource.EndsWith('.java', [System.StringComparison]::Ordinal)) {
                 throw "Native panel source is outside the owned panel-module root: $relativeSource"
             }
@@ -572,22 +573,11 @@ $embeddedAppFeatureLockJson = [System.IO.File]::ReadAllText((Resolve-Path -Liter
 $embeddedProductLock = $embeddedProductLockJson | ConvertFrom-Json
 $embeddedClientLock = $embeddedClientLockJson | ConvertFrom-Json
 $embeddedMediaBinding = $embeddedMediaBindingJson | ConvertFrom-Json
-if ([string]$embeddedClientLock.schema -ne "rusty.quest.broker_client_spec.v1" -or
-    [string]$embeddedClientLock.client_id -ne "client.quest.native-renderer" -or
-    [string]$embeddedClientLock.package_name -ne "io.github.mesmerprism.rustyquest.native_renderer" -or
-    @($embeddedClientLock.adapter_permissions).Count -ne 1 -or
-    [string]$embeddedClientLock.adapter_permissions[0] -ne "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION" -or
-    @($embeddedClientLock.runtime_properties).Count -ne 0 -or
-    @($embeddedClientLock.application_defaults).Count -ne 0) {
-    throw "Native renderer broker client lock is not an exact closed signature-scoped binding."
-}
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererBrokerClient.psm1') -Force
 $identitySuffix = if ($null -eq $appBuildLockObject) { "unlocked-development" } else { ([string]$appBuildLockObject.app_id).Replace("_", "-").Replace(".", "-") }
 $markerSuffix = $identitySuffix.ToUpperInvariant().Replace("-", "_")
-$embeddedClientLock.client_id = "client.quest.native-renderer.$identitySuffix"
-$embeddedClientLock.package_name = $packageName
-$embeddedClientLock.feature_lock_id = "lock.broker-client.native-renderer.$identitySuffix.v1"
-$embeddedClientLock.marker_namespace = "RUSTY_QUEST_NATIVE_BROKER_CLIENT_$markerSuffix"
-$embeddedClientLockJson = $embeddedClientLock | ConvertTo-Json -Depth 16 -Compress
+$embeddedClientLockJson = New-NativeRendererBrokerClientJson -TemplateJson $embeddedClientLockJson -AppId $(if ($null -eq $appBuildLockObject) { "unlocked-development" } else { [string]$appBuildLockObject.app_id }) -PackageName $packageName -SelectedFeatureIds $(if ($null -eq $appBuildLockObject) { @() } else { @($appBuildLockObject.selected_feature_ids) })
+$embeddedClientLock = $embeddedClientLockJson | ConvertFrom-Json
 $embeddedClientLockPath = Join-Path $OutDir "generated-native-renderer.client.json"
 [System.IO.File]::WriteAllText($embeddedClientLockPath, $embeddedClientLockJson, (New-Object System.Text.UTF8Encoding($false)))
 
@@ -786,6 +776,18 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
         ""
     }
     $generatedControlPanelActivityPath = Join-Path $generatedEmbeddedPackageDir "ControlPanelActivity.java"
+    $experimentSessionHubHook = ''
+    if ($null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider') {
+        if (-not $isExperimentSessionPanel) { throw 'Hub provider requires the breath composition panel.' }
+        $experimentSessionHubHook = @'
+    @Override
+    protected ExperimentSessionPanelCoordinator.StatusLifetime createHubStatusLifetime() {
+        return new ExperimentSessionHubLifetime(
+            (epoch, source) -> new ExperimentSessionHubSurfaceClient(this, "experimenter-status", epoch, source),
+            () -> hubNativeStatusSnapshot());
+    }
+'@
+    }
     $generatedControlPanelActivitySource = @"
 package io.github.mesmerprism.rustyquest.native_renderer;
 
@@ -1580,6 +1582,10 @@ $experimentSessionOnCreate
 $panelNativeMethods
 }
 "@
+    if (-not [string]::IsNullOrWhiteSpace($experimentSessionHubHook)) {
+        $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Insert(
+            $generatedControlPanelActivitySource.LastIndexOf('}'), $experimentSessionHubHook + [Environment]::NewLine)
+    }
     if ($isExperimentSessionPanel) {
         $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Replace(
             '    // EXPERIMENT_SESSION_SHELL_BEGIN' + [Environment]::NewLine, '')
@@ -1689,6 +1695,7 @@ if ($sourceFiles.Count -eq 0) {
     throw "No Java sources found under $appRoot"
 }
 $sourceList = Join-Path $OutDir "sources.rsp"
+$sourceFiles = @($sourceFiles | Select-Object -Unique)
 $sourceFiles | Set-Content -Encoding ASCII -Path $sourceList
 
 Invoke-Checked "javac" $javac @(

@@ -1,0 +1,63 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.experiment_session_hub_status_provider",
+  "module_path": "ui/experiment-session-hub-status-provider",
+  "module_kind": "read-only-hub-provider",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "build_input"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opt-in same-APK read-only Connection Hub status provider; no listener or application commands.",
+  "provides": [
+    "ui.experiment_session_hub_status_provider"
+  ],
+  "depends_on": [
+    "ui.breath_composition_control_panel"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": [
+      "io.github.mesmerprism.rustymanifold.broker"
+    ]
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Generic application status only; no credentials, private profile or control commands.",
+  "panel_source_module": {
+    "module_id": "experiment-session-hub-status-provider",
+    "entry_class": "",
+    "dependencies": [],
+    "source_files": [
+      "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionHubLifetime.java",
+      "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionHubProvider.java",
+      "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionHubSurfaceClient.java",
+      "crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java"
+    ]
+  }
+}

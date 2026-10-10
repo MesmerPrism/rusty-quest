@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.function.Supplier;
 
 /** Dormant, explicit-start Binder adapter. Does not start a listener or dispatch app commands. */
-final class ExperimentSessionHubSurfaceClient implements Closeable, ExperimentSessionHubProvider.Platform {
+final class ExperimentSessionHubSurfaceClient implements Closeable, ExperimentSessionHubProvider.Platform, ExperimentSessionHubLifetime.Driver {
     private final Context context;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, Runnable> timers = new HashMap<>();
@@ -26,7 +26,7 @@ final class ExperimentSessionHubSurfaceClient implements Closeable, ExperimentSe
         long generation = new SecureRandom().nextLong() & Long.MAX_VALUE;
         provider = new ExperimentSessionHubProvider(this, Math.max(1L, generation), channel, epoch, source);
     }
-    void start() { requireMain(); provider.start(); }
+    public void start() { requireMain(); provider.start(); }
     @Override public void close() { requireMain(); provider.close(); }
     private static void requireMain() {
         if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("main looper required");

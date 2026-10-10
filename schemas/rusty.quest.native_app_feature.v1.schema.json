@@ -344,6 +344,75 @@
           }
         }
       }
+    },
+    "panel_source_module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module_id",
+        "entry_class",
+        "dependencies",
+        "source_files"
+      ],
+      "properties": {
+        "module_id": {
+          "const": "experiment-session-hub-status-provider"
+        },
+        "entry_class": {
+          "const": ""
+        },
+        "dependencies": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "source_files": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionHubLifetime.java",
+              "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionHubProvider.java",
+              "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionHubSurfaceClient.java",
+              "crates/rusty-quest-broker-admission/android/io/github/mesmerprism/rustyquest/broker_admission/ConnectionHubAdmissionSessionReducer.java"
+            ]
+          }
+        }
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "panel_source_module"
+        ]
+      },
+      "then": {
+        "properties": {
+          "feature_id": {
+            "const": "ui.experiment_session_hub_status_provider"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "feature_id": {
+            "const": "ui.experiment_session_hub_status_provider"
+          }
+        },
+        "required": [
+          "feature_id"
+        ]
+      },
+      "then": {
+        "required": [
+          "panel_source_module"
+        ]
+      }
+    }
+  ]
 }

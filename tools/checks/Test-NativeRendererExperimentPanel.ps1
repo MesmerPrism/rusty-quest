@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+    [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [string]$HubFeatureLock
 )
 
 $ErrorActionPreference = 'Stop'
@@ -257,7 +258,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     $shellMatch = [regex]::Match($buildText, '(?s)\$generatedControlPanelActivitySource = @"\r?\n(.*?)\r?\n"@')
     $nativeMatch = [regex]::Match($buildText, '(?s)elseif \(\$selectedPanelModuleId -ceq "breath-composition-controls"\) \{\s*@"\r?\n(.*?)\r?\n"@')
     if (-not $shellMatch.Success -or -not $nativeMatch.Success) { throw 'Generated shell source missing' }
-    $generatedShell = $shellMatch.Groups[1].Value.Replace('$panelNativeMethods', $nativeMatch.Groups[1].Value)
+    $generatedShell = $shellMatch.Groups[1].Value.Replace('$panelNativeMethods', $nativeMatch.Groups[1].Value).Replace('$experimentSessionHubHook', '')
     $generatedShell = $generatedShell.Replace('$selectedPanelEntrySimpleName', 'BreathCompositionPanelModule')
     $generatedShell = $generatedShell.Replace('$selectedPanelModuleId', 'breath-composition-controls')
     $generatedShell = $generatedShell.Replace('$experimentSessionTerminalAudioStop', '        stopCurrentConditionAudioForTerminal(true);')
@@ -291,6 +292,25 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output @androidSources
     if ($LASTEXITCODE -ne 0) { throw "Generated Android shell javac failed: $LASTEXITCODE" }
 
+    if (-not [string]::IsNullOrWhiteSpace($HubFeatureLock)) {
+        $hubLock = Get-Content -LiteralPath $HubFeatureLock -Raw | ConvertFrom-Json
+        if (@($hubLock.selected_feature_ids) -cnotcontains 'ui.experiment_session_hub_status_provider') { throw 'Actual optional feature lock required.' }
+        $hookMatch = [regex]::Match($buildText, '(?s)\$experimentSessionHubHook = @''\r?\n(.*?)\r?\n''@')
+        if (-not $hookMatch.Success) { throw 'Actual optional generated hook unavailable.' }
+        $hubShell = $generatedShell.Insert($generatedShell.LastIndexOf('}'), $hookMatch.Groups[1].Value + [Environment]::NewLine)
+        if (-not $hubShell.Contains('new ExperimentSessionHubLifetime(')) { throw 'Optional generated hook was not inserted.' }
+        $closureSources = @($hubLock.panel_source_closure.source_files | ForEach-Object {
+            $path = Join-Path $repo ([string]$_.path)
+            if ((Get-FileHash $path).Hash.ToLowerInvariant() -cne [string]$_.sha256) { throw 'Actual closure source drift.' }
+            $path
+        })
+        [IO.File]::WriteAllText($stub, $hubShell, [Text.UTF8Encoding]::new($false))
+        $hubSources = @($androidSources + $closureSources | Select-Object -Unique)
+        & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $androidJar '-d' $output @hubSources
+        if ($LASTEXITCODE -ne 0) { throw "Optional actual-closure Android shell javac failed: $LASTEXITCODE" }
+        Write-Host 'Optional Hub actual source closure and generated shell Android compilation passed.'
+    }
+
     # A non-breath selected panel must compile from its own closure.  In
     # particular it must not need the breath-only experiment session, packaged
     # closure, condition-audio, or their JNI declarations merely because the
@@ -299,7 +319,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         $buildText,
         '(?s)if \(\$selectedPanelModuleId -ceq "stimulus-volume"\) \{\s*@"\r?\n(.*?)\r?\n"@')
     if (-not $stimulusNativeMatch.Success) { throw 'Stimulus generated JNI surface missing' }
-    $unrelatedShell = $shellMatch.Groups[1].Value.Replace('$panelNativeMethods', $stimulusNativeMatch.Groups[1].Value)
+    $unrelatedShell = $shellMatch.Groups[1].Value.Replace('$panelNativeMethods', $stimulusNativeMatch.Groups[1].Value).Replace('$experimentSessionHubHook', '')
     $unrelatedShell = $unrelatedShell.Replace('$selectedPanelEntrySimpleName', 'StimulusVolumePanelModule')
     $unrelatedShell = $unrelatedShell.Replace('$selectedPanelModuleId', 'stimulus-volume')
     $unrelatedShell = $unrelatedShell.Replace('$experimentSessionTerminalAudioStop', '')

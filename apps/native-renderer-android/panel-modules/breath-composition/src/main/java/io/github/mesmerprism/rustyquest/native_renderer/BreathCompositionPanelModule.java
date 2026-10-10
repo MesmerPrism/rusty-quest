@@ -845,6 +845,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onResume() {
         super.onResume();
+        closeHubStatusLifetime();
+        hubStatusLifetime = createHubStatusLifetime();
+        refreshHubStatusLifetime();
         remotePanelResumed = true;
         NativeRendererSelfKioskApplication.ensureArmedService(this);
         PolarSensorRuntime.forApplication(getApplicationContext()).onHostResume();
@@ -862,6 +865,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     @Override
     protected void onPause() {
+        closeHubStatusLifetime();
         remotePanelResumed = false;
         cancelRemotePolarRender();
         experimenterPanelShortcut.cancel();
@@ -921,6 +925,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     @Override
     protected void onDestroy() {
+        closeHubStatusLifetime();
         cancelRemotePolarRender();
         experimentShellDestroyed = true;
         if (remotePanel.get() == this) {
@@ -3014,6 +3019,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             readback.runtimeEpoch, readback.receipt,
             readback.statusReadCompletedNanos, android.os.SystemClock.elapsedRealtimeNanos());
         ExperimentSessionPanelState after = EXPERIMENT_SESSION_PANEL.snapshot();
+        refreshHubStatusLifetime();
         // Audio preparation is an idempotent arm-stage effect. Reassert it from
         // every authoritative arming readback so a reordered status callback or
         // panel recreation cannot leave the native session permanently arming.
@@ -3085,6 +3091,20 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             updateStatus("Saving recording and closing…");
         }
         return true;
+    }
+
+    private ExperimentSessionPanelCoordinator.StatusLifetime hubStatusLifetime;
+    protected ExperimentSessionPanelCoordinator.StatusLifetime createHubStatusLifetime() { return null; }
+    protected final ExperimentSessionPanelCoordinator.NativeStatusSnapshot hubNativeStatusSnapshot() {
+        return EXPERIMENT_SESSION_PANEL.nativeStatusSnapshot(SystemClock.elapsedRealtimeNanos());
+    }
+    private void refreshHubStatusLifetime() {
+        if (hubStatusLifetime != null) hubStatusLifetime.refresh();
+    }
+    private void closeHubStatusLifetime() {
+        ExperimentSessionPanelCoordinator.StatusLifetime old = hubStatusLifetime;
+        hubStatusLifetime = null;
+        if (old != null) old.close();
     }
 
     private void scheduleExperimenterProjectionRefresh() {
