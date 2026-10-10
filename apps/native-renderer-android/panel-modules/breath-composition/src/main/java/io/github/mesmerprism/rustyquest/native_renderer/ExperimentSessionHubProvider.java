@@ -96,8 +96,11 @@ final class ExperimentSessionHubProvider {
                 fields.put("surface_registration_json", registration); break;
             default: throw new IllegalStateException("unsupported operation");
         }
-        platform.schedule(e.getCorrelationId(), e.getDeadlineAtMs(), () ->
-            dispatch(Event.deadline(e.getBindingGeneration(), e.getCorrelationId(), platform.now())));
+        platform.schedule(e.getCorrelationId(), e.getDeadlineAtMs(), new Runnable() {
+            @Override public void run() {
+                dispatch(Event.deadline(e.getBindingGeneration(), e.getCorrelationId(), platform.now()));
+            }
+        });
         if (!platform.send(e.getBindingGeneration(), what, fields))
             dispatch(Event.disconnected(e.getBindingGeneration(), platform.now()));
     }
@@ -173,15 +176,17 @@ final class ExperimentSessionHubProvider {
     }
     private void schedulePoll() {
         long generation = state.getBindingGeneration();
-        platform.schedule(POLL, platform.now() + 1000L, () -> {
-            if (!state.isRegistered() || generation != state.getBindingGeneration()) return;
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("correlation_id", "state.s" + state.getSessionGeneration());
-            data.put("session_generation", state.getSessionGeneration()); data.put("surface_id", SURFACE);
-            try { data.put("state_json", observationState().toString()); }
-            catch (Exception failure) { dispatch(Event.disconnected(generation, platform.now())); return; }
-            if (!platform.send(generation, UPDATE, data)) dispatch(Event.disconnected(generation, platform.now()));
-            else schedulePoll();
+        platform.schedule(POLL, platform.now() + 1000L, new Runnable() {
+            @Override public void run() {
+                if (!state.isRegistered() || generation != state.getBindingGeneration()) return;
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("correlation_id", "state.s" + state.getSessionGeneration());
+                data.put("session_generation", state.getSessionGeneration()); data.put("surface_id", SURFACE);
+                try { data.put("state_json", observationState().toString()); }
+                catch (Exception failure) { dispatch(Event.disconnected(generation, platform.now())); return; }
+                if (!platform.send(generation, UPDATE, data)) dispatch(Event.disconnected(generation, platform.now()));
+                else schedulePoll();
+            }
         });
     }
     private void clear() { admissionRevision = 0; token = ""; authorizationCorrelation = ""; registrationId = ""; registration = ""; }

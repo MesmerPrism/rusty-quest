@@ -61,9 +61,15 @@ final class ExperimentSessionHubSurfaceClient implements Closeable, ExperimentSe
                         data.getString("error", ""), data.getString("response_json", "{}"));
                 }
             });
-            death = () -> handler.post(() -> {
-                if (connection == Connection.this) provider.event(Event.binderDied(generation, now()));
-            });
+            death = new IBinder.DeathRecipient() {
+                @Override public void binderDied() {
+                    handler.post(new Runnable() {
+                        @Override public void run() {
+                            if (connection == Connection.this) provider.event(Event.binderDied(generation, now()));
+                        }
+                    });
+                }
+            };
         }
         public void onServiceConnected(ComponentName name, IBinder binder) {
             if (connection != this) return;
