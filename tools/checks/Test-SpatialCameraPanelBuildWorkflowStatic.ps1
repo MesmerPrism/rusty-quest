@@ -122,4 +122,6 @@ $errors = $null
 [void][System.Management.Automation.Language.Parser]::ParseFile($testPath, [ref]$tokens, [ref]$errors)
 if (@($errors).Count -gt 0) { throw "Test wrapper PowerShell parse failed: $($errors[0].Message)" }
 
+& (Join-Path $repo "tools/checks/Test-SpatialCmakeStagingHost.ps1")
+
 Write-Host "Spatial Camera Panel fast build workflow static check: PASS"

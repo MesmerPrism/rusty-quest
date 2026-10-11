@@ -158,3 +158,5 @@ pwsh -NoProfile -ExecutionPolicy Bypass `
 
 The gate validates source guardrails plus valid and damaged capsule fixtures.
 It does not contact a headset.
+
+The ordinary Spatial Camera Panel static gate runs the CMake staging host controls, including the Windows reparse/path cases. The credential-free APK preflight pull-request job runs the same gate on Windows; its candidate execution is non-authoritative and does not replace external validation authority.

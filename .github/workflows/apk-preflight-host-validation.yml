@@ -1,0 +1,34 @@
+name: APK preflight host validation (non-authoritative)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  windows-apk-preflight:
+    name: Windows APK geometry and output guards
+    runs-on: windows-2025
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact candidate without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          lfs: false
+          submodules: false
+      - name: Verify candidate and run production helper controls
+        shell: pwsh
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:EXPECTED_HEAD -cnotmatch '^[0-9a-f]{40}$') { throw 'Malformed candidate head' }
+          $actual = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $actual -cne $env:EXPECTED_HEAD) { throw 'Candidate head differs' }
+          if ($PSVersionTable.PSVersion -lt [version]'7.6') { throw 'PowerShell 7.6 or later required' }
+          & ./tools/checks/Test-SpatialCameraPanelBuildWorkflowStatic.ps1 -RepoRoot .
