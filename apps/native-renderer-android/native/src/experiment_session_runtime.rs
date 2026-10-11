@@ -2809,7 +2809,7 @@ pub(crate) fn current_breath_guidance_target() -> Option<BreathGuidanceTarget> {
 
 /// Audio and bias share the same generation-bound intended target/official clock method.
 pub(crate) fn current_breath_phase_audio_sample() -> Option<(u64, usize, u64, u64, BreathGuidanceTarget)> {
-    runtime()?.current_breath_guidance_sample()
+    runtime().ok()?.current_breath_guidance_sample()
 }
 
 
