@@ -25,6 +25,35 @@ final class EmbeddedDuplexAbandonment {
         return EmbeddedDuplexProcessFence.digest(exact).equals(marker.getString(checkpoint
                 ? "checkpoint_sha256" : "evidence_sha256")) ? null : exact;
     }
+    /** Read-only projection of exactly archived historical maps, never native generation state. */
+    static synchronized void requireReplayRead(File directory,String name) throws Exception {
+        if(!java.util.Set.of("owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup-preparations.v1.json").contains(name)) return;
+        JSONObject marker=ACTIVE.get(directory.getCanonicalPath());
+        if(marker==null || !EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(marker.getJSONObject("operator_authorization").getString("$schema"))) return;
+        verifyArchive(directory,marker);
+        File archive=new File(directory,"abandoned-"+marker.getString("scope_sha256"));
+        if(!Files.exists(new File(archive,"committed-fence.raw").toPath(),LinkOption.NOFOLLOW_LINKS))
+            throw new IllegalStateException("historical replay disposition uncommitted");
+        for(String suffix:java.util.List.of(".new",".bak"))
+            if(Files.exists(new File(directory,name+suffix).toPath(),LinkOption.NOFOLLOW_LINKS))
+                throw new IllegalStateException("historical replay sidecar unresolved");
+    }
+    static synchronized String visibleReplay(File directory,String name,String exact) throws Exception {
+        requireReplayRead(directory,name);
+        if(!java.util.Set.of("owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup-preparations.v1.json").contains(name)) return exact;
+        JSONObject marker=ACTIVE.get(directory.getCanonicalPath());
+        if(marker==null || !EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(marker.getJSONObject("operator_authorization").getString("$schema"))) return exact;
+        verifyArchive(directory,marker);
+        File archive=new File(directory,"abandoned-"+marker.getString("scope_sha256"));
+        if(!Files.exists(new File(archive,"committed-fence.raw").toPath(),LinkOption.NOFOLLOW_LINKS))
+            throw new IllegalStateException("historical replay disposition uncommitted");
+        JSONObject auth=marker.getJSONObject("operator_authorization");
+        String sha=auth.getJSONObject("historical_peers").getJSONObject(auth.getString("role_id"))
+                .getJSONObject("preserved_records").getString(name);
+        if(!EmbeddedDuplexProcessFence.digest(exact).equals(sha)) return exact;
+        return name.equals("retained-cleanup-preparations.v1.json") ? "{\"originals\":{},\"prepared\":{}}"
+                : "{\"pending_request_sha256\":{},\"terminal\":{}}";
+    }
 
     /** Called with the already-held app channel record, never another descriptor for its inode. */
     static synchronized boolean restore(File directory, String record, String checkpoint, String evidence) throws Exception {
@@ -34,6 +63,11 @@ final class EmbeddedDuplexAbandonment {
         JSONObject marker = readMarker(path);
         verifyArchive(directory, marker);
         String[] fields = record.split("\n", -1);
+        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(marker.getJSONObject("operator_authorization").getString("$schema"))
+                && !Files.exists(new File(directory,"abandoned-"+marker.getString("scope_sha256")+"/committed-fence.raw").toPath(),LinkOption.NOFOLLOW_LINKS)) {
+            if(fields.length==8 && "clear".equals(fields[3])) throw new IllegalStateException("historical clear fence commit witness unavailable");
+            return false;
+        }
         // A crash before the fence commit leaves the original pending scope active.
         if (fields.length != 8 || Long.parseLong(fields[1]) < marker.getLong("successor_generation")
                 || !"-".equals(fields[4]) || !"-".equals(fields[5])
@@ -59,6 +93,21 @@ final class EmbeddedDuplexAbandonment {
         writeNew(new File(archive,"recovery-fence.raw"),currentRecord,protection);
         if (checkpoint != null) writeNew(new File(archive,"checkpoint.raw"),checkpoint,protection);
         if (evidence != null) writeNew(new File(archive,"evidence.raw"),evidence,protection);
+        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(authorization.getString("$schema"))) {
+            JSONObject digests=authorization.getJSONObject("historical_peers")
+                    .getJSONObject(authorization.getString("role_id")).getJSONObject("preserved_records");
+            for(String name:EmbeddedDuplexHistoricalAbandonment.RECORDS) {
+                for(String suffix:java.util.List.of(".new",".bak"))
+                    if(Files.exists(new File(directory,name+suffix).toPath(),LinkOption.NOFOLLOW_LINKS))
+                        throw new IllegalStateException("historical record sidecar unresolved");
+                String exact=read(new File(directory,name),8*1024*1024);
+                if(!EmbeddedDuplexProcessFence.digest(exact).equals(digests.getString(name)))
+                    throw new IllegalStateException("historical durable record differs");
+                writeNew(new File(archive,"preserved-"+name),exact,protection);
+                if(!EmbeddedDuplexProcessFence.digest(read(new File(directory,name),8*1024*1024)).equals(digests.getString(name)))
+                    throw new IllegalStateException("historical durable record changed while archiving");
+            }
+        }
         JSONObject receipt = new JSONObject().put("$schema",SCHEMA)
                 .put("disposition","old_scope_abandoned_cleanup_unknown")
                 .put("old_cleanup_confirmed",false).put("old_authority_transferred",false)
@@ -79,8 +128,15 @@ final class EmbeddedDuplexAbandonment {
         return receipt;
     }
 
-    static synchronized void committed(File directory, JSONObject receipt) throws Exception {
+    static synchronized void committed(File directory, JSONObject receipt,String clearRecord,Protection protection) throws Exception {
         verifyArchive(directory,receipt);
+        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(receipt.getJSONObject("operator_authorization").getString("$schema"))) {
+            File archive=new File(directory,"abandoned-"+receipt.getString("scope_sha256"));
+            if(!clearRecord.equals(expectedClear(archive))) throw new IllegalStateException("historical commit fence differs");
+            writeNew(new File(archive,"committed-fence.raw"),clearRecord,protection);
+            protection.apply(archive,true); // Android adapter chmods and fsyncs this directory.
+            verifyArchive(directory,receipt);
+        }
         retireActiveCopies(directory,receipt);
         ACTIVE.put(directory.getCanonicalPath(),receipt);
     }
@@ -145,6 +201,23 @@ final class EmbeddedDuplexAbandonment {
             throw new IllegalStateException("abandonment archive binding differs");
         verifyOptional(archive,"checkpoint.raw",marker.getString("checkpoint_sha256"),256*1024);
         verifyOptional(archive,"evidence.raw",marker.getString("evidence_sha256"),8*1024*1024);
+        JSONObject authorization=marker.getJSONObject("operator_authorization");
+        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(authorization.getString("$schema"))) {
+            JSONObject digests=authorization.getJSONObject("historical_peers")
+                    .getJSONObject(authorization.getString("role_id")).getJSONObject("preserved_records");
+            for(String name:EmbeddedDuplexHistoricalAbandonment.RECORDS)
+                verifyOptional(archive,"preserved-"+name,digests.getString(name),8*1024*1024);
+            File committed=new File(archive,"committed-fence.raw");
+            if(Files.exists(committed.toPath(),LinkOption.NOFOLLOW_LINKS) && !read(committed,512).equals(expectedClear(archive)))
+                throw new IllegalStateException("historical commit witness differs");
+        }
+    }
+    private static String expectedClear(File archive) throws Exception {
+        String[] fields=read(new File(archive,"recovery-fence.raw"),512).split("\n",-1);
+        if(fields.length!=8 || !"pending".equals(fields[3]) || !"-".equals(fields[4]) || !"-".equals(fields[5]))
+            throw new IllegalStateException("historical recovery fence shape differs");
+        fields[3]="clear";String body=String.join("\n",java.util.Arrays.copyOf(fields,6))+"\n";
+        return body+EmbeddedDuplexProcessFence.digest(body)+"\n";
     }
     private static boolean sameObject(JSONObject left,JSONObject right) throws Exception {
         java.util.Set<String> keys=new java.util.HashSet<>();for(java.util.Iterator<String> iterator=left.keys();iterator.hasNext();) keys.add(iterator.next());

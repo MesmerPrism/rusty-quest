@@ -1202,6 +1202,8 @@ final class EmbeddedDuplexProcessHost {
                 String component=applicationContext.getPackageName()+"/io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity";
                 request.requireInstalled(installed.packageId,installed.signerSha256,installedApkDigest.read(applicationContext),
                         component,android.os.Process.myUid(),android.os.Process.myPid());
+                if(request.historical()) request.requireCurrent(android.os.Process.myPid(),android.os.Process.myUid(),
+                        EmbeddedDuplexHistoricalAbandonment.currentStartTicks(),processFence.generation());
                 String receipt=processFence.abandon(checkpointSnapshot(),evidenceSnapshot(),request,
                         (path,directory)->{
                             android.system.Os.chmod(path.getAbsolutePath(),directory?0700:0600);

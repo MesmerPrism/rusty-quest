@@ -6,16 +6,19 @@ $package = 'io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duple
 $app = Join-Path $RepoRoot 'apps/spatial-camera-panel-android/app'
 $main = Join-Path $app "src/main/java/$package"
 $test = Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexProcessFenceHostTest.java'
+$historicalTest=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexHistoricalAbandonmentHostTest.java'
 $output = Join-Path ([IO.Path]::GetTempPath()) ('duplex-fence-classes-' + [guid]::NewGuid().ToString('N'))
 [void](New-Item -ItemType Directory -Path $output)
 $javac = (Get-Command javac -ErrorAction Stop).Source
 $java = Join-Path (Split-Path $javac -Parent) 'java.exe'
 $jsonJar=Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json') -Recurse -Filter 'json-*.jar' | Sort-Object FullName -Descending | Select-Object -First 1
 if(-not $jsonJar){throw 'Host org.json test dependency unavailable'}
-& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') $test
+& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') $test $historicalTest
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host compilation failed' }
 & $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexProcessFenceHostTest'
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host regressions failed' }
+& $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexHistoricalAbandonmentHostTest'
+if ($LASTEXITCODE -ne 0) {throw 'Historical abandonment host regressions failed'}
 $hostSource = Get-Content -Raw -LiteralPath (Join-Path $main 'EmbeddedDuplexProcessHost.java')
 # Execute the production predicate; platform observations are explicitly modeled.
 $begin=$hostSource.IndexOf('    private void requireAbandonmentEffectFree() {')
@@ -74,4 +77,9 @@ foreach ($required in @('ensureProcessFence(); result.complete(action.run())', '
     if (-not $hostSource.Contains($required)) { throw "App host fence integration missing: $required" }
 }
 if (-not $platformSource.Contains('guard.requireLive()') -or -not $platformSource.Contains('guard.retire()')) { throw 'App callback fence integration missing' }
+if(-not $platformSource.Contains('EmbeddedDuplexAbandonment.visibleReplay(replayDirectory,file.getBaseFile().getName(),')) {throw 'Historical replay reader projection integration missing'}
+$readerBegin=$platformSource.IndexOf('    private String loadReplay(AtomicFile file)')
+$preflight=$platformSource.IndexOf('EmbeddedDuplexAbandonment.requireReplayRead(', $readerBegin)
+$atomicRead=$platformSource.IndexOf('file.openRead()', $readerBegin)
+if($readerBegin-lt0-or$preflight-lt$readerBegin-or$atomicRead-le$preflight) {throw 'Historical sidecar preflight must precede AtomicFile.openRead'}
 Write-Output 'App startup/callback source gate passed. No native process-fence or physical-cleanup attestation.'

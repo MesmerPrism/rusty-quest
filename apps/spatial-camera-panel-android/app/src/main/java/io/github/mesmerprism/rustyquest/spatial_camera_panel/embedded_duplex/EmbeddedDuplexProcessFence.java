@@ -200,12 +200,13 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 || !recoveryOnly || !pending || predecessorRecord == null
                 || !checkpointDigest.equals(digest(checkpoint)) || !evidenceDigest.equals(digest(evidence)))
             throw new IllegalStateException("retained abandonment scope unavailable");
+        request.bind(predecessorRecord,serializedRecord(),checkpoint,evidence);
         org.json.JSONObject receipt = EmbeddedDuplexAbandonment.prepare(directory,predecessorRecord,
                 serializedRecord(),checkpoint,evidence,generation,authorization,directorySync,protection);
         // Archive and disposition are flushed first. A torn fence remains poisoned.
         checkpointDigest="-"; evidenceDigest="-"; pending=false;
         persist();
-        EmbeddedDuplexAbandonment.committed(directory,receipt);
+        EmbeddedDuplexAbandonment.committed(directory,receipt,serializedRecord(),protection);
         directorySync.sync();
         recoveryOnly=false;
         return receipt.toString();

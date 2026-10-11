@@ -535,6 +535,7 @@ final class EmbeddedDuplexPlatform {
     }
 
     private String loadReplay(AtomicFile file) throws Exception {
+        EmbeddedDuplexAbandonment.requireReplayRead(replayDirectory,file.getBaseFile().getName());
         if (!file.getBaseFile().exists()
                 && !new File(file.getBaseFile().getPath() + ".bak").exists()) {
             return "{\"pending_request_sha256\":{},\"terminal\":{}}";
@@ -550,7 +551,8 @@ final class EmbeddedDuplexPlatform {
                 offset += count;
             }
             if (input.read() != -1) throw new IllegalStateException("replay grew during read");
-            return new String(encoded, StandardCharsets.UTF_8);
+            return EmbeddedDuplexAbandonment.visibleReplay(replayDirectory,file.getBaseFile().getName(),
+                    new String(encoded, StandardCharsets.UTF_8));
         }
     }
 

@@ -311,6 +311,55 @@ behavior only, not Android JNI integration, physical cleanup or acceptance.
 
 ### Explicit nonaccepting abandonment after process absence
 
+#### Historical birth unavailable, with no Start journals
+
+The same fixed operator call also accepts the closed
+`rusty.quest.embedded_duplex.abandonment_authorization.v2` branch. This branch
+is limited to an original pending app fence whose checkpoint and recovery
+evidence journals were both absent. Nonempty journals reject; v1 remains the
+existing complete-identity route. V2 never invents a Start lineage.
+
+`historical_peers` contains exactly `peer_a` and `peer_b`. Each retains the exact
+original concurrent-qualification ARM receipt and its digest, original package,
+APK, signer, physical device, boot and installation UID scope. Original Linux
+birth is explicitly null with `historical_birth_not_recorded`. Package UID is
+the independently attested installation scope, not a claimed old `/proc` read.
+Complete package/UID process absence on both devices must be independently
+authenticated immediately before dispatch; Boolean attestations and digests
+are not self-authenticating process inventories. Preserve failed cleanup and
+all original receipt capsules alongside that evidence.
+
+The verifier checks ARM/native snapshot identity and challenge, reconstructs
+the original pending/no-journal fence from the producer's app epoch, and binds
+its digest to the authentic immediate recovery predecessor receipt. The exact
+recovery fence bytes then bind that receipt to the current successor's actual
+predecessor. Reconstruction is labeled as reconstruction; it is not a recorded
+OS birth. A swapped historical actor cannot match this chain.
+
+`current_recovery_actor` is separate: current PID, `/proc/self/stat` start ticks
+and app generation are checked against the actual effect-free process. The
+current installed APK digest is distinct from the preserved original APK;
+package, component, signer and installation UID must still match. A same-package
+signed update must preserve private data and acquire a new exact source/feature
+closure before adoption. Changing the namespace or erasing journals is not a
+recovery route. No build or install is authorized by the disposition itself.
+
+The existing archive-first/fence-commit transaction retains both fixed fences,
+authorization and immutable copies of the selected owner's dispatch, product
+activation, retained cleanup and native fence records. Their exact hashes are
+checked before and after copying. Those active records are never erased by v2.
+After the app fence has durably cleared, an exact clear-fence witness is synced
+inside that archive. V2 restoration requires that witness; a marker alone never
+projects replay or permits freshness. A clear fence without its witness fails
+closed. The reader projects only the three exact archived dispatch, activation
+and cleanup-preparation maps as canonical empty maps for the independent scope.
+Sidecars deny before AtomicFile recovery. New record hashes remain visible;
+native generation state is never projected. The other peer's record digests are external evidence; the local
+archive does not claim to copy remote files. Interrupted archive commits remain
+recovery-only. The unchanged `old_scope_abandoned_cleanup_unknown` receipt keeps
+both cleanup and authority-transfer claims false. Fresh enrollment and Start
+remain independent, with no automatic admission, callback or command replay.
+
 The debug-only DUMP/shell operator has two separate fixed calls:
 `recovery_status` reads the retained fence/journal digests; `abandon_retained_scope`
 accepts one bounded, closed `authorization_json` of schema

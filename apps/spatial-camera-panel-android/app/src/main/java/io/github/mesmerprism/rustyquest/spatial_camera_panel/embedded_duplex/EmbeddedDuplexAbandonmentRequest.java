@@ -12,9 +12,14 @@ public final class EmbeddedDuplexAbandonmentRequest {
             "expected_current_fence_sha256","authorize_abandonment");
     private final String exact;
     public EmbeddedDuplexAbandonmentRequest(String exact) throws Exception {
-        if(exact==null || exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>8192)
+        if(exact==null || exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>24*1024)
             throw new IllegalArgumentException("abandonment request bounds");
         JSONObject object=new JSONObject(exact);Set<String> keys=new HashSet<>();for(java.util.Iterator<String> iterator=object.keys();iterator.hasNext();) keys.add(iterator.next());
+        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(object.optString("$schema"))) {
+            EmbeddedDuplexHistoricalAbandonment.shape(object);this.exact=exact;return;
+        }
+        if(exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>8192)
+            throw new IllegalArgumentException("v1 abandonment request bounds");
         if(!keys.equals(FIELDS) || !"rusty.quest.embedded_duplex.abandonment_authorization.v1".equals(object.getString("$schema"))
                 || !Boolean.TRUE.equals(object.get("authorize_abandonment"))
                 || !Set.of("peer_a","peer_b").contains(object.getString("role_id")))
@@ -41,11 +46,18 @@ public final class EmbeddedDuplexAbandonmentRequest {
     }
     JSONObject json() throws Exception { return new JSONObject(exact); }
     String role() throws Exception { return json().getString("role_id"); }
+    boolean historical() throws Exception {return EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(json().getString("$schema"));}
+    void requireCurrent(int pid,int uid,long ticks,long generation) throws Exception {
+        if(historical()) EmbeddedDuplexHistoricalAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
+    }
+    void bind(String prior,String current,String checkpoint,String evidence) throws Exception {
+        if(historical()) EmbeddedDuplexHistoricalAbandonment.bind(json(),prior,current,checkpoint,evidence);
+    }
     void requireInstalled(String packageId,String signer,String apk,String component,int uid,int pid) throws Exception {
         JSONObject value=json();
         if(!packageId.equals(value.getString("package_id")) || !signer.equals(value.getString("signer_sha256"))
                 || !apk.equals(value.getString("installed_apk_sha256")) || !component.equals(value.getString("component_id"))
-                || uid!=value.getInt("package_uid") || pid==value.getInt("old_pid"))
+                || uid!=value.getInt("package_uid") || (!historical() && pid==value.getInt("old_pid")))
             throw new IllegalStateException("abandonment selected installed identity differs");
     }
 }
