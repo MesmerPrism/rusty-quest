@@ -114,3 +114,12 @@ pairing, browser reconnection and app effects still need device evidence.
 `tools/checks/test_experiment_native_readback_age.py` additionally exercises
 the complete production snapshot method and BLE server with modeled Android
 surfaces, validates its JSON bytes and checks the actual full-status limit.
+
+Remote Open Polar reuses an existing panel only while that Activity is resumed
+and its current content is attached, shown and window-visible. A retained paused,
+hidden, finishing or destroyed panel follows the existing explicit foreground
+panel intent route. Confirmation still requires the exact command/server and
+post-draw content receipt; dispatch or Activity launch alone does not confirm an
+effect. The routing gate includes actual extracted foreground/background source
+controls. Host validation does not prove Android foreground launch or wearer
+visibility, and the original timeout remains unqualified until device evidence.

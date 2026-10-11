@@ -1,11 +1,19 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$OutputRoot)
+param([Parameter(Mandatory)][string]$OutputRoot, [string]$PanelModulePath = "")
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if(Test-Path $OutputRoot){throw 'Create-new output required'}
 $null=New-Item -ItemType Directory $OutputRoot
 $panel=Join-Path $repo 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer'
-$module=Get-Content (Join-Path $panel 'BreathCompositionPanelModule.java') -Raw
+if ([string]::IsNullOrWhiteSpace($PanelModulePath)) { $PanelModulePath=Join-Path $panel 'BreathCompositionPanelModule.java' }
+$module=Get-Content -LiteralPath $PanelModulePath -Raw
+$polarStart=$module.IndexOf('if ("open-polar".equals(request.operation))')
+$routeMatch=[regex]::Match($module.Substring($polarStart),'if \((panel != null && [^\r\n]+)\) \{')
+if(-not $routeMatch.Success){throw 'Production Polar routing extraction missing'}
+$routeCondition=$routeMatch.Groups[1].Value
+$helperStart=$module.IndexOf('    // Called on the main-thread command dispatch path.')
+$helperEnd=$module.IndexOf('    private boolean remotePanelResumed;')
+$routeHelper=if($helperStart-ge0){$module.Substring($helperStart,$helperEnd-$helperStart)}else{''}
 $start=$module.IndexOf('    private boolean remotePanelResumed;')
 $end=$module.IndexOf('    private void selectExperimenterPage(', $start)
 if($start-lt0-or$end-lt0){throw 'Production observer extraction missing'}
@@ -58,7 +66,8 @@ class BreathCompositionPanelModule {
  void begin(){remotePanelResumed=true;observeRemotePolarRender(remotePending);}
  void draw(){root.child.observer.draw();}void drain(){root.child.drain();}
  void pause(){remotePanelResumed=false;cancelRemotePolarRender();}
-'@ + $adapter + "`n}")
+
+'@ + $routeHelper + "`n static boolean reuseRemotePolar(BreathCompositionPanelModule panel){return $routeCondition;}`n" + $adapter + "`n}")
 'RenderReceiptHostTest.java'=@'
 package io.github.mesmerprism.rustyquest.native_renderer;
 import android.view.*;import android.os.SystemClock;
@@ -66,6 +75,16 @@ public class RenderReceiptHostTest {
  static int count;static void check(boolean v,String label){if(!v)throw new AssertionError(label);count++;}
  interface Drift {void apply(BreathCompositionPanelModule m);}
  public static void main(String[] args){
+  check(!BreathCompositionPanelModule.reuseRemotePolar(null),"no panel selects foreground launch");
+  BreathCompositionPanelModule route=new BreathCompositionPanelModule();route.begin();
+  check(BreathCompositionPanelModule.reuseRemotePolar(route),"active visible panel reuses content");
+  route.pause();check(!BreathCompositionPanelModule.reuseRemotePolar(route),"paused retained panel selects foreground launch");
+  route.begin();route.experimentShellDestroyed=true;check(!BreathCompositionPanelModule.reuseRemotePolar(route),"destroyed panel selects foreground launch");
+  route.experimentShellDestroyed=false;route.finishing=true;check(!BreathCompositionPanelModule.reuseRemotePolar(route),"finishing panel selects foreground launch");
+  route.finishing=false;route.root.child.shown=false;check(!BreathCompositionPanelModule.reuseRemotePolar(route),"hidden panel selects foreground launch");
+  route.root.child.shown=true;route.root.child.attached=false;check(!BreathCompositionPanelModule.reuseRemotePolar(route),"detached panel selects foreground launch");
+  route.root.child.attached=true;route.root.child.visibility=4;check(!BreathCompositionPanelModule.reuseRemotePolar(route),"hidden window selects foreground launch");
+  route.root.child.visibility=0;route.root.child=null;check(!BreathCompositionPanelModule.reuseRemotePolar(route),"no content selects foreground launch");
   BreathCompositionPanelModule m=new BreathCompositionPanelModule();m.begin();
   check(m.server.confirmations==0,"dispatch and observer registration not completion");m.draw();
   check(m.server.confirmations==0,"onDraw alone is not post-draw completion");m.drain();
@@ -98,4 +117,4 @@ if($LASTEXITCODE){throw 'Production observer host controls failed'}
 $feature=Get-Content (Join-Path $repo 'fixtures/native-app-features/ui/breath-composition-panel/ui.breath_composition_control_panel.feature.json') -Raw|ConvertFrom-Json
 $path='apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPanelRenderReceipt.java'
 if(@($feature.panel_composition.modules[0].source_files|Where-Object{$_-ceq$path}).Count-ne1){throw 'Exact feature helper closure missing'}
-@{passed=$true;production_observer_sha256=(Get-FileHash (Join-Path $panel 'BreathCompositionPanelModule.java')).Hash.ToLowerInvariant();helper_sha256=(Get-FileHash $policy).Hash.ToLowerInvariant();limits='Byte-exact extracted production observer; modeled Android surfaces; no APK/device/physical proof'}|ConvertTo-Json|Set-Content (Join-Path $OutputRoot 'RESULT.json')
+@{passed=$true;production_observer_sha256=(Get-FileHash -LiteralPath $PanelModulePath).Hash.ToLowerInvariant();helper_sha256=(Get-FileHash $policy).Hash.ToLowerInvariant();limits='Byte-exact extracted production observer; modeled Android surfaces; no APK/device/physical proof'}|ConvertTo-Json|Set-Content (Join-Path $OutputRoot 'RESULT.json')

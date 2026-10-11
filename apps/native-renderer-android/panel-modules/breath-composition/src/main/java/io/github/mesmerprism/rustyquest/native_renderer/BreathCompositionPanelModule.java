@@ -542,7 +542,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 if ("open-polar".equals(request.operation)) {
                     remotePending = new RemotePending(request.id, "", "open-polar");
                     server.updateReceipt(request.id, "pending", "Opening Polar setup on Quest.");
-                    if (panel != null && !panel.experimentShellDestroyed) {
+                    if (panel != null && panel.canRenderRemotePolarInPlace()) {
                         panel.replaceBreathCompositionPanelContent("polar");
                         panel.observeRemotePolarRender(remotePending);
                     } else {
@@ -1589,6 +1589,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         setContentView(buildBreathCompositionControlPanelView());
         restorePanelScrollAfterLayout();
         scheduleExperimenterProjectionRefresh();
+    }
+
+    // Called on the main-thread command dispatch path. Sample the current
+    // Activity/content lifetime immediately before choosing an in-place route.
+    private boolean canRenderRemotePolarInPlace() {
+        if (!remotePanelResumed || experimentShellDestroyed || isFinishing()) return false;
+        View content = ((ViewGroup)findViewById(android.R.id.content)).getChildAt(0);
+        return content != null && content.isAttachedToWindow() && content.isShown()
+            && content.getWindowVisibility() == View.VISIBLE;
     }
 
     private boolean remotePanelResumed;
