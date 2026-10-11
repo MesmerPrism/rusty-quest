@@ -407,6 +407,7 @@ static NEXT_IMMERSIVE_OWNER: std::sync::atomic::AtomicU64 = std::sync::atomic::A
 impl Drop for ExperimentSessionImmersiveOwner<'_> {
     fn drop(&mut self) {
         if self.identity == 0 { return; }
+        android_events::status_owner_ended(self.identity, self.epoch);
         if self.identity > 0 {
             let _ = native_renderer_panel_bridge::notify_app_status_owner(self.app,
                 self.identity, self.epoch, false);
@@ -455,6 +456,7 @@ fn android_main(app: android_activity::AndroidApp) {
         _ => { marker("hub-status", "app_owner_start_ineligible"); (0, 0, None) }
     };
     let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner { app: &app, identity, epoch, runtime };
+    android_events::status_owner_started(identity, epoch);
     if identity > 0 {
         if let Err(reason) = native_renderer_panel_bridge::notify_app_status_owner(&app, identity, epoch, true) {
             marker("hub-status", format!("app_owner_start_failed reason={reason}"));

@@ -89,10 +89,27 @@ cannot refresh it. Transient query unavailability retains only the prior aged
 observation; a supplier age bound and an independent watchdog retire it after
 1500 ms without a valid acknowledgement, even if the poll callback never arrives.
 Closed completion, exact worker loss, clock regression, native Drop and terminal
-Binder/admission failure retire the owner and read executor. Neither a later ACK
-nor panel reopening retries a retired owner. Only an actual eligible new native
-owner may attempt a new lifetime. Existing BLE status, commands and navigation
-remain separate.
+Binder/admission failure permanently retire the owner and read executor. A later
+ACK or panel reopening cannot retry a retired generation.
+
+An actual NativeActivity pause followed by resume may recover only a lifetime
+retired for the acknowledgement age bound. The native thread carries its captured
+owner identity and runtime epoch into a synchronous JNI lifecycle signal; no
+lookup of a replacement runtime supplies that identity. Each pause authorizes
+one resume signal, and replacement/Drop fence queued recovery. Resume closes an
+expired registration even when its watchdog is still queued, then opens a new
+read-only executor and observation generation. Old suppliers, callbacks and
+watchdogs remain unavailable or inert even when the native epoch is unchanged.
+
+A new coordinator requires an accepted current-epoch query completed after the
+new observer opened and within the existing freshness bound before constructing
+a fresh Binder client. Cached status, initialization, product revision and resume
+alone cannot register a surface. No fresh query within 1500 ms permanently retires
+that recovery generation; admission failure also remains terminal across later
+resume signals. A healthy pause/resume does not replace its registration. This
+path never reopens mutation admission, replays commands or changes the product
+revision. Existing BLE carrier generation, authentication, status, commands and
+navigation remain separate.
 
 tools/Prepare-NativeRendererBrokerClient.ps1 -AppSpec <spec> -OutputRoot <new>
 runs the real source-only resolver and writes one generated client lock using
@@ -112,7 +129,9 @@ policy. This document supplies no token, client/provider identity, grant or
 authenticated subscription. Older owners reject empty-command registration.
 
 The caller must start only in its expressly selected lifetime and close when
-that native eligibility ends; no same-owner retry or persistent service is added.
+that native eligibility ends. The bounded native lifecycle recovery above adds
+one fresh registration generation after an expired observation; it does not retry
+a terminal Binder/admission operation or create a persistent service.
 Browser consumption requires a genuine authenticated Hub snapshot/event route
 and matching selected surface/channel/epoch before admitting observation bytes.
 LAN listening, plaintext security posture, wearer opt-in, same-origin assets,

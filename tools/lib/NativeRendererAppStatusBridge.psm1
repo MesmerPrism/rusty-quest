@@ -44,6 +44,10 @@ function New-NativeRendererAppStatusBridgeSource {
                 }
             });
     }
+    public static synchronized void lifecycle(long identity, long epoch, boolean resumed) {
+        if (owner == null) return;
+        if (resumed) owner.resumed(identity, epoch); else owner.paused(identity, epoch);
+    }
     public static synchronized void changed(long identity, long epoch, boolean live) {
         changedBle(identity, epoch, live);
         if (owner == null) return;
@@ -54,6 +58,7 @@ function New-NativeRendererAppStatusBridgeSource {
 @'
     static void prepare(android.content.Context context) { prepareBle(context); }
     public static void changed(long identity, long epoch, boolean live) { changedBle(identity, epoch, live); }
+    public static void lifecycle(long identity, long epoch, boolean resumed) { }
 '@
     }
     $bleBody = if ($BleSelected) {

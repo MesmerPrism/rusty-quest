@@ -4,6 +4,30 @@ use std::time::Duration;
 
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 
+// The native thread carries its captured owner; no registry lookup can redirect
+// a former lifetime's pause/resume to a replacement.
+std::thread_local! {
+    static STATUS_OWNER: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+pub(crate) fn status_owner_started(identity: u64, epoch: u64) {
+    STATUS_OWNER.with(|owner| owner.set((identity, epoch)));
+}
+pub(crate) fn status_owner_ended(identity: u64, epoch: u64) {
+    STATUS_OWNER.with(|owner| {
+        if owner.get() == (identity, epoch) { owner.set((0, 0)); }
+    });
+}
+fn notify_status_lifecycle(app: &AndroidApp, resumed: bool) {
+    let (identity, epoch) = STATUS_OWNER.with(|owner| owner.get());
+    if identity > 0 && epoch > 0 {
+        if let Err(reason) = crate::native_renderer_panel_bridge::notify_app_status_lifecycle(
+            app, identity, epoch, resumed,
+        ) {
+            crate::marker("hub-status", format!("native_lifecycle_signal_failed reason={reason}"));
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ActivityPumpStats {
     pub(crate) input_batches: u64,
@@ -40,8 +64,14 @@ pub(crate) fn pump_activity_events(
                         ),
                     );
                 }
-                MainEvent::Pause => crate::marker("activity-lifecycle", "event=pause"),
-                MainEvent::Resume { .. } => crate::marker("activity-lifecycle", "event=resume"),
+                MainEvent::Pause => {
+                    crate::marker("activity-lifecycle", "event=pause");
+                    notify_status_lifecycle(app, false);
+                },
+                MainEvent::Resume { .. } => {
+                    crate::marker("activity-lifecycle", "event=resume");
+                    notify_status_lifecycle(app, true);
+                },
                 MainEvent::Destroy => {
                     crate::marker("activity-lifecycle", "event=destroy");
                     *running = false;
