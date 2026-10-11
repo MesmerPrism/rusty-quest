@@ -125,9 +125,21 @@ def select_device(discovered, address, name=None):
 
 def status_characteristic(client, service_uuid, status_uuid):
     service = client.services.get_service(service_uuid)
-    characteristic = client.services.get_characteristic(status_uuid)
-    if service is None or characteristic is None or "read" not in characteristic.properties or not any(
-            item.uuid.casefold() == characteristic.uuid.casefold() for item in service.characteristics):
+    if service is None or service.uuid.casefold() != service_uuid.casefold():
+        raise ValueError("selected service is absent or has a different identity")
+    matches = [item for item in service.characteristics
+               if item.uuid.casefold() == status_uuid.casefold()]
+    if len(matches) != 1:
+        raise ValueError("exactly one status characteristic in selected service required")
+    characteristic = matches[0]
+    # Resolve from the service itself: a global UUID lookup can select another
+    # service's duplicate UUID. Join the backend's actual attribute handles too.
+    if ("read" not in characteristic.properties
+            or characteristic.service_uuid.casefold() != service.uuid.casefold()
+            or type(service.handle) is not int or service.handle <= 0
+            or type(characteristic.handle) is not int or characteristic.handle <= 0
+            or type(characteristic.service_handle) is not int
+            or characteristic.service_handle != service.handle):
         raise ValueError("status characteristic is not a readable member of the selected service")
     return characteristic
 
@@ -182,7 +194,9 @@ async def run(args, scanner, client_factory, bleak_version, *, clock=None, sleep
                     raise ValueError("connect returned without connected transport")
                 record("connected", cycle=cycle + 1, connected=bool(client.is_connected))
                 characteristic = status_characteristic(client, args.service, args.status)
-                record("gatt_membership", cycle=cycle + 1, service=args.service, status=characteristic.uuid)
+                record("gatt_membership", cycle=cycle + 1, service=characteristic.service_uuid,
+                       service_handle=characteristic.service_handle, status=characteristic.uuid,
+                       characteristic_handle=characteristic.handle)
                 deadline = clock() + args.seconds
                 while clock() < deadline:
                     if not bool(client.is_connected):
@@ -218,6 +232,9 @@ async def run(args, scanner, client_factory, bleak_version, *, clock=None, sleep
                 row["errors"].append(type(error).__name__ + ": " + str(error))
                 record("cycle_error", cycle=cycle + 1, error=row["errors"][-1])
             finally:
+                observation.available = False
+                row["terminal_observation_available"] = observation.available
+                record("observation_retired", cycle=cycle + 1, available=observation.available)
                 try:
                     await asyncio.wait_for(client.disconnect(), args.disconnect_timeout)
                     row["disconnect_confirmed"] = not bool(client.is_connected)

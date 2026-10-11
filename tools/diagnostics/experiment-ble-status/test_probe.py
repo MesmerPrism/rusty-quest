@@ -18,7 +18,7 @@ def status(epoch="1", read="10", generation=1, revision=0, age=10):
 
 class ObservationTests(unittest.TestCase):
     def test_canonical_identifiers_and_integer_version(self):
-        for value in ("0", "-1", "01", "9223372036854775808", "١", 1, True):
+        for value in ("0", "-1", "01", "9223372036854775808", "Ù¡", 1, True):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 probe.positive_int64(value)
         self.assertEqual(probe.positive_int64("9223372036854775807"), 9223372036854775807)
@@ -99,8 +99,9 @@ class SelectionTests(unittest.TestCase):
             probe.select_device({**inventory, "duplicate": inventory["peer"]}, "PEER-A")
 
     def test_gatt_membership_and_read_property_are_mandatory(self):
-        member = types.SimpleNamespace(uuid=probe.STATUS, properties=["read"])
-        service = types.SimpleNamespace(characteristics=[member])
+        member = types.SimpleNamespace(uuid=probe.STATUS, properties=["read"], handle=2,
+                                               service_uuid=probe.SERVICE, service_handle=1)
+        service = types.SimpleNamespace(uuid=probe.SERVICE, handle=1, characteristics=[member])
         collection = types.SimpleNamespace(get_service=lambda _: service,
                                            get_characteristic=lambda _: member)
         client = types.SimpleNamespace(services=collection)
@@ -110,6 +111,28 @@ class SelectionTests(unittest.TestCase):
             probe.status_characteristic(client, probe.SERVICE, probe.STATUS)
         service.characteristics = [member]
         member.properties = ["write"]
+        with self.assertRaises(ValueError):
+            probe.status_characteristic(client, probe.SERVICE, probe.STATUS)
+
+    def test_duplicate_uuid_in_other_service_cannot_supply_membership(self):
+        member = types.SimpleNamespace(uuid=probe.STATUS, properties=["read"], handle=2,
+                                       service_uuid=probe.SERVICE, service_handle=1)
+        foreign = types.SimpleNamespace(uuid=probe.STATUS, properties=["read"], handle=4,
+                                        service_uuid="foreign-service", service_handle=3)
+        service = types.SimpleNamespace(uuid=probe.SERVICE, handle=1, characteristics=[member])
+        client = types.SimpleNamespace(services=types.SimpleNamespace(
+            get_service=lambda _: service, get_characteristic=lambda _: foreign))
+        self.assertIs(probe.status_characteristic(client, probe.SERVICE, probe.STATUS), member)
+        for candidates in ([foreign], [member, member]):
+            service.characteristics = candidates
+            with self.assertRaises(ValueError):
+                probe.status_characteristic(client, probe.SERVICE, probe.STATUS)
+        service.characteristics = [member]
+        member.service_handle = 3
+        with self.assertRaises(ValueError):
+            probe.status_characteristic(client, probe.SERVICE, probe.STATUS)
+        member.service_handle = 1
+        member.service_uuid = "foreign-service"
         with self.assertRaises(ValueError):
             probe.status_characteristic(client, probe.SERVICE, probe.STATUS)
 
@@ -147,8 +170,9 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             def __init__(self, *_args, **_kwargs):
                 self.is_connected = False
                 self.read = 0
-                member = types.SimpleNamespace(uuid=probe.STATUS, properties=["read"])
-                service = types.SimpleNamespace(characteristics=[member])
+                member = types.SimpleNamespace(uuid=probe.STATUS, properties=["read"], handle=2,
+                                               service_uuid=probe.SERVICE, service_handle=1)
+                service = types.SimpleNamespace(uuid=probe.SERVICE, handle=1, characteristics=[member])
                 self.services = types.SimpleNamespace(get_service=lambda _: service,
                                                      get_characteristic=lambda _: member)
 
@@ -189,12 +213,18 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["browser_or_command_qualification"])
         self.assertFalse(result["physical_readiness_qualification"])
         self.assertTrue(result["native_observation_passed"])
+        self.assertTrue(all(row["terminal_observation_available"] is False for row in result["cycles"]))
+        retired = [json.loads(line) for line in (output / "events.jsonl").read_text().splitlines()
+                   if json.loads(line)["kind"] == "observation_retired"]
+        self.assertEqual(len(retired), 2)
+        self.assertTrue(all(event["available"] is False for event in retired))
 
     async def test_disconnect_timeout_retains_failure_and_prevents_reconnect(self):
         result, output, scans = await self.exercise(cycles=2, disconnect_timeout=True)
         self.assertFalse(result["success"])
         self.assertEqual(scans, 1)
         self.assertFalse(result["cycles"][0]["disconnect_confirmed"])
+        self.assertFalse(result["cycles"][0]["terminal_observation_available"])
         self.assertTrue(any("TimeoutError" in item for item in result["cycles"][0]["errors"]))
         self.assertTrue((output / "RESULT.json").exists())
         self.assertIn('"kind":"disconnect_error"', (output / "events.jsonl").read_text())

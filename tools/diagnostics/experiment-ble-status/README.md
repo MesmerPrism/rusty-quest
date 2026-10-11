@@ -27,7 +27,8 @@ Keep addresses, names, device captures and all output outside public source.
 Observe the owning task's device/radio coordination before live use. Every cycle
 requires fresh discovery of the explicit address, optionally its exact name,
 followed by uncached Windows service discovery and actual readable status
-membership in the selected GATT service. Windows' last system advertisement may
+membership in the selected GATT service, including service UUID and attribute
+handle joins. Duplicate status UUIDs in other services cannot supply membership. Windows' last system advertisement may
 omit the app UUID; advertisement UUID absence does not substitute for the GATT
 membership check. An address requires an independent peer identity join.
 
@@ -35,7 +36,8 @@ Scan, connect, read, poll, cycle gap and disconnect limits are configurable and
 bounded. `--scan-only` performs discovery only. Defaults select three read-only
 cycles and require two advancing native read completions per connection. A
 disconnect timeout preserves an unresolved failure and prevents another cycle;
-it is not proof the radio or system GATT handles closed. The Windows backend
+observation availability is retired before every disconnect attempt, including
+timeouts. It is not proof the radio or system GATT handles closed. The Windows backend
 can retain shared GATT for much longer than the poll interval, hence a separately
 selected disconnect deadline up to 135 seconds.
 
