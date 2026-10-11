@@ -781,7 +781,9 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     }
     $generatedControlPanelActivityPath = Join-Path $generatedEmbeddedPackageDir "ControlPanelActivity.java"
     $experimentSessionHubHook = ''
-    if ($null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider') {
+    $appHubSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider'
+    $appBleSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_ble_control'
+    if ($appHubSelected -or $appBleSelected) {
         if (-not $isExperimentSessionPanel) { throw 'Hub provider requires the breath composition panel.' }
         $experimentSessionHubHook = @'
     static void prepareExperimentSessionAppOwner(android.content.Context context) {
@@ -789,7 +791,7 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
         installConditionAudioFromPackagedClosure(ownerApplicationContext.getFilesDir().toString());
     }
 '@
-        [System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource -Selected), [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource -Selected:$appHubSelected -BleSelected:$appBleSelected), [System.Text.UTF8Encoding]::new($false))
     }
     $generatedControlPanelActivitySource = @"
 package io.github.mesmerprism.rustyquest.native_renderer;

@@ -1,11 +1,12 @@
 # Build-selected Java composition; no assets, device effects or admission authority.
 function New-NativeRendererAppStatusBridgeSource {
     [CmdletBinding()]
-    param([switch]$Selected)
+    param([switch]$Selected, [switch]$BleSelected)
     $body = if ($Selected) {
 @'
     private static ExperimentSessionAppStatusOwner owner;
     static synchronized void prepare(android.content.Context context) {
+        prepareBle(context);
         if (owner != null) return;
         final android.content.Context appContext = context.getApplicationContext();
         ControlPanelActivity.prepareExperimentSessionAppOwner(appContext);
@@ -43,18 +44,44 @@ function New-NativeRendererAppStatusBridgeSource {
                 }
             });
     }
+    public static synchronized void lifecycle(long identity, long epoch, boolean resumed) {
+        if (owner == null) return;
+        if (resumed) owner.resumed(identity, epoch); else owner.paused(identity, epoch);
+    }
     public static synchronized void changed(long identity, long epoch, boolean live) {
+        changedBle(identity, epoch, live);
         if (owner == null) return;
         if (live) owner.started(identity, epoch); else owner.ended(identity, epoch);
     }
 '@
     } else {
 @'
-    static void prepare(android.content.Context context) { }
-    public static void changed(long identity, long epoch, boolean live) { }
+    static void prepare(android.content.Context context) { prepareBle(context); }
+    public static void changed(long identity, long epoch, boolean live) { changedBle(identity, epoch, live); }
+    public static void lifecycle(long identity, long epoch, boolean resumed) { }
 '@
     }
-    return "package io.github.mesmerprism.rustyquest.native_renderer;`n/** Selected application composition; feature off is inert. */`npublic final class NativeRendererAppStatusBridge {`n" + $body + "`n}"
+    $bleBody = if ($BleSelected) {
+@'
+    private static android.content.Context bleContext;
+    private static synchronized void prepareBle(android.content.Context context) {
+        if (bleContext != null) return;
+        bleContext = context.getApplicationContext();
+        ControlPanelActivity.prepareExperimentSessionAppOwner(bleContext);
+        BreathCompositionPanelModule.prepareExperimentSessionBleOwner(bleContext);
+    }
+    private static synchronized void changedBle(long identity, long epoch, boolean live) {
+        if (bleContext == null) return;
+        BreathCompositionPanelModule.experimentSessionBleOwnerChanged(identity, epoch, live);
+    }
+'@
+    } else {
+@'
+    private static void prepareBle(android.content.Context context) { }
+    private static void changedBle(long identity, long epoch, boolean live) { }
+'@
+    }
+    return "package io.github.mesmerprism.rustyquest.native_renderer;`n/** Selected application composition; feature off is inert. */`npublic final class NativeRendererAppStatusBridge {`n" + $body + "`n" + $bleBody + "`n}"
 }
 function Write-NativeRendererJavaSourceResponse {
     param([Parameter(Mandatory)][string[]]$SourceFiles,

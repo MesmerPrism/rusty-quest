@@ -245,9 +245,32 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         );
     private static WeakReference<BreathCompositionPanelModule> remotePanel =
         new WeakReference<BreathCompositionPanelModule>(null);
-    private static Context remoteContext;
-    private static RemotePending remotePending;
-    private static long lastRemoteStatusPollMs;
+    private static volatile Context remoteContext;
+    private static volatile RemotePending remotePending;
+    private static volatile long lastRemoteStatusPollMs;
+    private static volatile RemoteStatusObserver remoteStatusObserver;
+    private static final class RemoteStatusObserver {
+        final long generation, epoch;
+        final ExperimentSessionAndroidShell.StatusObservationTarget target;
+        RemoteStatusObserver(ExperimentSessionBleServer carrier, long generation, long epoch) {
+            this.generation=generation; this.epoch=epoch;
+            target=new ExperimentSessionAndroidShell.StatusObservationTarget(epoch,
+                new java.util.function.BooleanSupplier() {
+                    @Override public boolean getAsBoolean() {
+                        return carrier.acceptsStatusRead(generation, epoch);
+                    }
+                },
+                new java.util.function.LongSupplier() {
+                    @Override public long getAsLong() { return SystemClock.elapsedRealtimeNanos(); }
+                },
+                new java.util.function.Consumer<String>() {
+                    @Override public void accept(String marker) {
+                        android.util.Log.i("RQNativeRenderer",
+                            "RUSTY_QUEST_NATIVE_RENDERER channel=ble-status carrier_generation="+generation+" "+marker);
+                    }
+                });
+        }
+    }
     private static final String EXTRA_REMOTE_OPEN_POLAR = "experiment_session_remote_open_polar";
 
     private static final class RemotePending {
@@ -269,6 +292,25 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private static ExperimentSessionBleServer remoteServer() {
         return remoteContext == null ? null : ExperimentSessionBleServer.process(
             remoteContext, REMOTE_DELEGATE);
+    }
+
+    static void prepareExperimentSessionBleOwner(Context context) {
+        remoteContext = context.getApplicationContext();
+        ExperimentSessionBleServer.process(remoteContext, REMOTE_DELEGATE);
+    }
+
+    static void experimentSessionBleOwnerChanged(long identity, long epoch, boolean live) {
+        ExperimentSessionBleServer server = remoteServer();
+        if (server == null) return;
+        boolean changed = live ? server.nativeOwnerStarted(identity, epoch)
+            : server.nativeOwnerEnded(identity, epoch);
+        if (changed) {
+            RemoteStatusObserver old=remoteStatusObserver;
+            remoteStatusObserver=null;
+            if (old != null) old.target.retire();
+            remotePending = null;
+            lastRemoteStatusPollMs = 0L;
+        }
     }
 
     private static final ExperimentSessionAndroidShell.UiSink REMOTE_SINK =
@@ -303,22 +345,22 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 ExperimentSessionBleServer server = remoteServer();
                 if (server == null) return;
                 if (!readback.receipt.accepted && !readback.commandPending()) {
-                    server.updateReceipt(pending.browserId, "rejected", "Native session rejected the command.");
+                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId, "rejected", "Native session rejected the command.");
                     remotePending = null;
                 } else if ("arm".equals(pending.operation)
                         && readback.receipt.durable
                         && state.phase == ExperimentSessionPanelState.Phase.ARMED
                         && state.pendingOperationId.isEmpty()) {
-                    server.updateReceipt(pending.browserId, "confirmed", "Condition armed by the Quest runtime.");
+                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId, "confirmed", "Condition armed by the Quest runtime.");
                     remotePending = null;
                 } else if ("save-next".equals(pending.operation)
                         && readback.receipt.durable
                         && state.phase == ExperimentSessionPanelState.Phase.IDLE
                         && "saved".equals(readback.recordingResult)) {
-                    server.updateReceipt(pending.browserId, "confirmed", "Session saved by the Quest writer.");
+                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId, "confirmed", "Session saved by the Quest writer.");
                     remotePending = null;
                 } else {
-                    server.updateReceipt(pending.browserId, "pending", "Awaiting native session readback.");
+                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId, "pending", "Awaiting native session readback.");
                 }
             }
 
@@ -327,7 +369,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 RemotePending pending = remotePending;
                 ExperimentSessionBleServer server = remoteServer();
                 if (pending != null && server != null && "save-exit".equals(pending.operation)) {
-                    server.updateReceipt(pending.browserId,
+                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId,
                         result != null && result.shouldFinish && result.saved
                             ? "confirmed" : "outcome_unknown",
                         result != null && result.shouldFinish && result.saved
@@ -343,14 +385,32 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 return ControlPanelActivity.experimentSessionOpenControlDefault();
             }
             @Override public JSONObject snapshot() throws Exception {
+                refreshExperimenterPolarProjection();
                 long now = SystemClock.elapsedRealtime();
+                final ExperimentSessionBleServer carrier = remoteServer();
+                final long generation = carrier == null ? 0L : carrier.currentGeneration();
+                final long epoch = carrier == null ? 0L : carrier.currentNativeEpoch();
+                if (carrier == null || !carrier.acceptsStatusRead(generation, epoch)) {
+                    throw new IllegalStateException("native-owner-status-read-unavailable");
+                }
+                RemoteStatusObserver observer=remoteStatusObserver;
+                if (observer == null || observer.generation != generation || observer.epoch != epoch) {
+                    if (observer != null) observer.target.retire();
+                    observer=new RemoteStatusObserver(carrier,generation,epoch);
+                    remoteStatusObserver=observer;
+                    lastRemoteStatusPollMs=0L;
+                }
                 if (now - lastRemoteStatusPollMs >= 1200L) {
                     lastRemoteStatusPollMs = now;
-                    EXPERIMENT_SESSION_SHELL.requestStatus(REMOTE_SINK);
+                    EXPERIMENT_SESSION_SHELL.requestStatus(observer.target);
                 }
                 ExperimentSessionPanelCoordinator.NativeStatusSnapshot observed =
-                    EXPERIMENT_SESSION_PANEL.nativeStatusSnapshot(SystemClock.elapsedRealtimeNanos());
+                    observer.target.snapshot();
+                if (observed == null) {
+                    throw new IllegalStateException("native-owner-status-read-unavailable");
+                }
                 ExperimentSessionPanelState state = observed.state;
+                ExperimentSessionPanelState polarState = EXPERIMENT_SESSION_PANEL.snapshot();
                 JSONObject status = new JSONObject()
                     .put("o", new JSONObject(observed.observationJson))
                     .put("f", NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext))
@@ -363,11 +423,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     .put("ms", state.activeTimeMs)
                     .put("st", state.storageStatus)
                     .put("k", remoteKioskState())
-                    .put("bt", state.polar.bluetooth.name())
-                    .put("po", state.polar.polar.name())
-                    .put("pf", state.polar.fresh
-                        && state.polar.observedAtUnixMs > 0L
-                        && System.currentTimeMillis() - state.polar.observedAtUnixMs < 5000L)
+                    .put("bt", polarState.polar.bluetooth.name())
+                    .put("po", polarState.polar.polar.name())
+                    .put("pf", polarState.polar.fresh
+                        && polarState.polar.observedAtUnixMs > 0L
+                        && System.currentTimeMillis() - polarState.polar.observedAtUnixMs < 5000L)
                     .put("done", state.counts.totalsAvailable
                         ? state.counts.completedTotal() : JSONObject.NULL)
                     .put("early", state.counts.totalsAvailable
@@ -386,7 +446,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 RemotePending pending = remotePending;
                 if (pending != null && now - pending.startedAtElapsedMs > 30000L) {
                     ExperimentSessionBleServer server = remoteServer();
-                    if (server != null) server.updateReceipt(pending.browserId,
+                    if (server != null) server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId,
                         "outcome_unknown", "Quest confirmation timed out. Check the headset.");
                     remotePending = null;
                     pending = null;
@@ -397,7 +457,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     boolean reached = "focused".equals(foreground);
                     if (reached) {
                         ExperimentSessionBleServer server = remoteServer();
-                        if (server != null) server.updateReceipt(pending.browserId,
+                        if (server != null) server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId,
                             "confirmed", "Quest foreground confirmed.");
                         remotePending = null;
                     }
@@ -2858,9 +2918,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
     }
 
-    private void refreshExperimenterPolarProjection() {
+    private static void refreshExperimenterPolarProjection() {
         try {
-            JSONObject projection = PolarSensorRuntime.forApplication(getApplicationContext())
+            JSONObject projection = PolarSensorRuntime.forApplication(remoteContext)
                 .experimenterStatusProjection();
             JSONObject ble = projection.optJSONObject("ble_runtime");
             String adapter = ble == null

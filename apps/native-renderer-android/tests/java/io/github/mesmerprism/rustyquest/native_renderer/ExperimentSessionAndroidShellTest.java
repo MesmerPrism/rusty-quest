@@ -5,6 +5,9 @@ import java.util.concurrent.TimeUnit;
 
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
+        headlessExplicitStatusIsDelivered();
+        explicitStatusLifetimeFences();
+        carrierStatusTargetFencesEligibilityToDelivery();
         explicitStatusReadCompletionIsNotAnAck();
         appObserverDoesNotReplacePanelAndRequiresNewNativeOwner();
         restartWaitsForAudioStopBeforeFinalizing();
@@ -24,6 +27,91 @@ public final class ExperimentSessionAndroidShellTest {
         definitiveClockRejectionRecoversWithFreshAttempt(true);
         definitiveRejectionRecoveryIsBoundedAndReasonSpecific();
         System.out.println("ExperimentSessionAndroidShellTest PASS");
+    }
+
+    private static void headlessExplicitStatusIsDelivered() throws Exception {
+        for(final long launch:new long[]{0L,1L}){
+        java.util.concurrent.LinkedBlockingQueue<Runnable> callbacks=new java.util.concurrent.LinkedBlockingQueue<>();
+        final int[] received={0};
+        ExperimentSessionAndroidShell.UiSink remote=new ExperimentSessionAndroidShell.UiSink(){
+            public boolean acceptsExperimentSessionCallbacks(long epoch){return epoch==launch;}
+            public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback value){
+                require(value.statusReadCompletedNanos>0L && "accepted".equals(value.commandStatus)); received[0]++;
+            }
+            public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult value){throw new AssertionError("status became terminal");}
+        };
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(new FakeBridge(false),new FakeCodec(),new FakeClock(),
+            new ExperimentSessionAndroidShell.UiDispatcher(){public void post(Runnable r){callbacks.add(r);}public boolean isUiThread(){return false;}});
+        try {
+            if(launch>0L)shell.beginExplicitLaunchEpoch(launch);shell.requestStatus(remote);
+            Runnable callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);callback.run();
+            if(received[0]!=1)throw new AssertionError("headless explicit status sink must receive completed native query exactly once");
+            final int[] panelReads={0};
+            shell.attach(new ExperimentSessionAndroidShell.UiSink(){
+                public boolean acceptsExperimentSessionCallbacks(long epoch){return true;}
+                public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback value){panelReads[0]++;}
+                public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult value){}
+            });
+            shell.requestStatus(remote);callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);callback.run();
+            equal(2,received[0]);equal(0,panelReads[0]);
+        } finally {shell.closeForTest();}
+        }
+    }
+
+    private static void explicitStatusLifetimeFences() throws Exception {
+        for(int mode=0;mode<3;mode++){
+            java.util.concurrent.LinkedBlockingQueue<Runnable> callbacks=new java.util.concurrent.LinkedBlockingQueue<>();
+            final int[] reads={0}; final java.util.concurrent.atomic.AtomicLong generation=new java.util.concurrent.atomic.AtomicLong(1L);
+            ExperimentSessionAndroidShell.UiSink sink=new ExperimentSessionAndroidShell.UiSink(){
+                public boolean acceptsExperimentSessionCallbacks(long epoch){return epoch==1L;}
+                public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback value){reads[0]++;}
+                public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult value){}
+            };
+            ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(new FakeBridge(false),new FakeCodec(),new FakeClock(),
+                new ExperimentSessionAndroidShell.UiDispatcher(){public void post(Runnable r){callbacks.add(r);}public boolean isUiThread(){return false;}});
+            try{
+                shell.beginExplicitLaunchEpoch(1L);
+                shell.requestStatus(sink);
+                Runnable callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);
+                if(mode==0)shell.detach(sink);
+                if(mode==1){
+                    boolean cleared=false;
+                    for(java.lang.reflect.Field field:callback.getClass().getDeclaredFields()){
+                        if(java.lang.ref.WeakReference.class.isAssignableFrom(field.getType())){
+                            field.setAccessible(true);((java.lang.ref.WeakReference<?>)field.get(callback)).clear();cleared=true;
+                        }
+                    }
+                    require(cleared);
+                }
+                if(mode==2)shell.beginExplicitLaunchEpoch(2L);
+                callback.run();equal(0,reads[0]);
+            }finally{shell.closeForTest();}
+        }
+        System.out.println("ExplicitStatusLifetime PASS weak/detach/launch fences");
+    }
+
+    private static void carrierStatusTargetFencesEligibilityToDelivery() throws Exception {
+        for(final int mode:new int[]{0,1,2}){
+            FakeClock clock=new FakeClock();java.util.concurrent.LinkedBlockingQueue<Runnable> callbacks=new java.util.concurrent.LinkedBlockingQueue<>();
+            java.util.concurrent.atomic.AtomicLong generation=new java.util.concurrent.atomic.AtomicLong(1L);
+            java.util.concurrent.atomic.AtomicInteger checks=new java.util.concurrent.atomic.AtomicInteger();
+            ExperimentSessionAndroidShell.StatusObservationTarget target=new ExperimentSessionAndroidShell.StatusObservationTarget(mode==2?2L:1L,()->{
+                boolean valid=generation.get()==1L;
+                if(checks.incrementAndGet()==1&&mode<2)generation.set(mode==0?0L:2L);
+                return valid;
+            },clock::elapsedRealtimeNanos);
+            ExperimentSessionAndroidShell.StatusObservationTarget replacement=new ExperimentSessionAndroidShell.StatusObservationTarget(1L,()->generation.get()==2L,clock::elapsedRealtimeNanos);
+            ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(new FakeBridge(false),new FakeCodec(),clock,
+                new ExperimentSessionAndroidShell.UiDispatcher(){public void post(Runnable r){callbacks.add(r);}public boolean isUiThread(){return false;}});
+            try{
+                shell.requestStatus(target);Runnable callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);callback.run();
+                ExperimentSessionPanelCoordinator.NativeStatusSnapshot old=target.snapshot();
+                require(old==null||!old.observed);require(replacement.snapshot()==null||!replacement.snapshot().observed);
+                if(mode==1){shell.requestStatus(replacement);callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);callback.run();require(replacement.snapshot().observed);}
+                target.retire();require(target.snapshot()==null);
+            }finally{shell.closeForTest();}
+        }
+        System.out.println("CarrierStatusTarget PASS real callback end/replacement inside eligibility-to-delivery / wrong native epoch / replacement fresh query");
     }
 
     private static void appObserverDoesNotReplacePanelAndRequiresNewNativeOwner() throws Exception {

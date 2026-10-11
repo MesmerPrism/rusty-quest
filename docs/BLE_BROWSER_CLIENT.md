@@ -63,6 +63,48 @@ starts a new fenced observation scope. Legacy v1 consumers may ignore `o`.
 The panel draw receipt identifies app-owned content and its view generation;
 it does not establish immersive focus, Bluetooth readiness or session effects.
 
+The selected native renderer prepares the existing application-context BLE
+delegate and packaged session closure before NativeActivity starts. BLE selection
+is independent of Hub status selection. Preparation creates no GATT server or
+permission prompt. Only an initialized native owner's positive identity/epoch
+starts the carrier, respecting the stored enabled choice and effective CONNECT
+and ADVERTISE grants. Missing grants remain unavailable until the visible panel's
+existing permission route fulfills them for that still-current owner.
+
+Panel pause/resume does not own carrier lifetime. Exact native owner Drop stops
+GATT/advertising, refresh work and peers even if the Java process survives. Old
+owner end, mismatched epoch and retired starts cannot stop/reopen a replacement.
+Native retirement clears cached status bytes; queued GATT commands remain fenced
+by their server generation. Terminal save-and-exit may close transport before the
+browser fetches its final receipt: preserve outcome unknown and use the owned
+native/writer acknowledgment; never retry a command to obtain confirmation.
+Status snapshots refresh the app-context Polar projection without starting sensor
+connection or requesting permissions. Its Bluetooth field still describes the
+Polar permission/adapter policy, not GATT advertising or native worker health.
+Each status refresh captures server generation and native identity/epoch before
+the delegate call, then checks them again before publishing bytes or scheduling
+another refresh. No carrier lock is held across delegate/JNI work; an in-flight
+retired snapshot cannot republish or reschedule after stop or replacement.
+
+The asynchronous native status query delivers to its explicit weak observation
+sink even before a panel is attached. Detached/collected sinks and retired launch
+or carrier generations cannot receive a held callback. This route does not replace
+the attached panel or alter command and terminal fallback delivery. A BLE carrier
+uses a carrier-private read-only projection for accepted status-response completion
+joined to its exact generation and native epoch. It cannot change panel state or
+start condition audio; current app-context Polar fields remain separate.
+its supplier denies a retained prior-carrier witness until a new completed query
+has joined. A mutation acknowledgement or rejected/future completion cannot qualify
+that witness. Hub status expiry and re-admission policy are separate.
+
+`tools/checks/Test-NativeRendererBleAppBridge.ps1` executes the production-generated
+BLE-only and inert/no-panel bridge with modeled Android boundaries. The panel
+gate also compiles production-generated BLE-only and BLE-plus-Hub closures
+against Android. The complete production server generation controls cover native
+owner start/end, denied grants, stored disabled state, repeated panel entry,
+retired permission callbacks and surviving-Java teardown. These are host controls;
+cold advertising, physical chooser/reconnection and app effects need device proof.
+
 Focused host gates are `tools/checks/test_experiment_ble_generation.py`,
 `tools/checks/Test-NativeRendererExperimentBleName.ps1`,
 `tools/checks/Test-ExperimentSessionPanelRenderReceipt.ps1` and

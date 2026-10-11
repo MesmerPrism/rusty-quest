@@ -1073,3 +1073,24 @@ pub(crate) fn notify_app_status_owner(app: &android_activity::AndroidApp,
         Ok(())
     }).map_err(|_| "app-status-owner-jni-unavailable".to_owned())
 }
+
+/// Application-context composition only: no Activity global reference escapes
+/// this synchronous JNI call. Java fences the exact native identity and epoch.
+#[cfg(target_os = "android")]
+pub(crate) fn notify_app_status_lifecycle(app: &android_activity::AndroidApp,
+    identity: u64, epoch: u64, resumed: bool) -> Result<(), String> {
+    use jni::{jni_sig, jni_str, objects::{JClass, JClassLoader, JObject, JValue}, JavaVM};
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env.call_method(&activity, jni_str!("getClassLoader"),
+            jni_sig!("()Ljava/lang/ClassLoader;"), &[])?.l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererAppStatusBridge")?;
+        let class = JClass::for_name_with_loader(env, name, true, loader)?;
+        env.call_static_method(class, jni_str!("lifecycle"), jni_sig!("(JJZ)V"),
+            &[JValue::Long(identity as i64), JValue::Long(epoch as i64), JValue::Bool(resumed)])?;
+        Ok(())
+    }).map_err(|_| "app-status-lifecycle-jni-unavailable".to_owned())
+}
