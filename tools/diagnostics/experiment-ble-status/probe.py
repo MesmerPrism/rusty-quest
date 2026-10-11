@@ -194,6 +194,8 @@ async def run(args, scanner, client_factory, bleak_version):
                     raw_path.write_bytes(raw)
                     record("raw_status", cycle=cycle + 1, raw_path=raw_path.name, bytes=len(raw),
                            sha256=hashlib.sha256(raw).hexdigest())
+                    if not bool(client.is_connected):
+                        raise ValueError("transport disconnected before status readback admission")
                     _, status = decode_status(raw)
                     try:
                         checked = observation.inspect(status)

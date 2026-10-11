@@ -125,7 +125,7 @@ class SelectionTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, *, cycles=1, disconnect_timeout=False, invalid_raw=None):
+    async def exercise(self, *, cycles=1, disconnect_timeout=False, invalid_raw=None, disconnect_during_read=False):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         output = pathlib.Path(temporary.name) / "run"
@@ -159,6 +159,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                 if options != {"use_cached": False}:
                     raise AssertionError("Actual status read must select uncached observation")
                 self.read += 1
+                if disconnect_during_read:
+                    self.is_connected = False
                 return invalid_raw if invalid_raw is not None else json.dumps(status(read=str(self.read))).encode()
 
             async def disconnect(self):
@@ -197,6 +199,15 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
         result, output, _ = await self.exercise(invalid_raw=b"\xff")
         self.assertFalse(result["success"])
         self.assertEqual(list(output.glob("*.bin")), [])
+
+    async def test_lost_transport_cannot_admit_completed_read(self):
+        result, output, scans = await self.exercise(cycles=2, disconnect_during_read=True)
+        self.assertFalse(result["success"])
+        self.assertFalse(result["native_observation_passed"])
+        self.assertEqual(scans, 1)
+        self.assertEqual(result["cycles"][0]["samples"], 0)
+        self.assertTrue((output / "cycle-1-sample-1.bin").exists())
+        self.assertTrue(any("readback admission" in item for item in result["cycles"][0]["errors"]))
 
 
 class ArgumentTests(unittest.TestCase):
