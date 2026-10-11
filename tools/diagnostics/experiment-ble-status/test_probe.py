@@ -170,7 +170,14 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
 
             # Intentionally no write, notification, pairing or command method exists.
 
-        result = await probe.run(args, Scanner, Client, "host-surrogate")
+        host_clock = [0.0]
+
+        async def host_sleep(delay):
+            host_clock[0] += delay
+            await asyncio.sleep(0)
+
+        result = await probe.run(args, Scanner, Client, "host-surrogate",
+                                 clock=lambda: host_clock[0], sleep=host_sleep)
         return result, output, Scanner.scans
 
     async def test_each_reconnect_requires_fresh_discovery_and_snapshots_inputs(self):

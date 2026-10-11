@@ -132,7 +132,9 @@ def status_characteristic(client, service_uuid, status_uuid):
     return characteristic
 
 
-async def run(args, scanner, client_factory, bleak_version):
+async def run(args, scanner, client_factory, bleak_version, *, clock=None, sleep=None):
+    clock = time.monotonic if clock is None else clock
+    sleep = asyncio.sleep if sleep is None else sleep
     output = pathlib.Path(args.output)
     output.mkdir(parents=True, exist_ok=False)
     source = pathlib.Path(__file__).read_bytes()
@@ -140,11 +142,11 @@ async def run(args, scanner, client_factory, bleak_version):
     configuration = {key: value for key, value in vars(args).items()}
     config_bytes = (json.dumps(configuration, sort_keys=True, indent=2) + "\n").encode()
     (output / "configuration.json").write_bytes(config_bytes)
-    started = time.monotonic()
+    started = clock()
     events = output / "events.jsonl"
 
     def record(kind, **fields):
-        item = {"kind": kind, "elapsed_s": time.monotonic() - started,
+        item = {"kind": kind, "elapsed_s": clock() - started,
                 "utc": datetime.datetime.now(datetime.timezone.utc).isoformat(), **fields}
         with events.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write(json.dumps(item, separators=(",", ":")) + "\n")
@@ -181,8 +183,8 @@ async def run(args, scanner, client_factory, bleak_version):
                 record("connected", cycle=cycle + 1, connected=bool(client.is_connected))
                 characteristic = status_characteristic(client, args.service, args.status)
                 record("gatt_membership", cycle=cycle + 1, service=args.service, status=characteristic.uuid)
-                deadline = time.monotonic() + args.seconds
-                while time.monotonic() < deadline:
+                deadline = clock() + args.seconds
+                while clock() < deadline:
                     if not bool(client.is_connected):
                         raise ValueError("transport disconnected during status polling")
                     raw = bytes(await asyncio.wait_for(client.read_gatt_char(characteristic, use_cached=False), args.read_timeout))
@@ -198,7 +200,7 @@ async def run(args, scanner, client_factory, bleak_version):
                         raise ValueError("transport disconnected before status readback admission")
                     _, status = decode_status(raw)
                     try:
-                        checked = observation.inspect(status)
+                        checked = observation.inspect(status, clock())
                         if not checked["available"]:
                             row["errors"].append(checked["reason"])
                     except (ValueError, TypeError, KeyError, AttributeError) as error:
@@ -207,7 +209,7 @@ async def run(args, scanner, client_factory, bleak_version):
                     record("status", cycle=cycle + 1, raw_path=raw_path.name, bytes=len(raw), raw_utf8=text,
                            sha256=hashlib.sha256(raw).hexdigest(), status=status, observation=checked)
                     row["samples"] += 1
-                    await asyncio.sleep(args.interval)
+                    await sleep(args.interval)
                 row["advances"] = observation.advances
                 if observation.advances < args.minimum_advances:
                     row["errors"].append("insufficient advancing native read completions")
@@ -226,7 +228,7 @@ async def run(args, scanner, client_factory, bleak_version):
             if row["errors"] or not row["disconnect_confirmed"]:
                 break
             if cycle + 1 < args.cycles:
-                await asyncio.sleep(args.cycle_gap)
+                await sleep(args.cycle_gap)
         if args.scan_only:
             result["success"] = bool(result["cycles"] and result["cycles"][0].get("scan_only"))
         else:
@@ -239,7 +241,7 @@ async def run(args, scanner, client_factory, bleak_version):
         if pathlib.Path(__file__).read_bytes() != source:
             result["success"] = False
             result["error"] = "diagnostic source changed during execution"
-        result["elapsed_s"] = time.monotonic() - started
+        result["elapsed_s"] = clock() - started
         result["discovery_only"] = args.scan_only
         result["transport_status_read_observed"] = any(row["samples"] for row in result["cycles"])
         result["native_observation_passed"] = result["success"] and not args.scan_only
