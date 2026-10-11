@@ -1733,9 +1733,9 @@ $sourceFiles = @($sourceFiles) +
 # Debug control is a separate closed source set; provider-off builds do not
 # compile either the provider class or its authority suffix.
 $debugSources = @()
-if ($script:BuildUsesLock -and $null -ne $appBuildLockObject.PSObject.Properties['debug_experiment_operator_sources']) {
-    $records = @($appBuildLockObject.debug_experiment_operator_sources)
-    $providers = if ($null -ne $appBuildLockObject.android_manifest.PSObject.Properties['providers']) { @($appBuildLockObject.android_manifest.providers) } else { @() }
+if ($script:BuildUsesLock) {
+    $records = @(if ($null -ne $appBuildLockObject.PSObject.Properties['debug_experiment_operator_sources']) { $appBuildLockObject.debug_experiment_operator_sources })
+    $providers = @(if ($null -ne $appBuildLockObject.android_manifest.PSObject.Properties['providers']) { $appBuildLockObject.android_manifest.providers })
     if ($records.Count -gt 0) {
         if ($records.Count -ne 2 -or $providers.Count -ne 1 -or $providers[0] -cne 'ExperimentSessionDebugControlProvider' -or
             @($appBuildLockObject.selected_feature_ids) -cnotcontains 'operator.breath_composition_cli') {
