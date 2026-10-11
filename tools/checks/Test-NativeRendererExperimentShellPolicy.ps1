@@ -195,6 +195,12 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Experiment session packaged-closure tests failed with exit code $LASTEXITCODE"
     }
+    $rustc = (Get-Command rustc -ErrorAction Stop).Source
+    $readerTests = Join-Path $resolvedOutput 'materialization-reader-tests.exe'
+    & $rustc '--edition' '2021' '--test' (Join-Path $repo 'apps/native-renderer-android/native/src/experiment_session_materialization.rs') '-o' $readerTests
+    if ($LASTEXITCODE -ne 0) { throw "Materialization reader compile failed: $LASTEXITCODE" }
+    & $readerTests
+    if ($LASTEXITCODE -ne 0) { throw "Materialization reader controls failed: $LASTEXITCODE" }
     $realInputs = @($RealFeatureLockPath, $RealProfilePath, $RealProviderManifestPath)
     $realInputCount = @($realInputs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
     if ($realInputCount -ne 0) {

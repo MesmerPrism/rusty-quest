@@ -20,6 +20,9 @@ use std::{
 
 use serde_json::{json, Map, Value};
 
+#[path = "experiment_session_materialization.rs"]
+mod materialization;
+
 use crate::{
     breath_guidance::{BreathGuidanceAssetIdentity, BreathGuidanceTarget, BreathGuidanceTimeline},
     experiment_session::{
@@ -2369,11 +2372,8 @@ fn load_compiled_experiment_inventory(
         return Err("experiment-session-compiled-anchor-invalid".to_owned());
     }
 
-    let path = trusted_files_root
-        .join("viscereality-recordings")
-        .join(EXPERIMENT_SESSION_PROFILE_FILE);
-    let bytes =
-        fs::read(&path).map_err(|error| format!("experiment-session-profile-read:{error}"))?;
+    let selected_directory = materialization::selected_directory(trusted_files_root, profile_sha256)?;
+    let bytes = materialization::read_file(&selected_directory, Path::new(EXPERIMENT_SESSION_PROFILE_FILE))?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| "experiment-session-profile-utf8-invalid".to_owned())?;
     if text.starts_with('\u{feff}') {
@@ -2486,11 +2486,8 @@ fn load_compiled_experiment_inventory(
                         .ok_or_else(|| {
                             "experiment-session-runtime-breath-guidance-bias-invalid".to_owned()
                         })?;
-                    let materialized = trusted_files_root
-                        .join("viscereality-recordings")
-                        .join("breath-guidance")
-                        .join(format!("{name}.json"));
-                    let bytes = fs::read(materialized)
+                    let bytes = materialization::read_file(&selected_directory,
+                        &Path::new("breath-guidance").join(format!("{name}.json")))
                         .map_err(|error| format!("breath-guidance-read:{error}"))?;
                     let timeline = BreathGuidanceTimeline::parse_exact(
                         &bytes,
@@ -3549,7 +3546,8 @@ mod tests {
     }
 
     fn materialize_compiled_profile(files_root: &Path, text: &str) {
-        let recording_root = files_root.join("viscereality-recordings");
+        let recording_root = files_root.join("viscereality-recordings").join("packaged-closures")
+            .join(rusty_quest_broker_authority::packaged_json_sha256(text));
         fs::create_dir_all(&recording_root).unwrap();
         fs::write(recording_root.join(EXPERIMENT_SESSION_PROFILE_FILE), text).unwrap();
     }
@@ -3718,7 +3716,7 @@ mod tests {
         let profile_text = document.to_string();
         let profile_digest = rusty_quest_broker_authority::packaged_json_sha256(&profile_text);
         materialize_compiled_profile(files_root, &profile_text);
-        let guidance_root = recording_root.join("breath-guidance");
+        let guidance_root = recording_root.join("packaged-closures").join(&profile_digest).join("breath-guidance");
         fs::create_dir_all(&guidance_root).unwrap();
         fs::write(guidance_root.join("condition-a.json"), &guidance_text).unwrap();
 

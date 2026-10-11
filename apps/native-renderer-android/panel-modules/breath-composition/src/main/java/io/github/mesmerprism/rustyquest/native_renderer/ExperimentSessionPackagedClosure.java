@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
 import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ final class ExperimentSessionPackagedClosure {
     static final String PROFILE_DESTINATION = "session-config/experiment-session.json";
     static final String MATERIALIZED_DIRECTORY = "viscereality-recordings";
     static final String MATERIALIZED_FILE = "experiment-session-profile.json";
+    static final String PACKAGED_CLOSURES_DIRECTORY = "packaged-closures";
     private static final String CLOSURE_SCHEMA =
         "rusty.quest.native_app_private_asset_closure.v1";
     private static final String OUTER_SCHEMA =
@@ -384,20 +386,27 @@ final class ExperimentSessionPackagedClosure {
         } else {
             for (String id : entries.keySet()) if (id.startsWith("phase-audio-")) fail("phase-audio-unselected-asset");
         }
-        materialize(filesRoot, profileBytes);
+        Path selectedDirectory = materializedDirectory(filesRoot, anchors.profileSha256);
         ArrayList<GuidanceEntry> guidanceEntries = new ArrayList<GuidanceEntry>();
+        byte[] guidanceABytes = null, guidanceBBytes = null;
         if (guidanceA != null) {
             byte[] bytes = requireGuidanceBytes(
                 assets, guidanceA, outerConditions.get("condition-a").audio.sourceSha256);
-            materializeGuidance(filesRoot, "condition-a", bytes);
+            guidanceABytes = bytes;
+            // All packaged identities are checked before publishing any selected bytes.
             guidanceEntries.add(new GuidanceEntry("condition-a", guidanceA));
         }
         if (guidanceB != null) {
             byte[] bytes = requireGuidanceBytes(
                 assets, guidanceB, outerConditions.get("condition-b").audio.sourceSha256);
-            materializeGuidance(filesRoot, "condition-b", bytes);
+            guidanceBBytes = bytes;
             guidanceEntries.add(new GuidanceEntry("condition-b", guidanceB));
         }
+        materialize(selectedDirectory, filesRoot, profileBytes);
+        if (guidanceA != null) materializeGuidance(selectedDirectory, filesRoot, "condition-a",
+            guidanceABytes);
+        if (guidanceB != null) materializeGuidance(selectedDirectory, filesRoot, "condition-b",
+            guidanceBBytes);
         return new Result(true, openControlDefault, providerId, inventorySha256, nonAudioProfileSha256,
             new AudioEntry[] {
             new AudioEntry("condition-a", packagedA),
@@ -542,18 +551,39 @@ final class ExperimentSessionPackagedClosure {
         return bytes;
     }
 
-    private static void materialize(Path filesRoot, byte[] profileBytes) throws IOException {
-        Path directory = filesRoot.resolve(MATERIALIZED_DIRECTORY);
-        Files.createDirectories(directory);
+    static Path materializedDirectory(Path filesRoot, String profileSha256) {
+        if (filesRoot == null || !filesRoot.isAbsolute() || !filesRoot.equals(filesRoot.normalize())
+                || !sha256(profileSha256)) fail("experiment-session-materialized-path-invalid");
+        return filesRoot.resolve(MATERIALIZED_DIRECTORY).resolve(PACKAGED_CLOSURES_DIRECTORY)
+            .resolve(profileSha256);
+    }
+
+    private static void ensureDirectoryNoLinks(Path filesRoot, Path directory) throws IOException {
+        if (!directory.startsWith(filesRoot) || !Files.isDirectory(filesRoot, LinkOption.NOFOLLOW_LINKS))
+            fail("experiment-session-materialized-path-invalid");
+        Path canonicalRoot = filesRoot.toRealPath();
+        Path current = filesRoot;
+        for (Path component : filesRoot.relativize(directory)) {
+            current = current.resolve(component);
+            try { Files.createDirectory(current); }
+            catch (FileAlreadyExistsException existing) { /* Verify the existing owner directory. */ }
+            if (!Files.isDirectory(current, LinkOption.NOFOLLOW_LINKS)
+                    || !current.toRealPath().equals(canonicalRoot.resolve(filesRoot.relativize(current))))
+                fail("experiment-session-materialized-path-invalid");
+        }
+    }
+
+    private static void materialize(Path directory, Path filesRoot, byte[] profileBytes) throws IOException {
+        ensureDirectoryNoLinks(filesRoot, directory);
         Path target = directory.resolve(MATERIALIZED_FILE);
-        if (Files.exists(target)) {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             requireExistingExact(target, profileBytes);
             return;
         }
         boolean created = false;
         try {
             try (FileChannel channel = FileChannel.open(target,
-                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
                 created = true;
                 ByteBuffer source = ByteBuffer.wrap(profileBytes);
                 while (source.hasRemaining()) channel.write(source);
@@ -572,24 +602,24 @@ final class ExperimentSessionPackagedClosure {
         requireExistingExact(target, profileBytes);
     }
 
-    private static void materializeGuidance(Path filesRoot, String conditionId, byte[] bytes)
+    private static void materializeGuidance(Path selectedDirectory, Path filesRoot, String conditionId, byte[] bytes)
             throws IOException {
-        Path directory = filesRoot.resolve(MATERIALIZED_DIRECTORY).resolve("breath-guidance");
-        Files.createDirectories(directory);
+        Path directory = selectedDirectory.resolve("breath-guidance");
+        ensureDirectoryNoLinks(filesRoot, directory);
         materializeExact(directory.resolve(conditionId + ".json"), bytes,
             "experiment-session-materialized-breath-guidance-drift");
     }
 
     private static void materializeExact(Path target, byte[] bytes, String driftReason)
             throws IOException {
-        if (Files.exists(target)) {
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
             requireExistingExact(target, bytes, driftReason);
             return;
         }
         boolean created = false;
         try {
             try (FileChannel channel = FileChannel.open(target,
-                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+                    StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
                 created = true;
                 ByteBuffer source = ByteBuffer.wrap(bytes);
                 while (source.hasRemaining()) channel.write(source);
@@ -614,7 +644,14 @@ final class ExperimentSessionPackagedClosure {
 
     private static void requireExistingExact(Path target, byte[] expected, String reason)
             throws IOException {
-        if (!Arrays.equals(expected, Files.readAllBytes(target))) fail(reason);
+        if (!Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS))
+            fail("experiment-session-materialized-path-invalid");
+        ByteBuffer actual = ByteBuffer.allocate(expected.length + 1);
+        try (FileChannel channel = FileChannel.open(target, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            while (actual.hasRemaining() && channel.read(actual) != -1) { /* Bounded exact read. */ }
+        }
+        if (actual.position() != expected.length
+                || !Arrays.equals(expected, Arrays.copyOf(actual.array(), actual.position()))) fail(reason);
     }
 
     private static String strictUtf8(byte[] bytes, String label) {

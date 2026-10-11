@@ -42,3 +42,14 @@ actual production background/cue owners against a fake Android transport. The
 shell gate tests closed opt-in/disabled and hostile cue asset joins. The panel gate
 compiles production Android sources against the SDK. None prove real audio effects;
 the next exact APK/native JNI compile and controlled playback slice remain required.
+
+Packaged profile and guidance metadata are materialized under
+`viscereality-recordings/packaged-closures/<compiled-profile-sha256>/`.
+Java creates only new files or verifies byte-identical existing files; Rust reads
+only the directory selected by the compiled profile anchor. Missing, partial,
+linked or mismatched selected files deny initialization with no legacy fallback.
+Older fixed profile/guidance files and timestamped session journals remain intact.
+The metadata directory is not a session timestamp and is skipped by existing
+session recovery. This supports same-package upgrades without rewriting prior
+session identities. The ordinary shell gate runs production Java closure and
+Rust reader controls; the panel gate compiles the Android producer integration.
