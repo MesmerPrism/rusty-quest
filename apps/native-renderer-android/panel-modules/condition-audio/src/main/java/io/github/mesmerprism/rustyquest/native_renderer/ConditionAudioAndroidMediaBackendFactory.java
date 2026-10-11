@@ -17,6 +17,7 @@ final class ConditionAudioAndroidMediaBackendFactory
         implements ConditionAudioRuntime.StartupPreloader {
     private final Object lock = new Object();
     private final AssetManager assets;
+    private final boolean loopBackground;
     private final Map<String, PreparedTrack> prepared = new HashMap<String, PreparedTrack>();
     private ConditionAudioRuntime.StartupPreloader.Listener preloadListener;
     private boolean closed;
@@ -38,9 +39,12 @@ final class ConditionAudioAndroidMediaBackendFactory
         }
     }
 
-    ConditionAudioAndroidMediaBackendFactory(AssetManager assets) {
+    ConditionAudioAndroidMediaBackendFactory(AssetManager assets) { this(assets, false); }
+
+    ConditionAudioAndroidMediaBackendFactory(AssetManager assets, boolean loopBackground) {
         if (assets == null) throw new IllegalArgumentException("packaged asset manager is required");
         this.assets = assets;
+        this.loopBackground = loopBackground;
     }
 
     @Override public void preload(
@@ -94,7 +98,8 @@ final class ConditionAudioAndroidMediaBackendFactory
             } finally {
                 descriptor.close();
             }
-            player.setLooping(false);
+            if (loopBackground) player.setLooping(true);
+            else player.setLooping(false);
             player.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
                 @Override public void onPrepared(MediaPlayer readyPlayer) {
                     synchronized (lock) {
@@ -201,7 +206,8 @@ final class ConditionAudioAndroidMediaBackendFactory
 
         @Override public void prepare(boolean looping) {
             if (looping) throw new IllegalArgumentException("condition audio must not loop");
-            player.setLooping(false);
+            if (factory.loopBackground) player.setLooping(true);
+            else player.setLooping(false);
             listener.onPrepared();
         }
 

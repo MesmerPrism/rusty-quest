@@ -823,6 +823,7 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     // EXPERIMENT_SESSION_SHELL_BEGIN
     private static volatile android.content.Context ownerApplicationContext;
     private static volatile ConditionAudioRuntime conditionAudioRuntime;
+    private static volatile BreathPhaseAudioAndroidOwner breathPhaseAudioOwner;
     private static volatile ExperimentSessionPackagedClosure.Result experimentSessionClosure;
     private static long pendingAudioGeneration;
     private static String pendingAudioPrepareOperation = "";
@@ -883,6 +884,17 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                         exactFilesRoot,
                         EXPERIMENT_SESSION_ANCHORS);
                 experimentSessionClosure = closure;
+                if (closure.phaseAudioEntries.length == 3) {
+                    ConditionAudioContract.Provider[] phaseProviders = new ConditionAudioContract.Provider[3];
+                    for (int i=0;i<3;i++) {
+                        ExperimentSessionPackagedClosure.AudioEntry e=closure.phaseAudioEntries[i];
+                        phaseProviders[i]=new ConditionAudioContract.Provider(e.conditionId,
+                            "packaged-native-app-provider",e.logicalDestination,e.sourceSha256,e.sourceBytes,e.mediaType);
+                    }
+                    breathPhaseAudioOwner=new BreathPhaseAudioAndroidOwner(assets,
+                        phaseProviders[0],phaseProviders[1],phaseProviders[2]);
+                }
+
                 if (closure.active) {
                     ConditionAudioContract.Provider[] providers =
                         new ConditionAudioContract.Provider[closure.audioEntries.length];
@@ -920,7 +932,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
         android.content.res.AssetManager assets = context == null ? null : context.getAssets();
         conditionAudioRuntime = ConditionAudioRuntime.installAppLifetime(
             inventory,
-            assets == null ? null : new ConditionAudioAndroidMediaBackendFactory(assets),
+            assets == null ? null : new ConditionAudioAndroidMediaBackendFactory(assets,
+                experimentSessionClosure != null && experimentSessionClosure.phaseAudioEntries.length == 3),
             new ConditionAudioContract.ReceiptSink() {
                 @Override public void onReceipt(ConditionAudioContract.Receipt receipt) {
                     android.util.Log.i("RustyQuestNativeRenderer",
@@ -1037,6 +1050,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     static String conditionAudioReadiness(String conditionId) {
         ConditionAudioRuntime runtime = conditionAudioRuntime;
         if (runtime == null) return "audio-inventory-unavailable";
+        BreathPhaseAudioAndroidOwner phaseOwner = breathPhaseAudioOwner;
+        if (phaseOwner != null && !"ready".equals(phaseOwner.readiness())) return "phase-audio-" + phaseOwner.readiness();
         ConditionAudioContract.TrackReadiness readiness = runtime.trackReadiness(conditionId);
         return readiness.state == ConditionAudioContract.TrackState.READY
             ? "track-ready" : readiness.reason;
@@ -1063,6 +1078,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     static boolean startConditionAudio(
             long sessionGeneration, String operationId, String conditionId) {
         ConditionAudioRuntime runtime = conditionAudioRuntime;
+        BreathPhaseAudioAndroidOwner phaseOwner=breathPhaseAudioOwner;
+        if(phaseOwner!=null && !"ready".equals(phaseOwner.readiness())) return false;
         if (runtime == null || sessionGeneration <= 0L || operationId == null
                 || operationId.isEmpty()) return false;
         ConditionAudioContract.TrackReadiness readiness = runtime.trackReadiness(conditionId);
@@ -1141,6 +1158,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                 sessionGeneration, receiptRevision, "audio-runtime-unavailable");
             return;
         }
+        BreathPhaseAudioAndroidOwner phaseOwner = breathPhaseAudioOwner;
+        if (phaseOwner != null) phaseOwner.control(sessionGeneration,event);
         ConditionAudioContract.Command command;
         if ("official-start".equals(event)) {
             command = ConditionAudioContract.Command.start(sessionGeneration, operationId);
@@ -1156,6 +1175,12 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
             publishConditionAudioControlFailure(
                 sessionGeneration, receiptRevision, submitted.reason);
         }
+    }
+
+    public static void applyBreathPhaseAudioSample(long generation, long index,
+            long start, long end, long activeTime, String phase) {
+        BreathPhaseAudioAndroidOwner owner=breathPhaseAudioOwner;
+        if (owner!=null) owner.sample(generation,index,start,end,activeTime,phase);
     }
 
     private static void publishConditionAudioControlFailure(
@@ -1194,6 +1219,12 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
         PanelImmersiveHandoff.setCompletionListener(null);
         try { clean = PolarSensorRuntime.closeExistingFromOwner(); }
         catch (Exception error) { clean = false; }
+        BreathPhaseAudioAndroidOwner phaseAudio=breathPhaseAudioOwner;
+        if(phaseAudio!=null){
+            phaseAudio.close();
+            try{boolean released=phaseAudio.awaitClosed(5000L);clean=released && clean;if(released)breathPhaseAudioOwner=null;}
+            catch(InterruptedException error){Thread.currentThread().interrupt();clean=false;}
+        }
         ConditionAudioRuntime audio = conditionAudioRuntime;
         if (audio != null) {
             audio.close();
@@ -1231,6 +1262,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
             long sessionGeneration,
             String operationId,
             ConditionAudioContract.StopReason stopReason) {
+        BreathPhaseAudioAndroidOwner phaseOwner=breathPhaseAudioOwner;
+        if(phaseOwner!=null) phaseOwner.control(sessionGeneration,"stop");
         synchronized (PRESENTATION_LOCK) {
             if (sessionGeneration == pendingAudioGeneration) {
                 pendingAudioGeneration = 0L;
@@ -1257,6 +1290,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     }
 
     static String conditionAudioShutdownStatus() {
+        BreathPhaseAudioAndroidOwner phaseOwner=breathPhaseAudioOwner;
+        if(phaseOwner!=null && !"complete".equals(phaseOwner.shutdownStatus())) return phaseOwner.shutdownStatus();
         ConditionAudioRuntime runtime = conditionAudioRuntime;
         if (runtime == null) return "complete";
         ConditionAudioContract.Phase phase = runtime.snapshot().phase;

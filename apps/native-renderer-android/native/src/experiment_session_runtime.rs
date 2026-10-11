@@ -2063,6 +2063,11 @@ impl ExperimentSessionRuntime {
     }
 
     fn current_breath_guidance_target(&self) -> Option<BreathGuidanceTarget> {
+        self.current_breath_guidance_sample()
+            .map(|(_, _, _, _, target)| target).filter(|target| target.bias_percent > 0)
+    }
+
+    fn current_breath_guidance_sample(&self) -> Option<(u64, usize, u64, u64, BreathGuidanceTarget)> {
         let now_ns = self.current_elapsed_realtime_ns()?;
         let projection = self.projection.try_read().ok()?;
         if projection.phase != SessionPhase::Active
@@ -2080,12 +2085,12 @@ impl ExperimentSessionRuntime {
         drop(projection);
         let guidance = self.active_breath_guidance.try_read().ok()?;
         let guidance = guidance.as_ref()?;
-        if guidance.generation != generation || guidance.bias_percent == 0 {
+        if guidance.generation != generation {
             return None;
         }
-        guidance
-            .timeline
-            .target_at(active_time_ns / 1_000_000, guidance.bias_percent)
+        let target = guidance.timeline.intended_target_at(active_time_ns / 1_000_000, guidance.bias_percent)?;
+        let (index, start, end) = guidance.timeline.phase_segment_at(target.official_active_time_ms)?;
+        Some((generation, index, start, end, target))
     }
 
     fn note_submitted_frame(&self, generation: u64, frame_sequence: u64) -> bool {
@@ -2801,6 +2806,12 @@ pub(crate) fn current_breath_guidance_target() -> Option<BreathGuidanceTarget> {
         .ok()
         .and_then(|runtime| runtime.current_breath_guidance_target())
 }
+
+/// Audio and bias share the same generation-bound intended target/official clock method.
+pub(crate) fn current_breath_phase_audio_sample() -> Option<(u64, usize, u64, u64, BreathGuidanceTarget)> {
+    runtime()?.current_breath_guidance_sample()
+}
+
 
 pub(crate) fn note_current_session_submitted_frame(generation: u64, frame_sequence: u64) -> bool {
     runtime()

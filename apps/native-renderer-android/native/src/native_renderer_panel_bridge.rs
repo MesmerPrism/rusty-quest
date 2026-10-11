@@ -120,6 +120,7 @@ pub(crate) struct ControlPanelCommandPoller {
     last_control_receipt_generation: u64,
     last_control_receipt_revision: u64,
     last_open_token: String,
+    last_audio_phase: Option<(u64, usize)>,
     startup_open_sent: bool,
     explicit_experiment_startup: ExplicitExperimentPanelStartupGate,
 }
@@ -127,6 +128,7 @@ pub(crate) struct ControlPanelCommandPoller {
 #[cfg(target_os = "android")]
 impl ControlPanelCommandPoller {
     pub(crate) fn poll_and_apply(&mut self, app: &android_activity::AndroidApp, frame_count: u64) {
+        let mut audio_control_delivered = false;
         if let Some((_, generation, revision, event)) =
             crate::experiment_session_runtime::current_control_receipt()
         {
@@ -155,6 +157,27 @@ impl ControlPanelCommandPoller {
                     }
                 }
             }
+            // A failed audio bridge must not block unrelated panel/control polling.
+            // Only consume an edge after this exact current control revision arrived.
+            audio_control_delivered = generation > 0
+                && generation == self.last_control_receipt_generation
+                && revision == self.last_control_receipt_revision;
+        }
+        if let Some((generation, index, start, end, target)) =
+            crate::experiment_session_runtime::current_breath_phase_audio_sample()
+        {
+            if audio_control_delivered
+                && generation == self.last_control_receipt_generation
+                && self.last_control_receipt_revision > 0
+                && self.last_audio_phase != Some((generation, index))
+            {
+                if apply_breath_phase_audio_sample(app, generation, index as u64, start, end,
+                        target.official_active_time_ms, target.expected_phase_token).is_ok() {
+                    self.last_audio_phase = Some((generation, index));
+                }
+            }
+        } else if let Some((generation, _)) = self.last_audio_phase.take() {
+            let _ = apply_breath_phase_audio_sample(app, generation, 0, 0, 0, 0, "inactive");
         }
         if frame_count % PANEL_COMMAND_POLL_INTERVAL_FRAMES != 0 {
             return;
@@ -315,6 +338,56 @@ fn apply_condition_audio_control_receipt(
             &[
                 JValue::Long(generation as i64),
                 JValue::Long(revision as i64),
+                JValue::Object(&event),
+            ],
+        )?;
+        Ok(())
+    })
+    .map_err(|error| format!("condition-audio-control-receipt:{error}"))
+}
+
+#[cfg(target_os = "android")]
+fn apply_breath_phase_audio_sample(
+    app: &android_activity::AndroidApp,
+    generation: u64,
+    index: u64,
+    start: u64,
+    end: u64,
+    time: u64,
+    event: &str,
+) -> Result<(), String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
+    };
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env
+            .new_string("io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity")?;
+        let class = JClass::for_name_with_loader(env, name, true, loader)?;
+        let event = env.new_string(event)?;
+        env.call_static_method(
+            class,
+            jni_str!("applyBreathPhaseAudioSample"),
+            jni_sig!("(JJJJJLjava/lang/String;)V"),
+            &[
+                JValue::Long(generation as i64),
+                JValue::Long(index as i64),
+                JValue::Long(start as i64),
+                JValue::Long(end as i64),
+                JValue::Long(time as i64),
                 JValue::Object(&event),
             ],
         )?;

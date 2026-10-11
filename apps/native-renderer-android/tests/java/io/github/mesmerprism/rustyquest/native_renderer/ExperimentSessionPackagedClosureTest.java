@@ -16,6 +16,7 @@ public final class ExperimentSessionPackagedClosureTest {
         validClosureMaterializesExactBytesAndBuildsOnlyAudio();
         validatedOpenControlDefaults();
         validGuidanceClosureMaterializesAndBindsAudio();
+        phaseAudioClosedOptInControls();
         inactiveClosureDoesNotMaterialize();
         rejectsWrongAssetCardinalityAndIds();
         rejectsProfileHashBytesBomAndUtf8Damage();
@@ -175,6 +176,49 @@ public final class ExperimentSessionPackagedClosureTest {
                 .resolve("breath-guidance").resolve("condition-a.json"))),
                 "exact breathing pattern bytes are materialized");
         } finally { fixture.close(); }
+    }
+
+
+    private static void phaseAudioClosedOptInControls() throws Exception {
+        for (int mode=0;mode<8;mode++) {
+            java.util.Map<String,byte[]> assetBytes = new java.util.HashMap<String,byte[]>();
+            String a=audio("session-audio/condition-a.mp3",AUDIO_A_SHA,101);
+            String b=audio("session-audio/condition-b.mp3",AUDIO_B_SHA,202);
+            String text=profile("provider.one",a,b,false);
+            String extra="";
+            for(String condition:new String[]{"condition-a","condition-b"}) {
+                String hash="condition-a".equals(condition)?AUDIO_A_SHA:AUDIO_B_SHA;
+                byte[] raw=("{\"schema\":\"rusty.quest.breath_guidance_timeline.v1\",\"timebase\":\"official-active-time-ms\",\"audio_source_sha256\":\""+hash+"\",\"segments\":[{\"start_ms\":0,\"end_ms\":4000,\"phase\":\"inhale\"}]}").getBytes(StandardCharsets.UTF_8);
+                String dest="breath-guidance/"+condition+".json";assetBytes.put(dest,raw);
+                String identity="{\"asset\":{\"logical_destination\":\""+dest+"\",\"source_sha256\":\""+sha(raw)+"\",\"source_bytes\":"+raw.length+",\"media_type\":\"application/json\"},\"default_bias_percent\":100}";
+                String audio="condition-a".equals(condition)?a:b;
+                String outer=outerCondition(condition,"condition-a".equals(condition)?"Condition 1":"Condition 2",audio);
+                String projected=projectedCondition(audio);
+                text=text.replace(outer,outer.substring(0,outer.length()-1)+",\"breath_guidance\":"+identity+"}")
+                    .replace("\""+condition+"\":"+projected,"\""+condition+"\":"+projected.substring(0,projected.length()-1)+",\"breath_guidance\":"+identity+"}");
+                extra+=","+entry("breath-guidance-"+("condition-a".equals(condition)?"a":"b"),dest,sha(raw),raw.length,"application/json");
+            }
+            String config="{\"enabled\":"+(mode==1?"false":mode==2?"1":"true");
+            for(String role:new String[]{"inhale","retention","exhale"}) {
+                byte[] raw=("synthetic-mp3-"+role).getBytes(StandardCharsets.UTF_8);
+                String dest="phase-audio/"+role+".mp3";
+                config+=",\""+role+"\":"+audio(mode==4&&role.equals("inhale")?"phase-audio/retention.mp3":dest,sha(raw),raw.length);
+                assetBytes.put(dest,mode==6?new byte[]{1}:raw);
+                if(!(mode==5&&role.equals("exhale")))extra+=","+entry("phase-audio-"+role,dest,sha(raw),raw.length,"audio/mpeg");
+            }
+            config+=mode==3?",\"unknown\":true}":"}";
+            if(mode!=7)text=text.substring(0,text.length()-1)+",\"phase_audio\":"+config+"}";
+            final byte[] profile=text.getBytes(StandardCharsets.UTF_8);
+            Fixture fixture=fixture(profile,"provider.one",entries(profile,"",false)+extra);
+            assetBytes.put(ExperimentSessionPackagedClosure.PROFILE_DESTINATION,profile);
+            try {
+                try {
+                    ExperimentSessionPackagedClosure.Result result=ExperimentSessionPackagedClosure.prepare(fixture.lock,destination->assetBytes.get(destination),fixture.root,fixture.anchors);
+                    check(mode<=1,"hostile optional audio must deny mode="+mode);
+                    check(result.phaseAudioEntries.length==(mode==0?3:0),"exact opt-in controls looping/cues");
+                }catch(IllegalArgumentException error){if(mode<=1)throw error;check(mode>=2,"positive closure rejected mode="+mode);}
+            }finally{fixture.close();}
+        }
     }
 
     private static void rejectsWrongAssetCardinalityAndIds() throws Exception {

@@ -85,7 +85,7 @@ Assert-Contains $buildPath 'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIM
 Assert-Contains $buildPath 'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_PROVIDER_MANIFEST_SHA256'
 Assert-Contains $buildPath 'RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_INVENTORY_SHA256'
 Assert-NotContains $buildPath 'entries.length() != 2'
-Assert-Contains $buildPath 'ConditionAudioAndroidMediaBackendFactory(assets)'
+Assert-Contains $buildPath 'ConditionAudioAndroidMediaBackendFactory(assets,'
 Assert-Contains $buildPath 'ConditionAudioContract.Command.prepare('
 Assert-Contains $buildPath 'pendingAudioCondition'
 Assert-Contains $buildPath 'sessionGeneration == pendingAudioGeneration'

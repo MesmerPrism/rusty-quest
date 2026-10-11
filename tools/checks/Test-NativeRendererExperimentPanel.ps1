@@ -301,7 +301,9 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $panelRoot 'ExperimentSessionPackagedClosure.java'),
         (Join-Path $audioRoot 'ConditionAudioRuntime.java'),
         (Join-Path $audioRoot 'ConditionAudioContract.java'),
-        (Join-Path $audioRoot 'ConditionAudioAndroidMediaBackendFactory.java')
+        (Join-Path $audioRoot 'ConditionAudioAndroidMediaBackendFactory.java'),
+        (Join-Path $audioRoot 'BreathPhaseAudioEngine.java'),
+        (Join-Path $audioRoot 'BreathPhaseAudioAndroidOwner.java')
     )
     $javaResponse = Join-Path $output 'androidSources.rsp'
     $null = Write-NativeRendererJavaSourceResponse -SourceFiles $androidSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
