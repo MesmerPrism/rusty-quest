@@ -344,7 +344,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     foreach ($selection in @(@{hub=$false;ble=$true},@{hub=$true;ble=$true},@{hub=$true;ble=$false})) {
         $hubOn = $selection.hub
         $bleOn = $selection.ble
-        [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource -Selected:$hubOn -BleSelected:$bleOn),[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource -Selected:$hubOn -BleSelected:$bleOn -PolarSelected),[Text.UTF8Encoding]::new($false))
         $ownerSources = @($androidSources)
         if ($hubOn) {
             $ownerSources += @($hubDescriptor.panel_source_module.source_files | ForEach-Object {Join-Path $repo $_})
@@ -456,3 +456,5 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
 
 & (Join-Path $PSScriptRoot 'Test-ExperimentSessionDebugSelection.ps1') -RepoRoot $repo
 Write-Host 'Test-NativeRendererExperimentPanel PASS'
+
+& (Join-Path $PSScriptRoot "Test-PolarTrustedColdStart.ps1") -RepoRoot $repo

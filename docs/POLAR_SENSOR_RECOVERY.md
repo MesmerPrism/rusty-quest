@@ -42,3 +42,12 @@ for extracted production callback, timeout, discovery, stop and restore decision
 with inert Android transport boundaries. These host controls do not qualify range,
 physical reconnection, sample recovery, or simultaneous Bluetooth links; those need
 separate device observations.
+
+The selected Polar composition requests automatic acquisition from the exact admitted
+NativeActivity MAIN/LAUNCHER cold launch, on the Android main thread. It does not
+wait for a 2D experimenter panel or the selected breath-input source. Application
+preparation, provider reads, internal routes and recreation do not create this
+request. Missing permissions remain an explicit prerequisite; the visible panel
+continues to own permission prompts and manual Connect remains a fallback. The
+existing process-owner intentional Disconnect suppression also applies to this
+request. Host controls qualify routing, not discovery or sensor timing.

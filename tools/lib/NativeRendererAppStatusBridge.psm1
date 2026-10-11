@@ -1,7 +1,7 @@
 # Build-selected Java composition; no assets, device effects or admission authority.
 function New-NativeRendererAppStatusBridgeSource {
     [CmdletBinding()]
-    param([switch]$Selected, [switch]$BleSelected)
+    param([switch]$Selected, [switch]$BleSelected, [switch]$PolarSelected)
     $body = if ($Selected) {
 @'
     private static ExperimentSessionAppStatusOwner owner;
@@ -81,7 +81,25 @@ function New-NativeRendererAppStatusBridgeSource {
     private static void changedBle(long identity, long epoch, boolean live) { }
 '@
     }
-    return "package io.github.mesmerprism.rustyquest.native_renderer;`n/** Selected application composition; feature off is inert. */`npublic final class NativeRendererAppStatusBridge {`n" + $body + "`n" + $bleBody + "`n}"
+    $polarBody = if ($PolarSelected) {
+@'
+    private static long polarColdLaunchEpoch;
+    /** Only the admitted NativeActivity cold launch calls this; reads/preparation are inert. */
+    static synchronized void trustedColdLaunch(final android.content.Context context, long epoch) {
+        if (context == null || epoch <= 0L || epoch <= polarColdLaunchEpoch) return;
+        polarColdLaunchEpoch = epoch;
+        final android.content.Context app = context.getApplicationContext();
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable() {
+            public void run() { PolarSensorRuntime.forApplication(app).ensureAutoConnection(); }
+        });
+    }
+'@
+    } else {
+@'
+    static void trustedColdLaunch(android.content.Context context, long epoch) { }
+'@
+    }
+    return "package io.github.mesmerprism.rustyquest.native_renderer;`n/** Selected application composition; feature off is inert. */`npublic final class NativeRendererAppStatusBridge {`n" + $body + "`n" + $bleBody + "`n" + $polarBody + "`n}"
 }
 function Write-NativeRendererJavaSourceResponse {
     param([Parameter(Mandatory)][string[]]$SourceFiles,

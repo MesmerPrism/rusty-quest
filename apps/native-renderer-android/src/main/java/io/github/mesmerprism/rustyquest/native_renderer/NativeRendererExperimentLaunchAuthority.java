@@ -46,7 +46,9 @@ final class NativeRendererExperimentLaunchAuthority {
             return 0L;
         }
         nativeActivityCreateSeen = true;
-        return issueAdmitted(SystemClock.elapsedRealtimeNanos());
+        long epoch = issueAdmitted(SystemClock.elapsedRealtimeNanos());
+        NativeRendererAppStatusBridge.trustedColdLaunch(activity, epoch);
+        return epoch;
     }
 
     private static long issueAdmitted(long monotonicCandidate) {

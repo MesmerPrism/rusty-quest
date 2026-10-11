@@ -791,7 +791,9 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
         installConditionAudioFromPackagedClosure(ownerApplicationContext.getFilesDir().toString());
     }
 '@
-        [System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource -Selected:$appHubSelected -BleSelected:$appBleSelected), [System.Text.UTF8Encoding]::new($false))
+    }
+    if ($appHubSelected -or $appBleSelected -or $usesPolarSessionRuntime) {
+        [System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource -Selected:$appHubSelected -BleSelected:$appBleSelected -PolarSelected:$usesPolarSessionRuntime), [System.Text.UTF8Encoding]::new($false))
     }
     $generatedControlPanelActivitySource = @"
 package io.github.mesmerprism.rustyquest.native_renderer;
