@@ -123,6 +123,24 @@ def select_device(discovered, address, name=None):
     return matches[0]
 
 
+def discovery_inventory(discovered):
+    """Private bounded metadata only; never retain manufacturer/service payloads."""
+    entries = []
+    values = list(discovered.values())
+    for device, adv in values[:64]:
+        uuids = list(adv.service_uuids or [])
+        entries.append({"address": str(device.address)[:128],
+                        "device_name": None if device.name is None else str(device.name)[:128],
+                        "advertised_name": None if adv.local_name is None else str(adv.local_name)[:128],
+                        "service_uuids": [str(value)[:128] for value in uuids[:32]],
+                        "service_uuids_truncated": len(uuids) > 32,
+                        "fields_truncated": any(len(str(value)) > 128 for value in
+                            [device.address, device.name, adv.local_name, *uuids[:32]]
+                            if value is not None)})
+    return {"count": len(values), "retained_count": len(entries),
+            "truncated": len(values) > 64, "entries": entries}
+
+
 def status_characteristic(client, service_uuid, status_uuid):
     service = client.services.get_service(service_uuid)
     if service is None or service.uuid.casefold() != service_uuid.casefold():
@@ -175,9 +193,21 @@ async def run(args, scanner, client_factory, bleak_version, *, clock=None, sleep
         for cycle in range(args.cycles):
             row = {"cycle": cycle + 1, "samples": 0, "errors": [], "disconnect_confirmed": False}
             result["cycles"].append(row)
-            discovered = await asyncio.wait_for(
-                scanner.discover(timeout=args.scan_seconds, return_adv=True), args.scan_seconds + 5)
-            device, advertisement = select_device(discovered, args.address, args.name)
+            row["stage"] = "discovery"
+            row["connection_attempted"] = False
+            try:
+                discovered = await asyncio.wait_for(
+                    scanner.discover(timeout=args.scan_seconds, return_adv=True), args.scan_seconds + 5)
+                record("discovery_inventory", cycle=cycle + 1, **discovery_inventory(discovered))
+                row["stage"] = "peer_selection"
+                device, advertisement = select_device(discovered, args.address, args.name)
+            except Exception as error:
+                row["errors"].append(type(error).__name__ + ": " + str(error))
+                row["error_classification"] = row["stage"] + "_failed"
+                record("cycle_error", cycle=cycle + 1, stage=row["stage"],
+                       classification=row["error_classification"], connection_attempted=False,
+                       error=row["errors"][-1])
+                break
             record("fresh_discovery", cycle=cycle + 1, address=device.address,
                    name=advertisement.local_name or device.name, service_uuids=advertisement.service_uuids)
             if args.scan_only:
@@ -189,14 +219,18 @@ async def run(args, scanner, client_factory, bleak_version, *, clock=None, sleep
             client = client_factory(device, **options)
             observation = Observation(args.maximum_age_ms)
             try:
+                row["stage"] = "connect"
+                row["connection_attempted"] = True
                 await asyncio.wait_for(client.connect(), args.connect_timeout)
                 if not bool(client.is_connected):
                     raise ValueError("connect returned without connected transport")
                 record("connected", cycle=cycle + 1, connected=bool(client.is_connected))
+                row["stage"] = "gatt_membership"
                 characteristic = status_characteristic(client, args.service, args.status)
                 record("gatt_membership", cycle=cycle + 1, service=characteristic.service_uuid,
                        service_handle=characteristic.service_handle, status=characteristic.uuid,
                        characteristic_handle=characteristic.handle)
+                row["stage"] = "status_polling"
                 deadline = clock() + args.seconds
                 while clock() < deadline:
                     if not bool(client.is_connected):
@@ -230,7 +264,10 @@ async def run(args, scanner, client_factory, bleak_version, *, clock=None, sleep
             except Exception as error:
                 observation.available = False
                 row["errors"].append(type(error).__name__ + ": " + str(error))
-                record("cycle_error", cycle=cycle + 1, error=row["errors"][-1])
+                row["error_classification"] = row["stage"] + "_failed"
+                record("cycle_error", cycle=cycle + 1, stage=row["stage"],
+                       classification=row["error_classification"], connection_attempted=True,
+                       error=row["errors"][-1])
             finally:
                 observation.available = False
                 row["terminal_observation_available"] = observation.available

@@ -30,7 +30,11 @@ followed by uncached Windows service discovery and actual readable status
 membership in the selected GATT service, including service UUID and attribute
 handle joins. Duplicate status UUIDs in other services cannot supply membership. Windows' last system advertisement may
 omit the app UUID; advertisement UUID absence does not substitute for the GATT
-membership check. An address requires an independent peer identity join.
+membership check. An address requires an independent peer identity join. Before selection, private
+events retain at most 64 discovered peers, bounded address/name fields and 32
+service UUIDs each, with counts and truncation flags. Manufacturer/service data
+payloads are omitted. Discovery and peer-selection failures identify their stage
+and confirm that no GATT connection was attempted; earlier scans are never reused.
 
 Scan, connect, read, poll, cycle gap and disconnect limits are configurable and
 bounded. `--scan-only` performs discovery only. Defaults select three read-only

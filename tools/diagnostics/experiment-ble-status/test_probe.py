@@ -18,7 +18,7 @@ def status(epoch="1", read="10", generation=1, revision=0, age=10):
 
 class ObservationTests(unittest.TestCase):
     def test_canonical_identifiers_and_integer_version(self):
-        for value in ("0", "-1", "01", "9223372036854775808", "Ù¡", 1, True):
+        for value in ("0", "-1", "01", "9223372036854775808", "Ã™Â¡", 1, True):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 probe.positive_int64(value)
         self.assertEqual(probe.positive_int64("9223372036854775807"), 9223372036854775807)
@@ -136,6 +136,18 @@ class SelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             probe.status_characteristic(client, probe.SERVICE, probe.STATUS)
 
+    def test_inventory_bounds_metadata_without_manufacturer_payload(self):
+        device = types.SimpleNamespace(address="A" * 200, name="N" * 200)
+        adv = advertisement("X" * 200, ["U" * 200] * 40)
+        adv.manufacturer_data = {1: b"secret-payload"}
+        inventory = probe.discovery_inventory({str(i): (device, adv) for i in range(70)})
+        self.assertEqual((inventory["count"], inventory["retained_count"]), (70, 64))
+        self.assertTrue(inventory["truncated"])
+        self.assertEqual(len(inventory["entries"][0]["address"]), 128)
+        self.assertEqual(len(inventory["entries"][0]["service_uuids"]), 32)
+        self.assertTrue(inventory["entries"][0]["service_uuids_truncated"])
+        self.assertNotIn("secret-payload", json.dumps(inventory))
+
     def test_actual_windows_boolean_proxy_needs_conversion(self):
         try:
             from bleak.backends.winrt.client import BleakClientWinRT
@@ -148,7 +160,7 @@ class SelectionTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, *, cycles=1, disconnect_timeout=False, invalid_raw=None, disconnect_during_read=False):
+    async def exercise(self, *, cycles=1, disconnect_timeout=False, invalid_raw=None, disconnect_during_read=False, missing_scan=None):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         output = pathlib.Path(temporary.name) / "run"
@@ -164,6 +176,8 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
             @classmethod
             async def discover(cls, **_):
                 cls.scans += 1
+                if cls.scans == missing_scan:
+                    return {"other": (types.SimpleNamespace(address="PEER-B", name="Other"), advertisement())}
                 return {"peer": (device, advertisement())}
 
         class Client:
@@ -218,6 +232,23 @@ class RuntimeTests(unittest.IsolatedAsyncioTestCase):
                    if json.loads(line)["kind"] == "observation_retired"]
         self.assertEqual(len(retired), 2)
         self.assertTrue(all(event["available"] is False for event in retired))
+
+    async def test_failed_fresh_selection_retains_inventory_without_connect_or_retry(self):
+        result, output, scans = await self.exercise(cycles=3, missing_scan=3)
+        self.assertFalse(result["success"])
+        self.assertEqual(scans, 3)
+        self.assertEqual(len(result["cycles"]), 3)
+        failed = result["cycles"][2]
+        self.assertEqual(failed["error_classification"], "peer_selection_failed")
+        self.assertFalse(failed["connection_attempted"])
+        self.assertEqual(failed["samples"], 0)
+        events = [json.loads(line) for line in (output / "events.jsonl").read_text().splitlines()]
+        inventory = [event for event in events if event["kind"] == "discovery_inventory"]
+        self.assertEqual(len(inventory), 3)
+        self.assertEqual(inventory[-1]["entries"][0]["address"], "PEER-B")
+        self.assertEqual(len([event for event in events if event["kind"] == "connected"]), 2)
+        self.assertLess(events.index(inventory[-1]), next(i for i, event in enumerate(events)
+                        if event["kind"] == "cycle_error" and event["cycle"] == 3))
 
     async def test_disconnect_timeout_retains_failure_and_prevents_reconnect(self):
         result, output, scans = await self.exercise(cycles=2, disconnect_timeout=True)
