@@ -1,0 +1,2 @@
+# Optional live BLE dependency, qualified separately from stdlib host controls.
+bleak==0.22.3

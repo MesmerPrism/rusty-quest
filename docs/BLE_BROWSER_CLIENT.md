@@ -29,3 +29,8 @@ Validation is the package's Node test plus both consuming website production
 adapters' target-free tests, including stale readbacks, serialized calls,
 receipt identity, outcome unknown and Hub framing/MTU/deadline cases. Device
 qualification, package publication and app effects require separate evidence.
+
+The optional [read-only native status diagnostic](../tools/diagnostics/experiment-ble-status/README.md)
+uses an explicit peer address and fresh discovery/GATT membership per connection.
+It qualifies only its selected transport and optional native read observation;
+it supplies no browser, command, physical readiness or other-bridge authority.
