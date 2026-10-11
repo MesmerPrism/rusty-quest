@@ -1728,6 +1728,31 @@ $sourceFiles = @($sourceFiles) +
     @($sharedBrokerClientJava) +
     @($sharedBrokerTransportJava) +
     @($generatedEmbeddedRuntimeConfigPath)
+# Debug control is a separate closed source set; provider-off builds do not
+# compile either the provider class or its authority suffix.
+$debugSources = @()
+if ($script:BuildUsesLock -and $null -ne $appBuildLockObject.PSObject.Properties['debug_experiment_operator_sources']) {
+    $records = @($appBuildLockObject.debug_experiment_operator_sources)
+    $providers = if ($null -ne $appBuildLockObject.android_manifest.PSObject.Properties['providers']) { @($appBuildLockObject.android_manifest.providers) } else { @() }
+    if ($records.Count -gt 0) {
+        if ($records.Count -ne 2 -or $providers.Count -ne 1 -or $providers[0] -cne 'ExperimentSessionDebugControlProvider' -or
+            @($appBuildLockObject.selected_feature_ids) -cnotcontains 'operator.breath_composition_cli') {
+            throw 'Debug experiment operator requires its exact selected provider and source closure.'
+        }
+        $expected = @('ExperimentSessionDebugControlProvider', 'ExperimentSessionDebugOperator') | ForEach-Object {
+            "apps/native-renderer-android/src/debug/java/io/github/mesmerprism/rustyquest/native_renderer/$_.java"
+        }
+        if ([string]::Join('|', @($records.path | Sort-Object)) -cne [string]::Join('|', @($expected | Sort-Object))) {
+            throw 'Debug experiment operator source set differs from the closed implementation.'
+        }
+        foreach ($record in $records) {
+            $path = Resolve-RepoPath -Path $record.path -RepoRoot $repoRoot
+            Assert-HashMatches -Label 'Debug operator source' -ExpectedSha256 $record.sha256 -Path $path
+            $debugSources += $path
+        }
+    } elseif ($providers.Count -gt 0) { throw 'Provider declared without debug source closure.' }
+}
+$sourceFiles += $debugSources
 if (-not [string]::IsNullOrWhiteSpace($generatedControlPanelActivityPath)) {
     $sourceFiles += $generatedControlPanelActivityPath
 }

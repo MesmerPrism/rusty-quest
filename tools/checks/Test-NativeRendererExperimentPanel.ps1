@@ -167,6 +167,18 @@ try {
     & $javaCommand.Source '-cp' $output 'io.github.mesmerprism.rustyquest.native_renderer.ExperimenterPanelShortcutPolicyTest'
     if ($LASTEXITCODE -ne 0) { throw "Panel controller shortcut policy Java test failed: $LASTEXITCODE" }
 
+    $jsonJar = Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json') -Recurse -Filter 'json-*.jar' | Sort-Object FullName -Descending | Select-Object -First 1
+    if ($null -eq $jsonJar) { throw 'Host org.json test dependency unavailable' }
+    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $panelRoot 'ExperimentSessionBleProtocol.java') (Join-Path $panelRoot 'ExperimentSessionControlCapability.java') (Join-Path $testRoot 'ExperimentSessionControlCapabilityTest.java')
+    if ($LASTEXITCODE -ne 0) { throw "Capability compile failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionControlCapabilityTest'
+    if ($LASTEXITCODE -ne 0) { throw "Capability controls failed: $LASTEXITCODE" }
+
+    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) '-d' $output (Join-Path $panelRoot 'ExperimentSessionUiControlHandoff.java') (Join-Path $testRoot 'ExperimentSessionUiControlHandoffTest.java')
+    if ($LASTEXITCODE -ne 0) { throw "UI handoff control compile failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionUiControlHandoffTest'
+    if ($LASTEXITCODE -ne 0) { throw "UI handoff controls failed: $LASTEXITCODE" }
+
     $androidSdk = @(
         [Environment]::GetEnvironmentVariable('ANDROID_HOME'),
         [Environment]::GetEnvironmentVariable('ANDROID_SDK_ROOT')
@@ -240,6 +252,8 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $panelRoot 'BreathCompositionPanelModule.java'),
         (Join-Path $panelRoot 'ExperimentSessionBleNamePolicy.java'),
         (Join-Path $panelRoot 'ExperimentSessionBleProtocol.java'),
+        (Join-Path $panelRoot 'ExperimentSessionControlCapability.java'),
+        (Join-Path $panelRoot 'ExperimentSessionUiControlHandoff.java'),
         (Join-Path $panelRoot 'ExperimentSessionBleServer.java'),
         (Join-Path $panelRoot 'ExperimentSessionPanelRenderReceipt.java'),
         (Join-Path $panelRoot 'ExperimentSessionAndroidShell.java'),
@@ -263,6 +277,15 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     $null = Write-NativeRendererJavaSourceResponse -SourceFiles $androidSources -GeneratedAppStatusBridgePath $bridge -Path $javaResponse
     & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-d' $output "@$javaResponse"
     if ($LASTEXITCODE -ne 0) { throw "Android panel javac failed: $LASTEXITCODE" }
+    $debugRoot = Join-Path $repo 'apps/native-renderer-android/src/debug/java/io/github/mesmerprism/rustyquest/native_renderer'
+    & $javacCommand.Source '-encoding' 'UTF-8' '-source' '1.8' '-target' '1.8' '-bootclasspath' $androidJar '-cp' $output '-d' $output (Join-Path $debugRoot 'ExperimentSessionDebugOperator.java') (Join-Path $debugRoot 'ExperimentSessionDebugControlProvider.java')
+    if ($LASTEXITCODE -ne 0) { throw "Opt-in debug operator API compile failed: $LASTEXITCODE" }
+    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName + [IO.Path]::PathSeparator + $androidJar) '-d' $output (Join-Path $testRoot 'ExperimentSessionDebugOperatorTest.java')
+    if ($LASTEXITCODE -ne 0) { throw "Debug operator control compile failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName + [IO.Path]::PathSeparator + $androidJar) 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionDebugOperatorTest'
+    if ($LASTEXITCODE -ne 0) { throw "Debug operator shape controls failed: $LASTEXITCODE" }
+
+
     & $javaCommand.Source '-cp' ("$output$([IO.Path]::PathSeparator)$androidJar") 'io.github.mesmerprism.rustyquest.native_renderer.PolarAutoConnectionPolicyTest'
     if ($LASTEXITCODE -ne 0) { throw "Polar auto-connection policy test failed: $LASTEXITCODE" }
     & $javaCommand.Source '-cp' ("$output$([IO.Path]::PathSeparator)$androidJar") 'io.github.mesmerprism.rustyquest.native_renderer.PolarRecoveryIntentTest'
@@ -431,4 +454,5 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     }
 }
 
+& (Join-Path $PSScriptRoot 'Test-ExperimentSessionDebugSelection.ps1') -RepoRoot $repo
 Write-Host 'Test-NativeRendererExperimentPanel PASS'

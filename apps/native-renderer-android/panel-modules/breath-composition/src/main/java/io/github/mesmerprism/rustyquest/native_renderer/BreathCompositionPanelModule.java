@@ -279,13 +279,18 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         final String operation;
         final long startedAtElapsedMs;
         final long serverGeneration;
+        final ExperimentSessionControlCapability.Fence sessionFence;
         RemotePending(String browserId, String nativeId, String operation) {
+            this(browserId,nativeId,operation,null);
+        }
+        RemotePending(String browserId,String nativeId,String operation,ExperimentSessionControlCapability.Fence fence) {
             this.browserId = browserId;
             this.nativeId = nativeId;
             this.operation = operation;
             this.startedAtElapsedMs = SystemClock.elapsedRealtime();
             ExperimentSessionBleServer server = remoteServer();
             this.serverGeneration = server == null ? 0L : server.currentGeneration();
+            this.sessionFence=fence;
         }
     }
 
@@ -379,10 +384,92 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             }
         };
 
+    private static ExperimentSessionUiControlHandoff uiControlHandoff;
+    private static final java.util.Set<String> operatorRequestIds = new java.util.HashSet<String>();
+    static JSONObject experimentOperatorOwnerReceipt() throws Exception {
+        ExperimentSessionBleServer server=remoteServer();return server==null?new JSONObject():server.ownerReceipt();
+    }
+    /** Shared closed owner route, called only after the debug Binder caller and APK fences. */
+    static JSONObject queueExperimentOperator(final JSONObject request) throws Exception {
+        final String id=request.getString("operation_id");
+        if(!ExperimentSessionBleProtocol.isLowerHex(id,16))throw new SecurityException("operator-id-invalid");
+        final JSONObject frozen=new JSONObject(request.toString());
+        synchronized(operatorRequestIds){if(operatorRequestIds.size()>=128 || !operatorRequestIds.add(id))throw new SecurityException("operator-replay");}
+        new Handler(Looper.getMainLooper()).post(new Runnable(){@Override public void run(){
+            ExperimentSessionBleServer server=remoteServer();
+            try{
+                if(server==null)throw new SecurityException("selected-carrier-owner-unavailable");
+                JSONObject current=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
+                    new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString())).getJSONObject("readback");
+                JSONObject breath=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
+                String session=current.isNull("session_key")?"-":current.getString("session_key");
+                String condition=current.isNull("condition_id")?"":current.getString("condition_id");
+                String profile=current.isNull("non_audio_profile_sha256")?"":current.getString("non_audio_profile_sha256");
+                if(!Boolean.TRUE.equals(breath.opt("feature_lock_active")) || !Boolean.TRUE.equals(breath.opt("activation_binding_matches"))
+                    || !frozen.getString("expected_binding_sha256").equals(breath.getString("activation_binding_sha256"))
+                    || frozen.getLong("expected_runtime_epoch")!=current.getLong("runtime_epoch")
+                    || frozen.getLong("expected_generation")!=current.getLong("generation")
+                    || !frozen.getString("expected_session_key").equals(session)
+                    || !frozen.getString("expected_condition").equals(condition)
+                    || !frozen.getString("expected_profile_sha256").equals(profile))throw new SecurityException("operator-owner-fence-mismatch");
+                String operation=frozen.getString("operation");
+                String selected="arm".equals(operation)?frozen.getString("requested_condition"):"";
+                int bias="arm".equals(operation)?frozen.getInt("requested_bias"):0;
+                server.markShellOperation(id);
+                REMOTE_DELEGATE.dispatch(new ExperimentSessionBleServer.CommandRequest(id,operation,selected,bias));
+            }catch(Exception denied){if(server!=null)server.updateReceipt(id,"rejected","Guarded shell owner operation rejected.");}
+        }});
+        return new JSONObject().put("command_status","queued").put("operation_id",id).put("operator_origin","shell-experiment-operator-v1");
+    }
+
     private static final ExperimentSessionBleServer.Delegate REMOTE_DELEGATE =
         new ExperimentSessionBleServer.Delegate() {
             @Override public boolean openControlDefault() {
                 return ControlPanelActivity.experimentSessionOpenControlDefault();
+            }
+            @Override public JSONObject sessionControlReadback() throws Exception {
+                JSONObject response=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
+                    new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString()));
+                if(!"accepted".equals(response.optString("command_status")))return null;
+                JSONObject readback=response.getJSONObject("readback");
+                JSONObject breath=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
+                if(!Boolean.TRUE.equals(breath.opt("feature_lock_active"))
+                        || !Boolean.TRUE.equals(breath.opt("activation_binding_matches")))return null;
+                readback.put("activation_binding_sha256",breath.getString("activation_binding_sha256"));
+                RemotePending pending=remotePending;
+                if(pending!=null && pending.sessionFence!=null) {
+                    ExperimentSessionControlCapability.Fence fence=pending.sessionFence;
+                    ExperimentSessionBleServer server=remoteServer();
+                    boolean exact=readback.optLong("generation",-1)==fence.generation
+                        && readback.optLong("runtime_epoch",-1)==fence.epoch
+                        && fence.session.equals(readback.optString("session_key"))
+                        && fence.condition.equals(readback.optString("condition_id"))
+                        && fence.profile.equals(readback.optString("non_audio_profile_sha256"))
+                        && fence.binding.equals(readback.optString("activation_binding_sha256"));
+                    String expected="start".equals(pending.operation)?"running":"pause".equals(pending.operation)?"paused":"running";
+                    boolean deniedCurrent=pending.nativeId.equals(readback.optString("last_operation_id"))
+                        && ("rejected".equals(readback.optString("last_operation_status"))
+                            || "failed".equals(readback.optString("last_operation_status"))
+                            || "duplicate".equals(readback.optString("last_operation_status")));
+                    if(deniedCurrent) {
+                        if(server!=null)server.updateReceiptForGeneration(pending.serverGeneration,pending.browserId,
+                            "rejected","Native session operation rejected, failed or duplicate.");remotePending=null;
+                    }else if(exact && pending.nativeId.equals(readback.optString("operator_operation_id"))
+                            && "ble-session-v2".equals(readback.optString("operator_origin"))
+                            && "applied".equals(readback.optString("operator_operation_status"))
+                            && expected.equals(readback.optString("control_state"))) {
+                        if(server!=null)server.updateReceiptForGeneration(pending.serverGeneration,pending.browserId,
+                            "confirmed","Native session operation applied.");
+                        remotePending=null;
+                    }else if(pending.nativeId.equals(readback.optString("last_operation_id"))
+                            && ("rejected".equals(readback.optString("last_operation_status"))
+                                || "failed".equals(readback.optString("last_operation_status")))) {
+                        if(server!=null)server.updateReceiptForGeneration(pending.serverGeneration,pending.browserId,
+                            "rejected","Native session operation rejected or failed.");
+                        remotePending=null;
+                    }
+                }
+                return readback;
             }
             @Override public JSONObject snapshot() throws Exception {
                 refreshExperimenterPolarProjection();
@@ -442,7 +529,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                             ExperimentSessionPanelCoordinator.CONDITION_ONE))
                         .put(ControlPanelActivity.conditionBreathGuidanceReadiness(
                             ExperimentSessionPanelCoordinator.CONDITION_TWO)))
-                    .put("pending", state.pendingOperationId.isEmpty() ? false : true);
+                    .put("pending", !state.pendingOperationId.isEmpty() || remotePending != null);
                 RemotePending pending = remotePending;
                 if (pending != null && now - pending.startedAtElapsedMs > 30000L) {
                     ExperimentSessionBleServer server = remoteServer();
@@ -470,6 +557,21 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 if (server == null) return;
                 if (remotePending != null) {
                     server.updateReceipt(request.id, "rejected", "Another command is awaiting confirmation.");
+                    return;
+                }
+                if(request.sessionFence!=null) {
+                    String nativeId="ble-session-"+request.id;
+                    try {
+                        if(request.sessionFence.server!=server.currentGeneration())throw new SecurityException("carrier-replaced");
+                        remotePending=new RemotePending(request.id,nativeId,request.operation,request.sessionFence);
+                        server.updateReceipt(request.id,"pending","Waiting for the native session operation.");
+                        // This is the same serialized native session owner used by controller input.
+                        // The worker rechecks the full current session/generation/epoch tuple.
+                        ControlPanelActivity.applyExperimentSessionCommand(request.sessionFence.nativeCommand(
+                            nativeId,SystemClock.elapsedRealtimeNanos()).toString());
+                    }catch(Exception denied) {
+                        server.updateReceipt(request.id,"rejected","Session owner admission failed.");remotePending=null;
+                    }
                     return;
                 }
                 if ("ping".equals(request.operation)) {
@@ -1435,6 +1537,40 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             ExperimentSessionPanelViewPolicy.stageTitle(state), ExperimentSessionPanelViewPolicy.stageTone(state));
         experimenterInstructionReadback = text(ExperimentSessionPanelViewPolicy.stageInstruction(state), 16, PANEL_FG);
         root.addView(experimenterInstructionReadback);
+        for(final String operation:new String[]{"start","pause","resume"}) {
+            Button control=button("start".equals(operation)?"Start official run":"pause".equals(operation)?"Pause official run":"Resume official run");
+            control.setEnabled(state.pendingOperationId.isEmpty() && ("start".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.ARMED:"pause".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.RUNNING:state.phase==ExperimentSessionPanelState.Phase.PAUSED));
+            control.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
+                try {
+                    if(!EXPERIMENT_SESSION_PANEL.snapshot().pendingOperationId.isEmpty())throw new SecurityException("session-operation-pending");
+                    JSONObject n=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString())).getJSONObject("readback");
+                    JSONObject b=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
+                    if(!Boolean.TRUE.equals(b.opt("feature_lock_active")) || !Boolean.TRUE.equals(b.opt("activation_binding_matches")))throw new SecurityException("feature-inactive");
+                    ExperimentSessionControlCapability.Fence fence=new ExperimentSessionControlCapability.Fence("",n.getString("session_key"),n.getString("condition_id"),n.getString("non_audio_profile_sha256"),b.getString("activation_binding_sha256"),operation,n.getLong("generation"),n.getLong("runtime_epoch"),0,0,0);
+                    JSONObject request=fence.nativeCommand("ui-session-"+ExperimentSessionBleProtocol.newHex(8),SystemClock.elapsedRealtimeNanos()).put("operator_origin","ui-session-v2");
+                    if(uiControlHandoff!=null && uiControlHandoff.pending())throw new SecurityException("handoff-already-pending");
+                    if("pause".equals(operation)){ControlPanelActivity.applyExperimentSessionCommand(request.toString());requestExperimentSessionStatus();}
+                    else {
+                        uiControlHandoff=new ExperimentSessionUiControlHandoff(new ExperimentSessionUiControlHandoff.Owner(){
+                            @Override public JSONObject read() throws Exception {
+                                JSONObject nativeState=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString())).getJSONObject("readback");
+                                JSONObject binding=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
+                                if(!Boolean.TRUE.equals(binding.opt("feature_lock_active")) || !Boolean.TRUE.equals(binding.opt("activation_binding_matches")))throw new SecurityException("feature-inactive");
+                                return nativeState.put("activation_binding_sha256",binding.getString("activation_binding_sha256"));
+                            }
+                            @Override public void returnVr(){ControlPanelActivity.closePanelAndReturnToImmersive(BreathCompositionPanelModule.this);}
+                            @Override public void dispatch(JSONObject command) throws Exception {JSONObject admission=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));if(!"queued".equals(admission.optString("command_status")))throw new SecurityException("native-not-queued");}
+                            @Override public void schedule(Runnable callback,long delay){new Handler(Looper.getMainLooper()).postDelayed(callback,delay);}
+                            @Override public long nowMs(){return SystemClock.elapsedRealtime();}
+                            @Override public long nowNs(){return SystemClock.elapsedRealtimeNanos();}
+                            @Override public void outcome(String state){Log.i("RQNativeRenderer","RUSTY_QUEST_NATIVE_RENDERER channel=session-control origin=ui-session-v2 outcome="+state);}
+                        },fence,request.getString("operation_id"));
+                        uiControlHandoff.run();
+                    }
+                }catch(Exception denied){updateStatus("Session control was not admitted; refresh the authoritative session state.");}
+            }});
+            root.addView(control);
+        }
         root.addView(text("Start / resume: Right Grip + A · Pause: Right Grip + B · Hold at least 0.75 seconds, then release after the pulse.", 14, PANEL_MUTED));
         root.addView(text("Use Return to VR above, or press B three times again, without changing the session state.", 14, PANEL_MUTED));
         LinearLayout sessions = panelCard("Session status");

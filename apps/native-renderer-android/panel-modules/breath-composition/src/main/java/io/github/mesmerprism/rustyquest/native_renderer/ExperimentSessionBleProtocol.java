@@ -82,6 +82,24 @@ final class ExperimentSessionBleProtocol {
         }
     }
 
+    static boolean validSessionFields(String id,String operation,String session,long generation,String nonce) {
+        return isLowerHex(id,16) && isLowerHex(session,32) && isLowerHex(nonce,16)
+            && generation>0 && generation<=9007199254740991L
+            && ("start".equals(operation) || "pause".equals(operation) || "resume".equals(operation));
+    }
+
+    static boolean verifySession(String code,String challenge,String id,String operation,
+            String session,long generation,String nonce,String suppliedMac) {
+        if(code==null || !isLowerHex(challenge,32) || !isLowerHex(suppliedMac,32)
+                || !validSessionFields(id,operation,session,generation,nonce)) return false;
+        try {
+            Mac hmac=Mac.getInstance("HmacSHA256");
+            hmac.init(new SecretKeySpec(code.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
+            byte[] expected=hmac.doFinal(("RQEC2|"+challenge+"|"+id+"|"+operation+"|"+session+"|"+generation+"|"+nonce).getBytes(StandardCharsets.UTF_8));
+            return MessageDigest.isEqual(java.util.Arrays.copyOf(expected,16),fromHex(suppliedMac));
+        } catch(Exception denied) {return false;}
+    }
+
     static String hex(byte[] bytes, int length) {
         char[] result = new char[length * 2];
         for (int i = 0; i < length; i++) {

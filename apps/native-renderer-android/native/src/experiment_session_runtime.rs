@@ -200,6 +200,17 @@ impl RouteAction {
 
 #[derive(Clone, Debug)]
 struct Projection {
+    arm_operation_id: Option<String>,
+    arm_generation: u64,
+    arm_runtime_epoch: u64,
+    arm_condition: Option<String>,
+    arm_durable_checkpoint: bool,
+    operator_origin: &'static str,
+    operator_operation_id: Option<String>,
+    operator_operation_status: &'static str,
+    session_key: Option<String>,
+    condition_id: Option<String>,
+    non_audio_profile_sha256: Option<String>,
     audio_technical_hold: bool,
     control_state: crate::experiment_session::ExperimentControlState,
     control_receipt_generation: u64,
@@ -244,6 +255,17 @@ struct Projection {
 impl Default for Projection {
     fn default() -> Self {
         Self {
+            arm_operation_id: None,
+            arm_generation: 0,
+            arm_runtime_epoch: 0,
+            arm_condition: None,
+            arm_durable_checkpoint: false,
+            operator_origin: "none",
+            operator_operation_id: None,
+            operator_operation_status: "none",
+            session_key: None,
+            condition_id: None,
+            non_audio_profile_sha256: None,
             audio_technical_hold: false,
             control_state: crate::experiment_session::ExperimentControlState::Idle,
             control_receipt_generation: 0,
@@ -294,6 +316,17 @@ impl Projection {
             "command_status": command_status,
             "reason_code": reason_code,
             "readback": {
+                "arm_operation_id": self.arm_operation_id,
+                "arm_generation": self.arm_generation,
+                "arm_runtime_epoch": self.arm_runtime_epoch,
+                "arm_condition": self.arm_condition,
+                "arm_durable_checkpoint": self.arm_durable_checkpoint,
+                "operator_origin": self.operator_origin,
+                "operator_operation_id": self.operator_operation_id,
+                "operator_operation_status": self.operator_operation_status,
+                "session_key": self.session_key,
+                "condition_id": self.condition_id,
+                "non_audio_profile_sha256": self.non_audio_profile_sha256,
                 "runtime_epoch": self.runtime_epoch,
                 "revision": self.revision,
                 "generation": self.generation,
@@ -518,12 +551,23 @@ enum ParsedOperation {
 
 #[derive(Clone, Debug)]
 struct ParsedCommand {
+    operator_fence: Option<OperatorFence>,
     operation_id: String,
     expected_generation: u64,
     at: MonotonicNanos,
     value: Value,
     operation: ParsedOperation,
     received_at: Instant,
+}
+
+#[derive(Clone, Debug)]
+struct OperatorFence {
+    origin: &'static str,
+    runtime_epoch: u64,
+    session_key: String,
+    condition_id: String,
+    profile_sha256: String,
+    binding_sha256: String,
 }
 
 #[derive(Clone, Debug)]
@@ -702,6 +746,7 @@ impl RecordingBackend for ActualRecordingBackend {
 }
 
 struct SessionWorker {
+    current_session_key: Option<String>,
     controller: ExperimentSessionController,
     backend: Box<dyn RecordingBackend>,
     projection: Arc<RwLock<Projection>>,
@@ -764,6 +809,7 @@ impl SessionWorker {
             next_reducer_operation: 0,
             pending_start: None,
             current_identity: None,
+            current_session_key: None,
             last_presentation: PresentationState::Experimenter,
             recording_root,
             trusted_inventory,
@@ -854,6 +900,20 @@ impl SessionWorker {
     }
 
     fn apply_parsed(&mut self, parsed: ParsedCommand) {
+        if let Some(fence) = &parsed.operator_fence {
+            let epoch = self.projection.read().unwrap_or_else(|e| e.into_inner()).runtime_epoch;
+            let identity = self.current_identity.as_ref();
+            let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap_or(Value::Null);
+            let matches = binding["snapshot"]["activation_binding_sha256"].as_str() == Some(fence.binding_sha256.as_str())
+                && epoch == fence.runtime_epoch
+                && self.current_session_key.as_deref() == Some(fence.session_key.as_str())
+                && identity.is_some_and(|i| i.condition_id == fence.condition_id
+                    && i.non_audio_profile_sha256 == fence.profile_sha256);
+            if !matches {
+                self.publish_operation(&parsed.operation_id, "rejected", "operator-owner-fence-mismatch", None);
+                return;
+            }
+        }
         let resolved_identity = match &parsed.operation {
             ParsedOperation::Start {
                 condition,
@@ -926,6 +986,22 @@ impl SessionWorker {
             );
             return;
         }
+        if parsed.operator_fence.is_some() {
+            let origin = parsed.operator_fence.as_ref().expect("operator fence").origin;
+            self.projection_write(|projection| projection.operator_origin = origin);
+        }
+        if matches!(parsed.operation, ParsedOperation::Start { .. }) {
+            self.projection_write(|projection| {
+                projection.arm_operation_id = None;
+                projection.arm_generation = 0;
+                projection.arm_runtime_epoch = 0;
+                projection.arm_condition = None;
+                projection.arm_durable_checkpoint = false;
+                projection.operator_operation_id = None;
+                projection.operator_operation_status = "none";
+                projection.operator_origin = "none";
+            });
+        }
         if matches!(
             parsed.operation,
             ParsedOperation::RestartToExperimenter | ParsedOperation::SaveAndExit
@@ -939,8 +1015,32 @@ impl SessionWorker {
         self.refresh_controller_projection();
         let result = self.process_effects(outcome.effects.clone(), parsed.at);
         match result {
-            Ok(()) => self.publish_operation(&parsed.operation_id, "accepted", "none", None),
+            Ok(()) => {
+                if let ParsedOperation::Start { arm: true, condition, .. } = &parsed.operation {
+                    // prepare() has awaited the actual writer's durable initial checkpoint.
+                    self.projection_write(|projection| {
+                        projection.arm_operation_id = Some(parsed.operation_id.clone());
+                        projection.arm_generation = outcome.generation;
+                        projection.arm_runtime_epoch = projection.runtime_epoch;
+                        projection.arm_condition = Some(condition.as_str().to_owned());
+                        projection.arm_durable_checkpoint = true;
+                    });
+                }
+                if parsed.operator_fence.is_some() {
+                    self.projection_write(|projection| {
+                        projection.operator_operation_id = Some(parsed.operation_id.clone());
+                        projection.operator_operation_status = "applied";
+                    });
+                }
+                self.publish_operation(&parsed.operation_id, "accepted", "none", None)
+            },
             Err(reason) => {
+                if parsed.operator_fence.is_some() {
+                    self.projection_write(|projection| {
+                        projection.operator_operation_id = Some(parsed.operation_id.clone());
+                        projection.operator_operation_status = "failed";
+                    });
+                }
                 self.publish_operation(&parsed.operation_id, "failed", &reason, None);
             }
         }
@@ -1045,6 +1145,7 @@ impl SessionWorker {
                             let _ = crate::breath_composition_runtime::
                                 ensure_running_for_experiment_arm();
                             self.current_identity = Some(spec.experiment_identity.clone());
+                            self.current_session_key = Some(spec.started_at.as_str().to_owned());
                             let active_guidance = spec
                                 .experiment_identity
                                 .breath_guidance
@@ -1309,7 +1410,13 @@ impl SessionWorker {
                     crate::breath_composition_runtime::reset_to_packaged_defaults();
                     let reset_revision = request_particle_packaged_defaults_reset();
                     self.current_identity = None;
+                    self.current_session_key = None;
                     self.projection_write(|projection| {
+                        projection.arm_operation_id = None;
+                        projection.arm_generation = 0;
+                        projection.arm_runtime_epoch = 0;
+                        projection.arm_condition = None;
+                        projection.arm_durable_checkpoint = false;
                         projection.defaults_reset_revision = reset_revision;
                     });
                 }
@@ -1584,6 +1691,9 @@ impl SessionWorker {
             projection.completion = self.controller.completion();
             projection.recording_result = self.controller.recording_result();
             projection.profile_identity_bound = self.current_identity.is_some();
+            projection.session_key = self.current_session_key.clone();
+            projection.condition_id = self.current_identity.as_ref().map(|i| i.condition_id.clone());
+            projection.non_audio_profile_sha256 = self.current_identity.as_ref().map(|i| i.non_audio_profile_sha256.clone());
             projection.audio_identity_bound = self.current_identity.is_some();
             projection.breath_guidance_identity_bound = self
                 .current_identity
@@ -3035,7 +3145,35 @@ fn parse_mutating_command(
         .get("operation")
         .and_then(Value::as_str)
         .ok_or_else(|| failure("operation-invalid"))?;
+    let operator_fence = if operation_name.starts_with("operator-") {
+        require_common_fields(object, &[
+            "operator_origin", "expected_runtime_epoch", "expected_session_key",
+            "expected_condition", "expected_profile_sha256", "expected_binding_sha256",
+        ]).map_err(|reason| failure(reason))?;
+        let origin = match object.get("operator_origin").and_then(Value::as_str) {
+            Some("shell-experiment-operator-v1") => "shell-experiment-operator-v1",
+            Some("ble-session-v2") => "ble-session-v2",
+            Some("ui-session-v2") => "ui-session-v2",
+            _ => return Err(failure("operator-origin-invalid")),
+        };
+        let runtime_epoch = object.get("expected_runtime_epoch").and_then(Value::as_u64)
+            .filter(|v| *v > 0).ok_or_else(|| failure("operator-epoch-invalid"))?;
+        let session_key = object.get("expected_session_key").and_then(Value::as_str)
+            .filter(|v| v.len() == 27 && v.starts_with("utc-ns-") && v[7..].bytes().all(|b| b.is_ascii_digit()))
+            .ok_or_else(|| failure("operator-session-invalid"))?.to_owned();
+        let condition_id = object.get("expected_condition").and_then(Value::as_str)
+            .filter(|v| *v == "condition-a" || *v == "condition-b")
+            .ok_or_else(|| failure("operator-condition-invalid"))?.to_owned();
+        let profile_sha256 = object.get("expected_profile_sha256").and_then(Value::as_str)
+            .filter(|v| valid_sha256(v)).ok_or_else(|| failure("operator-profile-invalid"))?.to_owned();
+        let binding_sha256 = object.get("expected_binding_sha256").and_then(Value::as_str)
+            .filter(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))).ok_or_else(|| failure("operator-binding-invalid"))?.to_owned();
+        Some(OperatorFence { origin, runtime_epoch, session_key, condition_id, profile_sha256, binding_sha256 })
+    } else { None };
     let operation = match operation_name {
+        "operator-official-start" => ParsedOperation::OfficialStart,
+        "operator-pause" => ParsedOperation::Pause,
+        "operator-resume" => ParsedOperation::Resume,
         "start" | "arm" => {
             if !object.contains_key("non_audio_profile_sha256") {
                 return Err(failure("profile-identity-missing"));
@@ -3177,6 +3315,7 @@ fn parse_mutating_command(
         _ => return Err(failure("unsupported-operation")),
     };
     Ok(ParsedCommand {
+        operator_fence,
         operation_id,
         expected_generation,
         at,
@@ -3901,6 +4040,71 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         panic!("status did not contain {needle}: {}", runtime.status_json());
+    }
+
+    #[test]
+    fn original_arm_checkpoint_survives_audio_and_operator_tuple_is_fenced() {
+        let root = temp_root("operator-arm-checkpoint");
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        runtime.apply_command_json(&start_command(&root, "original-arm")
+            .replace("\"operation\":\"start\"", "\"operation\":\"arm\""));
+        let armed: Value = serde_json::from_str(&wait_for(&runtime, "\"arm_durable_checkpoint\":true")).unwrap();
+        assert_eq!(armed["readback"]["arm_operation_id"], "original-arm");
+        assert_eq!(armed["readback"]["arm_generation"], 1);
+        assert_eq!(armed["readback"]["arm_runtime_epoch"], 1);
+        assert_eq!(armed["readback"]["arm_condition"], "condition-a");
+        runtime.apply_command_json(&command("audio-prepared", "later-audio", 1, 2_000));
+        let current: Value = serde_json::from_str(&wait_for(&runtime, "\"last_operation_id\":\"later-audio\"")).unwrap();
+        assert_eq!(current["readback"]["last_operation_id"], "later-audio");
+        assert_eq!(current["readback"]["arm_operation_id"], "original-arm");
+        let mut valid = json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
+            "operation":"operator-official-start", "operation_id":"operator-start",
+            "expected_generation":1,"elapsed_realtime_ns":8_000,
+            "operator_origin":"shell-experiment-operator-v1", "expected_runtime_epoch":1,
+            "expected_session_key":current["readback"]["session_key"],
+            "expected_condition":"condition-a", "expected_profile_sha256":"11".repeat(32),
+            "expected_binding_sha256":serde_json::from_str::<Value>(&crate::breath_composition_runtime::status_json()).unwrap()["snapshot"]["activation_binding_sha256"]});
+        for (index, (field, wrong)) in [
+            ("expected_runtime_epoch", json!(2)),
+            ("expected_session_key", json!("utc-ns-00000000000000000001")),
+            ("expected_condition", json!("condition-b")),
+            ("expected_profile_sha256", json!("99".repeat(32))),
+            ("expected_binding_sha256", json!("99".repeat(32))),
+            ("expected_generation", json!(2)),
+        ].into_iter().enumerate() {
+            let mut bad = valid.clone(); bad[field] = wrong;
+            let id = format!("stale-operator-{index}"); bad["operation_id"] = json!(id);
+            runtime.apply_command_json(&bad.to_string());
+            let status: Value = serde_json::from_str(&wait_for(&runtime, &format!("\"last_operation_id\":\"{id}\""))).unwrap();
+            assert_eq!(status["readback"]["last_operation_status"], "rejected");
+            assert_eq!(status["readback"]["control_state"], "armed");
+            assert_eq!(status["readback"]["operator_operation_id"], Value::Null);
+        }
+        runtime.note_submitted_frame(1, 1);
+        runtime.apply_command_json(&json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
+            "operation":"presentation","operation_id":"actual-test-presentation",
+            "expected_generation":1,"elapsed_realtime_ns":7_000,"presentation":"immersive-active"}).to_string());
+        wait_for(&runtime, "\"presentation\":\"immersive-active\"");
+        runtime.apply_command_json(&valid.to_string());
+        let started: Value = serde_json::from_str(&wait_for(&runtime, "\"operator_operation_status\":\"applied\"")).unwrap();
+        assert_eq!(started["readback"]["operator_operation_id"], "operator-start");
+        assert_eq!(started["readback"]["control_state"], "running");
+        let duplicate: Value = serde_json::from_str(&runtime.apply_command_json(&valid.to_string())).unwrap();
+        assert_eq!(duplicate["command_status"], "queued"); // worker owns replay admission, never synchronous applied.
+        wait_for(&runtime, "\"last_operation_status\":\"duplicate\"");
+        valid["operation"] = json!("operator-pause"); valid["operation_id"] = json!("operator-pause");
+        valid["elapsed_realtime_ns"] = json!(9_000);
+        runtime.apply_command_json(&valid.to_string());
+        wait_for(&runtime, "\"control_state\":\"paused\"");
+        valid["operation"] = json!("operator-resume"); valid["operation_id"] = json!("operator-resume");
+        valid["elapsed_realtime_ns"] = json!(10_000);
+        runtime.apply_command_json(&valid.to_string());
+        wait_for(&runtime, "\"operator_operation_id\":\"operator-resume\"");
+        runtime.apply_command_json(&command("save-and-exit", "cleanup", 1, 20_000));
+        wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        runtime.shutdown_for_test().unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     #[test]

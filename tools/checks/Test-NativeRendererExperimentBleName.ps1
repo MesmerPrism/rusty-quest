@@ -30,7 +30,7 @@ $lock=Get-Content -LiteralPath $result.feature_lock_path -Raw|ConvertFrom-Json -
 $closure=$lock.panel_source_closure
 if($closure.selected_module_id-cne'breath-composition-controls'-or$closure.runtime_widening_allowed){throw 'Exact breath panel closure required'}
 $consumerSources=@()
-foreach($name in @('ExperimentSessionBleNamePolicy.java','ExperimentSessionBleProtocol.java','ExperimentSessionBleServer.java')){
+foreach($name in @('ExperimentSessionBleNamePolicy.java','ExperimentSessionBleProtocol.java','ExperimentSessionControlCapability.java','ExperimentSessionBleServer.java')){
     $records=@($closure.source_files|Where-Object{[IO.Path]::GetFileName($_.path)-ceq$name})
     if($records.Count-ne1-or$records[0].module_id-cne'breath-composition-controls'){throw "Production closure omits or duplicates BLE source: $name"}
     $file=Join-Path $repo $records[0].path
@@ -45,5 +45,5 @@ if(-not$source.Contains('new AdvertiseData.Builder().setIncludeDeviceName(false)
    -not$source.Contains('.addServiceUuid(new ParcelUuid(SERVICE)).build()')-or
    -not$source.Contains('startAdvertising(settings, data, scanResponse, advertiseCallback)')-or
    $source.Contains('.setName(')){throw 'Primary service or global-name boundary changed'}
-"Production panel closure resolved; three exact BLE source records compiled. Evidence: $resultPath"
+"Production panel closure resolved; four exact BLE source records compiled. Evidence: $resultPath"
 'Actual BLE name consumer compilation and primary-service/no-global-rename boundaries passed.'

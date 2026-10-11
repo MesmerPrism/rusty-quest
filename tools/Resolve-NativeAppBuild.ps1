@@ -5,6 +5,7 @@ param(
     [string]$OutputRoot = "local-artifacts\native-app-builds",
     [string]$ResultJsonPath,
     [string]$PrivateAssetProviderManifest,
+    [switch]$EnableExperimentSessionDebugOperator,
     [switch]$DryRun
 )
 
@@ -666,7 +667,8 @@ function New-GeneratedAndroidManifestText {
         [string[]]$Activities,
         [string[]]$Receivers,
         [string[]]$Services,
-        [string[]]$Queries
+        [string[]]$Queries,
+        [switch]$ExperimentSessionDebugOperator
     )
     $lines = New-Object System.Collections.ArrayList
     [void]$lines.Add('<manifest xmlns:android="http://schemas.android.com/apk/res/android"')
@@ -789,6 +791,9 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.BREATH_COMPOSITION_COMMAND" />')
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </receiver>')
+    }
+    if ($ExperimentSessionDebugOperator) {
+        [void]$lines.Add(('        <provider android:name="io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionDebugControlProvider" android:authorities="{0}.debug-experiment-control" android:exported="true" android:permission="android.permission.DUMP" />' -f [System.Security.SecurityElement]::Escape($PackageName)))
     }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
@@ -1384,6 +1389,21 @@ $panelSourceClosure = Resolve-NativePanelComposition `
     -Features $features `
     -Activities $activities
 
+$debugOperatorSources = @()
+$debugOperatorProviders = @()
+if ($EnableExperimentSessionDebugOperator) {
+    if ($selectedFeatureIds -cnotcontains 'operator.breath_composition_cli' -or $activities -cnotcontains 'ControlPanelActivity') {
+        throw 'Experiment debug operator requires the explicitly selected breath CLI and panel features.'
+    }
+    $debugOperatorProviders = @('ExperimentSessionDebugControlProvider')
+    foreach ($name in @('ExperimentSessionDebugControlProvider', 'ExperimentSessionDebugOperator')) {
+        $relative = "apps/native-renderer-android/src/debug/java/io/github/mesmerprism/rustyquest/native_renderer/$name.java"
+        $debugOperatorSources += [ordered]@{path=$relative;sha256=Get-FileSha256 -Path (Join-Path $repoRootText $relative)}
+    }
+}
+$declaredDebugProviders = if ($null -ne $app.declared_manifest.PSObject.Properties['providers']) { Get-StringArray $app.declared_manifest.providers } else { @() }
+Assert-SetEquals -Label 'Explicit debug provider surface' -Expected $declaredDebugProviders -Actual $debugOperatorProviders
+
 $environmentDepthMode = if ($runtimeSet.Contains($EnvironmentDepthModeProperty)) { [string]$runtimeSet[$EnvironmentDepthModeProperty] } else { "" }
 $environmentDepthSource = if ($runtimeSet.Contains($EnvironmentDepthSourceProperty)) { [string]$runtimeSet[$EnvironmentDepthSourceProperty] } else { "" }
 $environmentDepthNativePassthroughRequired =
@@ -1586,6 +1606,7 @@ $resolutionInputs = [ordered]@{
     app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
     feature_descriptors = $featureDescriptorRecords
     panel_source_closure = $panelSourceClosure
+    debug_experiment_operator_sources = $debugOperatorSources
     private_particle_payload_linkage = $privateParticlePayloadLinkageReceipt
     private_asset_closure = $privateAssetClosure
     build_env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
@@ -1813,6 +1834,7 @@ $featureLock = [ordered]@{
     feature_descriptors = $featureDescriptorRecords
     dependency_reasons = $dependencyReasons
     panel_source_closure = $panelSourceClosure
+    debug_experiment_operator_sources = $debugOperatorSources
     breath_composition_activation = if ($null -ne $breathCompositionActivationBinding) {
         [ordered]@{
             schema = "rusty.quest.breath_composition.activation_binding.v1"
@@ -1876,6 +1898,7 @@ $featureLock = [ordered]@{
     validation_commands = $validationCommands
     generated_outputs = $generatedOutputs
 }
+if ($EnableExperimentSessionDebugOperator) { $featureLock.android_manifest['providers'] = @('ExperimentSessionDebugControlProvider') }
 Write-JsonArtifact -Value $featureLock -Path $featureLockPath
 
 $runtimeProfile = [ordered]@{
@@ -1904,7 +1927,7 @@ $applicationLabel = if ($null -ne $app.PSObject.Properties["application_label"])
 if ([string]::IsNullOrWhiteSpace($applicationLabel) -or $applicationLabel.Length -gt 64 -or $applicationLabel -match '[\r\n\t]') {
     throw "App build spec application_label must be 1..64 visible characters without control whitespace"
 }
-$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -ApplicationLabel $applicationLabel -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries
+$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -ApplicationLabel $applicationLabel -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries -ExperimentSessionDebugOperator:$EnableExperimentSessionDebugOperator
 New-Item -ItemType Directory -Path (Split-Path -Parent $androidManifestPath) -Force | Out-Null
 Set-Content -LiteralPath $androidManifestPath -Value $manifestText -Encoding UTF8
 

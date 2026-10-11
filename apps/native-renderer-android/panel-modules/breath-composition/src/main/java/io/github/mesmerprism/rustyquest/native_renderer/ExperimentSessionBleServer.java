@@ -50,6 +50,7 @@ final class ExperimentSessionBleServer {
 
     interface Delegate {
         JSONObject snapshot() throws Exception;
+        default JSONObject sessionControlReadback() throws Exception { return null; }
         default boolean openControlDefault() { return false; }
         void dispatch(CommandRequest command);
     }
@@ -59,12 +60,17 @@ final class ExperimentSessionBleServer {
         final String operation;
         final String condition;
         final int bias;
+        final ExperimentSessionControlCapability.Fence sessionFence;
 
         CommandRequest(String id, String operation, String condition, int bias) {
+            this(id,operation,condition,bias,null);
+        }
+        CommandRequest(String id,String operation,String condition,int bias,ExperimentSessionControlCapability.Fence fence) {
             this.id = id;
             this.operation = operation;
             this.condition = condition;
             this.bias = bias;
+            this.sessionFence=fence;
         }
     }
 
@@ -112,6 +118,11 @@ final class ExperimentSessionBleServer {
     private long nativeOwnerIdentity;
     private long nativeOwnerEpoch;
     private long nativeOwnerHighWater;
+    private JSONObject latestOwnerReceipt;
+    private String shellOperationId="";
+    synchronized void markShellOperation(String id) { shellOperationId=id; }
+    synchronized JSONObject ownerReceipt() throws Exception { return latestOwnerReceipt==null?new JSONObject():new JSONObject(latestOwnerReceipt.toString()); }
+    private final ExperimentSessionControlCapability sessionControl = new ExperimentSessionControlCapability();
 
     private ExperimentSessionBleServer(Context context) {
         this.context = context;
@@ -257,6 +268,7 @@ final class ExperimentSessionBleServer {
     synchronized void stop() {
         serverGeneration++;
         active = false;
+        sessionControl.clear();
         main.removeCallbacks(statusRefresh);
         if (advertiser != null && advertiseCallback != null) {
             try { advertiser.stopAdvertising(advertiseCallback); }
@@ -282,6 +294,8 @@ final class ExperimentSessionBleServer {
         try {
             JSONObject receipt = new JSONObject().put("v", 1).put("id", id)
                 .put("state", state).put("detail", safeDetail(detail));
+            latestOwnerReceipt = new JSONObject(receipt.toString());
+            if(id.equals(shellOperationId))latestOwnerReceipt.put("operator_origin","shell-experiment-operator-v1");
             byte[] bytes = jsonBytes(receipt.toString());
             for (Peer peer : peers.values()) {
                 if (id.equals(peer.lastCommandId)) {
@@ -316,9 +330,16 @@ final class ExperimentSessionBleServer {
                 try {
                     JSONObject status = target.snapshot();
                     status.put("v", 1).put("m", open ? "open" : "gated");
+                    JSONObject capability = sessionControl.offer(status,target.sessionControlReadback(),
+                        generation,identity,epoch,SystemClock.elapsedRealtime());
+                    if(capability!=null)status.put("q",capability);
                     byte[] bytes = jsonBytes(status.toString());
+                    if(bytes.length>480 && status.has("q")) {
+                        status.remove("q");sessionControl.clear();bytes=jsonBytes(status.toString());
+                    }
                     if (bytes.length <= 480) next = bytes;
                 } catch (Exception error) {
+                    sessionControl.clear();
                     Log.w(TAG, "status=snapshot-unavailable", error);
                 }
             }
@@ -457,12 +478,29 @@ final class ExperimentSessionBleServer {
                         && value != null && value.length <= ExperimentSessionBleProtocol.MAX_COMMAND_BYTES) {
                     try {
                         JSONObject body = new JSONObject(new String(value, StandardCharsets.UTF_8));
+                        boolean sessionVersion = Integer.valueOf(2).equals(body.opt("v")) || Long.valueOf(2).equals(body.opt("v"));
+                        ExperimentSessionControlCapability.Fence sessionFence = null;
                         String id = body.optString("id", "");
                         String operation = body.optString("op", "");
                         String condition = body.optString("condition", "");
                         String nonce = body.optString("nonce", "");
                         int bias = body.optInt("bias", -1);
-                        if (body.optInt("v", 0) != 1
+                        String session="";long sessionGeneration=0L;
+                        if(sessionVersion) {
+                            Set<String> fields=new HashSet<>(Arrays.asList("v","id","op","s","g","n"));
+                            if(body.has("mac"))fields.add("mac");
+                            if(body.length()!=fields.size())throw new IllegalArgumentException("closed-session-command-required");
+                            for(String field:fields)if(!body.has(field))throw new IllegalArgumentException("missing-session-command-field");
+                            id=ExperimentSessionControlCapability.string(body,"id");
+                            operation=ExperimentSessionControlCapability.string(body,"op");
+                            session=ExperimentSessionControlCapability.string(body,"s");
+                            nonce=ExperimentSessionControlCapability.string(body,"n");
+                            sessionGeneration=ExperimentSessionControlCapability.positive(body,"g");
+                            if(body.has("mac"))ExperimentSessionControlCapability.string(body,"mac");
+                            condition="";bias=0;
+                            if(!ExperimentSessionBleProtocol.validSessionFields(id,operation,session,sessionGeneration,nonce))
+                                throw new IllegalArgumentException("invalid-session-command");
+                        } else if (body.optInt("v", 0) != 1
                                 || !ExperimentSessionBleProtocol.validCommandFields(
                                     id, operation, condition, bias, nonce)) {
                             throw new IllegalArgumentException("invalid-command-fields");
@@ -474,20 +512,25 @@ final class ExperimentSessionBleServer {
                                     || SystemClock.elapsedRealtime() < blockedUntilMs) {
                                 throw new SecurityException("peer-replay-or-rate-limit");
                             }
-                            if (!openControl() && !ExperimentSessionBleProtocol.verify(
+                            boolean authenticated=sessionVersion ? ExperimentSessionBleProtocol.verifySession(
+                                code,peer.challenge,id,operation,session,sessionGeneration,nonce,body.optString("mac",""))
+                                : ExperimentSessionBleProtocol.verify(
                                     code, peer.challenge, id, operation, condition, bias, nonce,
-                                    body.optString("mac", ""))) {
+                                    body.optString("mac", ""));
+                            if (!openControl() && !authenticated) {
                                 invalidProofs++;
                                 if (invalidProofs >= 5) blockedUntilMs = SystemClock.elapsedRealtime() + 60000L;
                                 throw new SecurityException("authentication-failed");
                             }
+                            if(sessionVersion)sessionFence=sessionControl.admit(session,sessionGeneration,operation,
+                                SystemClock.elapsedRealtime(),serverGeneration,nativeOwnerIdentity,nativeOwnerEpoch);
                         }
                         synchronized (ExperimentSessionBleServer.this) {
                             Peer peer = peers.get(device);
                             if (peer == null) throw new SecurityException("peer-disconnected");
                             peer.lastCommandId = id;
                         }
-                        accepted = new CommandRequest(id, operation, condition, bias);
+                        accepted = new CommandRequest(id, operation, condition, bias,sessionFence);
                         updateReceipt(id, "accepted", "Command admitted by Quest BLE transport.");
                         response = BluetoothGatt.GATT_SUCCESS;
                     } catch (Exception rejected) {
@@ -502,18 +545,21 @@ final class ExperimentSessionBleServer {
                     final CommandRequest request = accepted;
                     main.post(new Runnable() {
                         @Override public void run() {
+                            final Delegate target;
                             synchronized (ExperimentSessionBleServer.this) {
-                            if (!current()) return;
-                            Delegate target = delegate;
+                                if (!current()) return;
+                                target = delegate;
+                            }
                             if (target == null) {
                                 updateReceipt(request.id, "rejected", "App command owner unavailable.");
                                 return;
                             }
+                            // Main-thread owner dispatch must not hold the carrier registry lock
+                            // across a callback into the session or application lifetime owner.
                             try { target.dispatch(request); }
                             catch (RuntimeException error) {
                                 updateReceipt(request.id, "rejected", "App command dispatch failed.");
                                 Log.w(TAG, "status=dispatch-failed", error);
-                            }
                             }
                         }
                     });
