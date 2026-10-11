@@ -5,6 +5,8 @@ import java.util.concurrent.TimeUnit;
 
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
+        submittedCommandObserverSurvivesPanelReplacement();
+        durableArmCorrelationSurvivesLaterAudioOperation();
         headlessExplicitStatusIsDelivered();
         explicitStatusLifetimeFences();
         carrierStatusTargetFencesEligibilityToDelivery();
@@ -27,6 +29,76 @@ public final class ExperimentSessionAndroidShellTest {
         definitiveClockRejectionRecoversWithFreshAttempt(true);
         definitiveRejectionRecoveryIsBoundedAndReasonSpecific();
         System.out.println("ExperimentSessionAndroidShellTest PASS");
+    }
+
+    private static void durableArmCorrelationSurvivesLaterAudioOperation() throws Exception {
+        ExperimentSessionPanelCoordinator.NativeReceipt receipt=new ExperimentSessionPanelCoordinator.NativeReceipt(
+            "later-audio-prepared",true,false,1L,3L,"active","armed","condition-a",true,false,
+            "ready",true,0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"accepted");
+        ExperimentSessionAndroidShell.SessionReadback readback=new ExperimentSessionAndroidShell.SessionReadback(
+            receipt,"accepted","ready","ready","ready","not-requested",0L,-1L,"",
+            "","none","",7L,"accepted","");
+        ExperimentSessionAndroidShell.ArmAcceptance proof=new ExperimentSessionAndroidShell.ArmAcceptance("original-arm",1L,7L,"condition-a",true);
+        readback=readback.withArmAcceptance(proof);
+        require(proof.matches("original-arm",1L,"condition-a",readback));
+        require(!receipt.durable); // Arm checkpoint never fabricates a finalized/save receipt.
+        require(!proof.matches("different-arm",1L,"condition-a",readback));
+        require(!proof.matches("original-arm",2L,"condition-a",readback));
+        require(!proof.matches("original-arm",1L,"condition-b",readback));
+        require(!new ExperimentSessionAndroidShell.ArmAcceptance("original-arm",1L,8L,"condition-a",true).matches("original-arm",1L,"condition-a",readback));
+        require(!new ExperimentSessionAndroidShell.ArmAcceptance("original-arm",1L,7L,"condition-a",false).matches("original-arm",1L,"condition-a",readback));
+        ExperimentSessionPanelCoordinator.NativeReceipt mismatchedCondition=new ExperimentSessionPanelCoordinator.NativeReceipt(
+            "later-audio-prepared",true,false,1L,3L,"active","armed","condition-b",true,false,
+            "ready",true,0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"accepted");
+        ExperimentSessionAndroidShell.SessionReadback mismatchedReadback=new ExperimentSessionAndroidShell.SessionReadback(
+            mismatchedCondition,"accepted","ready","ready","ready","not-requested",0L,-1L,"",
+            "","none","",7L,"accepted","").withArmAcceptance(proof);
+        require(!proof.matches("original-arm",1L,"condition-a",mismatchedReadback));
+        java.lang.reflect.Method poll=ExperimentSessionAndroidShell.class.getDeclaredMethod("needsCommandPoll",
+            ExperimentSessionAndroidShell.SessionReadback.class,ExperimentSessionPanelCoordinator.NativeCommand.class,boolean.class);
+        poll.setAccessible(true);
+        ExperimentSessionPanelCoordinator.NativeCommand command=new ExperimentSessionPanelCoordinator.NativeCommand("arm","original-arm",0L,"condition-a");
+        require(!((Boolean)poll.invoke(null,readback,command,true)));
+        require((Boolean)poll.invoke(null,readback.withArmAcceptance(null),command,true));
+        require((Boolean)poll.invoke(null,mismatchedReadback,command,true));
+        System.out.println("Durable original Arm / audio replacement / generation / runtime / condition / no save fabrication controls PASS");
+    }
+
+    private static void submittedCommandObserverSurvivesPanelReplacement() throws Exception {
+        for (final boolean observer : new boolean[]{false,true}) {
+            java.util.concurrent.LinkedBlockingQueue<Runnable> callbacks=new java.util.concurrent.LinkedBlockingQueue<>();
+            final int[] originalReads={0},replacementReads={0};
+            ExperimentSessionAndroidShell.UiSink submitted=new ExperimentSessionAndroidShell.UiSink(){
+                public boolean observesSubmittedCommand(){return observer;}
+                public boolean acceptsExperimentSessionCallbacks(long epoch){return epoch==1L;}
+                public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback r){
+                    if(!"exact-original".equals(r.receipt.operationId))throw new AssertionError("operation correlation changed");
+                    originalReads[0]++;
+                }
+                public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult r){}
+            };
+            ExperimentSessionAndroidShell.UiSink replacement=new ExperimentSessionAndroidShell.UiSink(){
+                public boolean acceptsExperimentSessionCallbacks(long epoch){return epoch==1L;}
+                public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback r){replacementReads[0]++;}
+                public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult r){}
+            };
+            ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(new FakeBridge(false),new FakeCodec(),new FakeClock(),
+                new ExperimentSessionAndroidShell.UiDispatcher(){public void post(Runnable r){callbacks.add(r);}public boolean isUiThread(){return false;}});
+            try {
+                shell.beginExplicitLaunchEpoch(1L);
+                if(!observer)shell.attach(submitted);
+                shell.submit(new ExperimentSessionPanelCoordinator.NativeCommand("arm","exact-original",0L,""),false,submitted);
+                Runnable callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);
+                shell.attach(replacement);if(!observer)shell.detach(submitted);callback.run();
+                equal(observer?1:0,originalReads[0]);equal(observer?0:1,replacementReads[0]);
+                // A delivered command observer still cannot cross a launch replacement.
+                shell.submit(new ExperimentSessionPanelCoordinator.NativeCommand("arm","exact-original",0L,""),false,submitted);
+                callback=callbacks.poll(2,TimeUnit.SECONDS);require(callback!=null);
+                shell.beginExplicitLaunchEpoch(2L);callback.run();
+                equal(observer?1:0,originalReads[0]);equal(observer?0:1,replacementReads[0]);
+            }finally{shell.closeForTest();}
+        }
+        System.out.println("Submitted command observer / replacement / exact operation / launch fences PASS");
     }
 
     private static void headlessExplicitStatusIsDelivered() throws Exception {

@@ -123,3 +123,13 @@ post-draw content receipt; dispatch or Activity launch alone does not confirm an
 effect. The routing gate includes actual extracted foreground/background source
 controls. Host validation does not prove Android foreground launch or wearer
 visibility, and the original timeout remains unqualified until device evidence.
+
+Remote Arm confirmation uses a process command observer rather than the current
+Activity presentation callback. It keeps the original browser request, server
+generation and native Arm operation ID. Native Arm acknowledgement reports the
+original operation, resulting session generation, runtime epoch and condition,
+with a successful writer checkpoint; later audio operations may change the last
+operation without replacing that acknowledgement. Confirmation still requires
+the exact matching live Armed state. A checkpoint is not a saved or finalized
+recording receipt. Absent, mismatched or malformed acknowledgement keeps the
+original command pending/unknown; no automatic Arm replay is permitted.

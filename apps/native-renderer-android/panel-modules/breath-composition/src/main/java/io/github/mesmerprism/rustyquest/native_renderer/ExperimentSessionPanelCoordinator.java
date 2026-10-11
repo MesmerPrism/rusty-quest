@@ -282,8 +282,13 @@ final class ExperimentSessionPanelCoordinator {
     // Preserve that result for pending-command reduction; it is never upgraded here.
     synchronized boolean acceptNativeReadback(long epoch, NativeReceipt receipt,
             long completedNanos, long nowNanos, boolean statusResponseAccepted) {
+        return acceptNativeReadback(epoch,receipt,completedNanos,nowNanos,statusResponseAccepted,null);
+    }
+    synchronized boolean acceptNativeReadback(long epoch,NativeReceipt receipt,
+            long completedNanos,long nowNanos,boolean statusResponseAccepted,ArmAcceptance arm) {
         acceptRuntimeEpoch(epoch);
-        boolean acceptedState = accept(receipt);
+        boolean acceptedState = accept(receipt,
+            statusResponseAccepted && epoch==runtimeEpoch && !freshRuntimeExpected ? arm : null,epoch);
         nativeStateAccepted = acceptedState;
         observeNativeStatusReadback(epoch, receipt, acceptedState, completedNanos, nowNanos,
             statusResponseAccepted);
@@ -598,13 +603,37 @@ final class ExperimentSessionPanelCoordinator {
         return true;
     }
 
-    synchronized boolean accept(NativeReceipt receipt) {
+    /** Successful original Arm writer checkpoint, independent of subsequent audio operations. */
+    static class ArmAcceptance {
+        final String operationId,condition;
+        final long generation,runtimeEpoch;
+        final boolean durableCheckpoint;
+        ArmAcceptance(String id,long generation,long epoch,String condition,boolean durable) {
+            this.operationId=id==null?"":id;this.generation=generation;this.runtimeEpoch=epoch;
+            this.condition=condition==null?"":condition;this.durableCheckpoint=durable;
+        }
+        boolean matches(String id,long expectedGeneration,String expectedCondition,
+                NativeReceipt receipt,long epoch) {
+            return durableCheckpoint && !operationId.isEmpty() && operationId.equals(id)
+                && generation>0L && generation==expectedGeneration && runtimeEpoch>0L
+                && runtimeEpoch==epoch && receipt!=null && generation==receipt.generation
+                && condition.equals(expectedCondition) && condition.equals(receipt.activeCondition) && receipt.recording;
+        }
+    }
+
+    synchronized boolean accept(NativeReceipt receipt) { return accept(receipt,null,0L); }
+
+    private boolean accept(NativeReceipt receipt,ArmAcceptance arm,long epoch) {
         nativeStateAcceptanceReason = "accepted";
         if (receipt == null) { nativeStateAcceptanceReason = "receipt_null"; return false; }
         if (receipt.revision < state.revision) { nativeStateAcceptanceReason = "revision_regression"; return false; }
         if (receipt.generation < state.generation) { nativeStateAcceptanceReason = "generation_regression"; return false; }
+        boolean provenArm = arm!=null && state.phase==ExperimentSessionPanelState.Phase.ARMING
+            && !state.pendingOperationId.isEmpty() && receipt.accepted
+            && "active".equals(receipt.phase) && "armed".equals(receipt.controlState)
+            && arm.matches(state.pendingOperationId,state.generation+1L,state.activeCondition,receipt,epoch);
         boolean pendingMatch = !state.pendingOperationId.isEmpty()
-            && state.pendingOperationId.equals(receipt.operationId);
+            && (state.pendingOperationId.equals(receipt.operationId) || provenArm);
         boolean repeatedRejectedOperation = state.phase == ExperimentSessionPanelState.Phase.ERROR
             && state.pendingOperationId.isEmpty()
             && !lastRejectedOperationId.isEmpty()

@@ -102,12 +102,15 @@ final class ExperimentSessionAndroidShell {
     }
 
     interface UiSink {
+        /** Process command observer, independent of the replaceable Activity presentation. */
+        default boolean observesSubmittedCommand() { return false; }
         boolean acceptsExperimentSessionCallbacks(long launchEpoch);
         void onExperimentSessionReadback(SessionReadback readback);
         void onExperimentSessionTerminal(TerminalResult result);
     }
 
     static final class SessionReadback {
+        final ArmAcceptance armAcceptance;
         final ExperimentSessionPanelCoordinator.NativeReceipt receipt;
         final String commandStatus;
         final String statusResponseReason;
@@ -144,7 +147,7 @@ final class ExperimentSessionAndroidShell {
                 recordingRootStatus, shutdownStatus, shutdownAckRevision,
                 finalizedSessionGeneration, finalizedOperationId, detail,
                 recordingResult, recordingError, runtimeEpoch,
-                lastOperationStatus, lastOperationReason, -1L, "unknown");
+                lastOperationStatus, lastOperationReason, -1L, "unknown", null);
         }
 
         private SessionReadback(
@@ -154,8 +157,9 @@ final class ExperimentSessionAndroidShell {
             long finalizedSessionGeneration, String finalizedOperationId,
             String detail, String recordingResult, String recordingError, long runtimeEpoch,
             String lastOperationStatus, String lastOperationReason,
-            long statusReadCompletedNanos, String statusResponseReason
+            long statusReadCompletedNanos, String statusResponseReason, ArmAcceptance armAcceptance
         ) {
+            this.armAcceptance = armAcceptance;
             this.statusReadCompletedNanos = statusReadCompletedNanos;
             this.statusResponseReason = safe(statusResponseReason);
             this.receipt = receipt;
@@ -182,7 +186,14 @@ final class ExperimentSessionAndroidShell {
                 inventoryStatus, recordingRootStatus, shutdownStatus, shutdownAckRevision,
                 finalizedSessionGeneration, finalizedOperationId, detail,
                 recordingResult, recordingError, runtimeEpoch,
-                lastOperationStatus, lastOperationReason, completedNanos, responseReason);
+                lastOperationStatus, lastOperationReason, completedNanos, responseReason, armAcceptance);
+        }
+        SessionReadback withArmAcceptance(ArmAcceptance arm) {
+            return new SessionReadback(receipt, commandStatus, initializationStatus,
+                inventoryStatus, recordingRootStatus, shutdownStatus, shutdownAckRevision,
+                finalizedSessionGeneration, finalizedOperationId, detail,
+                recordingResult, recordingError, runtimeEpoch, lastOperationStatus,
+                lastOperationReason, statusReadCompletedNanos, statusResponseReason, arm);
         }
         boolean initializationPending() {
             return "initializing".equals(initializationStatus);
@@ -191,6 +202,16 @@ final class ExperimentSessionAndroidShell {
         boolean commandPending() {
             return "queued".equals(commandStatus)
                 || (receipt != null && "queued".equals(receipt.detail));
+        }
+    }
+
+    /** Projection adapter for the coordinator-owned exact Arm acknowledgement. */
+    static final class ArmAcceptance extends ExperimentSessionPanelCoordinator.ArmAcceptance {
+        ArmAcceptance(String id,long generation,long epoch,String condition,boolean durable) {
+            super(id,generation,epoch,condition,durable);
+        }
+        boolean matches(String id,long generation,String condition,SessionReadback current) {
+            return current!=null && matches(id,generation,condition,current.receipt,current.runtimeEpoch);
         }
     }
 
@@ -816,6 +837,11 @@ final class ExperimentSessionAndroidShell {
             ExperimentSessionPanelCoordinator.NativeCommand expected, boolean start) {
         if (readback == null || readback.commandPending()) return true;
         if (expected == null || readback.receipt == null) return false;
+        if ("arm".equals(expected.operation) && readback.armAcceptance != null
+                && readback.armAcceptance.matches(expected.operationId,
+                    expected.expectedGeneration + 1L, expected.condition, readback)
+                && readback.receipt.accepted
+                && "armed".equals(readback.receipt.controlState)) return false;
         if (!expected.operationId.equals(readback.receipt.operationId)) return true;
         if (!readback.receipt.accepted) return false;
         if ("restart-to-experimenter".equals(expected.operation)) {
@@ -836,7 +862,11 @@ final class ExperimentSessionAndroidShell {
         uiDispatcher.post(new Runnable() {
             @Override public void run() {
                 UiSink target;
-                synchronized (admissionLock) { target = attachedSink.get(); }
+                synchronized (admissionLock) {
+                    UiSink submitted = sink.get();
+                    target = submitted != null && submitted.observesSubmittedCommand()
+                        ? submitted : attachedSink.get();
+                }
                 if (isCurrentEpoch(epoch) && target != null
                         && target.acceptsExperimentSessionCallbacks(epoch)) {
                     target.onExperimentSessionReadback(readback);

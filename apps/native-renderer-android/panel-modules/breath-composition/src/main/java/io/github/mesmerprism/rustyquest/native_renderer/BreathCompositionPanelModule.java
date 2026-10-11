@@ -280,13 +280,27 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         final long startedAtElapsedMs;
         final long serverGeneration;
         final ExperimentSessionControlCapability.Fence sessionFence;
+        final long armGeneration;
+        final String armCondition;
         RemotePending(String browserId, String nativeId, String operation) {
-            this(browserId,nativeId,operation,null);
+            this(browserId, nativeId, operation, -1L, "", null);
         }
-        RemotePending(String browserId,String nativeId,String operation,ExperimentSessionControlCapability.Fence fence) {
+        RemotePending(String browserId, String nativeId, String operation,
+                ExperimentSessionControlCapability.Fence fence) {
+            this(browserId, nativeId, operation, -1L, "", fence);
+        }
+        RemotePending(String browserId, String nativeId, String operation,
+                long armGeneration, String armCondition) {
+            this(browserId, nativeId, operation, armGeneration, armCondition, null);
+        }
+        RemotePending(String browserId, String nativeId, String operation,
+                long armGeneration, String armCondition,
+                ExperimentSessionControlCapability.Fence fence) {
             this.browserId = browserId;
             this.nativeId = nativeId;
             this.operation = operation;
+            this.armGeneration = armGeneration;
+            this.armCondition = armCondition;
             this.startedAtElapsedMs = SystemClock.elapsedRealtime();
             ExperimentSessionBleServer server = remoteServer();
             this.serverGeneration = server == null ? 0L : server.currentGeneration();
@@ -320,6 +334,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private static final ExperimentSessionAndroidShell.UiSink REMOTE_SINK =
         new ExperimentSessionAndroidShell.UiSink() {
+            @Override public boolean observesSubmittedCommand() { return true; }
             @Override public boolean acceptsExperimentSessionCallbacks(long epoch) {
                 return epoch == EXPERIMENT_SESSION_SHELL.currentLaunchEpochForUi();
             }
@@ -333,7 +348,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 } else {
                     EXPERIMENT_SESSION_PANEL.acceptNativeReadback(
                         readback.runtimeEpoch, readback.receipt,
-                        readback.statusReadCompletedNanos, android.os.SystemClock.elapsedRealtimeNanos());
+                        readback.statusReadCompletedNanos, android.os.SystemClock.elapsedRealtimeNanos(),
+                        "accepted".equals(readback.commandStatus), readback.armAcceptance);
                     ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
                     if (state.phase == ExperimentSessionPanelState.Phase.ARMING
                             && state.recording) {
@@ -343,20 +359,27 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     }
                 }
                 RemotePending pending = remotePending;
-                if (pending == null || !pending.nativeId.equals(readback.receipt.operationId)) {
-                    return;
-                }
+                if (pending == null) return;
                 ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
                 ExperimentSessionBleServer server = remoteServer();
                 if (server == null) return;
-                if (!readback.receipt.accepted && !readback.commandPending()) {
-                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId, "rejected", "Native session rejected the command.");
-                    remotePending = null;
-                } else if ("arm".equals(pending.operation)
-                        && readback.receipt.durable
+                if ("arm".equals(pending.operation) && readback.receipt.accepted
+                        && readback.armAcceptance != null
+                        && readback.armAcceptance.matches(pending.nativeId, pending.armGeneration,
+                            pending.armCondition, readback)
+                        && state.generation == pending.armGeneration
                         && state.phase == ExperimentSessionPanelState.Phase.ARMED
                         && state.pendingOperationId.isEmpty()) {
-                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId, "confirmed", "Condition armed by the Quest runtime.");
+                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId,
+                        "confirmed", "Condition armed by the Quest runtime.");
+                    remotePending = null;
+                    return;
+                }
+                if (!pending.nativeId.equals(readback.receipt.operationId)) {
+                    return;
+                }
+                if (!readback.receipt.accepted && !readback.commandPending()) {
+                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId, "rejected", "Native session rejected the command.");
                     remotePending = null;
                 } else if ("save-next".equals(pending.operation)
                         && readback.receipt.durable
@@ -594,7 +617,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         server.updateReceipt(request.id, "rejected", "Session is already active or pending.");
                         return;
                     }
-                    remotePending = new RemotePending(request.id, nativeCommand.operationId, "arm");
+                    remotePending = new RemotePending(request.id, nativeCommand.operationId, "arm",
+                        nativeCommand.expectedGeneration + 1L, request.condition);
                     server.updateReceipt(request.id, "pending", "Preparing condition in native session.");
                     EXPERIMENT_SESSION_SHELL.submit(nativeCommand, true, REMOTE_SINK);
                     return;
@@ -3225,7 +3249,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         boolean changed = EXPERIMENT_SESSION_PANEL.acceptNativeReadback(
             readback.runtimeEpoch, readback.receipt,
             readback.statusReadCompletedNanos, statusObservedAtNanos,
-            "accepted".equals(readback.commandStatus));
+            "accepted".equals(readback.commandStatus), readback.armAcceptance);
         hubStatusMarker("native_readback accepted=" + readback.receipt.accepted
             + " epoch=" + readback.runtimeEpoch
             + " status_read_completed=" + (readback.statusReadCompletedNanos > 0L)
@@ -5331,12 +5355,29 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     projection.optLong("runtime_epoch", 0L),
                     projection.optString("last_operation_status", ""),
                     projection.optString("last_reason", "")
-                );
+                ).withArmAcceptance(parseArmAcceptance(projection));
             } catch (RuntimeException error) {
                 throw error;
             } catch (Exception error) {
                 throw new IllegalArgumentException("could not parse session response", error);
             }
+        }
+
+        private static ExperimentSessionAndroidShell.ArmAcceptance parseArmAcceptance(JSONObject value) {
+            if (!Boolean.TRUE.equals(value.opt("arm_durable_checkpoint"))
+                    || !Boolean.TRUE.equals(value.opt("profile_identity_bound"))
+                    || !Boolean.TRUE.equals(value.opt("audio_identity_bound"))) return null;
+            for (String field : new String[]{"arm_generation", "arm_runtime_epoch"}) {
+                Object raw=value.opt(field);
+                if (!(raw instanceof Integer) && !(raw instanceof Long)) return null;
+                if (((Number)raw).longValue() <= 0L) return null;
+            }
+            Object id=value.opt("arm_operation_id"),condition=value.opt("arm_condition");
+            if (!(id instanceof String) || ((String)id).isEmpty()
+                    || !(condition instanceof String) || ((String)condition).isEmpty()) return null;
+            return new ExperimentSessionAndroidShell.ArmAcceptance((String)id,
+                ((Number)value.opt("arm_generation")).longValue(),
+                ((Number)value.opt("arm_runtime_epoch")).longValue(),(String)condition,true);
         }
 
         private static boolean validNonNegativeLong(JSONObject value, String field) {

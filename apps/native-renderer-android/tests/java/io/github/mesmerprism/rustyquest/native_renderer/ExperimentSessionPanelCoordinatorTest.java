@@ -2,6 +2,7 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 
 public final class ExperimentSessionPanelCoordinatorTest {
     public static void main(String[] args) {
+        originalArmAcknowledgementResolvesLaterAudioReadback();
         nativeReadbackObservationPolicy();
         nativeStatusSnapshotPolicy();
         launchAndRoutePolicy();
@@ -15,6 +16,35 @@ public final class ExperimentSessionPanelCoordinatorTest {
         guidanceBiasPendingPolicy();
         closedRuntimeEpochResetsGenerationButRecreationDoesNot();
         System.out.println("ExperimentSessionPanelCoordinatorTest PASS");
+    }
+
+    private static void originalArmAcknowledgementResolvesLaterAudioReadback() {
+        for(int mode=0;mode<11;mode++) {
+            ExperimentSessionPanelCoordinator c=new ExperimentSessionPanelCoordinator();
+            c.acceptRuntimeEpoch(7L);
+            ExperimentSessionPanelCoordinator.NativeCommand arm=c.arm("condition-a",100);
+            check(arm!=null && !c.snapshot().pendingOperationId.isEmpty(),"actual original pending Arm");
+            check(!ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot()),"pending Arm blocks Return");
+            ExperimentSessionPanelCoordinator.NativeReceipt later=new ExperimentSessionPanelCoordinator.NativeReceipt(
+                "later-audio-prepared",true,false,1L,3L,"active","armed",mode==10?"condition-b":"condition-a",true,false,
+                "ready",true,0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"accepted");
+            ExperimentSessionPanelCoordinator.ArmAcceptance proof=mode==6?null:
+                new ExperimentSessionPanelCoordinator.ArmAcceptance(mode==1?"different-arm":arm.operationId,
+                    mode==2?2L:1L,(mode==3 || mode==8)?8L:mode==9?6L:7L,mode==4?"condition-b":"condition-a",mode!=5);
+            boolean accepted=c.acceptNativeReadback(mode==8?8L:mode==9?6L:7L,later,100L,110L,mode!=7,proof);
+            if(mode==0) {
+                check(accepted && c.snapshot().phase==ExperimentSessionPanelState.Phase.ARMED,
+                    "exact original durable Arm resolves later audio operation");
+                check(c.snapshot().pendingOperationId.isEmpty() && ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot()),
+                    "pending cleared and Return permitted");
+                check("later-audio-prepared".equals(later.operationId) && !later.durable,
+                    "native last operation and save durability never overwritten");
+            } else {
+                check(!accepted && !c.snapshot().pendingOperationId.isEmpty(),"wrong/missing proof keeps pending");
+                check(!ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot()),"wrong proof cannot unlock Return");
+            }
+        }
+        System.out.println("Production ARMING/pending Arm -> later audio + exact checkpoint -> ARMED/Return controls PASS");
     }
 
     private static void nativeStatusSnapshotPolicy() {
