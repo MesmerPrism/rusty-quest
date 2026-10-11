@@ -222,6 +222,7 @@ final class PolarSensorPanel {
     private long autoUniqueCandidateScheduledGeneration = -1L;
     private int autoConnectionAttempts;
     private boolean automaticConnectionRequested;
+    private final PolarRecoveryIntent recoveryIntent = new PolarRecoveryIntent();
     private boolean automaticConnectionCycleActive;
     private boolean automaticConnectionRetryScheduled;
     private boolean manualConnectionControl;
@@ -520,6 +521,7 @@ final class PolarSensorPanel {
 
     boolean requestStartupPermissions(Activity permissionHost) {
         if (closing || permissionHost == null) return hasRequiredPermissions();
+        if (!recoveryIntent.automaticStartupAllowed()) return hasRequiredPermissions();
         automaticConnectionRequested = true;
         if (hasRequiredPermissions()) {
             resumeAutomaticConnectionIfRequested();
@@ -595,6 +597,7 @@ final class PolarSensorPanel {
             closing = true;
         }
         cancelAutomaticRecovery(true);
+        recoveryIntent.disconnect();
         stopScan();
         closeGatt();
         handler.removeCallbacksAndMessages(null);
@@ -788,7 +791,7 @@ final class PolarSensorPanel {
     }
 
     void ensureAutoConnection() {
-        if (closing) return;
+        if (closing || !recoveryIntent.automaticStartupAllowed()) return;
         if (Looper.myLooper() != Looper.getMainLooper()) {
             handler.post(new Runnable() {
                 @Override
@@ -895,6 +898,20 @@ final class PolarSensorPanel {
         }
         autoScanGeneration = -1L;
         autoUniqueCandidateScheduledGeneration = -1L;
+        if (recoveryIntent.connectionWanted()) {
+            for (int index = 0; index < devices.size(); index++) {
+                DeviceEntry candidate = devices.get(index);
+                if (recoveryIntent.permitsCandidate(candidate.instanceId())) {
+                    selectedDeviceIndex = index;
+                    setAutomaticConnectionState("connecting", "Reconnecting the exact selected Polar sensor.");
+                    connectAdmittedCandidate(candidate, true);
+                    return;
+                }
+            }
+            setAutomaticConnectionState("not-found", "The selected Polar sensor is not present.");
+            scheduleAutomaticRecovery("Waiting for the exact selected Polar sensor.");
+            return;
+        }
         if (decision == PolarAutoConnectionPolicy.Decision.NOT_FOUND) {
             setAutomaticConnectionState("not-found", "No eligible Polar sensor was found.");
             scheduleAutomaticRecovery("No eligible Polar sensor was found.");
@@ -920,6 +937,11 @@ final class PolarSensorPanel {
             return;
         }
         DeviceEntry admittedCandidate = devices.get(admittedIndex);
+        if (!recoveryIntent.permitsCandidate(admittedCandidate.instanceId())) {
+            setAutomaticConnectionState("not-found", "The selected Polar sensor is not present.");
+            scheduleAutomaticRecovery("Waiting for the exact selected Polar sensor.");
+            return;
+        }
         if (decision == PolarAutoConnectionPolicy.Decision.CONNECT_PAIRED) {
             selectedDeviceIndex = admittedIndex;
             setAutomaticConnectionState("connecting", "Reconnecting the app-private preferred sensor.");
@@ -1328,6 +1350,7 @@ final class PolarSensorPanel {
     private void disconnect() {
         manualConnectionControl = true;
         cancelAutomaticRecovery(true);
+        recoveryIntent.disconnect();
         advanceAutoConnectionGeneration();
         stopScan();
         closeGatt();
@@ -1351,6 +1374,7 @@ final class PolarSensorPanel {
             setStatus("PMD notifications are not ready yet.");
             return;
         }
+        recoveryIntent.startStream(selectedMode);
         beginPmdStartFlow(selectedMode);
     }
 
@@ -1363,6 +1387,8 @@ final class PolarSensorPanel {
             setStatus("PMD control point is not ready for parallel streams.");
             return;
         }
+        recoveryIntent.startStream("acc");
+        recoveryIntent.startStream("ecg");
         startAllPending = true;
         if (!accPmdRunning) {
             beginPmdStartFlow("acc");
@@ -1375,34 +1401,46 @@ final class PolarSensorPanel {
     }
 
     private void stopAllPmd() {
-        if (gatt == null || pmdControlCharacteristic == null) {
-            setStatus("PMD control point is not available.");
-            return;
-        }
-        stopAllPending = true;
-        pmdFlowGeneration += 1L;
-        if (accPmdRunning) {
-            pendingPmdMode = "acc";
-            writePmdCommand("stop_stream_only", buildStopCommand("acc"));
-        } else if (ecgPmdRunning) {
-            pendingPmdMode = "ecg";
-            writePmdCommand("stop_stream_only", buildStopCommand("ecg"));
-        } else {
-            stopAllPending = false;
-            setStatus("All PMD streams are already stopped.");
-        }
+        recoveryIntent.stopStreams();
+        startAllPending = false;
+        stopAllPending = false;
+        requestUndesiredStreamStop("acc");
+        requestUndesiredStreamStop("ecg");
     }
 
     private void stopPmd() {
-        if (gatt == null || pmdControlCharacteristic == null) {
-            setStatus("PMD control point is not available.");
-            return;
-        }
         String mode = selectedPmdMode();
-        if (!streamRunning(mode)) {
-            setStatus(mode.toUpperCase(Locale.US) + " PMD stream is already stopped.");
+        recoveryIntent.stopStream(mode);
+        startAllPending = false;
+        requestUndesiredStreamStop(mode);
+    }
+
+    private void requestUndesiredStreamStop(String mode) {
+        completeUndesiredStreamStop(mode, gatt, recoveryIntent.streamRevision(mode), 20);
+    }
+
+    private void completeUndesiredStreamStop(
+        final String mode, final BluetoothGatt expectedGatt, final long expectedRevision,
+        final int remainingWaits
+    ) {
+        if (!isCurrentConnectedGatt(expectedGatt)
+                || expectedRevision != recoveryIntent.streamRevision(mode)
+                || recoveryIntent.streamWanted(mode)) return;
+        if (commandInFlight || ("stop_stream_only".equals(pendingCommand) && streamRunning(pendingPmdMode))) {
+            if (remainingWaits <= 0) {
+                setStatus("PMD stop is unconfirmed; the preceding command has not completed.");
+                return;
+            }
+            handler.postDelayed(new Runnable() {
+                @Override public void run() {
+                    completeUndesiredStreamStop(mode, expectedGatt, expectedRevision, remainingWaits - 1);
+                }
+            }, 100L);
             return;
         }
+        // A START already written is reconciled by its actual ACK below. A
+        // pre-write start is cancelled by the desired-intent guard at dispatch.
+        if (!streamRunning(mode) || !recoveryIntent.claimStop(mode, expectedRevision)) return;
         pmdFlowGeneration += 1L;
         pendingPmdMode = mode;
         writePmdCommand("stop_stream_only", buildStopCommand(mode));
@@ -1892,6 +1930,8 @@ final class PolarSensorPanel {
             pendingConnectionDeviceInstanceId = "none";
             setStatusState("connected", "Connected. Discovering services.");
             rememberConnectedPairing();
+            recoveryIntent.connected(connectedDeviceInstanceId, selectedPmdMode());
+            automaticConnectionRequested = true;
             manualConnectionControl = false;
             finishAutomaticConnectionCycle();
             setAutomaticConnectionState(
@@ -1997,8 +2037,10 @@ final class PolarSensorPanel {
         if (pmdControlCharacteristic != null && pmdDataCharacteristic != null) {
             pmdReady = true;
             marker("status=pmd-ready");
-            setStatus("HR/RR notifications active; starting " + selectedPmdMode().toUpperCase(Locale.US) + " PMD.");
-            startSelectedPmd();
+            setStatus("HR/RR notifications active; restoring requested PMD streams.");
+            startAllPending = recoveryIntent.streamWanted("acc") && recoveryIntent.streamWanted("ecg");
+            if (recoveryIntent.streamWanted("acc")) beginPmdStartFlow("acc");
+            else if (recoveryIntent.streamWanted("ecg")) beginPmdStartFlow("ecg");
         } else {
             pmdReady = false;
             setStatus("HR/RR notifications active; PMD service not available.");
@@ -2044,29 +2086,12 @@ final class PolarSensorPanel {
             return;
         }
         if ("stop_stream_only".equals(command)) {
-            final String stoppedMode = pendingPmdMode;
-            setStreamRunning(stoppedMode, false);
-            setStatus(stoppedMode.toUpperCase(Locale.US) + " PMD stream stopped.");
-            marker("status=pmd-stopped mode=" + markerToken(stoppedMode));
-            appendStatusEvent("pmd-stopped-" + stoppedMode);
-            updateCounters();
-            if (stopAllPending && pmdRunning) {
-                handler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        String nextMode = accPmdRunning ? "acc" : "ecg";
-                        pendingPmdMode = nextMode;
-                        pmdFlowGeneration += 1L;
-                        writePmdCommand("stop_stream_only", buildStopCommand(nextMode));
-                    }
-                }, 150L);
-            } else {
-                stopAllPending = false;
-            }
+            setStatus("PMD STOP written; waiting for the sensor acknowledgement.");
         }
     }
 
     private void beginPmdStartFlow(String mode) {
+        if (!connected || gatt == null || !pmdReady || !recoveryIntent.streamWanted(mode)) return;
         if (commandInFlight) {
             setStatus("PMD command is already in flight.");
             return;
@@ -2125,7 +2150,7 @@ final class PolarSensorPanel {
     }
 
     private void startPmdWithCurrentSettings(final long generation) {
-        if (generation != pmdFlowGeneration || !pmdReady) {
+        if (generation != pmdFlowGeneration || !pmdReady || !recoveryIntent.streamWanted(pendingPmdMode)) {
             return;
         }
         if (commandInFlight) {
@@ -2424,6 +2449,7 @@ final class PolarSensorPanel {
         }
         if (record.opCode == 0x02
                 && "start_stream".equals(pendingCommand)
+                && pendingCommandGeneration == pmdFlowGeneration
                 && record.measurementType == measurementTypeInt(pendingPmdMode)) {
             if (record.errorCode == 0) {
                 final String startedMode = pendingPmdMode;
@@ -2433,10 +2459,19 @@ final class PolarSensorPanel {
                     + " activeModes=" + markerToken(activePmdMode));
                 appendStatusEvent("pmd-started-" + startedMode);
                 updateCounters();
+                if (!recoveryIntent.streamWanted(startedMode)) {
+                    requestUndesiredStreamStop(startedMode);
+                    return;
+                }
                 if (startAllPending && "acc".equals(startedMode) && !ecgPmdRunning) {
+                    final BluetoothGatt resumedGatt = gatt;
+                    final long resumedGeneration = pmdFlowGeneration;
                     handler.postDelayed(new Runnable() {
                         @Override
                         public void run() {
+                            if (resumedGeneration != pmdFlowGeneration
+                                    || !isCurrentConnectedGatt(resumedGatt)
+                                    || !startAllPending || !recoveryIntent.streamWanted("ecg")) return;
                             beginPmdStartFlow("ecg");
                         }
                     }, 150L);
@@ -2456,9 +2491,19 @@ final class PolarSensorPanel {
             return;
         }
         if (record.opCode == 0x03
+                && pendingCommandGeneration == pmdFlowGeneration
+                && record.measurementType == measurementTypeInt(pendingPmdMode)
                 && ("stop_stream_only".equals(pendingCommand) || "stop_before_start".equals(pendingCommand))) {
-            setStreamRunning(pendingPmdMode, false);
-            updateCounters();
+            if (record.errorCode == 0) {
+                setStreamRunning(pendingPmdMode, false);
+                setStatus(pendingPmdMode.toUpperCase(Locale.US) + " PMD stop acknowledged.");
+                marker("status=pmd-stopped mode=" + markerToken(pendingPmdMode));
+                appendStatusEvent("pmd-stopped-" + pendingPmdMode);
+                updateCounters();
+            } else {
+                setStatus("PMD STOP was rejected; stream stop is unconfirmed.");
+            }
+            pendingCommand = "none";
         }
     }
 
@@ -2755,6 +2800,9 @@ final class PolarSensorPanel {
         fields.put("selected_device_instance_id", selectedDeviceInstanceId());
         fields.put("connected_device_instance_id", connectedDeviceInstanceId);
         fields.put("connected", connected);
+        fields.put("connection_recovery_requested", automaticConnectionRequested);
+        fields.put("acc_resume_requested", recoveryIntent.streamWanted("acc"));
+        fields.put("ecg_resume_requested", recoveryIntent.streamWanted("ecg"));
         fields.put("pmd_ready", pmdReady);
         fields.put("pmd_running", pmdEffectiveRunning);
         fields.put("pmd_mode", pmdEffectiveMode);

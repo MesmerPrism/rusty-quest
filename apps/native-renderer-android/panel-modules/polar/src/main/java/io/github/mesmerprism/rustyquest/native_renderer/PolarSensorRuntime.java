@@ -447,3 +447,70 @@ final class PolarStatusPersistenceThreadPolicy {
         }
     }
 }
+
+/** Process-owner intent survives transport loss, never an intentional disconnect. */
+final class PolarRecoveryIntent {
+    private String identity = "";
+    private boolean connection;
+    private boolean intentionallyDisconnected;
+    private boolean acc;
+    private boolean ecg;
+    private boolean streamsInitialized;
+    private long accRevision;
+    private long ecgRevision;
+    private long accStopDispatched = -1L;
+    private long ecgStopDispatched = -1L;
+
+    void connected(String exactIdentity, String initialMode) {
+        if (exactIdentity == null || exactIdentity.isEmpty() || "none".equals(exactIdentity)) {
+            throw new IllegalArgumentException("missing connected identity");
+        }
+        if ((!identity.isEmpty() && !exactIdentity.equals(identity)) || !streamsInitialized) {
+            acc = "acc".equals(initialMode);
+            ecg = "ecg".equals(initialMode);
+            accRevision++;
+            ecgRevision++;
+            streamsInitialized = true;
+        }
+        identity = exactIdentity;
+        connection = true;
+        intentionallyDisconnected = false;
+    }
+
+    boolean permitsCandidate(String candidate) {
+        return !connection || identity.equals(candidate);
+    }
+
+    boolean connectionWanted() { return connection; }
+    boolean automaticStartupAllowed() { return !intentionallyDisconnected; }
+    boolean streamWanted(String mode) { return "acc".equals(mode) ? acc : "ecg".equals(mode) && ecg; }
+    long streamRevision(String mode) { return "acc".equals(mode) ? accRevision : ecgRevision; }
+    boolean claimStop(String mode, long revision) {
+        if (streamWanted(mode) || streamRevision(mode) != revision) return false;
+        if ("acc".equals(mode)) {
+            if (accStopDispatched == revision) return false;
+            accStopDispatched = revision;
+        } else if ("ecg".equals(mode)) {
+            if (ecgStopDispatched == revision) return false;
+            ecgStopDispatched = revision;
+        } else return false;
+        return true;
+    }
+
+    void startStream(String mode) {
+        streamsInitialized = true;
+        if ("acc".equals(mode)) { acc = true; accRevision++; }
+        else if ("ecg".equals(mode)) { ecg = true; ecgRevision++; }
+        else throw new IllegalArgumentException("unsupported stream");
+    }
+
+    void stopStream(String mode) {
+        streamsInitialized = true;
+        if ("acc".equals(mode)) { acc = false; accRevision++; }
+        else if ("ecg".equals(mode)) { ecg = false; ecgRevision++; }
+        else throw new IllegalArgumentException("unsupported stream");
+    }
+
+    void stopStreams() { stopStream("acc"); stopStream("ecg"); }
+    void disconnect() { connection = false; intentionallyDisconnected = true; identity = ""; stopStreams(); streamsInitialized = false; }
+}

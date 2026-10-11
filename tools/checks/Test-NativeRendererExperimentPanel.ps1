@@ -256,6 +256,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $lslRoot 'LslPanelConfigStore.java'),
         (Join-Path $privateRoot 'PrivateParticlePanelController.java'),
         (Join-Path $testRoot 'PolarAutoConnectionPolicyTest.java'),
+        (Join-Path $testRoot 'PolarRecoveryIntentTest.java'),
         $stub
     )
     $javaResponse = Join-Path $output 'androidSources.rsp'
@@ -264,6 +265,8 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     if ($LASTEXITCODE -ne 0) { throw "Android panel javac failed: $LASTEXITCODE" }
     & $javaCommand.Source '-cp' ("$output$([IO.Path]::PathSeparator)$androidJar") 'io.github.mesmerprism.rustyquest.native_renderer.PolarAutoConnectionPolicyTest'
     if ($LASTEXITCODE -ne 0) { throw "Polar auto-connection policy test failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ("$output$([IO.Path]::PathSeparator)$androidJar") 'io.github.mesmerprism.rustyquest.native_renderer.PolarRecoveryIntentTest'
+    if ($LASTEXITCODE -ne 0) { throw "Polar recovery intent test failed: $LASTEXITCODE" }
     # Compile the real generated shell as well as the module stub; no APK/build invocation.
     $buildText = [IO.File]::ReadAllText((Join-Path $repo 'tools/Build-NativeRendererAndroid.ps1'))
     $shellMatch = [regex]::Match($buildText, '(?s)\$generatedControlPanelActivitySource = @"\r?\n(.*?)\r?\n"@')
