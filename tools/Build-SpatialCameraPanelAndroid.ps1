@@ -1053,6 +1053,8 @@ if (-not [string]::IsNullOrWhiteSpace($SharedGradleToolRoot)) {
 if ($BuildCacheRoot.Length -gt 64) {
     throw "BuildCacheRoot must remain deliberately short (64 characters or fewer): $BuildCacheRoot"
 }
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialCmakeStaging.psm1') -Force
+$cmakeStaging = Get-SpatialCmakeStaging -BuildCacheRoot $BuildCacheRoot -ProductId $resolvedProductId -BuildType $buildTypeLower
 New-Item -ItemType Directory -Force -Path $BuildCacheRoot | Out-Null
 $buildLaneMutexHash = Get-StringSha256 -Value $BuildCacheRoot.ToLowerInvariant()
 $buildLaneMutexName = "Local\RustyQuestSpatialBuild-$($buildLaneMutexHash.Substring(0, 16))"
@@ -1730,6 +1732,7 @@ $packageInvalidation = @(Get-IdentityInvalidation -Previous $priorPackageDescrip
 $cacheIdentityReceipt = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.build_cache_identities.v1"
     workflow_mode = $BuildMode.ToLowerInvariant()
+    cmake_staging = Get-SpatialCmakeStagingReceipt -Staging $cmakeStaging
     stable_short_cache = $true
     paths_recorded = $false
     fingerprints = [ordered]@{
@@ -2170,6 +2173,7 @@ try {
         "-Pkotlin.project.persistent.dir=$kotlinProjectPersistentDir",
         "-Pkotlin.project.persistent.dir.gradle.disableWrite=true",
         "-Pandroid.aapt2FromMavenOverride=$shortAapt2",
+        "-PrqCmakeStagingDirectory=$($cmakeStaging.path)",
         "-PandroidJar=$mediaAndroidJar",
         "-PmediaBuildDir=$mediaAndroidBuildRoot",
         "-PrqSourceBanksForeignOwnership=$($sourceBankBuildInputs.enabled.ToString().ToLowerInvariant())",

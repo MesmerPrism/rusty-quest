@@ -85,6 +85,18 @@ dependencies. Keep the full app source proof separate from each component's
 cache inputs: an Android-only edit must not invalidate native compilation,
 while a native input change must. The Cargo/native dependency assertion keeps
 its existing closure and behavior.
+Spatial depth-layer CMake staging uses the selected serialized product/type
+cache lane, in a persistent `x` sibling of Gradle's temporary `a` and `r`
+directories. It no longer inherits `.cxx` beneath the source checkout.
+Before output writes or compilation the builder checks the known depth-layer
+object path against CMake's Windows 250-character limit. Select a shorter
+absolute `-BuildCacheRoot` if that check fails; do not toggle global long-path
+policy or delete an existing output. The builder passes the staging selection
+explicitly to Gradle, and records its geometry and selected-path SHA-256 in
+path-free build-cache evidence.
+Direct Gradle builds with the depth layer require an explicit absolute
+`rqCmakeStagingDirectory`; missing staging fails instead of falling back to
+the source tree. Host controls: `tools/checks/Test-SpatialCmakeStagingHost.ps1`.
 
 Every locked build writes `run-capsule.json`. The capsule hashes the APK, build
 manifest, selected lock or build-input lock, runtime profile, and complete
