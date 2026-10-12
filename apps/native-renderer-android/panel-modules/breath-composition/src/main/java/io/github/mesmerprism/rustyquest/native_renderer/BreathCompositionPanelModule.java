@@ -282,6 +282,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         final ExperimentSessionControlCapability.Fence sessionFence;
         final long armGeneration;
         final String armCondition;
+        boolean awaitsDurableNativeOutcome() {
+            return "arm".equals(operation) || "save-next".equals(operation)
+                || "save-exit".equals(operation);
+        }
         RemotePending(String browserId, String nativeId, String operation) {
             this(browserId, nativeId, operation, -1L, "", null);
         }
@@ -311,6 +315,27 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private static ExperimentSessionBleServer remoteServer() {
         return remoteContext == null ? null : ExperimentSessionBleServer.process(
             remoteContext, REMOTE_DELEGATE);
+    }
+
+    private static void expireRemotePendingObservation(long now) {
+        RemotePending pending = remotePending;
+        ExperimentSessionBleServer server = remoteServer();
+        if (pending != null && server != null
+                && server.currentGeneration() != pending.serverGeneration) {
+            // The originating carrier was actually retired. Never adopt its
+            // pending result into a replacement server generation.
+            remotePending = null;
+            return;
+        }
+        // A durable operation remains owned after dispatch. Slow recovery/storage
+        // cannot retire its original Java/native mapping or authorize a replay.
+        if (pending == null || pending.awaitsDurableNativeOutcome()) return;
+        if (now - pending.startedAtElapsedMs > 30000L) {
+            if (server != null) server.updateReceiptForGeneration(
+                pending.serverGeneration, pending.browserId,
+                "outcome_unknown", "Quest confirmation timed out. Check the headset.");
+            remotePending = null;
+        }
     }
 
     static void prepareExperimentSessionBleOwner(Context context) {
@@ -557,14 +582,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         .put(ControlPanelActivity.conditionBreathGuidanceReadiness(
                             ExperimentSessionPanelCoordinator.CONDITION_TWO)))
                     .put("pending", !state.pendingOperationId.isEmpty() || remotePending != null);
+                expireRemotePendingObservation(now);
                 RemotePending pending = remotePending;
-                if (pending != null && now - pending.startedAtElapsedMs > 30000L) {
-                    ExperimentSessionBleServer server = remoteServer();
-                    if (server != null) server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId,
-                        "outcome_unknown", "Quest confirmation timed out. Check the headset.");
-                    remotePending = null;
-                    pending = null;
-                }
                 if (pending != null && "return-vr".equals(pending.operation)) {
                     String foreground = NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext);
                     BreathCompositionPanelModule panel = remotePanel.get();

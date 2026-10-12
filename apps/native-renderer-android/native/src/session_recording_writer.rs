@@ -1414,6 +1414,34 @@ mod tests {
     }
 
     #[test]
+    fn admitted_finalize_receipt_survives_previous_wait_and_keeps_saved_counts() {
+        let (reply, receiver) = mpsc::channel();
+        let receipt = ControlReceipt { receiver };
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_secs(11));
+            let mut recovery = RecoveryReport::default();
+            recovery.counts.completed = 1;
+            reply.send(Ok(FinalizedReceipt {
+                generation: 19,
+                directory: PathBuf::from("original-finalized-session"),
+                accepted_sequence_cutoff: 71,
+                completed: true,
+                saved: true,
+                dropped_records: 0,
+                recovery,
+            })).expect("finalize receiver must remain owned until actual result");
+        });
+        let finalized = receipt.receive().unwrap();
+        assert_eq!(finalized.generation, 19);
+        assert_eq!(finalized.accepted_sequence_cutoff, 71);
+        assert!(finalized.saved && finalized.completed);
+        assert_eq!(finalized.dropped_records, 0);
+        assert_eq!(finalized.recovery.counts.completed, 1);
+        assert_eq!(finalized.recovery.counts.errors, 0);
+        writer.join().unwrap();
+    }
+
+    #[test]
     fn durable_receipt_preserves_writer_failure_and_disconnection() {
         let (reply, receiver) = mpsc::channel();
         reply

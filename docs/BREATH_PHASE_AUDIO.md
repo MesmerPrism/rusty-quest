@@ -54,10 +54,27 @@ session recovery. This supports same-package upgrades without rewriting prior
 session identities. The ordinary shell gate runs production Java closure and
 Rust reader controls; the panel gate compiles the Android producer integration.
 
-Recording recovery and initial durable preparation retain their admitted writer
+Recording recovery, durable preparation, control-event writes, completion and
+finalization retain their admitted writer
 receipt until completion on the dedicated session-control worker. Large retained
 archives or slow storage do not cause a guessed wait to report an idle failed arm
 while the writer is still preparing its session. Android UI, BLE and render
 threads continue to submit and observe asynchronously. Writer errors and channel
 disconnection still fail explicitly; no retry or replay is added. Existing
-finalization, shutdown and other control timeout policies remain separate.
+shutdown acknowledgement and pre-admission backpressure policies remain separate.
+
+The browser/shell Arm, Save Next and Save Exit correlation also remains pending
+after dispatch until its matching native result or actual owner retirement.
+The Java status observer does not abandon that mapping after thirty seconds.
+An original durable Arm checkpoint can therefore confirm the same command after
+slow archive recovery, even if later audio/frame operations changed the latest
+native operation. Matching generation/epoch/condition and current-owner checks
+remain mandatory. Pre-dispatch presentation handoff limits are separate, and
+closing a presentation panel alone does not retire the app-owned operation.
+
+Opt-in experiment BLE logs project only server generation, fixed stop reason,
+native epoch and GATT callback status/next-state/currentness. They contain no
+device address, pairing code, challenge, command ID or signature. Native owner
+replacement/end, deliberate disable/access changes and startup failures have
+distinct stop reasons; these markers diagnose transport lifetime, not session
+completion or physical reconnection.

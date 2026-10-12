@@ -174,6 +174,8 @@ try {
     & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionControlCapabilityTest'
     if ($LASTEXITCODE -ne 0) { throw "Capability controls failed: $LASTEXITCODE" }
     & (Join-Path $PSScriptRoot 'Test-PolarStopBleReceipt.ps1') -RepoRoot $repo
+    & python (Join-Path $PSScriptRoot 'test_remote_durable_pending.py') --repo $repo
+    if ($LASTEXITCODE -ne 0) { throw 'Durable remote confirmation controls failed' }
 
     & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) '-d' $output (Join-Path $panelRoot 'ExperimentSessionUiControlHandoff.java') (Join-Path $testRoot 'ExperimentSessionUiControlHandoffTest.java')
     if ($LASTEXITCODE -ne 0) { throw "UI handoff control compile failed: $LASTEXITCODE" }

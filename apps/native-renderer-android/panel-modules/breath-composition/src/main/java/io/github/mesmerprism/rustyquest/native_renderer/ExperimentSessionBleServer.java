@@ -162,7 +162,7 @@ final class ExperimentSessionBleServer {
     /** Actual initialized native owner only; preparation creates no transport. */
     synchronized boolean nativeOwnerStarted(long identity, long epoch) {
         if (identity <= 0L || epoch <= 0L || identity <= nativeOwnerHighWater) return false;
-        stop();
+        stopWithReason("native-owner-replaced");
         nativeOwnerHighWater = identity;
         nativeOwnerIdentity = identity;
         nativeOwnerEpoch = epoch;
@@ -174,7 +174,7 @@ final class ExperimentSessionBleServer {
         if (identity <= 0L || identity != nativeOwnerIdentity || epoch != nativeOwnerEpoch) return false;
         nativeOwnerIdentity = 0L;
         nativeOwnerEpoch = 0L;
-        stop();
+        stopWithReason("native-owner-ended");
         return true;
     }
 
@@ -189,7 +189,7 @@ final class ExperimentSessionBleServer {
                     != PackageManager.PERMISSION_GRANTED)) return;
         start();
         } catch (RuntimeException unavailable) {
-            stop();
+            stopWithReason("native-owner-platform-unavailable");
             Log.w(TAG, "status=unavailable reason=native-owner-platform-unavailable", unavailable);
         }
     }
@@ -197,14 +197,14 @@ final class ExperimentSessionBleServer {
     void setEnabled(boolean value, Activity activity) {
         prefs.edit().putBoolean(ENABLED, value).apply();
         if (value) startFromPanel(activity);
-        else stop();
+        else stopWithReason("disabled");
     }
 
     synchronized void setOpenControl(boolean value, Activity activity) {
         if (openControl() == value) return;
         prefs.edit().putBoolean(OPEN, value).apply();
         // Invalidate all connection challenges and any previous pairing code.
-        stop();
+        stopWithReason("access-mode-changed");
         if (enabled()) startFromPanel(activity);
     }
 
@@ -267,14 +267,20 @@ final class ExperimentSessionBleServer {
             active = true;
             if (!gatt.addService(service)) throw new IllegalStateException("gatt-add-service-failed");
             main.post(statusRefresh);
-            Log.i(TAG, "status=starting access=" + (openControl() ? "open" : "gated"));
+            Log.i(TAG, "status=starting access=" + (openControl() ? "open" : "gated")
+                + " serverGeneration=" + generation + " nativeEpoch=" + nativeOwnerEpoch);
         } catch (RuntimeException error) {
             Log.w(TAG, "status=unavailable reason=gatt-start-failed", error);
-            stop();
+            stopWithReason("gatt-start-failed");
         }
     }
 
     synchronized void stop() {
+        stopWithReason("explicit-stop");
+    }
+
+    private synchronized void stopWithReason(String reason) {
+        long retiredGeneration = serverGeneration;
         serverGeneration++;
         active = false;
         sessionControl.clear();
@@ -294,7 +300,8 @@ final class ExperimentSessionBleServer {
         advertiseCallback = null;
         gatt = null;
         code = "";
-        Log.i(TAG, "status=stopped");
+        Log.i(TAG, "status=stopped reason=" + reason + " retiredGeneration="
+            + retiredGeneration + " serverGeneration=" + serverGeneration);
     }
 
     synchronized void updateReceipt(String id, String state, String detail) {
@@ -448,6 +455,9 @@ final class ExperimentSessionBleServer {
 
         @Override public void onConnectionStateChange(BluetoothDevice device, int status, int next) {
             synchronized (ExperimentSessionBleServer.this) {
+                Log.i(TAG, "status=gatt-connection callbackStatus=" + status
+                    + " nextState=" + next + " callbackGeneration=" + generation
+                    + " serverGeneration=" + serverGeneration + " current=" + current());
                 if (!current()) return;
                 synchronized (ExperimentSessionBleServer.this) {
                     if (next == BluetoothProfile.STATE_CONNECTED) peers.put(device, new Peer());

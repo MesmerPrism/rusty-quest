@@ -677,7 +677,7 @@ impl RecordingBackend for ActualRecordingBackend {
     ) -> Result<(), String> {
         self.writer()?
             .record_control(generation, at, kind)?
-            .receive_timeout(CONTROL_TIMEOUT)
+            .receive()
     }
     fn recover(&mut self, root: &Path) -> Result<RecoveryReport, String> {
         self.ensure_writer(root)?
@@ -705,7 +705,7 @@ impl RecordingBackend for ActualRecordingBackend {
     fn mark_completion(&self, generation: u64, at: MonotonicNanos) -> Result<(), String> {
         self.writer()?
             .mark_completion(generation, at)?
-            .receive_timeout(CONTROL_TIMEOUT)
+            .receive()
             .map(|_| ())
     }
 
@@ -720,7 +720,7 @@ impl RecordingBackend for ActualRecordingBackend {
         let deadline = Instant::now() + Duration::from_millis(250);
         loop {
             match writer.try_finalize(generation, at, reason, threshold_reached) {
-                Ok(receipt) => return receipt.receive_timeout(CONTROL_TIMEOUT),
+                Ok(receipt) => return receipt.receive(),
                 Err(OfferOutcome::AdmissionBusy) if Instant::now() < deadline => {
                     thread::yield_now();
                 }
@@ -3930,6 +3930,8 @@ mod tests {
         recover_delay: Duration,
         prepare_delay: Duration,
         prepare_entered: Option<Arc<AtomicBool>>,
+        finalize_delay: Duration,
+        finalize_entered: Option<Arc<AtomicBool>>,
         fail_completion_once: AtomicBool,
         fail_finalize_once: AtomicBool,
     }
@@ -3945,6 +3947,8 @@ mod tests {
                 recover_delay: Duration::ZERO,
                 prepare_delay: Duration::ZERO,
                 prepare_entered: None,
+                finalize_delay: Duration::ZERO,
+                finalize_entered: None,
                 fail_completion_once: AtomicBool::new(false),
                 fail_finalize_once: AtomicBool::new(false),
             }
@@ -3997,6 +4001,10 @@ mod tests {
             reason: FinalizationReason,
             threshold_reached: bool,
         ) -> Result<FinalizedReceipt, String> {
+            if let Some(entered) = self.finalize_entered.as_ref() {
+                entered.store(true, Ordering::Release);
+            }
+            thread::sleep(self.finalize_delay);
             if self.fail_finalize_once.swap(false, Ordering::AcqRel) {
                 let _ = self
                     .inner
@@ -4641,6 +4649,52 @@ mod tests {
         let directory = root.join("utc-ns-01725000000000000000");
         assert!(directory.join("checkpoint-00000000000000000001.json").is_file());
         runtime.apply_command_json(&command("save-and-exit", "pending-arm-exit", 1, 2_000));
+        wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        runtime.shutdown_for_test().unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn pending_save_keeps_original_generation_until_final_receipt_and_counts() {
+        let root = temp_root("pending-save-receipt");
+        let entered = Arc::new(AtomicBool::new(false));
+        let observed_entered = Arc::clone(&entered);
+        let runtime = ExperimentSessionRuntime::spawn(
+            root.clone(),
+            Some(trusted_inventory()),
+            move |slot, loss| {
+                let mut backend = DamageBackend::new(slot, loss);
+                backend.finalize_delay = Duration::from_millis(200);
+                backend.finalize_entered = Some(entered);
+                Box::new(backend)
+            },
+        )
+        .unwrap();
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        runtime.apply_command_json(&start_command(&root, "original-start-for-save"));
+        wait_for(&runtime, "\"phase\":\"active\"");
+        let submitted = Instant::now();
+        runtime.apply_command_json(&command("restart-to-experimenter", "original-save", 1, 2_000));
+        assert!(submitted.elapsed() < Duration::from_millis(100));
+        while !observed_entered.load(Ordering::Acquire) {
+            assert!(submitted.elapsed() < Duration::from_secs(1));
+            thread::yield_now();
+        }
+        let pending: Value = serde_json::from_str(&runtime.status_json()).unwrap();
+        assert_eq!(pending["readback"]["generation"], 1);
+        assert_eq!(pending["readback"]["phase"], "finalizing-restart");
+        assert_ne!(pending["readback"]["recording_result"]["status"], "unsaved");
+        let saved: Value =
+            serde_json::from_str(&wait_for(&runtime, "\"last_operation_id\":\"original-save\"")).unwrap();
+        assert_eq!(saved["readback"]["last_operation_id"], "original-save");
+        assert_eq!(saved["readback"]["recording_result"]["status"], "saved");
+        assert_eq!(saved["readback"]["recording_result"]["completed"], false);
+        assert_eq!(saved["readback"]["counts"]["stopped_early"], 1);
+        assert_eq!(saved["readback"]["counts"]["errors"], 0);
+        let final_path = root.join("utc-ns-01725000000000000000").join("final.json");
+        let final_value: Value = serde_json::from_slice(&fs::read(final_path).unwrap()).unwrap();
+        assert_eq!(final_value["saved"], true);
+        runtime.apply_command_json(&command("save-and-exit", "idle-save-exit", 1, 3_000));
         wait_for(&runtime, "\"shutdown_status\":\"complete\"");
         runtime.shutdown_for_test().unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
