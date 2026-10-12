@@ -501,7 +501,10 @@ imported revision and source-key checks remain mandatory. The existing scoped
 processing policy applies that snapshot to bank stages; the next frame adopts
 later controls. There is no post-acquisition retry/continue.
 
-`tools/checks/Test-StereoSourceRefreshHost.py` compiles the installed baseline
+The ordinary `Test-SpatialCameraPanelAndroid.ps1` route invokes
+`tools/Test-StereoSourceRefreshHost.ps1`, also reached by `check_all.ps1`.
+It uses a retained bounded pre-change fixture with no history/worktree lookup.
+`tools/checks/Test-StereoSourceRefreshHost.py` compiles that baseline
 and candidate refresh bodies with modeled retired imports, then executes the
 actual candidate loop/control-policy seams. It reproduces baseline termination,
 checks exact-race deferral versus physical failures, rejects unretired imports,

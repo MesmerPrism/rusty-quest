@@ -15,22 +15,23 @@ def block(text, marker):
 
 def main():
     p=argparse.ArgumentParser()
-    for name in ('repo-root','baseline-root','output-root'):
+    for name in ('repo-root','output-root'):
         p.add_argument('--'+name,type=pathlib.Path,required=True)
-    p.add_argument('--rustc',required=True);a=p.parse_args()
+    p.add_argument('--baseline-root',type=pathlib.Path);p.add_argument('--rustc',required=True);a=p.parse_args()
     root=a.repo_root.resolve();out=a.output_root.resolve()
     if not out.is_relative_to(root/'target') or out.exists():raise ValueError('Unused owned target required')
     out.mkdir(parents=True)
     rel='apps/spatial-camera-panel-android/native-receipt/src'
-    base=root/rel;before=a.baseline_root.resolve()/rel
+    base=root/rel
+    fixture=root/'tools/checks/fixtures/stereo_source_refresh_baseline.rs'
+    retained=fixture.read_text()
+    def seam(name):return retained.split('// '+name+'_BEGIN\n',1)[1].split('// '+name+'_END',1)[0].rstrip()
+    baseline=seam('REFRESH');old_consumer=seam('CONSUMER');normalizer=seam('NORMALIZER')
     new=(base/'spatial_stereo_source_import.rs').read_text()
-    old=(before/'spatial_stereo_source_import.rs').read_text()
     current=block(new,'    pub(crate) unsafe fn refresh(')
-    baseline=block(old,'    pub(crate) unsafe fn refresh(')
-    old_consumer_start=old.index('        if self.pending.is_some()',old.index('    pub(crate) fn recording_inputs('))
-    old_consumer_end=old.index('        let [own, peer]',old_consumer_start)
-    old_consumer=old[old_consumer_start:old_consumer_end]
-    normalizer=block(old,'fn normalizer_processing_policy(')
+    if a.baseline_root:
+        old=(a.baseline_root.resolve()/rel/'spatial_stereo_source_import.rs').read_text()
+        assert baseline.strip()==block(old,'    pub(crate) unsafe fn refresh(').strip()
     consumer_start=new.index('        if !crate::stereo_source_refresh_policy::recording_snapshot_valid(')
     consumer_end=new.index('        let [own, peer]',consumer_start)
     consumer=new[consumer_start:consumer_end]
@@ -137,7 +138,7 @@ fn main(){
         t=(base/name).read_text();begin=t.index('            let recording_control =');reset=t.index('.reset_fences',begin)
         assert begin<t.index('if !imports.refresh(',begin)<t.index('continue;',begin)<reset
         assert 'recording_control.1' in t[begin:reset] and 'thread::yield_now()' in t[begin:reset]
-    paths=[base/n for n in ('spatial_stereo_source_import.rs','camera_hwb_source_set.rs','camera_hwb_probe.rs','stereo_source_refresh_policy.rs')]
+    paths=[base/n for n in ('spatial_stereo_source_import.rs','camera_hwb_source_set.rs','camera_hwb_probe.rs','stereo_source_refresh_policy.rs')]+[fixture]
     (out/'RESULT.json').write_text(json.dumps({'status':'passed','checks':results,'source_pins':{str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in paths},'limits':'Actual extracted refresh/loop/policy seams; fence, imports and control-change timing modeled. Does not prove current Q failure cause or Android/GPU/device qualification.'},indent=2))
     print((out/'baseline-controls.stdout').read_text());print((out/'candidate-controls.stdout').read_text())
     print((out/'policy-controls.stdout').read_text())
