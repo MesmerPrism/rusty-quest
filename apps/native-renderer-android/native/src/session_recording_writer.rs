@@ -134,6 +134,15 @@ pub(crate) struct ControlReceipt<T> {
 }
 
 impl<T> ControlReceipt<T> {
+    /// Retain ownership of an admitted durable operation until the writer replies.
+    /// Only the dedicated session-control owner or host tests may block here;
+    /// Android UI, OpenXR, render and BLE callbacks remain nonblocking.
+    pub(crate) fn receive(self) -> Result<T, String> {
+        self.receiver
+            .recv()
+            .map_err(|_| "recording-control-disconnected".to_owned())?
+    }
+
     pub(crate) fn try_receive(&self) -> Result<Option<Result<T, String>>, String> {
         match self.receiver.try_recv() {
             Ok(value) => Ok(Some(value)),
@@ -1381,6 +1390,46 @@ mod tests {
     };
 
     static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn admitted_durable_receipt_survives_the_previous_ten_second_wait() {
+        let (reply, receiver) = mpsc::channel();
+        let receipt = ControlReceipt { receiver };
+        let writer = thread::spawn(move || {
+            thread::sleep(Duration::from_secs(11));
+            reply
+                .send(Ok(PreparedReceipt {
+                    generation: 17,
+                    directory: PathBuf::from("original-admitted-session"),
+                }))
+                .expect("owner must retain the original reply receiver");
+        });
+        let prepared = receipt.receive().unwrap();
+        assert_eq!(prepared.generation, 17);
+        assert_eq!(
+            prepared.directory,
+            PathBuf::from("original-admitted-session")
+        );
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn durable_receipt_preserves_writer_failure_and_disconnection() {
+        let (reply, receiver) = mpsc::channel();
+        reply
+            .send(Err::<(), _>("recording-session-directory-create:denied".to_owned()))
+            .unwrap();
+        assert_eq!(
+            ControlReceipt { receiver }.receive().unwrap_err(),
+            "recording-session-directory-create:denied"
+        );
+        let (reply, receiver) = mpsc::channel::<Result<(), String>>();
+        drop(reply);
+        assert_eq!(
+            ControlReceipt { receiver }.receive().unwrap_err(),
+            "recording-control-disconnected"
+        );
+    }
 
     fn temp_root(label: &str) -> PathBuf {
         std::env::temp_dir()

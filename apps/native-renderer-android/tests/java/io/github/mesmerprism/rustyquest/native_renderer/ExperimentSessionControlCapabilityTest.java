@@ -16,7 +16,15 @@ public final class ExperimentSessionControlCapabilityTest {
   .put("acc_revision",0).put("ecg_revision",0).put("stop_acc_operation_id",repeat("b",32)).put("stop_ecg_operation_id",repeat("c",32));}
  static void polarControls()throws Exception{
   PolarStopBleCapability p=new PolarStopBleCapability();final JSONObject projection=polar(),nativeStatus=read();
-  JSONObject offered=p.offer(projection,nativeStatus,9,11,2,1000);String ref=offered.getString("s");
+  JSONObject offered=p.offer(projection,nativeStatus,9,11,2,900);final String idleRef=offered.getString("s");
+  JSONObject idle=read().put("profile_identity_bound",false).put("non_audio_profile_sha256",JSONObject.NULL);
+  require(p.offer(projection,idle,9,11,2,901)==null,"idle null profile omits optional Polar grant without throwing");
+  deny(()->p.admit(idleRef,0,"stop-acc",902,9,11,2),"idle replacement retires old Polar capability");
+  JSONObject idleBase=new JSONObject().put("v",1).put("p","IDLE").put("g",0).put("m","open");
+  require(new JSONObject(new String(p.projectBoundedStatus(idleBase,null),StandardCharsets.UTF_8)).getString("p").equals("IDLE"),"idle status remains deliverable");
+  final JSONObject malformedBound=read().put("non_audio_profile_sha256",JSONObject.NULL);
+  deny(()->p.offer(projection,malformedBound,9,11,2,903),"bound grant still requires valid profile identity");
+  offered=p.offer(projection,nativeStatus,9,11,2,1000);String ref=offered.getString("s");
   deny(()->p.admit(ref,1,"stop-acc",1100,9,11,2),"wrong Polar revision");
   deny(()->p.admit(ref,0,"start",1100,9,11,2),"session cannot use Polar grant");
   deny(()->p.admit(ref,0,"stop-acc",2501,9,11,2),"stale Polar grant");

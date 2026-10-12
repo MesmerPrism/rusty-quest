@@ -682,7 +682,7 @@ impl RecordingBackend for ActualRecordingBackend {
     fn recover(&mut self, root: &Path) -> Result<RecoveryReport, String> {
         self.ensure_writer(root)?
             .recover()?
-            .receive_timeout(CONTROL_TIMEOUT)
+            .receive()
     }
 
     fn prepare(&mut self, generation: u64, spec: SessionStartSpec) -> Result<(), String> {
@@ -692,7 +692,7 @@ impl RecordingBackend for ActualRecordingBackend {
             .ok_or_else(|| "recording-root-not-bound".to_owned())?;
         self.ensure_writer(&root)?
             .prepare(generation, spec)?
-            .receive_timeout(CONTROL_TIMEOUT)
+            .receive()
             .map(|_| ())
     }
 
@@ -3745,12 +3745,22 @@ mod tests {
             .parent()
             .unwrap()
             .to_owned();
+        // Keep the selected keyed directory valid so this tests the missing
+        // profile file itself, rather than rejecting a missing parent first.
+        fs::create_dir_all(
+            files_root
+                .join("viscereality-recordings")
+                .join("packaged-closures")
+                .join("11".repeat(32)),
+        )
+        .unwrap();
         assert!(load_compiled_experiment_inventory(
             &files_root,
             compiled_anchors(&"11".repeat(32))
         )
         .unwrap_err()
-        .contains("profile-read"));
+        .starts_with("materialized-file:"));
+        fs::remove_dir_all(files_root).unwrap();
     }
 
     #[test]
@@ -3759,7 +3769,11 @@ mod tests {
         let files_root = recording_root.parent().unwrap();
         let original = compiled_profile_document();
         let digest = rusty_quest_broker_authority::packaged_json_sha256(&original);
-        materialize_compiled_profile(files_root, &(original + " "));
+        materialize_compiled_profile(files_root, &original);
+        // Tamper the selected original-key file. Materializing the altered text
+        // would select its different digest and only test a missing directory.
+        let selected = materialization::selected_directory(files_root, &digest).unwrap();
+        fs::write(selected.join(EXPERIMENT_SESSION_PROFILE_FILE), original + " ").unwrap();
         assert!(
             load_compiled_experiment_inventory(files_root, compiled_anchors(&digest))
                 .unwrap_err()
@@ -4587,6 +4601,49 @@ mod tests {
             .contains("\"initialization_status\":\"initializing\""));
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         runtime.shutdown_for_test().unwrap();
+    }
+
+    #[test]
+    fn pending_arm_keeps_its_original_generation_until_durable_prepare_replies() {
+        let root = temp_root("pending-arm-prepare");
+        let entered = Arc::new(AtomicBool::new(false));
+        let observed_entered = Arc::clone(&entered);
+        let runtime = ExperimentSessionRuntime::spawn(
+            root.clone(),
+            Some(trusted_inventory()),
+            move |slot, loss| {
+                let mut backend = DamageBackend::new(slot, loss);
+                backend.prepare_delay = Duration::from_millis(200);
+                backend.prepare_entered = Some(entered);
+                Box::new(backend)
+            },
+        )
+        .unwrap();
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        let submitted = Instant::now();
+        runtime.apply_command_json(
+            &start_command(&root, "pending-original-arm")
+                .replace("\"operation\":\"start\"", "\"operation\":\"arm\""),
+        );
+        assert!(submitted.elapsed() < Duration::from_millis(100));
+        while !observed_entered.load(Ordering::Acquire) {
+            assert!(submitted.elapsed() < Duration::from_secs(1));
+            thread::yield_now();
+        }
+        let pending: Value = serde_json::from_str(&runtime.status_json()).unwrap();
+        assert_eq!(pending["readback"]["generation"], 1);
+        assert_ne!(pending["readback"]["phase"], "idle");
+        assert_eq!(pending["readback"]["arm_durable_checkpoint"], false);
+        let armed: Value =
+            serde_json::from_str(&wait_for(&runtime, "\"arm_durable_checkpoint\":true")).unwrap();
+        assert_eq!(armed["readback"]["arm_operation_id"], "pending-original-arm");
+        assert_eq!(armed["readback"]["arm_generation"], 1);
+        let directory = root.join("utc-ns-01725000000000000000");
+        assert!(directory.join("checkpoint-00000000000000000001.json").is_file());
+        runtime.apply_command_json(&command("save-and-exit", "pending-arm-exit", 1, 2_000));
+        wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        runtime.shutdown_for_test().unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     #[test]

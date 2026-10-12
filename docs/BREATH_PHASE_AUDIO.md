@@ -53,3 +53,11 @@ The metadata directory is not a session timestamp and is skipped by existing
 session recovery. This supports same-package upgrades without rewriting prior
 session identities. The ordinary shell gate runs production Java closure and
 Rust reader controls; the panel gate compiles the Android producer integration.
+
+Recording recovery and initial durable preparation retain their admitted writer
+receipt until completion on the dedicated session-control worker. Large retained
+archives or slow storage do not cause a guessed wait to report an idle failed arm
+while the writer is still preparing its session. Android UI, BLE and render
+threads continue to submit and observe asynchronously. Writer errors and channel
+disconnection still fail explicitly; no retry or replay is added. Existing
+finalization, shutdown and other control timeout policies remain separate.

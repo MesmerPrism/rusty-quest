@@ -158,3 +158,8 @@ source/host qualifications only. This tranche adds no web acquisition command:
 the existing session `qcap` and RQEC2 envelope cannot authorize Polar actions.
 Any future web adapter needs its own reviewed operation/sensor/revision
 capability and the existing server/HMAC/command-budget fences.
+
+An idle or otherwise profile-unbound native session omits the optional Polar BLE
+stop grant before parsing nullable profile fields. This retires an earlier grant
+and keeps ordinary status available; it does not bind a profile, authorize a
+sensor operation, or weaken validation of an offered bound-session grant.

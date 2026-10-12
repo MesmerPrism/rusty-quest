@@ -197,6 +197,9 @@ final class PolarStopBleCapability {
         // Clear before parsing so malformed replacement data cannot retain an old grant.
         org.json.JSONObject prior=state;String oldTuple=tuple,oldRef=reference;clear();
         if(projection==null||nativeReadback==null||server<=0||owner<=0||ownerEpoch<=0||now<=0)return null;
+        // An idle/rejected session has no bound profile. Omit this optional grant
+        // before parsing its nullable identity; keep the rest of status available.
+        if(!Boolean.TRUE.equals(nativeReadback.opt("profile_identity_bound")))return null;
         if(!Boolean.FALSE.equals(projection.opt("closed")))return null;
         int accBits=streamBits(projection,"acc"),ecgBits=streamBits(projection,"ecg");
         long revision=integer(projection,"action_revision",true);
