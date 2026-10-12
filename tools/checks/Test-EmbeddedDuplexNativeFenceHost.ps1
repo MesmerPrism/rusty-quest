@@ -167,7 +167,7 @@ if ($Mode -eq 'Native') {
     $javaOutput = Join-Path $OutputRoot 'java-api34'
     [void](New-Item -ItemType Directory -Force -Path $javaOutput)
     $source = Join-Path $snapshot 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexProcessFence.java'
-    & $javac '-source' '8' '-target' '8' '-bootclasspath' $jar '-encoding' 'UTF-8' '-d' $javaOutput $source (Join-Path (Split-Path $source -Parent) 'EmbeddedDuplexAbandonment.java') (Join-Path (Split-Path $source -Parent) 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path (Split-Path $source -Parent) 'EmbeddedDuplexHistoricalAbandonment.java') 2>&1 | Tee-Object -FilePath (Join-Path $OutputRoot 'java-api34.log')
+    & $javac '-source' '8' '-target' '8' '-bootclasspath' $jar '-encoding' 'UTF-8' '-d' $javaOutput $source (Join-Path (Split-Path $source -Parent) 'EmbeddedDuplexAbandonment.java') (Join-Path (Split-Path $source -Parent) 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path (Split-Path $source -Parent) 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path (Split-Path $source -Parent) 'EmbeddedDuplexKnownBirthAbandonment.java') 2>&1 | Tee-Object -FilePath (Join-Path $OutputRoot 'java-api34.log')
     $compileExit = $LASTEXITCODE
     $negative = Join-Path $javaOutput 'Api34Negative.java'
     [IO.File]::WriteAllText($negative, 'final class Api34Negative { String x(java.nio.file.Path p) throws Exception { return java.nio.file.Files.readString(p); } }')

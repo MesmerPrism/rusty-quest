@@ -18,6 +18,9 @@ public final class EmbeddedDuplexAbandonmentRequest {
         if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(object.optString("$schema"))) {
             EmbeddedDuplexHistoricalAbandonment.shape(object);this.exact=exact;return;
         }
+        if(EmbeddedDuplexKnownBirthAbandonment.SCHEMA.equals(object.optString("$schema"))) {
+            EmbeddedDuplexKnownBirthAbandonment.shape(object);this.exact=exact;return;
+        }
         if(exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>8192)
             throw new IllegalArgumentException("v1 abandonment request bounds");
         if(!keys.equals(FIELDS) || !"rusty.quest.embedded_duplex.abandonment_authorization.v1".equals(object.getString("$schema"))
@@ -46,12 +49,21 @@ public final class EmbeddedDuplexAbandonmentRequest {
     }
     JSONObject json() throws Exception { return new JSONObject(exact); }
     String role() throws Exception { return json().getString("role_id"); }
-    boolean historical() throws Exception {return EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(json().getString("$schema"));}
+    static boolean replayDisposition(JSONObject object) throws Exception {
+        String schema=object.getString("$schema");
+        return EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(schema)
+            || EmbeddedDuplexKnownBirthAbandonment.SCHEMA.equals(schema);
+    }
+    boolean historical() throws Exception {return replayDisposition(json());}
     void requireCurrent(int pid,int uid,long ticks,long generation) throws Exception {
-        if(historical()) EmbeddedDuplexHistoricalAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
+        if(EmbeddedDuplexKnownBirthAbandonment.SCHEMA.equals(json().getString("$schema")))
+            EmbeddedDuplexKnownBirthAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
+        else if(historical()) EmbeddedDuplexHistoricalAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
     }
     void bind(String prior,String current,String checkpoint,String evidence) throws Exception {
-        if(historical()) EmbeddedDuplexHistoricalAbandonment.bind(json(),prior,current,checkpoint,evidence);
+        if(EmbeddedDuplexKnownBirthAbandonment.SCHEMA.equals(json().getString("$schema")))
+            EmbeddedDuplexKnownBirthAbandonment.bind(json(),prior,current,checkpoint,evidence);
+        else if(historical()) EmbeddedDuplexHistoricalAbandonment.bind(json(),prior,current,checkpoint,evidence);
     }
     void requireInstalled(String packageId,String signer,String apk,String component,int uid,int pid) throws Exception {
         JSONObject value=json();

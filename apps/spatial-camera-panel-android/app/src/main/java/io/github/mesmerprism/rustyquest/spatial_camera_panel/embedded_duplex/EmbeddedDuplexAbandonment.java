@@ -29,7 +29,7 @@ final class EmbeddedDuplexAbandonment {
     static synchronized void requireReplayRead(File directory,String name) throws Exception {
         if(!java.util.Set.of("owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup-preparations.v1.json").contains(name)) return;
         JSONObject marker=ACTIVE.get(directory.getCanonicalPath());
-        if(marker==null || !EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(marker.getJSONObject("operator_authorization").getString("$schema"))) return;
+        if(marker==null || !EmbeddedDuplexAbandonmentRequest.replayDisposition(marker.getJSONObject("operator_authorization"))) return;
         verifyArchive(directory,marker);
         File archive=new File(directory,"abandoned-"+marker.getString("scope_sha256"));
         if(!Files.exists(new File(archive,"committed-fence.raw").toPath(),LinkOption.NOFOLLOW_LINKS))
@@ -42,7 +42,7 @@ final class EmbeddedDuplexAbandonment {
         requireReplayRead(directory,name);
         if(!java.util.Set.of("owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup-preparations.v1.json").contains(name)) return exact;
         JSONObject marker=ACTIVE.get(directory.getCanonicalPath());
-        if(marker==null || !EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(marker.getJSONObject("operator_authorization").getString("$schema"))) return exact;
+        if(marker==null || !EmbeddedDuplexAbandonmentRequest.replayDisposition(marker.getJSONObject("operator_authorization"))) return exact;
         verifyArchive(directory,marker);
         File archive=new File(directory,"abandoned-"+marker.getString("scope_sha256"));
         if(!Files.exists(new File(archive,"committed-fence.raw").toPath(),LinkOption.NOFOLLOW_LINKS))
@@ -63,7 +63,7 @@ final class EmbeddedDuplexAbandonment {
         JSONObject marker = readMarker(path);
         verifyArchive(directory, marker);
         String[] fields = record.split("\n", -1);
-        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(marker.getJSONObject("operator_authorization").getString("$schema"))
+        if(EmbeddedDuplexAbandonmentRequest.replayDisposition(marker.getJSONObject("operator_authorization"))
                 && !Files.exists(new File(directory,"abandoned-"+marker.getString("scope_sha256")+"/committed-fence.raw").toPath(),LinkOption.NOFOLLOW_LINKS)) {
             if(fields.length==8 && "clear".equals(fields[3])) throw new IllegalStateException("historical clear fence commit witness unavailable");
             return false;
@@ -93,7 +93,7 @@ final class EmbeddedDuplexAbandonment {
         writeNew(new File(archive,"recovery-fence.raw"),currentRecord,protection);
         if (checkpoint != null) writeNew(new File(archive,"checkpoint.raw"),checkpoint,protection);
         if (evidence != null) writeNew(new File(archive,"evidence.raw"),evidence,protection);
-        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(authorization.getString("$schema"))) {
+        if(EmbeddedDuplexAbandonmentRequest.replayDisposition(authorization)) {
             JSONObject digests=authorization.getJSONObject("historical_peers")
                     .getJSONObject(authorization.getString("role_id")).getJSONObject("preserved_records");
             for(String name:EmbeddedDuplexHistoricalAbandonment.RECORDS) {
@@ -130,7 +130,7 @@ final class EmbeddedDuplexAbandonment {
 
     static synchronized void committed(File directory, JSONObject receipt,String clearRecord,Protection protection) throws Exception {
         verifyArchive(directory,receipt);
-        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(receipt.getJSONObject("operator_authorization").getString("$schema"))) {
+        if(EmbeddedDuplexAbandonmentRequest.replayDisposition(receipt.getJSONObject("operator_authorization"))) {
             File archive=new File(directory,"abandoned-"+receipt.getString("scope_sha256"));
             if(!clearRecord.equals(expectedClear(archive))) throw new IllegalStateException("historical commit fence differs");
             writeNew(new File(archive,"committed-fence.raw"),clearRecord,protection);
@@ -202,7 +202,7 @@ final class EmbeddedDuplexAbandonment {
         verifyOptional(archive,"checkpoint.raw",marker.getString("checkpoint_sha256"),256*1024);
         verifyOptional(archive,"evidence.raw",marker.getString("evidence_sha256"),8*1024*1024);
         JSONObject authorization=marker.getJSONObject("operator_authorization");
-        if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(authorization.getString("$schema"))) {
+        if(EmbeddedDuplexAbandonmentRequest.replayDisposition(authorization)) {
             JSONObject digests=authorization.getJSONObject("historical_peers")
                     .getJSONObject(authorization.getString("role_id")).getJSONObject("preserved_records");
             for(String name:EmbeddedDuplexHistoricalAbandonment.RECORDS)

@@ -541,3 +541,28 @@ classpath options run the actual CPU producer/accessor controls. The separate
 terminal host script selects explicit Java/JSON dependencies for its actual
 projection controls. Target JNI/Java/provider compilation and artifact adoption
 remain separate qualification steps.
+
+### Known-birth no-journal disposition
+
+The separately closed `rusty.quest.embedded_duplex.abandonment_authorization.v3`
+selects an original actor whose PID and Linux start ticks were recorded. Both
+peers attest complete package/UID absence. Each preserved original ARM receipt
+joins its native vector, app epoch and exact Pending fence; a typed original
+birth receipt joins PID/start/UID, epoch, package APK, device and boot. The
+current effect-free recovery actor must be the direct next app generation and
+must match the current installed APK and fresh fence. This branch rejects
+Start journals and never relabels a known birth as historical unknown evidence.
+
+Archive-first preservation and the existing clear-fence commit witness apply
+to exactly the two replay maps, cleanup preparations and native counter. Only
+byte-identical archived replay maps project as empty after a verified witness.
+A newly written map remains visible; sidecars, drift or a missing witness fail
+closed. The native counter is preserved and never projected, reset or deleted.
+Other durable files remain unchanged. This disposition proves neither the old
+physical cleanup nor new admission, renderer participation or media readiness.
+Fresh bootstrap, signatures, resources and Start remain separate actions.
+
+The ordinary process-fence host gate registers production transaction and
+crash controls. Its optional `-KnownBirthFixture` input also exercises preserved
+owner bytes supplied by an adopted external workspace. Fixture execution still
+models current actor and external absence; it performs no headset cleanup.

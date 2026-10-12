@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$RepoRoot = (Join-Path $PSScriptRoot '../..'))
+param([string]$RepoRoot = (Join-Path $PSScriptRoot '../..'), [string]$KnownBirthFixture)
 $ErrorActionPreference = 'Stop'
 $RepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
 $package = 'io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex'
@@ -7,18 +7,22 @@ $app = Join-Path $RepoRoot 'apps/spatial-camera-panel-android/app'
 $main = Join-Path $app "src/main/java/$package"
 $test = Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexProcessFenceHostTest.java'
 $historicalTest=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexHistoricalAbandonmentHostTest.java'
+$knownBirthTest=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexKnownBirthAbandonmentHostTest.java'
 $output = Join-Path ([IO.Path]::GetTempPath()) ('duplex-fence-classes-' + [guid]::NewGuid().ToString('N'))
 [void](New-Item -ItemType Directory -Path $output)
 $javac = (Get-Command javac -ErrorAction Stop).Source
 $java = Join-Path (Split-Path $javac -Parent) 'java.exe'
 $jsonJar=Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json') -Recurse -Filter 'json-*.jar' | Sort-Object FullName -Descending | Select-Object -First 1
 if(-not $jsonJar){throw 'Host org.json test dependency unavailable'}
-& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') $test $historicalTest
+& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') $test $historicalTest $knownBirthTest
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host compilation failed' }
 & $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexProcessFenceHostTest'
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host regressions failed' }
 & $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexHistoricalAbandonmentHostTest'
 if ($LASTEXITCODE -ne 0) {throw 'Historical abandonment host regressions failed'}
+$knownBirthArgs=@(); if($KnownBirthFixture){$knownBirthArgs=@((Resolve-Path -LiteralPath $KnownBirthFixture).Path)}
+& $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexKnownBirthAbandonmentHostTest' @knownBirthArgs
+if ($LASTEXITCODE -ne 0) {throw 'Known-birth abandonment host regressions failed'}
 $hostSource = Get-Content -Raw -LiteralPath (Join-Path $main 'EmbeddedDuplexProcessHost.java')
 # Execute the production predicate; platform observations are explicitly modeled.
 $begin=$hostSource.IndexOf('    private void requireAbandonmentEffectFree() {')
