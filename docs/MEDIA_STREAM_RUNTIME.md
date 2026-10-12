@@ -266,3 +266,10 @@ Run `tools/checks/Test-ReceiverStageTraceHost.ps1` with an explicit JDK, the exi
 pinned host JSON dependency, API34 Android jar and create-new output under `target`.
 The pure clock/generation controls and Android receiver typecheck do not establish
 headset, transport, codec or duplex readiness.
+
+The normal Windows Spatial host route runs
+`tools/Test-OwnerTransportDiagnosticHost.ps1`. Its actual production transport
+classes and real TCP controls compile with Java 8 APIs, `-Xlint:all` and
+`-Werror`; an explicit JDK can be supplied. The complete media library retains
+its separate Android classpath and strict Gradle `compileJava` requirement.
+Passing host transport controls does not qualify Android/JNI or media authority.

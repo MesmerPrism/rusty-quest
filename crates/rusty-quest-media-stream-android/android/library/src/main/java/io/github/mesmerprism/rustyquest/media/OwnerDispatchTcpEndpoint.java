@@ -53,6 +53,7 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
         }
     }
     private static final class FrameBoundsException extends IOException {
+        private static final long serialVersionUID = 1L;
         FrameBoundsException() { super("owner frame bound"); }
     }
     public static final int MAX_FRAME_BYTES = 128 * 1024;
