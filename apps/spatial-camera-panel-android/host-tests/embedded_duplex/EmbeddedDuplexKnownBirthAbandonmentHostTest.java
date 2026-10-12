@@ -55,6 +55,39 @@ final class EmbeddedDuplexKnownBirthAbandonmentHostTest {
             .put("current_recovery_actor",new JSONObject().put("pid",900).put("start_ticks",12345).put("app_process_generation",current.generation()))
             .put("historical_peers",new JSONObject().put("peer_a",a).put("peer_b",b));
     }
+    static java.util.Map<String,Path> fixturePaths(Path root,JSONObject files) throws Exception {
+        Path base=root.toAbsolutePath().normalize();
+        if(Files.isSymbolicLink(base)) throw new IllegalArgumentException("fixture root link");
+        java.util.Map<String,Path> result=new java.util.LinkedHashMap<>();
+        // Preflight every selected name before the first mkdir/write.
+        for(String name:files.keySet()) {
+            if(!name.matches("[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*"))
+                throw new IllegalArgumentException("fixture relative name required");
+            for(String part:name.split("/",-1))
+                if(part.equals(".") || part.equals("..") || part.isEmpty())
+                    throw new IllegalArgumentException("fixture dot/empty component");
+            Path selected=base.resolve(name).normalize();
+            if(!selected.startsWith(base) || selected.equals(base))
+                throw new IllegalArgumentException("fixture containment");
+            for(Path current=selected;current!=null && current.startsWith(base);current=current.getParent())
+                if(Files.isSymbolicLink(current)) throw new IllegalArgumentException("fixture parent link");
+            result.put(name,selected);
+        }
+        return result;
+    }
+    static void fixturePathControls() throws Exception {
+        Path root=Files.createTempDirectory("known-birth-contained");
+        Path outside=root.getParent().resolve("known-birth-escape-"+java.util.UUID.randomUUID());
+        for(String name:new String[]{"../"+outside.getFileName(),outside.toString(),"C:/escape","//host/share",
+                "back\\slash","a//b","a/../b","./relative",""}) {
+            JSONObject files=new JSONObject().put("safe/nested.json","safe").put(name,"escape");
+            deny(()->fixturePaths(root,files));
+            if(Files.exists(outside) || Files.exists(root.resolve("safe")))
+                throw new AssertionError("fixture preflight wrote before rejection");
+        }
+        if(!fixturePaths(root,new JSONObject().put("safe/nested.json","safe")).get("safe/nested.json")
+            .equals(root.resolve("safe/nested.json"))) throw new AssertionError("nested fixture denied");
+    }
     static void actualFixture(Path input) throws Exception {
         JSONObject fixture=new JSONObject(Files.readString(input));
         JSONObject peers=fixture.getJSONObject("peers");
@@ -62,8 +95,9 @@ final class EmbeddedDuplexKnownBirthAbandonmentHostTest {
             JSONObject selected=peers.getJSONObject(role);Path dir=Files.createTempDirectory("known-birth-retained");
             JSONObject records=fixture.getJSONObject("records").getJSONObject(role);
             JSONObject all=fixture.getJSONObject("full_owner_files").getJSONObject(role);
-            for(String name:all.keySet()) {
-                Path file=dir.resolve(name);Files.createDirectories(file.getParent());Files.writeString(file,all.getString(name));
+            java.util.Map<String,Path> selectedPaths=fixturePaths(dir,all);
+            for(String name:selectedPaths.keySet()) {
+                Path file=selectedPaths.get(name);Files.createDirectories(file.getParent());Files.writeString(file,all.getString(name));
             }
             Files.writeString(dir.resolve("process-fence.v1.lock"),selected.getString("original_fence_record"));
             try(EmbeddedDuplexProcessFence current=EmbeddedDuplexProcessFence.acquire(dir.toFile(),null,null,()->{})) {
@@ -92,6 +126,7 @@ final class EmbeddedDuplexKnownBirthAbandonmentHostTest {
         System.out.println("Actual retained fixture production transaction: both peers archived, witness committed, exact old replay projected; host modeled current actor/absence, no device effects.");
     }
     public static void main(String[] argv) throws Exception {
+        fixturePathControls();
         Path aDir=Files.createTempDirectory("known-birth-a"),bDir=Files.createTempDirectory("known-birth-b");
         JSONObject a=peer(aDir,"A",10001),b=peer(bDir,"B",10002);
         try(EmbeddedDuplexProcessFence current=EmbeddedDuplexProcessFence.acquire(aDir.toFile(),null,null,()->{})) {
