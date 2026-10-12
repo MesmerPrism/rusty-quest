@@ -17,6 +17,7 @@ param(
     [string]$RecordedHandCaptureDir = "",
     [int]$RecordedHandFrameLimit = 24,
     [string]$PrivateLayerProfilePath = "",
+    [string]$PrivateLayerProviderRoot = "",
     [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultLeftX = 0.0,
     [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultLeftY = 0.0,
     [ValidateRange(-0.25, 0.25)][double]$DepthAlignmentDefaultRightX = 0.0,
@@ -1333,7 +1334,7 @@ $embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
 Import-Module (Join-Path $repoRoot 'tools/src/SourceBankBuildInputs.psm1') -Force
 $sourceBankBuildInputs = Resolve-SourceBankBuildInputs -PrivateLayerProfilePath $resolvedPrivateLayerProfilePath `
     -ValidatedProductInputs $embeddedDuplexProductInputs -VertexShaderPath $resolvedOpaqueProjectionVertexShader `
-    -FragmentShaderPath $resolvedOpaqueProjectionShader
+    -FragmentShaderPath $resolvedOpaqueProjectionShader -ShaderProviderRoot $PrivateLayerProviderRoot
 if ($sourceBankBuildInputs.enabled -and $EnvironmentDepthOwner -cne 'spatial-sdk-api-layer') {
     throw 'Source-bank capture requires the selected shared Vulkan capability owner.'
 }
@@ -1750,6 +1751,8 @@ $cargoOutput = [Collections.Generic.List[string]]::new()
 $sourceBankCargoEnvironment = @{}
 foreach ($name in @('RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI',
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES')) {
@@ -1807,6 +1810,8 @@ try {
     foreach ($entry in @(
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER';path=$resolvedOpaqueProjectionVertexShader},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_FRAGMENT_SHADER';path=$resolvedOpaqueProjectionShader},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI';path=$sourceBankBuildInputs.final_abi_version},
+        @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER';path=$(if ($null -ne $sourceBankBuildInputs.primary_input_shader) { $sourceBankBuildInputs.primary_input_shader.path } else { $null })},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS';path=$sourceBankBuildInputs.own_capture_hold_limits.slots},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES';path=$sourceBankBuildInputs.own_capture_hold_limits.bytes},
         @{name='RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES';path=$sourceBankBuildInputs.own_capture_hold_limits.gpu_uses})) {

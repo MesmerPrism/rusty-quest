@@ -135,6 +135,26 @@ fn main() {
         "fragment",
         &["-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string()],
     );
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI");
+    let source_bank_abi =
+        match env::var("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_ABI").as_deref() {
+            Err(env::VarError::NotPresent) | Ok("1") => 1,
+            Ok("2") => 2,
+            _ => panic!("source bank final ABI must be explicit 1 or 2"),
+        };
+    let primary_input = compile_optional_shader_env_with_args(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER",
+        "spatial_primary_input.frag.spv",
+        "fragment",
+        &[],
+    );
+    assert_eq!(
+        primary_input.compiled,
+        source_bank_abi == 2,
+        "primary input provider and final ABI2 must be selected together"
+    );
     let source_bank_vertex = compile_optional_shader_env_with_args(
         &glslc,
         &out_dir,
@@ -144,6 +164,7 @@ fn main() {
         &[
             "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
             "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+            format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
         ],
     );
     let source_bank_fragment = compile_optional_shader_env_with_args(
@@ -155,13 +176,18 @@ fn main() {
         &[
             "-DPRIVATE_LAYER_VIDEO_COMPOSITOR=1".to_string(),
             "-DPRIVATE_LAYER_SOURCE_BANKS=1".to_string(),
+            format!("-DPRIVATE_LAYER_SOURCE_BANK_ABI={source_bank_abi}"),
         ],
+    );
+    assert!(
+        source_bank_abi == 1 || (source_bank_vertex.compiled && source_bank_fragment.compiled),
+        "ABI2 requires both exact final shader providers"
     );
     fs::write(
         out_dir.join("spatial_source_bank_build.rs"),
         format!(
-            "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};",
-            source_bank_vertex.compiled && source_bank_fragment.compiled
+            "pub(crate) const SOURCE_BANK_SHADER_COMPILED: bool = {};\npub(crate) const SOURCE_BANK_ABI: u32 = {};\npub(crate) const PRIMARY_INPUT_SHADER_COMPILED: bool = {};",
+            source_bank_vertex.compiled && source_bank_fragment.compiled, source_bank_abi, primary_input.compiled
         ),
     )
     .expect("write source bank shader metadata");

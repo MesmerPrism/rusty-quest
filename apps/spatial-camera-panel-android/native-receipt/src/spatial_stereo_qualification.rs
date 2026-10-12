@@ -27,6 +27,8 @@ pub(crate) struct FrameFact {
     pub final_draw: bool,
     pub geometry_sampled: bool,
     pub available: [bool; 2],
+    pub primary_prefix: u32,
+    pub final_abi_version: u32,
 }
 #[derive(Clone, Copy, Default)]
 struct OriginStats {
@@ -180,6 +182,20 @@ impl State {
         generation
     }
     fn record(&mut self, fact: FrameFact, now: u64) {
+        if fact.primary_prefix != 0
+            && (fact.final_abi_version != 2
+                || fact.primary_prefix != 6
+                || crate::stereo_bank_mask_v1::validate(fact.mask) != Ok(true)
+                || fact
+                    .sources
+                    .iter()
+                    .any(|s| s.is_none_or(|s| s.prefix != 6 || s.config_revision != fact.revision))
+                || fact.sources[0]
+                    .zip(fact.sources[1])
+                    .is_none_or(|(a, b)| a.processing_codes != b.processing_codes))
+        {
+            return;
+        }
         if !self.armed
             || fact.arm_generation != self.generation
             || fact.ordinal == 0
@@ -370,7 +386,17 @@ impl State {
         fn frame(f: FrameFact) -> serde_json::Value {
             serde_json::json!({"ordinal":f.ordinal,"surface_generation":f.surface,
             "arm_generation":f.arm_generation,"control_revision":f.revision,"policy":f.policies,"mask_words":f.mask,
-            "final_draw_retired":f.final_draw,"effective_mask_state":if f.mask==[0;3]{"disabled"}else if f.final_draw&&f.sources.iter().all(|s|s.is_some_and(|s|s.prefix>=6)){"retired-both-current-banks"}else{"closed-missing-bank"},"banks":f.sources.map(|source|source.map(|s|serde_json::json!({
+            "final_draw_retired":f.final_draw,"final_source_bank_abi_version":f.final_abi_version,
+            "derived_primary_completed_prefix":f.primary_prefix,
+            "derived_primary":if f.primary_prefix==6 {Some(serde_json::json!({"completed_prefix":f.primary_prefix,
+                "control_revision":f.revision,"mask_words":f.mask,"source_keys":f.sources.map(|source|source.map(|s|serde_json::json!({
+                    "process_generation":s.identity.epoch.process_generation,"source_generation":s.identity.epoch.source_generation,
+                    "pair_sequence":s.identity.pair_sequence,"packed_pts_ns":s.identity.packed_pts_ns,
+                    "left_timestamp_ns":s.identity.left_timestamp_ns,"right_timestamp_ns":s.identity.right_timestamp_ns,
+                    "calibration_revision":s.identity.calibration_revision,"geometry_revision":s.geometry_revision,
+                    "config_revision":s.config_revision,"content_serial":s.content_serial,"processing_policy":s.processing_codes}))),
+                "scope":"recorded-derived-input-guide-prefix-same-original-source-fence-not-final-stack-pixels"}))}else{None},
+            "effective_mask_state":if f.mask==[0;3]{"disabled"}else if f.final_abi_version==2 && f.primary_prefix!=6 {"closed-missing-primary"}else if f.final_draw&&f.sources.iter().all(|s|s.is_some_and(|s|s.prefix>=6)){"retired-both-current-banks"}else{"closed-missing-bank"},"banks":f.sources.map(|source|source.map(|s|serde_json::json!({
                 "process_generation":s.identity.epoch.process_generation,"source_generation":s.identity.epoch.source_generation,
                 "pair_sequence":s.identity.pair_sequence,"packed_pts_ns":s.identity.packed_pts_ns,"config_revision":s.config_revision,
                 "content_serial":s.content_serial,"prefix":s.prefix})))})
@@ -966,7 +992,57 @@ mod tests {
             final_draw: true,
             geometry_sampled: false,
             available: [true, peer.is_some()],
+            primary_prefix: 0,
+            final_abi_version: 1,
         }
+    }
+    #[test]
+    fn primary_provenance_requires_same_complete_originals_and_actual_retirement() {
+        let mut s = State::empty();
+        let generation = s.arm(7, [1, 2], 10);
+        let mut f = frame(generation, 1, Some(source(2, 1)));
+        f.final_abi_version = 2;
+        f.primary_prefix = 6;
+        f.mask = crate::stereo_bank_mask_v1::pack(true, 0.5, 0.05, 1.0, true, false).unwrap();
+        for source in f.sources.iter_mut().flatten() {
+            source.config_revision = f.revision;
+        }
+        let mut bad = f;
+        bad.sources[1] = None;
+        s.record(bad, 20);
+        assert!(s.pending.is_none());
+        bad = f;
+        bad.sources[1].as_mut().unwrap().config_revision += 1;
+        s.record(bad, 20);
+        assert!(s.pending.is_none());
+        bad = f;
+        bad.sources[1].as_mut().unwrap().processing_codes[0] = 1;
+        s.record(bad, 20);
+        assert!(s.pending.is_none());
+        bad = f;
+        bad.mask = [0; 3];
+        s.record(bad, 20);
+        assert!(s.pending.is_none());
+        bad = f;
+        bad.mask = [u32::MAX; 3];
+        s.record(bad, 20);
+        assert!(s.pending.is_none());
+        s.record(f, 20);
+        let before: serde_json::Value = serde_json::from_str(&s.blend_json()).unwrap();
+        assert!(before["retired_frame"].is_null());
+        s.retire(1, 8, 30);
+        let j: serde_json::Value = serde_json::from_str(&s.blend_json()).unwrap();
+        assert_eq!(j["retired_frame"]["derived_primary_completed_prefix"], 6);
+        assert_eq!(
+            j["retired_frame"]["derived_primary"]["mask_words"][0],
+            f.mask[0]
+        );
+        assert_eq!(
+            j["retired_frame"]["derived_primary"]["source_keys"][1]["source_generation"],
+            2
+        );
+        assert_eq!(j["sample_status"], "unavailable");
+        assert!(j["sample_rgba8"].is_null());
     }
     #[test]
     fn mask_strip_requires_actual_retired_frame_pixel_identity_and_exact_marker() {

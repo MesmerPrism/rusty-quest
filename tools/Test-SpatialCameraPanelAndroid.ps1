@@ -202,6 +202,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $workflowCheckPath -RepoRoot $repoRootPath
 & $staticCheckPath -RepoRoot $repoRootPath
 & (Join-Path $repoRootPath 'tools/Test-StereoSourceRefreshHost.ps1') -RepoRoot $repoRootPath
+& (Join-Path $repoRootPath 'tools/Test-StereoPrimaryInputHost.ps1') -RepoRoot $repoRootPath
 if($IsWindows){& (Join-Path $repoRootPath 'tools/Test-OwnerTransportDiagnosticHost.ps1') -RepoRoot $repoRootPath -JavaHome $JavaHome}
 & $rawProjectionFreshnessFinalizerCheckPath -RepoRoot $repoRootPath
 & $rawProjectionFreshnessReducerCheckPath -RepoRoot $repoRootPath

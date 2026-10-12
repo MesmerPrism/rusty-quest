@@ -846,6 +846,7 @@ mod stereo_renderer_terminal;
 #[cfg(target_os = "android")]
 mod stereo_renderer_terminal_jni;
 mod stereo_bank_transport_v1;
+mod stereo_bank_transport_v2;
 mod stereo_input_set;
 #[cfg(target_os = "android")]
 mod stereo_source_payload;
