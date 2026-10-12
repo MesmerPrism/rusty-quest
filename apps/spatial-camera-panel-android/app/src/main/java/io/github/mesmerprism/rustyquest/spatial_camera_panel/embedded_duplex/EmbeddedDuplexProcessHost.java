@@ -400,6 +400,18 @@ final class EmbeddedDuplexProcessHost {
     CompletableFuture<String> concurrentPolicy(String challenge, long[] policy) {
         return concurrentQualificationOnLane(false, challenge, true, policy == null ? null : policy.clone(), null);
     }
+    CompletableFuture<String> concurrentMaskConfiguration(String challenge) {
+        return submit(() -> {
+            requireFreshProcess();
+            if (localFixture || processFence == null || runtimeConfigSha256 == null || ownFeatureLockSha256 == null
+                    || nativeExecutorGeneration <= 0L || attachmentGeneration <= 0L)
+                throw new IllegalStateException("mask configuration actor context unavailable");
+            String result = ConcurrentStereoQualification.maskConfiguration(challenge, processFence.epochId(),
+                    runtimeConfigSha256, ownFeatureLockSha256, installedApkDigest.read(applicationContext));
+            requireFreshProcess();
+            return result;
+        });
+    }
     CompletableFuture<String> concurrentMask(String challenge, long[] mask) {
         return concurrentQualificationOnLane(false,challenge,true,mask == null ? null : mask.clone(),null,true);
     }
@@ -697,6 +709,18 @@ final class EmbeddedDuplexProcessHost {
                 }
                 throw failure;
             }
+        });
+    }
+
+    CompletableFuture<String> rendererTerminalStatus(String challenge) {
+        return submit(() -> {
+            requireFreshProcess();
+            if (localFixture || runtimeConfigSha256 == null || nativeExecutorGeneration <= 0L || attachmentGeneration <= 0L)
+                throw new IllegalStateException("renderer diagnostic runtime context unavailable");
+            String result = StereoRendererTerminalStatus.read(challenge, processFence.epochId(), processFence.generation(),
+                    nativeExecutorGeneration, attachmentGeneration, runtimeConfigSha256);
+            requireFreshProcess();
+            return result;
         });
     }
 

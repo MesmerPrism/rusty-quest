@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.stereo.neutral_mask_config_receipt.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "action",
+    "challenge",
+    "process_epoch_id",
+    "native_process_generation",
+    "arm_generation",
+    "runtime_config_sha256",
+    "feature_lock_sha256",
+    "installed_apk_sha256",
+    "configured_mask",
+    "configured_policy",
+    "configuration_scope"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.stereo.neutral_mask_config_receipt.v1"
+    },
+    "action": {
+      "const": "blend_config_read"
+    },
+    "challenge": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "process_epoch_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "native_process_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "arm_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "runtime_config_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "feature_lock_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "installed_apk_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "configured_mask": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "configured_policy": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 2
+      }
+    },
+    "configuration_scope": {
+      "const": "configuration_only"
+    }
+  }
+}

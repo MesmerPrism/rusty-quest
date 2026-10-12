@@ -32,6 +32,10 @@ data class NeutralMaskPolicy(val version: Int = 1, val enabled: Boolean = false,
 object StereoBankControls {
     fun updateMask(policy: NeutralMaskPolicy): Long = nativeApplyMask(policy.words()).also { require(it > 0) }
     fun maskSnapshot(): LongArray = nativeReadMask().also { require(it.size == 12 && it[0] == 1L && it[1] == 1L && it[2] > 0) }
+    /** CPU configuration may remain readable after physical bank retirement. */
+    fun maskConfigurationSnapshot(): LongArray = nativeReadMask().also {
+        require(it.size == 12 && it[0] == 1L && it[1] in 0L..1L && it[2] > 0)
+    }
     fun maskReadback(): String = requireNotNull(nativeReadMaskReadback()).also { require(it.toByteArray(Charsets.UTF_8).size <= 8192) }
     @JvmStatic private external fun nativeReadMask(): LongArray
     @JvmStatic private external fun nativeApplyMask(policy: LongArray): Long

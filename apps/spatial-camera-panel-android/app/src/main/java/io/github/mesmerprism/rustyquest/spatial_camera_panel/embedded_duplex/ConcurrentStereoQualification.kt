@@ -115,6 +115,26 @@ internal object ConcurrentStereoQualification {
             .put("policy_configuration_scope", "configuration_only").toString()
     }
 
+    /** CPU configuration only; current arm lineage does not require any GPU frame. */
+    @JvmStatic fun maskConfiguration(challenge: String, processEpoch: String, runtimeSha: String,
+        featureSha: String, apkSha: String): String {
+        require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)
+        // receipt validates actor/challenge/arm and authenticated input hashes only.
+        receipt("blend_config_read", challenge, processEpoch, runtimeSha, featureSha, apkSha,
+            StereoBankControls.concurrentQualification())
+        val configured = StereoBankControls.maskConfigurationSnapshot()
+        receipt("blend_config_read", challenge, processEpoch, runtimeSha, featureSha, apkSha,
+            StereoBankControls.concurrentQualification())
+        return JSONObject().put("schema", "rusty.quest.stereo.neutral_mask_config_receipt.v1")
+            .put("action", "blend_config_read").put("challenge", challenge)
+            .put("process_epoch_id", processEpoch).put("native_process_generation", nativeProcess)
+            .put("arm_generation", arm).put("runtime_config_sha256", runtimeSha)
+            .put("feature_lock_sha256", featureSha).put("installed_apk_sha256", apkSha)
+            .put("configured_mask", JSONArray(configured.take(6)))
+            .put("configured_policy", JSONArray(configured.drop(6)))
+            .put("configuration_scope", "configuration_only").toString()
+    }
+
     @JvmStatic fun mask(challenge: String, processEpoch: String, runtimeSha: String,
         featureSha: String, apkSha: String, update: LongArray?): String {
         require(this.challenge == challenge && this.processEpoch == processEpoch && arm != 0L)

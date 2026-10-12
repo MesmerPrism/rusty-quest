@@ -45,6 +45,9 @@ public final class EmbeddedDuplexRuntimeService {
     public static CompletableFuture<String> concurrentHubPolicy(Context context, long[] policy, java.util.concurrent.atomic.AtomicBoolean cancelled) {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentHubPolicy(policy,cancelled);
     }
+    public static CompletableFuture<String> concurrentMaskConfiguration(Context context, String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).concurrentMaskConfiguration(challenge);
+    }
     public static CompletableFuture<String> concurrentMask(Context context, String challenge, long[] mask) {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentMask(challenge,mask);
     }
@@ -54,6 +57,10 @@ public final class EmbeddedDuplexRuntimeService {
 
     public static CompletableFuture<String> peerLifecycle(Context context, EmbeddedDuplexPeerAction action, String challenge) {
         return EmbeddedDuplexProcessHost.forApplication(context).peerLifecycle(action, challenge);
+    }
+
+    public static CompletableFuture<String> rendererTerminalStatus(Context context, String challenge) {
+        return EmbeddedDuplexProcessHost.forApplication(context).rendererTerminalStatus(challenge);
     }
 
     public static CompletableFuture<EmbeddedDuplexRuntimeStatus> status(Context context) {

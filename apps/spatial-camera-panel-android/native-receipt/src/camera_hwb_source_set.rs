@@ -5,17 +5,20 @@ unsafe fn render_source_set_common_graph(
     requested_height: u32,
     max_frames: u32,
     cancellation: Arc<AtomicBool>,
+    diagnostic: Option<crate::stereo_renderer_terminal::GraphToken>,
     ready_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
     if cancellation.load(Ordering::Acquire) {
         return Err("source-set-session-cancelled-before-wsi".to_string());
     }
+    crate::stereo_renderer_terminal::set_phase(diagnostic, "wsi_acquire");
     let mut owned = PeerCommonGraphResources::new(CameraHwbWsiParts::create(
         window,
         requested_width,
         requested_height,
     )?);
     let run_result = (|| -> Result<(), String> {
+        crate::stereo_renderer_terminal::set_phase(diagnostic, "seed");
         if cancellation.load(Ordering::Acquire) {
             return Err("source-set-session-cancelled-after-wsi".to_string());
         }
@@ -149,6 +152,7 @@ unsafe fn render_source_set_common_graph(
             wsi.memory_properties,
         ));
         let surface_generation = NEXT_SDK_SURFACE_GENERATION.fetch_add(1, Ordering::AcqRel);
+        crate::stereo_renderer_terminal::bind_surface(diagnostic, surface_generation);
         crate::spatial_stereo_qualification::carrier_live();
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         crate::spatial_stereo_qualification::carrier_device(
@@ -250,6 +254,7 @@ unsafe fn render_source_set_common_graph(
             if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
                 targets.retire_stereo_banks_after_fence(&device)?;
             }
+            crate::stereo_renderer_terminal::set_phase(diagnostic, "import_refresh");
             // One immutable control snapshot feeds both retired refresh and recording.
             let recording_control = crate::spatial_public_multistack_runtime::read_mask_policy();
             if let Some(imports) = stereo_source_imports.as_mut() {
@@ -273,6 +278,7 @@ unsafe fn render_source_set_common_graph(
             device
                 .reset_fences(&[frame_fence])
                 .map_err(|error| format!("peer-reset-fence-{error:?}"))?;
+            crate::stereo_renderer_terminal::set_phase(diagnostic, "wsi_acquire");
             let image_index = match swapchain_loader.acquire_next_image(
                 swapchain,
                 u64::MAX,
@@ -433,6 +439,7 @@ unsafe fn render_source_set_common_graph(
                     frame.import_sequence,
                 ))
             });
+            crate::stereo_renderer_terminal::set_phase(diagnostic, "command_record");
             let record_result = record_camera_hwb_probe_command_buffer(
                 &device,
                 command_buffer,
@@ -508,6 +515,7 @@ unsafe fn render_source_set_common_graph(
                 if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
                     targets.mark_stereo_submission_entered()?;
                 }
+                crate::stereo_renderer_terminal::set_phase(diagnostic, "queue_submit");
                 device
                     .queue_submit(queue, &submits, frame_fence)
                     .map_err(|error| format!("peer-queue-submit-{error:?}"))?;
@@ -527,6 +535,7 @@ unsafe fn render_source_set_common_graph(
             }
             #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
             {
+                crate::stereo_renderer_terminal::set_phase(diagnostic, "sdk_retirement");
                 let request_id = (surface_generation << 32) | u64::from(frames_presented + 1);
                 if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
                     targets.mark_stereo_sdk_submission_entered(
@@ -749,7 +758,12 @@ unsafe fn render_source_set_common_graph(
         Ok(())
     })();
 
+    if let Err(error) = &run_result {
+        crate::stereo_renderer_terminal::failure(diagnostic, error, crate::own_packed_pool::monotonic_ns().unwrap_or(0));
+    }
+    crate::stereo_renderer_terminal::set_phase(diagnostic, "physical_cleanup");
     let cleanup_result = owned.teardown();
+    crate::stereo_renderer_terminal::record_cleanup(diagnostic, cleanup_result.is_ok(), crate::own_packed_pool::monotonic_ns().unwrap_or(0));
     if let Err(error) = &cleanup_result {
         let stage = source_set_cleanup_failure_stage(error);
         crate::camera_hwb_marker::log_camera_hwb_marker(format!(
@@ -857,6 +871,8 @@ pub(crate) unsafe fn start_source_set_common_graph(
             ACameraNativeWindow_release(window);
             return 0;
         }
+        // Diagnostic reset follows the actual existing physical claim/release gate.
+        let diagnostic = crate::stereo_renderer_terminal::begin_after_owner_claim(admitted_epoch.process_generation, route_generation as u64);
         owner.window_address = window_address;
         owner.own_epoch = Some(admitted_epoch);
         owner.cancellation = Some(cancellation.clone());
@@ -873,10 +889,12 @@ pub(crate) unsafe fn start_source_set_common_graph(
                         requested_height.max(64),
                         max_frames,
                         worker_cancellation,
+                        diagnostic,
                         ready_tx,
                     )
                 })
                 .unwrap_or_else(|_| Err("panic".to_string()));
+                crate::stereo_renderer_terminal::finish(diagnostic, result.as_ref().map(|_| ()).map_err(String::as_str), crate::own_packed_pool::monotonic_ns().unwrap_or(0));
                 unsafe {
                     ACameraNativeWindow_release(window.cast::<ANativeWindow>());
                 }
@@ -900,6 +918,9 @@ pub(crate) unsafe fn start_source_set_common_graph(
                 let released = owner.claim.release(route_generation);
                 debug_assert!(released);
                 ACameraNativeWindow_release(window);
+                crate::stereo_renderer_terminal::failure(diagnostic, "source-set-spawn-failed", crate::own_packed_pool::monotonic_ns().unwrap_or(0));
+                crate::stereo_renderer_terminal::record_cleanup(diagnostic, released, crate::own_packed_pool::monotonic_ns().unwrap_or(0));
+                crate::stereo_renderer_terminal::finish(diagnostic, Err("source-set-spawn-failed"), crate::own_packed_pool::monotonic_ns().unwrap_or(0));
                 return 0;
             }
         }

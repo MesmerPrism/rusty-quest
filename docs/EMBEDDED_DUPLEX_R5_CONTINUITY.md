@@ -513,3 +513,31 @@ refresh. The pure production classifier and mask tests also run. These checks
 prove source behavior, not which error stopped an installed renderer or physical
 Android/GPU recovery. The current worker only logs terminal errors; counters
 and terminal cleanup remain observable after that bounded log history expires.
+
+
+## Separate debug renderer and CPU configuration observations
+
+`renderer_terminal_status` is a shell/DUMP-gated read-only operator method.
+Its closed `rusty.quest.stereo.renderer_terminal_status.v1` receipt joins the
+current app actor context to a native same-process source graph sequence. It
+retains the first bounded failure phase/category and physical carrier cleanup
+observation. This is neither media authority nor a full cleanup receipt. Late
+callbacks cannot overwrite a finished graph or its successor. A new graph
+sequence begins only after the existing physical renderer owner claim succeeds;
+the observation never authorizes recovery or transfers authority.
+
+`blend_config_read` uses the separate closed
+`rusty.quest.stereo.neutral_mask_config_receipt.v1` receipt. Native actor,
+challenge, arm, runtime, feature and installed APK inputs are checked before and
+after one atomic mask/policy copy. Retired source banks may still expose their
+CPU configuration with enabled header zero. The receipt has configuration-only
+scope and carries no GPU frame, pixel readback, readback request, media authority
+or cleanup claim. Existing blend read/update and fixed 160-word contracts retain
+their separate adoption requirements.
+
+The ordinary `Test-StereoSourceRefreshHost.ps1` route registers native terminal
+latch and CPU source binding controls; its explicit Kotlin compiler/runtime
+classpath options run the actual CPU producer/accessor controls. The separate
+terminal host script selects explicit Java/JSON dependencies for its actual
+projection controls. Target JNI/Java/provider compilation and artifact adoption
+remain separate qualification steps.

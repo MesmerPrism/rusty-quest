@@ -130,6 +130,14 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
             putBoolean("local_fixture", saved.localFixture)
           }
         }
+        EmbeddedDuplexOperatorContract.Route.BLEND_CONFIG_READ -> {
+          val receipt = EmbeddedDuplexRuntimeService.concurrentMaskConfiguration(app,request.challenge).get(30,TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge",request.challenge); putString("receipt",receipt) }
+        }
+        EmbeddedDuplexOperatorContract.Route.RENDERER_TERMINAL_STATUS -> {
+          val receipt = EmbeddedDuplexRuntimeService.rendererTerminalStatus(app,request.challenge).get(30,TimeUnit.SECONDS)
+          Bundle().apply { header("observed"); putString("challenge",request.challenge); putString("receipt",receipt) }
+        }
         EmbeddedDuplexOperatorContract.Route.RUNTIME_STATUS ->
           runtimeBundle(request.challenge, EmbeddedDuplexRuntimeService.status(app).get(10, TimeUnit.SECONDS))
         EmbeddedDuplexOperatorContract.Route.BOOTSTRAP_REAL_PEER ->

@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.stereo.renderer_terminal_status.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "challenge",
+    "process_epoch_id",
+    "app_process_generation",
+    "native_executor_generation",
+    "attachment_generation",
+    "runtime_config_sha256",
+    "runtime_join",
+    "observation",
+    "scope"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.stereo.renderer_terminal_status.v1"
+    },
+    "challenge": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "process_epoch_id": {
+      "type": "string",
+      "pattern": "^app-process\\.[0-9]+\\."
+    },
+    "app_process_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "native_executor_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "attachment_generation": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "runtime_config_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "runtime_join": {
+      "const": "current_actor_context_only"
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "availability",
+        "graph_sequence",
+        "native_process_generation",
+        "route_generation",
+        "surface_generation",
+        "state",
+        "failure_phase",
+        "failure_category",
+        "carrier_cleanup",
+        "captured_at_ns",
+        "scope"
+      ],
+      "properties": {
+        "schema": {
+          "const": "rusty.quest.stereo.renderer_terminal_native.v1"
+        },
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable"
+          ]
+        },
+        "graph_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "native_process_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "route_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "surface_generation": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "enum": [
+            "unavailable",
+            "running",
+            "succeeded",
+            "failed",
+            "cleanup_pending"
+          ]
+        },
+        "failure_phase": {
+          "enum": [
+            "none",
+            "seed",
+            "import_refresh",
+            "command_record",
+            "wsi_acquire",
+            "queue_submit",
+            "sdk_retirement",
+            "physical_cleanup",
+            "panic",
+            "native_other"
+          ]
+        },
+        "failure_category": {
+          "enum": [
+            "none",
+            "control_changed",
+            "source_binding",
+            "resource_or_driver",
+            "retirement_pending",
+            "panic",
+            "other_native"
+          ]
+        },
+        "carrier_cleanup": {
+          "enum": [
+            "unknown",
+            "pending",
+            "terminal"
+          ]
+        },
+        "captured_at_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scope": {
+          "const": "source_graph_observation_not_authority"
+        }
+      }
+    },
+    "scope": {
+      "const": "source_graph_failure_observation_not_media_or_cleanup_authority"
+    }
+  }
+}

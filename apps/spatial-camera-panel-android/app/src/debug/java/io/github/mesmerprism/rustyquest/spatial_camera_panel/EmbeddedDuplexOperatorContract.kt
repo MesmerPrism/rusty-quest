@@ -38,7 +38,7 @@ internal object EmbeddedDuplexOperatorContract {
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
   enum class Route { RECOVERY_STATUS, ABANDON_RETAINED_SCOPE, STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
-    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
+    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, RENDERER_TERMINAL_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_CONFIG_READ, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
   data class Request(
       val route: Route,
       val challenge: String,
@@ -76,8 +76,10 @@ internal object EmbeddedDuplexOperatorContract {
       METHOD_START_PREFLIGHT -> Route.START_PREFLIGHT
       "concurrent_arm" -> Route.CONCURRENT_ARM
       "concurrent_status" -> Route.CONCURRENT_STATUS
+      "renderer_terminal_status" -> Route.RENDERER_TERMINAL_STATUS
       "policy_read" -> Route.POLICY_READ
       "policy_update" -> Route.POLICY_UPDATE
+      "blend_config_read" -> Route.BLEND_CONFIG_READ
       "blend_read" -> Route.BLEND_READ
       "blend_update" -> Route.BLEND_UPDATE
       "start" -> Route.START
@@ -95,7 +97,7 @@ internal object EmbeddedDuplexOperatorContract {
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
       Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.CLOSE_NO_MEDIA,
-      Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.OWNER_FAILURE_DIAGNOSTIC, Route.OWN_CAPTURE_DIAGNOSTIC, Route.STREAM_DROPOUT_DIAGNOSTIC, Route.POLICY_READ, Route.BLEND_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
+      Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.RENDERER_TERMINAL_STATUS, Route.OWNER_FAILURE_DIAGNOSTIC, Route.OWN_CAPTURE_DIAGNOSTIC, Route.STREAM_DROPOUT_DIAGNOSTIC, Route.POLICY_READ, Route.BLEND_CONFIG_READ, Route.BLEND_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
       Route.BLEND_UPDATE -> setOf("version","enabled","threshold","softness","amount","invert","diagnostic")
       Route.POLICY_UPDATE -> setOf("center", "middle", "outer", "geometry", "brightness", "strength")
     }
@@ -121,7 +123,7 @@ internal object EmbeddedDuplexOperatorContract {
     }
     if (route in setOf(Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE)) return Request(route, argument)
     if (route == Route.POLICY_READ || route == Route.BLEND_READ || route == Route.CONCURRENT_ARM || route == Route.CONCURRENT_STATUS ||
-        route == Route.OWNER_FAILURE_DIAGNOSTIC || route == Route.OWN_CAPTURE_DIAGNOSTIC || route == Route.STREAM_DROPOUT_DIAGNOSTIC ||
+        route == Route.RENDERER_TERMINAL_STATUS || route == Route.OWNER_FAILURE_DIAGNOSTIC || route == Route.OWN_CAPTURE_DIAGNOSTIC || route == Route.STREAM_DROPOUT_DIAGNOSTIC ||
         route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER ||
         route == Route.CLOSE_NO_MEDIA || route == Route.PAIR_STATUS ||
         route == Route.PAIR_SESSION || route == Route.START_PREFLIGHT)
