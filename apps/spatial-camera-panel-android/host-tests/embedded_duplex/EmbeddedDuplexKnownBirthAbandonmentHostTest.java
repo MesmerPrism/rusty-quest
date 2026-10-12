@@ -125,7 +125,45 @@ final class EmbeddedDuplexKnownBirthAbandonmentHostTest {
         }
         System.out.println("Actual retained fixture production transaction: both peers archived, witness committed, exact old replay projected; host modeled current actor/absence, no device effects.");
     }
+    static void crossBootControls() throws Exception {
+        Path aDir=Files.createTempDirectory("cross-boot-known-a"),bDir=Files.createTempDirectory("cross-boot-known-b");
+        JSONObject a=peer(aDir,"A",10001),b=peer(bDir,"B",10002);
+        String boot="00000000-0000-0000-0000-000000000002";
+        try(EmbeddedDuplexProcessFence current=EmbeddedDuplexProcessFence.acquire(aDir.toFile(),null,null,()->{})) {
+            JSONObject good=auth(current,a,b);
+            good.getJSONObject("current_recovery_actor").put("start_ticks",12);
+            JSONObject v3=clone(good);deny(()->new EmbeddedDuplexAbandonmentRequest(v3.toString()));
+            good.put("$schema",EmbeddedDuplexKnownBirthAbandonment.CROSS_BOOT_SCHEMA).put("current_boot_id",boot);
+            EmbeddedDuplexAbandonmentRequest request=new EmbeddedDuplexAbandonmentRequest(good.toString());
+            request.requireInstalled("test.product.app","b".repeat(64),"c".repeat(64),"test.product.app/test.Activity",10001,900);
+            request.requireCurrent(900,10001,12,current.generation());request.requireBoot(boot);
+            deny(()->request.requireBoot(a.getString("boot_id")));
+            deny(()->request.requireCurrent(900,10001,13,current.generation()));
+            JSONObject same=clone(good).put("current_boot_id",a.getString("boot_id"));
+            deny(()->new EmbeddedDuplexAbandonmentRequest(same.toString()));
+            JSONObject missing=clone(good);missing.remove("current_boot_id");
+            deny(()->new EmbeddedDuplexAbandonmentRequest(missing.toString()));
+            JSONObject unknown=clone(good).put("unselected",true);
+            deny(()->new EmbeddedDuplexAbandonmentRequest(unknown.toString()));
+            request.bind(a.getString("original_fence_record"),current.retainedRecord(),null,null);
+            JSONObject receipt=new JSONObject(current.abandon(null,null,request,(path,directory)->{}));
+            if(receipt.getBoolean("old_cleanup_confirmed") || new JSONObject(current.recoveryStatus()).getBoolean("recovery_only"))
+                throw new AssertionError("crossboot disposition confused with cleanup/current recovery");
+            Path archive=aDir.resolve("abandoned-"+receipt.getString("scope_sha256"));
+            if(!Files.readString(archive.resolve("prior-fence.raw")).equals(a.getString("original_fence_record")))
+                throw new AssertionError("original pending fence changed");
+            for(String name:EmbeddedDuplexKnownBirthAbandonment.RECORDS) {
+                String original="retained exact "+name;
+                if(!Files.readString(archive.resolve("preserved-"+name)).equals(original))
+                    throw new AssertionError("crossboot preserved record changed");
+            }
+            if(!EmbeddedDuplexAbandonment.visibleReplay(aDir.toFile(),"owner-dispatch.v1.json","retained exact owner-dispatch.v1.json")
+                .equals("{\"pending_request_sha256\":{},\"terminal\":{}}")) throw new AssertionError("old replay still visible");
+        }
+        System.out.println("Crossboot known-birth durable archive and current-boot/actor denials PASS; OS absence modeled.");
+    }
     public static void main(String[] argv) throws Exception {
+        crossBootControls();
         fixturePathControls();
         Path aDir=Files.createTempDirectory("known-birth-a"),bDir=Files.createTempDirectory("known-birth-b");
         JSONObject a=peer(aDir,"A",10001),b=peer(bDir,"B",10002);

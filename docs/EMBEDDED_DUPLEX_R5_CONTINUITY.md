@@ -1,5 +1,15 @@
 # Embedded duplex finite authority and native fencing
 
+Known-birth nonaccepting disposition v4 supports a distinct current boot after
+an externally attested complete package-UID absence. It preserves the original
+known actor birth, boot, ARM receipt, pending fence and replay records. The
+closed authorization adds `current_boot_id`; it must differ from the selected
+old boot and match the actual kernel boot read in the fresh, effect-free
+process. Current PID, UID, birth ticks and direct successor generation still
+match exactly. Birth ticks are ordered only within v3's same-boot branch;
+v4 never compares ticks across boots. Archive and committed-fence readback
+prove disposition, never old physical cleanup or transferred authority.
+
 This is the source contract for the renewable-authority candidate. The current
 operator route remains pre-Start. Native fencing, compilation and host checks
 do not establish camera, codec, reciprocal rendering, renewal or teardown.

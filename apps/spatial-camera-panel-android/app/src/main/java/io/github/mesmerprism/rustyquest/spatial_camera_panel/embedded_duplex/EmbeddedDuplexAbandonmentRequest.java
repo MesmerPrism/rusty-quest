@@ -18,7 +18,7 @@ public final class EmbeddedDuplexAbandonmentRequest {
         if(EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(object.optString("$schema"))) {
             EmbeddedDuplexHistoricalAbandonment.shape(object);this.exact=exact;return;
         }
-        if(EmbeddedDuplexKnownBirthAbandonment.SCHEMA.equals(object.optString("$schema"))) {
+        if(EmbeddedDuplexKnownBirthAbandonment.supported(object)) {
             EmbeddedDuplexKnownBirthAbandonment.shape(object);this.exact=exact;return;
         }
         if(exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>8192)
@@ -52,16 +52,21 @@ public final class EmbeddedDuplexAbandonmentRequest {
     static boolean replayDisposition(JSONObject object) throws Exception {
         String schema=object.getString("$schema");
         return EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(schema)
-            || EmbeddedDuplexKnownBirthAbandonment.SCHEMA.equals(schema);
+            || EmbeddedDuplexKnownBirthAbandonment.supported(object);
     }
     boolean historical() throws Exception {return replayDisposition(json());}
+    boolean crossBoot() throws Exception {return EmbeddedDuplexKnownBirthAbandonment.crossBoot(json());}
     void requireCurrent(int pid,int uid,long ticks,long generation) throws Exception {
-        if(EmbeddedDuplexKnownBirthAbandonment.SCHEMA.equals(json().getString("$schema")))
+        if(EmbeddedDuplexKnownBirthAbandonment.supported(json()))
             EmbeddedDuplexKnownBirthAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
         else if(historical()) EmbeddedDuplexHistoricalAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
     }
+    void requireBoot(String actualBoot) throws Exception {
+        if(EmbeddedDuplexKnownBirthAbandonment.supported(json()))
+            EmbeddedDuplexKnownBirthAbandonment.requireBoot(json(),actualBoot);
+    }
     void bind(String prior,String current,String checkpoint,String evidence) throws Exception {
-        if(EmbeddedDuplexKnownBirthAbandonment.SCHEMA.equals(json().getString("$schema")))
+        if(EmbeddedDuplexKnownBirthAbandonment.supported(json()))
             EmbeddedDuplexKnownBirthAbandonment.bind(json(),prior,current,checkpoint,evidence);
         else if(historical()) EmbeddedDuplexHistoricalAbandonment.bind(json(),prior,current,checkpoint,evidence);
     }

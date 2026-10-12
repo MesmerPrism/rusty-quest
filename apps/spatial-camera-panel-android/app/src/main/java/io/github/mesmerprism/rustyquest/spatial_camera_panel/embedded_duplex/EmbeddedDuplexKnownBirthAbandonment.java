@@ -9,6 +9,11 @@ import java.util.HashSet;
  * Original live actor evidence and the next recovery fence are separate exact scopes. */
 final class EmbeddedDuplexKnownBirthAbandonment {
     static final String SCHEMA="rusty.quest.embedded_duplex.abandonment_authorization.v3";
+    static final String CROSS_BOOT_SCHEMA="rusty.quest.embedded_duplex.abandonment_authorization.v4";
+    static boolean supported(JSONObject auth) {
+        return SCHEMA.equals(auth.optString("$schema")) || CROSS_BOOT_SCHEMA.equals(auth.optString("$schema"));
+    }
+    static boolean crossBoot(JSONObject auth) {return CROSS_BOOT_SCHEMA.equals(auth.optString("$schema"));}
     private static final Set<String> ROOT=Set.of("$schema","role_id","package_id","component_id",
         "installed_apk_sha256","signer_sha256","physical_serial","boot_id","user_id","package_uid",
         "expected_predecessor_sha256","expected_current_fence_sha256","authorize_abandonment",
@@ -24,8 +29,10 @@ final class EmbeddedDuplexKnownBirthAbandonment {
         "arm_generation","native_process_generation","runtime_config_sha256","feature_lock_sha256",
         "apk_sha256","native_snapshot");
     static void shape(JSONObject auth) throws Exception {
-        keys(auth,ROOT);
-        if(!SCHEMA.equals(auth.getString("$schema")) || !Boolean.TRUE.equals(auth.get("authorize_abandonment"))
+        Set<String> root=new HashSet<>(ROOT);
+        if(crossBoot(auth)) root.add("current_boot_id");
+        keys(auth,root);
+        if(!supported(auth) || !Boolean.TRUE.equals(auth.get("authorize_abandonment"))
             || !Set.of("peer_a","peer_b").contains(auth.getString("role_id"))) deny("authorization shape");
         for(String key:Set.of("installed_apk_sha256","signer_sha256","expected_predecessor_sha256",
             "expected_current_fence_sha256","process_absence_evidence_sha256")) sha(auth.getString(key));
@@ -46,7 +53,11 @@ final class EmbeddedDuplexKnownBirthAbandonment {
         for(String key:Set.of("package_id","signer_sha256","physical_serial","boot_id","user_id","package_uid"))
             if(!auth.get(key).toString().equals(selected.get(key).toString())) deny("selected historical peer differs");
         // Upgrade APK identity is intentionally distinct from the preserved original APK.
-        if(current.getLong("start_ticks")<=selected.getLong("original_start_ticks"))
+        if(crossBoot(auth)) {
+            String boot=auth.getString("current_boot_id");
+            if(!boot.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+                || boot.equals(selected.getString("boot_id"))) deny("distinct current boot required");
+        } else if(current.getLong("start_ticks")<=selected.getLong("original_start_ticks"))
             deny("current recovery birth is not later on selected boot");
         if(!auth.getString("component_id").matches("[A-Za-z][A-Za-z0-9_.]*/[A-Za-z][A-Za-z0-9_.]*")) deny("component shape");
     }
@@ -55,6 +66,10 @@ final class EmbeddedDuplexKnownBirthAbandonment {
         if(current.getLong("pid")!=pid || auth.getLong("package_uid")!=uid
             || current.getLong("start_ticks")!=ticks || current.getLong("app_process_generation")!=generation)
             deny("current recovery incarnation differs");
+    }
+    static void requireBoot(JSONObject auth,String actualBoot) throws Exception {
+        if(crossBoot(auth) && !auth.getString("current_boot_id").equals(actualBoot))
+            deny("current recovery boot differs");
     }
     static void bind(JSONObject auth,String prior,String current,String checkpoint,String evidence) throws Exception {
         shape(auth);
