@@ -133,6 +133,7 @@ final class PolarSensorPanel {
      * but must never become the lifetime owner of BLE, PMD, or a capture.
      */
     private final Context appContext;
+    private final PolarSensorRuntime originatingRuntime;
     private Activity activity;
     private Host host;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -233,8 +234,10 @@ final class PolarSensorPanel {
     private volatile long automaticConnectionEvidenceGeneration;
     private long automaticConnectionDeadlineElapsedMs;
 
-    PolarSensorPanel(Context context) {
+    PolarSensorPanel(Context context,PolarSensorRuntime owner) {
         this.appContext = context.getApplicationContext();
+        if(owner==null)throw new IllegalArgumentException("polar-originating-owner-required");
+        this.originatingRuntime=owner;
     }
 
     void attachPanel(Activity panelActivity, Host panelHost) {
@@ -411,6 +414,18 @@ final class PolarSensorPanel {
         parallelRow.addView(startAll, rowButtonParams());
         parallelRow.addView(stopAll, rowButtonParams());
         root.addView(parallelRow);
+
+        LinearLayout explicitStopRow = row();
+        for (final String mode : new String[]{"acc", "ecg"}) {
+            Button explicitStop = button("Stop " + mode.toUpperCase(Locale.US));
+            explicitStop.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View view) {
+                    dispatchProjectedPanelStop("stop_" + mode);
+                }
+            });
+            explicitStopRow.addView(explicitStop, rowButtonParams());
+        }
+        root.addView(explicitStopRow);
 
         root.addView(sectionTitle("ACC presentation"));
         LinearLayout presentationRow = row();
@@ -1409,10 +1424,60 @@ final class PolarSensorPanel {
     }
 
     private void stopPmd() {
-        String mode = selectedPmdMode();
+        String mode=selectedPmdMode();
         recoveryIntent.stopStream(mode);
+        startAllPending=false;
+        requestUndesiredStreamStop(mode);
+    }
+
+    /** Explicit stream identity; never depends on the presentation spinner. */
+    void stopSpecificPmd(String mode) {
+        if (!"acc".equals(mode) && !"ecg".equals(mode)) throw new IllegalArgumentException("unsupported-stream");
+        recoveryIntent.stopExplicitStream(mode,selectedPmdMode());
         startAllPending = false;
         requestUndesiredStreamStop(mode);
+    }
+
+    void showProjectedStopFeedback(String operation,JSONObject response) {
+        if(Looper.myLooper()!=Looper.getMainLooper())throw new IllegalStateException("polar-main-thread-required");
+        setStatus(PolarProjectedStopActions.feedback(operation,response));
+    }
+
+    void dispatchProjectedPanelStop(String operation) {
+        originatingRuntime.dispatchProjectedFromPanel(this,operation);
+    }
+
+    /** Retired views may show denial but never overwrite the replacement owner's status file. */
+    void showProjectedStopRejection(String operation,String reason) {
+        if(Looper.myLooper()!=Looper.getMainLooper())throw new IllegalStateException("polar-main-thread-required");
+        try {
+            String message=PolarProjectedStopActions.feedback(operation,new JSONObject().put("dispatch_status","rejected").put("reason",reason));
+            if(status!=null)status.setText(message);
+        }catch(Exception ignored){ }
+    }
+
+    /** Read on the owning main thread; intent and effective ACK/data remain separate. */
+    JSONObject projectedStopState(long runtimeGeneration, String ownerEpoch, int pid) throws Exception {
+        if (Looper.myLooper() != Looper.getMainLooper()) throw new IllegalStateException("polar-main-thread-required");
+        long accSampleCount, ecgSampleCount, accReceipt, ecgReceipt;
+        synchronized (countersLock) {
+            accSampleCount=accSamples;ecgSampleCount=ecgSamples;
+            accReceipt=lastAccFrameReceiptNs;ecgReceipt=lastEcgFrameReceiptNs;
+        }
+        long observedAt=System.nanoTime();
+        return new JSONObject().put("schema", "rusty.quest.native_renderer.polar_projected_state.v1")
+            .put("pid", pid).put("runtime_generation", runtimeGeneration).put("owner_epoch",ownerEpoch).put("closed", closing)
+            .put("selected_sensor", selectedDeviceInstanceId()).put("connected_sensor", connectedDeviceInstanceId)
+            .put("connected", connected).put("acc_revision", recoveryIntent.streamRevision("acc"))
+            .put("ecg_revision", recoveryIntent.streamRevision("ecg"))
+            .put("acc_requested", recoveryIntent.streamWanted("acc"))
+            .put("ecg_requested", recoveryIntent.streamWanted("ecg"))
+            .put("acc_pmd_ack_running", accPmdRunning).put("ecg_pmd_ack_running", ecgPmdRunning)
+            .put("acc_data_receiving_observed", pmdDataReceiving(connected,observedAt,accReceipt))
+            .put("ecg_data_receiving_observed", pmdDataReceiving(connected,observedAt,ecgReceipt))
+            .put("acc_samples", accSampleCount).put("ecg_samples", ecgSampleCount)
+            .put("observed_at_monotonic_ns", observedAt)
+            .put("capture_session_id", captureSessionId);
     }
 
     private void requestUndesiredStreamStop(String mode) {

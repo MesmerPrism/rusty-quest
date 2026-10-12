@@ -19,6 +19,13 @@ public final class PolarSensorCommandReceiver extends BroadcastReceiver {
         if (intent == null || !PolarSensorRuntime.ACTION_COMMAND.equals(intent.getAction())) {
             return;
         }
+        if (intent.hasExtra(PolarSensorRuntime.EXTRA_PROJECTED_REQUEST)) {
+            if (intent.hasExtra(PolarSensorRuntime.EXTRA_COMMAND)) return;
+            PolarSensorRuntime.forApplication(context).dispatchProjectedFromCli(
+                intent.getStringExtra(PolarSensorRuntime.EXTRA_PROJECTED_REQUEST),
+                intent.getStringExtra(PolarSensorRuntime.EXTRA_TOKEN));
+            return;
+        }
         PolarSensorRuntime.forApplication(context).dispatchFromCli(
             intent.getStringExtra(PolarSensorRuntime.EXTRA_COMMAND),
             intent.getStringExtra(PolarSensorRuntime.EXTRA_TOKEN)

@@ -290,6 +290,11 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     if ($LASTEXITCODE -ne 0) { throw "Polar auto-connection policy test failed: $LASTEXITCODE" }
     & $javaCommand.Source '-cp' ("$output$([IO.Path]::PathSeparator)$androidJar") 'io.github.mesmerprism.rustyquest.native_renderer.PolarRecoveryIntentTest'
     if ($LASTEXITCODE -ne 0) { throw "Polar recovery intent test failed: $LASTEXITCODE" }
+    & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName + [IO.Path]::PathSeparator + $androidJar) '-d' $output (Join-Path $testRoot 'PolarProjectedStopActionsTest.java')
+    if ($LASTEXITCODE -ne 0) { throw "Polar projected stop control compile failed: $LASTEXITCODE" }
+    & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName + [IO.Path]::PathSeparator + $androidJar) 'io.github.mesmerprism.rustyquest.native_renderer.PolarProjectedStopActionsTest'
+    if ($LASTEXITCODE -ne 0) { throw "Polar projected stop action controls failed: $LASTEXITCODE" }
+    & (Join-Path $PSScriptRoot 'Test-PolarProjectedStopCli.ps1') -RepoRoot $repo
     # Compile the real generated shell as well as the module stub; no APK/build invocation.
     $buildText = [IO.File]::ReadAllText((Join-Path $repo 'tools/Build-NativeRendererAndroid.ps1'))
     $shellMatch = [regex]::Match($buildText, '(?s)\$generatedControlPanelActivitySource = @"\r?\n(.*?)\r?\n"@')
@@ -455,6 +460,8 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
 }
 
 & (Join-Path $PSScriptRoot 'Test-ExperimentSessionDebugSelection.ps1') -RepoRoot $repo
+& python (Join-Path $PSScriptRoot 'test_polar_recovery_callbacks.py')
+if ($LASTEXITCODE -ne 0) { throw 'Production Polar callback/UI owner controls failed' }
 Write-Host 'Test-NativeRendererExperimentPanel PASS'
 
 & (Join-Path $PSScriptRoot "Test-PolarTrustedColdStart.ps1") -RepoRoot $repo

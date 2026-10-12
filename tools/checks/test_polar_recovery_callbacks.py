@@ -25,7 +25,7 @@ markers = ['private void handleConnectionState(', 'private void scheduleAutomati
            'private void scheduleAutomaticRecovery(String detail, boolean announceRetry)',
            'private void finishAutomaticConnectionCycle()', 'private void cancelAutomaticRecovery(',
            'private void scheduleAutomaticConnectionTimeout(', 'private void disconnect()',
-           'private void completeAutoScan(', 'private void stopPmd()',
+           'private void completeAutoScan(', 'private void stopPmd()', 'void stopSpecificPmd(String mode)',
            'private void stopAllPmd()', 'private void beginStreams(',
            'private void requestUndesiredStreamStop(', 'private void completeUndesiredStreamStop(',
            'private void handlePmdControlRecord(', 'void ensureAutoConnection()',
@@ -124,6 +124,15 @@ public final class PolarRecoveryCallbacksHost {
    check(!h.recoveryIntent.streamWanted("acc")&&h.recoveryIntent.streamWanted("ecg")&&h.automaticConnectionRequested,"actual offline individual stop clears only ACC resume");
    h.gatt=new BluetoothGatt();h.connected=true;h.beginStreams(h.gatt);
    check("ecg".equals(h.startedMode),"actual subscription restore resumes remaining ECG only");
+   h=connectedOwner();h.recoveryIntent.startStream("ecg");h.stopSpecificPmd("ecg");
+   check(h.recoveryIntent.streamWanted("acc")&&!h.recoveryIntent.streamWanted("ecg")&&h.automaticConnectionRequested,
+     "explicit ECG stop ignores ambient ACC mode and retains ACC/HR intent");
+   h=new PolarRecoveryCallbacksHost();h.automaticConnectionRequested=true;h.stopSpecificPmd("ecg");
+   h.recoveryIntent.connected("sensor-A","acc");h.gatt=new BluetoothGatt();h.connected=true;h.beginStreams(h.gatt);
+   check("acc".equals(h.startedMode)&&!h.recoveryIntent.streamWanted("ecg")&&h.automaticConnectionRequested,
+     "cold explicit other-stream stop preserves latent automatic ACC default without starting it at stop dispatch");
+   h=new PolarRecoveryCallbacksHost();h.stopPmd();h.recoveryIntent.connected("sensor-A","acc");
+   check(!h.recoveryIntent.streamWanted("acc"),"legacy cold selected StopPMD still suppresses its default");
    h=connectedOwner();h.recoveryIntent.startStream("ecg");h.beginStreams(h.gatt);
    check(h.startAllPending&&"acc".equals(h.startedMode),"actual parallel restore starts ACC then queues ECG intent");
    h=connectedOwner();h.stopAllPmd();h.beginStreams(h.gatt);
@@ -155,6 +164,75 @@ with tempfile.TemporaryDirectory(prefix='polar-recovery-controls-') as tmp:
     source.write_text(fixture,encoding='utf-8')
     subprocess.run(['javac','--release','8','-encoding','UTF-8','-d',tmp,str(source)],check=True)
     subprocess.run(['java','-cp',tmp,'io.github.mesmerprism.rustyquest.native_renderer.PolarRecoveryCallbacksHost'],check=True)
+
+# Execute the actual UI entrypoint and runtime entrypoint with inert Android
+# projection/dispatch boundaries. Retired callbacks must not call a factory,
+# read a replacement projection, dispatch a stop, or persist replacement status.
+panel_entry=block(text,'void dispatchProjectedPanelStop(String operation)')
+runtime_entry=block(runtime_text,'void dispatchProjectedFromPanel(PolarSensorPanel source,String operation)')
+owner_fixture=r'''
+package io.github.mesmerprism.rustyquest.native_renderer;
+import java.util.*;
+import java.nio.charset.StandardCharsets;
+class JSONObject {
+ final Map<String,Object> fields=new HashMap<String,Object>();
+ JSONObject put(String key,Object value){fields.put(key,value);return this;}
+ Object get(String key)throws Exception{if(!fields.containsKey(key))throw new Exception("missing");return fields.get(key);}
+ String getString(String key)throws Exception{return (String)get(key);}
+}
+class Log{static void i(String tag,String message){}}
+class PolarProjectedStopActions{static final String SCHEMA="fixture";}
+class PolarSensorPanel{
+ final PolarSensorRuntime originatingRuntime;int rejected,feedback;
+ PolarSensorPanel(PolarSensorRuntime owner){originatingRuntime=owner;}
+ void showProjectedStopRejection(String operation,String reason){rejected++;}
+ void showProjectedStopFeedback(String operation,JSONObject response){feedback++;}
+ PANEL_ENTRY
+}
+class PolarSensorRuntime{
+ static PolarSensorRuntime instance;static int factories;
+ static final String TAG="fixture",MARKER_PREFIX="fixture";
+ boolean closed;int projections,dispatches;
+ final PolarSensorPanel panel=new PolarSensorPanel(this);
+ final Projector projectedStops=new Projector();
+ static PolarSensorRuntime forApplication(Object ignored){factories++;return instance;}
+ class Projector{JSONObject project(Object ignored){projections++;JSONObject s=new JSONObject();
+   for(String field:new String[]{"pid","runtime_generation","owner_epoch","action_revision","selected_sensor","connected_sensor","acc_revision","ecg_revision"})s.put(field,field);
+   return s.put("stop_acc_operation_id","offered-acc").put("stop_ecg_operation_id","offered-ecg");}}
+ Object projectedTarget(){return this;}
+ JSONObject dispatchProjected(String encoded,String token,String origin){dispatches++;return new JSONObject();}
+ RUNTIME_ENTRY
+}
+public class PolarProjectedUiOwnerHost{
+ static void check(boolean b,String why){if(!b)throw new AssertionError(why);}
+ public static void main(String[] ignored){
+   PolarSensorRuntime old=new PolarSensorRuntime();PolarSensorRuntime.instance=old;
+   old.panel.dispatchProjectedPanelStop("stop_acc");
+   check(old.dispatches==1&&old.projections==1&&old.panel.feedback==1,"valid originating panel routes to common adapter");
+   PolarSensorRuntime fresh=new PolarSensorRuntime();PolarSensorRuntime.instance=fresh;old.closed=true;
+   old.panel.dispatchProjectedPanelStop("stop_ecg");
+   check(old.dispatches==1&&old.projections==1&&fresh.dispatches==0&&fresh.projections==0&&old.panel.rejected==1,"closed retired callback neither creates nor adopts a replacement owner");
+   old.closed=false;old.panel.dispatchProjectedPanelStop("stop_acc");
+   check(old.dispatches==1&&old.projections==1&&old.panel.rejected==2,"replaced actual owner denied even without a closed flag");
+   fresh.dispatchProjectedFromPanel(old.panel,"stop_ecg");
+   check(fresh.dispatches==0&&fresh.projections==0&&old.panel.rejected==3,"mismatched panel cannot invoke fresh owner");
+   fresh.dispatchProjectedFromPanel(null,"stop_acc");
+   check(fresh.dispatches==0&&PolarSensorRuntime.factories==0,"no implicit factory or null-source dispatch");
+   fresh.panel.dispatchProjectedPanelStop("stop_ecg");
+   check(fresh.dispatches==1&&fresh.panel.feedback==1,"current replacement panel works through its own adapter");
+   System.out.println("Production Polar UI actual-entrypoint stale/closed/mismatched panel ownership controls PASS");
+ }
+}
+'''.replace('PANEL_ENTRY',panel_entry).replace('RUNTIME_ENTRY',runtime_entry)
+with tempfile.TemporaryDirectory(prefix='polar-projected-ui-owner-') as tmp:
+    output=pathlib.Path(tmp)
+    source=output/'PolarProjectedUiOwnerHost.java';source.write_text(owner_fixture,encoding='utf-8')
+    android=output/'android'/'util';android.mkdir(parents=True)
+    base64=android/'Base64.java'
+    base64.write_text('package android.util;public class Base64{public static final int NO_WRAP=2;public static String encodeToString(byte[] data,int flags){return java.util.Base64.getEncoder().encodeToString(data);}}',encoding='utf-8')
+    subprocess.run(['javac','--release','8','-encoding','UTF-8','-d',tmp,str(source),str(base64)],check=True)
+    subprocess.run(['java','-cp',tmp,'io.github.mesmerprism.rustyquest.native_renderer.PolarProjectedUiOwnerHost'],check=True)
 print(json.dumps({'panel_sha256':hashlib.sha256(panel.read_bytes()).hexdigest(),
                   'runtime_sha256':hashlib.sha256(runtime.read_bytes()).hexdigest(),
-                  'extracted_methods':markers,'scope':'host production owner decisions; inert Android transport effects'}))
+                  'extracted_methods':markers,'projected_ui_entrypoints':['dispatchProjectedPanelStop','dispatchProjectedFromPanel'],
+                  'scope':'host production owner decisions; inert Android transport effects'}))
