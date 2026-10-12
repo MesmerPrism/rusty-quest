@@ -35,5 +35,11 @@ fun main() {
     val live=JSONObject(call());check(live.getJSONArray("configured_mask").getLong(2)==4L && live.getJSONArray("configured_policy").getLong(1)==1L);checks++
     StereoBankControls.rotate=true;denied{call()};StereoBankControls.rotate=false;StereoBankControls.actor[5]=8
     call();checks++
+    val contract=io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexOperatorContract
+    check(contract.parseFields("blend_config_read","a".repeat(32),emptyMap()).route==io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexOperatorContract.Route.BLEND_CONFIG_READ);checks++
+    check(contract.parseFields("renderer_terminal_status","a".repeat(32),emptyMap()).route==io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexOperatorContract.Route.RENDERER_TERMINAL_STATUS);checks++
+    denied{contract.parseFields("blend_config_read","a".repeat(32),mapOf("role_id" to "peer_a"))}
+    denied{contract.parseFields("blend_config_read","bad",emptyMap())}
+    check(io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.Construction.effects==0);checks++
     println("Actual CPU producer/accessor: $checks controls PASS; native inputs modeled, zero GPU counters accepted, rotated arm denied")
 }

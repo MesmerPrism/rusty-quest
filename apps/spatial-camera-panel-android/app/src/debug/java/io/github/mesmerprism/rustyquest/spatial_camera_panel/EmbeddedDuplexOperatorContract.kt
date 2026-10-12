@@ -122,7 +122,7 @@ internal object EmbeddedDuplexOperatorContract {
       return Request(route, argument, policy = words)
     }
     if (route in setOf(Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE)) return Request(route, argument)
-    if (route == Route.POLICY_READ || route == Route.BLEND_READ || route == Route.CONCURRENT_ARM || route == Route.CONCURRENT_STATUS ||
+    if (route == Route.POLICY_READ || route == Route.BLEND_CONFIG_READ || route == Route.BLEND_READ || route == Route.CONCURRENT_ARM || route == Route.CONCURRENT_STATUS ||
         route == Route.RENDERER_TERMINAL_STATUS || route == Route.OWNER_FAILURE_DIAGNOSTIC || route == Route.OWN_CAPTURE_DIAGNOSTIC || route == Route.STREAM_DROPOUT_DIAGNOSTIC ||
         route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER ||
         route == Route.CLOSE_NO_MEDIA || route == Route.PAIR_STATUS ||

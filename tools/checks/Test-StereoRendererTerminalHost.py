@@ -50,6 +50,7 @@ def main():
     assert '*CONTROL_POLICY.lock()' in atomic
     assert '"blend_config_read" -> Route.BLEND_CONFIG_READ' in contract.read_text()
     assert 'Route.BLEND_CONFIG_READ' in provider.read_text()
+    assert 'route == Route.BLEND_CONFIG_READ' in contract.read_text()
     assert 'it[1] in 0L..1L' in controls.read_text()
     files=[b/'stereo_renderer_terminal.rs',b/'stereo_renderer_terminal_jni.rs',b/'camera_hwb_source_set.rs',j/'StereoRendererTerminalStatus.java',fixture,provider,contract,cpu,controls]
     (out/'RESULT.json').write_text(json.dumps({'status':'passed','java_projection_selected':not a.native_only,'checks':checks,'source_pins':{str(f):hashlib.sha256(f.read_bytes()).hexdigest() for f in files},'limits':'Production native latch and Java projection with source joins; native resources, actor context and provider callers modeled. Android JNI/provider target compilation and artifact/device adoption are separate.'},indent=2))
