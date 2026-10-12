@@ -1625,9 +1625,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         !io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected() ||
         embeddedDuplexAttachmentGeneration != 0L || !spatialSceneReady ||
         cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext() == null) return
+    val activity = java.lang.ref.WeakReference(this)
     runCatching {
           io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
-              .EmbeddedDuplexActivityAttachment.attach(this, embeddedDuplexDisplay)
+              .EmbeddedDuplexActivityAttachment.attach(this, embeddedDuplexDisplay,
+                  java.util.function.Consumer { proof -> activity.get()?.onEmbeddedDuplexWholeCloseVerified(proof) })
         }
         .onSuccess { generation ->
           embeddedDuplexAttachmentGeneration = generation
@@ -1676,6 +1678,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       }
     }
     return result
+  }
+
+  private fun onEmbeddedDuplexWholeCloseVerified(
+      proof: io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexWholeCloseRollover,
+  ) {
+    val completed = embeddedDuplexRuntimeFuture
+    runOnUiThread {
+      if (embeddedDuplexActivityDestroying || completed == null ||
+          embeddedDuplexRuntimeFuture !== completed || !completed.isDone ||
+          completed.isCompletedExceptionally || completed.isCancelled) return@runOnUiThread
+      val status = completed.getNow(null) ?: return@runOnUiThread
+      if (!proof.matchesRuntime(embeddedDuplexAttachmentGeneration,
+              status.runtimeConfigSha256, status.enrollmentRecordSha256) ||
+          !io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+              .EmbeddedDuplexRuntimeService.wholeCloseRolloverCurrent(this, proof)) return@runOnUiThread
+      embeddedDuplexRuntimeFuture = null
+      embeddedDuplexAttachmentGeneration = 0L
+      marker("channel=embedded-duplex status=whole-close-activity-rollover-verified " +
+          "attachmentGeneration=${proof.attachmentGeneration} receiptSha256=${proof.receiptSha256}")
+    }
   }
 
   /** Shared human/typed transport entry; enrollment and session values come from the app. */

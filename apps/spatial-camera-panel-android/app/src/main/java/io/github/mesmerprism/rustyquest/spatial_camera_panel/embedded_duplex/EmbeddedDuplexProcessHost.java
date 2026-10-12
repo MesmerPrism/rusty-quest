@@ -42,6 +42,8 @@ final class EmbeddedDuplexProcessHost {
     private final Object attachmentGate = new Object();
     private final AtomicReference<Phase> phase = new AtomicReference<>(Phase.NEW);
     private volatile long attachmentGeneration;
+    private java.util.function.Consumer<EmbeddedDuplexWholeCloseRollover> wholeCloseActivity;
+    private EmbeddedDuplexWholeCloseRollover wholeCloseRollover;
     private boolean displayDetaching;
     private boolean closeInFlight;
     private final ExecutorService commands = Executors.newSingleThreadExecutor(runnable -> {
@@ -100,13 +102,29 @@ final class EmbeddedDuplexProcessHost {
     EmbeddedDuplexDisplaySlot displayAttachment() { return display; }
     boolean ready() { return phase.get() == Phase.READY; }
 
-    long attachDisplay(EmbeddedDuplexDisplay next) {
+    long attachDisplay(EmbeddedDuplexDisplay next) { return attachDisplay(next, null); }
+    long attachDisplay(EmbeddedDuplexDisplay next,
+            java.util.function.Consumer<EmbeddedDuplexWholeCloseRollover> onWholeClose) {
         synchronized (attachmentGate) {
             if (phase.get() != Phase.NEW || attachmentGeneration != 0L || displayDetaching) {
                 throw new IllegalStateException("embedded display attachment unavailable");
             }
             attachmentGeneration = display.attach(next);
+            wholeCloseActivity = onWholeClose;
+            wholeCloseRollover = null; // A successor attachment fences a delayed old Activity callback.
             return attachmentGeneration;
+        }
+    }
+
+    boolean wholeCloseRolloverCurrent(EmbeddedDuplexWholeCloseRollover proof) {
+        synchronized (attachmentGate) {
+            if (proof == null || proof != wholeCloseRollover || phase.get() != Phase.NEW
+                    || attachmentGeneration != 0L || displayDetaching || platform != null || resources != null
+                    || runtimeConfigSha256 != null || nativeExecutorGeneration != 0L || processFence == null) return false;
+            try {
+                processFence.requireLive(proof.appGeneration);
+                return proof.processEpochId.equals(processFence.epochId());
+            } catch (Exception changed) { return false; }
         }
     }
 
@@ -1151,10 +1169,20 @@ final class EmbeddedDuplexProcessHost {
         }
         processFence.afterVerifiedWholeProductCleanup(checkpointSnapshot(), evidenceSnapshot(), joinedDigest);
         proof.put("app_process_fence_cleanup", "terminal").put("whole_app_physical_cleanup", "terminal").put("status", "terminal");
+        java.util.function.Consumer<EmbeddedDuplexWholeCloseRollover> activity = noMedia ? null : wholeCloseActivity;
+        EmbeddedDuplexWholeCloseRollover rollover = activity == null ? null
+                : EmbeddedDuplexWholeCloseRollover.verified(proof, processFence.epochId(), processFence.generation(),
+                        nativeExecutorGeneration, attachmentGeneration, expectedSha, enrollmentRecordSha256);
         platform = null; resources = null; runtimeConfigSha256 = null; nativeExecutorGeneration = 0L;
         nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; startIntent.afterVerifiedCleanup();
         ownNoMediaStopTarget = null;
-        synchronized (attachmentGate) { attachmentGeneration = 0L; displayDetaching = false; phase.set(Phase.NEW); }
+        synchronized (attachmentGate) {
+            wholeCloseRollover = rollover; wholeCloseActivity = null;
+            attachmentGeneration = 0L; displayDetaching = false; phase.set(Phase.NEW);
+        }
+        // The callback only reconciles the exact old Activity cache. It cannot change the verified close result.
+        if (activity != null) try { activity.accept(rollover); }
+        catch (RuntimeException retiredActivity) { /* A destroyed Activity does not become a fresh bootstrap. */ }
     }
 
     /** A native authenticated remote closure never becomes a local seven-owner Stop. */

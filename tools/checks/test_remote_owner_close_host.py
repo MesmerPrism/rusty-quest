@@ -53,11 +53,14 @@ public final class StereoBankControls {
 ''', encoding='utf-8')
     harness = java / 'RemoteCloseHarness.java'
     harness.write_text(HARNESS_PREFIX + actual + HARNESS_SUFFIX, encoding='utf-8')
-    run('javac', [a.javac, '--release', '17', '-encoding', 'UTF-8', '-cp', a.json_jar, '-d', str(java), str(stereo), str(harness)])
+    token = java / 'EmbeddedDuplexWholeCloseRollover.java'
+    token_source = (root / 'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexWholeCloseRollover.java').read_text()
+    token.write_text(token_source.split('\n', 1)[1].replace('EmbeddedDuplexProcessFence.digest', 'RemoteCloseHarness.EmbeddedDuplexProcessFence.digest'), encoding='utf-8')
+    run('javac', [a.javac, '--release', '17', '-encoding', 'UTF-8', '-cp', a.json_jar, '-d', str(java), str(stereo), str(harness), str(token)])
     import os
     run('java', [a.java, '-cp', str(java) + os.pathsep + a.json_jar, 'RemoteCloseHarness'])
-    (out / 'RESULT.json').write_text(json.dumps({'status': 'pass', 'rust_controls': 8, 'java_controls': 13, 'android_cleanup_qualified': False, 'device_effects': False}), encoding='utf-8')
-    print('Remote receiver replay 8 and actual Java completion 13 controls PASS; host model only.')
+    (out / 'RESULT.json').write_text(json.dumps({'status': 'pass', 'rust_controls': 8, 'java_controls': 14, 'android_cleanup_qualified': False, 'device_effects': False}), encoding='utf-8')
+    print('Remote receiver replay 8 and actual Java completion 14 controls PASS; host model only.')
 
 
 HARNESS_PREFIX = '''import org.json.*;
@@ -66,9 +69,10 @@ public final class RemoteCloseHarness {
  static final class EmbeddedDuplexPlatform { boolean retired,closed; void closeControlAfterProductCleanup(){closed=true;} void retireProcessCallbacks(){retired=true;} }
  static final class Resources { boolean terminal=true; boolean productResourcesTerminal(){return terminal;} }
  static final class Display { void detachAfterCleanup(long generation,Runnable action){action.run();} }
- static final class EmbeddedDuplexProcessFence { boolean cleared; long generation(){return 3;} static String digest(String text){return "fixture";} void afterVerifiedWholeProductCleanup(String c,String e,String d){cleared=true;} }
+ static final class EmbeddedDuplexProcessFence { boolean cleared; long generation(){return 3;} String epochId(){return "app-process.3.fixture";} static String digest(String text){return "fixture";} void afterVerifiedWholeProductCleanup(String c,String e,String d){cleared=true;} }
  static final class EmbeddedDuplexStartJournal { EmbeddedDuplexStartJournal(Object context){} String read(){return null;} void persist(String text){} }
  static final class Intent { boolean cleared; void afterVerifiedCleanup(){cleared=true;} }
+ java.util.function.Consumer<EmbeddedDuplexWholeCloseRollover> wholeCloseActivity; EmbeddedDuplexWholeCloseRollover wholeCloseRollover;
  enum Phase {CLOSING,NEW}
  final Object applicationContext=new Object(), attachmentGate=new Object();
  EmbeddedDuplexPlatform platform=new EmbeddedDuplexPlatform(); Resources resources=new Resources(); Display display=new Display();
@@ -107,7 +111,14 @@ HARNESS_SUFFIX = '''
  denied("duplicate receipts",(x,y)->y.getJSONObject("remote_receiver_terminal_history").put("verified_response_count",4).getJSONArray("receiver_stop_receipt_ids").put("receipt.stop"));
  denied("missing history",(x,y)->y.remove("remote_receiver_terminal_history"));
  denied("local proof promotion",(x,y)->y.put("peer_physical_cleanup","terminal"));
- System.out.println("Actual finishWholeAppProof: 13 controls PASS; platform model, no Android effects.");
+ // Select the Activity callback only after the real full-completion method passes its barriers.
+ renderer(); h=new RemoteCloseHarness(); String sha=new String(new char[64]).replace('\\0','a');
+ h.runtimeConfigSha256=sha;h.enrollmentRecordSha256=sha;p=proof().put("config_sha256",sha);
+ java.util.concurrent.atomic.AtomicReference<EmbeddedDuplexWholeCloseRollover> observed=new java.util.concurrent.atomic.AtomicReference<>();
+ h.wholeCloseActivity=observed::set;h.finishWholeAppProof(p,sha,false);
+ if(observed.get()==null||observed.get()!=h.wholeCloseRollover||!observed.get().matchesRuntime(2,sha,sha)||h.phase.get()!=Phase.NEW)
+   throw new AssertionError("verified Activity handoff absent");
+ System.out.println("Actual finishWholeAppProof: 14 controls PASS; platform model, no Android effects.");
  }
 }
 '''

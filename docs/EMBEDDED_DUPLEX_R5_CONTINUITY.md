@@ -458,3 +458,25 @@ actual coupled renewals and expiry. Shared trust accepts the authenticated
 cleanup projection; distinct receiver trust rejects and leaves the receiver
 snapshot unchanged. This is host authority evidence, not physical Stop, whole
 close or a claim that policy changes can recover a retained live transaction.
+
+### Proof-bound warm Activity rollover
+
+A successful typed whole-product close now hands the attached Activity an opaque
+process-owned rollover token after the persisted full-cleanup fence and all
+existing physical barriers. It binds the actor epoch, app/native/attachment
+generations, runtime and enrollment digests, and final receipt digest. The
+Activity reconciles its cached bootstrap future and attachment only on its UI
+thread, after the completed future matches that token and the process host
+still owns the issued token in the closed state. A successor attachment
+invalidates the token. Pending cleanup, `NEW` alone, a replaced/failed future,
+other actors or runtime inputs, and ordinary `onNewIntent` cannot clear the
+cache. Rollover does not bootstrap, authorize media, replay Stop or retire a
+process. The existing no-media close path keeps its separate behavior.
+
+`tools/checks/Test-WholeCloseActivityRolloverHost.py` compiles the production
+token and current-host predicate and checks incomplete/different proofs and
+actor/attachment/runtime drift against a modeled process fence. Source joins
+check the actual callback ordering and UI guards. Retained completion and
+remote-owner completion controls remain applicable. Actual Android Java/Kotlin
+entrypoint compilation is a separate source qualification; host checks do not
+qualify a packaged or installed app, or physical device cleanup.
