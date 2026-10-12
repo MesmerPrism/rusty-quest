@@ -494,6 +494,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 }
                 return readback;
             }
+
+            @Override public JSONObject polarStopReadback() throws Exception {
+                return ControlPanelActivity.polarStopProjection();
+            }
             @Override public JSONObject snapshot() throws Exception {
                 refreshExperimenterPolarProjection();
                 long now = SystemClock.elapsedRealtime();
@@ -578,6 +582,20 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             @Override public void dispatch(ExperimentSessionBleServer.CommandRequest request) {
                 ExperimentSessionBleServer server = remoteServer();
                 if (server == null) return;
+                if(request.polarRequest!=null) {
+                    try {
+                        if(!PolarStopBleCapability.matchesNativeFence(request.polarNativeFence,sessionControlReadback()))
+                            throw new SecurityException("native-owner-changed-before-polar-dispatch");
+                        JSONObject result=ControlPanelActivity.dispatchPolarStop(request.polarRequest,request.id+request.id);
+                        if(result==null)throw new SecurityException("polar-owner-unavailable");
+                        JSONObject receipt=result.optJSONObject("action_receipt");
+                        if(receipt==null)server.updateReceipt(request.id,"rejected","Polar owner rejected the current action scope.");
+                        else if("dispatched".equals(receipt.optString("dispatch_status")))
+                            server.updateReceipt(request.id,"dispatched","Stop requested; sensor ACK is not confirmed.");
+                        else server.updateReceipt(request.id,"outcome_unknown","Polar action outcome unknown; do not replay.");
+                    } catch(Exception denied) { server.updateReceipt(request.id,"rejected","Polar owner admission failed."); }
+                    return;
+                }
                 if (remotePending != null) {
                     server.updateReceipt(request.id, "rejected", "Another command is awaiting confirmation.");
                     return;

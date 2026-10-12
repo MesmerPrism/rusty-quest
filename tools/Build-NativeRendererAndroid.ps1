@@ -779,6 +779,23 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     } else {
         ""
     }
+    $polarBleStopHooks = if ($usesPolarSessionRuntime) {
+@'
+    static org.json.JSONObject polarStopProjection() throws Exception {
+        return PolarSensorRuntime.existingProjectedStopState();
+    }
+    static org.json.JSONObject dispatchPolarStop(org.json.JSONObject request,String token) throws Exception {
+        return PolarSensorRuntime.dispatchExistingProjectedStop(request,token);
+    }
+'@
+    } else {
+@'
+    static org.json.JSONObject polarStopProjection() throws Exception { return null; }
+    static org.json.JSONObject dispatchPolarStop(org.json.JSONObject request,String token) throws Exception {
+        throw new SecurityException("polar-feature-unselected");
+    }
+'@
+    }
     $generatedControlPanelActivityPath = Join-Path $generatedEmbeddedPackageDir "ControlPanelActivity.java"
     $experimentSessionHubHook = ''
     $appHubSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider'
@@ -1048,6 +1065,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
         }
         return bytes.toByteArray();
     }
+
+$polarBleStopHooks
 
     static String conditionAudioReadiness(String conditionId) {
         ConditionAudioRuntime runtime = conditionAudioRuntime;

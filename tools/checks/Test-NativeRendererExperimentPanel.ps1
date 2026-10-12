@@ -173,6 +173,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Capability compile failed: $LASTEXITCODE" }
     & $javaCommand.Source '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) 'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionControlCapabilityTest'
     if ($LASTEXITCODE -ne 0) { throw "Capability controls failed: $LASTEXITCODE" }
+    & (Join-Path $PSScriptRoot 'Test-PolarStopBleReceipt.ps1') -RepoRoot $repo
 
     & $javacCommand.Source '--release' '8' '-encoding' 'UTF-8' '-cp' ($output + [IO.Path]::PathSeparator + $jsonJar.FullName) '-d' $output (Join-Path $panelRoot 'ExperimentSessionUiControlHandoff.java') (Join-Path $testRoot 'ExperimentSessionUiControlHandoffTest.java')
     if ($LASTEXITCODE -ne 0) { throw "UI handoff control compile failed: $LASTEXITCODE" }
@@ -207,6 +208,10 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     static boolean admitTerminalSaveAndExit(android.app.Activity activity, android.content.Intent intent) { return false; }
     static void finishTerminalSaveAndExit(android.app.Activity activity, boolean saved, long generation, String operationId, long revision) {}
     static String conditionAudioReadiness(String condition) { return "audio-track-not-ready"; }
+    static org.json.JSONObject polarStopProjection() throws Exception { return null; }
+    static org.json.JSONObject dispatchPolarStop(org.json.JSONObject request,String token) throws Exception {
+        throw new SecurityException("polar-feature-unselected");
+    }
     static boolean experimentSessionOpenControlDefault() { return false; }
     static String conditionBreathGuidanceReadiness(String condition) { return "no-pattern"; }
     static int conditionBreathGuidanceDefaultBias(String condition) { return 0; }
@@ -306,6 +311,9 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     $generatedShell = $generatedShell.Replace('$experimentSessionTerminalAudioStop', '        stopCurrentConditionAudioForTerminal(true);')
     $generatedShell = $generatedShell.Replace('$experimentSessionOnCreate', '        ownerApplicationContext = getApplicationContext();')
     $generatedShell = $generatedShell.Replace('$polarRuntimeReopenFromExplicitLaunch', '            PolarSensorRuntime.reopenClosedFromExplicitLaunch();')
+    $polarHookMatch = [regex]::Match($buildText, "(?s)\`$polarBleStopHooks = if .*?@'\r?\n(.*?)\r?\n'@")
+    if (-not $polarHookMatch.Success) { throw 'Actual generated Polar stop bridge missing' }
+    $generatedShell = $generatedShell.Replace('$polarBleStopHooks', $polarHookMatch.Groups[1].Value)
     $generatedShell = $generatedShell.Replace('    // EXPERIMENT_SESSION_SHELL_BEGIN' + [Environment]::NewLine, '')
     $generatedShell = $generatedShell.Replace('    // EXPERIMENT_SESSION_SHELL_END' + [Environment]::NewLine, '')
     foreach ($anchor in @('experimentSessionProfileSha256', 'experimentSessionProviderManifestSha256', 'experimentSessionInventorySha256')) {

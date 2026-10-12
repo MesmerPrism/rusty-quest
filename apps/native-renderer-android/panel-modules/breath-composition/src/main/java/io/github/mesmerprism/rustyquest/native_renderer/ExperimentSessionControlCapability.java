@@ -32,6 +32,10 @@ final class ExperimentSessionControlCapability {
 
     synchronized JSONObject offer(JSONObject status,JSONObject nativeReadback,long server,long owner,
             long ownerEpoch,long now) throws Exception {
+        return offer(status,nativeReadback,server,owner,ownerEpoch,now,"");
+    }
+    synchronized JSONObject offer(JSONObject status,JSONObject nativeReadback,long server,long owner,
+            long ownerEpoch,long now,String independentPolarTuple) throws Exception {
         if(nativeReadback==null || now<=0 || server<=0 || owner<=0 || ownerEpoch<=0
                 || !Boolean.TRUE.equals(nativeReadback.opt("recording"))
                 || !Boolean.TRUE.equals(nativeReadback.opt("profile_identity_bound"))
@@ -47,7 +51,7 @@ final class ExperimentSessionControlCapability {
         String state=string(nativeReadback,"control_state");
         String nextAllowed="armed".equals(state)?"start":"running".equals(state)?"pause":"paused".equals(state)?"resume":"";
         if(nextAllowed.isEmpty() || !state.equalsIgnoreCase(string(status,"p"))) {clear();return null;}
-        String nextTuple=server+"|"+owner+"|"+ownerEpoch+"|"+epoch+"|"+generation+"|"+session+"|"+condition+"|"+profile+"|"+binding;
+        String nextTuple=server+"|"+owner+"|"+ownerEpoch+"|"+epoch+"|"+generation+"|"+session+"|"+condition+"|"+profile+"|"+binding+"|"+independentPolarTuple;
         if(!nextTuple.equals(tuple)){reference=ExperimentSessionBleProtocol.newHex(16);tuple=nextTuple;}
         this.projection=new JSONObject(nativeReadback.toString());this.observed=now;
         this.server=server;this.owner=owner;this.ownerEpoch=ownerEpoch;this.allowed=nextAllowed;

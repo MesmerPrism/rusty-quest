@@ -51,6 +51,7 @@ final class ExperimentSessionBleServer {
     interface Delegate {
         JSONObject snapshot() throws Exception;
         default JSONObject sessionControlReadback() throws Exception { return null; }
+        default JSONObject polarStopReadback() throws Exception { return null; }
         default boolean openControlDefault() { return false; }
         void dispatch(CommandRequest command);
     }
@@ -61,11 +62,18 @@ final class ExperimentSessionBleServer {
         final String condition;
         final int bias;
         final ExperimentSessionControlCapability.Fence sessionFence;
+        final JSONObject polarRequest;
+        final JSONObject polarNativeFence;
 
         CommandRequest(String id, String operation, String condition, int bias) {
             this(id,operation,condition,bias,null);
         }
         CommandRequest(String id,String operation,String condition,int bias,ExperimentSessionControlCapability.Fence fence) {
+            this(id,operation,condition,bias,fence,null,null);
+        }
+        CommandRequest(String id,String operation,String condition,int bias,ExperimentSessionControlCapability.Fence fence,JSONObject polarRequest,JSONObject polarNativeFence) {
+            this.polarRequest=polarRequest;
+            this.polarNativeFence=polarNativeFence;
             this.id = id;
             this.operation = operation;
             this.condition = condition;
@@ -123,6 +131,7 @@ final class ExperimentSessionBleServer {
     synchronized void markShellOperation(String id) { shellOperationId=id; }
     synchronized JSONObject ownerReceipt() throws Exception { return latestOwnerReceipt==null?new JSONObject():new JSONObject(latestOwnerReceipt.toString()); }
     private final ExperimentSessionControlCapability sessionControl = new ExperimentSessionControlCapability();
+    private final PolarStopBleCapability polarControl = new PolarStopBleCapability();
 
     private ExperimentSessionBleServer(Context context) {
         this.context = context;
@@ -269,6 +278,7 @@ final class ExperimentSessionBleServer {
         serverGeneration++;
         active = false;
         sessionControl.clear();
+        polarControl.clear();
         main.removeCallbacks(statusRefresh);
         if (advertiser != null && advertiseCallback != null) {
             try { advertiser.stopAdvertising(advertiseCallback); }
@@ -290,7 +300,7 @@ final class ExperimentSessionBleServer {
     synchronized void updateReceipt(String id, String state, String detail) {
         if (!ExperimentSessionBleProtocol.isLowerHex(id, 16)) return;
         if (!Arrays.asList("accepted", "pending", "confirmed", "rejected",
-                "outcome_unknown").contains(state)) return;
+                "outcome_unknown", "dispatched").contains(state)) return;
         try {
             JSONObject receipt = new JSONObject().put("v", 1).put("id", id)
                 .put("state", state).put("detail", safeDetail(detail));
@@ -330,16 +340,23 @@ final class ExperimentSessionBleServer {
                 try {
                     JSONObject status = target.snapshot();
                     status.put("v", 1).put("m", open ? "open" : "gated");
-                    JSONObject capability = sessionControl.offer(status,target.sessionControlReadback(),
+                    JSONObject nativeReadback=target.sessionControlReadback();
+                    JSONObject polarOffer=polarControl.offer(target.polarStopReadback(),nativeReadback,
                         generation,identity,epoch,SystemClock.elapsedRealtime());
+                    JSONObject capability = sessionControl.offer(status,nativeReadback,
+                        generation,identity,epoch,SystemClock.elapsedRealtime(),polarControl.bindingTuple());
                     if(capability!=null)status.put("q",capability);
-                    byte[] bytes = jsonBytes(status.toString());
+                    if(capability!=null&&polarOffer!=null) {
+                        polarControl.shareReference(capability.getString("s"));polarOffer.put("s",capability.getString("s"));
+                    }
+                    byte[] bytes = polarControl.projectBoundedStatus(status,polarOffer);
+                    if(status.has("q")&&!new JSONObject(new String(bytes,StandardCharsets.UTF_8)).has("q"))sessionControl.clear();
                     if(bytes.length>480 && status.has("q")) {
                         status.remove("q");sessionControl.clear();bytes=jsonBytes(status.toString());
                     }
                     if (bytes.length <= 480) next = bytes;
                 } catch (Exception error) {
-                    sessionControl.clear();
+                    sessionControl.clear();polarControl.clear();
                     Log.w(TAG, "status=snapshot-unavailable", error);
                 }
             }
@@ -479,6 +496,9 @@ final class ExperimentSessionBleServer {
                     try {
                         JSONObject body = new JSONObject(new String(value, StandardCharsets.UTF_8));
                         boolean sessionVersion = Integer.valueOf(2).equals(body.opt("v")) || Long.valueOf(2).equals(body.opt("v"));
+                        boolean polarVersion = Integer.valueOf(3).equals(body.opt("v")) || Long.valueOf(3).equals(body.opt("v"));
+                        JSONObject polarRequest=null;
+                        JSONObject polarNativeFence=null;
                         ExperimentSessionControlCapability.Fence sessionFence = null;
                         String id = body.optString("id", "");
                         String operation = body.optString("op", "");
@@ -486,7 +506,11 @@ final class ExperimentSessionBleServer {
                         String nonce = body.optString("nonce", "");
                         int bias = body.optInt("bias", -1);
                         String session="";long sessionGeneration=0L;
-                        if(sessionVersion) {
+                        if(polarVersion) {
+                            PolarStopBleCapability.Wire wire=PolarStopBleCapability.parse(body);
+                            id=wire.id;operation=wire.operation;session=wire.reference;nonce=wire.nonce;
+                            sessionGeneration=wire.revision;condition="";bias=0;
+                        } else if(sessionVersion) {
                             Set<String> fields=new HashSet<>(Arrays.asList("v","id","op","s","g","n"));
                             if(body.has("mac"))fields.add("mac");
                             if(body.length()!=fields.size())throw new IllegalArgumentException("closed-session-command-required");
@@ -512,7 +536,8 @@ final class ExperimentSessionBleServer {
                                     || SystemClock.elapsedRealtime() < blockedUntilMs) {
                                 throw new SecurityException("peer-replay-or-rate-limit");
                             }
-                            boolean authenticated=sessionVersion ? ExperimentSessionBleProtocol.verifySession(
+                            boolean authenticated=polarVersion ? ExperimentSessionBleProtocol.verifyPolar(
+                                code,peer.challenge,id,operation,session,sessionGeneration,nonce,body.optString("mac","")) : sessionVersion ? ExperimentSessionBleProtocol.verifySession(
                                 code,peer.challenge,id,operation,session,sessionGeneration,nonce,body.optString("mac",""))
                                 : ExperimentSessionBleProtocol.verify(
                                     code, peer.challenge, id, operation, condition, bias, nonce,
@@ -522,6 +547,11 @@ final class ExperimentSessionBleServer {
                                 if (invalidProofs >= 5) blockedUntilMs = SystemClock.elapsedRealtime() + 60000L;
                                 throw new SecurityException("authentication-failed");
                             }
+                            if(polarVersion) {
+                                polarNativeFence=polarControl.nativeFence();
+                                polarRequest=polarControl.admit(session,sessionGeneration,operation,
+                                    SystemClock.elapsedRealtime(),serverGeneration,nativeOwnerIdentity,nativeOwnerEpoch);
+                            }
                             if(sessionVersion)sessionFence=sessionControl.admit(session,sessionGeneration,operation,
                                 SystemClock.elapsedRealtime(),serverGeneration,nativeOwnerIdentity,nativeOwnerEpoch);
                         }
@@ -530,7 +560,7 @@ final class ExperimentSessionBleServer {
                             if (peer == null) throw new SecurityException("peer-disconnected");
                             peer.lastCommandId = id;
                         }
-                        accepted = new CommandRequest(id, operation, condition, bias,sessionFence);
+                        accepted = new CommandRequest(id, operation, condition, bias,sessionFence,polarRequest,polarNativeFence);
                         updateReceipt(id, "accepted", "Command admitted by Quest BLE transport.");
                         response = BluetoothGatt.GATT_SUCCESS;
                     } catch (Exception rejected) {

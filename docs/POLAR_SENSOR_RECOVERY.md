@@ -1,5 +1,32 @@
 # Polar connection and stream recovery
 
+The optional BLE carrier can project an independent Polar stop capability `z`.
+Its compact fields are `{r,a,e,s?}`: action revision and ACC/ECG requested,
+PMD-ACK-active and recent-data bits (1/2/4). When `s` is absent, the existing
+session `q.s` is a shared offering identifier salted by the full Polar owner,
+selected/connected sensor and stream revision tuple. Session and Polar grants
+remain separately admitted records with distinct RQEC2/RQPC1 HMAC domains.
+An old session capability without `z` never authorizes a Polar stop.
+
+The v3 wire is closed to `{v,id,op,s,r,n,mac?}`, only stop-acc/stop-ecg,
+and retains the240-byte command limit. Maximum signed bytes measure171.
+The app resolves the reference to its full original owner/action tuple, consumes
+the offering before queued dispatch, and rechecks native epoch/profile/binding
+before the originating Polar adapter's main-thread revision admission. No
+owner factory, automatic retry, connection, recording or native clock change
+is introduced. Carrier/owner/sensor/revision replacement retires old grants.
+
+The full representative armed/audio-ready/Polar-connected status with both
+independent grants measures452 bytes within the existing480-byte status cap.
+Mandatory fields are preserved; the existing optional session-q overflow
+fallback remains, and a Polar grant that cannot fit is cleared and omitted.
+Full numeric maximum status representations still become unavailable under
+the original cap. This is bounded parity in representable states, not universal
+control availability. A BLE dispatched stop is not sensor ACK, physical
+retirement, data cessation or recording finalization; the independent current
+stream bits retain those distinctions. Frozen APKs remain unchanged and need
+separate compiled package and physical qualification before adoption.
+
 A successful app-owned connection enables continued connection intent for that
 exact sensor instance. Transport failure retains this intent. Discovery during
 recovery may not substitute another sensor, even when it is the only candidate.

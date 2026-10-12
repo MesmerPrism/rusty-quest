@@ -184,6 +184,21 @@ final class PolarSensorRuntime {
         };
     }
 
+    /** BLE can observe only an existing owner; it cannot create or adopt a replacement. */
+    static JSONObject existingProjectedStopState() throws Exception {
+        PolarSensorRuntime owner=instance;
+        if(owner==null||owner.closed||!owner.nativeLibraryReady)return null;
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())throw new IllegalStateException("polar-main-thread-required");
+        return owner.projectedStops.project(owner.projectedTarget());
+    }
+
+    static JSONObject dispatchExistingProjectedStop(JSONObject request,String token) throws Exception {
+        PolarSensorRuntime owner=instance;
+        if(owner==null||owner.closed)throw new SecurityException("polar-owner-unavailable");
+        return owner.dispatchProjected(android.util.Base64.encodeToString(request.toString().getBytes(StandardCharsets.UTF_8),
+            android.util.Base64.NO_WRAP),token,"ble-polar-v3");
+    }
+
     /** Read-only app-lifetime projection for the experimenter home. */
     JSONObject experimenterStatusProjection() {
         JSONObject projection = panel.experimenterStatusProjection();

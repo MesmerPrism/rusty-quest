@@ -9,7 +9,95 @@ public final class ExperimentSessionControlCapabilityTest {
  static void deny(Checked f,String why)throws Exception{try{f.run();}catch(IllegalArgumentException|SecurityException e){return;}throw new AssertionError(why);}
  static JSONObject read()throws Exception{return new JSONObject().put("recording",true).put("profile_identity_bound",true).put("audio_identity_bound",true).put("generation",7L).put("runtime_epoch",3L).put("session_key","utc-ns-00000000000000000042").put("condition_id","condition-a").put("non_audio_profile_sha256",repeat("1",64)).put("activation_binding_sha256",repeat("2",64)).put("control_state","armed");}
  static String repeat(String s,int n){StringBuilder b=new StringBuilder();while(n-->0)b.append(s);return b.toString();}
+ static JSONObject polar()throws Exception{return new JSONObject().put("closed",false).put("acc_requested",true).put("ecg_requested",false)
+  .put("acc_pmd_ack_running",true).put("ecg_pmd_ack_running",false).put("acc_data_receiving_observed",true).put("ecg_data_receiving_observed",false)
+  .put("pid",42).put("runtime_generation",1).put("owner_epoch",repeat("a",32))
+  .put("action_revision",0).put("selected_sensor","polar-111111111111").put("connected_sensor","polar-111111111111")
+  .put("acc_revision",0).put("ecg_revision",0).put("stop_acc_operation_id",repeat("b",32)).put("stop_ecg_operation_id",repeat("c",32));}
+ static void polarControls()throws Exception{
+  PolarStopBleCapability p=new PolarStopBleCapability();final JSONObject projection=polar(),nativeStatus=read();
+  JSONObject offered=p.offer(projection,nativeStatus,9,11,2,1000);String ref=offered.getString("s");
+  deny(()->p.admit(ref,1,"stop-acc",1100,9,11,2),"wrong Polar revision");
+  deny(()->p.admit(ref,0,"start",1100,9,11,2),"session cannot use Polar grant");
+  deny(()->p.admit(ref,0,"stop-acc",2501,9,11,2),"stale Polar grant");
+  deny(()->p.admit(ref,0,"stop-acc",999,9,11,2),"regressed clock");
+  deny(()->p.admit(ref,0,"stop-acc",1100,10,11,2),"wrong carrier");
+  deny(()->p.admit(ref,0,"stop-acc",1100,9,12,2),"wrong native owner");
+  deny(()->p.admit(ref,0,"stop-acc",1100,9,11,3),"wrong native owner epoch");
+  JSONObject command=p.admit(ref,0,"stop-acc",1100,9,11,2);
+  require(command.getString("operation_id").equals(repeat("b",32)),"owner offered action ID preserved");
+  require(command.getString("selected_sensor").equals("polar-111111111111"),"actual sensor retained");
+  deny(()->p.admit(ref,0,"stop-acc",1101,9,11,2),"single consumption");
+  require(p.offer(projection,nativeStatus,9,11,2,1200)==null,"same consumed projection cannot reoffer");
+  projection.put("action_revision",1);String next=p.offer(projection,nativeStatus,9,11,2,1300).getString("s");
+  require(!ref.equals(next),"new action revision rotates");
+  projection.put("acc_revision",1);String changed=p.offer(projection,nativeStatus,9,11,2,1400).getString("s");
+  require(!next.equals(changed),"stream revision rotates");
+  projection.put("selected_sensor","polar-222222222222");String sensor=p.offer(projection,nativeStatus,9,11,2,1450).getString("s");
+  require(!changed.equals(sensor),"sensor rotates");
+  projection.put("pid",true);deny(()->p.offer(projection,nativeStatus,9,11,2,1500),"Boolean PID denied");
+  deny(()->p.admit(sensor,1,"stop-acc",1501,9,11,2),"malformed clears retained capability");
+  final JSONObject drift=polar();drift.put("action_revision",0.0);
+  deny(()->p.offer(drift,nativeStatus,9,11,2,1600),"float revision denied");
+  JSONObject fresh=polar().put("action_revision",2);JSONObject cap=p.offer(fresh,nativeStatus,9,11,2,1700);
+  JSONObject base=new JSONObject().put("v",1).put("p","ARMED").put("g",7).put("m","open");
+  byte[] status=p.projectBoundedStatus(base,cap);require(status.length<=480&&new JSONObject(new String(status,StandardCharsets.UTF_8)).has("z"),"fits native status budget");
+  base.put("padding",repeat("x",400));status=p.projectBoundedStatus(base,cap);
+  require(!new JSONObject(new String(status,StandardCharsets.UTF_8)).has("z"),"no grant when budget full");
+  final String omitted=cap.getString("s");deny(()->p.admit(omitted,2,"stop-acc",1701,9,11,2),"omitted grant not admissible");
+  base.put("padding",repeat("x",500));final JSONObject huge=base;
+  deny(()->p.projectBoundedStatus(huge,null),"oversized base never truncated");
+  String id=repeat("a",16),nonce=repeat("b",16),reference=repeat("c",32),challenge=repeat("d",32),code="ABCDEFGHJKLM";
+  Mac mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(code.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
+  String signature=ExperimentSessionBleProtocol.hex(mac.doFinal(("RQPC1|"+challenge+"|"+id+"|stop-acc|"+reference+"|0|"+nonce).getBytes(StandardCharsets.UTF_8)),16);
+  require(ExperimentSessionBleProtocol.verifyPolar(code,challenge,id,"stop-acc",reference,0,nonce,signature),"Polar signed production codec");
+  require(!ExperimentSessionBleProtocol.verifySession(code,challenge,id,"start",reference,1,nonce,signature),"session domain cannot reuse Polar proof");
+  require(!ExperimentSessionBleProtocol.verifyPolar(code,challenge,id,"stop-ecg",reference,0,nonce,signature),"operation authenticated");
+  require(!ExperimentSessionBleProtocol.verifyPolar(code,challenge,id,"stop-acc",reference,1,nonce,signature),"revision authenticated");
+  JSONObject wire=new JSONObject().put("v",3).put("id",id).put("op","stop-ecg").put("s",reference).put("r",9007199254740991L).put("n",nonce).put("mac",signature);
+  int wireBytes=wire.toString().getBytes(StandardCharsets.UTF_8).length;require(wireBytes<=240,"maximum signed Polar command fits240");
+  require(PolarStopBleCapability.parse(wire).revision==9007199254740991L,"actual production parser maximum revision");
+  for(final JSONObject invalid:new JSONObject[]{new JSONObject(wire.toString()).put("extra",1),new JSONObject(wire.toString()).put("v",true),
+      new JSONObject(wire.toString()).put("r",true),new JSONObject(wire.toString()).put("r",0.0),
+      new JSONObject(wire.toString()).put("op","pause"),new JSONObject(wire.toString()).put("mac","bad")})
+    deny(()->PolarStopBleCapability.parse(invalid),"closed production wire negative");
+  final JSONObject missing=new JSONObject(wire.toString());missing.remove("n");deny(()->PolarStopBleCapability.parse(missing),"missing actual parser field");
+  JSONObject ns=read();PolarStopBleCapability sensorCap=new PolarStopBleCapability();ExperimentSessionControlCapability sessionCap=new ExperimentSessionControlCapability();
+  JSONObject ps=polar(),po=sensorCap.offer(ps,ns,9,11,2,2000);
+  JSONObject sessionStatus=new JSONObject().put("g",7).put("p","ARMED").put("pending",false);
+  JSONObject qo=sessionCap.offer(sessionStatus,ns,9,11,2,2000,sensorCap.bindingTuple());
+  sensorCap.shareReference(qo.getString("s"));po.put("s",qo.getString("s"));
+  sessionStatus.put("q",qo);byte[] shared=sensorCap.projectBoundedStatus(sessionStatus,po);
+  JSONObject published=new JSONObject(new String(shared,StandardCharsets.UTF_8));
+  require(published.has("q")&&!published.getJSONObject("z").has("s"),"independent shared offering retains session control");
+  JSONObject representative=new JSONObject("{\"o\":{\"v\":1,\"s\":\"observed\",\"e\":\"1\",\"i\":\"10000000000000\",\"g\":7,\"r\":0,\"a\":741},\"f\":\"panel\",\"p\":\"ARMED\",\"g\":7,\"r\":0,\"c\":\"condition-a\",\"rec\":true,\"co\":\"NOT_REACHED\",\"ms\":0,\"st\":\"ready\",\"k\":\"starting\",\"bt\":\"ON\",\"po\":\"CONNECTED\",\"pf\":true,\"done\":0,\"early\":0,\"a\":[\"track-ready\",\"track-ready\"],\"b\":[\"pattern-ready\",\"pattern-ready\"],\"pending\":false,\"v\":1,\"m\":\"open\"}");
+  representative.put("q",qo);byte[] full=sensorCap.projectBoundedStatus(representative,po);
+  JSONObject complete=new JSONObject(new String(full,StandardCharsets.UTF_8));
+  require(full.length<=480&&complete.has("q")&&complete.has("z"),"full representative armed/audio/Polar connected producer state keeps both grants");
+  final JSONObject savedNativeFence=sensorCap.nativeFence();
+  for(String field:new String[]{"o","f","p","g","r","c","rec","co","ms","st","k","bt","po","pf","done","early","a","b","pending","v","m"})
+    require(complete.get(field).toString().equals(representative.get(field).toString()),"mandatory producer field preserved:"+field);
+  JSONObject maximum=new JSONObject(representative.toString());maximum.remove("q");
+  for(String field:new String[]{"g","r","ms","done","early"})maximum.put(field,9007199254740991L);
+  maximum.getJSONObject("o").put("e","9223372036854775807").put("i","9223372036854775807")
+      .put("g",9007199254740991L).put("r",9007199254740991L).put("a",9007199254740991L);
+  final JSONObject maxShape=maximum;int maximumBaseBytes=maximum.toString().getBytes(StandardCharsets.UTF_8).length;
+  require(maximumBaseBytes>480,"full maximum numeric representation exceeds original status budget");
+  deny(()->sensorCap.projectBoundedStatus(maxShape,po),"original maximum base remains unavailable, no limit raise/truncation");
+  JSONObject optionalOverflow=new JSONObject().put("v",1).put("padding",repeat("x",420))
+      .put("q",new JSONObject().put("v",2).put("s",repeat("a",32)).put("g",9007199254740991L).put("o",new org.json.JSONArray().put("resume")));
+  require(!new JSONObject(new String(sensorCap.projectBoundedStatus(optionalOverflow,null),StandardCharsets.UTF_8)).has("q"),"original optional session overflow fallback retained");
+  require(PolarStopBleCapability.matchesNativeFence(savedNativeFence,ns),"actual queued native tuple matches");
+  require(!PolarStopBleCapability.matchesNativeFence(savedNativeFence,read().put("runtime_epoch",4)),"queued native epoch change denied");
+  require(!PolarStopBleCapability.matchesNativeFence(savedNativeFence,read().put("activation_binding_sha256",repeat("9",64))),"queued binding change denied");
+  String old=qo.getString("s");ps.put("ecg_revision",1);sensorCap.offer(ps,ns,9,11,2,2100);
+  JSONObject newer=sessionCap.offer(sessionStatus,ns,9,11,2,2100,sensorCap.bindingTuple());require(!old.equals(newer.getString("s")),"sensor change rotates shared offering");
+  deny(()->sessionCap.admit(old,7,"start",2101,9,11,2),"old shared session record retired");
+  deny(()->sensorCap.admit(old,0,"stop-acc",2101,9,11,2),"old shared sensor record retired");
+  System.out.println("PASS production Polar capability/codec: max signed command="+wireBytes+"B; full representative armed/audio/connected status with independent session+Polar grants="+full.length+"B; full safe-integer maximum base="+maximumBaseBytes+"B remains unavailable; strict parser/shared native/sensor/revision/domain negatives");
+ }
  public static void main(String[]args)throws Exception{
+  polarControls();
   ExperimentSessionControlCapability c=new ExperimentSessionControlCapability();JSONObject r=read();JSONObject status=new JSONObject().put("g",7L).put("p","ARMED").put("pending",false);
   JSONObject q=c.offer(status,r,9,11,2,1000);String ref=q.getString("s");require(q.getLong("g")==7,"actual generation");
   ExperimentSessionControlCapability.Fence f=c.admit(ref,7,"start",1100,9,11,2);JSONObject command=f.nativeCommand("native-op",123456);require(command.getString("expected_binding_sha256").equals(repeat("2",64)),"binding retained");
