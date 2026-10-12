@@ -1,4 +1,4 @@
-//! Borrowed faÃ§ade over the one live Broker and durable peer Runtime Host.
+//! Borrowed facade over the one live Broker and durable peer Runtime Host.
 
 use std::sync::{Arc, RwLock};
 
@@ -179,6 +179,23 @@ pub struct QuestCommonLanContextDraft {
 pub struct QuestEmbeddedDuplexAuthority {
     broker: Arc<RwLock<ManifoldBrokerRuntime>>,
     peer: Arc<RwLock<ManifoldPeerRuntimeHost>>,
+}
+
+/// Local witness captured only after an incoming original dispatch is authenticated.
+/// It is retained with that exact native original, never accepted from a Prepare frame.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestRetainedOriginalEnrollment {
+    schema: String,
+    original_sha256: String,
+    ticket_sha256: String,
+    credential_id: String,
+    key_id: String,
+    key_generation: u64,
+    public_key_sha256: String,
+    valid_from_ms: u64,
+    expires_at_ms: u64,
+    accepted_at_ms: u64,
 }
 
 impl QuestEmbeddedDuplexAuthority {
@@ -682,6 +699,58 @@ impl QuestEmbeddedDuplexAuthority {
         )
     }
 
+    /// Capture the receiving registry's current enrollment after signed original admission.
+    /// The caller must retain this with the exact original before entering the provider.
+    pub fn capture_retained_original_enrollment(
+        &self,
+        original: &OwnerDispatchAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket,
+        signer_key_id: &str,
+        signer_key: &[u8; 32],
+        accepted_at_ms: u64,
+    ) -> Result<QuestRetainedOriginalEnrollment, String> {
+        let peer = read_peer(&self.peer)?;
+        let snapshot = peer.snapshot();
+        let credential = snapshot
+            .enrollment
+            .credentials
+            .iter()
+            .find(|credential| {
+                credential.peer_id.as_str() == original.authority_peer_id
+                    && credential.key_id.as_str() == signer_key_id
+                    && matches!(
+                        credential.status,
+                        rusty_manifold_peer::ManifoldPeerCredentialStatus::Active
+                    )
+                    && credential.valid_from_ms <= accepted_at_ms
+                    && credential.expires_at_ms > accepted_at_ms
+            })
+            .ok_or("retained original signer is not currently enrolled")?;
+        if decode_array::<32>(&credential.public_key_hex)? != *signer_key
+            || accepted_at_ms == 0
+            || original.expires_at_ms <= accepted_at_ms
+            || original.schema_id != QUEST_C1_OWNER_PROJECTION_SCHEMA
+            || original.authorization_kind != OwnerDispatchAuthorizationKind::CurrentRoute
+            || ticket.authority_epoch_id != original.authority_provider_epoch_id
+            || ticket.client_id != original.authority_client_id
+            || ticket.lease_id != original.authority_runtime_lease_id
+        {
+            return Err("retained original enrollment admission differs".into());
+        }
+        Ok(QuestRetainedOriginalEnrollment {
+            schema: "rusty.quest.retained_original_enrollment.v1".into(),
+            original_sha256: typed_sha256(original)?,
+            ticket_sha256: typed_sha256(ticket)?,
+            credential_id: credential.credential_id.to_string(),
+            key_id: credential.key_id.to_string(),
+            key_generation: credential.key_generation,
+            public_key_sha256: credential.public_key_sha256.clone(),
+            valid_from_ms: credential.valid_from_ms,
+            expires_at_ms: credential.expires_at_ms,
+            accepted_at_ms,
+        })
+    }
+
     /// Validates bounded sender-owned renewal ancestry inside the already fully
     /// signature-authenticated cleanup frame; foreign authority is never imported.
     pub fn validate_remote_retained_cleanup_projection_with_renewals(
@@ -693,6 +762,30 @@ impl QuestEmbeddedDuplexAuthority {
         signer_key: &[u8; 32],
         now_ms: u64,
         renewals: &[QuestRetainedCleanupSessionRenewal],
+    ) -> Result<(), String> {
+        self.validate_remote_retained_cleanup_projection_with_original_enrollment(
+            cleanup,
+            original,
+            ticket,
+            signer_key_id,
+            signer_key,
+            now_ms,
+            renewals,
+            None,
+        )
+    }
+
+    /// Validate exact retained native original enrollment; absent witnesses preserve legacy checks.
+    pub fn validate_remote_retained_cleanup_projection_with_original_enrollment(
+        &self,
+        cleanup: &RetainedCleanupAuthorityProjection,
+        original: &OwnerDispatchAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket,
+        signer_key_id: &str,
+        signer_key: &[u8; 32],
+        now_ms: u64,
+        renewals: &[QuestRetainedCleanupSessionRenewal],
+        retained_enrollment: Option<&QuestRetainedOriginalEnrollment>,
     ) -> Result<(), String> {
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
@@ -708,11 +801,30 @@ impl QuestEmbeddedDuplexAuthority {
                         rusty_manifold_peer::ManifoldPeerCredentialStatus::Active
                     )
                     && credential.valid_from_ms <= now_ms
-                    && credential.expires_at_ms > now_ms
+                    && (retained_enrollment.is_some() || credential.expires_at_ms > now_ms)
             })
             .ok_or("cleanup signer is not currently enrolled")?;
         if decode_array::<32>(&credential.public_key_hex)? != *signer_key {
             return Err("cleanup enrolled signer changed".into());
+        }
+        if let Some(witness) = retained_enrollment {
+            if witness.schema != "rusty.quest.retained_original_enrollment.v1"
+                || witness.original_sha256 != typed_sha256(original)?
+                || witness.ticket_sha256 != typed_sha256(ticket)?
+                || witness.credential_id != credential.credential_id.as_str()
+                || witness.key_id != signer_key_id
+                || witness.key_generation != credential.key_generation
+                || witness.public_key_sha256 != credential.public_key_sha256
+                || witness.valid_from_ms != credential.valid_from_ms
+                || credential.expires_at_ms < witness.expires_at_ms
+                || witness.accepted_at_ms == 0
+                || witness.accepted_at_ms > now_ms
+                || witness.valid_from_ms > witness.accepted_at_ms
+                || witness.expires_at_ms <= witness.accepted_at_ms
+                || original.expires_at_ms <= witness.accepted_at_ms
+            {
+                return Err("cleanup retained original enrollment differs".into());
+            }
         }
         let parties = if cleanup.trusted_revoker {
             cleanup.requester_id != cleanup.target_client_id

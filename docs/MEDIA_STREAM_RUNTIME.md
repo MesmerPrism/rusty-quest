@@ -283,3 +283,32 @@ do not select a decoder fallback, retry an activation or establish resource exha
 The normal Windows Spatial host route also compiles and exercises the actual
 start catch, classifier and activation-journal parser with host platform doubles.
 Real codec execution and the next packaged Android build remain separate checks.
+
+### Retained original enrollment for cleanup
+
+An authenticated incoming Start retains a local enrollment witness before its
+provider callback. The witness binds the exact source projection and owner
+ticket digests, credential and key identities/generation, public-key digest,
+original validity interval and the receiving native acceptance time. An
+uncertain provider result keeps this witness with the retained original.
+
+A later signed cleanup may use that witness after the original credential
+expires. It still requires the current credential to be Active with the same
+key and original enrollment identity/validity start, and checks the original
+admission interval, fresh cleanup requester lease, trusted revoker, original
+owner ticket and renewal ancestry. Supported credential renewal extends expiry
+without replacing the original witness. New enrollment after Start does not
+adopt its original. Active dispatch admission keeps its current-time checks.
+
+This is local retained state, not a new Prepare wire field. Records without a
+witness retain the existing current-enrollment requirement; the source repair
+does not reconstruct historical witnesses or repair an already Pending close.
+
+The ordinary affected `Test-RetainedPrepareDiagnosticHost.ps1` route also runs
+`Test-RetainedOriginalEnrollmentHost.ps1`, with caller-selected `RepoRoot`, a
+fresh ignored `OutputRoot`, and qualified `Rustc`. Its nine controls execute the
+exact native retaining method while modeling physical callbacks, clock and
+persistence. The registered broker Cargo test additionally executes genuine
+0/32 renewal histories, captures enrollment before renewal, and checks expired
+cleanup plus damaged witness/current-enrollment/requester negatives. Full
+Android/JNI compilation remains required before packaging this source.

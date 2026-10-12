@@ -43,7 +43,7 @@ pub(super) fn exercise(authority: crate::QuestEmbeddedDuplexAuthority, source_au
  source_key: &SigningKey, source_key_id: &str, target_key: &SigningKey, target_key_id: &str, now:u64) {
  let clock=Arc::new(std::sync::atomic::AtomicU64::new(now));
  let mut state=PreparedState::default();
- state.originals.insert(key(original_ticket), Original{ticket:original_ticket.clone(),effect:None,source_authority:Some(original_projection.clone())});
+ state.originals.insert(key(original_ticket), Original{ticket:original_ticket.clone(),effect:None,source_authority:Some(original_projection.clone()),retained_enrollment:None});
  let receiver=Cleanup{authority,callbacks:Callbacks{key:target_key.clone(),id:target_key_id.into(),saved:Mutex::new(String::new())},
   clock:AuthorityClock(clock.clone()),local:projection.executor_peer_id.clone(),remote:projection.authority_peer_id.clone(),
   remote_key_id:source_key_id.into(),remote_key:source_key.verifying_key().to_bytes(),generation:9,

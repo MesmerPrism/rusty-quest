@@ -136,12 +136,35 @@ fn run_coupled_owner_graph_with_projection_probe(
         false,
     );
 }
+#[test]
+fn retained_prepare_expired_enrollment_keeps_authenticated_cleanup_only() {
+    run_coupled_owner_graph_with_credential_expiry(false, true, 0, false, false, true);
+    run_coupled_owner_graph_with_credential_expiry(false, true, 32, false, false, true);
+}
+
 fn run_coupled_owner_graph_with_revoker_policy(
     retained_abort: bool,
     cross_authority_probe: bool,
     renewed_probe: usize,
     restart_after_prefix: bool,
     distinct_revokers: bool,
+) {
+    run_coupled_owner_graph_with_credential_expiry(
+        retained_abort,
+        cross_authority_probe,
+        renewed_probe,
+        restart_after_prefix,
+        distinct_revokers,
+        false,
+    );
+}
+fn run_coupled_owner_graph_with_credential_expiry(
+    retained_abort: bool,
+    cross_authority_probe: bool,
+    renewed_probe: usize,
+    restart_after_prefix: bool,
+    distinct_revokers: bool,
+    expire_signer_before_cleanup: bool,
 ) {
     struct FailStopOnce {
         inner: DeterministicAndroidMediaOwnerExecutor,
@@ -543,6 +566,26 @@ fn run_coupled_owner_graph_with_revoker_policy(
         ] {
             originals.push(capture_original(provider, authority, local, remote, 4200));
         }
+        let enrollment_witnesses = originals
+            .iter()
+            .enumerate()
+            .map(|(index, original)| {
+                let (receiver, key_id, signer) = if index == 0 {
+                    (&authority_b, "key.peer.quest-a.1", &alpha)
+                } else {
+                    (&authority_a, "key.peer.quest-b.1", &beta)
+                };
+                receiver
+                    .capture_retained_original_enrollment(
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &signer.verifying_key().to_bytes(),
+                        4200,
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
         let initial_originals = originals.clone();
         if renewed_probe > 0 {
             let mut current_a = topology_a.clone();
@@ -778,7 +821,15 @@ fn run_coupled_owner_graph_with_revoker_policy(
             }
         }
         let late = if renewed_probe > 0 {
-            64_000 + ((renewed_probe - 1) / 2) as u64 * 120_000 + 266_000
+            64_000
+                + ((renewed_probe - 1) / 2) as u64 * 120_000
+                + if expire_signer_before_cleanup {
+                    350_000
+                } else {
+                    266_000
+                }
+        } else if expire_signer_before_cleanup {
+            350_000
         } else {
             250_000
         };
@@ -1127,6 +1178,255 @@ fn run_coupled_owner_graph_with_revoker_policy(
                     std::fs::write(std::path::Path::new(&directory).join(format!("ancestry-{renewed_probe}-{restart_after_prefix}-{local}.json")),
                         serde_json::to_vec(&serde_json::json!({"cleanup":cleanup,"ticket":original.1,"ancestry":ancestry})).unwrap()).unwrap();
                 }
+            }
+            if expire_signer_before_cleanup {
+                let witness = &enrollment_witnesses[index];
+                let receiver_before = receiver.snapshot_json().unwrap();
+                let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
+                    serde_json::from_str(&receiver_before).unwrap();
+                let credential = snapshot
+                    .enrollment
+                    .credentials
+                    .iter()
+                    .find(|credential| {
+                        credential.peer_id.as_str() == original.0.authority_peer_id
+                            && credential.key_id.as_str() == key_id
+                    })
+                    .unwrap();
+                assert!(credential.expires_at_ms < late + 10);
+                if renewed_probe == 0 {
+                    // Preserve the actual retained grant and shorten only the live
+                    // credential window in an independently validated receiver store.
+                    let mut shorter = snapshot.clone();
+                    shorter
+                        .enrollment
+                        .credentials
+                        .iter_mut()
+                        .find(|credential| {
+                            credential.peer_id.as_str() == original.0.authority_peer_id
+                                && credential.key_id.as_str() == key_id
+                        })
+                        .unwrap()
+                        .expires_at_ms = original.0.expires_at_ms - 1;
+                    receiver
+                        .restore_snapshot_json(&serde_json::to_string(&shorter).unwrap())
+                        .expect("Live shorter credential snapshot remains a valid authority store");
+                    struct AdmissionClock;
+                    impl rusty_quest_media_stream_android::OwnerDispatchClock for AdmissionClock {
+                        fn now_ms(&self) -> Result<u64, String> {
+                            Ok(4200)
+                        }
+                    }
+                    let request = rusty_quest_media_stream_android::OwnerDispatchRequest {
+                        schema_id: rusty_quest_media_stream_android::OWNER_DISPATCH_REQUEST_SCHEMA
+                            .into(),
+                        dispatch_id: "fixture.longer-grant-live-credential".into(),
+                        sequence: 1,
+                        issued_at_ms: 4200,
+                        target_peer_id: original.0.executor_peer_id.clone(),
+                        authority: original.0.clone(),
+                        ticket: original.1.clone(),
+                        mode: rusty_quest_media_stream_android::AndroidMediaExecutionMode::Execute,
+                        signer_key_id: key_id.into(),
+                        signature_base64: String::new(),
+                    };
+                    let signing_bytes =
+                        rusty_quest_media_stream_android::request_signing_bytes(&request).unwrap();
+                    let signature = ed25519_dalek::Signer::sign(signer, &signing_bytes).to_bytes();
+                    let verifier = crate::QuestOwnerDispatchAuthorityVerifier::new(
+                        receiver.clone(),
+                        std::sync::Arc::new(AdmissionClock),
+                    );
+                    rusty_quest_media_stream_android::OwnerDispatchAuthorityVerifier::verify_current(
+                        &verifier, &request, &signing_bytes, &signature,
+                    ).expect("Formerly valid signed Start must remain admitted");
+                    let shorter_witness = receiver
+                        .capture_retained_original_enrollment(
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &key,
+                            4200,
+                        )
+                        .expect("Live shorter credential must not add a new Start refusal");
+                    receiver
+                        .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                            &cleanup,
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &key,
+                            late + 10,
+                            &ancestry,
+                            Some(&shorter_witness),
+                        )
+                        .expect("Acceptance in both intervals suffices after expiry");
+                    receiver.restore_snapshot_json(&receiver_before).unwrap();
+                }
+                let encoded_witness = serde_json::to_value(witness).unwrap();
+                if renewed_probe > 0 {
+                    assert!(
+                        credential.expires_at_ms
+                            > encoded_witness["expires_at_ms"].as_u64().unwrap()
+                    );
+                    assert_eq!(
+                        credential.valid_from_ms,
+                        encoded_witness["valid_from_ms"].as_u64().unwrap()
+                    );
+                }
+                assert_eq!(
+                    receiver.validate_remote_retained_cleanup_projection_with_renewals(
+                        &cleanup,
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &key,
+                        late + 10,
+                        &ancestry,
+                    ),
+                    Err("cleanup signer is not currently enrolled".into()),
+                    "Legacy witnessless records must not gain authority"
+                );
+                receiver
+                    .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                        &cleanup,
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &key,
+                        late + 10,
+                        &ancestry,
+                        Some(witness),
+                    )
+                    .unwrap();
+                for (field, value) in [
+                    ("accepted_at_ms", serde_json::json!(0)),
+                    ("accepted_at_ms", serde_json::json!(late + 11)),
+                    (
+                        "accepted_at_ms",
+                        serde_json::json!(original.0.expires_at_ms),
+                    ),
+                    ("schema", serde_json::json!("unknown")),
+                    ("key_id", serde_json::json!("key.foreign")),
+                    ("credential_id", serde_json::json!("credential.foreign")),
+                    ("key_generation", serde_json::json!(999)),
+                    (
+                        "public_key_sha256",
+                        serde_json::json!(format!("sha256:{}", "f".repeat(64))),
+                    ),
+                    (
+                        "original_sha256",
+                        serde_json::json!(format!("sha256:{}", "f".repeat(64))),
+                    ),
+                    (
+                        "ticket_sha256",
+                        serde_json::json!(format!("sha256:{}", "f".repeat(64))),
+                    ),
+                    ("valid_from_ms", serde_json::json!(4201)),
+                ] {
+                    let mut changed = encoded_witness.clone();
+                    changed[field] = value;
+                    let changed = serde_json::from_value(changed).unwrap();
+                    assert!(
+                        receiver
+                            .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                                &cleanup,
+                                &original.0,
+                                &original.1,
+                                key_id,
+                                &key,
+                                late + 10,
+                                &ancestry,
+                                Some(&changed),
+                            )
+                            .is_err(),
+                        "Changed retained enrollment witness admitted: {field}"
+                    );
+                }
+                for damage in ["revoked", "replaced_key", "after_original", "shortened"] {
+                    let mut changed = snapshot.clone();
+                    let credential = changed
+                        .enrollment
+                        .credentials
+                        .iter_mut()
+                        .find(|credential| {
+                            credential.peer_id.as_str() == original.0.authority_peer_id
+                                && credential.key_id.as_str() == key_id
+                        })
+                        .unwrap();
+                    match damage {
+                        "revoked" => {
+                            credential.status =
+                                rusty_manifold_peer::ManifoldPeerCredentialStatus::Revoked
+                        }
+                        "replaced_key" => credential.public_key_hex = "00".repeat(32),
+                        "after_original" => credential.valid_from_ms = 4201,
+                        "shortened" => credential.expires_at_ms = original.0.expires_at_ms - 1,
+                        _ => unreachable!(),
+                    }
+                    if receiver
+                        .restore_snapshot_json(&serde_json::to_string(&changed).unwrap())
+                        .is_ok()
+                    {
+                        assert!(receiver.validate_remote_retained_cleanup_projection_with_original_enrollment(
+                            &cleanup, &original.0, &original.1, key_id, &key, late + 10, &ancestry, Some(witness),
+                        ).is_err(), "Changed current enrollment admitted: {damage}");
+                        receiver.restore_snapshot_json(&receiver_before).unwrap();
+                    }
+                    assert_eq!(receiver.snapshot_json().unwrap(), receiver_before);
+                }
+                for field in [
+                    "requester_id",
+                    "target_client_id",
+                    "peer_session_id",
+                    "provider_epoch_id",
+                ] {
+                    let mut changed = serde_json::to_value(&cleanup).unwrap();
+                    changed[field] = serde_json::json!("foreign.identity");
+                    let changed = serde_json::from_value(changed).unwrap();
+                    assert!(
+                        receiver
+                            .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                                &changed,
+                                &original.0,
+                                &original.1,
+                                key_id,
+                                &key,
+                                late + 10,
+                                &ancestry,
+                                Some(witness),
+                            )
+                            .is_err(),
+                        "Changed cleanup authority admitted: {field}"
+                    );
+                }
+                let mut expired = cleanup.clone();
+                expired.requester_expires_at_ms = late;
+                assert!(receiver
+                    .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                        &expired,
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &key,
+                        late + 10,
+                        &ancestry,
+                        Some(witness),
+                    )
+                    .is_err());
+                assert!(receiver
+                    .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                        &cleanup,
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &[0; 32],
+                        late + 10,
+                        &ancestry,
+                        Some(witness),
+                    )
+                    .is_err());
+                continue;
             }
             receiver
                 .validate_remote_retained_cleanup_projection_with_renewals(

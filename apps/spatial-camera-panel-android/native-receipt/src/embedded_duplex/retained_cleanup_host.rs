@@ -44,6 +44,8 @@ struct Original {
     effect: Option<AuthenticatedOwnerEffect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_authority: Option<OwnerDispatchAuthorityProjection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retained_enrollment: Option<rusty_quest_broker_authority::QuestRetainedOriginalEnrollment>,
 }
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -234,7 +236,7 @@ impl Cleanup {
             return Err("remote cleanup request source differs".into());
         }
         self.authority
-            .validate_remote_retained_cleanup_projection_with_renewals(
+            .validate_remote_retained_cleanup_projection_with_original_enrollment(
                 authority,
                 retained,
                 &original.ticket,
@@ -242,6 +244,7 @@ impl Cleanup {
                 &self.remote_key,
                 now,
                 &request.renewal_ancestry,
+                original.retained_enrollment.as_ref(),
             )?;
         Ok(authority.clone())
     }
@@ -507,6 +510,35 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
                     | MediaStreamOwnerActionKind::Start
             );
         if retain_forward {
+            // The dispatcher validated the incoming signed current-route request
+            // before entering this registry. Persist its live enrollment witness
+            // alongside the exact original before any uncertain provider effect.
+            let retained_enrollment = match authority {
+                Some(original)
+                    if original.authority_peer_id == self.cleanup.remote
+                        && original.executor_peer_id == self.cleanup.local =>
+                {
+                    Some(
+                        self.cleanup
+                            .authority
+                            .capture_retained_original_enrollment(
+                                original,
+                                ticket,
+                                &self.cleanup.remote_key_id,
+                                &self.cleanup.remote_key,
+                                self.cleanup.clock.now_ms()?,
+                            )?,
+                    )
+                }
+                Some(original)
+                    if original.authority_peer_id == self.cleanup.local
+                        && original.executor_peer_id == self.cleanup.local =>
+                {
+                    None
+                }
+                None => None,
+                Some(_) => return Err("retained original peer not paired".into()),
+            };
             let mut next = self
                 .cleanup
                 .state
@@ -522,6 +554,7 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
                     ticket: ticket.clone(),
                     effect: None,
                     source_authority: authority.cloned(),
+                    retained_enrollment,
                 },
             );
             self.cleanup.persist(next)?;
