@@ -405,3 +405,56 @@ nonaccepting disposition. Actual recovery-only restoration continues to require
 its original exact authority/owner joins. Host controls model external absence
 and Android chmod/platform observations; they prove neither Android execution,
 actual process absence, physical cleanup, APK qualification nor device recovery.
+
+### Local transport attempt observation
+
+The existing read-only owner diagnostic and Peer lifecycle receipt expose a
+separate bounded latest transport attempt. Its sequence, phase, outcome and
+failure category are closed values. Connect, request write, response header,
+response body and returned-frame phases remain distinct; refusal, unchanged
+transport deadline, EOF, frame bounds and other I/O retain their observed phase.
+The first media/native failure latch and its admission semantics are unchanged.
+No exception message, peer identity, address, payload or signature is exported.
+
+A returned frame is explicitly unauthenticated: native response decoding,
+signature verification, preparation/commit and physical owner barriers still
+follow it. A remote handler rejection closes the connection without a rejection
+envelope; EOF therefore cannot identify an authentication failure or establish
+that no effect happened. Missing/invalid callback data is unavailable/rejected,
+never synthesized success. Counter exhaustion and observer failure cannot deny,
+retry or reissue transport or Stop.
+
+`tools/checks/Test-OwnerTransportDiagnosticHost.py` exercises the production Java
+endpoint over real ephemeral loopback TCP, including refusal, EOF before/within
+the header, truncated body, rejected handler, frame bounds, valid unverified
+response, observer failure and the actual unchanged thirty-second read deadline.
+`Test-OwnerDiagnosticReadHost.ps1` also executes the strict production transport
+parser and damaged-field/counter controls. These are host observations, not
+Android/JNI execution, an installed APK update or retained physical cleanup.
+
+### Explicit paired cleanup requester selection
+
+A fresh paired enrollment must select the same reviewed `media_revoker_id` on
+both sides when it uses the current singleton requester trust policy. Local
+revoker adoption grants no foreign receiver trust: the remote retained Prepare
+still checks its requester against the receiving peer's explicit trust policy.
+Distinct local requester IDs can therefore pass independent enrollment review
+and Start, then be rejected on expired-session cleanup. Changing a future
+selection does not authorize, repair or retire an existing Pending owner action.
+
+`tools/Review-EmbeddedDuplexPairedEnrollment.py` compiles and invokes the production
+inert `EmbeddedDuplexEnrollmentDraft.requirePairedCleanupIdentity` guard against
+the two selected review capsules before dispatching either review/confirmation.
+The tool never invokes those capsules. Its result grants no enrollment authority;
+independent genuine reviews, confirmations, key/role bindings and current process
+and device guards retain their existing owners. Unsupported local fixtures or
+same-role pairs are rejected. A nonmatching pair is corrected explicitly in the
+fresh reviewed selection, never by expanding the receiving policy implicitly.
+
+The focused production broker control
+`retained_prepare_32_renewals_requires_explicit_shared_revoker_trust` runs both
+reviewed shared-identity and distinct local-identity cases through thirty-two
+actual coupled renewals and expiry. Shared trust accepts the authenticated
+cleanup projection; distinct receiver trust rejects and leaves the receiver
+snapshot unchanged. This is host authority evidence, not physical Stop, whole
+close or a claim that policy changes can recover a retained live transaction.

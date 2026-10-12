@@ -8,6 +8,7 @@ import android.util.AtomicFile;
 import io.github.mesmerprism.rustyquest.media.MediaOwnerAction;
 import io.github.mesmerprism.rustyquest.media.MediaProductBinding;
 import io.github.mesmerprism.rustyquest.media.OwnerDispatchTcpEndpoint;
+import io.github.mesmerprism.rustyquest.media.OwnerTransportAttempt;
 import io.github.mesmerprism.rustyquest.media.PackagedAndroidMediaOwnerRegistry;
 
 import org.json.JSONObject;
@@ -398,12 +399,25 @@ final class EmbeddedDuplexPlatform {
         return identity.rawPublicKey();
     }
 
-    public byte[] exchangeOwnerFrame(String targetPeerId, byte[] exactFrame) throws Exception {
+    private final OwnerTransportAttempt transportAttempt = new OwnerTransportAttempt();
+    public String ownerTransportAttemptDiagnostic() {
         requireProcessCallback();
-        if (!remotePeerId.equals(targetPeerId) || !controlReady()) {
-            throw new IllegalStateException("owner control target unavailable");
+        return transportAttempt.snapshot();
+    }
+    public byte[] exchangeOwnerFrame(String targetPeerId, byte[] exactFrame) throws Exception {
+        final long attempt = transportAttempt.begin();
+        try {
+            requireProcessCallback();
+            if (!remotePeerId.equals(targetPeerId) || !controlReady()) {
+                throw new IllegalStateException("owner control target unavailable");
+            }
+        } catch (Exception failure) {
+            transportAttempt.observe(attempt, OwnerDispatchTcpEndpoint.Phase.TARGET_BINDING,
+                    OwnerDispatchTcpEndpoint.Outcome.FAILED, OwnerDispatchTcpEndpoint.Failure.TARGET_UNAVAILABLE);
+            throw failure;
         }
-        return OwnerDispatchTcpEndpoint.exchange(remoteControlAddress, remoteControlPort, exactFrame);
+        return OwnerDispatchTcpEndpoint.exchange(remoteControlAddress, remoteControlPort, exactFrame,
+                (phase, outcome, failure) -> transportAttempt.observe(attempt, phase, outcome, failure));
     }
 
     /** Fixed native v2 callback; target identity is preserved independently of requester. */

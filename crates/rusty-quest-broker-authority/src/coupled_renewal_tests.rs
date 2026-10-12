@@ -116,11 +116,32 @@ fn retained_prepare_renewal_after_supported_media_restart() {
     run_coupled_owner_graph_with_projection_probe(false, true, 22, true);
 }
 
+#[test]
+fn retained_prepare_32_renewals_requires_explicit_shared_revoker_trust() {
+    run_coupled_owner_graph_with_revoker_policy(false, true, 32, false, false);
+    run_coupled_owner_graph_with_revoker_policy(false, true, 32, false, true);
+}
+
 fn run_coupled_owner_graph_with_projection_probe(
     retained_abort: bool,
     cross_authority_probe: bool,
     renewed_probe: usize,
     restart_after_prefix: bool,
+) {
+    run_coupled_owner_graph_with_revoker_policy(
+        retained_abort,
+        cross_authority_probe,
+        renewed_probe,
+        restart_after_prefix,
+        false,
+    );
+}
+fn run_coupled_owner_graph_with_revoker_policy(
+    retained_abort: bool,
+    cross_authority_probe: bool,
+    renewed_probe: usize,
+    restart_after_prefix: bool,
+    distinct_revokers: bool,
 ) {
     struct FailStopOnce {
         inner: DeterministicAndroidMediaOwnerExecutor,
@@ -192,7 +213,11 @@ fn run_coupled_owner_graph_with_projection_probe(
                 id("fingerprint.peer.quest-b"),
             ],
             trusted_adapter_ids: vec![id("adapter.quest.embedded-duplex")],
-            trusted_media_revoker_ids: vec![id("operator.quest.media-revoker")],
+            trusted_media_revoker_ids: vec![id(if distinct_revokers {
+                "operator.quest.media-revoker.a"
+            } else {
+                "operator.quest.media-revoker"
+            })],
         })
         .expect("duplex config");
     let mut client: QuestBrokerClientLockSpec =
@@ -253,6 +278,13 @@ fn run_coupled_owner_graph_with_projection_probe(
         .as_mut()
         .expect("duplex config")
         .runtime_host_id = id("host.quest-b.media-runtime");
+    if distinct_revokers {
+        peer_b_config
+            .embedded_duplex
+            .as_mut()
+            .unwrap()
+            .trusted_media_revoker_ids = vec![id("operator.quest.media-revoker.b")];
+    }
     if cross_authority_probe {
         // Independent product-owned admission grants, without mutating runtime state.
         let encoded = serde_json::to_string(&peer_b_config).unwrap();
@@ -959,6 +991,25 @@ fn run_coupled_owner_graph_with_projection_probe(
                 }
             }
             let ancestry = sender.retained_cleanup_renewal_ancestry(&cleanup).unwrap();
+            if distinct_revokers {
+                assert_eq!(ancestry.len(), 32);
+                // Each sender is locally authorized; that never adds its revoker to foreign trust.
+                let receiver_before = receiver.snapshot_json().unwrap();
+                assert_eq!(
+                    receiver.validate_remote_retained_cleanup_projection_with_renewals(
+                        &cleanup,
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &key,
+                        late + 10,
+                        &ancestry
+                    ),
+                    Err("remote cleanup retained source differs".to_owned())
+                );
+                assert_eq!(receiver.snapshot_json().unwrap(), receiver_before);
+                continue;
+            }
             if renewed_probe > 0 {
                 if restart_after_prefix && renewed_probe == 16 {
                     assert_eq!(

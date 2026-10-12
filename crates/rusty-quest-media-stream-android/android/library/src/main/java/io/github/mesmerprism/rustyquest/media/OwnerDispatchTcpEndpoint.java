@@ -5,6 +5,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
+import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -24,6 +25,36 @@ import java.util.concurrent.TimeUnit;
 /** Bounded framing only. The injected native handler authenticates every action. */
 public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
     public interface Handler { byte[] handle(byte[] requestFrame) throws Exception; }
+    public enum Phase { NONE, TARGET_BINDING, INPUT_BOUNDS, CONNECT, WRITE_REQUEST,
+        READ_RESPONSE_HEADER, READ_RESPONSE_BODY, RESPONSE_RETURNED }
+    public enum Outcome { NONE, IN_PROGRESS, RETURNED, FAILED, UNAVAILABLE }
+    public enum Failure { NONE, TARGET_UNAVAILABLE, INPUT_BOUNDS, CONNECT_FAILURE,
+        DEADLINE, EOF, FRAME_BOUNDS, IO, CALLBACK_REJECTED }
+    public interface ExchangeObserver { void observe(Phase phase, Outcome outcome, Failure failure); }
+    private static final class ExchangeTrace {
+        private final ExchangeObserver observer;
+        private Phase phase = Phase.TARGET_BINDING;
+        private volatile boolean deadlineExpired;
+        ExchangeTrace(ExchangeObserver observer) { this.observer = observer; }
+        void enter(Phase value) { phase = value; publish(Outcome.IN_PROGRESS, Failure.NONE); }
+        void publish(Outcome outcome, Failure failure) {
+            if (observer != null) try { observer.observe(phase, outcome, failure); }
+            catch (RuntimeException ignored) { /* Observation never changes transport. */ }
+        }
+        void failed(Exception error) {
+            Failure cause = deadlineExpired ? Failure.DEADLINE : error instanceof EOFException ? Failure.EOF
+                    : error instanceof SocketTimeoutException ? Failure.DEADLINE
+                    : error instanceof ConnectException ? Failure.CONNECT_FAILURE
+                    : phase == Phase.TARGET_BINDING ? Failure.TARGET_UNAVAILABLE
+                    : phase == Phase.INPUT_BOUNDS ? Failure.INPUT_BOUNDS
+                    : error instanceof FrameBoundsException ? Failure.FRAME_BOUNDS
+                    : error instanceof IOException ? Failure.IO : Failure.CALLBACK_REJECTED;
+            publish(Outcome.FAILED, cause);
+        }
+    }
+    private static final class FrameBoundsException extends IOException {
+        FrameBoundsException() { super("owner frame bound"); }
+    }
     public static final int MAX_FRAME_BYTES = 128 * 1024;
     private static final int IO_TIMEOUT_MS = 30_000;
     private static final int SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -105,30 +136,50 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
 
     /** The caller must obtain the exact address from current accepted route authority. */
     public static byte[] exchange(InetAddress targetAddress, int targetPort, byte[] frame) throws IOException {
-        if (targetAddress == null || targetPort <= 0 || targetPort > 65535) {
-            throw new IllegalArgumentException("owner control target");
-        }
-        requireFrame(frame);
-        ScheduledThreadPoolExecutor timeout = deadlineExecutor();
-        try (Socket socket = new Socket()) {
-            timeout.schedule(() -> {
-                closeTimedSocket(socket);
-            }, IO_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            socket.connect(new InetSocketAddress(targetAddress, targetPort), 3_000);
-            socket.setSoTimeout(IO_TIMEOUT_MS);
-            socket.setTcpNoDelay(true);
-            writeFrame(new DataOutputStream(socket.getOutputStream()), frame);
-            return readFrame(socket);
-        } finally { timeout.shutdownNow(); }
+        return exchange(targetAddress, targetPort, frame, null);
     }
 
-    private static byte[] readFrame(Socket socket) throws IOException {
+    /** Finite local transport observation only; a returned frame is not an authenticated receipt. */
+    public static byte[] exchange(InetAddress targetAddress, int targetPort, byte[] frame,
+            ExchangeObserver observer) throws IOException {
+        ExchangeTrace trace = new ExchangeTrace(observer);
+        try {
+            trace.enter(Phase.TARGET_BINDING);
+            if (targetAddress == null || targetPort <= 0 || targetPort > 65535) {
+                throw new IllegalArgumentException("owner control target");
+            }
+            trace.enter(Phase.INPUT_BOUNDS);
+            requireFrame(frame);
+            ScheduledThreadPoolExecutor timeout = deadlineExecutor();
+            try (Socket socket = new Socket()) {
+                timeout.schedule(() -> { trace.deadlineExpired = true; closeTimedSocket(socket); }, IO_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                trace.enter(Phase.CONNECT);
+                socket.connect(new InetSocketAddress(targetAddress, targetPort), 3_000);
+                socket.setSoTimeout(IO_TIMEOUT_MS);
+                socket.setTcpNoDelay(true);
+                trace.enter(Phase.WRITE_REQUEST);
+                writeFrame(new DataOutputStream(socket.getOutputStream()), frame);
+                byte[] response = readFrame(socket, trace);
+                trace.phase = Phase.RESPONSE_RETURNED;
+                trace.publish(Outcome.RETURNED, Failure.NONE);
+                return response;
+            } finally { timeout.shutdownNow(); }
+        } catch (IOException | RuntimeException error) {
+            trace.failed(error);
+            throw error;
+        }
+    }
+
+    private static byte[] readFrame(Socket socket) throws IOException { return readFrame(socket, null); }
+    private static byte[] readFrame(Socket socket, ExchangeTrace trace) throws IOException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(IO_TIMEOUT_MS);
         byte[] header = new byte[4];
+        if (trace != null) trace.enter(Phase.READ_RESPONSE_HEADER);
         readExactly(socket, header, deadline);
         int length = ByteBuffer.wrap(header).getInt();
-        if (length <= 0 || length > MAX_FRAME_BYTES) throw new IOException("owner frame bound");
+        if (length <= 0 || length > MAX_FRAME_BYTES) throw new FrameBoundsException();
         byte[] frame = new byte[length];
+        if (trace != null) trace.enter(Phase.READ_RESPONSE_BODY);
         readExactly(socket, frame, deadline);
         return frame;
     }
@@ -155,7 +206,7 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
 
     private static void requireFrame(byte[] frame) throws IOException {
         if (frame == null || frame.length == 0 || frame.length > MAX_FRAME_BYTES) {
-            throw new IOException("owner frame bound");
+            throw new FrameBoundsException();
         }
     }
 

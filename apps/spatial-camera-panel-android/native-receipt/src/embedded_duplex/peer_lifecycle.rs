@@ -129,6 +129,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "media_completion":state.stop_completion,"media_stop_effect_receipt":media_stop_effect(state),
         "owner_failure_diagnostic":owner_diagnostic,
         "owner_failure_diagnostic_status":owner_diagnostic_status,
+        "owner_transport_attempt":host.callbacks.owner_transport_attempt_read(),
         "native_owner_dispatch_failure":*host.owner_dispatch_failure.lock().map_err(|_| "owner diagnostic state unavailable")?,
         "activation":state.activation,"renewal_receipts":&state.renewals[state.renewals.len().saturating_sub(2)..],
         "renewal_total_completed":state.renewals.len(),

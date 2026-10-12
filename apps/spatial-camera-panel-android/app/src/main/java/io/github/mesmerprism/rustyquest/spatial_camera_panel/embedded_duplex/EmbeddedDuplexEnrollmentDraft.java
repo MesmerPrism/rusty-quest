@@ -35,6 +35,18 @@ public final class EmbeddedDuplexEnrollmentDraft {
         this.localFixture = localFixture;
     }
 
+    /** Inert host/operator preflight for a selected fresh pair, before either review/confirm effect.
+     * This checks explicit selected trust; it never adds the foreign requester to either policy.
+     */
+    public static void requirePairedCleanupIdentity(EmbeddedDuplexEnrollmentDraft first,
+            EmbeddedDuplexEnrollmentDraft second) {
+        if (first == null || second == null || first.localFixture || second.localFixture
+                || first.roleId.equals(second.roleId)
+                || !first.mediaRevokerId.equals(second.mediaRevokerId)) {
+            throw new IllegalArgumentException("paired enrollment cleanup identity differs");
+        }
+    }
+
     private static boolean dotted(String value) {
         return value != null && value.matches("[a-z][a-z0-9_-]*(?:\\.[a-z0-9][a-z0-9_-]*)+");
     }
