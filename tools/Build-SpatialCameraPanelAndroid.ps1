@@ -639,6 +639,35 @@ function Get-ZipEntrySha256 {
     }
 }
 
+function Get-NativeReceiptArtifactMetadata {
+    param(
+        [Parameter(Mandatory=$true)][string]$JniInputPath,
+        [Parameter(Mandatory=$true)]$Zip,
+        [Parameter(Mandatory=$true)][string]$ApkEntryName
+    )
+    $inputFile = Get-Item -LiteralPath $JniInputPath -ErrorAction Stop
+    if ($inputFile.PSIsContainer -or $inputFile.Length -le 0) {
+        throw "Native receipt JNI input must be a nonempty file."
+    }
+    $packaged = Get-ZipEntrySha256 -Zip $Zip -EntryName $ApkEntryName
+    if ($packaged.size_bytes -le 0) { throw "Packaged native receipt must be nonempty." }
+    return [ordered]@{
+        schema = "rusty.quest.spatial_camera_panel.native_receipt_artifacts.v1"
+        input = [ordered]@{
+            role = "generated-jni-input"
+            path = "app/build/generated/rustJniLibs/arm64-v8a/libspatial_camera_panel_native_receipt.so"
+            sha256 = Get-FileSha256 -Path $JniInputPath
+            size_bytes = [long]$inputFile.Length
+        }
+        packaged = [ordered]@{
+            role = "apk-zip-entry"
+            path = $ApkEntryName
+            sha256 = [string]$packaged.sha256
+            size_bytes = [long]$packaged.size_bytes
+        }
+    }
+}
+
 function Test-HandMeshRigAssetPack {
     param([string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -2424,6 +2453,11 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $apkZip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $apkOut).Path)
 try {
     $apkEntryNames = @($apkZip.Entries | ForEach-Object { [string]$_.FullName })
+    $nativeReceiptArtifacts = Get-NativeReceiptArtifactMetadata `
+        -JniInputPath $nativeReceiptJniLib -Zip $apkZip -ApkEntryName $nativeReceiptApkEntry
+    if ($nativeReceiptArtifacts.input.sha256 -cne $nativeReceiptSha256) {
+        throw "Native receipt JNI input changed during Android packaging."
+    }
     $actualEmbeddedDuplexAssetNames = @($apkEntryNames | Where-Object {
         $_.StartsWith("assets/embedded-duplex/", [StringComparison]::Ordinal)
     } | Sort-Object)
@@ -2800,6 +2834,8 @@ $manifest = [ordered]@{
     native_receipt_library = $nativeReceiptApkEntry
     native_receipt_library_packaged = $nativeReceiptLibraryPackaged
     native_receipt_library_sha256 = $nativeReceiptSha256
+    native_receipt_library_sha256_scope = "generated-jni-input"
+    native_receipt_artifacts = $nativeReceiptArtifacts
     native_receipt_generated_jni_libs = "app/build/generated/rustJniLibs/arm64-v8a"
     spatial_public_guide_target_extent = "768x384-packed-stereo"
     spatial_public_guide_per_eye_extent = "384x384"

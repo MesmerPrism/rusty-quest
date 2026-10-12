@@ -55,6 +55,15 @@ address; replacement is a repair/debug action.
 
 ## Run Capsule
 
+Native receipt metadata distinguishes the generated JNI input from the final
+APK ZIP entry. Gradle may strip symbols while packaging, so these bytes and
+digests may differ. `native_receipt_artifacts.input` binds the generated input
+path, SHA-256 and byte count; `.packaged` binds the unique final APK entry, its
+SHA-256 and byte count. The legacy `native_receipt_library_sha256` remains the
+input digest and now declares `generated-jni-input` scope. Use the packaged
+record when verifying the APK entry; keep native cache validation on the input.
+Host controls: `tools/checks/Test-NativeReceiptArtifactMetadataHost.ps1`.
+
 Spatial depth-layer CMake staging uses the selected serialized product/type
 cache lane, in a persistent `x` sibling of Gradle's temporary `a` and `r`
 directories. It no longer inherits `.cxx` beneath the source checkout.

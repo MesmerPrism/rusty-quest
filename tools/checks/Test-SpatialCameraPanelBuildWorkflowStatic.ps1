@@ -123,5 +123,6 @@ $errors = $null
 if (@($errors).Count -gt 0) { throw "Test wrapper PowerShell parse failed: $($errors[0].Message)" }
 
 & (Join-Path $repo "tools/checks/Test-SpatialCmakeStagingHost.ps1")
+& (Join-Path $repo "tools/checks/Test-NativeReceiptArtifactMetadataHost.ps1") -RepoRoot $repo
 
 Write-Host "Spatial Camera Panel fast build workflow static check: PASS"
