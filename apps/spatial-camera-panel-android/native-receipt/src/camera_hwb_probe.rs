@@ -4023,18 +4023,25 @@ unsafe fn render_peer_common_graph(
             if let Some(targets) = processing_graph.public_guide_targets.as_mut() {
                 targets.retire_stereo_banks_after_fence(&device)?;
             }
+            // One immutable control snapshot feeds both retired refresh and recording.
+            let recording_control = crate::spatial_public_multistack_runtime::read_control_policy();
             if let Some(imports) = stereo_source_imports.as_mut() {
                 imports.retire_after_fence(device)?;
                 crate::spatial_stereo_source_import::synchronize_peer_source()?;
-                imports.refresh(
+                if !imports.refresh(
                     device,
                     &memory_properties,
                     ahb_device,
                     &processing_graph.camera_resources,
                     CameraHwbProbeMode::RawColorProjection,
                     1_000_000_000,
-                    crate::spatial_public_multistack_runtime::read_mask_policy().1,
-                )?;
+                    recording_control.1,
+                )? {
+                    // Imports are retired/cleared; keep the signaled fence and defer
+                    // this frame rather than terminating the owned renderer.
+                    thread::yield_now();
+                    continue;
+                }
             }
             device
                 .reset_fences(&[frame_fence])
@@ -4067,8 +4074,7 @@ unsafe fn render_peer_common_graph(
             let normalized_images = normalizer.images();
             let video_settings = spatial_video_projection_settings();
             let stereo_inputs = if let Some(imports) = stereo_source_imports.as_mut() {
-                let (words, revision) =
-                    crate::spatial_public_multistack_runtime::read_control_policy();
+                let (words, revision) = recording_control;
                 let policy = crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
                     region_origins: [words[0], words[1], words[2], words[3]],
                     guide_origins: [words[4], words[5], 0, 0],

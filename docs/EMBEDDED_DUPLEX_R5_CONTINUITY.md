@@ -480,3 +480,33 @@ check the actual callback ordering and UI guards. Retained completion and
 remote-owner completion controls remain applicable. Actual Android Java/Kotlin
 entrypoint compilation is a separate source qualification; host checks do not
 qualify a packaged or installed app, or physical device cleanup.
+
+### Retired source refresh during control changes
+
+Each common-graph iteration captures one immutable control snapshot for its
+retired imports and subsequent recording. If controls change while refreshing
+retired imports, the refresh clears both retired bindings and defers that frame
+before resetting the signaled fence. The next iteration refreshes current
+controls. Deferral yields and returns to the loop's cancellation check. This
+exact normal control race does not terminate the renderer;
+pending retirement, unavailable/invalid control, source binding and native
+resource errors keep their fatal behavior. No source owner is restarted and
+no command or media effect is replayed. Neutral mask participation remains
+both complete six-stage banks on the concurrent source-set path.
+The successfully refreshed full guide-processing policy also stays with the
+imported bytes through WSI acquisition and recording. Recording checks its
+stored snapshot/import consistency rather than comparing mutable current
+controls after acquisition. Pending fence, nonzero request revision, exact
+imported revision and source-key checks remain mandatory. The existing scoped
+processing policy applies that snapshot to bank stages; the next frame adopts
+later controls. There is no post-acquisition retry/continue.
+
+`tools/checks/Test-StereoSourceRefreshHost.py` compiles the installed baseline
+and candidate refresh bodies with modeled retired imports, then executes the
+actual candidate loop/control-policy seams. It reproduces baseline termination,
+checks exact-race deferral versus physical failures, rejects unretired imports,
+and verifies coherent mask/revision recording when a control changes after
+refresh. The pure production classifier and mask tests also run. These checks
+prove source behavior, not which error stopped an installed renderer or physical
+Android/GPU recovery. The current worker only logs terminal errors; counters
+and terminal cleanup remain observable after that bounded log history expires.

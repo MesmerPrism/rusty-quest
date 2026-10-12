@@ -25,6 +25,9 @@ use ash::vk;
 type Frame = RetainedStereoFrame<StereoSourceLease<PackedLease, SpatialVideoProjectionFrame>>;
 fn normalizer_processing_policy() -> [u32; 4] {
     let policy = crate::spatial_guide_processing::current_spatial_guide_processing_policy();
+    processing_policy_words(policy)
+}
+fn processing_policy_words(policy: crate::spatial_guide_processing::SpatialGuideProcessingPolicy) -> [u32; 4] {
     [
         policy.preblur_kernel as u32,
         policy.preblur_input as u32,
@@ -201,6 +204,7 @@ pub(crate) struct StereoSourceImports {
     foreign_queue_family: Option<u32>,
     control_revision: u64,
     processing_policy: [u32; 4],
+    processing_snapshot: crate::spatial_guide_processing::SpatialGuideProcessingPolicy,
 }
 impl StereoSourceImports {
     pub(crate) unsafe fn create(
@@ -249,6 +253,7 @@ impl StereoSourceImports {
             foreign_queue_family,
             control_revision: 0,
             processing_policy: [0; 4],
+            processing_snapshot: crate::spatial_guide_processing::SpatialGuideProcessingPolicy::default(),
         })
     }
     pub(crate) unsafe fn retire_after_fence(&mut self, device: &ash::Device) -> Result<(), String> {
@@ -291,7 +296,7 @@ impl StereoSourceImports {
         mode: CameraHwbProbeMode,
         maximum_age_ns: u64,
         control_revision: u64,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if self.pending.is_some() {
             return Err("stereo-import-replacement-before-retirement".into());
         }
@@ -309,7 +314,7 @@ impl StereoSourceImports {
         if result.is_err() {
             self.clear_retired_sources(device);
         }
-        result
+        crate::stereo_source_refresh_policy::classify_retired_refresh(result)
     }
     unsafe fn clear_retired_sources(&mut self, device: &ash::Device) {
         debug_assert!(self.pending.is_none());
@@ -334,7 +339,8 @@ impl StereoSourceImports {
         if control_revision == 0 {
             return Err("stereo-normalizer-control-unavailable".into());
         }
-        let processing_policy = normalizer_processing_policy();
+        let processing_snapshot = crate::spatial_guide_processing::current_spatial_guide_processing_policy();
+        let processing_policy = processing_policy_words(processing_snapshot);
         if mode.descriptor_binding_count() != 2 || resources.sampler_ycbcr_conversion.is_some() {
             return Err("stereo-normalized-layout-invalid".into());
         }
@@ -476,6 +482,7 @@ impl StereoSourceImports {
         }
         self.control_revision = control_revision;
         self.processing_policy = processing_policy;
+        self.processing_snapshot = processing_snapshot;
         Ok(())
     }
     pub(crate) fn recording_inputs(
@@ -487,17 +494,16 @@ impl StereoSourceImports {
         frame_ordinal: u64,
         surface_generation: u64,
     ) -> Result<StereoRecordingInputs<'_>, String> {
-        if self.pending.is_some()
-            || fence == vk::Fence::null()
-            || processing_revision == 0
-            || processing_revision != self.control_revision
-            || normalizer_processing_policy() != self.processing_policy
-        {
+        if !crate::stereo_source_refresh_policy::recording_snapshot_valid(
+            self.pending.is_some(), fence != vk::Fence::null(), processing_revision,
+            self.control_revision, processing_policy_words(self.processing_snapshot), self.processing_policy,
+        ) {
             return Err("stereo-recording-admission-invalid".into());
         }
         self.pending = Some(fence);
-        let processing_policy =
-            crate::spatial_guide_processing::current_spatial_guide_processing_policy();
+        // These exact imported/normalized bytes keep the successfully refreshed
+        // processing snapshot through WSI acquisition and command recording.
+        let processing_policy = self.processing_snapshot;
         let [own, peer] = &mut self.sources;
         let sources=[own,peer].into_iter().enumerate().map(|(origin,slot)|slot.as_mut().map(|source|
             StereoRecordingSource{key:StereoGuideKey {origin,frame:source.frame.identity,geometry_revision:None,processing_revision,processing_policy},

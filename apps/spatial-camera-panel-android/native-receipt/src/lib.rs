@@ -841,6 +841,7 @@ mod spatial_stereo_source_import;
 #[cfg(target_os = "android")]
 mod stereo_bank_control_jni;
 mod stereo_bank_mask_v1;
+mod stereo_source_refresh_policy;
 mod stereo_bank_transport_v1;
 mod stereo_input_set;
 #[cfg(target_os = "android")]
