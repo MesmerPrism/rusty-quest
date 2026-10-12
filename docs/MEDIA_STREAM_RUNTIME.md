@@ -273,3 +273,13 @@ classes and real TCP controls compile with Java 8 APIs, `-Xlint:all` and
 `-Werror`; an explicit JDK can be supplied. The complete media library retains
 its separate Android classpath and strict Gradle `compileJava` requirement.
 Passing host transport controls does not qualify Android/JNI or media authority.
+
+The receiver retains closed first and latest codec-start exception details before
+wrapping a failed `MediaCodec.start()` as `DECODER_START`: platform classification,
+numeric codec error code, recoverable flag and transient flag. Exception messages,
+stack traces and arbitrary class names are excluded. Non-codec exceptions report
+their closed category with zero code and false codec flags. These observations
+do not select a decoder fallback, retry an activation or establish resource exhaustion.
+The normal Windows Spatial host route also compiles and exercises the actual
+start catch, classifier and activation-journal parser with host platform doubles.
+Real codec execution and the next packaged Android build remain separate checks.

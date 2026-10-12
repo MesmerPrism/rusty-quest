@@ -73,6 +73,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
     // counters; no exception text, endpoints or tokens. First code is sticky per
     // receiver generation and is never overwritten by cleanup-time failures.
     private String firstFailureCode = "NONE", finalFailureCode = "NONE";
+    private CodecStartFailure firstCodecStartFailure = CodecStartFailure.none();
+    private CodecStartFailure finalCodecStartFailure = CodecStartFailure.none();
     private long acceptedConnections, bytesRead, packetsRead, configPackets, keyframePackets;
     private long packetsBeforeBootstrap, inputsQueued, outputsDequeued, outputsReleasedForRender;
     private long renderCallbacks, renderCallbacksSuperseded, lateRenderCallbacks, renderHistoryEvicted;
@@ -460,7 +462,16 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }
         }, new Handler(callbacks.getLooper()));
         try { codec.start(); }
-        catch (RuntimeException start) { throw closed("DECODER_START", start); }
+        catch (RuntimeException start) {
+            // Capture platform classification before the closed IOException
+            // wrapper changes its type. No messages, names or private paths.
+            synchronized (lock) {
+                CodecStartFailure detail = CodecStartFailure.from(start);
+                if ("NONE".equals(firstCodecStartFailure.kind)) firstCodecStartFailure = detail;
+                finalCodecStartFailure = detail;
+            }
+            throw closed("DECODER_START", start);
+        }
         connectionState = "decoder_configured";
         synchronized (lock) {
             if (decoder == codec && !stopRequested && retiredConnectionGeneration < activeConnection)
@@ -1002,7 +1013,9 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 + " queuedWindow=" + queuedWindowLocked() + " renderWindow=" + renderWindowLocked()
                 + " renderHistory=" + retiredRenderFrames.size() + " windowBound=" + bounds.maxPendingFrames
                 + " receiverFirstStage=" + firstTransportStage + " receiverFirstCause=" + firstTransportCause
-                + " receiverFinalStage=" + finalTransportStage + " receiverFinalCause=" + finalTransportCause;
+                + " receiverFinalStage=" + finalTransportStage + " receiverFinalCause=" + finalTransportCause
+                + firstCodecStartFailure.fields("codecStartFirst")
+                + finalCodecStartFailure.fields("codecStartFinal");
     }
 
     private int queuedWindowLocked() {
@@ -1050,6 +1063,32 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             }
         } catch (RuntimeException unavailable) { return "UNKNOWN"; }
         return "UNKNOWN";
+    }
+
+    /** Closed platform detail; the original exception text never crosses this boundary. */
+    static final class CodecStartFailure {
+        final String kind;
+        final int errorCode;
+        final boolean recoverable, transientFailure;
+        CodecStartFailure(String kind, int errorCode, boolean recoverable, boolean transientFailure) {
+            this.kind = kind; this.errorCode = errorCode;
+            this.recoverable = recoverable; this.transientFailure = transientFailure;
+        }
+        static CodecStartFailure none() { return new CodecStartFailure("NONE", 0, false, false); }
+        static CodecStartFailure from(RuntimeException failure) {
+            if (failure instanceof MediaCodec.CodecException) {
+                MediaCodec.CodecException codec = (MediaCodec.CodecException) failure;
+                return new CodecStartFailure("CODEC", codec.getErrorCode(), codec.isRecoverable(), codec.isTransient());
+            }
+            String kind = failure instanceof SecurityException ? "SECURITY"
+                    : failure instanceof IllegalStateException ? "ILLEGAL_STATE" : "OTHER_RUNTIME";
+            return new CodecStartFailure(kind, 0, false, false);
+        }
+        String fields(String prefix) {
+            return " " + prefix + "Kind=" + kind + " " + prefix + "ErrorCode=" + errorCode
+                    + " " + prefix + "Recoverable=" + (recoverable ? "1" : "0")
+                    + " " + prefix + "Transient=" + (transientFailure ? "1" : "0");
+        }
     }
 
     /** Closed failure; the code is from a fixed vocabulary and the cause is never exported. */

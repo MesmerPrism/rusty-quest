@@ -346,6 +346,15 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                     if (!value.matches("NONE|IDLE|LISTENER_BIND|CONNECT|ACCEPT|HEADER|DECODER_CONFIG|PACKET_READ|DECODE")) return false; break;
                 case "receiverFirstCause": case "receiverFinalCause":
                     if (!value.matches("NONE|CODEC|REFUSED|CONNECT_TIMEOUT|READ_TIMEOUT|EOF|HEADER_IO|IO|STATE|OTHER")) return false; break;
+                case "codecStartFirstKind": case "codecStartFinalKind":
+                    if (!value.matches("NONE|CODEC|SECURITY|ILLEGAL_STATE|OTHER_RUNTIME")) return false; break;
+                case "codecStartFirstErrorCode": case "codecStartFinalErrorCode":
+                    if (!canonicalSignedLong(value)) return false;
+                    try { Integer.parseInt(value); } catch (NumberFormatException invalid) { return false; }
+                    break;
+                case "codecStartFirstRecoverable": case "codecStartFinalRecoverable":
+                case "codecStartFirstTransient": case "codecStartFinalTransient":
+                    if (!value.matches("0|1")) return false; break;
                 case "firstRenderReject":
                     if (!value.matches("NONE|CODEC|STATE|PTS_MISSING|CONNECTION|NOT_READY|TIMESTAMP|AFTER_WITNESS")) return false; break;
                 case "firstRenderRejectPendingPtsUs":
