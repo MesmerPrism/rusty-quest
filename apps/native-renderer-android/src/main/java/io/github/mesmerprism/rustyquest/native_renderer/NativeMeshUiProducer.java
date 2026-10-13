@@ -26,6 +26,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /** App-owned Android widgets rendered into the native OpenXR mesh texture, not another Activity. */
 public final class NativeMeshUiProducer {
+    // NativeActivity's platform dlopen is not this application's JNI classloader registration.
+    // Register explicitly so widget callbacks resolve without another optional Java bridge.
+    static { System.loadLibrary("rusty_quest_native_renderer"); }
     private static final String TAG = "RQNativeMeshUi";
     private static volatile NativeMeshUiProducer current;
     private static volatile Activity producerActivity;
