@@ -176,9 +176,11 @@ post-index acknowledgment. Hashing uses bounded buffers and verifies file and
 path metadata around each read. Old histories remain metadata-only; this assumes
 app-private custody and filesystem change timestamps with subsecond granularity.
 A backward wall-clock observation during recovery or publication rejects that
-operation. A previously validated digest can age out without reparsing only
-with identical metadata and forward clock progress; the inverse transition
-always revalidates. Privileged clock/filesystem manipulation outside app-private
+operation. A digest aging out of the recent window forces full semantic revalidation
+once, even with unchanged metadata and forward clock progress. Otherwise a
+same-tick write after the previous observation could hide behind the transition.
+Old histories then remain metadata-only; newly modified large histories may
+incur one additional full scan when their recent digest ages out. Privileged clock/filesystem manipulation outside app-private
 custody is not an immutability guarantee.
 Added/deleted sessions and root replacement invalidate the corresponding
 inventory. Symlinks and aliased files reject reuse; unsupported platforms or

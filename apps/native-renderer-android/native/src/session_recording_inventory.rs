@@ -193,24 +193,10 @@ impl RecoveryInventory {
     }
 }
 
-// A validated digest may age out only while every stat field and filename
-// remains identical. The caller separately rejects backward clock movement.
-// The inverse transition (old metadata becoming recent) always revalidates.
+// A digest-presence transition must revalidate. A same-tick write after a
+// prior observation can leave metadata unchanged until the digest ages out.
 fn equivalent_validation(old: &[(PathBuf, Stamp)], current: &[(PathBuf, Stamp)]) -> bool {
-    old.len() == current.len()
-        && old
-            .iter()
-            .zip(current)
-            .all(|((old_path, old), (path, current))| {
-                if old_path != path {
-                    return false;
-                }
-                let mut previous = old.clone();
-                previous.digest = current.digest;
-                previous == *current
-                    && (old.digest == current.digest
-                        || (old.digest.is_some() && current.digest.is_none()))
-            })
+    old == current
 }
 
 fn snapshot(root: &Path, hash_since: SystemTime) -> Result<Option<Snapshot>, String> {
@@ -671,7 +657,7 @@ mod tests {
     }
 
     #[test]
-    fn digest_aging_is_one_way_and_clock_rollback_rejects_publication_and_reuse() {
+    fn digest_aging_revalidates_and_clock_rollback_rejects_publication_and_reuse() {
         let root = temp_root("inventory-clock");
         fixture(&root, 1_725_000_000_000_000_000);
         let mut inventory = RecoveryInventory::default();
@@ -690,7 +676,7 @@ mod tests {
         for (_, stamp) in &mut aged {
             stamp.digest = None;
         }
-        assert!(equivalent_validation(&original, &aged));
+        assert!(!equivalent_validation(&original, &aged));
         assert!(!equivalent_validation(&aged, &original));
         aged[0].1.inode += 1;
         assert!(!equivalent_validation(&original, &aged));
@@ -706,6 +692,42 @@ mod tests {
             inventory.recover(&root, None).unwrap_err(),
             "recording-inventory-clock-regressed"
         );
+        assert!(inventory.entries.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn same_tick_write_after_observation_cannot_hide_when_digest_ages_out() {
+        let root = temp_root("inventory-alias-then-aging");
+        let directory = fixture(&root, 1_725_000_000_000_000_000);
+        let mut inventory = RecoveryInventory::default();
+        inventory.recover(&root, None).unwrap();
+        inventory.confirm_publication(&root).unwrap();
+        let original = inventory.snapshot.clone().unwrap();
+        // Mutation occurs AFTER the last observation, then its digest ages
+        // out. Force aliased stat fields to model the kernel tick exactly.
+        let path = directory.join("events.jsonl");
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[0] = b'!';
+        fs::write(path, bytes).unwrap();
+        let report = inventory
+            .recover_observed(&root, None, |root, _| {
+                let mut aged = snapshot(root, SystemTime::now() + Duration::from_secs(3))?.unwrap();
+                assert_eq!(aged.recent_bytes_hashed, 0);
+                for (path, files) in &mut aged.sessions {
+                    for ((_, current), (_, previous)) in
+                        files.iter_mut().zip(&original.sessions[path])
+                    {
+                        *current = previous.clone();
+                        current.digest = None;
+                    }
+                }
+                Ok(Some(aged))
+            })
+            .unwrap();
+        assert_eq!(report.work.reused_sessions, 0);
+        assert_eq!(report.work.validated_sessions, 1);
+        assert!(report.sessions[0].error.is_some());
         assert!(inventory.entries.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
