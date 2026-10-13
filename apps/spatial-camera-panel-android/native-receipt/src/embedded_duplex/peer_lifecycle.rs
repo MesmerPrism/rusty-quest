@@ -817,6 +817,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _: JClass<'_>,
 ) -> jstring {
     let result = (|| {
+        if let Some(failure) = super::initialization_failure_read()? {
+            return Ok(failure.to_string());
+        }
         let host = host()?;
         host.capability.require_live()?;
         let mut value = host.callbacks.owner_failure_diagnostic_read();
