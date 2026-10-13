@@ -2,9 +2,12 @@
 
 use std::collections::VecDeque;
 
+#[path = "native_camera_metadata_tags.rs"]
+mod metadata_tags;
+
 use crate::acamera_sys::{
-    ACameraMetadata, ACameraMetadataConstEntry, ACameraMetadata_getConstEntry,
-    ACAMERA_CONTROL_AE_STATE, ACAMERA_CONTROL_AE_STATE_CONVERGED,
+    ACameraMetadata, ACameraMetadataConstEntry, ACameraMetadata_getAllTags,
+    ACameraMetadata_getConstEntry, ACAMERA_CONTROL_AE_STATE, ACAMERA_CONTROL_AE_STATE_CONVERGED,
     ACAMERA_CONTROL_AE_STATE_FLASH_REQUIRED, ACAMERA_CONTROL_AE_STATE_INACTIVE,
     ACAMERA_CONTROL_AE_STATE_LOCKED, ACAMERA_CONTROL_AE_STATE_PRECAPTURE,
     ACAMERA_CONTROL_AE_STATE_SEARCHING, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
@@ -208,18 +211,28 @@ impl NativeCameraCaptureResultSnapshot {
         result_count: u64,
         metadata: *const ACameraMetadata,
     ) -> Self {
+        // Tag storage is owned by this callback's metadata. Borrow it only while
+        // producing an owned snapshot; never cache it across capture callbacks.
+        let mut count = 0_i32;
+        let mut tag_ptr = std::ptr::null();
+        let status = if metadata.is_null() {
+            -1
+        } else {
+            ACameraMetadata_getAllTags(metadata, &mut count, &mut tag_ptr)
+        };
+        let tags = metadata_tags::tag_list_from_ffi(status, count, tag_ptr).unwrap_or(&[]);
         Self {
             result_count,
-            sensor_timestamp_ns: metadata_i64(metadata, ACAMERA_SENSOR_TIMESTAMP),
-            exposure_time_ns: metadata_i64(metadata, ACAMERA_SENSOR_EXPOSURE_TIME),
-            sensitivity_iso: metadata_i32(metadata, ACAMERA_SENSOR_SENSITIVITY),
-            frame_duration_ns: metadata_i64(metadata, ACAMERA_SENSOR_FRAME_DURATION),
-            ae_fps_range: metadata_i32_pair(metadata, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE),
-            ae_state: metadata_u8(metadata, ACAMERA_CONTROL_AE_STATE),
-            awb_state: metadata_u8(metadata, ACAMERA_CONTROL_AWB_STATE),
-            noise_reduction_mode: metadata_u8(metadata, ACAMERA_NOISE_REDUCTION_MODE),
-            edge_mode: metadata_u8(metadata, ACAMERA_EDGE_MODE),
-            sync_frame_number: metadata_i64(metadata, ACAMERA_SYNC_FRAME_NUMBER),
+            sensor_timestamp_ns: metadata_i64(metadata, tags, ACAMERA_SENSOR_TIMESTAMP),
+            exposure_time_ns: metadata_i64(metadata, tags, ACAMERA_SENSOR_EXPOSURE_TIME),
+            sensitivity_iso: metadata_i32(metadata, tags, ACAMERA_SENSOR_SENSITIVITY),
+            frame_duration_ns: metadata_i64(metadata, tags, ACAMERA_SENSOR_FRAME_DURATION),
+            ae_fps_range: metadata_i32_pair(metadata, tags, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE),
+            ae_state: metadata_u8(metadata, tags, ACAMERA_CONTROL_AE_STATE),
+            awb_state: metadata_u8(metadata, tags, ACAMERA_CONTROL_AWB_STATE),
+            noise_reduction_mode: metadata_u8(metadata, tags, ACAMERA_NOISE_REDUCTION_MODE),
+            edge_mode: metadata_u8(metadata, tags, ACAMERA_EDGE_MODE),
+            sync_frame_number: metadata_i64(metadata, tags, ACAMERA_SYNC_FRAME_NUMBER),
         }
     }
 
@@ -240,8 +253,8 @@ impl NativeCameraCaptureResultSnapshot {
     }
 }
 
-unsafe fn read_u8_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<u8> {
-    let Some(entry) = metadata_entry(metadata, tag) else {
+unsafe fn read_u8_values(metadata: *const ACameraMetadata, tags: &[u32], tag: u32) -> Vec<u8> {
+    let Some(entry) = metadata_entry(metadata, tags, tag) else {
         return Vec::new();
     };
     if entry.count == 0 || entry.data.u8_.is_null() {
@@ -250,8 +263,8 @@ unsafe fn read_u8_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<u8> 
     std::slice::from_raw_parts(entry.data.u8_, entry.count as usize).to_vec()
 }
 
-unsafe fn read_i32_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<i32> {
-    let Some(entry) = metadata_entry(metadata, tag) else {
+unsafe fn read_i32_values(metadata: *const ACameraMetadata, tags: &[u32], tag: u32) -> Vec<i32> {
+    let Some(entry) = metadata_entry(metadata, tags, tag) else {
         return Vec::new();
     };
     if entry.count == 0 || entry.data.i32_.is_null() {
@@ -262,26 +275,32 @@ unsafe fn read_i32_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<i32
 
 unsafe fn metadata_entry(
     metadata: *const ACameraMetadata,
+    tags: &[u32],
     tag: u32,
 ) -> Option<ACameraMetadataConstEntry> {
-    let mut entry = std::mem::MaybeUninit::<ACameraMetadataConstEntry>::zeroed();
-    if ACameraMetadata_getConstEntry(metadata, tag, entry.as_mut_ptr()) == 0 {
-        Some(entry.assume_init())
-    } else {
-        None
-    }
+    // getConstEntry emits an Android error for absent optional tags. Check this
+    // result's actual inventory first; present entries retain their original API
+    // status handling and value parsers.
+    metadata_tags::read_if_present(tags, tag, || {
+        let mut entry = std::mem::MaybeUninit::<ACameraMetadataConstEntry>::zeroed();
+        if ACameraMetadata_getConstEntry(metadata, tag, entry.as_mut_ptr()) == 0 {
+            Some(entry.assume_init())
+        } else {
+            None
+        }
+    })
 }
 
-unsafe fn metadata_u8(metadata: *const ACameraMetadata, tag: u32) -> Option<u8> {
-    read_u8_values(metadata, tag).first().copied()
+unsafe fn metadata_u8(metadata: *const ACameraMetadata, tags: &[u32], tag: u32) -> Option<u8> {
+    read_u8_values(metadata, tags, tag).first().copied()
 }
 
-unsafe fn metadata_i32(metadata: *const ACameraMetadata, tag: u32) -> Option<i32> {
-    read_i32_values(metadata, tag).first().copied()
+unsafe fn metadata_i32(metadata: *const ACameraMetadata, tags: &[u32], tag: u32) -> Option<i32> {
+    read_i32_values(metadata, tags, tag).first().copied()
 }
 
-unsafe fn metadata_i64(metadata: *const ACameraMetadata, tag: u32) -> Option<i64> {
-    let Some(entry) = metadata_entry(metadata, tag) else {
+unsafe fn metadata_i64(metadata: *const ACameraMetadata, tags: &[u32], tag: u32) -> Option<i64> {
+    let Some(entry) = metadata_entry(metadata, tags, tag) else {
         return None;
     };
     if entry.count == 0 || entry.data.i64_.is_null() {
@@ -290,8 +309,12 @@ unsafe fn metadata_i64(metadata: *const ACameraMetadata, tag: u32) -> Option<i64
     Some(*entry.data.i64_)
 }
 
-unsafe fn metadata_i32_pair(metadata: *const ACameraMetadata, tag: u32) -> Option<[i32; 2]> {
-    let values = read_i32_values(metadata, tag);
+unsafe fn metadata_i32_pair(
+    metadata: *const ACameraMetadata,
+    tags: &[u32],
+    tag: u32,
+) -> Option<[i32; 2]> {
+    let values = read_i32_values(metadata, tags, tag);
     if values.len() < 2 {
         None
     } else {

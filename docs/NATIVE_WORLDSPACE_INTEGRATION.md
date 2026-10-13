@@ -149,3 +149,12 @@ headset rendering or performance. The live probe should progress through:
 Keep source, feature lock, APK hash and exact headset tied to each capture. Report
 UI command application, visible behavior and timing evidence separately. A built
 APK is a candidate until its live checks pass.
+
+## Camera result metadata
+
+Optional Camera2 capture metadata is read only when its tag is present in that
+result's `ACameraMetadata_getAllTags` inventory. The list is borrowed within the
+capture callback; snapshots retain only parsed values. Missing optional fields
+remain unavailable, without repeatedly asking Android to log a failed lookup.
+Discovery or entry errors do not fabricate values, and no metadata pointers are
+cached across frames.
