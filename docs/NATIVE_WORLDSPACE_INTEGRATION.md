@@ -47,8 +47,9 @@ GPU particles, live GPU hand meshes, hand graft copies and a world-positioned UI
 mesh in one native OpenXR/Vulkan session. The mode is opt-in. Existing closed
 particle and camera-layer modes keep their own composition rules.
 
-The public `native-worldspace-panel-test.app.json` selects only the scene and UI
-foundation. A downstream composition can select
+The public `native-worldspace-panel-test.app.json` selects the scene, UI and
+neutral tracked-joint pointer foundation, with compact rig input disabled and no
+private payload. A downstream composition can select
 `renderer.private_particles.composable` and `render.private_layer.composable`
 alongside the existing hand features. Private payloads and shader formulas remain
 inputs supplied by their owners; the public renderer owns frame scheduling,
