@@ -394,12 +394,22 @@ impl GpuMeshUiPanel {
         }
         Ok(captured_before || self.pointer.captured() || event.is_some())
     }
+    /// Quiesce the writer but retain every GPU/image owner when retirement is unproven.
+    /// The caller MUST also retain the Vulkan device/instance and loader until process exit.
+    pub(crate) unsafe fn retain_unretired(mut self, app: &android_activity::AndroidApp) {
+        if let Some(producer) = self.producer.take() {
+            producer.quiesce(app);
+        }
+        std::mem::forget(self);
+    }
     /// Call only after ALL referenced frame fences completed and graphics queue retired.
+    /// Err means this panel and its release submission remain retained; the device owner
+    /// must retain its entire device closure rather than destroying it beneath them.
     pub(crate) unsafe fn destroy(
         mut self,
         app: &android_activity::AndroidApp,
         device: &ash::Device,
-    ) {
+    ) -> Result<(), String> {
         self.slots = [None, None];
         self.latest = None;
         self.pending_acquires[0].clear();
@@ -417,14 +427,10 @@ impl GpuMeshUiPanel {
                         crate::sanitize(&error)
                     ),
                 );
-                // No successful ownership release means no safe Android recycling. Retain the
-                // bounded image owners and reader rather than returning live GPU resources.
-                for texture in self.registry.drain(..) {
-                    std::mem::forget(texture);
-                }
-                if let Some(producer) = self.producer.take() {
-                    producer.quiesce(app);
-                }
+                // The new release submission may itself still be pending. Retain the whole
+                // panel, including its descriptors/pipeline, and propagate to the device owner.
+                self.retain_unretired(app);
+                return Err(error);
             }
         }
         self.registry.clear();
@@ -441,6 +447,7 @@ impl GpuMeshUiPanel {
         device.destroy_descriptor_pool(self.pool, None);
         device.destroy_descriptor_set_layout(self.set_layout, None);
         device.destroy_sampler(self.sampler, None);
+        Ok(())
     }
 }
 unsafe fn pipeline(

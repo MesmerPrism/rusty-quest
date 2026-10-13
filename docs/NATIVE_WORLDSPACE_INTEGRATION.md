@@ -98,6 +98,15 @@ The native owner pumps its existing Android events during the bounded wait so
 window callbacks can finish and queued UI closure can run. A timeout, failed
 closure or Activity destruction retains the reader. Consumed Destroy events
 remain terminal for later error-loop pumping on the same native Activity thread.
+The Android writer starts only after the fallible frame-resource allocations.
+Invalid head-view frames cancel pointer capture just like other skipped frames.
+If GPU retirement fails, including the final ownership-release submission, teardown
+quiesces the writer and retains the panel, device resources and Vulkan/OpenXR
+loaders until process exit. It reports `retained-until-process-exit`; this is a
+failed cleanup requiring process retirement, not a successful reusable shutdown.
+The outer renderer owns projection swapchains, foveation profiles and eye depth
+resources through every frame-loop return. It destroys them only after successful
+GPU retirement, or retains them with the device on retirement failure.
 
 An unselected simultaneous-tracking adapter remains inert across session creation
 and READY callbacks. It owns no session generation or platform resume call; the

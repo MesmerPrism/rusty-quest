@@ -808,32 +808,6 @@ unsafe fn run_projection_loop_inner(
         projection_foveation_vulkan_support.fdm_ready(),
         scene_depth.map(|config| config.format),
     )?;
-    let mut mesh_ui_panel = if mesh_ui_enabled {
-        if !external_hwb_extension_ready {
-            return Err("native mesh UI requires AHardwareBuffer Vulkan import".into());
-        }
-        static NEXT_UI_GENERATION: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(1);
-        let generation = NEXT_UI_GENERATION
-            .fetch_update(
-                std::sync::atomic::Ordering::Relaxed,
-                std::sync::atomic::Ordering::Relaxed,
-                |value| value.checked_add(1),
-            )
-            .map_err(|_| "native mesh UI generation exhausted".to_string())?;
-        Some(GpuMeshUiPanel::new(
-            app,
-            &vk_instance,
-            &vk_device,
-            memory_properties,
-            render_pass,
-            scene_depth.is_some(),
-            generation,
-            queue_family_index,
-        )?)
-    } else {
-        None
-    };
     let mut camera_projection_renderer = CameraProjectionRenderer::new(
         &vk_instance,
         &vk_device,
@@ -1475,6 +1449,37 @@ unsafe fn run_projection_loop_inner(
     let mut hand_joint_capture_recorder =
         LiveHandJointCaptureRecorder::new(app, hand_mesh_visual_material_settings);
 
+    // Start the Android writer only after all fallible frame-resource allocations.
+    // From here every frame-loop exit joins the explicit panel/device teardown below.
+    let mut mesh_ui_panel = if mesh_ui_enabled {
+        if !external_hwb_extension_ready {
+            return Err("native mesh UI requires AHardwareBuffer Vulkan import".into());
+        }
+        static NEXT_UI_GENERATION: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
+        let generation = NEXT_UI_GENERATION
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |value| value.checked_add(1),
+            )
+            .map_err(|_| "native mesh UI generation exhausted".to_string())?;
+        Some(GpuMeshUiPanel::new(
+            app,
+            &vk_instance,
+            &vk_device,
+            memory_properties,
+            render_pass,
+            scene_depth.is_some(),
+            generation,
+            queue_family_index,
+        )?)
+    } else {
+        None
+    };
+    // Keep XR swapchain RAII handles and app-owned eye resources outside the frame
+    // function so every early/error return still joins checked device retirement.
+    let mut projection_swapchain: Option<ProjectionSwapchain> = None;
     let loop_result = run_projection_frames(
         app,
         &xr_instance,
@@ -1488,6 +1493,7 @@ unsafe fn run_projection_loop_inner(
         render_pass,
         color_format,
         scene_depth,
+        &mut projection_swapchain,
         &memory_properties,
         &cmds,
         &fences,
@@ -1572,9 +1578,68 @@ unsafe fn run_projection_loop_inner(
     hand_joint_capture_recorder.finish_active("projection-loop-ended");
     hand_mesh_capture_recorder.finish_active("projection-loop-ended");
 
-    let _ = vk_device.device_wait_idle();
-    if let Some(panel) = mesh_ui_panel.take() {
-        panel.destroy(app, &vk_device);
+    let retirement = match vk_device.device_wait_idle() {
+        Ok(()) => match mesh_ui_panel.take() {
+            Some(panel) => panel.destroy(app, &vk_device),
+            None => Ok(()),
+        },
+        Err(error) => {
+            if let Some(panel) = mesh_ui_panel.take() {
+                panel.retain_unretired(app);
+            }
+            Err(format!("frame work retirement failed: {error}"))
+        }
+    };
+    if let Err(error) = retirement {
+        // The panel may have submitted an additional FOREIGN release after the idle
+        // wait. Its timeout is not covered by the ordinary frame fences. Preserve all
+        // resource owners and both loaders until process exit; never unload/destroy
+        // the device underneath a retained submission or imported Android images.
+        crate::marker(
+            "vulkan-cleanup",
+            format!(
+                "status=retained-until-process-exit reason={} deviceDestroyed=false",
+                crate::sanitize(&error)
+            ),
+        );
+        std::mem::forget((
+            projection_swapchain,
+            gpu_hand_mesh_visual_renderer,
+            secondary_gpu_hand_mesh_visual_renderer,
+            gpu_hand_anchor_particle_renderer,
+            secondary_gpu_hand_anchor_particle_renderer,
+            gpu_environment_depth_particle_renderer,
+            gpu_private_particle_renderer,
+            gpu_stimulus_volume_renderer,
+            gpu_sdf_field_renderer,
+            secondary_gpu_sdf_field_renderer,
+            gpu_timestamp_tracker,
+            private_extension_slot_runtime,
+            guide_blur_graph_renderer,
+            video_projection_renderer,
+            display_composite_feedback_renderer,
+            camera_projection_renderer,
+            gpu_mesh_replay,
+            openxr_environment_depth_runtime,
+            native_passthrough,
+            stimulus_actions,
+            live_hand_compact,
+            session,
+            frame_wait,
+            frame_stream,
+            reference_space,
+            vk_device,
+            vk_instance,
+            vk_entry,
+            xr_instance,
+            entry,
+        ));
+        return Err(format!(
+            "renderer device retained until process exit: {error}"
+        ));
+    }
+    if let Some(swapchain) = projection_swapchain.take() {
+        swapchain.destroy_retired(&vk_device);
     }
     if let Err(error) = vk_device.wait_for_fences(&fences, true, 1_000_000_000) {
         crate::marker(
@@ -2086,6 +2151,7 @@ unsafe fn run_projection_frames(
     render_pass: vk::RenderPass,
     color_format: vk::Format,
     scene_depth: Option<SceneDepthConfig>,
+    swapchain: &mut Option<ProjectionSwapchain>,
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
     cmds: &[vk::CommandBuffer],
     fences: &[vk::Fence],
@@ -2161,7 +2227,6 @@ unsafe fn run_projection_frames(
     display_composite_projection_metadata: &DisplayCompositeProjectionMetadata,
     video_projection_metadata: &VideoProjectionMetadata,
 ) -> Result<(), String> {
-    let mut swapchain: Option<ProjectionSwapchain> = None;
     let mut event_storage = xr::EventDataBuffer::new();
     let mut display_refresh = NativeDisplayRefreshRuntimeState::new(display_refresh_settings);
     let mut session_running = false;
@@ -2376,9 +2441,6 @@ unsafe fn run_projection_frames(
                         xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => {
                             simultaneous_hands_controllers
                                 .hard_reset_session_loss("session-exiting-or-loss-pending");
-                            if let Some(swapchain) = swapchain.take() {
-                                swapchain.destroy(vk_device);
-                            }
                             return Ok(());
                         }
                         _ => {}
@@ -2392,9 +2454,6 @@ unsafe fn run_projection_frames(
                 }
                 xr::Event::InstanceLossPending(_) => {
                     simultaneous_hands_controllers.hard_reset_session_loss("instance-loss-pending");
-                    if let Some(swapchain) = swapchain.take() {
-                        swapchain.destroy(vk_device);
-                    }
                     return Ok(());
                 }
                 xr::Event::EventsLost(event) => crate::marker(
@@ -2535,7 +2594,7 @@ unsafe fn run_projection_frames(
             foveation_settings,
             projection_swapchain_settings,
             projection_foveation_vulkan_support,
-            &mut swapchain,
+            swapchain,
         )?;
         trace_startup_frame(frame_count, "after-ensure-swapchain");
         let (view_flags, views) = session
@@ -2549,6 +2608,12 @@ unsafe fn run_projection_frames(
             || !view_flags.contains(xr::ViewStateFlags::ORIENTATION_VALID)
             || !view_flags.contains(xr::ViewStateFlags::POSITION_VALID)
         {
+            // An empty frame with invalid head views also loses pointer admission.
+            // Cancel before recovery can turn a stale captured press into ACTION_UP.
+            alternate_pointer.reset();
+            if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+                panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
+            }
             if frame_count == 0 || frame_count % 120 == 0 {
                 crate::marker(
                     "openxr-frame",
@@ -4287,9 +4352,6 @@ unsafe fn run_projection_frames(
         frame_slot = (frame_slot + 1) % PIPELINE_DEPTH as usize;
     }
 
-    if let Some(swapchain) = swapchain.take() {
-        swapchain.destroy(vk_device);
-    }
     Ok(())
 }
 
@@ -7126,9 +7188,10 @@ struct ProjectionSwapchain {
 }
 
 impl ProjectionSwapchain {
-    unsafe fn destroy(self, device: &ash::Device) {
-        // Framebuffers, depth images and views must outlive every submitted eye draw.
-        let _ = device.device_wait_idle();
+    /// Caller must have successfully retired device work. The outer renderer owns
+    /// this value through frame-loop errors and retains it if retirement fails.
+    unsafe fn destroy_retired(self, device: &ash::Device) {
+        // Free app-owned eye resources before RAII drops the XR swapchain/profile.
         for buffer in self.buffers {
             for eye in buffer.eyes {
                 eye.destroy(device);

@@ -667,6 +667,20 @@ mod tests {
         assert_eq!(s.particle_scale, 0.8);
     }
     #[test]
+    fn cancelled_frame_cannot_complete_the_previous_widget_press() {
+        let mut capture = PointerCapture::default();
+        let pixels = Some([40.0, 20.0]);
+        assert_eq!(capture.update(true, true, pixels), Some((0, [40.0, 20.0])));
+        // The renderer uses this cancellation when head views lose validity.
+        assert_eq!(capture.update(false, false, None), Some((3, [40.0, 20.0])));
+        assert!(!capture.captured());
+        // Releasing during the skipped frame must not become an ACTION_UP click
+        // on recovery. A subsequent deliberate press/release remains usable.
+        assert_eq!(capture.update(true, false, pixels), None);
+        assert_eq!(capture.update(true, true, pixels), Some((0, [40.0, 20.0])));
+        assert_eq!(capture.update(true, false, pixels), Some((2, [40.0, 20.0])));
+    }
+    #[test]
     fn effect_override_is_explicit_and_has_closed_seven_slot_cycle() {
         let mut state = ControlSnapshot {
             generation: 7,
