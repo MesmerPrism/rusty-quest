@@ -50,6 +50,7 @@ $RuntimeDangerousPermissionNames = @(
     "android.permission.ACCESS_FINE_LOCATION",
     "android.permission.BLUETOOTH_CONNECT",
     "android.permission.BLUETOOTH_SCAN",
+    "android.permission.NEARBY_WIFI_DEVICES",
     "android.permission.CAMERA",
     "com.oculus.permission.HAND_TRACKING",
     "horizonos.permission.HEADSET_CAMERA",
@@ -668,6 +669,7 @@ function New-GeneratedAndroidManifestText {
         [string[]]$Receivers,
         [string[]]$Services,
         [string[]]$Queries,
+        [string[]]$SelectedFeatureIds,
         [switch]$ExperimentSessionDebugOperator
     )
     $lines = New-Object System.Collections.ArrayList
@@ -687,7 +689,15 @@ function New-GeneratedAndroidManifestText {
         }
     }
     foreach ($permission in $Permissions) {
-        [void]$lines.Add("    <uses-permission android:name=""$([System.Security.SecurityElement]::Escape($permission))"" />")
+        $attributes = ''
+        if ($SelectedFeatureIds -ccontains 'ui.experiment_session_direct_network') {
+            if ($permission -ceq 'android.permission.NEARBY_WIFI_DEVICES') { $attributes = ' android:usesPermissionFlags="neverForLocation"' }
+            # Polar's existing scan adapter requires location on modern Android.
+            # A new optional Wi-Fi route must preserve that selected permission.
+            if ($permission -ceq 'android.permission.ACCESS_FINE_LOCATION' -and
+                $SelectedFeatureIds -cnotcontains 'sensor.polar_h10_ble') { $attributes = ' android:maxSdkVersion="32"' }
+        }
+        [void]$lines.Add("    <uses-permission android:name=""$([System.Security.SecurityElement]::Escape($permission))""$attributes />")
     }
     [void]$lines.Add("")
     [void]$lines.Add('    <application')
@@ -703,6 +713,19 @@ function New-GeneratedAndroidManifestText {
     [void]$lines.Add('        <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />')
     if ($Receivers -contains "NativeRendererBootReceiver") {
         [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.boot_autostart" android:value="true" />')
+    }
+    # Closed, source-selected public connection policy. Credentials and active
+    # controller/relay enrollment remain private headset state.
+    if ($SelectedFeatureIds -ccontains 'ui.experiment_session_command_gateway') {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.enabled" android:value="true" />')
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.origins" android:value="https://mesmerprism.com" />')
+    }
+    if ($SelectedFeatureIds -ccontains 'ui.experiment_session_direct_network') {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.feature.experiment_direct_network" android:value="true" />')
+    }
+    if ($SelectedFeatureIds -ccontains 'ui.experiment_session_relay') {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.feature.experiment_control_relay" android:value="true" />')
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.relay_origin" android:value="https://control-relay.mesmerprism.com" />')
     }
     if ($Activities -contains "android.app.NativeActivity") {
         [void]$lines.Add('        <activity')
@@ -1940,7 +1963,7 @@ $applicationLabel = if ($null -ne $app.PSObject.Properties["application_label"])
 if ([string]::IsNullOrWhiteSpace($applicationLabel) -or $applicationLabel.Length -gt 64 -or $applicationLabel -match '[\r\n\t]') {
     throw "App build spec application_label must be 1..64 visible characters without control whitespace"
 }
-$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -ApplicationLabel $applicationLabel -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries -ExperimentSessionDebugOperator:$EnableExperimentSessionDebugOperator
+$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -ApplicationLabel $applicationLabel -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Receivers $receivers -Services $services -Queries $queries -SelectedFeatureIds $selectedFeatureIds -ExperimentSessionDebugOperator:$EnableExperimentSessionDebugOperator
 New-Item -ItemType Directory -Path (Split-Path -Parent $androidManifestPath) -Force | Out-Null
 Set-Content -LiteralPath $androidManifestPath -Value $manifestText -Encoding UTF8
 
