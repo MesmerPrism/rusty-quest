@@ -122,6 +122,23 @@ fn run_coupled_owner_graph_with_projection_probe(
     renewed_probe: usize,
     restart_after_prefix: bool,
 ) {
+    run_coupled_owner_graph_with_root_horizon(
+        retained_abort, cross_authority_probe, renewed_probe, restart_after_prefix, 300_000,
+    );
+}
+
+#[test]
+fn finite_thirty_minute_setup_roots_complete_real_first_and_later_coupled_renewals() {
+    run_coupled_owner_graph_with_root_horizon(false, true, 3, false, 1_800_000);
+}
+
+fn run_coupled_owner_graph_with_root_horizon(
+    retained_abort: bool,
+    cross_authority_probe: bool,
+    renewed_probe: usize,
+    restart_after_prefix: bool,
+    root_horizon_ms: u64,
+) {
     struct FailStopOnce {
         inner: DeterministicAndroidMediaOwnerExecutor,
         failed: bool,
@@ -247,6 +264,16 @@ fn run_coupled_owner_graph_with_projection_probe(
             && placement.target
                 == rusty_quest_media_stream_android::AndroidMediaOwnerPlacementTarget::Local
     }));
+    if root_horizon_ms != 300_000 {
+        let grant=&mut runtime_config.admission.snapshot.grants[0];
+        grant.expires_at_ms=1000+root_horizon_ms;
+        runtime_config.admission.snapshot.root_renewal_policies=vec![rusty_manifold_admission::ManifoldAdmissionRootRenewalPolicy {
+            grant_id:grant.grant_id.clone(), horizon_ms:root_horizon_ms
+        }];
+        for lease in &mut runtime_config.initial_leases {
+            if lease.holder_id==grant.identity.client_id && lease.scope.as_str()=="lease.media.session" {lease.expires_at_ms=1000+root_horizon_ms;}
+        }
+    }
     let mut peer_b_config = runtime_config.clone();
     peer_b_config
         .embedded_duplex
@@ -586,6 +613,22 @@ fn run_coupled_owner_graph_with_projection_probe(
                         )
                         .unwrap();
                     assert!(actual.media_authority.applied && actual.outer_lifecycle.applied);
+                    assert!(actual.admission_grant.application.applied);
+                    if let Ok(directory) = std::env::var("RQ_FINITE_ROOT_RECEIPT_TEST_OUTPUT") {
+                        std::fs::write(std::path::Path::new(&directory).join(format!("renewal-{root_horizon_ms}-{index}-{round}.json")), serde_json::to_vec(&actual).unwrap()).unwrap();
+                    }
+                    assert_eq!(actual.admission_grant.binding.root_renewal_horizon_ms,root_horizon_ms);
+                    for permit in [&actual.grant_token_issue,&actual.lease_token_issue] {
+                        let token=permit.token.as_ref().unwrap();assert!(token.expires_at_ms-token.issued_at_ms<=5000);
+                    }
+                    assert!(actual.media_authority.expires_at_ms<=now+1+180000);
+                    assert!(actual.media_authority.expires_at_ms<=actual.accepted_pair.expires_at_ms);
+                    assert!(actual.media_authority.renewed_inner_lease.expires_at_ms<=now+1+235000);
+
+                    assert_eq!(actual.admission_grant.binding.renewed_grant.expires_at_ms,now+1+root_horizon_ms);
+                    assert_eq!(actual.outer_lifecycle.outcome,rusty_manifold_broker_adapter::ManifoldBrokerControlLeaseLifecycleOutcome::AcceptedAndAdopted);
+                    assert_eq!(actual.product_adoption.prior_physical_graph_sha256,actual.product_adoption.physical_graph_sha256);
+
                     if restart_after_prefix && round == 16 {
                         let before = authority.snapshot_json().unwrap();
                         let actual:rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot=serde_json::from_str(&before).unwrap();
