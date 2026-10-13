@@ -5,11 +5,13 @@ use crate::{
         self as ahb, AhbVulkanFormatKey, AhbVulkanSampledImage, AhbVulkanSampledImageCreateInfo,
     },
     gpu_hand_mesh_visual::HandMeshVisualEyeProjection,
+    native_alternate_input::PointerOwner,
     native_mesh_ui::{
         self,
         android::{ImageLease, Producer},
         PointerCapture,
     },
+    native_pointer_visual::{segment_pose, PointerVisual},
 };
 use ash::vk;
 use std::{cell::Cell, ffi::CString, mem, rc::Rc};
@@ -41,6 +43,9 @@ pub(crate) struct GpuMeshUiPanel {
     sets: [vk::DescriptorSet; 2],
     layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+    pointer_pipeline: vk::Pipeline,
+    pointer_owner: PointerOwner,
+    visual: Option<PointerVisual>,
     latest: Option<Rc<TextureLease>>,
     slots: [Option<Rc<TextureLease>>; 2],
     poses: [native_mesh_ui::PanelPose; 2],
@@ -56,6 +61,7 @@ struct PanelPush {
     eye_far: [f32; 4],
     eye_orientation: [f32; 4],
     fov: [f32; 4],
+    color_mode: [f32; 4],
 }
 impl GpuMeshUiPanel {
     pub(crate) fn initialize_pose(&mut self, eye: HandMeshVisualEyeProjection) -> bool {
@@ -148,7 +154,7 @@ impl GpuMeshUiPanel {
             }
         };
         let push_ranges = [vk::PushConstantRange::default()
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
             .size(mem::size_of::<PanelPush>() as u32)];
         let layout = match device.create_pipeline_layout(
@@ -165,9 +171,20 @@ impl GpuMeshUiPanel {
                 return Err(e.to_string());
             }
         };
-        let pipeline = match pipeline(device, render_pass, layout) {
+        let panel_pipeline = match pipeline(device, render_pass, layout, false) {
             Ok(v) => v,
             Err(e) => {
+                device.destroy_pipeline_layout(layout, None);
+                device.destroy_descriptor_pool(pool, None);
+                device.destroy_descriptor_set_layout(set_layout, None);
+                device.destroy_sampler(sampler, None);
+                return Err(e);
+            }
+        };
+        let pointer_pipeline = match pipeline(device, render_pass, layout, true) {
+            Ok(v) => v,
+            Err(e) => {
+                device.destroy_pipeline(panel_pipeline, None);
                 device.destroy_pipeline_layout(layout, None);
                 device.destroy_descriptor_pool(pool, None);
                 device.destroy_descriptor_set_layout(set_layout, None);
@@ -178,7 +195,8 @@ impl GpuMeshUiPanel {
         let producer = match Producer::start(app, generation) {
             Ok(v) => v,
             Err(e) => {
-                device.destroy_pipeline(pipeline, None);
+                device.destroy_pipeline(panel_pipeline, None);
+                device.destroy_pipeline(pointer_pipeline, None);
                 device.destroy_pipeline_layout(layout, None);
                 device.destroy_descriptor_pool(pool, None);
                 device.destroy_descriptor_set_layout(set_layout, None);
@@ -200,7 +218,10 @@ impl GpuMeshUiPanel {
             pool,
             sets: [allocated[0], allocated[1]],
             layout,
-            pipeline,
+            pipeline: panel_pipeline,
+            pointer_pipeline,
+            pointer_owner: PointerOwner::None,
+            visual: None,
             latest: None,
             slots: [None, None],
             poses: [native_mesh_ui::PanelPose::default(); 2],
@@ -342,6 +363,7 @@ impl GpuMeshUiPanel {
             eye_far: [eye.position[0], eye.position[1], eye.position[2], 20.0],
             eye_orientation: eye.orientation_xyzw,
             fov: eye.fov_tangents,
+            color_mode: [1.0; 4],
         };
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
         device.cmd_bind_descriptor_sets(
@@ -356,10 +378,88 @@ impl GpuMeshUiPanel {
             (&push as *const PanelPush).cast::<u8>(),
             mem::size_of::<PanelPush>(),
         );
-        device.cmd_push_constants(cmd, self.layout, vk::ShaderStageFlags::VERTEX, 0, bytes);
+        device.cmd_push_constants(
+            cmd,
+            self.layout,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+            0,
+            bytes,
+        );
         device.cmd_set_viewport(cmd, 0, &[viewport]);
         device.cmd_set_scissor(cmd, 0, &[scissor]);
         device.cmd_draw(cmd, 6, 1, 0, 0);
+    }
+    pub(crate) fn set_pointer_owner(&mut self, owner: PointerOwner) {
+        self.pointer_owner = owner;
+    }
+    pub(crate) fn pointer_visual_marker(&self) -> &'static str {
+        match self.visual {
+            Some(v) if v.hit => "ray-and-hit-reticle",
+            Some(_) => "ray",
+            None => "none",
+        }
+    }
+    /// Solid app-owned geometry, independent of UI image adoption and descriptors.
+    /// Draw last inside the same scene pass; depth test preserves world occlusion.
+    pub(crate) unsafe fn record_pointer_eye(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        eye: HandMeshVisualEyeProjection,
+        viewport: vk::Viewport,
+        scissor: vk::Rect2D,
+    ) {
+        let Some(visual) = self.visual else {
+            return;
+        };
+        let q = eye.orientation_xyzw;
+        let rotate = |v: [f32; 3]| {
+            let u = [q[0], q[1], q[2]];
+            let a = crate::native_pointer_visual::cross(u, v);
+            let b = crate::native_pointer_visual::cross(u, a);
+            std::array::from_fn(|i| v[i] + 2.0 * (q[3] * a[i] + b[i]))
+        };
+        let eye_right = rotate([1.0, 0.0, 0.0]);
+        let eye_up = rotate([0.0, 1.0, 0.0]);
+        let position = [eye.position[0], eye.position[1], eye.position[2]];
+        let ray = segment_pose(visual.origin, visual.end, position, eye_right, 0.003);
+        let reticle = visual.hit.then_some(native_mesh_ui::PanelPose {
+            center: visual.end,
+            right: eye_right,
+            up: eye_up,
+            width: 0.022,
+            height: 0.022,
+        });
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pointer_pipeline);
+        device.cmd_set_viewport(cmd, 0, &[viewport]);
+        device.cmd_set_scissor(cmd, 0, &[scissor]);
+        for (pose, mode) in [(ray, 0.0), (reticle, 1.0)] {
+            let Some(p) = pose else {
+                continue;
+            };
+            let color = visual.color();
+            let push = PanelPush {
+                center_width: [p.center[0], p.center[1], p.center[2], p.width],
+                right_height: [p.right[0], p.right[1], p.right[2], p.height],
+                up_near: [p.up[0], p.up[1], p.up[2], 0.05],
+                eye_far: [position[0], position[1], position[2], 20.0],
+                eye_orientation: q,
+                fov: eye.fov_tangents,
+                color_mode: [color[0], color[1], color[2], mode],
+            };
+            let bytes = std::slice::from_raw_parts(
+                (&push as *const PanelPush).cast::<u8>(),
+                mem::size_of::<PanelPush>(),
+            );
+            device.cmd_push_constants(
+                cmd,
+                self.layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                bytes,
+            );
+            device.cmd_draw(cmd, 6, 1, 0, 0);
+        }
     }
     pub(crate) fn controller_ray(
         &mut self,
@@ -370,6 +470,14 @@ impl GpuMeshUiPanel {
         direction: [f32; 3],
     ) -> Result<bool, String> {
         let controls = native_mesh_ui::snapshot();
+        self.visual = PointerVisual::new(
+            self.pointer_owner,
+            valid,
+            pressed,
+            origin,
+            direction,
+            controls.pose_initialized.then_some(controls.pose),
+        );
         let valid = valid && controls.pose_initialized;
         let pixels = native_mesh_ui::ray_pixels(controls.pose, origin, direction);
         let captured_before = self.pointer.captured();
@@ -442,6 +550,7 @@ impl GpuMeshUiPanel {
                 );
             }
         }
+        device.destroy_pipeline(self.pointer_pipeline, None);
         device.destroy_pipeline(self.pipeline, None);
         device.destroy_pipeline_layout(self.layout, None);
         device.destroy_descriptor_pool(self.pool, None);
@@ -454,15 +563,23 @@ unsafe fn pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     layout: vk::PipelineLayout,
+    solid_pointer: bool,
 ) -> Result<vk::Pipeline, String> {
     let vertex = words(include_bytes!(concat!(
         env!("OUT_DIR"),
         "/mesh_ui_panel.vert.spv"
     )))?;
-    let fragment = words(include_bytes!(concat!(
-        env!("OUT_DIR"),
-        "/mesh_ui_panel.frag.spv"
-    )))?;
+    let fragment = if solid_pointer {
+        words(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/mesh_pointer.frag.spv"
+        )))?
+    } else {
+        words(include_bytes!(concat!(
+            env!("OUT_DIR"),
+            "/mesh_ui_panel.frag.spv"
+        )))?
+    };
     let v = device
         .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&vertex), None)
         .map_err(|e| e.to_string())?;
@@ -504,7 +621,7 @@ unsafe fn pipeline(
     let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachments);
     let depth = vk::PipelineDepthStencilStateCreateInfo::default()
         .depth_test_enable(true)
-        .depth_write_enable(true)
+        .depth_write_enable(!solid_pointer)
         .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL);
     let states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&states);

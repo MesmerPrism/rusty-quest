@@ -261,11 +261,12 @@ impl ProjectionFoveationVulkanSupport {
 
 pub(crate) fn probe(
     app: &android_activity::AndroidApp,
+    render_mode: NativeRendererRenderMode,
     simultaneous_decision: ActivationDecision,
 ) -> XrVulkanReadiness {
     let started = Instant::now();
     let mut readiness = XrVulkanReadiness::default();
-    match unsafe { probe_inner(app, &mut readiness, simultaneous_decision) } {
+    match unsafe { probe_inner(app, &mut readiness, simultaneous_decision, render_mode) } {
         Ok(()) => {
             crate::marker(
                 "xr-vulkan-probe",
@@ -410,6 +411,11 @@ unsafe fn run_projection_loop_inner(
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
+    enabled_extensions.fb_hand_tracking_aim = enabled_extensions.ext_hand_tracking
+        && available_extensions.fb_hand_tracking_aim
+        && crate::native_alternate_input::tracked_pointer_enabled_for_mode(
+            runtime_options.render_mode.marker_value(),
+        );
     enabled_extensions.fb_hand_tracking_mesh =
         enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
     enabled_extensions.fb_passthrough =
@@ -456,7 +462,7 @@ unsafe fn run_projection_loop_inner(
             application_version: 1,
             engine_name: "Rusty Quest",
             engine_version: 1,
-            api_version: xr::Version::new(1, 0, 0),
+            api_version: renderer_xr_api_version(runtime_options.render_mode),
         },
         &enabled_extensions,
         &[],
@@ -1699,6 +1705,7 @@ unsafe fn probe_inner(
     app: &android_activity::AndroidApp,
     readiness: &mut XrVulkanReadiness,
     simultaneous_decision: ActivationDecision,
+    render_mode: NativeRendererRenderMode,
 ) -> Result<(), String> {
     let entry = xr::Entry::load().map_err(|error| format!("load OpenXR: {error}"))?;
     initialize_android_loader(&entry, app)?;
@@ -1745,7 +1752,7 @@ unsafe fn probe_inner(
             application_version: 1,
             engine_name: "Rusty Quest",
             engine_version: 1,
-            api_version: xr::Version::new(1, 0, 0),
+            api_version: renderer_xr_api_version(render_mode),
         },
         &enabled_extensions,
         &[],
@@ -1869,6 +1876,15 @@ fn initialize_android_loader(
     ensure_xr_success(result, "xrInitializeLoaderKHR")
 }
 
+fn renderer_xr_api_version(render_mode: NativeRendererRenderMode) -> xr::Version {
+    // Meta's 1.1.53 behavior includes Shell-aligned hand aim and corrected aim flags.
+    if render_mode.marker_value() == "native-worldspace-integration" {
+        xr::Version::new(1, 1, 53)
+    } else {
+        xr::Version::new(1, 0, 0)
+    }
+}
+
 unsafe fn create_android_instance(
     entry: &xr::Entry,
     app: &android_activity::AndroidApp,
@@ -1932,8 +1948,18 @@ unsafe fn create_android_instance(
     write_xr_string(&mut info.application_info.engine_name, app_info.engine_name);
 
     let mut handle = xr::sys::Instance::NULL;
+    if app_info.api_version == xr::Version::new(1, 1, 53) {
+        crate::marker(
+            "worldspace-openxr-api",
+            format!(
+                "status=requested apiVersion={} handAimExtensionEnabled={} downgradeAllowed=false",
+                app_info.api_version, required_extensions.fb_hand_tracking_aim
+            ),
+        );
+    }
     let result = (entry.fp().create_instance)(&info, &mut handle);
-    ensure_xr_success(result, "xrCreateInstance")?;
+    ensure_xr_success(result, "xrCreateInstance")
+        .map_err(|error| format!("{error}; requestedApiVersion={}", app_info.api_version))?;
 
     let extensions = xr::InstanceExtensions::load(entry, handle, required_extensions)
         .map_err(|error| format!("load OpenXR instance extensions: {error}"))?;
@@ -2837,13 +2863,15 @@ unsafe fn run_projection_frames(
                 if changed {
                     panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
                 }
+                panel.set_pointer_owner(owner);
                 let controller_owner =
                     owner == crate::native_alternate_input::PointerOwner::Controllers;
                 let hand = ui_hand_sample;
                 let consumed = panel.controller_ray(
                     app,
                     if controller_owner {
-                        ray.is_some_and(|ray| ray.valid)
+                        renderer_focus_session_state == "FOCUSED"
+                            && ray.is_some_and(|ray| ray.valid)
                     } else {
                         hand.is_some()
                     },
@@ -2864,7 +2892,7 @@ unsafe fn run_projection_frames(
                     },
                 )?;
                 if changed || frame_count % 120 == 0 {
-                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers={} handPointerSource=tracked-joints-wrist-index-proximal handPinchPressed={} handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), alternate_input_enabled, hand_pressed));
+                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), alternate_input_enabled, hand.map(|h| h.source()).unwrap_or("none"), hand_pressed, panel.pointer_visual_marker()));
                 }
                 if consumed || (alternate_input_enabled && !controller_selected) {
                     controller_events.stimulus_randomize_triggered = false;
@@ -2970,11 +2998,12 @@ unsafe fn run_projection_frames(
             && controller_readiness.action_ready;
         if alternate_input_enabled && stimulus_actions.is_none() {
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
-                let (_, pressed, changed) = alternate_pointer.update(false, ui_hand_sample);
+                let (owner, pressed, changed) = alternate_pointer.update(false, ui_hand_sample);
                 if changed {
                     panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
                 }
                 let hand = ui_hand_sample;
+                panel.set_pointer_owner(owner);
                 panel.controller_ray(
                     app,
                     hand.is_some(),
@@ -2982,6 +3011,9 @@ unsafe fn run_projection_frames(
                     hand.map(|ray| ray.origin).unwrap_or([0.0; 3]),
                     hand.map(|ray| ray.direction).unwrap_or([0.0; 3]),
                 )?;
+                if changed || frame_count % 120 == 0 {
+                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers=true handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), hand.map(|h| h.source()).unwrap_or("none"), pressed, panel.pointer_visual_marker()));
+                }
             }
         }
         let (route_action, route_revision) =
@@ -5835,7 +5867,9 @@ unsafe fn record_projection_diagnostic(
                 gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
             }
         }
-        let background = if stimulus_volume_route || render_mode.uses_solid_black_background() {
+        let background = if mesh_ui_panel.is_some() {
+            crate::native_pointer_visual::NEUTRAL_WORLDSPACE_CLEAR
+        } else if stimulus_volume_route || render_mode.uses_solid_black_background() {
             [0.0, 0.0, 0.0, 1.0]
         } else if passthrough_alpha_clear {
             [0.0, 0.0, 0.0, 0.0]
@@ -6274,6 +6308,25 @@ unsafe fn record_projection_diagnostic(
             if eye_index == 0 {
                 visual_stats = eye_visual_stats;
             }
+        }
+        if let Some(panel) = mesh_ui_panel {
+            panel.record_pointer_eye(
+                device,
+                cmd,
+                eye_projection,
+                vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: swapchain.extent.width as f32,
+                    height: swapchain.extent.height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                },
+                vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: swapchain.extent,
+                },
+            );
         }
         device.cmd_end_render_pass(cmd);
     }

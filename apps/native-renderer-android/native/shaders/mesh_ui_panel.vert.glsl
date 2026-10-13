@@ -6,6 +6,7 @@ layout(push_constant) uniform PanelPush {
     vec4 eyeFar;
     vec4 eyeOrientation;
     vec4 fov;
+    vec4 colorMode;
 } pc;
 layout(location=0) out vec2 uv;
 vec3 rotateQuat(vec4 q,vec3 p) {return p+2.0*cross(q.xyz,cross(q.xyz,p)+q.w*p);}

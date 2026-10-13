@@ -97,6 +97,8 @@ mod native_camera_reader_selection;
 mod native_controller_breath_state;
 #[cfg(any(test, target_os = "android"))]
 mod native_mesh_ui;
+#[cfg(any(test, target_os = "android"))]
+mod native_pointer_visual;
 mod native_renderer_camera_options;
 mod native_renderer_diagnostics_contract;
 mod native_renderer_display_composite_options;
@@ -308,6 +310,7 @@ fn runtime_permissions_for_route(
         && runtime_options.camera_output_mode.camera_import_enabled()
     {
         permissions.push("android.permission.CAMERA");
+        permissions.push("horizonos.permission.HEADSET_CAMERA");
     }
     if hand_adapter_effect_request(runtime_options).any()
         || native_alternate_input::tracked_pointer_enabled_for_mode(
@@ -579,7 +582,11 @@ fn android_main(app: android_activity::AndroidApp) {
         keep_activity_alive_after_error(&app);
         return;
     }
-    let xr_vulkan_readiness = xr_vulkan::probe(&app, simultaneous_hands_controllers_decision);
+    let xr_vulkan_readiness = xr_vulkan::probe(
+        &app,
+        runtime_options.render_mode,
+        simultaneous_hands_controllers_decision,
+    );
     if simultaneous_hands_controllers_decision.is_selected()
         && !xr_vulkan_readiness.simultaneous_hands_controllers_probe_ready
     {

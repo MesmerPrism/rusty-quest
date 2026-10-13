@@ -1,5 +1,4 @@
-//! Bounded joint-derived pointer for exclusive hands-or-controllers worldspace input.
-//! This is an app pointer, not XR_FB_hand_tracking_aim or simultaneous input proof.
+//! Exclusive hands-or-controllers input with optional runtime aim and joint fallback.
 
 pub(crate) fn tracked_pointer_enabled_for_mode(mode: &str) -> bool {
     tracked_pointer_selection(
@@ -17,6 +16,8 @@ pub(crate) struct HandPointerSample {
     pub(crate) direction: [f32; 3],
     pub(crate) pinch_distance: f32,
     pub(crate) right: bool,
+    /// Some only for valid runtime FB aim; None selects distance hysteresis.
+    pub(crate) runtime_pinch: Option<bool>,
 }
 
 pub(crate) fn joint_pointer(
@@ -49,7 +50,50 @@ pub(crate) fn joint_pointer(
         direction: delta.map(|v| v / length),
         pinch_distance: pinch,
         right,
+        runtime_pinch: None,
     })
+}
+
+/// Runtime aim is accepted only while valid and outside a system gesture.
+/// Never infer a click or ray from an invalid pose; re-entry still needs an open pinch.
+pub(crate) fn runtime_aim_pointer(
+    origin: [f32; 3],
+    q: [f32; 4],
+    right: bool,
+    valid: bool,
+    system_gesture: bool,
+    pinching: bool,
+) -> Option<HandPointerSample> {
+    if !valid
+        || system_gesture
+        || origin.iter().chain(q.iter()).any(|v| !v.is_finite())
+        || (q.iter().map(|v| v * v).sum::<f32>() - 1.0).abs() > 0.01
+    {
+        return None;
+    }
+    // OpenXR aim points along local -Z. Keep this in the same reference space as hits.
+    let direction = [
+        -2.0 * (q[0] * q[2] + q[3] * q[1]),
+        -2.0 * (q[1] * q[2] - q[3] * q[0]),
+        2.0 * (q[0] * q[0] + q[1] * q[1]) - 1.0,
+    ];
+    let length = direction.iter().map(|v| v * v).sum::<f32>().sqrt();
+    Some(HandPointerSample {
+        origin,
+        direction: direction.map(|v| v / length),
+        pinch_distance: 0.0,
+        right,
+        runtime_pinch: Some(pinching),
+    })
+}
+impl HandPointerSample {
+    pub(crate) fn source(self) -> &'static str {
+        if self.runtime_pinch.is_some() {
+            "XR_FB_hand_tracking_aim"
+        } else {
+            "tracked-joints-wrist-index-proximal"
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -107,7 +151,12 @@ impl AlternatePointer {
         }
         if !controller {
             if let Some(hand) = hand {
-                if hand.pinch_distance >= 0.04 {
+                if let Some(pinching) = hand.runtime_pinch {
+                    if !pinching {
+                        self.armed = true;
+                    }
+                    self.pressed = self.armed && pinching;
+                } else if hand.pinch_distance >= 0.04 {
                     self.armed = true;
                     self.pressed = false;
                 } else if self.armed && hand.pinch_distance <= 0.025 {
@@ -142,6 +191,7 @@ mod tests {
     }
     fn hand(distance: f32) -> HandPointerSample {
         HandPointerSample {
+            runtime_pinch: None,
             origin: [0.; 3],
             direction: [0., 0., -1.],
             pinch_distance: distance,
@@ -241,5 +291,41 @@ mod tests {
         assert_eq!(capture.update(false, false, None).unwrap().0, 3);
         assert!(!capture.captured());
         assert!(!owner.update(false, Some(sample)).1);
+    }
+    #[test]
+    fn runtime_aim_cancels_system_gesture_and_rearms_after_loss() {
+        let sample = |valid, system, pinch| {
+            runtime_aim_pointer([0.0; 3], [0.0, 0.0, 0.0, 1.0], true, valid, system, pinch)
+        };
+        assert_eq!(
+            sample(true, false, false).unwrap().direction,
+            [0.0, 0.0, -1.0]
+        );
+        assert!(sample(false, false, false).is_none());
+        assert!(sample(true, true, true).is_none());
+        assert!(runtime_aim_pointer([0.0; 3], [f32::NAN; 4], true, true, false, false).is_none());
+        let mut state = AlternatePointer::default();
+        assert!(!state.update(false, sample(true, false, true)).1);
+        assert!(!state.update(false, sample(true, false, false)).1);
+        assert!(state.update(false, sample(true, false, true)).1);
+        assert!(!state.update(false, sample(true, true, true)).1);
+        assert!(!state.update(false, sample(true, false, true)).1);
+        assert!(!state.update(false, sample(true, false, false)).1);
+        assert!(state.update(false, sample(true, false, true)).1);
+        assert_eq!(
+            sample(true, false, false).unwrap().source(),
+            "XR_FB_hand_tracking_aim"
+        );
+    }
+    #[test]
+    fn runtime_aim_uses_pose_negative_z_and_rejects_nonunit_orientation() {
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        let sample =
+            runtime_aim_pointer([1.0, 2.0, 3.0], [0.0, h, 0.0, h], false, true, false, false)
+                .unwrap();
+        assert!((sample.direction[0] + 1.0).abs() < 1e-6);
+        assert!(sample.direction[2].abs() < 1e-6);
+        assert_eq!(sample.origin, [1.0, 2.0, 3.0]);
+        assert!(runtime_aim_pointer([0.0; 3], [0.0; 4], true, true, false, false).is_none());
     }
 }

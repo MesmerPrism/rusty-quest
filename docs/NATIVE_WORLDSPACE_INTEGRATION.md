@@ -4,12 +4,22 @@
 
 Worldspace mode uses one input owner at a time. An active recognized controller
 interaction profile takes priority; otherwise the mesh UI can use a tracked hand.
-The right hand takes priority over a valid left-hand fallback. Its app-derived ray
-runs from the wrist toward the index proximal joint; thumb/index tip separation
-drives pinch with 25mm press and 40mm release thresholds. A newly tracked hand
-must first open its pinch. Ownership changes, focus loss, missing tracking and
-non-rendering frames cancel drag capture. This is a basic tracked-joint pointer,
-not a claim of the platform's hand-aim extension or controller-input proof.
+The right hand takes priority over a valid left-hand fallback. When available,
+`XR_FB_hand_tracking_aim` supplies the aim pose and index pinch. Worldspace alone
+requests OpenXR API 1.1.53 for Meta's corrected aim flags and Shell-aligned pose;
+an unsupported API fails explicitly without a silent downgrade. Computed + valid
+runtime aim, an active hand and a tracked wrist are required; system gestures
+cancel input. If the extension is unavailable, the ray runs from wrist toward
+index proximal, with thumb/index tip separation providing 25mm press and 40mm
+release thresholds. A newly tracked hand must first open its pinch. Ownership
+changes, focus loss, missing tracking and non-rendering frames cancel drag capture
+and remove its visual.
+
+The app draws a solid depth-tested Vulkan ray and a hit reticle independently of
+the Android UI texture. White indicates aiming, green a panel hit, and amber a
+press. The runtime supplies input data, not these graphics; no Meta sample assets
+or new hand model are included. Existing combined GPU hand meshes remain the hand
+visuals. Both worldspace eyes use the same neutral background clear.
 
 Joints use the existing `XR_EXT_hand_tracking` trackers, projection reference
 space and current predicted display timestamp. No extra frame loop is created.
@@ -27,8 +37,8 @@ emits `com.oculus.handtracking.support=HANDS_AND_CONTROLLERS` and hand version
 This permits either input mode at launch without claiming simultaneous tracking.
 
 The public foundation additionally selects `input.tracked_hand_pointer`. Its
-explicit packaged flag enables a four-joint UI sample even while compact mesh
-input is disabled. It needs neither a hand-adapter lock nor a private or recorded
+explicit packaged flag enables runtime aim (or its four-joint fallback) even
+while compact mesh input is disabled. It needs neither a hand-adapter lock nor a private or recorded
 rig input: the pointer consumes positions directly in the projection reference
 space. The existing hand tracker owns the raw acquisition, using position-valid
 and position-tracked flags on all four joints (`0x2 | 0x8` in OpenXR). A private
@@ -48,7 +58,7 @@ mesh in one native OpenXR/Vulkan session. The mode is opt-in. Existing closed
 particle and camera-layer modes keep their own composition rules.
 
 The public `native-worldspace-panel-test.app.json` selects the scene, UI and
-neutral tracked-joint pointer foundation, with compact rig input disabled and no
+neutral visible pointer foundation, with compact rig input disabled and no
 private payload. A downstream composition can select
 `renderer.private_particles.composable` and `render.private_layer.composable`
 alongside the existing hand features. Private payloads and shader formulas remain
