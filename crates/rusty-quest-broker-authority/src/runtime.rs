@@ -1111,12 +1111,34 @@ impl QuestBrokerAuthorityRuntime {
             return Err(QuestBrokerRuntimeError::SchemaMismatch);
         }
         for policy in &config.admission.snapshot.root_renewal_policies {
-            let grant = config.admission.snapshot.grants.iter().find(|g| g.grant_id == policy.grant_id)
+            let grant = config
+                .admission
+                .snapshot
+                .grants
+                .iter()
+                .find(|g| g.grant_id == policy.grant_id)
                 .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
-            let expiry = u64::try_from(authority_wall_unix_ms).ok().and_then(|t| t.checked_add(policy.horizon_ms))
+            let now = u64::try_from(authority_wall_unix_ms)
+                .ok()
+                .filter(|now| *now > 0)
                 .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
-            if grant.expires_at_ms != expiry || !config.initial_leases.iter().any(|lease|
-                lease.holder_id == grant.identity.client_id && lease.scope.as_str() == "lease.media.session" && lease.expires_at_ms == expiry) {
+            // Issuance precedes native construction. Preserve the issued expiry;
+            // the current authority clock bounds remaining validity, not issuance.
+            let remaining = grant
+                .expires_at_ms
+                .checked_sub(now)
+                .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
+            if !(300_000..=3_600_000).contains(&policy.horizon_ms)
+                || policy.horizon_ms % 60_000 != 0
+                || grant.expires_at_ms > i64::MAX as u64
+                || remaining == 0
+                || remaining > policy.horizon_ms
+                || !config.initial_leases.iter().any(|lease| {
+                    lease.holder_id == grant.identity.client_id
+                        && lease.scope.as_str() == "lease.media.session"
+                        && lease.expires_at_ms == grant.expires_at_ms
+                })
+            {
                 return Err(QuestBrokerRuntimeError::ControlLeaseBootstrap);
             }
         }
@@ -4202,6 +4224,110 @@ mod tests {
             ),
             Err(QuestBrokerRuntimeError::LegacyRuntimeConfigRequiresRebuild)
         ));
+    }
+
+    fn finite_initialization_fixture(horizon: u64) -> QuestBrokerRuntimeConfig {
+        let mut config = config(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        );
+        config.admission.snapshot.grants[0].expires_at_ms = 1_000 + horizon;
+        config.initial_leases[0].expires_at_ms = 1_000 + horizon;
+        config.admission.snapshot.root_renewal_policies = vec![
+            rusty_manifold_admission::ManifoldAdmissionRootRenewalPolicy {
+                grant_id: config.admission.snapshot.grants[0].grant_id.clone(),
+                horizon_ms: horizon,
+            },
+        ];
+        config
+    }
+
+    fn initialize_fixture(
+        config: &QuestBrokerRuntimeConfig,
+        now: i64,
+    ) -> Result<QuestBrokerRuntimeProvider, QuestBrokerRuntimeError> {
+        let raw = serde_json::to_string(config).unwrap();
+        let sha = sha256_hex(raw.as_bytes());
+        let mut provider = QuestBrokerRuntimeProvider::default();
+        let status = provider.initialize(&raw, &sha, &"12".repeat(32), now, 1_000_000_000)?;
+        assert_eq!(status.config_sha256, sha);
+        assert!(!status.existing_authority_preserved);
+        Ok(provider)
+    }
+
+    #[test]
+    fn finite_initialization_accepts_elapsed_issuance_without_extending_expiry() {
+        for horizon in [300_000, 1_800_000, 3_600_000] {
+            for delay in [0, 1, 100, 1_000, 60_000] {
+                let config = finite_initialization_fixture(horizon);
+                let provider =
+                    initialize_fixture(&config, 1_000 + delay).expect("live delayed provider");
+                let runtime = provider.runtime.as_ref().unwrap();
+                let evidence = runtime.evidence().unwrap();
+                assert_eq!(
+                    evidence.runtime.host_snapshot.leases[0].expires_at_ms,
+                    1_000 + horizon
+                );
+                let admission: serde_json::Value =
+                    serde_json::from_str(&provider.admission_snapshot_json().unwrap()).unwrap();
+                assert_eq!(
+                    admission["grants"][0]["expires_at_ms"],
+                    serde_json::json!(1_000 + horizon)
+                );
+            }
+        }
+        let legacy = config(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        );
+        assert!(legacy.admission.snapshot.root_renewal_policies.is_empty());
+        initialize_fixture(&legacy, 2_000).expect("unchanged legacy default with delay");
+    }
+
+    #[test]
+    fn finite_initialization_rejects_expiry_future_and_mismatched_authority() {
+        let config = finite_initialization_fixture(1_800_000);
+        for now in [-1, 0, 999, 1_801_000, 1_801_001, i64::MAX] {
+            assert!(
+                matches!(
+                    initialize_fixture(&config, now),
+                    Err(QuestBrokerRuntimeError::ControlLeaseBootstrap)
+                ),
+                "clock {now}"
+            );
+        }
+        for horizon in [0, 299_999, 300_001, 3_600_001, u64::MAX] {
+            let mut bad = config.clone();
+            bad.admission.snapshot.root_renewal_policies[0].horizon_ms = horizon;
+            assert!(matches!(
+                initialize_fixture(&bad, 1_000),
+                Err(QuestBrokerRuntimeError::ControlLeaseBootstrap)
+            ));
+        }
+        for case in 0..5 {
+            let mut bad = config.clone();
+            match case {
+                0 => bad.initial_leases[0].expires_at_ms += 1,
+                1 => bad.initial_leases[0].holder_id = id("client.other"),
+                2 => bad.initial_leases[0].scope = id("lease.other"),
+                3 => bad.admission.snapshot.root_renewal_policies[0].grant_id = id("grant.other"),
+                _ => {
+                    bad.admission.snapshot.grants[0].expires_at_ms = u64::MAX;
+                    bad.initial_leases[0].expires_at_ms = u64::MAX;
+                }
+            }
+            assert!(
+                matches!(
+                    initialize_fixture(&bad, 1_000),
+                    Err(QuestBrokerRuntimeError::ControlLeaseBootstrap)
+                ),
+                "binding {case}"
+            );
+        }
     }
 
     #[test]

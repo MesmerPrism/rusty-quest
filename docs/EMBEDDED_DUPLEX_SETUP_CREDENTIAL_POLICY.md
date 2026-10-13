@@ -17,3 +17,13 @@ Run `python apps/spatial-camera-panel-android/host-tests/embedded_duplex/test_se
 The packaged Java transfer keeps the exact original ten-field binding schema when the policy is absent, for default-compatible legacy inputs. When present, it admits only the one additional `setup_credential_horizon_ms` integer field with the same finite whole-minute bounds and transfers that value verbatim. Unknown fields, strings, floating-point values, nulls and out-of-bound values are rejected before native assembly.
 
 For the actual retained-asset transfer control, set `QUESTMS_SETUP_PRODUCT_INPUT_ROOT` to a selected authenticated product-input closure. The same focused command compiles the actual `EmbeddedDuplexPackagedInputs`, loads/verifies those assets, and calls `packagedConfigRequest` with actual new thirty-minute and default five-minute session inputs plus the legacy five-minute input without the optional field. Missing fixture input skips this additional control; a supplied invalid fixture fails. Optionally set `QUESTMS_SETUP_REQUEST_OUTPUT` to an existing fresh directory to retain the exact emitted request JSON using CreateNew for an independent native assembler test. These requests model enrollment and Android platform identity and establish no live authority.
+
+### Elapsed initialization time
+
+Issuance binds the grant and media lease to one immutable expiry. Native provider
+initialization uses the current authority clock and requires positive remaining
+validity no greater than the selected bounded horizon. It does not require the
+initialization clock to equal the earlier issuance clock, extend expiry, or
+substitute an earlier clock for current authority validation. Actual provider
+regressions cover delayed initialization and expired, future-issued, out-of-range,
+and mismatched grant/lease inputs.
