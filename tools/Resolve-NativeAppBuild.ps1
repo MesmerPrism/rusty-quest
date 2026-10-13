@@ -55,9 +55,9 @@ $RuntimeDangerousPermissionNames = @(
     "android.permission.CAMERA",
     "com.oculus.permission.HAND_TRACKING",
     "horizonos.permission.HEADSET_CAMERA",
-    "horizonos.permission.SPATIAL_CAMERA",
     "horizonos.permission.USE_SCENE"
 )
+$RoleManagedPermissionNames = @("horizonos.permission.SPATIAL_CAMERA")
 $MediaProjectionForegroundServicePermission = "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
 
 if (-not $DryRun) {
@@ -1774,6 +1774,7 @@ $settingsHotload = [ordered]@{
 }
 
 $runtimeDangerousPermissions = @($permissions | Where-Object { $RuntimeDangerousPermissionNames -contains $_ })
+$roleManagedPermissions = @($permissions | Where-Object { $RoleManagedPermissionNames -contains $_ })
 $mediaProjectionAppOps = @()
 if ($permissions -contains $MediaProjectionForegroundServicePermission -or $services -contains "DisplayCompositeProjectionService") {
     $mediaProjectionAppOps += "PROJECT_MEDIA"
@@ -1798,6 +1799,7 @@ $permissionPregrant = [ordered]@{
     package_name = [string]$app.package_name
     declared_permissions = $permissions
     runtime_dangerous_permissions = $runtimeDangerousPermissions
+    role_managed_permissions = $roleManagedPermissions
     app_ops = $appOps
     required_before_first_launch = $permissionPregrantRequired
     tool = "tools/Grant-NativeRendererPermissions.ps1"
@@ -1806,6 +1808,7 @@ $permissionPregrant = [ordered]@{
     notes = @(
         "Only permissions declared by the resolved app manifest should be requested for this app.",
         "pm grant can fail for normal or signature permissions; dangerous permission and app-op evidence is acceptance-critical.",
+        "Role-managed permissions retain their manifest declarations and require their owning role route; pm grant does not establish that authority. Native Camera2 camera.hwb requires CAMERA and HEADSET_CAMERA, not SPATIAL_CAMERA.",
         "USE_SCENE_DATA app-op is prepared when the manifest declares horizonos.permission.USE_SCENE for Meta environment-depth routes.",
         "PROJECT_MEDIA app-op reduces lab prompt friction but does not replace fresh MediaProjection resultData from createScreenCaptureIntent."
     )

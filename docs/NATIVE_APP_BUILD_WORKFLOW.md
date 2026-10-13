@@ -2,6 +2,16 @@
 
 Use this workflow when creating a new Rusty Quest native APK profile.
 
+The native `camera.hwb` Camera2 route declares and pregrants
+`android.permission.CAMERA` and `horizonos.permission.HEADSET_CAMERA`, as required
+by the [native Camera2 permission contract](https://developers.meta.com/vr/documentation/native/android/pca-native-documentation/).
+It does not require `horizonos.permission.SPATIAL_CAMERA`. An app that explicitly
+declares that role-managed permission retains it in the manifest and the lock's
+`role_managed_permissions`; shell `pm grant` cannot establish its role authority.
+This classification does not grant a role or satisfy another route's role checks.
+Run `tools/checks/Test-NativeCameraPermissionResolution.ps1` for the focused
+resolver regression checks.
+
 Every native OpenXR/Vulkan feature is explicit opt-in. A feature descriptor may
 exist in `fixtures/native-app-features/`, but it must not change APK manifest
 entries, runtime properties, packaged assets, build environment, app behavior,
