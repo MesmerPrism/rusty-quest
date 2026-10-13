@@ -4204,6 +4204,10 @@ mod tests {
         assert_eq!(saved["readback"]["active_time_ms"], 0);
         assert_eq!(saved["readback"]["shutdown_status"], "not-requested");
         assert_eq!(saved["readback"]["finalized_session_generation"], 1);
+        assert!(!runtime.producer_gate.read().unwrap().accepting);
+        assert!(matches!(runtime.try_offer(SessionRecord::Event(SessionEvent {
+            observed_at: MonotonicNanos::new(2_001), kind: SessionEventKind::ImmersiveActive,
+        })), OfferOutcome::NotAccepting));
         // The durable identity is published inside terminal effects. Wait for
         // the original operation's final acknowledgement before inspecting
         // worker-internal generation cleanup that follows those effects.
