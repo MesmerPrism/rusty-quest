@@ -54,6 +54,7 @@ final class EmbeddedDuplexProcessHost {
     private EmbeddedDuplexPlatform platform;
     private volatile EmbeddedDuplexResources resources;
     private String runtimeConfigSha256;
+    private EmbeddedDuplexSetupCredentials setupCredentials;
     private volatile EmbeddedDuplexBootstrap.Failure lastBootstrapFailure;
     private String ownFeatureLockSha256;
     private String ownNoMediaConfigSha256;
@@ -561,6 +562,7 @@ final class EmbeddedDuplexProcessHost {
                 trace.mark(EmbeddedDuplexBootstrap.Failure.SESSION_INPUTS);
                 EmbeddedDuplexSessionInputs inputs =
                         EmbeddedDuplexSessionInputs.createRealPeer(enrollment);
+                setupCredentials = inputs.setupCredentials;
                 enrollmentRecordSha256 = enrollment.recordSha256;
                 initializeOnCommandLane(inputs.role, inputs.runtimeBindings.toString(),
                         inputs.startup.toString(), false, trace);
@@ -664,7 +666,7 @@ final class EmbeddedDuplexProcessHost {
                 : current == Phase.READY ? "local_fixture"
                 : current == Phase.BOOTSTRAPPING ? "bootstrapping" : "cleanup_pending";
         EmbeddedDuplexRuntimeStatus status = new EmbeddedDuplexRuntimeStatus(state, attachmentGeneration != 0L,
-                runtimeConfigSha256, enrollmentRecordSha256, lastBootstrapFailure);
+                runtimeConfigSha256, enrollmentRecordSha256, lastBootstrapFailure, setupCredentials);
         OwnStereoCaptureRuntime ownCapture = OwnStereoCaptureRuntime.currentForApplication();
         return ownCapture != null ? new EmbeddedDuplexRuntimeStatus(status, ownCapture.phase().name(), ownCapture.cleanupStatus()) : status;
     }
