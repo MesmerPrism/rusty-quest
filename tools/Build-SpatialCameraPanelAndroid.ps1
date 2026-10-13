@@ -36,6 +36,7 @@ param(
     [string]$PrivateFeatureAssetDir = "",
     [string]$PrivateFeatureResourceDir = "",
     [string]$EmbeddedDuplexProductInputRoot = "",
+    [ValidateRange(300000,3600000)][long]$EmbeddedDuplexSetupHorizonMs = 300000,
     [string]$ProductId = "",
     [string]$AppId = "",
     [string]$AppLabel = "",
@@ -1498,6 +1499,7 @@ $nativeIdentityDescriptor = [ordered]@{
     distortion_speed_scale = $resolvedDistortionSpeedScale
     environment_depth_owner = $EnvironmentDepthOwner
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
@@ -1543,6 +1545,7 @@ $shellIdentityDescriptor = [ordered]@{
     private_assets_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_assets) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_assets.sha256 }
     private_resources_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_resources) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_resources.sha256 }
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
@@ -2058,6 +2061,7 @@ try {
     $env:RUSTY_QUEST_ANDROID_NDK_VERSION = Split-Path -Leaf $NdkHome
     $env:JAVA_HOME = $JavaHome
     $env:GRADLE_USER_HOME = $gradleUserHome
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS = $EmbeddedDuplexSetupHorizonMs.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $resolvedProductId
     $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $appBuildDir
     $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $rootBuildDir
@@ -2531,6 +2535,7 @@ $apkInspection = [ordered]@{
     app_owned_rust_native_receipt_count = $nativeReceiptPayloadEntries.Count
     embedded_media_additional_native_payload_count = $unexpectedEmbeddedMediaNativePayload.Count
     embedded_media_rust_linkage = "statically-linked-once-in-spatial-camera-panel-native-receipt"
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_inputs = [ordered]@{
         configured = ($null -ne $embeddedDuplexProductInputs)
         closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
@@ -2647,6 +2652,7 @@ $manifest = [ordered]@{
         native_payload_count = 0
         rust_linkage = [string]$embeddedMediaArtifactInspection.rust_linkage
     }
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_inputs = [ordered]@{
         configured = ($null -ne $embeddedDuplexProductInputs)
         closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })

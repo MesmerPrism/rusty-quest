@@ -205,6 +205,12 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         }
         state.lastBootstrapFailureStage?.let { putString("last_bootstrap_failure_stage", it) }
         state.lastBootstrapFailureCode?.let { putString("last_bootstrap_failure_code", it) }
+        state.setupCredentials?.let {
+          putString("setup_credential_policy", it.policyId)
+          putLong("setup_credential_horizon_ms", it.horizonMs)
+          putLong("setup_credentials_issued_at_ms", it.issuedAtMs)
+          putLong("setup_credentials_expires_at_ms", it.expiresAtMs)
+        }
         state.runtimeConfigSha256?.let { putString("runtime_config_sha256", it) }
         state.enrollmentRecordSha256?.let { putString("enrollment_record_sha256", it) }
         putBoolean("peer_route_proven", false)

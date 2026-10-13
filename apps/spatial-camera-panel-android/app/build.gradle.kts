@@ -5,6 +5,15 @@ plugins {
   alias(libs.plugins.compose.compiler)
 }
 
+// Explicit artifact-bound finite setup policy; existing unselected builds keep five minutes.
+val embeddedDuplexSetupHorizonMs = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS")
+  .orElse("300000").map { raw ->
+    require(raw.matches(Regex("[0-9]+"))) { "Invalid embedded duplex setup horizon" }
+    val value = raw.toLongOrNull() ?: error("Embedded duplex setup horizon overflow")
+    require(value in 300_000L..3_600_000L) { "Embedded duplex setup horizon must be 300000..3600000 ms" }
+    value
+  }
+
 val spatialApplicationId =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_ID")
     .orElse("io.github.mesmerprism.rustyquest.spatial_camera_panel")
@@ -264,6 +273,7 @@ android {
 
   defaultConfig {
     applicationId = spatialApplicationId.get()
+    buildConfigField("long", "EMBEDDED_DUPLEX_SETUP_HORIZON_MS", "${embeddedDuplexSetupHorizonMs.get()}L")
     minSdk = 34
     targetSdk = 34
     versionCode = 1
