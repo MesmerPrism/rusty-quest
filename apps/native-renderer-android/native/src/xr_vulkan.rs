@@ -3828,7 +3828,7 @@ unsafe fn run_projection_frames(
                 gpu_sdf_stats.ready,
                 prepared_camera_projection.as_ref(),
                 projection_metadata,
-                private_layer_settings,
+                effective_private_layer_settings,
             );
             if let Some(runtime) = camera_runtime {
                 runtime.record_private_layer_invocation();
