@@ -27,7 +27,7 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 310,
+  "property_count": 311,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.breath_composition.activation.binding_sha256",
@@ -1460,6 +1460,25 @@
         "dim",
         "hide",
         "debug-only"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.experiment.preparation_mode",
+      "family": "experiment",
+      "runtime_owner": "native_renderer_panel_bridge",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "local-panel",
+        "remote-vr"
       ],
       "validators": [
         "runtime-parser",

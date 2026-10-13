@@ -2207,6 +2207,10 @@ unsafe fn run_projection_frames(
                         experiment_frame_gate.begin_session();
                     }
                     let focused = event.state() == xr::SessionState::FOCUSED;
+                    if !focused {
+                        crate::experiment_session_runtime::note_preparation_presentation(
+                            crate::experiment_session::PresentationState::Unfocused);
+                    }
                     let lost_frame_admission = experiment_frame_gate.set_focused(focused);
                     let experiment_generation =
                         crate::experiment_session_runtime::current_generation();
@@ -3912,6 +3916,11 @@ unsafe fn run_projection_frames(
             renderer.confirm_submitted_frame(frame_count, private_particle_stats);
         }
         let experiment_generation = crate::experiment_session_runtime::current_generation();
+        if experiment_generation == 0 && frame_count % 30 == 0
+            && renderer_focus_session_state == "FOCUSED" {
+            crate::experiment_session_runtime::note_preparation_presentation(
+                crate::experiment_session::PresentationState::ImmersiveActive);
+        }
         if experiment_generation > 0 {
             let _ = crate::experiment_session_runtime::note_current_session_submitted_frame(
                 experiment_generation,

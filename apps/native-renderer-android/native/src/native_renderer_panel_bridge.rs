@@ -42,6 +42,16 @@ const PROP_CONTROL_PANEL_MODE: &str = "debug.rustyquest.native_renderer.control_
 static PACKAGED_CONTROL_PANEL_MODE: OnceLock<Option<String>> = OnceLock::new();
 
 #[cfg(target_os = "android")]
+static PACKAGED_PREPARATION_MODE: OnceLock<crate::experiment_session::PreparationMode> = OnceLock::new();
+
+pub(crate) fn packaged_preparation_mode() -> crate::experiment_session::PreparationMode {
+    #[cfg(target_os = "android")]
+    { PACKAGED_PREPARATION_MODE.get().copied().unwrap_or_default() }
+    #[cfg(not(target_os = "android"))]
+    { crate::experiment_session::PreparationMode::default() }
+}
+
+#[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PanelRouteReceipt<'a> {
     pub(crate) route_generation: u64,
@@ -55,6 +65,9 @@ pub(crate) fn install_packaged_control_panel_mode(
     defaults: &crate::native_app_settings::NativeAppSettingsDefaults,
 ) {
     let _ = PACKAGED_CONTROL_PANEL_MODE.set(defaults.lookup(PROP_CONTROL_PANEL_MODE));
+    let _ = PACKAGED_PREPARATION_MODE.set(crate::experiment_session::PreparationMode::from_packaged(
+        defaults.lookup(crate::native_renderer_properties::PROP_EXPERIMENT_PREPARATION_MODE).as_deref(),
+    ));
 }
 
 #[cfg(target_os = "android")]
@@ -274,6 +287,15 @@ impl ControlPanelCommandPoller {
         else {
             return;
         };
+        if packaged_preparation_mode() == crate::experiment_session::PreparationMode::RemoteVr {
+            match consume_remote_preparation_launch(app, epoch) {
+                Ok(true) => crate::marker("experiment-session-panel", format!(
+                    "event=remote-vr-preparation status=launch-consumed launchEpoch={} submittedFrame={} panelOpened=false officialActiveTimeMs=0", epoch, submitted_frame)),
+                Ok(false) => crate::marker("experiment-session-panel", "event=remote-vr-preparation status=launch-rejected panelOpened=false"),
+                Err(error) => crate::marker("experiment-session-panel", format!("event=remote-vr-preparation status=authority-error reason={}", crate::sanitize(&error))),
+            }
+            return;
+        }
         crate::marker(
             "experiment-session-panel",
             format!(
@@ -1042,6 +1064,23 @@ fn pending_experiment_launch_epoch(
     })
     .map(|epoch| if epoch == 0 { None } else { Some(epoch) })
     .map_err(|error| format!("experiment launch authority readback failed: {error}"))
+}
+
+#[cfg(target_os = "android")]
+fn consume_remote_preparation_launch(app: &android_activity::AndroidApp, epoch: u64) -> Result<bool, String> {
+    use jni::{jni_sig, jni_str, objects::{JClass, JClassLoader, JObject, JValue}, JavaVM};
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<bool> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env.call_method(&activity, jni_str!("getClassLoader"), jni_sig!("()Ljava/lang/ClassLoader;"), &[])?.l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLaunchAuthority")?;
+        let authority = JClass::for_name_with_loader(env, name, true, loader)?;
+        let provenance = env.new_string(PROVENANCE_EXPLICIT_USER_LAUNCH)?;
+        env.call_static_method(authority, jni_str!("consume"), jni_sig!("(Ljava/lang/String;J)Z"),
+            &[JValue::Object(&provenance), JValue::Long(epoch as i64)])?.z()
+    }).map_err(|error| format!("remote preparation launch consumption failed: {error}"))
 }
 
 #[cfg(target_os = "android")]

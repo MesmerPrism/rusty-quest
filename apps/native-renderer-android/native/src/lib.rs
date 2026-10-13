@@ -183,6 +183,7 @@ fn android_on_create(state: &android_activity::OnCreateState) {
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_on_create_state(state);
     marker("native-app-settings", native_app_settings.marker_fields());
+    native_renderer_panel_bridge::install_packaged_control_panel_mode(&native_app_settings);
     if native_renderer_panel_bridge::packaged_control_panel_mode_is_breath_mapping(
         &native_app_settings,
     ) {
@@ -435,6 +436,10 @@ impl Drop for ExperimentSessionImmersiveOwner<'_> {
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
+    let native_app_settings =
+        native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
+    marker("native-app-settings", native_app_settings.marker_fields());
+    native_renderer_panel_bridge::install_packaged_control_panel_mode(&native_app_settings);
     let initialization = experiment_session_runtime::initialize_from_android_app(&app);
     let initialized = initialization.is_ok();
     match initialization {
@@ -462,10 +467,6 @@ fn android_main(app: android_activity::AndroidApp) {
             marker("hub-status", format!("app_owner_start_failed reason={reason}"));
         }
     }
-    let native_app_settings =
-        native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
-    marker("native-app-settings", native_app_settings.marker_fields());
-    native_renderer_panel_bridge::install_packaged_control_panel_mode(&native_app_settings);
     let particle_adapter_input =
         particle_adapter_consumer::load_runtime_input_with_defaults(&native_app_settings);
     let particle_adapter_decision =

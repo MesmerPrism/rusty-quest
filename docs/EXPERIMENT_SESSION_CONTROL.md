@@ -21,6 +21,34 @@ an active session. Developer tuning, Polar scan/connect/stream controls and
 private settings keep their separate existing typed contracts; this table does
 not turn them into unrestricted session operations.
 
+## Packaged remote VR preparation
+
+`debug.rustyquest.native_renderer.experiment.preparation_mode` selects
+`local-panel` (default) or `remote-vr` in the packaged native app settings.
+The native owner installs this startup policy once; mutable Android property
+readback cannot replace it. Unknown or absent values preserve the local panel.
+
+In `remote-vr`, an authenticated cold launcher epoch is consumed after a
+submitted immersive frame without opening the settings Activity. Recording
+recovery still completes before readiness. Save Next retains its original
+durable finalization, recorded reason, generation and operation receipt, then
+returns to idle preparation with official active time zero and no panel route.
+The native worker and app owner remain alive for browser control. Arm and
+official Start keep their existing audio, recording and frame prerequisites.
+
+Status exposes `readback.preparation_mode` and `readback.vr_preparation`.
+The latter requires completed recovery, initialized native state, idle phase
+and an actual focused submitted XR presentation. Focus loss clears that
+presentation; neither wake nor preparation observations start or resume a run.
+These fields do not prove configured cold-boot kiosk enforcement or BLE radio
+availability. Explicit maintenance panels and Save and exit remain available.
+
+Focused validation includes the `experiment_session` and
+`native_renderer_panel_bridge` native host tests, the runtime property parity
+gate, and the Android native target check. Device qualification must separately
+cover cold launch, two consecutive durable sessions, wake, BLE control
+availability and deliberate maintenance return.
+
 ## Debug operator
 
 EnableExperimentSessionDebugOperator is an explicit build-resolution opt-in.

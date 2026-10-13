@@ -3,6 +3,9 @@
 //! Keep names here so profile fixtures, host tooling, and runtime parsing agree on
 //! one low-rate settings surface.
 
+pub(crate) const PROP_EXPERIMENT_PREPARATION_MODE: &str =
+    "debug.rustyquest.native_renderer.experiment.preparation_mode";
+
 pub(crate) const PROP_ENABLE_SDF_VISUAL: &str =
     "debug.rustyquest.native_renderer.sdf.visual.enabled";
 pub(crate) const PROP_BREATH_COMPOSITION_ENABLED: &str =

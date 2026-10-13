@@ -27,7 +27,7 @@ use crate::{
     breath_guidance::{BreathGuidanceAssetIdentity, BreathGuidanceTarget, BreathGuidanceTimeline},
     experiment_session::{
         CommandEnvelope, CommandOutcome, CompletionProgress, ExperimentSessionController,
-        OperationToken, PresentationState, RecordingFailure, RecordingResult, SessionCommand,
+        OperationToken, PreparationMode, PresentationState, RecordingFailure, RecordingResult, SessionCommand,
         SessionEffect, SessionPhase,
     },
     session_recording_clock::{
@@ -200,6 +200,7 @@ impl RouteAction {
 
 #[derive(Clone, Debug)]
 struct Projection {
+    preparation_mode: PreparationMode,
     arm_operation_id: Option<String>,
     arm_generation: u64,
     arm_runtime_epoch: u64,
@@ -255,6 +256,7 @@ struct Projection {
 impl Default for Projection {
     fn default() -> Self {
         Self {
+            preparation_mode: PreparationMode::default(),
             arm_operation_id: None,
             arm_generation: 0,
             arm_runtime_epoch: 0,
@@ -338,6 +340,11 @@ impl Projection {
                 "control_event": self.control_event,
                 "control_event_elapsed_realtime_ns": self.control_event_elapsed_realtime_ns,
                 "presentation": presentation_token(self.presentation),
+                "preparation_mode": self.preparation_mode.as_str(),
+                "vr_preparation": self.preparation_mode == PreparationMode::RemoteVr
+                    && self.phase == SessionPhase::Idle
+                    && self.presentation == PresentationState::ImmersiveActive
+                    && self.initialization_status == "ready" && self.recovery_status == "complete",
                 "active_time_ms": self.active_time_ns / 1_000_000,
                 "breath_guidance": {
                     "identity_bound": self.breath_guidance_identity_bound,
@@ -746,6 +753,7 @@ impl RecordingBackend for ActualRecordingBackend {
 }
 
 struct SessionWorker {
+    preparation_presentation_observation: Arc<AtomicU64>,
     current_session_key: Option<String>,
     controller: ExperimentSessionController,
     backend: Box<dyn RecordingBackend>,
@@ -778,6 +786,8 @@ struct SessionWorker {
 
 impl SessionWorker {
     fn new(
+        preparation_mode: PreparationMode,
+        preparation_presentation_observation: Arc<AtomicU64>,
         backend: Box<dyn RecordingBackend>,
         projection: Arc<RwLock<Projection>>,
         readback_cache: Arc<RwLock<ReadbackCache>>,
@@ -798,7 +808,8 @@ impl SessionWorker {
         active_breath_guidance: Arc<RwLock<Option<ActiveBreathGuidance>>>,
     ) -> Self {
         Self {
-            controller: ExperimentSessionController::default(),
+            preparation_presentation_observation,
+            controller: ExperimentSessionController::with_preparation_mode(preparation_mode),
             backend,
             projection,
             readback_cache,
@@ -878,6 +889,7 @@ impl SessionWorker {
         match self.backend.recover(&self.recording_root) {
             Ok(recovery) => {
                 self.set_recovery(&recovery);
+                self.refresh_controller_projection();
                 self.projection_write(|projection| {
                     projection.initialization_status = "ready";
                     projection.inventory_status = inventory_status;
@@ -1424,6 +1436,10 @@ impl SessionWorker {
                     self.publish_terminal_route_identity();
                     self.set_route(RouteAction::ShowExperimenter);
                 }
+                SessionEffect::ReturnToPreparation => {
+                    self.publish_terminal_route_identity();
+                    self.set_route(RouteAction::None);
+                }
                 SessionEffect::ShutdownApp => {
                     self.projection_write(|projection| {
                         projection.shutdown_status = "joining";
@@ -1678,6 +1694,7 @@ impl SessionWorker {
             projection.control_state = self.controller.control_state();
             projection.audio_technical_hold = self.controller.audio_error();
             projection.presentation = self.controller.presentation();
+            projection.preparation_mode = self.controller.preparation_mode();
             self.presentation_state.store(
                 presentation_code(self.controller.presentation()),
                 Ordering::Release,
@@ -1756,6 +1773,7 @@ enum WorkerMessage {
 }
 
 pub(crate) struct ExperimentSessionRuntime {
+    preparation_presentation_observation: Arc<AtomicU64>,
     runtime_epoch: u64,
     immersive_owner_identity: AtomicU64,
     recording_root: PathBuf,
@@ -1806,10 +1824,24 @@ impl ExperimentSessionRuntime {
             + Send
             + 'static,
     ) -> Result<Self, String> {
+        Self::spawn_with_preparation_mode(recording_root, trusted_inventory, runtime_epoch,
+            crate::native_renderer_panel_bridge::packaged_preparation_mode(), backend_factory)
+    }
+
+    fn spawn_with_preparation_mode(
+        recording_root: PathBuf,
+        trusted_inventory: Option<TrustedExperimentInventory>,
+        runtime_epoch: u64,
+        preparation_mode: PreparationMode,
+        backend_factory: impl FnOnce(Arc<Mutex<Option<Arc<SessionRecordingWriter>>>>,
+            Arc<OnceLock<ExternalLossRecorder>>) -> Box<dyn RecordingBackend> + Send + 'static,
+    ) -> Result<Self, String> {
         if runtime_epoch == 0 {
             return Err("experiment-session-runtime-epoch-invalid".to_owned());
         }
         let (command_sender, command_receiver) = mpsc::sync_channel(COMMAND_QUEUE_CAPACITY);
+        let preparation_presentation_observation = Arc::new(AtomicU64::new(0));
+        let worker_preparation_presentation_observation = Arc::clone(&preparation_presentation_observation);
         let (terminal_sender, terminal_receiver) = mpsc::sync_channel(TERMINAL_QUEUE_CAPACITY);
         let (observation_sender, observation_receiver) = mpsc::sync_channel(4);
         let (retry_sender, retry_receiver) = mpsc::sync_channel(RETRY_QUEUE_CAPACITY);
@@ -1860,6 +1892,8 @@ impl ExperimentSessionRuntime {
                     terminal_receiver,
                     observation_receiver,
                     SessionWorker::new(
+                        preparation_mode,
+                        worker_preparation_presentation_observation,
                         backend,
                         worker_projection,
                         worker_readback,
@@ -1883,6 +1917,7 @@ impl ExperimentSessionRuntime {
             })
             .map_err(|error| format!("experiment-session-worker-spawn:{error}"))?;
         Ok(Self {
+            preparation_presentation_observation,
             runtime_epoch,
             immersive_owner_identity: AtomicU64::new(0),
             recording_root: runtime_recording_root,
@@ -2329,6 +2364,12 @@ fn run_worker(
             let _ = observation.acknowledgement.try_send(response);
         }
         worker.drain_pending_retries();
+        // Latest actual renderer observation survives mutation-lane saturation.
+        let observed = worker.preparation_presentation_observation.swap(0, Ordering::AcqRel);
+        if observed & (1 << 63) != 0
+            && worker.controller.observe_preparation_presentation(presentation_from_code(observed & !(1 << 63))) {
+            worker.refresh_controller_projection();
+        }
         match command_receiver.recv_timeout(Duration::from_millis(10)) {
             Ok(WorkerMessage::Command {
                 raw, received_at, ..
@@ -2900,6 +2941,12 @@ pub(crate) fn current_presentation() -> PresentationState {
         return PresentationState::Experimenter;
     };
     presentation_from_code(runtime.presentation_state.load(Ordering::Acquire))
+}
+
+pub(crate) fn note_preparation_presentation(presentation: PresentationState) {
+    if let Ok(runtime) = runtime() {
+        runtime.preparation_presentation_observation.store((1 << 63) | presentation_code(presentation), Ordering::Release);
+    }
 }
 
 pub(crate) fn current_elapsed_realtime_ns() -> Option<u64> {
@@ -4127,6 +4174,48 @@ mod tests {
         wait_for(&runtime, "\"shutdown_status\":\"complete\"");
         runtime.shutdown_for_test().unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn remote_preparation_save_next_preserves_owner_and_recovered_recording() {
+        let root = temp_root("remote-preparation-save-next");
+        let spawn_remote = |epoch| ExperimentSessionRuntime::spawn_with_preparation_mode(
+            root.clone(), Some(trusted_inventory()), epoch, PreparationMode::RemoteVr,
+            |slot, loss| Box::new(ActualRecordingBackend::new(slot, loss))).unwrap();
+        let runtime = spawn_remote(1);
+        let initial: Value = serde_json::from_str(&wait_for(&runtime, "\"initialization_status\":\"ready\"")).unwrap();
+        assert_eq!(initial["readback"]["preparation_mode"], "remote-vr");
+        assert_eq!(initial["readback"]["generation"], 0);
+        assert_eq!(initial["readback"]["active_time_ms"], 0);
+        assert_eq!(initial["readback"]["vr_preparation"], false);
+        runtime.preparation_presentation_observation.store((1 << 63) | presentation_code(PresentationState::ImmersiveActive), Ordering::Release);
+        wait_for(&runtime, "\"vr_preparation\":true");
+        runtime.apply_command_json(&start_command(&root, "remote-recording"));
+        wait_for(&runtime, "\"phase\":\"active\"");
+        let mut presented: Value = serde_json::from_str(&command("presentation", "remote-frame", 1, 1_100)).unwrap();
+        presented["presentation"] = json!("immersive-active");
+        runtime.apply_command_json(&presented.to_string());
+        wait_for(&runtime, "\"presentation\":\"immersive-active\"");
+        runtime.apply_command_json(&command("restart-to-experimenter", "remote-save-next", 1, 2_000));
+        let saved: Value = serde_json::from_str(&wait_for(&runtime, "\"finalized_operation_id\":\"remote-save-next\"")).unwrap();
+        assert_eq!(saved["readback"]["phase"], "idle");
+        assert_eq!(saved["readback"]["route_action"], "none");
+        assert_eq!(saved["readback"]["recording_result"]["status"], "saved");
+        assert_eq!(saved["readback"]["active_time_ms"], 0);
+        assert_eq!(saved["readback"]["shutdown_status"], "not-requested");
+        assert_eq!(saved["readback"]["finalized_session_generation"], 1);
+        assert_eq!(runtime.active_generation.load(Ordering::Acquire), 0);
+        assert!(!runtime.worker_finished());
+        drop(runtime);
+        let recovered = spawn_remote(2);
+        let ready: Value = serde_json::from_str(&wait_for(&recovered, "\"initialization_status\":\"ready\"")).unwrap();
+        assert_eq!(ready["readback"]["recovery_status"], "complete");
+        assert_eq!(ready["readback"]["counts"]["stopped_early"], 1);
+        assert_eq!(ready["readback"]["generation"], 0);
+        assert_eq!(ready["readback"]["control_state"], "idle");
+        assert_eq!(ready["readback"]["active_time_ms"], 0);
+        drop(recovered);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
