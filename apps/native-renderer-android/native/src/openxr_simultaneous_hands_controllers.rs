@@ -138,19 +138,23 @@ impl OpenXrSimultaneousHandsControllers {
         session: &xr::Session<G>,
     ) -> Result<(), String> {
         let session_handle = session.as_raw();
-        let generation = if self.session_handle == Some(session_handle) {
-            self.lifecycle
-                .session_generation()
-                .ok_or_else(|| "current session generation is missing".to_owned())?
-        } else {
+        let Some(generation) = self
+            .lifecycle
+            .generation_for_resume(self.session_handle == Some(session_handle), || {
+                NEXT_SESSION_GENERATION.fetch_add(1, Ordering::Relaxed)
+            })
+            .map_err(str::to_owned)?
+        else {
+            return Ok(());
+        };
+        if self.session_handle != Some(session_handle) {
             if self.session_handle.is_some() {
                 if let Some(previous_generation) = self.lifecycle.session_generation() {
                     self.lifecycle.hard_reset(previous_generation);
                 }
             }
             self.session_handle = Some(session_handle);
-            NEXT_SESSION_GENERATION.fetch_add(1, Ordering::Relaxed)
-        };
+        }
         let Some(LifecycleCommand::Resume { session_generation }) =
             self.lifecycle.begin_session(generation)
         else {

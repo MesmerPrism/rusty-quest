@@ -506,30 +506,13 @@ pub(crate) mod android {
                 media::AImage_deleteAsync(image, fence);
             }
             deactivate(self.generation);
-            let mut stopped = false;
-            let result = with_class(app, |env, class, _| {
-                stopped = env
-                    .call_static_method(
-                        class,
-                        jni_str!("stop"),
-                        jni_sig!("(J)Z"),
-                        &[JValue::Long(self.generation as i64)],
-                    )?
-                    .z()?;
-                Ok(())
-            });
+            let result = wait_for_writer_retirement(app, self.generation);
             // If Android UI shutdown has not acknowledged, keep the reader alive rather than
             // destroying a producer resource still referenced by a live VirtualDisplay.
-            if stopped {
+            if result.is_ok() {
                 media::AImageReader_delete(self.reader);
             }
-            result.and_then(|()| {
-                if stopped {
-                    Ok(())
-                } else {
-                    Err("mesh UI producer stop not acknowledged; reader retained".into())
-                }
-            })
+            result
         }
     }
     impl Producer {
@@ -539,15 +522,74 @@ pub(crate) mod android {
             if let Some((image, fence)) = self.pending.take() {
                 media::AImage_deleteAsync(image, fence);
             }
-            let _ = with_class(app, |env, class, _| {
-                env.call_static_method(
+            let _ = wait_for_writer_retirement(app, self.generation);
+        }
+    }
+    fn wait_for_writer_retirement(
+        app: &android_activity::AndroidApp,
+        generation: u64,
+    ) -> Result<(), String> {
+        let mut admitted = false;
+        with_class(app, |env, class, _| {
+            admitted = env
+                .call_static_method(
                     class,
-                    jni_str!("stop"),
+                    jni_str!("requestStop"),
                     jni_sig!("(J)Z"),
-                    &[JValue::Long(self.generation as i64)],
-                )?;
+                    &[JValue::Long(generation as i64)],
+                )?
+                .z()?;
+            Ok(())
+        })?;
+        if !admitted {
+            return Err("mesh UI stop request rejected; reader retained".into());
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut running = true;
+        loop {
+            // NativeActivity's UI-thread window/lifecycle callbacks wait for this thread's
+            // event acknowledgment. A synchronous Java latch wait here prevents queued UI
+            // writer-close execution. Pump only the existing Android event owner, not XR.
+            crate::android_events::pump_activity_events(
+                app,
+                std::time::Duration::from_millis(0),
+                &mut running,
+            );
+            let mut state = 0;
+            with_class(app, |env, class, _| {
+                state = env
+                    .call_static_method(
+                        class,
+                        jni_str!("stopStatus"),
+                        jni_sig!("(J)I"),
+                        &[JValue::Long(generation as i64)],
+                    )?
+                    .i()?;
                 Ok(())
-            });
+            })?;
+            if state == 1 {
+                crate::marker(
+                    "native-mesh-ui",
+                    format!(
+                        "event=producer-stop-ack-observed generation={} writerClosed=true",
+                        generation
+                    ),
+                );
+                return Ok(());
+            }
+            if state < 0 {
+                return Err("mesh UI writer close failed; reader retained".into());
+            }
+            if !running {
+                return Err(
+                    "Activity destroyed before mesh UI writer acknowledgment; reader retained"
+                        .into(),
+                );
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("mesh UI producer stop not acknowledged within bounded event-pumped wait; reader retained".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
     }
     fn with_class<F>(app: &android_activity::AndroidApp, call: F) -> Result<(), String>

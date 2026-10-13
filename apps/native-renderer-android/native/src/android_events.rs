@@ -1,6 +1,6 @@
 //! NativeActivity lifecycle and input queue pumping.
 
-use std::time::Duration;
+use std::{cell::Cell, time::Duration};
 
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 
@@ -27,6 +27,11 @@ fn notify_status_lifecycle(app: &AndroidApp, resumed: bool) {
         }
     }
 }
+// One native Activity owner runs on this thread. Teardown may consume Destroy
+// before an error fallback starts; later pumps must preserve that terminal fact.
+thread_local! {
+    static DESTROY_OBSERVED: Cell<bool> = const { Cell::new(false) };
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ActivityPumpStats {
@@ -41,6 +46,11 @@ pub(crate) fn pump_activity_events(
     running: &mut bool,
 ) -> ActivityPumpStats {
     let mut stats = ActivityPumpStats::default();
+
+    if DESTROY_OBSERVED.with(Cell::get) {
+        *running = false;
+        return stats;
+    }
 
     app.poll_events(Some(timeout), |event| {
         if let PollEvent::Main(main_event) = event {
@@ -73,6 +83,7 @@ pub(crate) fn pump_activity_events(
                     notify_status_lifecycle(app, true);
                 },
                 MainEvent::Destroy => {
+                    DESTROY_OBSERVED.with(|observed| observed.set(true));
                     crate::marker("activity-lifecycle", "event=destroy");
                     *running = false;
                 }

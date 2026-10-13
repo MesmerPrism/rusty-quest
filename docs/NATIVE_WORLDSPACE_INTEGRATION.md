@@ -93,6 +93,15 @@ ready producer frames, acquire foreign queue ownership before sampling, and
 release ownership after the GPU consumer retires. Device support and actual
 buffer compatibility are checked before enabling the path. Teardown must stop
 the producer before deleting the ImageReader and retire submitted GPU resources.
+Java shutdown uses a generation-specific asynchronous request and acknowledgment.
+The native owner pumps its existing Android events during the bounded wait so
+window callbacks can finish and queued UI closure can run. A timeout, failed
+closure or Activity destruction retains the reader. Consumed Destroy events
+remain terminal for later error-loop pumping on the same native Activity thread.
+
+An unselected simultaneous-tracking adapter remains inert across session creation
+and READY callbacks. It owns no session generation or platform resume call; the
+selected adapter retains its exact binding and generation checks.
 
 ## Build and validation
 

@@ -20,8 +20,7 @@ import android.widget.FrameLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** App-owned Android widgets rendered into the native OpenXR mesh texture, not another Activity. */
@@ -33,6 +32,8 @@ public final class NativeMeshUiProducer {
     private static volatile NativeMeshUiProducer current;
     private static volatile Activity producerActivity;
     private static volatile long cancelledGeneration;
+    private static final HashMap<Long, StopReceipt> stopReceipts = new HashMap<Long, StopReceipt>();
+    private static final class StopReceipt { volatile int state; }
     private final Activity activity;
     private final long generation;
     private final Surface surface;
@@ -135,8 +136,8 @@ public final class NativeMeshUiProducer {
         layout.addView(scale, new LinearLayout.LayoutParams(-1, 76));
         button(context, layout, "Panel farther / nearer", 6);
         button(context, layout, "Panel larger / smaller", 7);
-        button(context, layout, "Toggle camera output carrier", 8);
-        button(context, layout, "Toggle particle carriers", 9);
+        button(context, layout, "Toggle camera output", 8);
+        button(context, layout, "Toggle particles", 9);
         button(context, layout, "Toggle base hand meshes", 10);
         button(context, layout, "Cycle effect index 0–6", 11);
         layout.addView(text(context, "Graft size", 18));
@@ -149,7 +150,7 @@ public final class NativeMeshUiProducer {
         });
         layout.addView(graft, new LinearLayout.LayoutParams(-1, 76));
         button(context, layout, "Reset panel pose and size", 13);
-        layout.addView(text(context, "Controller trigger: click / drag. Controls are closed app-local requests.", 16));
+        layout.addView(text(context, "Hand pinch or controller trigger: click / drag.", 16));
     }
 
     private static TextView text(Context context, String value, int size) {
@@ -218,23 +219,44 @@ public final class NativeMeshUiProducer {
         }});
     }
 
-    public static boolean stop(long generation) {
+    /** Admission only. Native must pump NativeActivity events while polling stopStatus. */
+    public static boolean requestStop(long generation) {
+        if (generation <= 0) return false;
         cancelledGeneration = generation;
         Activity activity = producerActivity;
         if (activity == null) return false;
-        CountDownLatch retired = new CountDownLatch(1);
-        boolean[] released = {false};
+        final StopReceipt receipt;
+        synchronized (stopReceipts) {
+            if (stopReceipts.containsKey(generation)) return true;
+            if (stopReceipts.size() >= 8) return false;
+            receipt = new StopReceipt();
+            stopReceipts.put(generation, receipt);
+        }
+        Log.i(TAG, "event=producer-stop-requested generation=" + generation);
         // Always enqueue behind any pending start, even if current is still null.
         activity.runOnUiThread(new Runnable() { @Override public void run() {
+            boolean released = false;
             try {
                 NativeMeshUiProducer owner = current;
-                if (owner == null || owner.generation != generation) { released[0] = true; }
-                else if (owner.close()) { current = null; released[0] = true; }
+                if (owner == null || owner.generation != generation) { released = true; }
+                else if (owner.close()) { current = null; released = true; }
+            } finally {
+                receipt.state = released ? 1 : -1;
+                Log.i(TAG, "event=producer-stop-ack generation=" + generation + " released=" + released);
             }
-            finally { retired.countDown(); }
         }});
-        try { return retired.await(2, TimeUnit.SECONDS) && released[0]; }
-        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return false; }
+        return true;
+    }
+
+    /** 0 pending/unknown, 1 all writer resources closed, -1 close failed. Generation-specific. */
+    public static int stopStatus(long generation) {
+        synchronized (stopReceipts) {
+            StopReceipt receipt = stopReceipts.get(generation);
+            if (receipt == null) return 0;
+            int result = receipt.state;
+            if (result != 0) stopReceipts.remove(generation);
+            return result;
+        }
     }
 
     private boolean close() {
@@ -246,7 +268,7 @@ public final class NativeMeshUiProducer {
         catch (RuntimeException error) { released = false; }
         try { surface.release(); } catch (RuntimeException error) { released = false; }
         root = null;
-        Log.i(TAG, "event=producer-stopped generation=" + generation);
+        Log.i(TAG, "event=producer-stopped generation=" + generation + " released=" + released);
         return released;
     }
 
