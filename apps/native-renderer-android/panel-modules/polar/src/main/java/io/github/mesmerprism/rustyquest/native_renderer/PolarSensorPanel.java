@@ -746,6 +746,40 @@ final class PolarSensorPanel {
         return finishOperatorCommand(operationGeneration, command, "rejected", "unknown-command", "not-started");
     }
 
+    synchronized JSONObject remoteSetupProjection() throws Exception {
+        JSONObject ble=PolarBleRuntimeSupport.statusJson(appContext);
+        org.json.JSONArray candidates=new org.json.JSONArray();
+        for(int i=0;i<devices.size()&&i<4;i++)candidates.put(devices.get(i).instanceId().substring(6));
+        String selected=selectedDeviceInstanceId();
+        long now=System.nanoTime(),accReceipt,ecgReceipt;
+        synchronized(countersLock){accReceipt=lastAccFrameReceiptNs;ecgReceipt=lastEcgFrameReceiptNs;}
+        return new JSONObject().put("p",ble.optBoolean("runtime_permission_ready",false))
+            .put("b","on".equals(ble.optString("bluetooth_adapter_state")))
+            .put("c",connected&&selected.equals(connectedDeviceInstanceId)).put("x",selected.startsWith("polar-")?selected.substring(6):"")
+            .put("a",connected&&accPmdRunning&&accReceipt>0&&now>=accReceipt&&now-accReceipt<5000000000L)
+            .put("e",connected&&ecgPmdRunning&&ecgReceipt>0&&now>=ecgReceipt&&now-ecgReceipt<5000000000L)
+            .put("d",candidates).put("sc",scanning);
+    }
+
+    long remoteSetupEffectNs(String operation) {
+        synchronized(countersLock){
+            if("start-acc".equals(operation))return lastAccFrameReceiptNs;
+            if("start-ecg".equals(operation))return lastEcgFrameReceiptNs;
+        }
+        return System.nanoTime();
+    }
+
+    OperatorCommandStatus selectRemoteCandidate(String candidate) throws Exception {
+        if(candidate==null||!candidate.matches("[a-f0-9]{12}"))throw new SecurityException("invalid-candidate");
+        if(connected||scanning)throw new SecurityException("selection-not-idle");
+        for(int i=0;i<devices.size();i++)if(devices.get(i).instanceId().equals("polar-"+candidate)) {
+            beginManualConnectionControl();selectedDeviceIndex=i;
+            if(deviceSpinner!=null)deviceSpinner.setSelection(i);
+            return finishOperatorCommand(++operatorCommandGeneration,"select","accepted","none","observed");
+        }
+        throw new SecurityException("candidate-no-longer-present");
+    }
+
     /**
      * Side-effect-free experimenter projection. This does not scan, connect, request a
      * permission, call native code, or write the status file.

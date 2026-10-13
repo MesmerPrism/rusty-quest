@@ -534,6 +534,23 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 return readback;
             }
 
+            @Override public JSONObject polarSetupReadback() throws Exception {
+                ExperimentSessionBleServer server=remoteServer();if(server==null)return null;
+                if(!remoteSetupPendingId.isEmpty()) {
+                    if(!server.acceptsStatusRead(remoteSetupPendingCarrier,remoteSetupPendingEpoch))remoteSetupPendingId="";
+                    else {
+                        JSONObject receipt=PolarSensorRuntime.existingRemoteSetupReceipt(remoteSetupPendingId,remoteSetupPendingEpoch);
+                        if(receipt!=null) {
+                            String outcome=receipt.getString("state");
+                            server.recordEffectTimestamp(remoteSetupPendingId,receipt.optLong("effect_ns",0));
+                            server.updateReceiptForGeneration(remoteSetupPendingCarrier,remoteSetupPendingId,outcome,
+                                "confirmed".equals(outcome)?"Polar owner confirmed the requested effect.":"Awaiting Polar owner effect; do not replay.");
+                            if(!"pending".equals(outcome))remoteSetupPendingId="";
+                        }
+                    }
+                }
+                return PolarSensorRuntime.existingRemoteSetupStatus(server.currentNativeEpoch());
+            }
             @Override public JSONObject polarStopReadback() throws Exception {
                 return ControlPanelActivity.polarStopProjection();
             }
@@ -595,13 +612,22 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                             ExperimentSessionPanelCoordinator.CONDITION_ONE))
                         .put(ControlPanelActivity.conditionBreathGuidanceReadiness(
                             ExperimentSessionPanelCoordinator.CONDITION_TWO)))
-                    .put("pending", !state.pendingOperationId.isEmpty() || remotePending != null);
+                    .put("pending", !state.pendingOperationId.isEmpty() || remotePending != null || !remoteSetupPendingId.isEmpty());
+                JSONObject nativePresentation=sessionControlReadback();
+                BreathCompositionPanelModule visiblePanel=remotePanel.get();
+                String presentation="unknown";
+                if(visiblePanel!=null&&visiblePanel.canRenderRemotePolarInPlace()||"panel".equals(NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext)))presentation="panel";
+                else if(nativePresentation!=null&&nativePresentation.optLong("runtime_epoch",-1)==epoch) {
+                    if(nativePresentation.optBoolean("vr_preparation",false))presentation="vr-preparation";
+                    else if("immersive-active".equals(nativePresentation.optString("presentation"))&&state.hasActiveSession())presentation="vr-session";
+                }
+                status.put("h",presentation);
                 expireRemotePendingObservation(now);
                 RemotePending pending = remotePending;
                 if (pending != null && "return-vr".equals(pending.operation)) {
                     String foreground = NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext);
                     BreathCompositionPanelModule panel = remotePanel.get();
-                    boolean reached = "focused".equals(foreground);
+                    boolean reached = "vr-preparation".equals(presentation)||"vr-session".equals(presentation);
                     if (reached) {
                         ExperimentSessionBleServer server = remoteServer();
                         if (server != null) server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId,
@@ -615,6 +641,20 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             @Override public void dispatch(ExperimentSessionBleServer.CommandRequest request) {
                 ExperimentSessionBleServer server = remoteServer();
                 if (server == null) return;
+                if(request.setupRequest!=null) {
+                    try {
+                        if(remotePending!=null||!remoteSetupPendingId.isEmpty()&&!remoteSetupPendingId.equals(request.id))throw new SecurityException("another-command-pending");
+                        JSONObject readback=sessionControlReadback();
+                        if(readback==null||readback.getLong("runtime_epoch")!=request.setupRequest.getLong("g"))throw new SecurityException("native-epoch-changed");
+                        if(!"idle".equals(readback.optString("control_state")))throw new SecurityException("setup-requires-preparation");
+                        JSONObject receipt=PolarSensorRuntime.dispatchExistingRemoteSetup(request.setupRequest,server.currentNativeEpoch());
+                        String outcome=receipt.getString("state");
+                        server.recordEffectTimestamp(request.id,receipt.optLong("effect_ns",0));
+                        server.updateReceipt(request.id,outcome,"Polar setup is awaiting the app-owned effect.");
+                        if("pending".equals(outcome)){remoteSetupPendingId=request.id;remoteSetupPendingCarrier=server.currentGeneration();remoteSetupPendingEpoch=server.currentNativeEpoch();}
+                    }catch(Exception denied){server.updateReceipt(request.id,"rejected","Polar setup guard rejected; check setup prerequisites.");}
+                    return;
+                }
                 if(request.polarRequest!=null) {
                     try {
                         if(!PolarStopBleCapability.matchesNativeFence(request.polarNativeFence,sessionControlReadback()))
@@ -629,7 +669,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     } catch(Exception denied) { server.updateReceipt(request.id,"rejected","Polar owner admission failed."); }
                     return;
                 }
-                if (remotePending != null) {
+                if (remotePending != null || !remoteSetupPendingId.isEmpty()) {
                     server.updateReceipt(request.id, "rejected", "Another command is awaiting confirmation.");
                     return;
                 }
@@ -708,8 +748,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         remotePending = new RemotePending(request.id, "", "return-vr");
                         server.updateReceipt(request.id, "pending", "Waiting for immersive foreground.");
                         panel.closePanelAndReturnToImmersive();
-                    } else if ("focused".equals(
-                            NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext))) {
+                    } else if (isRemoteImmersiveConfirmed()) {
                         server.updateReceipt(request.id, "confirmed", "Immersive app is in foreground.");
                     } else {
                         server.updateReceipt(request.id, "rejected", "No live panel can return to VR.");
@@ -737,6 +776,29 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 }
             }
         };
+
+    public static void reconcileCurrentExperimentSessionBleOwner() {
+        ExperimentSessionBleServer server=remoteServer();if(server!=null)server.reconcileCurrentNativeOwner();
+    }
+    static void reconcileExperimentSessionBleOwner(long identity,long epoch) {
+        ExperimentSessionBleServer server=remoteServer();if(server!=null)server.reconcileNativeOwner(identity,epoch);
+    }
+    static JSONObject remoteSetupOperator(JSONObject request) throws Exception {
+        if(Looper.myLooper()!=Looper.getMainLooper())throw new SecurityException("main-thread-required");
+        ExperimentSessionBleServer server=remoteServer();if(server==null)throw new SecurityException("native-owner-unavailable");
+        if(request.length()==2&&Integer.valueOf(4).equals(request.opt("v"))&&"status".equals(request.opt("op")))
+            return new JSONObject().put("y",REMOTE_DELEGATE.polarSetupReadback()).put("receipt",server.ownerReceipt());
+        JSONObject command=ExperimentSessionBleProtocol.parseSetup(request);
+        ExperimentSessionBleServer.CommandRequest wrapped=new ExperimentSessionBleServer.CommandRequest(command.getString("id"),command.getString("op"),"",0);
+        wrapped.setupRequest=command;REMOTE_DELEGATE.dispatch(wrapped);
+        return new JSONObject().put("y",REMOTE_DELEGATE.polarSetupReadback()).put("receipt",server.ownerReceipt());
+    }
+    private static boolean isRemoteImmersiveConfirmed() {
+        try{JSONObject current=REMOTE_DELEGATE.sessionControlReadback();return current!=null&&"immersive-active".equals(current.optString("presentation"));}
+        catch(Exception unknown){return false;}
+    }
+    private static String remoteSetupPendingId="";
+    private static long remoteSetupPendingCarrier,remoteSetupPendingEpoch;
 
     private static String remoteKioskState() {
         NativeRendererSoftKioskCoordinator.Effectiveness effectiveness =

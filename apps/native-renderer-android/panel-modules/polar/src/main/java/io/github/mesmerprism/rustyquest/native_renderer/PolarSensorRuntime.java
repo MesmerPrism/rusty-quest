@@ -199,6 +199,74 @@ final class PolarSensorRuntime {
             android.util.Base64.NO_WRAP),token,"ble-polar-v3");
     }
 
+    private long setupRevision,setupEpoch;
+    private String setupTuple="";
+    private final java.util.Map<String,String> setupReceipts=new java.util.LinkedHashMap<>();
+    private final java.util.Map<String,Long> setupEffectTimes=new java.util.LinkedHashMap<>();
+    private final java.util.Map<String,String> setupOutcomes=new java.util.LinkedHashMap<>();
+    private String setupPendingId="",setupPendingOperation="",setupPendingCandidate="";
+    private long setupPendingSince;
+
+    synchronized JSONObject remoteSetupStatus(long epoch) throws Exception {
+        if(closed||instance!=this||!nativeLibraryReady)throw new SecurityException("polar-owner-unavailable");
+        if(epoch<=0)throw new SecurityException("native-epoch-unavailable");
+        if(setupEpoch!=0&&setupEpoch!=epoch&&!setupPendingId.isEmpty()){setupOutcomes.put(setupPendingId,"outcome_unknown");setupPendingId="";}
+        setupEpoch=epoch;
+        JSONObject status=panel.remoteSetupProjection();
+        String tuple=status.optBoolean("p")+"|"+status.optBoolean("b")+"|"+status.optBoolean("c")+"|"+status.optString("x")+"|"+status.getJSONArray("d").toString();
+        if(!tuple.equals(setupTuple)){setupTuple=tuple;setupRevision++;}
+        return status.put("s",projectedOwnerEpoch).put("g",epoch).put("r",setupRevision);
+    }
+    static JSONObject existingRemoteSetupStatus(long epoch) throws Exception {
+        PolarSensorRuntime owner=instance;return owner==null?null:owner.remoteSetupStatus(epoch);
+    }
+    static JSONObject dispatchExistingRemoteSetup(JSONObject command,long epoch) throws Exception {
+        PolarSensorRuntime owner=instance;if(owner==null)throw new SecurityException("polar-owner-unavailable");
+        return owner.dispatchRemoteSetup(command,epoch);
+    }
+    synchronized JSONObject dispatchRemoteSetup(JSONObject command,long epoch) throws Exception {
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())throw new SecurityException("polar-main-thread-required");
+        String id=command.getString("id"),canonical=command.toString();
+        if(setupReceipts.containsKey(id)) {
+            if(!setupReceipts.get(id).equals(canonical))throw new SecurityException("setup-id-conflict");
+            return remoteSetupReceipt(id,epoch);
+        }
+        JSONObject current=remoteSetupStatus(epoch);
+        if(!command.getString("s").equals(current.getString("s"))||command.getLong("g")!=epoch||command.getLong("r")!=setupRevision)
+            throw new SecurityException("stale-setup-fence");
+        if(!current.getBoolean("p")||!current.getBoolean("b"))throw new SecurityException("platform-setup-required");
+        if(!setupPendingId.isEmpty()||setupReceipts.size()>=128)throw new SecurityException("setup-pending-or-budget");
+        String operation=command.getString("op");
+        if("connect".equals(operation)&&current.getString("x").isEmpty() || operation.startsWith("start-")&&!current.getBoolean("c"))throw new SecurityException("sensor-not-ready");
+        if("select".equals(operation))panel.selectRemoteCandidate(command.getString("d"));
+        else panel.handleCommand(operation.replace('-','_'));
+        if("scan".equals(operation)&&!panel.remoteSetupProjection().getBoolean("sc"))throw new SecurityException("scan-not-started");
+        setupReceipts.put(id,canonical);setupRevision++;
+        setupPendingId=id;setupPendingOperation=operation;setupPendingCandidate=command.getString("d");setupPendingSince=SystemClock.elapsedRealtime();
+        return remoteSetupReceipt(id,epoch);
+    }
+    static JSONObject existingRemoteSetupReceipt(String id,long epoch) throws Exception {
+        PolarSensorRuntime owner=instance;return owner==null?null:owner.remoteSetupReceipt(id,epoch);
+    }
+    synchronized JSONObject remoteSetupReceipt(String id,long epoch) throws Exception {
+        if(!setupReceipts.containsKey(id))throw new SecurityException("setup-operation-unknown");
+        JSONObject state=remoteSetupStatus(epoch);
+        boolean effective=id.equals(setupPendingId)&&(
+            "scan".equals(setupPendingOperation)&&!state.getBoolean("sc")
+            ||"select".equals(setupPendingOperation)&&setupPendingCandidate.equals(state.getString("x"))
+            ||"connect".equals(setupPendingOperation)&&state.getBoolean("c")
+            ||"start-acc".equals(setupPendingOperation)&&state.getBoolean("a")
+            ||"start-ecg".equals(setupPendingOperation)&&state.getBoolean("e"));
+        String receiptState=effective?"confirmed":SystemClock.elapsedRealtime()-setupPendingSince>30000L?"outcome_unknown":"pending";
+        if(!id.equals(setupPendingId))receiptState=setupOutcomes.containsKey(id)?setupOutcomes.get(id):"outcome_unknown";
+        if(effective&&!setupEffectTimes.containsKey(id))setupEffectTimes.put(id,panel.remoteSetupEffectNs(setupPendingOperation));
+        JSONObject result=new JSONObject().put("id",id).put("state",receiptState);
+        if(setupEffectTimes.containsKey(id))result.put("effect_ns",setupEffectTimes.get(id));
+        // Observation retires pending work; retained IDs never dispatch a second effect.
+        if(!"pending".equals(receiptState)&&id.equals(setupPendingId)){setupOutcomes.put(id,receiptState);setupPendingId="";}
+        return result;
+    }
+
     /** Read-only app-lifetime projection for the experimenter home. */
     JSONObject experimenterStatusProjection() {
         JSONObject projection = panel.experimenterStatusProjection();

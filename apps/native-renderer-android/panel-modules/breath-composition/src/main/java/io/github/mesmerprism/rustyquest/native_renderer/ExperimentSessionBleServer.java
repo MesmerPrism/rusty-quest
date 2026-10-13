@@ -51,6 +51,7 @@ final class ExperimentSessionBleServer {
     interface Delegate {
         JSONObject snapshot() throws Exception;
         default JSONObject sessionControlReadback() throws Exception { return null; }
+        default JSONObject polarSetupReadback() throws Exception { return null; }
         default JSONObject polarStopReadback() throws Exception { return null; }
         default boolean openControlDefault() { return false; }
         void dispatch(CommandRequest command);
@@ -64,6 +65,7 @@ final class ExperimentSessionBleServer {
         final ExperimentSessionControlCapability.Fence sessionFence;
         final JSONObject polarRequest;
         final JSONObject polarNativeFence;
+        JSONObject setupRequest;
 
         CommandRequest(String id, String operation, String condition, int bias) {
             this(id,operation,condition,bias,null);
@@ -127,6 +129,12 @@ final class ExperimentSessionBleServer {
     private long nativeOwnerEpoch;
     private long nativeOwnerHighWater;
     private JSONObject latestOwnerReceipt;
+    private int recoveryAttempts;
+    private boolean recoveryScheduled;
+    private long recoveryToken;
+    private final Map<String,Long> admissionTimes=new HashMap<>();
+    private final Map<String,Long> effectTimes=new HashMap<>();
+    synchronized void recordEffectTimestamp(String id,long ns){if(ExperimentSessionBleProtocol.isLowerHex(id,16)&&ns>0&&effectTimes.size()<256&&!effectTimes.containsKey(id))effectTimes.put(id,ns);}
     private String shellOperationId="";
     synchronized void markShellOperation(String id) { shellOperationId=id; }
     synchronized JSONObject ownerReceipt() throws Exception { return latestOwnerReceipt==null?new JSONObject():new JSONObject(latestOwnerReceipt.toString()); }
@@ -136,6 +144,24 @@ final class ExperimentSessionBleServer {
     private ExperimentSessionBleServer(Context context) {
         this.context = context;
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        android.content.IntentFilter filter=new android.content.IntentFilter();
+        filter.addAction(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED);
+        filter.addAction(android.content.Intent.ACTION_USER_PRESENT);
+        filter.addAction(android.content.Intent.ACTION_SCREEN_ON);
+        android.content.BroadcastReceiver recovery=new android.content.BroadcastReceiver(){
+            @Override public void onReceive(Context ignored,android.content.Intent event) {
+                synchronized(ExperimentSessionBleServer.this) {
+                    if(!hasNativeOwner()||!enabled())return;
+                    if(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED.equals(event.getAction())
+                            &&event.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE,-1)!=android.bluetooth.BluetoothAdapter.STATE_ON) {
+                        stopWithReason("radio-unavailable");return;
+                    }
+                    reconcileNativeOwner(nativeOwnerIdentity,nativeOwnerEpoch);
+                }
+            }
+        };
+        if(Build.VERSION.SDK_INT>=33)context.registerReceiver(recovery,filter,Context.RECEIVER_EXPORTED);
+        else context.registerReceiver(recovery,filter);
     }
 
     boolean enabled() { return prefs.getBoolean(ENABLED, true); }
@@ -163,21 +189,47 @@ final class ExperimentSessionBleServer {
     synchronized boolean nativeOwnerStarted(long identity, long epoch) {
         if (identity <= 0L || epoch <= 0L || identity <= nativeOwnerHighWater) return false;
         stopWithReason("native-owner-replaced");
+        latestOwnerReceipt=null;admissionTimes.clear();effectTimes.clear();
         nativeOwnerHighWater = identity;
         nativeOwnerIdentity = identity;
         nativeOwnerEpoch = epoch;
+        recoveryAttempts=0;recoveryToken++;recoveryScheduled=false;
         startFromNativeOwner();
+        if(!active)scheduleRecovery();
         return true;
     }
 
     synchronized boolean nativeOwnerEnded(long identity, long epoch) {
         if (identity <= 0L || identity != nativeOwnerIdentity || epoch != nativeOwnerEpoch) return false;
+        latestOwnerReceipt=null;admissionTimes.clear();effectTimes.clear();
         nativeOwnerIdentity = 0L;
         nativeOwnerEpoch = 0L;
+        recoveryToken++;recoveryScheduled=false;
         stopWithReason("native-owner-ended");
         return true;
     }
 
+    synchronized void reconcileCurrentNativeOwner(){reconcileNativeOwner(nativeOwnerIdentity,nativeOwnerEpoch);}
+    synchronized void reconcileNativeOwner(long identity,long epoch) {
+        if(identity<=0||identity!=nativeOwnerIdentity||epoch!=nativeOwnerEpoch||!enabled())return;
+        recoveryAttempts=0;recoveryToken++;recoveryScheduled=false;
+        if(active&&gatt!=null) {
+            try{if(advertiser!=null&&advertiseCallback!=null)advertiser.stopAdvertising(advertiseCallback);}catch(RuntimeException ignored){ }
+            advertiseCallback=null;startAdvertising(serverGeneration,gatt);
+            main.removeCallbacks(statusRefresh);main.post(statusRefresh);
+        }else{startFromNativeOwner();if(!active)scheduleRecovery();}
+    }
+    private synchronized void scheduleRecovery() {
+        if(recoveryScheduled||recoveryAttempts>=6||!hasNativeOwner()||!enabled())return;
+        final long token=recoveryToken,identity=nativeOwnerIdentity,epoch=nativeOwnerEpoch;
+        long delay=Math.min(8000L,500L<<recoveryAttempts++);recoveryScheduled=true;
+        main.postDelayed(new Runnable(){@Override public void run(){synchronized(ExperimentSessionBleServer.this){
+            if(token!=recoveryToken||identity!=nativeOwnerIdentity||epoch!=nativeOwnerEpoch)return;
+            recoveryScheduled=false;
+            if(active&&gatt!=null)startAdvertising(serverGeneration,gatt);else startFromNativeOwner();
+            if(!active)scheduleRecovery();
+        }}},delay);
+    }
     private synchronized void startFromNativeOwner() {
         if (nativeOwnerIdentity <= 0L || nativeOwnerEpoch <= 0L
                 || !featurePackaged(context) || !enabled()) return;
@@ -311,6 +363,11 @@ final class ExperimentSessionBleServer {
         try {
             JSONObject receipt = new JSONObject().put("v", 1).put("id", id)
                 .put("state", state).put("detail", safeDetail(detail));
+            long now=SystemClock.elapsedRealtime();
+            if("accepted".equals(state)&&!admissionTimes.containsKey(id)&&admissionTimes.size()<256)admissionTimes.put(id,now);
+            if(admissionTimes.containsKey(id))receipt.put("admit_ms",admissionTimes.get(id));
+            receipt.put("publish_ms",now);
+            if(effectTimes.containsKey(id))receipt.put("effect_ns",effectTimes.get(id));
             latestOwnerReceipt = new JSONObject(receipt.toString());
             if(id.equals(shellOperationId))latestOwnerReceipt.put("operator_origin","shell-experiment-operator-v1");
             byte[] bytes = jsonBytes(receipt.toString());
@@ -348,6 +405,8 @@ final class ExperimentSessionBleServer {
                     JSONObject status = target.snapshot();
                     status.put("v", 1).put("m", open ? "open" : "gated");
                     JSONObject nativeReadback=target.sessionControlReadback();
+                    JSONObject setup=target.polarSetupReadback();
+                    if(setup!=null&&"IDLE".equals(status.optString("p")))status.put("y",setup);
                     JSONObject polarOffer=polarControl.offer(target.polarStopReadback(),nativeReadback,
                         generation,identity,epoch,SystemClock.elapsedRealtime());
                     JSONObject capability = sessionControl.offer(status,nativeReadback,
@@ -382,10 +441,11 @@ final class ExperimentSessionBleServer {
 
     private synchronized void startAdvertising(final long generation, final BluetoothGattServer server) {
         if (!currentServer(generation, server)) return;
+        if(advertiseCallback!=null){try{if(advertiser!=null)advertiser.stopAdvertising(advertiseCallback);}catch(RuntimeException ignored){ }advertiseCallback=null;}
         BluetoothManager manager = context.getSystemService(BluetoothManager.class);
-        if (manager == null || manager.getAdapter() == null) return;
+        if (manager == null || manager.getAdapter() == null){scheduleRecovery();return;}
         advertiser = manager.getAdapter().getBluetoothLeAdvertiser();
-        if (advertiser == null) return;
+        if (advertiser == null){scheduleRecovery();return;}
         AdvertiseSettings settings = new AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
             .setConnectable(true).setTimeout(0)
@@ -410,14 +470,16 @@ final class ExperimentSessionBleServer {
             @Override public void onStartFailure(int code) {
                 synchronized (ExperimentSessionBleServer.this) {
                     if (!currentServer(generation, server) || advertiseCallback != this) return;
+                    advertiseCallback=null;
+                    scheduleRecovery();
                     Log.w(TAG, "status=advertise-failed code=" + code);
                 }
             }
         };
         // A name change between sizing and dispatch may still be rejected by Android.
-        // Preserve that actual callback failure; never issue an automatic second attempt.
+        // Recovery attempts are bounded and remain tied to the same native owner.
         try { advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback); }
-        catch (RuntimeException error) { Log.w(TAG, "status=advertise-failed", error); }
+        catch (RuntimeException error) { advertiseCallback=null;scheduleRecovery();Log.w(TAG, "status=advertise-failed", error); }
     }
 
     private static BluetoothGattCharacteristic readCharacteristic(UUID uuid) {
@@ -448,7 +510,7 @@ final class ExperimentSessionBleServer {
             synchronized (ExperimentSessionBleServer.this) {
                 if (!current()) return;
                 if (status == BluetoothGatt.GATT_SUCCESS && SERVICE.equals(service.getUuid())) startAdvertising(generation, server);
-                else Log.w(TAG, "status=gatt-service-failed code=" + status);
+                else {stopWithReason("gatt-service-failed");scheduleRecovery();Log.w(TAG, "status=gatt-service-failed code=" + status);}
 
             }
         }
@@ -484,7 +546,12 @@ final class ExperimentSessionBleServer {
                     read(device, requestId, offset,
                         jsonBytes("{\"v\":1,\"n\":\"" + peer.challenge + "\"}"));
                 } else if (RECEIPT.equals(uuid)) {
-                    if (offset == 0 || peer.receiptRead == null) peer.receiptRead = peer.receipt;
+                    if (offset == 0 || peer.receiptRead == null) {
+                        // Reconnection observes the original current-owner outcome without
+                        // adopting command authority or dispatching the action again.
+                        peer.receiptRead = peer.lastCommandId.isEmpty()&&latestOwnerReceipt!=null
+                            ? jsonBytes(latestOwnerReceipt.toString()) : peer.receipt;
+                    }
                     read(device, requestId, offset, peer.receiptRead);
                 } else if (gatt != null) {
                     gatt.sendResponse(device, requestId, BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED,
@@ -506,6 +573,8 @@ final class ExperimentSessionBleServer {
                     try {
                         JSONObject body = new JSONObject(new String(value, StandardCharsets.UTF_8));
                         boolean sessionVersion = Integer.valueOf(2).equals(body.opt("v")) || Long.valueOf(2).equals(body.opt("v"));
+                        boolean setupVersion = Integer.valueOf(4).equals(body.opt("v")) || Long.valueOf(4).equals(body.opt("v"));
+                        JSONObject setupRequest=null;
                         boolean polarVersion = Integer.valueOf(3).equals(body.opt("v")) || Long.valueOf(3).equals(body.opt("v"));
                         JSONObject polarRequest=null;
                         JSONObject polarNativeFence=null;
@@ -516,7 +585,10 @@ final class ExperimentSessionBleServer {
                         String nonce = body.optString("nonce", "");
                         int bias = body.optInt("bias", -1);
                         String session="";long sessionGeneration=0L;
-                        if(polarVersion) {
+                        if(setupVersion) {
+                            setupRequest=ExperimentSessionBleProtocol.parseSetup(body);
+                            id=body.getString("id");operation=body.getString("op");nonce=body.getString("n");condition="";bias=0;
+                        } else if(polarVersion) {
                             PolarStopBleCapability.Wire wire=PolarStopBleCapability.parse(body);
                             id=wire.id;operation=wire.operation;session=wire.reference;nonce=wire.nonce;
                             sessionGeneration=wire.revision;condition="";bias=0;
@@ -546,7 +618,7 @@ final class ExperimentSessionBleServer {
                                     || SystemClock.elapsedRealtime() < blockedUntilMs) {
                                 throw new SecurityException("peer-replay-or-rate-limit");
                             }
-                            boolean authenticated=polarVersion ? ExperimentSessionBleProtocol.verifyPolar(
+                            boolean authenticated=setupVersion ? ExperimentSessionBleProtocol.verifySetup(code,peer.challenge,body) : polarVersion ? ExperimentSessionBleProtocol.verifyPolar(
                                 code,peer.challenge,id,operation,session,sessionGeneration,nonce,body.optString("mac","")) : sessionVersion ? ExperimentSessionBleProtocol.verifySession(
                                 code,peer.challenge,id,operation,session,sessionGeneration,nonce,body.optString("mac",""))
                                 : ExperimentSessionBleProtocol.verify(
@@ -570,7 +642,9 @@ final class ExperimentSessionBleServer {
                             if (peer == null) throw new SecurityException("peer-disconnected");
                             peer.lastCommandId = id;
                         }
+                        if(setupVersion && setupRequest.getLong("g")!=nativeOwnerEpoch)throw new SecurityException("setup-native-epoch-stale");
                         accepted = new CommandRequest(id, operation, condition, bias,sessionFence,polarRequest,polarNativeFence);
+                        accepted.setupRequest=setupRequest;
                         updateReceipt(id, "accepted", "Command admitted by Quest BLE transport.");
                         response = BluetoothGatt.GATT_SUCCESS;
                     } catch (Exception rejected) {

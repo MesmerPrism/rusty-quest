@@ -118,6 +118,32 @@ final class ExperimentSessionBleProtocol {
         } catch(Exception denied){return false;}
     }
 
+    static boolean validSetupFields(String id,String op,String ref,long epoch,long revision,String device,String nonce) {
+        return isLowerHex(id,16)&&isLowerHex(ref,32)&&isLowerHex(nonce,16)&&epoch>0&&epoch<=9007199254740991L
+            &&revision>=0&&revision<=9007199254740991L&&("scan".equals(op)||"select".equals(op)||"connect".equals(op)||"start-acc".equals(op)||"start-ecg".equals(op))
+            &&("select".equals(op)?isLowerHex(device,12):"".equals(device));
+    }
+    static org.json.JSONObject parseSetup(org.json.JSONObject body) throws Exception {
+        java.util.Set<String> fields=new java.util.HashSet<>(java.util.Arrays.asList("v","id","op","s","g","r","d","n"));
+        if(body.has("mac"))fields.add("mac");
+        if(body.length()!=fields.size()||PolarStopBleCapability.integer(body,"v",false)!=4)throw new IllegalArgumentException("closed-setup-version-required");
+        for(String field:fields)if(!body.has(field))throw new IllegalArgumentException("setup-field-missing");
+        if(!validSetupFields(ExperimentSessionControlCapability.string(body,"id"),ExperimentSessionControlCapability.string(body,"op"),
+            ExperimentSessionControlCapability.string(body,"s"),PolarStopBleCapability.integer(body,"g",false),PolarStopBleCapability.integer(body,"r",true),
+            ExperimentSessionControlCapability.string(body,"d"),ExperimentSessionControlCapability.string(body,"n"))
+            ||body.has("mac")&&!isLowerHex(ExperimentSessionControlCapability.string(body,"mac"),32))throw new IllegalArgumentException("invalid-setup-fields");
+        return new org.json.JSONObject(body.toString());
+    }
+    static boolean verifySetup(String code,String challenge,org.json.JSONObject body) {
+        try {
+            parseSetup(body);if(code==null||!isLowerHex(challenge,32)||!isLowerHex(body.optString("mac"),32))return false;
+            String input="RQPS1|"+challenge;
+            for(String key:new String[]{"id","op","s","g","r","d","n"})input+="|"+body.get(key);
+            Mac mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(code.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
+            return MessageDigest.isEqual(java.util.Arrays.copyOf(mac.doFinal(input.getBytes(StandardCharsets.UTF_8)),16),fromHex(body.getString("mac")));
+        }catch(Exception denied){return false;}
+    }
+
     static String hex(byte[] bytes, int length) {
         char[] result = new char[length * 2];
         for (int i = 0; i < length; i++) {
@@ -260,6 +286,11 @@ final class PolarStopBleCapability {
     }
     synchronized byte[] projectBoundedStatus(org.json.JSONObject base,org.json.JSONObject offer) throws Exception {
         org.json.JSONObject candidate=new org.json.JSONObject(base.toString());
+        // Readiness and presentation have priority over optional diagnostics.
+        if(candidate.has("y"))for(String field:new String[]{"done","early","ms","k","rec","co","bt","po","pf","f","r"}) {
+            if(candidate.toString().getBytes(StandardCharsets.UTF_8).length<=430)break;
+            candidate.remove(field);
+        }
         // Preserve the pre-existing optional q fallback before considering the new grant.
         if(candidate.toString().getBytes(StandardCharsets.UTF_8).length>480&&candidate.has("q"))candidate.remove("q");
         if(offer!=null) {

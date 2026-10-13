@@ -76,6 +76,7 @@ final class ExperimentSessionBleServer {
  boolean acceptsStatusRead(long g,long e){return active&&g==serverGeneration&&e==nativeOwnerEpoch;}
  boolean updateReceiptForGeneration(long generation,String id,String state,String detail){if(generation!=currentGeneration())return false;updates++;this.id=id;this.state=state;return true;}
  void stopWithReason(String reason){active=false;serverGeneration++;}
+ java.util.Map<String,Long> admissionTimes=new java.util.HashMap<>(),effectTimes=new java.util.HashMap<>();org.json.JSONObject latestOwnerReceipt;int recoveryAttempts;long recoveryToken;boolean recoveryScheduled;void scheduleRecovery(){}
  void startFromNativeOwner(){active=true;serverGeneration++;}
  __OWNER_START__
  __OWNER_END__
