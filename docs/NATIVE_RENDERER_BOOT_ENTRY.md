@@ -2,8 +2,8 @@
 
 `ui.experiment_boot_autostart` is an explicit additional selection for a remote
 VR preparation app. It adds only the non-exported `NativeRendererBootReceiver`,
-the normal `RECEIVE_BOOT_COMPLETED` permission, and the declared overlay
-permission used by the existing own-app return route. It is disabled when not
+the normal `RECEIVE_BOOT_COMPLETED` permission, and the explicit overlay
+permission required for this selected background launch route. It is disabled when not
 selected. The selected feature also requires `remote-vr` preparation defaults.
 
 The receiver accepts only the protected system `BOOT_COMPLETED` action and its
