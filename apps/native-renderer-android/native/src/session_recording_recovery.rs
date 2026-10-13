@@ -63,6 +63,16 @@ pub(crate) struct RecoveryReport {
     pub(crate) sessions: Vec<RecoveredSession>,
     pub(crate) counts: SessionCounts,
     pub(crate) condition_counts: RecoveredConditionCounts,
+    pub(crate) work: RecoveryWork,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RecoveryWork {
+    pub(crate) elapsed_us: u64,
+    pub(crate) validated_sessions: u64,
+    pub(crate) reused_sessions: u64,
+    pub(crate) metadata_entries: u64,
+    pub(crate) recent_bytes_hashed: u64,
 }
 
 pub(crate) fn recover_recordings(root: &Path) -> Result<RecoveryReport, String> {
@@ -91,35 +101,51 @@ pub(crate) fn recover_recordings(root: &Path) -> Result<RecoveryReport, String> 
         let Ok(started_at) = SessionTimestampKey::parse(name) else {
             continue;
         };
-        // Bind the per-condition summary while still on the recording actor.
-        // A corrupt/unreadable manifest stays in aggregate counts only and is
-        // never guessed into a condition bucket.
-        let manifest = validate_manifest(&directory, &started_at).ok();
-        let recovered = recover_session(&directory, started_at);
-        match recovered.disposition {
-            RecoveryDisposition::FinalizedCompleted | RecoveryDisposition::InterruptedCompleted => {
-                report.counts.completed = report.counts.completed.saturating_add(1);
-            }
-            RecoveryDisposition::FinalizedEarly | RecoveryDisposition::InterruptedEarly => {
-                report.counts.stopped_early = report.counts.stopped_early.saturating_add(1);
-            }
-            RecoveryDisposition::CorruptEarly => {
-                report.counts.stopped_early = report.counts.stopped_early.saturating_add(1);
-            }
-        }
-        if recovered.error.is_some() {
-            report.counts.errors = report.counts.errors.saturating_add(1);
-        }
-        if let Some(manifest) = manifest.as_ref() {
-            add_condition_count(
-                &mut report.condition_counts,
-                &manifest.condition,
-                &recovered,
-            );
-        }
-        report.sessions.push(recovered);
+        let entry = recover_directory(&directory, started_at);
+        append_recovered(&mut report, &entry);
+        report.work.validated_sessions += 1;
     }
     Ok(report)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RecoveredEntry {
+    pub(crate) session: RecoveredSession,
+    pub(crate) condition: Option<ConditionKey>,
+}
+
+pub(crate) fn recover_directory(
+    directory: &Path,
+    started_at: SessionTimestampKey,
+) -> RecoveredEntry {
+    // Keep the existing complete manifest/terminal/stream validation. A failed
+    // manifest never acquires a guessed condition bucket or reusable identity.
+    let condition = validate_manifest(directory, &started_at)
+        .ok()
+        .map(|m| m.condition);
+    RecoveredEntry {
+        session: recover_session(directory, started_at),
+        condition,
+    }
+}
+
+pub(crate) fn append_recovered(report: &mut RecoveryReport, entry: &RecoveredEntry) {
+    let recovered = &entry.session;
+    match recovered.disposition {
+        RecoveryDisposition::FinalizedCompleted | RecoveryDisposition::InterruptedCompleted => {
+            report.counts.completed = report.counts.completed.saturating_add(1);
+        }
+        _ => {
+            report.counts.stopped_early = report.counts.stopped_early.saturating_add(1);
+        }
+    }
+    if recovered.error.is_some() {
+        report.counts.errors = report.counts.errors.saturating_add(1);
+    }
+    if let Some(condition) = entry.condition.as_ref() {
+        add_condition_count(&mut report.condition_counts, condition, recovered);
+    }
+    report.sessions.push(recovered.clone());
 }
 
 pub(crate) fn validate_recording_root_no_links(root: &Path) -> Result<(), String> {

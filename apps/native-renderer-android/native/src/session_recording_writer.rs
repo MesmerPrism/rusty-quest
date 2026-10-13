@@ -27,8 +27,9 @@ use crate::{
         SESSION_CHECKPOINT_SCHEMA, SESSION_FINAL_SCHEMA, SESSION_INDEX_SCHEMA,
         SESSION_MANIFEST_SCHEMA, SESSION_STREAM_FILES,
     },
+    session_recording_inventory::{elapsed_us, RecoveryInventory},
     session_recording_recovery::{
-        recover_recordings, validate_recording_root_no_links, RecoveryDisposition, RecoveryReport,
+        validate_recording_root_no_links, RecoveryDisposition, RecoveryReport,
     },
 };
 
@@ -127,6 +128,25 @@ pub(crate) struct FinalizedReceipt {
     pub(crate) saved: bool,
     pub(crate) dropped_records: u64,
     pub(crate) recovery: RecoveryReport,
+    pub(crate) timings: FinalizationTimings,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct FinalizationTimings {
+    pub(crate) drain_us: u64,
+    pub(crate) durable_finalize_us: u64,
+    pub(crate) recovery_us: u64,
+    pub(crate) index_us: u64,
+    pub(crate) fence_us: u64,
+    pub(crate) fence_bytes_hashed: u64,
+    pub(crate) total_us: u64,
+}
+
+impl FinalizationTimings {
+    pub(crate) fn value(self) -> Value {
+        json!({"drain_us":self.drain_us,"durable_finalize_us":self.durable_finalize_us,
+            "recovery_us":self.recovery_us,"index_us":self.index_us,"fence_us":self.fence_us,"fence_bytes_hashed":self.fence_bytes_hashed,"total_us":self.total_us})
+    }
 }
 
 pub(crate) struct ControlReceipt<T> {
@@ -627,6 +647,7 @@ fn run_actor(
     external_loss: Arc<ExternalLossLedger>,
 ) {
     let mut active: Option<ActiveRecording> = None;
+    let mut inventory = RecoveryInventory::default();
     let mut running = true;
     while running {
         while let Ok(command) = control_receiver.try_recv() {
@@ -638,6 +659,7 @@ fn run_actor(
                 &queued_bytes,
                 &external_loss,
                 &mut active,
+                &mut inventory,
             );
             if !running {
                 break;
@@ -684,6 +706,7 @@ fn handle_control(
     queued_bytes: &AtomicUsize,
     external_loss: &ExternalLossLedger,
     active: &mut Option<ActiveRecording>,
+    inventory: &mut RecoveryInventory,
 ) -> bool {
     match command {
         ControlCommand::Prepare {
@@ -777,12 +800,16 @@ fn handle_control(
                     Err("recording-generation-stale".to_owned())
                 } else {
                     let directory = recording.directory.clone();
-                    let finalization_loss = loss.clone();
-                    let finalization = recording
-                        .drain_to_cutoff(data_receiver, queued_bytes, cutoff)
-                        .and_then(|()| {
-                            recording.finalize(at, reason, threshold_reached, finalization_loss)
-                        });
+                    let total_start = Instant::now();
+                    let mut timings = FinalizationTimings::default();
+                    let start = Instant::now();
+                    let drained = recording.drain_to_cutoff(data_receiver, queued_bytes, cutoff);
+                    timings.drain_us = elapsed_us(start);
+                    let start = Instant::now();
+                    let finalization = drained.and_then(|()| {
+                        recording.finalize(at, reason, threshold_reached, loss.clone())
+                    });
+                    timings.durable_finalize_us = elapsed_us(start);
                     let completed = recording.completion_durable;
                     // Drop every stream handle on the actor even when durable
                     // finalization fails. The latest checkpoint remains
@@ -796,9 +823,17 @@ fn handle_control(
                     state.finalize_requested = true;
                     drop(state);
                     finalization.and_then(|()| {
-                        let recovery = recover_recordings(&config.root)?;
+                        let start = Instant::now();
+                        let recovery = inventory.recover(&config.root, Some(&directory))?;
+                        timings.recovery_us = elapsed_us(start);
                         let saved = validate_current_recovery(&recovery, &directory, &loss)?;
+                        let start = Instant::now();
                         publish_index(&config.root, &recovery)?;
+                        timings.index_us = elapsed_us(start);
+                        let start = Instant::now();
+                        timings.fence_bytes_hashed = inventory.confirm_publication(&config.root)?;
+                        timings.fence_us = elapsed_us(start);
+                        timings.total_us = elapsed_us(total_start);
                         Ok(FinalizedReceipt {
                             generation,
                             directory,
@@ -807,6 +842,7 @@ fn handle_control(
                             saved,
                             dropped_records: loss.dropped_records,
                             recovery,
+                            timings,
                         })
                     })
                 }
@@ -819,7 +855,7 @@ fn handle_control(
             let result = if active.is_some() {
                 Err("recording-recovery-while-active".to_owned())
             } else {
-                recover_recordings(&config.root)
+                inventory.recover(&config.root, None)
             };
             let _ = reply.send(result);
         }
@@ -1370,7 +1406,8 @@ fn sync_directory(_directory: &Path) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use crate::session_recording_recovery::recover_recordings;
     use super::*;
     use std::{
         sync::atomic::{AtomicU64, Ordering},
@@ -1421,15 +1458,18 @@ mod tests {
             thread::sleep(Duration::from_secs(11));
             let mut recovery = RecoveryReport::default();
             recovery.counts.completed = 1;
-            reply.send(Ok(FinalizedReceipt {
-                generation: 19,
-                directory: PathBuf::from("original-finalized-session"),
-                accepted_sequence_cutoff: 71,
-                completed: true,
-                saved: true,
-                dropped_records: 0,
-                recovery,
-            })).expect("finalize receiver must remain owned until actual result");
+            reply
+                .send(Ok(FinalizedReceipt {
+                    timings: FinalizationTimings::default(),
+                    generation: 19,
+                    directory: PathBuf::from("original-finalized-session"),
+                    accepted_sequence_cutoff: 71,
+                    completed: true,
+                    saved: true,
+                    dropped_records: 0,
+                    recovery,
+                }))
+                .expect("finalize receiver must remain owned until actual result");
         });
         let finalized = receipt.receive().unwrap();
         assert_eq!(finalized.generation, 19);
@@ -1445,7 +1485,9 @@ mod tests {
     fn durable_receipt_preserves_writer_failure_and_disconnection() {
         let (reply, receiver) = mpsc::channel();
         reply
-            .send(Err::<(), _>("recording-session-directory-create:denied".to_owned()))
+            .send(Err::<(), _>(
+                "recording-session-directory-create:denied".to_owned(),
+            ))
             .unwrap();
         assert_eq!(
             ControlReceipt { receiver }.receive().unwrap_err(),
@@ -1459,7 +1501,7 @@ mod tests {
         );
     }
 
-    fn temp_root(label: &str) -> PathBuf {
+    pub(crate) fn temp_root(label: &str) -> PathBuf {
         std::env::temp_dir()
             .join(format!(
                 "rusty-quest-session-writer-{label}-{}-{}",
@@ -1472,7 +1514,7 @@ mod tests {
             .join("viscereality-recordings")
     }
 
-    fn spec(utc: u64) -> SessionStartSpec {
+    pub(crate) fn spec(utc: u64) -> SessionStartSpec {
         let utc = UtcEpochNanos::new(utc);
         SessionStartSpec {
             started_at: SessionTimestampKey::from_utc(utc),
@@ -1509,7 +1551,7 @@ mod tests {
         }
     }
 
-    fn config(root: PathBuf, capacity: usize, checkpoint_ms: u64) -> WriterConfig {
+    pub(crate) fn config(root: PathBuf, capacity: usize, checkpoint_ms: u64) -> WriterConfig {
         WriterConfig {
             root,
             data_queue_capacity: capacity,
@@ -2270,6 +2312,7 @@ mod tests {
         let key = SessionTimestampKey::parse("utc-ns-01725000000000000999").unwrap();
         let directory = PathBuf::from("root").join(key.as_str());
         let recovery = RecoveryReport {
+            work: Default::default(),
             sessions: vec![crate::session_recording_recovery::RecoveredSession {
                 started_at: key,
                 experiment_identity: None,

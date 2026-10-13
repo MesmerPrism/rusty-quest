@@ -159,3 +159,60 @@ same current epoch/session/condition/profile/source in ImmersiveActive permits
 one native call. Drift, timeout or an unknown call outcome cannot retry. Pause
 uses the actual running owner directly. The native reducer remains authoritative
 for frame/presentation/clock admission; the UI handoff never synthesizes them.
+
+## Historical recording validation and save timings
+
+The recording actor owns an in-memory inventory of successfully validated
+sessions. Startup always reads and validates historical manifests, terminal
+records/checkpoints, identities, and stream contents. Subsequent Arm and save
+operations may reuse historical results on Android/Linux only while complete
+session-directory metadata snapshots agree before and after recovery. These
+snapshots include every file name, type, device/inode identity, length, link
+count, and nanosecond modification/change times. Same-length writes with
+restored modification times still invalidate through kernel change time.
+Recent files additionally carry SHA-256 content fences: a fixed cutoff two
+seconds before recovery covers Linux/Android timestamp tick coarseness through
+post-index acknowledgment. Hashing uses bounded buffers and verifies file and
+path metadata around each read. Old histories remain metadata-only; this assumes
+app-private custody and filesystem change timestamps with subsecond granularity.
+A backward wall-clock observation during recovery or publication rejects that
+operation. A previously validated digest can age out without reparsing only
+with identical metadata and forward clock progress; the inverse transition
+always revalidates. Privileged clock/filesystem manipulation outside app-private
+custody is not an immutability guarantee.
+Added/deleted sessions and root replacement invalidate the corresponding
+inventory. Symlinks and aliased files reject reuse; unsupported platforms or
+nonregular entries fall back to complete recovery. Zero inode/change-time
+fields and zero subsecond change times also force full recovery; the intended
+Android app-private filesystem must supply meaningful nanosecond change time. No persisted index earns
+trust, and failed validation never becomes a reusable entry. Kernel-privileged
+mutation that can forge filesystem metadata is outside app-private custody.
+
+Save always validates the current recording again, after draining the exact
+accepted cutoff and synchronizing its streams and terminal record. It publishes
+the index and checks the metadata fence once more before returning the saved
+acknowledgment. An unstable observation clears the inventory and fails that
+operation; it does not silently publish stale counts or automatically retry.
+The existing corruption and interrupted-checkpoint recovery rules are unchanged.
+The cache lasts only as long as the recording actor.
+
+Native readback adds `recovery_work` with `elapsed_us`, `validated_sessions`,
+`reused_sessions`, `metadata_entries`, and `recent_bytes_hashed` (both recovery
+fences combined). It also exposes `finalization_timings`: `drain_us`, `durable_finalize_us`,
+`recovery_us`, `index_us`, `fence_us`, and `total_us`, plus
+`fence_bytes_hashed` for the post-index fence. All duration fields are measured
+with the owner's monotonic clock, in microseconds; zero also represents no
+completed measurement yet. These diagnostics do not alter durable-recording
+schemas or certify end-to-end browser latency. After a successful save, the
+readback describes the finalization recovery, including current validation.
+Later recovery may update `recovery_work`. Finalization timings reset to zero
+when a new finalization begins; a failed finalization leaves them zero. Full startup recovery still scales with history;
+warm recovery scales with metadata entries and changed/current stream bytes.
+
+Focused host validation runs the native crate tests filtered by
+`session_recording` and `experiment_session_runtime`. The inventory race and
+metadata tests require an actual Unix filesystem, such as Linux ext4 `/tmp`;
+Windows fallback tests do not prove Android metadata behavior. The retained
+12,655-checkpoint fixture reports metadata overhead without a wall-clock pass
+threshold. Android target compilation and live app-private filesystem/readback
+qualification remain necessary before claiming device latency improvement.

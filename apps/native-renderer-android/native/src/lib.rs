@@ -148,6 +148,7 @@ mod same_apk_panel_action;
 mod session_recording_clock;
 mod session_recording_contract;
 mod session_recording_recovery;
+mod session_recording_inventory;
 mod session_recording_writer;
 mod simultaneous_hands_controllers;
 #[cfg(target_os = "android")]

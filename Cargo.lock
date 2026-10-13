@@ -903,6 +903,7 @@ dependencies = [
  "rusty-quest-native-renderer",
  "rusty-quest-particle-adapter",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

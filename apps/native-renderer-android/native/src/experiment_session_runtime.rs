@@ -232,6 +232,8 @@ struct Projection {
     storage_status: &'static str,
     recovery_status: &'static str,
     recovery_count: u64,
+    recovery_work: crate::session_recording_recovery::RecoveryWork,
+    finalization_timings: crate::session_recording_writer::FinalizationTimings,
     last_operation_id: Option<String>,
     last_operation_status: &'static str,
     last_reason: String,
@@ -288,6 +290,8 @@ impl Default for Projection {
             storage_status: "preparing",
             recovery_status: "not-run",
             recovery_count: 0,
+            recovery_work: Default::default(),
+            finalization_timings: Default::default(),
             last_operation_id: None,
             last_operation_status: "none",
             last_reason: "none".to_owned(),
@@ -373,6 +377,14 @@ impl Projection {
                 "storage_status": self.storage_status,
                 "recovery_status": self.recovery_status,
                 "recovery_count": self.recovery_count,
+                "recovery_work": {
+                    "elapsed_us": self.recovery_work.elapsed_us,
+                    "validated_sessions": self.recovery_work.validated_sessions,
+                    "reused_sessions": self.recovery_work.reused_sessions,
+                    "metadata_entries": self.recovery_work.metadata_entries,
+                    "recent_bytes_hashed": self.recovery_work.recent_bytes_hashed,
+                },
+                "finalization_timings": self.finalization_timings.value(),
                 "kiosk_requested": true,
                 "kiosk_effective": "unknown",
                 "kiosk_enforcement": "not-enforced",
@@ -1330,6 +1342,9 @@ impl SessionWorker {
                     reason,
                     threshold_reached,
                 } => {
+                    self.projection_write(|projection| {
+                        projection.finalization_timings = Default::default();
+                    });
                     // The recording actor writes the typed restart/exit event as
                     // part of its terminal transaction. Enqueuing a second event
                     // here would create duplicate lifecycle evidence and could
@@ -1341,6 +1356,9 @@ impl SessionWorker {
                     {
                         Ok(receipt) => {
                             self.set_recovery(&receipt.recovery);
+                            self.projection_write(|projection| {
+                                projection.finalization_timings = receipt.timings;
+                            });
                             let completion_failure = self.completion_persistence_failure.take();
                             let finalized = if completion_failure.is_some() {
                                 self.apply_internal(
@@ -1634,6 +1652,7 @@ impl SessionWorker {
             projection.storage_status = "ready";
             projection.recovery_status = "complete";
             projection.recovery_count = recovery.sessions.len() as u64;
+            projection.recovery_work = recovery.work;
         });
     }
 
@@ -4466,6 +4485,11 @@ mod tests {
         assert_eq!(finalized_value["readback"]["storage_status"], "ready");
         assert_eq!(finalized_value["readback"]["recovery_status"], "complete");
         assert_eq!(finalized_value["readback"]["recovery_count"], 1);
+        assert_eq!(finalized_value["readback"]["recovery_work"]["validated_sessions"], 1);
+        assert_eq!(finalized_value["readback"]["recovery_work"]["reused_sessions"], 0);
+        let timings = &finalized_value["readback"]["finalization_timings"];
+        assert!(timings["total_us"].as_u64().unwrap() >= timings["durable_finalize_us"].as_u64().unwrap());
+
         assert_eq!(
             finalized_value["readback"]["counts"]["by_condition"]["condition-a"]["stopped_early"],
             1
@@ -5408,6 +5432,9 @@ mod tests {
             wait_for(&runtime, "\"initialization_status\":\"ready\"");
             runtime.apply_command_json(&start_command(&root, "start-threshold-fault"));
             wait_for(&runtime, "\"phase\":\"active\"");
+            // Simulate retained diagnostic timing from an earlier successful save.
+            runtime.projection.write().unwrap().finalization_timings.total_us = 999;
+
             assert!(runtime.note_submitted_frame(1, 1));
             runtime.apply_command_json(
                 &json!({
@@ -5431,6 +5458,9 @@ mod tests {
             assert!(failed.contains("\"completed\":true"));
             assert!(failed.contains("\"status\":\"unsaved\""));
             assert!(failed.contains("\"error\":\"Finalize\""));
+            let failed_value: Value = serde_json::from_str(&failed).unwrap();
+            assert_eq!(failed_value["readback"]["finalization_timings"]["total_us"], 0);
+
             runtime.shutdown_for_test().unwrap();
             fs::remove_dir_all(root.parent().unwrap()).unwrap();
         }
