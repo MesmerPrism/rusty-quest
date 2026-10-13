@@ -10,6 +10,9 @@ use ash::vk::{self, Handle};
 use openxr as xr;
 use openxr::sys::Handle as _;
 
+use crate::gpu_mesh_ui_panel::GpuMeshUiPanel;
+use crate::native_scene_depth::{SceneDepthAttachment, SceneDepthConfig};
+
 use crate::{
     camera_projection::{
         record_camera_projection_eye, CameraProjectionFrameStats, CameraProjectionRenderer,
@@ -568,6 +571,16 @@ unsafe fn run_projection_loop_inner(
         .ok_or_else(|| "OpenXR-selected Vulkan device has no graphics+compute queue".to_string())?;
     let selected_queue_family_properties = queue_family_properties[queue_family_index as usize];
 
+    let mesh_ui_enabled =
+        crate::native_mesh_ui::enabled_for_mode(runtime_options.render_mode.marker_value());
+    let mesh_ui_foreign_queue_ready = physical_device_supports_extension(
+        &vk_instance,
+        vk_physical_device,
+        ash::ext::queue_family_foreign::NAME,
+    )?;
+    if mesh_ui_enabled && !mesh_ui_foreign_queue_ready {
+        return Err("native mesh UI requires VK_EXT_queue_family_foreign".into());
+    }
     let external_hwb_extension_ready = physical_device_supports_extension(
         &vk_instance,
         vk_physical_device,
@@ -632,6 +645,9 @@ unsafe fn run_projection_loop_inner(
     };
 
     let mut device_extension_ptrs = Vec::new();
+    if mesh_ui_enabled {
+        device_extension_ptrs.push(ash::ext::queue_family_foreign::NAME.as_ptr());
+    }
     if external_hwb_extension_ready {
         device_extension_ptrs
             .push(ash::android::external_memory_android_hardware_buffer::NAME.as_ptr());
@@ -705,6 +721,7 @@ unsafe fn run_projection_loop_inner(
         runtime_options
             .render_mode
             .requests_private_particle_recenter_input(),
+        mesh_ui_enabled,
     ) {
         Ok(actions) => actions,
         Err(error) if simultaneous_decision.is_selected() => {
@@ -771,11 +788,47 @@ unsafe fn run_projection_loop_inner(
     );
     let color_format =
         choose_swapchain_format(&session, runtime_options.swapchain_color_format_mode)?;
+    let scene_depth = if runtime_options.render_mode.uses_scene_depth() {
+        Some(SceneDepthConfig::select(
+            &vk_instance,
+            vk_physical_device,
+            memory_properties,
+        )?)
+    } else {
+        None
+    };
     let render_pass = create_projection_render_pass(
         &vk_device,
         color_format,
         projection_foveation_vulkan_support.fdm_ready(),
+        scene_depth.map(|config| config.format),
     )?;
+    let mut mesh_ui_panel = if mesh_ui_enabled {
+        if !external_hwb_extension_ready {
+            return Err("native mesh UI requires AHardwareBuffer Vulkan import".into());
+        }
+        static NEXT_UI_GENERATION: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
+        let generation = NEXT_UI_GENERATION
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |value| value.checked_add(1),
+            )
+            .map_err(|_| "native mesh UI generation exhausted".to_string())?;
+        Some(GpuMeshUiPanel::new(
+            app,
+            &vk_instance,
+            &vk_device,
+            memory_properties,
+            render_pass,
+            scene_depth.is_some(),
+            generation,
+            queue_family_index,
+        )?)
+    } else {
+        None
+    };
     let mut camera_projection_renderer = CameraProjectionRenderer::new(
         &vk_instance,
         &vk_device,
@@ -1135,6 +1188,7 @@ unsafe fn run_projection_loop_inner(
             &vk_device,
             &memory_properties,
             render_pass,
+            render_mode.uses_scene_depth(),
             replay,
             draw_resources,
         ) {
@@ -1164,6 +1218,7 @@ unsafe fn run_projection_loop_inner(
                 &vk_device,
                 &memory_properties,
                 render_pass,
+                render_mode.uses_scene_depth(),
                 queue,
                 cmd_pool,
                 draw_resources,
@@ -1228,6 +1283,7 @@ unsafe fn run_projection_loop_inner(
             &vk_device,
             &memory_properties,
             render_pass,
+            render_mode.uses_scene_depth(),
             secondary_replay,
             draw_resources,
         ) {
@@ -1253,6 +1309,7 @@ unsafe fn run_projection_loop_inner(
                 &vk_device,
                 &memory_properties,
                 render_pass,
+                render_mode.uses_scene_depth(),
                 queue,
                 cmd_pool,
                 draw_resources,
@@ -1360,6 +1417,7 @@ unsafe fn run_projection_loop_inner(
         &vk_device,
         &memory_properties,
         render_pass,
+        render_mode.uses_scene_depth(),
         queue,
         cmd_pool,
         runtime_options.private_particle_breath_state_driver_settings,
@@ -1424,6 +1482,7 @@ unsafe fn run_projection_loop_inner(
         &reference_space,
         render_pass,
         color_format,
+        scene_depth,
         &memory_properties,
         &cmds,
         &fences,
@@ -1432,6 +1491,7 @@ unsafe fn run_projection_loop_inner(
         &mut video_projection_renderer,
         &mut guide_blur_graph_renderer,
         camera_runtime,
+        mesh_ui_panel.as_mut(),
         render_mode,
         environment_blend_mode,
         native_passthrough_requested,
@@ -1508,6 +1568,9 @@ unsafe fn run_projection_loop_inner(
     hand_mesh_capture_recorder.finish_active("projection-loop-ended");
 
     let _ = vk_device.device_wait_idle();
+    if let Some(panel) = mesh_ui_panel.take() {
+        panel.destroy(app, &vk_device);
+    }
     if let Err(error) = vk_device.wait_for_fences(&fences, true, 1_000_000_000) {
         crate::marker(
             "vulkan-cleanup",
@@ -2017,6 +2080,7 @@ unsafe fn run_projection_frames(
     reference_space: &xr::Space,
     render_pass: vk::RenderPass,
     color_format: vk::Format,
+    scene_depth: Option<SceneDepthConfig>,
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
     cmds: &[vk::CommandBuffer],
     fences: &[vk::Fence],
@@ -2025,6 +2089,7 @@ unsafe fn run_projection_frames(
     video_projection_renderer: &mut VideoProjectionRenderer,
     guide_blur_graph_renderer: &mut GuideBlurGraphRenderer,
     camera_runtime: Option<&NativeCameraRuntime>,
+    mut mesh_ui_panel: Option<&mut GpuMeshUiPanel>,
     render_mode: NativeRendererRenderMode,
     environment_blend_mode: xr::EnvironmentBlendMode,
     native_passthrough_requested: bool,
@@ -2100,6 +2165,7 @@ unsafe fn run_projection_frames(
     let mut app_running = true;
     let mut frame_slot = 0_usize;
     let mut frame_count = 0_u64;
+    let mut ui_particle_phase_frame = 0_u64;
     let experiment_frame_gate_clock = Instant::now();
     let mut experiment_frame_gate =
         crate::experiment_session_runtime::SubmittedFrameReadinessGate::default();
@@ -2210,6 +2276,9 @@ unsafe fn run_projection_frames(
                     if !focused {
                         crate::experiment_session_runtime::note_preparation_presentation(
                             crate::experiment_session::PresentationState::Unfocused);
+                        if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+                            panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
+                        }
                     }
                     let lost_frame_admission = experiment_frame_gate.set_focused(focused);
                     let experiment_generation =
@@ -2424,6 +2493,9 @@ unsafe fn run_projection_frames(
         trace_startup_frame(frame_count, "after-xr-begin-frame");
 
         if !frame_state.should_render {
+            if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+                panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
+            }
             trace_startup_frame(frame_count, "skip-frame-should-render-false");
             frame_stream
                 .end(
@@ -2443,6 +2515,7 @@ unsafe fn run_projection_frames(
             session,
             render_pass,
             color_format,
+            scene_depth,
             available_extensions,
             enabled_extensions,
             foveation_settings,
@@ -2614,7 +2687,7 @@ unsafe fn run_projection_frames(
         let mut breath_observed_at = None;
         let mut controller_readiness = Default::default();
         if let Some(actions) = stimulus_actions.as_deref_mut() {
-            let controller_events = actions.sync_and_poll(
+            let mut controller_events = actions.sync_and_poll(
                 xr_instance,
                 session,
                 reference_space,
@@ -2625,6 +2698,25 @@ unsafe fn run_projection_frames(
             );
             controller_readiness = controller_events.controller_readiness.clone();
             breath_observed_at = controller_events.breath_observed_at;
+            if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+                let ray = controller_events.mesh_ui_ray.as_ref();
+                let consumed = panel.controller_ray(
+                    app,
+                    ray.is_some_and(|ray| ray.valid),
+                    ray.is_some_and(|ray| ray.pressed),
+                    ray.map(|ray| ray.origin).unwrap_or([0.0; 3]),
+                    ray.map(|ray| ray.direction).unwrap_or([0.0; 3]),
+                )?;
+                if consumed {
+                    controller_events.stimulus_randomize_triggered = false;
+                    controller_events.panel_toggle_triggered = false;
+                    controller_events.developer_panel_triggered = false;
+                    controller_events.experimenter_restart_triggered = false;
+                    controller_events.private_particle_recenter_triggered = false;
+                    controller_events.projection_target_inputs.clear();
+                    controller_events.environment_depth_alignment_inputs.clear();
+                }
+            }
             for input in controller_events.projection_target_inputs {
                 projection_target_state.apply_input(input);
             }
@@ -2907,6 +2999,25 @@ unsafe fn run_projection_frames(
             )
             .map_err(|error| format!("begin Vulkan command buffer: {error}"))?;
         gpu_timestamp_tracker.reset_frame(vk_device, cmd, frame_slot, frame_count);
+        if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+            panel.prepare_frame(vk_device, cmd, frame_slot)?;
+        }
+        let mesh_ui_controls = mesh_ui_panel.as_ref().map(|panel| panel.frame_controls());
+        let camera_output_enabled = mesh_ui_controls.is_none_or(|controls| controls.camera);
+        let mut effective_diagnostic_settings = hand_mesh_visual_diagnostic_settings;
+        effective_diagnostic_settings.enabled &=
+            mesh_ui_controls.is_none_or(|controls| controls.diagnostics);
+        let effective_grafts_enabled = hand_mesh_graft_copies_enabled
+            && mesh_ui_controls.is_none_or(|controls| controls.grafts && controls.hands);
+        let effective_graft_scale = hand_mesh_graft_copy_scale
+            * mesh_ui_controls
+                .map(|controls| controls.graft_scale)
+                .unwrap_or(1.0);
+        let mut effective_private_layer_settings = private_layer_settings;
+        if let Some(controls) = mesh_ui_controls.filter(|controls| controls.effect_selected) {
+            effective_private_layer_settings.layer_override = controls.effect_index as f32;
+        }
+
         let stage_started = Instant::now();
         gpu_timestamp_tracker.write_stage_start(
             vk_device,
@@ -2916,7 +3027,8 @@ unsafe fn run_projection_frames(
         );
         let remote_broker_camera_projection =
             video_projection_settings.remote_broker_camera_projection_active();
-        let prepared_camera_projection = if render_mode.uses_custom_stereo_projection()
+        let prepared_camera_projection = if camera_output_enabled
+            && render_mode.uses_custom_stereo_projection()
             && (camera_output_mode.camera_import_enabled() || remote_broker_camera_projection)
         {
             let stereo_frame = if camera_output_mode.camera_import_enabled() {
@@ -3275,7 +3387,7 @@ unsafe fn run_projection_frames(
                 compact_hand_input_source_mode.allows_recorded_fallback(),
                 selected_primary_live_hand,
                 hand_mesh_visual_mesh_source,
-                hand_mesh_visual_diagnostic_settings,
+                effective_diagnostic_settings,
                 hand_mesh_visual_material_settings,
             ) {
                 Ok(stats) => stats,
@@ -3295,7 +3407,7 @@ unsafe fn run_projection_frames(
                         selected_primary_live_hand,
                         hand_mesh_visual_mesh_source,
                         "record-frame-error",
-                        hand_mesh_visual_diagnostic_settings,
+                        effective_diagnostic_settings,
                         hand_mesh_visual_material_settings,
                     )
                 }
@@ -3307,7 +3419,7 @@ unsafe fn run_projection_frames(
                 selected_primary_live_hand,
                 hand_mesh_visual_mesh_source,
                 "renderer-unavailable",
-                hand_mesh_visual_diagnostic_settings,
+                effective_diagnostic_settings,
                 hand_mesh_visual_material_settings,
             )
         };
@@ -3322,7 +3434,7 @@ unsafe fn run_projection_frames(
                 compact_hand_input_source_mode.allows_recorded_fallback(),
                 selected_secondary_live_hand,
                 hand_mesh_visual_mesh_source,
-                hand_mesh_visual_diagnostic_settings,
+                effective_diagnostic_settings,
                 hand_mesh_visual_material_settings,
             ) {
                 Ok(stats) => stats,
@@ -3342,7 +3454,7 @@ unsafe fn run_projection_frames(
                         selected_secondary_live_hand,
                         hand_mesh_visual_mesh_source,
                         "secondary-record-frame-error",
-                        hand_mesh_visual_diagnostic_settings,
+                        effective_diagnostic_settings,
                         hand_mesh_visual_material_settings,
                     )
                 }
@@ -3354,11 +3466,11 @@ unsafe fn run_projection_frames(
                 selected_secondary_live_hand,
                 hand_mesh_visual_mesh_source,
                 "secondary-renderer-unavailable",
-                hand_mesh_visual_diagnostic_settings,
+                effective_diagnostic_settings,
                 hand_mesh_visual_material_settings,
             )
         };
-        if hand_mesh_graft_copies_enabled
+        if effective_grafts_enabled
             && primary_hand_mesh_visual_stats.ready
             && secondary_hand_mesh_visual_stats.ready
             && primary_hand_mesh_visual_stats.live_compact_input_frame
@@ -3373,7 +3485,7 @@ unsafe fn run_projection_frames(
                     vk_device,
                     source_frame,
                     target_frame,
-                    hand_mesh_graft_copy_scale,
+                    effective_graft_scale,
                 ) {
                     Ok(copy_count) => primary_hand_mesh_visual_stats.graft_copy_count = copy_count,
                     Err(error) => crate::marker(
@@ -3394,7 +3506,7 @@ unsafe fn run_projection_frames(
                     vk_device,
                     source_frame,
                     target_frame,
-                    hand_mesh_graft_copy_scale,
+                    effective_graft_scale,
                 ) {
                     Ok(copy_count) => secondary_hand_mesh_visual_stats.graft_copy_count = copy_count,
                     Err(error) => crate::marker(
@@ -3407,12 +3519,16 @@ unsafe fn run_projection_frames(
                 }
             }
         }
-        let hand_mesh_visual_stats = GpuHandMeshVisualFrameSetStats::new(
+        let mut hand_mesh_visual_stats = GpuHandMeshVisualFrameSetStats::new(
             primary_hand_mesh_visual_stats,
             secondary_hand_mesh_visual_stats,
-            hand_mesh_graft_copies_enabled,
-            hand_mesh_graft_copy_scale,
+            effective_grafts_enabled,
+            effective_graft_scale,
         );
+        if let Some(controls) = mesh_ui_controls {
+            hand_mesh_visual_stats.primary.visible &= controls.hands;
+            hand_mesh_visual_stats.secondary.visible &= controls.hands;
+        }
         let hand_anchor_particle_stats = GpuHandAnchorParticleFrameSetStats::new(
             &hand_mesh_visual_stats,
             hand_anchor_particle_settings,
@@ -3482,7 +3598,7 @@ unsafe fn run_projection_frames(
             } else {
                 GpuEnvironmentDepthParticleFrameStats::unavailable(environment_depth_settings)
             };
-        let private_particle_stats =
+        let mut private_particle_stats =
             if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
                 renderer.record_compute_frame(
                     vk_device,
@@ -3497,6 +3613,13 @@ unsafe fn run_projection_frames(
                     private_particle_world_anchor.scale_parameter_source(),
                     private_particle_world_anchor.world_forward_axis(),
                     frame_count,
+                    mesh_ui_controls.map(|controls| {
+                        (
+                            ui_particle_phase_frame,
+                            controls.animation,
+                            0.5 + controls.particle_scale,
+                        )
+                    }),
                 )
             } else {
                 for stage in [
@@ -3508,6 +3631,9 @@ unsafe fn run_projection_frames(
                 }
                 GpuPrivateParticleFrameStats::unavailable()
             };
+        if let Some(controls) = mesh_ui_controls {
+            private_particle_stats.visible &= controls.particles;
+        }
         if private_particle_stats.half_res_offscreen_requested() {
             if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
                 renderer.ensure_half_res_offscreen_resources(
@@ -3753,7 +3879,7 @@ unsafe fn run_projection_frames(
             camera_output_mode,
             camera_direct_border_opacity,
             hand_mesh_real_hands_visible,
-            replay_visual_proof_enabled,
+            replay_visual_proof_enabled && mesh_ui_controls.is_none_or(|controls| controls.replay),
             projection_border_stretch_settings,
             prepared_camera_projection.as_ref(),
             video_projection_renderer,
@@ -3771,7 +3897,7 @@ unsafe fn run_projection_frames(
             stimulus_volume_settings,
             private_extension_slot_runtime,
             &private_extension_stats,
-            private_layer_settings,
+            effective_private_layer_settings,
             guide_blur_graph_renderer,
             &guide_blur_stats,
             guide_blur_enabled,
@@ -3794,10 +3920,11 @@ unsafe fn run_projection_frames(
             &live_hand_frames,
             &views,
             compact_hand_input_source_mode.selects_live_frame()
-                && hand_mesh_visual_diagnostic_settings.enabled,
-            hand_mesh_visual_diagnostic_settings,
+                && effective_diagnostic_settings.enabled,
+            effective_diagnostic_settings,
             projection_metadata,
             &projection_target_state,
+            mesh_ui_panel.as_deref(),
         );
         if render_mode.uses_stimulus_volume() {
             gpu_timestamp_tracker.write_stage_end(
@@ -3838,6 +3965,9 @@ unsafe fn run_projection_frames(
                 fences[frame_slot],
             )
             .map_err(|error| format!("submit Vulkan queue: {error}"))?;
+        if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+            panel.mark_submitted(frame_slot);
+        }
         trace_startup_frame(frame_count, "after-vulkan-queue-submit");
         let submit_ms = submit_started.elapsed().as_secs_f64() * 1000.0;
         frame_timings.queue_submit_ms = submit_ms;
@@ -3984,6 +4114,19 @@ unsafe fn run_projection_frames(
             );
         }
 
+        if let Some(controls) = mesh_ui_controls {
+            if controls.animation {
+                ui_particle_phase_frame = ui_particle_phase_frame.saturating_add(1);
+            }
+            if crate::native_mesh_ui::renderer_observed(controls.generation, controls.revision)
+                && (frame_count == 0 || frame_count % 120 == 0)
+            {
+                crate::marker("native-mesh-ui", format!("status=renderer-observed generation={} revision={} submittedFrame={} cameraOutputRequested={} particlesDraw={} handsDraw={} graftsDraw={} effectOverride={} visibleConfirmation=false",
+                    controls.generation, controls.revision, frame_count, camera_output_enabled,
+                    private_particle_stats.visible, hand_mesh_visual_stats.any_ready() && controls.hands,
+                    effective_grafts_enabled, effective_private_layer_settings.layer_override));
+            }
+        }
         frame_count = frame_count.saturating_add(1);
         pacing_window_frames = pacing_window_frames.saturating_add(1);
         if let Some(runtime) = camera_runtime {
@@ -4660,75 +4803,104 @@ unsafe fn create_projection_render_pass(
     device: &ash::Device,
     color_format: vk::Format,
     fragment_density_map_enabled: bool,
+    scene_depth_format: Option<vk::Format>,
 ) -> Result<vk::RenderPass, String> {
-    let color_attachment = vk::AttachmentDescription {
-        format: color_format,
-        samples: vk::SampleCountFlags::TYPE_1,
-        load_op: vk::AttachmentLoadOp::CLEAR,
-        store_op: vk::AttachmentStoreOp::STORE,
-        initial_layout: vk::ImageLayout::UNDEFINED,
-        final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        ..Default::default()
-    };
-    let fragment_density_map_attachment = vk::AttachmentDescription {
-        format: vk::Format::R8G8_UNORM,
-        samples: vk::SampleCountFlags::TYPE_1,
-        load_op: vk::AttachmentLoadOp::LOAD,
-        store_op: vk::AttachmentStoreOp::DONT_CARE,
-        initial_layout: vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
-        final_layout: vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
-        ..Default::default()
-    };
-    let color_refs = [vk::AttachmentReference {
-        attachment: 0,
-        layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-    }];
-    let fragment_density_ref = vk::AttachmentReference {
-        attachment: 1,
-        layout: vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
-    };
-    let subpasses = [vk::SubpassDescription::default()
-        .color_attachments(&color_refs)
-        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)];
-    let color_dependency = vk::SubpassDependency {
-        src_subpass: vk::SUBPASS_EXTERNAL,
-        dst_subpass: 0,
-        src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-        dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-        dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-        ..Default::default()
-    };
-    let fragment_density_dependency = vk::SubpassDependency {
-        src_subpass: vk::SUBPASS_EXTERNAL,
-        dst_subpass: 0,
-        src_stage_mask: vk::PipelineStageFlags::TOP_OF_PIPE,
-        dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_DENSITY_PROCESS_EXT,
-        dst_access_mask: vk::AccessFlags::FRAGMENT_DENSITY_MAP_READ_EXT,
-        ..Default::default()
-    };
-    let color_dependencies = [color_dependency];
-    let fdm_dependencies = [fragment_density_dependency, color_dependency];
-    let color_only_attachments = [color_attachment];
-    let fdm_attachments = [color_attachment, fragment_density_map_attachment];
-    let mut fragment_density_map_info = vk::RenderPassFragmentDensityMapCreateInfoEXT::default()
-        .fragment_density_map_attachment(fragment_density_ref);
-    let mut render_pass_info = vk::RenderPassCreateInfo::default()
-        .attachments(if fragment_density_map_enabled {
-            &fdm_attachments
-        } else {
-            &color_only_attachments
-        })
-        .subpasses(&subpasses)
-        .dependencies(if fragment_density_map_enabled {
-            &fdm_dependencies
-        } else {
-            &color_dependencies
-        });
+    let mut attachments = vec![vk::AttachmentDescription::default()
+        .format(color_format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
     if fragment_density_map_enabled {
-        render_pass_info = render_pass_info.push_next(&mut fragment_density_map_info);
+        attachments.push(
+            vk::AttachmentDescription::default()
+                .format(vk::Format::R8G8_UNORM)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::LOAD)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT)
+                .final_layout(vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT),
+        );
+    }
+    if let Some(format) = scene_depth_format {
+        attachments.push(
+            vk::AttachmentDescription::default()
+                .format(format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL),
+        );
+    }
+    let color_refs = [vk::AttachmentReference::default()
+        .attachment(0)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+    let depth_ref = vk::AttachmentReference::default()
+        .attachment(crate::native_scene_depth::attachment_index(
+            fragment_density_map_enabled,
+        ))
+        .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    let mut subpass = vk::SubpassDescription::default()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(&color_refs);
+    if scene_depth_format.is_some() {
+        subpass = subpass.depth_stencil_attachment(&depth_ref);
+    }
+    let subpasses = [subpass];
+    let mut dependencies = vec![vk::SubpassDependency::default()
+        .src_subpass(vk::SUBPASS_EXTERNAL)
+        .dst_subpass(0)
+        .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)];
+    if scene_depth_format.is_some() {
+        dependencies.push(
+            vk::SubpassDependency::default()
+                .src_subpass(vk::SUBPASS_EXTERNAL)
+                .dst_subpass(0)
+                .src_stage_mask(
+                    vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                )
+                .dst_stage_mask(
+                    vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                        | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                )
+                .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                .dst_access_mask(
+                    vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                ),
+        );
+    }
+    if fragment_density_map_enabled {
+        dependencies.insert(
+            0,
+            vk::SubpassDependency::default()
+                .src_subpass(vk::SUBPASS_EXTERNAL)
+                .dst_subpass(0)
+                .src_stage_mask(vk::PipelineStageFlags::TOP_OF_PIPE)
+                .dst_stage_mask(vk::PipelineStageFlags::FRAGMENT_DENSITY_PROCESS_EXT)
+                .dst_access_mask(vk::AccessFlags::FRAGMENT_DENSITY_MAP_READ_EXT),
+        );
+    }
+    let mut fdm = vk::RenderPassFragmentDensityMapCreateInfoEXT::default()
+        .fragment_density_map_attachment(
+            vk::AttachmentReference::default()
+                .attachment(1)
+                .layout(vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT),
+        );
+    let mut info = vk::RenderPassCreateInfo::default()
+        .attachments(&attachments)
+        .subpasses(&subpasses)
+        .dependencies(&dependencies);
+    if fragment_density_map_enabled {
+        info = info.push_next(&mut fdm);
     }
     device
-        .create_render_pass(&render_pass_info, None)
+        .create_render_pass(&info, None)
         .map_err(|error| format!("create Vulkan render pass: {error}"))
 }
 
@@ -4739,6 +4911,7 @@ unsafe fn ensure_projection_swapchain<'a>(
     session: &xr::Session<xr::Vulkan>,
     render_pass: vk::RenderPass,
     color_format: vk::Format,
+    scene_depth: Option<SceneDepthConfig>,
     available_extensions: &xr::ExtensionSet,
     enabled_extensions: &xr::ExtensionSet,
     foveation_settings: NativeFoveationSettings,
@@ -4786,17 +4959,29 @@ unsafe fn ensure_projection_swapchain<'a>(
             fdm_requested,
         );
         let projection_images = enumerate_projection_swapchain_images(&handle, fdm_requested)?;
-        let mut buffers = Vec::with_capacity(projection_images.len());
+        let mut buffers: Vec<ProjectionSwapchainBuffer> =
+            Vec::with_capacity(projection_images.len());
         for projection_image in projection_images {
-            buffers.push(create_projection_swapchain_buffer(
+            match create_projection_swapchain_buffer(
                 device,
                 render_pass,
                 color_format,
+                scene_depth,
                 projection_image.color_image,
                 projection_image.foveation_image,
                 extent,
                 projection_foveation_vulkan_support,
-            )?);
+            ) {
+                Ok(buffer) => buffers.push(buffer),
+                Err(error) => {
+                    for buffer in buffers {
+                        for eye in buffer.eyes {
+                            eye.destroy(device);
+                        }
+                    }
+                    return Err(error);
+                }
+            }
         }
         crate::marker(
             "openxr-swapchain",
@@ -4821,6 +5006,7 @@ unsafe fn ensure_projection_swapchain<'a>(
             buffers,
             extent,
             render_pass,
+            scene_depth_enabled: scene_depth.is_some(),
             _foveation_profile: foveation.profile,
         });
     }
@@ -5129,12 +5315,13 @@ unsafe fn create_projection_swapchain_buffer(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     color_format: vk::Format,
+    scene_depth: Option<SceneDepthConfig>,
     image: vk::Image,
     foveation_image: Option<ProjectionFoveationImage>,
     extent: vk::Extent2D,
     projection_foveation_vulkan_support: ProjectionFoveationVulkanSupport,
 ) -> Result<ProjectionSwapchainBuffer, String> {
-    let mut eyes = Vec::with_capacity(VIEW_COUNT_USIZE);
+    let mut eyes: Vec<ProjectionEyeTarget> = Vec::with_capacity(VIEW_COUNT_USIZE);
     let fragment_density_map_enabled = projection_foveation_vulkan_support.fdm_ready();
     let foveation_view_flags = if fragment_density_map_enabled
         && projection_foveation_vulkan_support.deferred_feature_ready
@@ -5151,59 +5338,60 @@ unsafe fn create_projection_swapchain_buffer(
         "none"
     };
     for eye_index in 0..VIEW_COUNT {
-        let view = device
-            .create_image_view(
-                &vk::ImageViewCreateInfo::default()
-                    .image(image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(color_format)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: eye_index,
-                        layer_count: 1,
-                    }),
-                None,
-            )
-            .map_err(|error| format!("create Vulkan swapchain image view: {error}"))?;
-        let foveation_view = if fragment_density_map_enabled {
-            let Some(foveation_image) = foveation_image else {
-                device.destroy_image_view(view, None);
-                return Err(
-                    "FDM render pass requested but OpenXR did not return a foveation image"
-                        .to_string(),
-                );
-            };
-            match device.create_image_view(
-                &vk::ImageViewCreateInfo::default()
-                    .flags(foveation_view_flags)
-                    .image(foveation_image.image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(vk::Format::R8G8_UNORM)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    }),
-                None,
-            ) {
-                Ok(foveation_view) => Some(foveation_view),
-                Err(error) => {
+        let result = (|| -> Result<ProjectionEyeTarget, String> {
+            let view = device
+                .create_image_view(
+                    &vk::ImageViewCreateInfo::default()
+                        .image(image)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(color_format)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: eye_index,
+                            layer_count: 1,
+                        }),
+                    None,
+                )
+                .map_err(|error| format!("create Vulkan swapchain image view: {error}"))?;
+            let foveation_view = if fragment_density_map_enabled {
+                let Some(foveation_image) = foveation_image else {
                     device.destroy_image_view(view, None);
-                    return Err(format!(
-                        "create Vulkan foveation image view {}x{}: {error}",
-                        foveation_image.extent.width, foveation_image.extent.height
-                    ));
+                    return Err(
+                        "FDM render pass requested but OpenXR did not return a foveation image"
+                            .to_string(),
+                    );
+                };
+                match device.create_image_view(
+                    &vk::ImageViewCreateInfo::default()
+                        .flags(foveation_view_flags)
+                        .image(foveation_image.image)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(vk::Format::R8G8_UNORM)
+                        .subresource_range(vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        }),
+                    None,
+                ) {
+                    Ok(foveation_view) => Some(foveation_view),
+                    Err(error) => {
+                        device.destroy_image_view(view, None);
+                        return Err(format!(
+                            "create Vulkan foveation image view {}x{}: {error}",
+                            foveation_image.extent.width, foveation_image.extent.height
+                        ));
+                    }
                 }
-            }
-        } else {
-            None
-        };
-        if foveation_view.is_some() {
-            crate::marker(
+            } else {
+                None
+            };
+            if foveation_view.is_some() {
+                crate::marker(
                 "openxr-foveation-framebuffer",
                 format!(
                     "stage=create eye={} colorViewType=2D colorBaseArrayLayer={} foveationImageWidth={} foveationImageHeight={} foveationViewType=2D foveationBaseArrayLayer=0 foveationViewFlags={} framebufferWidth={} framebufferHeight={} framebufferLayers=1",
@@ -5220,42 +5408,65 @@ unsafe fn create_projection_swapchain_buffer(
                     extent.height,
                 ),
             );
-        }
-        let framebuffer = if let Some(foveation_view) = foveation_view {
-            let attachments = [view, foveation_view];
-            device.create_framebuffer(
-                &vk::FramebufferCreateInfo::default()
-                    .render_pass(render_pass)
-                    .attachments(&attachments)
-                    .width(extent.width)
-                    .height(extent.height)
-                    .layers(1),
-                None,
-            )
-        } else {
-            let attachments = [view];
-            device.create_framebuffer(
-                &vk::FramebufferCreateInfo::default()
-                    .render_pass(render_pass)
-                    .attachments(&attachments)
-                    .width(extent.width)
-                    .height(extent.height)
-                    .layers(1),
-                None,
-            )
-        }
-        .map_err(|error| {
-            if let Some(foveation_view) = foveation_view {
-                device.destroy_image_view(foveation_view, None);
             }
-            device.destroy_image_view(view, None);
-            format!("create Vulkan framebuffer: {error}")
-        })?;
-        eyes.push(ProjectionEyeTarget {
-            view,
-            foveation_view,
-            framebuffer,
-        });
+            let depth = if let Some(config) = scene_depth {
+                match SceneDepthAttachment::create(device, config, extent) {
+                    Ok(depth) => Some(depth),
+                    Err(error) => {
+                        if let Some(foveation_view) = foveation_view {
+                            device.destroy_image_view(foveation_view, None);
+                        }
+                        device.destroy_image_view(view, None);
+                        return Err(error);
+                    }
+                }
+            } else {
+                None
+            };
+            let mut attachments = vec![view];
+            if let Some(foveation_view) = foveation_view {
+                attachments.push(foveation_view);
+            }
+            if let Some(depth) = depth.as_ref() {
+                attachments.push(depth.view);
+            }
+            let framebuffer = match device.create_framebuffer(
+                &vk::FramebufferCreateInfo::default()
+                    .render_pass(render_pass)
+                    .attachments(&attachments)
+                    .width(extent.width)
+                    .height(extent.height)
+                    .layers(1),
+                None,
+            ) {
+                Ok(framebuffer) => framebuffer,
+                Err(error) => {
+                    if let Some(depth) = depth {
+                        depth.destroy(device);
+                    }
+                    if let Some(foveation_view) = foveation_view {
+                        device.destroy_image_view(foveation_view, None);
+                    }
+                    device.destroy_image_view(view, None);
+                    return Err(format!("create Vulkan framebuffer: {error}"));
+                }
+            };
+            Ok(ProjectionEyeTarget {
+                view,
+                foveation_view,
+                framebuffer,
+                depth,
+            })
+        })();
+        match result {
+            Ok(eye) => eyes.push(eye),
+            Err(error) => {
+                for eye in eyes {
+                    eye.destroy(device);
+                }
+                return Err(error);
+            }
+        }
     }
     Ok(ProjectionSwapchainBuffer { eyes })
 }
@@ -5317,6 +5528,7 @@ unsafe fn record_projection_diagnostic(
     diagnostic_settings: HandMeshVisualDiagnosticSettings,
     projection_metadata: &CameraProjectionMetadata,
     projection_target_state: &ProjectionTargetState,
+    mesh_ui_panel: Option<&GpuMeshUiPanel>,
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
     let mut visual_stats = ReplayVisualStats::default();
@@ -5479,11 +5691,11 @@ unsafe fn record_projection_diagnostic(
                 }
             }
         }
-        let clear_values = [vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: background,
-            },
-        }];
+        let clear_values = crate::native_scene_depth::clear_values(
+            background,
+            eye.foveation_view.is_some(),
+            eye.depth.is_some(),
+        );
         device.cmd_begin_render_pass(
             cmd,
             &vk::RenderPassBeginInfo::default()
@@ -5672,6 +5884,52 @@ unsafe fn record_projection_diagnostic(
                 }
             }
         }
+        if swapchain.scene_depth_enabled {
+            if let Some(renderer) = gpu_hand_mesh_visual_renderer {
+                if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
+                    renderer.record_graft_overlay_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        target_rect,
+                        eye_projection,
+                        &hand_mesh_visual_stats.primary,
+                    );
+                }
+            }
+            if let Some(renderer) = secondary_gpu_hand_mesh_visual_renderer {
+                if hand_mesh_visual_stats.secondary.graft_copy_count > 0 {
+                    renderer.record_graft_overlay_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        target_rect,
+                        eye_projection,
+                        &hand_mesh_visual_stats.secondary,
+                    );
+                }
+            }
+        }
+        if let Some(panel) = mesh_ui_panel {
+            panel.record_eye(
+                device,
+                cmd,
+                frame_slot,
+                eye_projection,
+                vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: swapchain.extent.width as f32,
+                    height: swapchain.extent.height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                },
+                vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: swapchain.extent,
+                },
+            );
+        }
         for draw_target in
             hand_anchor_particle_draw_order(hand_anchor_particle_stats, eye_projection)
         {
@@ -5789,28 +6047,30 @@ unsafe fn record_projection_diagnostic(
                 }
             }
         }
-        if let Some(renderer) = gpu_hand_mesh_visual_renderer {
-            if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
-                renderer.record_graft_overlay_eye(
-                    device,
-                    cmd,
-                    swapchain.extent,
-                    target_rect,
-                    eye_projection,
-                    &hand_mesh_visual_stats.primary,
-                );
+        if !swapchain.scene_depth_enabled {
+            if let Some(renderer) = gpu_hand_mesh_visual_renderer {
+                if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
+                    renderer.record_graft_overlay_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        target_rect,
+                        eye_projection,
+                        &hand_mesh_visual_stats.primary,
+                    );
+                }
             }
-        }
-        if let Some(renderer) = secondary_gpu_hand_mesh_visual_renderer {
-            if hand_mesh_visual_stats.secondary.graft_copy_count > 0 {
-                renderer.record_graft_overlay_eye(
-                    device,
-                    cmd,
-                    swapchain.extent,
-                    target_rect,
-                    eye_projection,
-                    &hand_mesh_visual_stats.secondary,
-                );
+            if let Some(renderer) = secondary_gpu_hand_mesh_visual_renderer {
+                if hand_mesh_visual_stats.secondary.graft_copy_count > 0 {
+                    renderer.record_graft_overlay_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        target_rect,
+                        eye_projection,
+                        &hand_mesh_visual_stats.secondary,
+                    );
+                }
             }
         }
         if eye_index == 0 && !draw_recorded_replay_overlay {
@@ -6758,18 +7018,17 @@ struct ProjectionSwapchain {
     buffers: Vec<ProjectionSwapchainBuffer>,
     extent: vk::Extent2D,
     render_pass: vk::RenderPass,
+    scene_depth_enabled: bool,
     _foveation_profile: Option<xr::FoveationProfileFB>,
 }
 
 impl ProjectionSwapchain {
     unsafe fn destroy(self, device: &ash::Device) {
+        // Framebuffers, depth images and views must outlive every submitted eye draw.
+        let _ = device.device_wait_idle();
         for buffer in self.buffers {
             for eye in buffer.eyes {
-                device.destroy_framebuffer(eye.framebuffer, None);
-                if let Some(foveation_view) = eye.foveation_view {
-                    device.destroy_image_view(foveation_view, None);
-                }
-                device.destroy_image_view(eye.view, None);
+                eye.destroy(device);
             }
         }
     }
@@ -7002,6 +7261,20 @@ struct ProjectionEyeTarget {
     view: vk::ImageView,
     foveation_view: Option<vk::ImageView>,
     framebuffer: vk::Framebuffer,
+    depth: Option<SceneDepthAttachment>,
+}
+
+impl ProjectionEyeTarget {
+    unsafe fn destroy(self, device: &ash::Device) {
+        device.destroy_framebuffer(self.framebuffer, None);
+        if let Some(depth) = self.depth {
+            depth.destroy(device);
+        }
+        if let Some(view) = self.foveation_view {
+            device.destroy_image_view(view, None);
+        }
+        device.destroy_image_view(self.view, None);
+    }
 }
 
 fn write_xr_string<const N: usize>(destination: &mut [std::os::raw::c_char; N], value: &str) {

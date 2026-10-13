@@ -60,6 +60,8 @@ mod gpu_hand_mesh_visual;
 #[cfg(target_os = "android")]
 mod gpu_mesh_replay;
 #[cfg(target_os = "android")]
+mod gpu_mesh_ui_panel;
+#[cfg(target_os = "android")]
 mod gpu_private_particles;
 #[cfg(target_os = "android")]
 mod gpu_sdf_field;
@@ -92,6 +94,8 @@ mod native_camera_profiles;
 #[cfg(target_os = "android")]
 mod native_camera_reader_selection;
 mod native_controller_breath_state;
+#[cfg(any(test, target_os = "android"))]
+mod native_mesh_ui;
 mod native_renderer_camera_options;
 mod native_renderer_diagnostics_contract;
 mod native_renderer_display_composite_options;
@@ -119,6 +123,8 @@ mod native_renderer_stimulus_volume_options;
 mod native_renderer_timing;
 mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
+#[cfg(any(test, target_os = "android"))]
+mod native_scene_depth;
 mod openxr_controller_breath_adapter;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;

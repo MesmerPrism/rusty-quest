@@ -1,0 +1,59 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.native_scene",
+  "module_path": "renderer/native-scene",
+  "module_kind": "scene-renderer",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opt-in native world composition with physical per-eye projection and a shared scene depth attachment.",
+  "provides": [
+    "render.native_scene",
+    "render.scene_depth",
+    "render.world_projection"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles",
+    "private_layer"
+  ],
+  "exclusive_groups": {
+    "render_route": "native-worldspace-integration"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "native-worldspace-integration"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "renderMode=native-worldspace-integration"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Only reusable platform resources, interfaces and markers are public; downstream algorithms and payloads remain app-owned."
+}

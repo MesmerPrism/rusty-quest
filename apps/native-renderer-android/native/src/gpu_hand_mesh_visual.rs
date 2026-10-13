@@ -264,6 +264,7 @@ impl GpuHandMeshVisualRenderer {
         device: &ash::Device,
         memory_properties: &vk::PhysicalDeviceMemoryProperties,
         render_pass: vk::RenderPass,
+        scene_depth_enabled: bool,
         replay: &RecordedHandReplaySummary,
         draw_resources: SkinnedHandMeshDrawResources,
     ) -> Result<Self, String> {
@@ -352,16 +353,17 @@ impl GpuHandMeshVisualRenderer {
             }
         };
 
-        let pipeline = match create_pipeline(device, render_pass, pipeline_layout) {
-            Ok(pipeline) => pipeline,
-            Err(error) => {
-                device.destroy_pipeline_layout(pipeline_layout, None);
-                graft_params_buffer.destroy(device);
-                device.destroy_descriptor_pool(descriptor_pool, None);
-                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-                return Err(error);
-            }
-        };
+        let pipeline =
+            match create_pipeline(device, render_pass, pipeline_layout, scene_depth_enabled) {
+                Ok(pipeline) => pipeline,
+                Err(error) => {
+                    device.destroy_pipeline_layout(pipeline_layout, None);
+                    graft_params_buffer.destroy(device);
+                    device.destroy_descriptor_pool(descriptor_pool, None);
+                    device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                    return Err(error);
+                }
+            };
 
         crate::marker(
             "hand-mesh-visual",
@@ -858,6 +860,7 @@ unsafe fn create_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    scene_depth_enabled: bool,
 ) -> Result<vk::Pipeline, String> {
     let vertex_words = spirv_words(include_bytes!(concat!(
         env!("OUT_DIR"),
@@ -887,15 +890,25 @@ unsafe fn create_pipeline(
     };
 
     let entry = CString::new("main").expect("static shader entry point is valid");
+    let specialization_entries = [vk::SpecializationMapEntry::default()
+        .constant_id(crate::native_scene_depth::SPECIALIZATION_ID)
+        .offset(0)
+        .size(4)];
+    let specialization_data = u32::from(scene_depth_enabled).to_ne_bytes();
+    let specialization = vk::SpecializationInfo::default()
+        .map_entries(&specialization_entries)
+        .data(&specialization_data);
     let stages = [
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_module)
-            .name(&entry),
+            .name(&entry)
+            .specialization_info(&specialization),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fragment_module)
-            .name(&entry),
+            .name(&entry)
+            .specialization_info(&specialization),
     ];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default();
     let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
@@ -911,7 +924,7 @@ unsafe fn create_pipeline(
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
     let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
-        .blend_enable(true)
+        .blend_enable(!scene_depth_enabled)
         .src_color_blend_factor(vk::BlendFactor::ONE)
         .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .color_blend_op(vk::BlendOp::ADD)
@@ -922,9 +935,13 @@ unsafe fn create_pipeline(
     let color_blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
     let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
-        .depth_test_enable(false)
-        .depth_write_enable(false)
-        .depth_compare_op(vk::CompareOp::ALWAYS)
+        .depth_test_enable(scene_depth_enabled)
+        .depth_write_enable(scene_depth_enabled)
+        .depth_compare_op(if scene_depth_enabled {
+            vk::CompareOp::LESS_OR_EQUAL
+        } else {
+            vk::CompareOp::ALWAYS
+        })
         .stencil_test_enable(false);
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);

@@ -28,6 +28,7 @@ $BreathCompositionDriverFeatureId = "particles.private.breath_composition_driver
 $BreathCompositionDriverActivationBindingProperty = "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256"
 $BreathCompositionDriverExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
 $PrivateParticleRendererFeatureId = "renderer.private_particles"
+$ComposablePrivateParticleRendererFeatureId = "renderer.private_particles.composable"
 $PrivateParticlePlaceholderFeatureId = "particles.private.placeholder_compute"
 $PrivateParticleLinkedMarker = "privateParticlePayloadLinked=true"
 $PrivateParticleUnlinkedMarkers = @(
@@ -1103,7 +1104,8 @@ $state = New-FeatureResolverState
 foreach ($requestedFeature in Get-StringArray $app.requested_features) {
     Resolve-FeatureClosure -FeatureId $requestedFeature -Reason "requested by app spec" -Features $features -Denied $denied -State $state
 }
-$privateParticleRendererSelected = $state.selected.ContainsKey($PrivateParticleRendererFeatureId)
+$privateParticleRendererSelected = $state.selected.ContainsKey($PrivateParticleRendererFeatureId) -or
+    $state.selected.ContainsKey($ComposablePrivateParticleRendererFeatureId)
 if ($privateParticleRendererSelected) {
     if ([int]$privateParticlePayloadLinkage.complete_payload_count -eq 1) {
         $privateParticlePayloadLinkage.mode = "linked-app-payload"
@@ -1352,7 +1354,7 @@ Add-StringsToSet -Set $permissionsSet -Values $app.permission_allowlist
 Add-StringsToSet -Set $requiredMarkerSet -Values $app.expected_markers.required
 Add-StringsToSet -Set $forbiddenMarkerSet -Values $app.expected_markers.forbidden
 
-if ($selectedFeatureIds -contains $PrivateParticleRendererFeatureId) {
+if ($privateParticleRendererSelected) {
     if ([string]$privateParticlePayloadLinkage.mode -eq "linked-app-payload") {
         $requiredMarkerSet[$PrivateParticleLinkedMarker] = $true
         foreach ($marker in $PrivateParticleUnlinkedMarkers) {

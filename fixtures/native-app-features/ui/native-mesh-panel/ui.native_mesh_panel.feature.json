@@ -1,0 +1,60 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.native_mesh_panel",
+  "module_path": "ui/native-mesh-panel",
+  "module_kind": "mesh-ui",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Application-owned Android Surface UI sampled by a native Vulkan world mesh with bounded input capture.",
+  "provides": [
+    "ui.native_mesh_panel",
+    "ui.surface_texture",
+    "ui.native_ray_capture"
+  ],
+  "depends_on": [
+    "renderer.native_scene"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "native-worldspace-integration"
+    ]
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED",
+        "value": "true"
+      }
+    ],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/mesh_ui_panel.vert.glsl",
+      "apps/native-renderer-android/native/shaders/mesh_ui_panel.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Only reusable platform resources, interfaces and markers are public; downstream algorithms and payloads remain app-owned."
+}

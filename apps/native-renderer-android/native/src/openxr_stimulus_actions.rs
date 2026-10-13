@@ -77,6 +77,8 @@ pub(crate) struct StimulusVolumeActions {
     left_thumbstick_x: xr::Action<f32>,
     left_thumbstick_y: xr::Action<f32>,
     right_grip_pose: xr::Action<xr::Posef>,
+    right_mesh_ui_aim: Option<xr::Action<xr::Posef>>,
+    right_mesh_ui_aim_space: Option<xr::Space>,
     right_breath_haptic: xr::Action<xr::Haptic>,
     right_hand_subaction_path: xr::Path,
     right_grip_space: Option<xr::Space>,
@@ -113,6 +115,7 @@ pub(crate) struct StimulusVolumeActions {
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeRendererControllerEvents {
+    pub(crate) mesh_ui_ray: Option<NativeMeshUiRay>,
     pub(crate) breath_observed_at: Option<BreathTimestampMicros>,
     pub(crate) stimulus_randomize_triggered: bool,
     pub(crate) panel_toggle_triggered: bool,
@@ -127,6 +130,14 @@ pub(crate) struct NativeRendererControllerEvents {
     pub(crate) right_grip_pose_active: bool,
     pub(crate) right_grip_pose_tracked: bool,
     pub(crate) controller_readiness: ControllerActionReadiness,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct NativeMeshUiRay {
+    pub(crate) valid: bool,
+    pub(crate) pressed: bool,
+    pub(crate) origin: [f32; 3],
+    pub(crate) direction: [f32; 3],
 }
 
 #[derive(Clone, Debug, Default)]
@@ -187,6 +198,7 @@ impl StimulusVolumeActions {
         breath_calibration_controller_action_settings: BreathCalibrationControllerActionSettings,
         environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
         private_particle_recenter_enabled: bool,
+        mesh_ui_enabled: bool,
     ) -> Result<Option<Self>, String> {
         let breath_calibration_controller_action_selected =
             breath_calibration_controller_action_settings.enabled()
@@ -203,6 +215,7 @@ impl StimulusVolumeActions {
             && !controller_capture_annotation_feature_active
             && !crate::breath_composition_runtime::controller_adapter_available()
             && !private_particle_recenter_enabled
+            && !mesh_ui_enabled
         {
             crate::marker(
                 "stimulus-volume-input",
@@ -269,6 +282,15 @@ impl StimulusVolumeActions {
         let left_thumbstick_y = action_set
             .create_action::<f32>("left_thumbstick_y", "Left Thumbstick Y", &[])
             .map_err(|error| format!("create depth alignment thumbstick Y action: {error}"))?;
+        let right_mesh_ui_aim = if mesh_ui_enabled {
+            Some(
+                action_set
+                    .create_action::<xr::Posef>("right_mesh_ui_aim", "Right Mesh UI Aim", &[])
+                    .map_err(|error| format!("create mesh UI aim action: {error}"))?,
+            )
+        } else {
+            None
+        };
         let right_grip_pose = action_set
             .create_action::<xr::Posef>("right_grip_pose", "Right Grip Pose", &[])
             .map_err(|error| format!("create right grip pose action: {error}"))?;
@@ -387,6 +409,12 @@ impl StimulusVolumeActions {
                 if primary_recenter_binding_enabled || experiment_controls_enabled {
                     bindings.push(xr::Binding::new(&right_primary_reset, input));
                 }
+            }
+            if let Some(action) = right_mesh_ui_aim.as_ref() {
+                let input = instance
+                    .string_to_path("/user/hand/right/input/aim/pose")
+                    .map_err(|error| format!("create mesh UI aim binding: {error}"))?;
+                bindings.push(xr::Binding::new(action, input));
             }
             if let Some(input_path) = profile.right_trigger_value_path {
                 let input = instance.string_to_path(input_path).map_err(|error| {
@@ -601,6 +629,8 @@ impl StimulusVolumeActions {
             right_breath_haptic,
             right_hand_subaction_path,
             right_grip_space: None,
+            right_mesh_ui_aim,
+            right_mesh_ui_aim_space: None,
             action_set_attached: false,
             native_controller_breath_assessment,
             breath_haptic_cadence: BreathHapticCadence::new_ready(),
@@ -640,6 +670,14 @@ impl StimulusVolumeActions {
             .attach_action_sets(&[&self.action_set])
             .map_err(|error| format!("attach native renderer OpenXR action set: {error}"))?;
         self.action_set_attached = true;
+        if let Some(action) = self.right_mesh_ui_aim.as_ref() {
+            self.right_mesh_ui_aim_space = Some(
+                action
+                    .create_space(session, xr::Path::NULL, xr::Posef::IDENTITY)
+                    .map_err(|error| format!("create mesh UI aim space: {error}"))?,
+            );
+        }
+
         match self
             .right_grip_pose
             .create_space(session, xr::Path::NULL, xr::Posef::IDENTITY)
@@ -868,6 +906,10 @@ impl StimulusVolumeActions {
             return events;
         }
 
+        if self.right_mesh_ui_aim.is_some() {
+            events.mesh_ui_ray =
+                Some(self.mesh_ui_ray(session, reference_space, predicted_display_time));
+        }
         let control_haptic = self.poll_experiment_control(session, dt_seconds, frame_count);
         let suppress_buttons = self.experiment_control_gesture.suppress_buttons();
         events.stimulus_randomize_triggered =
@@ -1540,6 +1582,51 @@ impl StimulusVolumeActions {
         }
 
         triggered
+    }
+
+    fn mesh_ui_ray<G>(
+        &self,
+        session: &xr::Session<G>,
+        reference: &xr::Space,
+        time: xr::Time,
+    ) -> NativeMeshUiRay {
+        let Some(action) = self.right_mesh_ui_aim.as_ref() else {
+            return NativeMeshUiRay::default();
+        };
+        let Some(space) = self.right_mesh_ui_aim_space.as_ref() else {
+            return NativeMeshUiRay::default();
+        };
+        if !action.is_active(session, xr::Path::NULL).unwrap_or(false) {
+            return NativeMeshUiRay::default();
+        }
+        let Ok(location) = space.locate(reference, time) else {
+            return NativeMeshUiRay::default();
+        };
+        let required =
+            xr::SpaceLocationFlags::POSITION_VALID | xr::SpaceLocationFlags::ORIENTATION_VALID;
+        if !location.location_flags.contains(required) {
+            return NativeMeshUiRay::default();
+        }
+        let q = location.pose.orientation;
+        let origin = location.pose.position;
+        let pressed = self
+            .right_trigger_panel_toggle
+            .state(session, xr::Path::NULL)
+            .is_ok_and(|state| state.is_active && state.current_state >= 0.55)
+            || self
+                .right_select_panel_toggle
+                .state(session, xr::Path::NULL)
+                .is_ok_and(|state| state.is_active && state.current_state);
+        NativeMeshUiRay {
+            valid: true,
+            pressed,
+            origin: [origin.x, origin.y, origin.z],
+            direction: [
+                -2.0 * (q.x * q.z + q.w * q.y),
+                -2.0 * (q.y * q.z - q.w * q.x),
+                -1.0 + 2.0 * (q.x * q.x + q.y * q.y),
+            ],
+        }
     }
 
     fn poll_panel_toggle<G>(

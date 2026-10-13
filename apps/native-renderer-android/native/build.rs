@@ -6,6 +6,9 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED");
+    println!("cargo:rerun-if-changed=shaders/mesh_ui_panel.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/mesh_ui_panel.frag.glsl");
     println!("cargo:rustc-check-cfg=cfg(rusty_quest_native_renderer_lsl_android)");
     println!("cargo:rerun-if-changed=shaders/camera_projection.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/camera_projection.frag.glsl");
@@ -234,6 +237,18 @@ fn main() {
             "Android shader build needs glslc. Put glslc on PATH, set GLSLC, or set ANDROID_NDK_HOME."
         )
     });
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/mesh_ui_panel.vert.glsl"),
+        &out_dir.join("mesh_ui_panel.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/mesh_ui_panel.frag.glsl"),
+        &out_dir.join("mesh_ui_panel.frag.spv"),
+    );
     compile_shader(
         &glslc,
         "vertex",

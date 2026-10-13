@@ -35,6 +35,9 @@ jni = "0.22"
 ndk-sys = "0.6"
 openxr = "0.21.1"
 
+[dev-dependencies]
+ash = "0.38"
+
 [lints.rust]
 unsafe_code = "allow"
 missing_docs = "allow"

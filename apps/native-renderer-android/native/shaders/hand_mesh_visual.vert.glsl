@@ -1,5 +1,7 @@
 #version 450
 
+layout(constant_id = 100) const bool SCENE_DEPTH_ENABLED = false;
+
 layout(set = 0, binding = 0) readonly buffer SkinnedWorldPositions {
     vec4 positions[];
 } skinned_positions;
@@ -68,6 +70,17 @@ vec2 world_to_target_uv(vec3 world) {
 
 vec4 world_to_eye_clip(vec3 world) {
     vec3 eye = world_to_eye(world);
+    if (SCENE_DEPTH_ENABLED) {
+        float forward = -eye.z;
+        vec4 fov = pc.fov_tangents;
+        const float near_m = 0.05;
+        const float far_m = 20.0;
+        return vec4(
+            (2.0 * eye.x - (fov.y + fov.x) * forward) / (fov.y - fov.x),
+            (-2.0 * eye.y + (fov.w + fov.z) * forward) / (fov.w - fov.z),
+            far_m / (far_m - near_m) * forward - far_m * near_m / (far_m - near_m),
+            forward);
+    }
     if (eye.z >= -0.0001) {
         return vec4(4.0, 4.0, 0.0, 1.0);
     }
@@ -146,7 +159,7 @@ void main() {
     }
 
     bool world_eye_projection = pc.target1.z > 0.5;
-    if (world_eye_projection) {
+    if (world_eye_projection || SCENE_DEPTH_ENABLED) {
         gl_Position = world_to_eye_clip(vertex.xyz);
     } else {
         vec2 screen_uv = world_to_target_uv(vertex.xyz);

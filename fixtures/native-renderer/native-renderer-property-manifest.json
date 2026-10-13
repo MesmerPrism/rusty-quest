@@ -4841,6 +4841,7 @@
       "value_kind": "token",
       "allowed_values": [
         "custom-stereo-projection",
+      "native-worldspace-integration",
         "native-passthrough-style-only",
         "native-passthrough-media-only",
         "native-passthrough-graft-only",

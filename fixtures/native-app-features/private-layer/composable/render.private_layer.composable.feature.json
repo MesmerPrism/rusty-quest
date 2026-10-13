@@ -1,0 +1,65 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "render.private_layer.composable",
+  "module_path": "private-layer/composable",
+  "module_kind": "private-effect-slot",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Neutral private guide and projection shader slots in the shared native world scene route.",
+  "provides": [
+    "render.private_layer_selector",
+    "render.private_layer_native_abi"
+  ],
+  "depends_on": [
+    "renderer.native_scene",
+    "camera.hwb"
+  ],
+  "incompatible_with": [
+    "private_layer"
+  ],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.private_layer.enabled": "true"
+    },
+    "clear_families": [],
+    "expected_render_modes": [
+      "native-worldspace-integration"
+    ]
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "privateLayerEnabled=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Only reusable platform resources, interfaces and markers are public; downstream algorithms and payloads remain app-owned."
+}
