@@ -309,7 +309,11 @@ fn runtime_permissions_for_route(
     {
         permissions.push("android.permission.CAMERA");
     }
-    if hand_adapter_effect_request(runtime_options).any() {
+    if hand_adapter_effect_request(runtime_options).any()
+        || native_alternate_input::tracked_pointer_enabled_for_mode(
+            runtime_options.render_mode.marker_value(),
+        )
+    {
         permissions.push("com.oculus.permission.HAND_TRACKING");
     }
     permissions.sort_unstable();
