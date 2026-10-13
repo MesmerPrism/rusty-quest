@@ -14,7 +14,7 @@ pub(crate) struct PanelPose {
 impl Default for PanelPose {
     fn default() -> Self {
         Self {
-            center: [0.0, 1.35, -1.4],
+            center: [0.0, 0.0, -1.4],
             right: [1.0, 0.0, 0.0],
             up: [0.0, 1.0, 0.0],
             width: 0.96,
@@ -39,6 +39,9 @@ pub(crate) struct ControlSnapshot {
     pub(crate) graft_scale: f32,
     pub(crate) particle_scale: f32,
     pub(crate) pose: PanelPose,
+    pub(crate) pose_initialized: bool,
+    pub(crate) initial_pose: PanelPose,
+    pub(crate) pose_distance: f32,
 }
 impl Default for ControlSnapshot {
     fn default() -> Self {
@@ -58,6 +61,9 @@ impl Default for ControlSnapshot {
             graft_scale: 1.0,
             particle_scale: 0.5,
             pose: PanelPose::default(),
+            pose_initialized: false,
+            initial_pose: PanelPose::default(),
+            pose_distance: 1.4,
         }
     }
 }
@@ -67,6 +73,57 @@ fn controls() -> &'static Mutex<ControlSnapshot> {
 }
 pub(crate) fn snapshot() -> ControlSnapshot {
     *controls().lock().unwrap_or_else(|p| p.into_inner())
+}
+/// Calibrate once from a valid central eye in the renderer's actual reference space.
+/// No floor-height assumption or continuing head lock is introduced.
+pub(crate) fn initialize_pose(generation: u64, position: [f32; 3], orientation: [f32; 4]) -> bool {
+    let mut state = controls().lock().unwrap_or_else(|p| p.into_inner());
+    calibrate(&mut state, generation, position, orientation)
+}
+fn calibrate(
+    state: &mut ControlSnapshot,
+    generation: u64,
+    position: [f32; 3],
+    orientation: [f32; 4],
+) -> bool {
+    if generation == 0 || state.generation != generation || state.pose_initialized {
+        return false;
+    }
+    let Some(pose) = head_relative_pose(position, orientation) else {
+        return false;
+    };
+    state.pose = pose;
+    state.initial_pose = pose;
+    state.pose_initialized = true;
+    state.pose_distance = 1.4;
+    true
+}
+fn head_relative_pose(position: [f32; 3], orientation: [f32; 4]) -> Option<PanelPose> {
+    if position
+        .iter()
+        .chain(orientation.iter())
+        .any(|x| !x.is_finite())
+    {
+        return None;
+    }
+    let norm = orientation.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if !norm.is_finite() || norm < 0.001 {
+        return None;
+    }
+    let q = orientation.map(|x| x / norm);
+    let rotate = |v: [f32; 3]| {
+        let xyz = [q[0], q[1], q[2]];
+        let first = cross(xyz, v);
+        let second = cross(xyz, first);
+        std::array::from_fn(|i| v[i] + 2.0 * (q[3] * first[i] + second[i]))
+    };
+    let forward: [f32; 3] = rotate([0.0, 0.0, -1.0]);
+    Some(PanelPose {
+        center: std::array::from_fn(|i| position[i] + forward[i] * 1.4),
+        right: rotate([1.0, 0.0, 0.0]),
+        up: rotate([0.0, 1.0, 0.0]),
+        ..PanelPose::default()
+    })
 }
 pub(crate) fn enabled_for_mode(mode: &str) -> bool {
     option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED") == Some("true")
@@ -107,7 +164,16 @@ fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> boo
         3 => s.diagnostics = !s.diagnostics,
         4 => s.grafts = !s.grafts,
         5 => s.particle_scale = value,
-        6 => s.pose.center[2] = if s.pose.center[2] < -1.6 { -1.2 } else { -1.9 },
+        6 => {
+            if !s.pose_initialized {
+                return false;
+            }
+            let next = if s.pose_distance > 1.6 { 1.2 } else { 1.9 };
+            let normal = cross(s.pose.right, s.pose.up);
+            s.pose.center =
+                std::array::from_fn(|i| s.pose.center[i] + normal[i] * (s.pose_distance - next));
+            s.pose_distance = next;
+        }
         7 => {
             s.pose.width = if s.pose.width > 1.0 { 0.96 } else { 1.2 };
             s.pose.height = s.pose.width * 0.75;
@@ -124,7 +190,13 @@ fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> boo
             s.effect_selected = true;
         }
         12 => s.graft_scale = 0.10 + 1.90 * value,
-        13 => s.pose = PanelPose::default(),
+        13 => {
+            if !s.pose_initialized {
+                return false;
+            }
+            s.pose = s.initial_pose;
+            s.pose_distance = 1.4;
+        }
         _ => return false,
     }
     s.revision = s.revision.saturating_add(1);
@@ -514,7 +586,10 @@ mod tests {
     use super::*;
     #[test]
     fn ray_mapping_rejects_backface_and_behind() {
-        let p = PanelPose::default();
+        let p = PanelPose {
+            center: [0.0, 1.35, -1.4],
+            ..PanelPose::default()
+        };
         assert_eq!(
             ray_pixels(p, [0.0, 1.35, 0.0], [0.0, 0.0, -1.0]),
             Some([512.0, 384.0])
@@ -563,5 +638,61 @@ mod tests {
             assert!(apply(&mut state, 7, 11, 1.0));
             assert_eq!(state.effect_index, expected);
         }
+    }
+    #[test]
+    fn pose_calibration_matches_eye_space_and_remains_world_locked() {
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        let mut state = ControlSnapshot {
+            generation: 7,
+            ..Default::default()
+        };
+        assert!(calibrate(
+            &mut state,
+            7,
+            [2.0, 1.65, 3.0],
+            [0.0, half, 0.0, half]
+        ));
+        assert!((state.pose.center[0] - 0.6).abs() < 0.00001);
+        assert!((state.pose.center[1] - 1.65).abs() < 0.00001);
+        assert!((state.pose.center[2] - 3.0).abs() < 0.00001);
+        assert!((state.pose.right[2] + 1.0).abs() < 0.00001);
+        assert_eq!(state.pose.up, [0.0, 1.0, 0.0]);
+        let initial = state.pose;
+        assert!(!calibrate(
+            &mut state,
+            7,
+            [20.0, 10.0, 15.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ));
+        assert_eq!(state.pose.center, initial.center);
+        assert!(apply(&mut state, 7, 6, 1.0));
+        assert!((state.pose.center[0] - 0.1).abs() < 0.00001);
+        assert_eq!(state.pose.center[1], initial.center[1]);
+        assert_eq!(state.pose.center[2], initial.center[2]);
+        assert!(apply(&mut state, 7, 6, 1.0));
+        assert!((state.pose.center[0] - 0.8).abs() < 0.00001);
+        assert!(apply(&mut state, 7, 7, 1.0));
+        assert!(apply(&mut state, 7, 13, 1.0));
+        assert_eq!(state.pose.center, initial.center);
+        assert_eq!(state.pose.width, initial.width);
+        assert_eq!(state.pose_distance, 1.4);
+    }
+    #[test]
+    fn local_origin_and_tilt_are_valid_but_invalid_orientation_waits() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            ..Default::default()
+        };
+        assert!(!calibrate(&mut state, 7, [0.0; 3], [0.0; 4]));
+        assert!(!state.pose_initialized);
+        assert!(calibrate(&mut state, 7, [0.0; 3], [0.0, 0.0, 0.0, 1.0]));
+        assert_eq!(state.pose.center, [0.0, 0.0, -1.4]);
+        let angle = std::f32::consts::FRAC_PI_8;
+        let pose =
+            head_relative_pose([0.0, 1.65, 0.0], [angle.sin(), 0.0, 0.0, angle.cos()]).unwrap();
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        assert!((pose.up[1] - half).abs() < 0.00001);
+        assert!((pose.up[2] - half).abs() < 0.00001);
+        assert!((pose.center[1] - (1.65 + 1.4 * half)).abs() < 0.00001);
     }
 }

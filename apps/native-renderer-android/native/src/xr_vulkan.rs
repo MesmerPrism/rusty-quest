@@ -2586,6 +2586,15 @@ unsafe fn run_projection_frames(
             .first()
             .map(hand_mesh_visual_eye_projection)
             .unwrap_or_default();
+        if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+            let mut head = particle_sort_eye_projection;
+            if let Some(other_eye) = views.get(1) {
+                let other = hand_mesh_visual_eye_projection(other_eye);
+                head.position =
+                    std::array::from_fn(|axis| (head.position[axis] + other.position[axis]) * 0.5);
+            }
+            panel.initialize_pose(head);
+        }
         if gpu_private_particle_renderer.is_some() {
             private_particle_world_anchor.refresh_scale_from_android_properties(frame_count);
             private_particle_world_anchor

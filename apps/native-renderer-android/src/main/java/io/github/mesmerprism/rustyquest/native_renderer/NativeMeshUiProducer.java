@@ -56,7 +56,7 @@ public final class NativeMeshUiProducer {
             return;
         }
         producerActivity = activity;
-        activity.runOnUiThread(() -> {
+        activity.runOnUiThread(new Runnable() { @Override public void run() {
             if (cancelledGeneration == generation || activity.isFinishing() || activity.isDestroyed()) {
                 surface.release(); return;
             }
@@ -88,7 +88,7 @@ public final class NativeMeshUiProducer {
                 Log.e(TAG, "event=producer-failed generation=" + generation + " reason=" + error.getClass().getSimpleName());
                 if (owner.close() && current == owner) current = null;
             }
-        });
+        }});
     }
 
     private void build(Context context) {
@@ -162,7 +162,9 @@ public final class NativeMeshUiProducer {
         button.setAllCaps(false);
         // This combined test is locked to live hands; no unselected replay feature is activated.
         if (code == 2) button.setEnabled(false);
-        button.setOnClickListener(view -> submit(code, 1.0f));
+        button.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View view) { submit(code, 1.0f); }
+        });
         parent.addView(button, new LinearLayout.LayoutParams(-1, 68));
     }
 
@@ -181,7 +183,7 @@ public final class NativeMeshUiProducer {
             owner.pointerQueueInvalid = true;
             return;
         }
-        owner.activity.runOnUiThread(() -> {
+        owner.activity.runOnUiThread(new Runnable() { @Override public void run() {
             try {
             if (current != owner || owner.root == null) return;
             if (owner.pointerQueueInvalid) { owner.cancelPointer(); return; }
@@ -210,7 +212,7 @@ public final class NativeMeshUiProducer {
             } finally {
                 if (owner.queuedPointers.decrementAndGet() == 0) owner.pointerQueueInvalid = false;
             }
-        });
+        }});
     }
 
     public static boolean stop(long generation) {
@@ -220,14 +222,14 @@ public final class NativeMeshUiProducer {
         CountDownLatch retired = new CountDownLatch(1);
         boolean[] released = {false};
         // Always enqueue behind any pending start, even if current is still null.
-        activity.runOnUiThread(() -> {
+        activity.runOnUiThread(new Runnable() { @Override public void run() {
             try {
                 NativeMeshUiProducer owner = current;
                 if (owner == null || owner.generation != generation) { released[0] = true; }
                 else if (owner.close()) { current = null; released[0] = true; }
             }
             finally { retired.countDown(); }
-        });
+        }});
         try { return retired.await(2, TimeUnit.SECONDS) && released[0]; }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return false; }
     }

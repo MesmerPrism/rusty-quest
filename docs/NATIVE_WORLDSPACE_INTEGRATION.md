@@ -33,6 +33,9 @@ display, backed by an NDK ImageReader Surface. Vulkan imports each RGBA hardware
 buffer on the existing XR device and samples it on a world quad. The app has one
 NativeActivity and requires no separately launchable control-panel Activity.
 The panel's pose and dimensions are scene values, not an Android window pose.
+Its first valid head pose places it 1.4 metres ahead of the eye midpoint, with
+the corresponding orientation, then leaves it anchored in the reference space.
+Distance controls move along the panel normal; reset restores that initial pose.
 The build selects it through `ui.native_mesh_panel` and
 `RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED=true`.
 

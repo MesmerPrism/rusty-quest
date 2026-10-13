@@ -58,6 +58,21 @@ struct PanelPush {
     fov: [f32; 4],
 }
 impl GpuMeshUiPanel {
+    pub(crate) fn initialize_pose(&mut self, eye: HandMeshVisualEyeProjection) -> bool {
+        let Some(producer) = self.producer.as_ref() else {
+            return false;
+        };
+        let initialized = native_mesh_ui::initialize_pose(
+            producer.generation,
+            [eye.position[0], eye.position[1], eye.position[2]],
+            eye.orientation_xyzw,
+        );
+        if initialized {
+            let pose = native_mesh_ui::snapshot().pose;
+            crate::marker("native-mesh-ui",format!("event=world-pose-calibrated generation={} center={:.3},{:.3},{:.3} distanceMeters=1.4 poseSource=first-valid-central-eye headLocked=false",producer.generation,pose.center[0],pose.center[1],pose.center[2]));
+        }
+        initialized
+    }
     /// Opt-in owner only. Caller owns renderpass and shared device; no second XR loop.
     pub(crate) unsafe fn new(
         app: &android_activity::AndroidApp,
@@ -210,6 +225,9 @@ impl GpuMeshUiPanel {
         // Freeze one pose for both eyes; asynchronous Android controls apply next frame.
         self.frame_controls = native_mesh_ui::snapshot();
         self.poses[slot] = self.frame_controls.pose;
+        if !self.frame_controls.pose_initialized {
+            return Ok(false);
+        }
         if let Some(lease) = self.producer.as_mut().and_then(|p| p.acquire()) {
             let desc = lease.buffer.descriptor();
             if desc.width != native_mesh_ui::WIDTH
@@ -313,7 +331,7 @@ impl GpuMeshUiPanel {
         viewport: vk::Viewport,
         scissor: vk::Rect2D,
     ) {
-        if slot >= 2 || self.slots[slot].is_none() {
+        if slot >= 2 || self.slots[slot].is_none() || !self.frame_controls.pose_initialized {
             return;
         }
         let p = self.poses[slot];
@@ -351,7 +369,9 @@ impl GpuMeshUiPanel {
         origin: [f32; 3],
         direction: [f32; 3],
     ) -> Result<bool, String> {
-        let pixels = native_mesh_ui::ray_pixels(native_mesh_ui::snapshot().pose, origin, direction);
+        let controls = native_mesh_ui::snapshot();
+        let valid = valid && controls.pose_initialized;
+        let pixels = native_mesh_ui::ray_pixels(controls.pose, origin, direction);
         let captured_before = self.pointer.captured();
         let event = self.pointer.update(valid, pressed, pixels);
         if let Some((action, p)) = event {
