@@ -267,7 +267,9 @@ not authority, successful host construction, or cleanup certification.
 The existing process mutex owns this record. Accepted initialization clears the
 previous record before construction; successful route cleanup removes it. Reads
 require the current live capability, matching staged digest and app record, and
-no initialization/close in progress. Java additionally joins the current FAILED
+no initialization/close in progress. The live app-source callback runs without
+either native mutex held; the same attempt and route are revalidated afterwards.
+Java additionally joins the current FAILED
 host's held runtime and app-record digests. Published-host diagnostics keep their
 existing callback path. Capability loss and panics do not fabricate a readable
 failure. The existing pending fence and cleanup obligations are unchanged.
