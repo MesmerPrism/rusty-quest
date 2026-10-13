@@ -1376,6 +1376,7 @@ $embeddedMediaBuildInputsSha256 = Get-StringSha256 -Value $embeddedMediaBuildInp
 Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
 $sourceVersionMetadata=New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) -Enabled:$UseSourceCompositionVersionName
 $buildInputDescriptor = [ordered]@{
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
     source_commit = $sourceHead
     source_tree = $sourceTree
@@ -3282,6 +3283,7 @@ $manifestPath = Join-Path $OutDir "build-manifest.json"
 [void](Set-TextFileIfChanged -Path $manifestPath -Value ($manifest | ConvertTo-Json -Depth 12))
 
 $runCapsule = [ordered]@{
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.apk_run_capsule.v1"
     capsule_id = "spatial-$($resolvedAppId.Replace('.', '-'))-$($buildInputFingerprint.Substring(0, 12))"
     app_id = $resolvedAppId
