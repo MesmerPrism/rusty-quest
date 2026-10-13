@@ -80,6 +80,45 @@ owns the exact headset lease. Queued is not applied. Status exposes persistent
 native operator correlation and the existing owner receipt for legacy commands.
 Replay IDs are denied for the application lifetime; there is no automatic replay.
 
+### Privileged local trusted-LAN enrollment
+
+The debug-only `enroll-trusted-lan` operation additionally requires Boolean
+`trusted_lan_consent: true`, positive `expected_native_owner_identity`, positive
+`expected_gateway_lifecycle_revision`, and `expected_enrollment_reference` from
+that process's most recent privileged `status.local_enrollment` observation.
+The offer expires after five seconds and is consumed once. A new status replaces
+it; rotation, revocation and native-owner retirement invalidate it. Public
+status/discovery, BLE and authenticated remote gateway requests never receive
+this offer and cannot invoke this operation. Browser enrollment is a separate
+grant and remains unchanged.
+
+The existing actor PID/UID/birth, installed APK, activation binding, runtime
+epoch and recording generation/key/condition/profile fences apply. The main
+owner re-reads native state and pending work before rotation and before returning
+credentials: it requires idle, no current session and no pending command. Native
+owner identity and lifecycle revision must still match. A post-rotation owner,
+session or expiry mismatch revokes the new keys and returns no credentials.
+Replay IDs remain consumed even on denial; no retry is automatic.
+
+The headset UI and local debug grant call the same random controller/key
+rotation, private persistence, route retirement and reconciliation method.
+This does not change selected permissions, origins or network features, create a
+hotspot, or enroll at launch. The normal release closure still omits both debug
+provider classes and their authority. A local grant is available only in an
+explicitly selected debuggable build behind shell UID 2000 and DUMP permission.
+
+For enrollment, `Invoke-ExperimentSessionControl.ps1` requires
+`-SecretOutputDirectory` naming a new directory below an existing local parent.
+On Windows it creates and verifies a protected current-user-only ACL before any
+provider call. It captures both provider streams privately and writes the
+credential-bearing receipt only to create-new `enrollment.json` inside that
+directory. Normal output contains only the result and file path. Do not print,
+log, publish or copy the receipt into ordinary evidence. Provider/transport
+failure may leave the enrollment outcome unknown; retain the private output
+location and reconcile explicitly, never replay the original request. The
+response proves local enrollment/rotation only, not browser reachability or LAN
+security beyond the explicitly consented trusted network.
+
 ## Web session capability
 
 Optional q={v:2,s:32lowerhex,g:positive JS-safe native generation,o:[closed op]}

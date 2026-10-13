@@ -15,6 +15,37 @@ public final class ExperimentSessionDebugOperatorTest {
   JSONObject unknown=new JSONObject(good.toString()).put("operation","inject-tick");deny(()->ExperimentSessionDebugOperator.validateShape(unknown));
   JSONObject arm=new JSONObject(good.toString()).put("operation","arm").put("requested_condition","condition-b").put("requested_bias",100);ExperimentSessionDebugOperator.validateShape(arm);arm.put("requested_bias",101);deny(()->ExperimentSessionDebugOperator.validateShape(arm));arm.put("requested_bias",100.5);deny(()->ExperimentSessionDebugOperator.validateShape(arm));
   for(String op:new String[]{"save-next","save-exit","return-vr","open-polar"})ExperimentSessionDebugOperator.validateShape(new JSONObject(good.toString()).put("operation",op));
+  JSONObject enroll=new JSONObject(good.toString()).put("operation","enroll-trusted-lan")
+    .put("trusted_lan_consent",true).put("expected_native_owner_identity",1L)
+    .put("expected_gateway_lifecycle_revision",2L).put("expected_enrollment_reference","aabbccddeeff00112233445566778899");
+  ExperimentSessionDebugOperator.validateShape(enroll);
+  for(Object value:new Object[]{false,"true",1,JSONObject.NULL}){
+   JSONObject bad=new JSONObject(enroll.toString()).put("trusted_lan_consent",value);deny(()->ExperimentSessionDebugOperator.validateShape(bad));
+  }
+  for(String key:new String[]{"expected_native_owner_identity","expected_gateway_lifecycle_revision"}){
+   for(Object value:new Object[]{0,-1,"1",1.5,true,JSONObject.NULL}){
+    JSONObject bad=new JSONObject(enroll.toString()).put(key,value);deny(()->ExperimentSessionDebugOperator.validateShape(bad));
+   }
+  }
+  JSONObject missingConsent=new JSONObject(enroll.toString());missingConsent.remove("trusted_lan_consent");deny(()->ExperimentSessionDebugOperator.validateShape(missingConsent));
+  JSONObject remoteGrant=new JSONObject(enroll.toString()).put("browser_enrollment",true);deny(()->ExperimentSessionDebugOperator.validateShape(remoteGrant));
+  enroll.put("expected_generation",0L).put("expected_session_key","-").put("expected_condition","").put("expected_profile_sha256","").put("expected_binding_sha256","b");
+  ExperimentSessionDebugOperator.validateEnrollmentActorFacts(enroll,123,10191,456,"a");
+  deny(()->ExperimentSessionDebugOperator.validateEnrollmentActorFacts(enroll,124,10191,456,"a"));
+  deny(()->ExperimentSessionDebugOperator.validateEnrollmentActorFacts(enroll,123,10192,456,"a"));
+  deny(()->ExperimentSessionDebugOperator.validateEnrollmentActorFacts(enroll,123,10191,457,"a"));
+  deny(()->ExperimentSessionDebugOperator.validateEnrollmentActorFacts(enroll,123,10191,456,"changed-apk"));
+  JSONObject current=new JSONObject().put("phase","idle").put("control_state","idle").put("session_key",JSONObject.NULL).put("condition_id",JSONObject.NULL).put("non_audio_profile_sha256",JSONObject.NULL).put("runtime_epoch",3L).put("generation",0L);
+  JSONObject breath=new JSONObject().put("feature_lock_active",true).put("activation_binding_matches",true).put("activation_binding_sha256","b");
+  ExperimentSessionDebugOperator.validateEnrollmentSession(enroll,current,breath);
+  for(String key:new String[]{"phase","session_key","runtime_epoch","generation"}){
+   JSONObject bad=new JSONObject(current.toString()).put(key,key.equals("phase")?"active":key.equals("session_key")?"active-key":4L);
+   deny(()->ExperimentSessionDebugOperator.validateEnrollmentSession(enroll,bad,breath));
+  }
+  for(String key:new String[]{"runtime_epoch","generation"})for(Object value:new Object[]{"3",3.0,true,JSONObject.NULL}){
+   JSONObject bad=new JSONObject(current.toString()).put(key,value);deny(()->ExperimentSessionDebugOperator.validateEnrollmentSession(enroll,bad,breath));
+  }
+  JSONObject wrongBinding=new JSONObject(breath.toString()).put("activation_binding_sha256","c");deny(()->ExperimentSessionDebugOperator.validateEnrollmentSession(enroll,current,wrongBinding));
   System.out.println("PASS actual debug owner closed shape/coercion denials and canonical operation inventory");
  }
 }

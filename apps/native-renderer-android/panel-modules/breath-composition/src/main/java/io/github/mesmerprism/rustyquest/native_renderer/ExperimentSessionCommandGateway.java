@@ -29,8 +29,13 @@ public final class ExperimentSessionCommandGateway {
     private ExperimentSessionDirectNetwork direct;
     private ExperimentSessionRelayClient relay;
     private long identity,epoch,gatewayEpoch;
-    private long lifecycleRevision;
+    private volatile long lifecycleRevision;
     private String routeState="disabled";
+    private String localEnrollmentReference="";
+    private long localEnrollmentObserved,localEnrollmentRevision;
+    private final java.util.Set<String> localEnrollmentIds=new java.util.HashSet<String>();
+    interface LocalEnrollmentGuard { void check() throws Exception; }
+
 
     static synchronized ExperimentSessionCommandGateway process(Context context,ExperimentSessionBleServer.Delegate delegate) {
         if(process==null)process=new ExperimentSessionCommandGateway(context.getApplicationContext(),delegate);
@@ -87,6 +92,10 @@ public final class ExperimentSessionCommandGateway {
     }
     /** Headset UI only: rotates the only controller and explicitly approves unencrypted trusted LAN. */
     JSONObject enrollFromHeadset(boolean trustedLan) throws Exception {
+        return enrollLocalController(trustedLan);
+    }
+    /** Shared rotation/persistence/lifecycle for an attended UI or privileged debug grant. */
+    private JSONObject enrollLocalController(boolean trustedLan) throws Exception {
         requireMain();if(!featurePackaged(context))throw new SecurityException("feature-not-selected");
         if(!trustedLan&&relayOrigin().isEmpty())throw new SecurityException("encrypted-relay-not-selected");
         retire();
@@ -94,6 +103,63 @@ public final class ExperimentSessionCommandGateway {
         if(!preferences.edit().putBoolean("trusted-lan",trustedLan).putString("controller",controller).putString("key",key).commit())
             throw new IllegalStateException("enrollment-not-persisted");
         reconcile();return new JSONObject().put("controller",controller).put("key",key).put("device",preferences.getString("device",""));
+    }
+    /** Privileged debug status only; this capability is never included in public discovery/status. */
+    JSONObject localOperatorEnrollmentStatus() throws Exception {
+        return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception {
+            clearLocalEnrollmentOffer();
+            if(!featurePackaged(context)||identity<=0||epoch<=0||!carrier.acceptsNativeOwner(identity,epoch))
+                return new JSONObject().put("available",false);
+            JSONObject current=delegate.sessionControlReadback(),status=delegate.snapshot();
+            if(!localEnrollmentIdle(current,status))return new JSONObject().put("available",false);
+            localEnrollmentReference=ExperimentSessionBleProtocol.newHex(16);
+            localEnrollmentObserved=SystemClock.elapsedRealtime();localEnrollmentRevision=lifecycleRevision;
+            return new JSONObject().put("available",true).put("reference",localEnrollmentReference)
+                .put("native_owner_identity",identity).put("runtime_epoch",epoch)
+                .put("lifecycle_revision",lifecycleRevision).put("expires_in_ms",5000);
+        }});
+    }
+    static boolean localEnrollmentIdle(JSONObject current,JSONObject status) {
+        return current!=null&&status!=null&&"idle".equals(current.opt("phase"))&&"idle".equals(current.opt("control_state"))
+            &&current.has("session_key")&&current.isNull("session_key")
+            &&Boolean.FALSE.equals(status.opt("pending"));
+    }
+    private void clearLocalEnrollmentOffer(){localEnrollmentReference="";localEnrollmentObserved=0;}
+    private void requireLocalEnrollmentOwner(long owner,long nativeEpoch,long revision) {
+        if(owner<=0||owner!=identity||nativeEpoch<=0||nativeEpoch!=epoch||revision!=lifecycleRevision
+                ||!carrier.acceptsNativeOwner(owner,nativeEpoch))throw new SecurityException("local-enrollment-owner-retired");
+    }
+    /** Called only by the debug-only shell/DUMP provider after exact actor/APK checks. */
+    JSONObject enrollFromLocalOperator(final JSONObject input,final LocalEnrollmentGuard guard) throws Exception {
+        final JSONObject request=new JSONObject(input.toString());
+        return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception {
+            requireMain();
+            if(!Boolean.TRUE.equals(request.opt("trusted_lan_consent")))throw new SecurityException("trusted-lan-consent-required");
+            final long owner=request.getLong("expected_native_owner_identity"),nativeEpoch=request.getLong("expected_runtime_epoch"),revision=request.getLong("expected_gateway_lifecycle_revision");
+            requireLocalEnrollmentOwner(owner,nativeEpoch,revision);
+            long now=SystemClock.elapsedRealtime();String id=request.getString("operation_id");
+            if(localEnrollmentReference.isEmpty()||!localEnrollmentReference.equals(request.getString("expected_enrollment_reference"))
+                    ||localEnrollmentRevision!=revision||now<localEnrollmentObserved||now-localEnrollmentObserved>5000)
+                throw new SecurityException("local-enrollment-offer-stale");
+            if(!ExperimentSessionBleProtocol.isLowerHex(id,16)||localEnrollmentIds.size()>=128||!localEnrollmentIds.add(id))
+                throw new SecurityException("local-enrollment-replay");
+            final long deadline=localEnrollmentObserved+5000;
+            clearLocalEnrollmentOffer();
+            guard.check();
+            if(SystemClock.elapsedRealtime()>deadline)throw new SecurityException("local-enrollment-offer-expired");
+            if(!localEnrollmentIdle(delegate.sessionControlReadback(),delegate.snapshot()))throw new SecurityException("local-enrollment-requires-idle");
+            requireLocalEnrollmentOwner(owner,nativeEpoch,revision);
+            JSONObject credentials=enrollLocalController(true);
+            try {
+                guard.check();
+                if(SystemClock.elapsedRealtime()>deadline)throw new SecurityException("local-enrollment-offer-expired");
+                if(!localEnrollmentIdle(delegate.sessionControlReadback(),delegate.snapshot()))throw new SecurityException("local-enrollment-owner-changed");
+                requireLocalEnrollmentOwner(owner,nativeEpoch,revision);
+                return new JSONObject().put("operation_id",id).put("command_status","enrolled")
+                    .put("credentials",credentials).put("trusted_lan",true).put("route",routeState)
+                    .put("gateway_epoch",Long.toString(gatewayEpoch));
+            } catch(Exception changed) {revokeFromHeadset();throw changed;}
+        }});
     }
     void revokeFromHeadset(){requireMain();preferences.edit().putBoolean("trusted-lan",false).remove("key").remove("controller").commit();retire();}
     synchronized void nativeOwnerChanged(final long owner,final long nextEpoch,final boolean live) {
@@ -133,6 +199,7 @@ public final class ExperimentSessionCommandGateway {
         catch(Exception unavailable){routeState="listener-unavailable";if(http!=null)http.close();http=null;}
     }
     private void retire() {
+        clearLocalEnrollmentOffer();
         stopRoutesFromHeadset();
         if(protocol!=null)protocol.retire();protocol=null;
         if(http!=null)http.close();http=null;

@@ -28,6 +28,16 @@ final class ExperimentSessionDebugOperator {
             if (!apk.matches("[0-9a-f]{64}") || !apk.equals(installedApkSha256(context)))
                 throw new SecurityException("operator-apk-mismatch");
         }
+        if ("enroll-trusted-lan".equals(operation)) {
+            final JSONObject frozen=new JSONObject(request.toString());
+            ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
+            if(gateway==null)throw new SecurityException("local-enrollment-owner-unavailable");
+            JSONObject receipt=gateway.enrollFromLocalOperator(frozen,new ExperimentSessionCommandGateway.LocalEnrollmentGuard(){
+                @Override public void check()throws Exception {validateEnrollmentActor(context,frozen);}
+            });
+            return new JSONObject().put("schema","rusty.quest.experiment_session.operator_receipt.v1")
+                .put("operation",operation).put("native_response",receipt).toString();
+        }
         boolean legacy = !read && !"official-start".equals(operation) && !"pause".equals(operation) && !"resume".equals(operation);
         if (legacy) return new JSONObject().put("schema","rusty.quest.experiment_session.operator_receipt.v1")
             .put("native_response",BreathCompositionPanelModule.queueExperimentOperator(request)).toString();
@@ -46,10 +56,14 @@ final class ExperimentSessionDebugOperator {
                 .put("expected_binding_sha256", request.getString("expected_binding_sha256"));
         }
         JSONObject nativeResponse = new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));
+        JSONObject enrollment=new JSONObject().put("available",false);
+        ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
+        if(read&&gateway!=null)enrollment=gateway.localOperatorEnrollmentStatus();
         return new JSONObject().put("schema", "rusty.quest.experiment_session.operator_receipt.v1")
             .put("operation", operation).put("pid", android.os.Process.myPid())
             .put("uid", android.os.Process.myUid()).put("process_start_ticks", processStartTicks())
             .put("read_completed_elapsed_ns", android.os.SystemClock.elapsedRealtimeNanos())
+            .put("local_enrollment",enrollment)
             .put("native_response", nativeResponse).put("owner_receipt",BreathCompositionPanelModule.experimentOperatorOwnerReceipt())
             .put("audio_readiness", new org.json.JSONArray()
                 .put(ControlPanelActivity.conditionAudioReadiness("condition-a"))
@@ -60,7 +74,7 @@ final class ExperimentSessionDebugOperator {
     static void validateShape(JSONObject request) throws Exception {
         String operation = request.getString("operation");
         boolean read = "status".equals(operation);
-        if (!read && !"official-start".equals(operation) && !"pause".equals(operation)
+        if (!read && !"enroll-trusted-lan".equals(operation) && !"official-start".equals(operation) && !"pause".equals(operation)
                 && !"resume".equals(operation) && !ExperimentSessionBleProtocol.supportedOperation(operation)) throw new SecurityException("operator-operation-invalid");
         String[] fields = read ? new String[] {"schema", "operation"} : new String[] {
             "schema", "operation", "operation_id", "expected_pid", "expected_uid",
@@ -68,11 +82,18 @@ final class ExperimentSessionDebugOperator {
             "expected_runtime_epoch", "expected_generation", "expected_session_key",
             "expected_condition", "expected_profile_sha256", "operator_origin"};
         if ("arm".equals(operation)) { String[] extended=java.util.Arrays.copyOf(fields,fields.length+2); extended[fields.length]="requested_condition";extended[fields.length+1]="requested_bias";fields=extended; }
+        if ("enroll-trusted-lan".equals(operation)) {
+            String[] extended=java.util.Arrays.copyOf(fields,fields.length+4);
+            extended[fields.length]="trusted_lan_consent";extended[fields.length+1]="expected_native_owner_identity";
+            extended[fields.length+2]="expected_gateway_lifecycle_revision";extended[fields.length+3]="expected_enrollment_reference";fields=extended;
+        }
         if (request.length() != fields.length) throw new SecurityException("operator-unexpected-field");
         for (String field : fields) if (!request.has(field)) throw new SecurityException("operator-missing-field");
         for (String field : fields) {
             Object raw = request.opt(field);
-            if (field.equals("expected_pid") || field.equals("expected_uid")
+            if (field.equals("trusted_lan_consent")) {
+                if(!Boolean.TRUE.equals(raw))throw new SecurityException("trusted-lan-consent-required");
+            } else if (field.equals("expected_native_owner_identity") || field.equals("expected_gateway_lifecycle_revision") || field.equals("expected_pid") || field.equals("expected_uid")
                     || field.equals("expected_process_start_ticks") || field.equals("expected_runtime_epoch")
                     || field.equals("expected_generation") || field.equals("requested_bias")) {
                 if (!(raw instanceof Integer) && !(raw instanceof Long))
@@ -83,6 +104,35 @@ final class ExperimentSessionDebugOperator {
         }
         if ("arm".equals(operation) && (!request.getString("requested_condition").matches("condition-[ab]") || request.getLong("requested_bias")>100)) throw new SecurityException("operator-arm-selection-invalid");
         if (!"rusty.quest.experiment_session.operator_command.v1".equals(request.getString("schema"))) throw new SecurityException("operator-schema-invalid");
+    }
+
+    static void validateEnrollmentSession(JSONObject request,JSONObject current,JSONObject breath) throws Exception {
+        Object generation=current.opt("generation"),runtime=current.opt("runtime_epoch");
+        if((!(generation instanceof Integer)&&!(generation instanceof Long))
+                ||(!(runtime instanceof Integer)&&!(runtime instanceof Long)))throw new SecurityException("local-enrollment-native-integer-required");
+        if(!Boolean.TRUE.equals(breath.opt("feature_lock_active"))||!Boolean.TRUE.equals(breath.opt("activation_binding_matches"))
+                ||!request.getString("expected_binding_sha256").equals(breath.opt("activation_binding_sha256"))
+                ||!"idle".equals(current.opt("phase"))||!"idle".equals(current.opt("control_state"))
+                ||!current.has("condition_id")||!current.has("non_audio_profile_sha256")||!current.has("session_key")||!current.isNull("session_key")
+                ||request.getLong("expected_runtime_epoch")!=current.getLong("runtime_epoch")
+                ||request.getLong("expected_generation")!=current.getLong("generation")
+                ||!"-".equals(request.getString("expected_session_key"))
+                ||!request.getString("expected_condition").equals(current.isNull("condition_id")?"":current.getString("condition_id"))
+                ||!request.getString("expected_profile_sha256").equals(current.isNull("non_audio_profile_sha256")?"":current.getString("non_audio_profile_sha256")))
+            throw new SecurityException("local-enrollment-session-fence-mismatch");
+    }
+    static void validateEnrollmentActorFacts(JSONObject request,long pid,long uid,long birth,String apk)throws Exception {
+        if(request.getLong("expected_pid")!=pid||request.getLong("expected_uid")!=uid
+                ||request.getLong("expected_process_start_ticks")!=birth||!request.getString("expected_apk_sha256").equals(apk))
+            throw new SecurityException("local-enrollment-actor-changed");
+    }
+    private static void validateEnrollmentActor(Context context,JSONObject request)throws Exception {
+        validateEnrollmentActorFacts(request,android.os.Process.myPid(),android.os.Process.myUid(),processStartTicks(),installedApkSha256(context));
+        JSONObject response=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
+            new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString()));
+        if(!"accepted".equals(response.opt("command_status")))throw new SecurityException("local-enrollment-readback-unavailable");
+        validateEnrollmentSession(request,response.getJSONObject("readback"),
+            new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot"));
     }
 
     private static long processStartTicks() throws Exception {
