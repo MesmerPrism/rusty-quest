@@ -234,6 +234,14 @@ impl CompactHandInputSourceMode {
     pub(crate) fn allows_recorded_fallback(self) -> bool {
         matches!(self, Self::Auto | Self::RecordedReplay | Self::LiveMeta)
     }
+
+    /// Worldspace uses recordings only as static topology/bind data, never as live poses.
+    pub(crate) fn allows_recorded_fallback_in(self, render_mode: NativeRendererRenderMode) -> bool {
+        !matches!(
+            render_mode,
+            NativeRendererRenderMode::NativeWorldspaceIntegration
+        ) && self.allows_recorded_fallback()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -551,6 +559,49 @@ impl Default for NativePrivateLayerSettings {
             layer_seconds: 5.0,
             layer_override: -1.0,
             effect: [1.0, 1.0, 0.0, 1.0],
+        }
+    }
+}
+
+#[cfg(test)]
+mod worldspace_source_tests {
+    use super::*;
+
+    #[test]
+    fn worldspace_live_selection_never_allows_recorded_pose_fallback() {
+        let mode =
+            NativeRendererRenderMode::from_property(Some("native-worldspace-integration".into()));
+        let live = CompactHandInputSourceMode::from_property(
+            Some("live-meta-openxr-hand-tracking".into()),
+            false,
+        );
+        assert!(live.selects_live_frame());
+        assert!(!live.allows_recorded_fallback_in(mode));
+        // Even an accidentally selected replay/auto mode cannot animate recordings here.
+        for source in [
+            CompactHandInputSourceMode::Auto,
+            CompactHandInputSourceMode::RecordedReplay,
+            CompactHandInputSourceMode::Disabled,
+        ] {
+            assert!(!source.allows_recorded_fallback_in(mode));
+        }
+    }
+
+    #[test]
+    fn other_render_modes_preserve_existing_recorded_pose_policy() {
+        for mode in [
+            NativeRendererRenderMode::CustomStereoProjection,
+            NativeRendererRenderMode::SolidBlackHandsAndGrafts,
+            NativeRendererRenderMode::NativePassthroughGraftOnly,
+        ] {
+            for source in [
+                CompactHandInputSourceMode::Auto,
+                CompactHandInputSourceMode::LiveMeta,
+                CompactHandInputSourceMode::RecordedReplay,
+            ] {
+                assert!(source.allows_recorded_fallback_in(mode));
+            }
+            assert!(!CompactHandInputSourceMode::Disabled.allows_recorded_fallback_in(mode));
         }
     }
 }

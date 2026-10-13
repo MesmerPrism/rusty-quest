@@ -45,7 +45,12 @@ and position-tracked flags on all four joints (`0x2 | 0x8` in OpenXR). A private
 live-skinning composition can select this feature as well; it reuses its existing
 current compact sample when available and polls raw joints only as a fallback.
 Live GPU rig mapping still requires that composition's independently applied
-hand-adapter lock. The pointer feature never substitutes for that lock.
+hand-adapter lock. The pointer feature never substitutes for that lock. Worldspace
+never uses recorded poses as a fallback: missing live compact input hides the
+corresponding hand, while the static topology/bind rig remains available. Other
+render modes keep their existing replay policies. The short `worldspace-hand-input`
+marker reports per-hand active/ready/source/locate state, shape counts and reason
+every 120 frames and on state changes; raw pointer input remains rig-independent.
 
 Pure host tests cover bounded ray construction, pinch hysteresis, controller
 priority, hand switching and tracking loss. Resolver tests cover manifest

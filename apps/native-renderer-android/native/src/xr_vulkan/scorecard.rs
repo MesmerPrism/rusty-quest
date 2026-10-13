@@ -290,7 +290,7 @@ pub(super) fn write_projection_scorecard(
                 replay_visual_proof_enabled,
                 compact_hand_input_source_mode.marker_value(),
                 compact_hand_input_source_mode.selects_live_frame(),
-                compact_hand_input_source_mode.allows_recorded_fallback(),
+                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
                 if replay_visual_proof_enabled {
                     "pending-headset-screenshot"
                 } else {
@@ -362,7 +362,7 @@ pub(super) fn write_projection_scorecard(
             replay_visual_proof_enabled,
             compact_hand_input_source_mode.marker_value(),
             compact_hand_input_source_mode.selects_live_frame(),
-            compact_hand_input_source_mode.allows_recorded_fallback(),
+            compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
             gpu_sdf_stats.marker_fields(),
             sdf_visual_evidence_rects
         ),
@@ -407,7 +407,7 @@ pub(super) fn write_projection_scorecard(
             replay_visual_proof_enabled,
             compact_hand_input_source_mode.marker_value(),
             compact_hand_input_source_mode.selects_live_frame(),
-            compact_hand_input_source_mode.allows_recorded_fallback(),
+            compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
             hand_mesh_visual_stats.marker_fields(),
             hand_mesh_visual_evidence_rects
         ),

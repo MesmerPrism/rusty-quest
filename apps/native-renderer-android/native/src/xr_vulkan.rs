@@ -891,7 +891,7 @@ unsafe fn run_projection_loop_inner(
             PROP_HAND_MESH_INPUT_SOURCE,
             compact_hand_input_source_mode.marker_value(),
             compact_hand_input_source_mode.selects_live_frame(),
-            compact_hand_input_source_mode.allows_recorded_fallback(),
+            compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
             PROP_SDF_FIELD_VISUAL_ENABLED,
             PROP_ENABLE_SDF_VISUAL,
             sdf_visual_enabled,
@@ -2263,6 +2263,7 @@ unsafe fn run_projection_frames(
     let mut frame_count = 0_u64;
     let alternate_input_enabled = render_mode.marker_value() == "native-worldspace-integration";
     let mut alternate_pointer = crate::native_alternate_input::AlternatePointer::default();
+    let mut last_worldspace_hand_state = String::new();
     if alternate_input_enabled {
         crate::marker("worldspace-input", format!("status=config trackedHandPointerSelected={} compactRigInputSelected={} handPointerSource=XR_EXT_hand_tracking handAdapterRequiredForRawPointer=false simultaneousTrackingRequired=false",
             crate::native_alternate_input::tracked_pointer_enabled_for_mode(render_mode.marker_value()),
@@ -3462,7 +3463,7 @@ unsafe fn run_projection_frames(
             live_hand_frames
                 .primary_handedness()
                 .unwrap_or_else(|| handedness_label(&replay.handedness))
-        } else if compact_hand_input_source_mode.allows_recorded_fallback() {
+        } else if compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode) {
             handedness_label(&replay.handedness)
         } else {
             "none"
@@ -3476,11 +3477,41 @@ unsafe fn run_projection_frames(
             live_hand_frames
                 .secondary_handedness()
                 .unwrap_or_else(|| handedness_label(&secondary_replay.handedness))
-        } else if compact_hand_input_source_mode.allows_recorded_fallback() {
+        } else if compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode) {
             handedness_label(&secondary_replay.handedness)
         } else {
             "none"
         };
+        if alternate_input_enabled {
+            // Kept separate from the large scorecard so Android log limits cannot hide
+            // live readiness or substitute a recorded-frame success for live tracking.
+            let selected = compact_hand_input_source_mode.selects_live_frame()
+                && !worldspace_controllers_selected;
+            let state = format!(
+                "inputMode={} recordedPoseFallback=false trackerReady={} frameReady={} leftActive={} leftReady={} leftSource={} leftLocate={} rightActive={} rightReady={} rightSource={} rightLocate={} reason={} rigRuntimeJointCount={} rigTipLengthCount={} expectedRuntimeJointCount=21 expectedTipLengthCount=5 pointerRigIndependent=true focus={}",
+                compact_hand_input_source_mode.marker_value(), live_hand_stats.tracker_ready,
+                live_hand_stats.frame_ready, live_hand_stats.left_active, live_hand_frames.left.is_some(),
+                if selected && live_hand_frames.left.is_some() { "live-openxr" } else { "none" },
+                crate::sanitize(&live_hand_stats.left_locate_status),
+                live_hand_stats.right_active, live_hand_frames.right.is_some(),
+                if selected && live_hand_frames.right.is_some() { "live-openxr" } else { "none" },
+                crate::sanitize(&live_hand_stats.right_locate_status), live_hand_stats.reason,
+                replay.runtime_joint_count, replay.tip_length_count, renderer_focus_session_state,
+            );
+            if state != last_worldspace_hand_state || frame_count % 120 == 0 {
+                crate::marker(
+                    "worldspace-hand-input",
+                    format!(
+                        "status=current frame={} liveFrame={} liveTimestampNs={} {}",
+                        frame_count,
+                        live_hand_stats.frame_index,
+                        live_hand_stats.timestamp_ns,
+                        state
+                    ),
+                );
+                last_worldspace_hand_state = state;
+            }
+        }
         let stage_started = Instant::now();
         gpu_timestamp_tracker.write_stage_start(
             vk_device,
@@ -3497,7 +3528,7 @@ unsafe fn run_projection_frames(
                 sdf_visual_enabled,
                 sdf_update_period_frames,
                 selected_primary_live_hand_frame,
-                compact_hand_input_source_mode.allows_recorded_fallback(),
+                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
             ) {
                 Ok(stats) => {
                     if stats.field_update_dispatched {
@@ -3534,7 +3565,7 @@ unsafe fn run_projection_frames(
                 false,
                 sdf_update_period_frames,
                 selected_secondary_live_hand_frame,
-                compact_hand_input_source_mode.allows_recorded_fallback(),
+                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
             ) {
                 Ok(stats) => stats,
                 Err(error) => {
@@ -3579,7 +3610,7 @@ unsafe fn run_projection_frames(
                 frame_count,
                 gpu_sdf_stats.skinning_ready,
                 selected_primary_live_hand_frame,
-                compact_hand_input_source_mode.allows_recorded_fallback(),
+                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
                 selected_primary_live_hand,
                 hand_mesh_visual_mesh_source,
                 effective_diagnostic_settings,
@@ -3626,7 +3657,7 @@ unsafe fn run_projection_frames(
                 frame_count,
                 secondary_gpu_sdf_stats.skinning_ready,
                 selected_secondary_live_hand_frame,
-                compact_hand_input_source_mode.allows_recorded_fallback(),
+                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
                 selected_secondary_live_hand,
                 hand_mesh_visual_mesh_source,
                 effective_diagnostic_settings,
