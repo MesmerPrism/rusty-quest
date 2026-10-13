@@ -462,11 +462,20 @@ fn validate_scalar_inputs(
     input: &EmbeddedDuplexPackagedConfigInput<'_>,
 ) -> Result<(), PackagedConfigError> {
     if let Some(horizon) = input.setup_credential_horizon_ms {
-        let issued = u64::try_from(input.validation_wall_unix_ms).map_err(|_| PackagedConfigError::Binding("setup credential clock"))?;
-        let expiry = issued.checked_add(horizon).ok_or(PackagedConfigError::Binding("setup credential overflow"))?;
-        if expiry > i64::MAX as u64 || !(300_000..=3_600_000).contains(&horizon) || horizon % 60_000 != 0
-            || input.grant_expires_at_ms != expiry || input.lease_expires_at_ms != expiry {
-            return Err(PackagedConfigError::Binding("setup credential horizon binding"));
+        let issued = u64::try_from(input.validation_wall_unix_ms)
+            .map_err(|_| PackagedConfigError::Binding("setup credential clock"))?;
+        let expiry = issued
+            .checked_add(horizon)
+            .ok_or(PackagedConfigError::Binding("setup credential overflow"))?;
+        if expiry > i64::MAX as u64
+            || !(300_000..=3_600_000).contains(&horizon)
+            || horizon % 60_000 != 0
+            || input.grant_expires_at_ms != expiry
+            || input.lease_expires_at_ms != expiry
+        {
+            return Err(PackagedConfigError::Binding(
+                "setup credential horizon binding",
+            ));
         }
     }
     if input.package_name.trim().is_empty()
@@ -730,37 +739,71 @@ mod finite_setup_policy_tests {
     #[test]
     #[ignore = "requires an explicitly retained actual Java packaged request"]
     fn finite_setup_actual_java_transfer_assembles_native_scoped_policy() {
-        let path=std::env::var("RUSTY_QUEST_PACKAGED_POLICY_REQUEST").expect("explicit actual Java request required");
-        let raw=std::fs::read_to_string(path).unwrap();
-        let request:Value=serde_json::from_str(&raw).unwrap();
-        assert_eq!(request["setup_credential_horizon_ms"],json!(1_800_000));
-        let assembled=assemble_packaged_config_request_json(&raw).unwrap();
-        let envelope:Value=serde_json::from_str(&assembled.0).unwrap();
-        let config:QuestBrokerRuntimeConfig=serde_json::from_str(envelope["runtime_config_json"].as_str().unwrap()).unwrap();
-        assert_eq!(config.admission.snapshot.root_renewal_policies.len(),1);
-        assert_eq!(config.admission.snapshot.root_renewal_policies[0].grant_id.as_str(),request["grant_id"].as_str().unwrap());
-        assert_eq!(config.admission.snapshot.root_renewal_policies[0].horizon_ms,1_800_000);
-        assert_eq!(config.admission.snapshot.max_token_ttl_ms,request["max_token_ttl_ms"].as_u64().unwrap());
-        for invalid in [0,299_999,300_001,3_600_001,u64::MAX] {
-            let mut bad=request.clone();bad["setup_credential_horizon_ms"]=json!(invalid);
+        let path = std::env::var("RUSTY_QUEST_PACKAGED_POLICY_REQUEST")
+            .expect("explicit actual Java request required");
+        let raw = std::fs::read_to_string(path).unwrap();
+        let request: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(request["setup_credential_horizon_ms"], json!(1_800_000));
+        let assembled = assemble_packaged_config_request_json(&raw).unwrap();
+        let envelope: Value = serde_json::from_str(&assembled.0).unwrap();
+        let config: QuestBrokerRuntimeConfig =
+            serde_json::from_str(envelope["runtime_config_json"].as_str().unwrap()).unwrap();
+        assert_eq!(config.admission.snapshot.root_renewal_policies.len(), 1);
+        assert_eq!(
+            config.admission.snapshot.root_renewal_policies[0]
+                .grant_id
+                .as_str(),
+            request["grant_id"].as_str().unwrap()
+        );
+        assert_eq!(
+            config.admission.snapshot.root_renewal_policies[0].horizon_ms,
+            1_800_000
+        );
+        assert_eq!(
+            config.admission.snapshot.max_token_ttl_ms,
+            request["max_token_ttl_ms"].as_u64().unwrap()
+        );
+        for invalid in [0, 299_999, 300_001, 3_600_001, u64::MAX] {
+            let mut bad = request.clone();
+            bad["setup_credential_horizon_ms"] = json!(invalid);
             assert!(assemble_packaged_config_request_json(&bad.to_string()).is_err());
         }
-        for field in ["grant_expires_at_ms","lease_expires_at_ms"] {
-            let mut bad=request.clone();bad[field]=json!(request[field].as_u64().unwrap()+1);
+        for field in ["grant_expires_at_ms", "lease_expires_at_ms"] {
+            let mut bad = request.clone();
+            bad[field] = json!(request[field].as_u64().unwrap() + 1);
             assert!(assemble_packaged_config_request_json(&bad.to_string()).is_err());
         }
-        let mut overflow=request.clone();overflow["validation_wall_unix_ms"]=json!(i64::MAX);
-        overflow["grant_expires_at_ms"]=json!(i64::MAX as u64+1_800_000);overflow["lease_expires_at_ms"]=overflow["grant_expires_at_ms"].clone();
+        let mut overflow = request.clone();
+        overflow["validation_wall_unix_ms"] = json!(i64::MAX);
+        overflow["grant_expires_at_ms"] = json!(i64::MAX as u64 + 1_800_000);
+        overflow["lease_expires_at_ms"] = overflow["grant_expires_at_ms"].clone();
         assert!(assemble_packaged_config_request_json(&overflow.to_string()).is_err());
-        let mut malformed=request.clone();malformed["setup_credential_horizon_ms"]=json!("1800000");
+        let mut malformed = request.clone();
+        malformed["setup_credential_horizon_ms"] = json!("1800000");
         assert!(assemble_packaged_config_request_json(&malformed.to_string()).is_err());
-        let mut legacy=request;legacy.as_object_mut().unwrap().remove("setup_credential_horizon_ms");
-        let expires=legacy["validation_wall_unix_ms"].as_u64().unwrap()+300_000;
-        legacy["grant_expires_at_ms"]=json!(expires);legacy["lease_expires_at_ms"]=json!(expires);
-        let old=assemble_packaged_config_request_json(&legacy.to_string()).unwrap();
-        let envelope:Value=serde_json::from_str(&old.0).unwrap();
-        let old_config:QuestBrokerRuntimeConfig=serde_json::from_str(envelope["runtime_config_json"].as_str().unwrap()).unwrap();
-        assert!(old_config.admission.snapshot.root_renewal_policies.is_empty());
-        assert_eq!(old_config.admission.snapshot.root_renewal_horizon_ms(&old_config.admission.snapshot.grants[0].grant_id),300_000);
+        let mut legacy = request;
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("setup_credential_horizon_ms");
+        let expires = legacy["validation_wall_unix_ms"].as_u64().unwrap() + 300_000;
+        legacy["grant_expires_at_ms"] = json!(expires);
+        legacy["lease_expires_at_ms"] = json!(expires);
+        let old = assemble_packaged_config_request_json(&legacy.to_string()).unwrap();
+        let envelope: Value = serde_json::from_str(&old.0).unwrap();
+        let old_config: QuestBrokerRuntimeConfig =
+            serde_json::from_str(envelope["runtime_config_json"].as_str().unwrap()).unwrap();
+        assert!(old_config
+            .admission
+            .snapshot
+            .root_renewal_policies
+            .is_empty());
+        assert_eq!(
+            old_config
+                .admission
+                .snapshot
+                .root_renewal_horizon_ms(&old_config.admission.snapshot.grants[0].grant_id),
+            300_000
+        );
     }
 }

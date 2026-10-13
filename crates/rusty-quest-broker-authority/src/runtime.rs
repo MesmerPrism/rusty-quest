@@ -1111,12 +1111,24 @@ impl QuestBrokerAuthorityRuntime {
             return Err(QuestBrokerRuntimeError::SchemaMismatch);
         }
         for policy in &config.admission.snapshot.root_renewal_policies {
-            let grant = config.admission.snapshot.grants.iter().find(|g| g.grant_id == policy.grant_id)
+            let grant = config
+                .admission
+                .snapshot
+                .grants
+                .iter()
+                .find(|g| g.grant_id == policy.grant_id)
                 .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
-            let expiry = u64::try_from(authority_wall_unix_ms).ok().and_then(|t| t.checked_add(policy.horizon_ms))
+            let expiry = u64::try_from(authority_wall_unix_ms)
+                .ok()
+                .and_then(|t| t.checked_add(policy.horizon_ms))
                 .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
-            if grant.expires_at_ms != expiry || !config.initial_leases.iter().any(|lease|
-                lease.holder_id == grant.identity.client_id && lease.scope.as_str() == "lease.media.session" && lease.expires_at_ms == expiry) {
+            if grant.expires_at_ms != expiry
+                || !config.initial_leases.iter().any(|lease| {
+                    lease.holder_id == grant.identity.client_id
+                        && lease.scope.as_str() == "lease.media.session"
+                        && lease.expires_at_ms == expiry
+                })
+            {
                 return Err(QuestBrokerRuntimeError::ControlLeaseBootstrap);
             }
         }

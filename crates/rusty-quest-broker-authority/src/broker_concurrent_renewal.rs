@@ -256,7 +256,9 @@ impl QuestBrokerRuntimeProvider {
                     "renewal requires one current outer media lease",
                 ));
             };
-            let root_horizon_ms = broker.admission_snapshot().root_renewal_horizon_ms(&grant.grant_id);
+            let root_horizon_ms = broker
+                .admission_snapshot()
+                .root_renewal_horizon_ms(&grant.grant_id);
             let expiry = now_ms
                 .checked_add(5_000)
                 .ok_or_else(rejected)?
@@ -328,7 +330,10 @@ impl QuestBrokerRuntimeProvider {
                 )?,
                 grant_id: pending.grant_id.clone(),
                 prior_expires_at_ms: pending.prior_grant_expiry,
-                expires_at_ms: pending.now_ms.checked_add(pending.root_horizon_ms).ok_or_else(rejected)?,
+                expires_at_ms: pending
+                    .now_ms
+                    .checked_add(pending.root_horizon_ms)
+                    .ok_or_else(rejected)?,
                 accepted_evidence_id: pending.proof.request_id.clone(),
                 accepted_evidence_sha256: format!(
                     "sha256:{}",
