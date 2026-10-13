@@ -1,0 +1,23 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "input.tracked_hand_pointer",
+  "module_path": "input/tracked-hand-pointer",
+  "module_kind": "openxr-input-mode-adapter",
+  "settings_surface": { "authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile" },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicit worldspace mesh UI ray/pinch from four tracked EXT hand joints; no mesh rig, replay or simultaneous tracking prerequisite.",
+  "provides": ["input.tracked_hand_pointer", "input.hand_pinch_ui"],
+  "depends_on": ["input.controllers_and_hands_optional", "ui.native_mesh_panel"],
+  "incompatible_with": ["input.simultaneous_hands_and_controllers"],
+  "exclusive_groups": { "meta_hand_controller_input_mode": "hands-or-controllers" },
+  "android_manifest": { "permissions": [], "uses_features": [], "activities": [], "services": [], "queries": [] },
+  "runtime_profile": { "set": {}, "clear_families": [], "expected_render_modes": ["native-worldspace-integration"] },
+  "build_inputs": {
+    "env": [{ "name": "RUSTY_QUEST_NATIVE_RENDERER_TRACKED_HAND_POINTER_ENABLED", "value": "true" }],
+    "assets": [], "shaders": []
+  },
+  "markers": { "required": ["trackedHandPointerSelected=true"], "forbidden": [] },
+  "validation": { "quick": ["pwsh -NoProfile -File tools/Test-NativeAppBuildProfile.ps1 -RepoRoot ."], "standard": [], "device": [] },
+  "public_private_boundary": "Quest owns session tracker acquisition, bounded ray/pinch and exclusive UI capture. No application rig, skinning payload or private semantics are imported."
+}

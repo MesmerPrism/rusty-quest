@@ -30,6 +30,21 @@ pub(crate) struct ParticleAdapterEffectRequest {
 }
 
 impl ParticleAdapterEffectRequest {
+    pub(crate) fn from_selection(
+        environment_depth_particles: bool,
+        hand_anchor_particles: bool,
+        private_particle_render_mode: bool,
+        private_particle_payload_linked: bool,
+    ) -> Self {
+        Self {
+            environment_depth_particles,
+            hand_anchor_particles,
+            // The worldspace mode also serves panel-only apps. A mode alone
+            // cannot select a private effect whose payload was not packaged.
+            private_particles: private_particle_render_mode && private_particle_payload_linked,
+        }
+    }
+
     pub(crate) fn any(self) -> bool {
         self.environment_depth_particles || self.hand_anchor_particles || self.private_particles
     }
@@ -129,6 +144,32 @@ mod tests {
             lock_revision: 1,
             lock_sha256: ACCEPTED_LOCK_SHA256.to_owned(),
         }
+    }
+
+    #[test]
+    fn panel_only_mode_does_not_request_an_absent_private_particle_payload() {
+        let request = ParticleAdapterEffectRequest::from_selection(false, false, true, false);
+        assert!(!request.any());
+        let mut disabled = accepted_input();
+        disabled.enabled = false;
+        assert!(effects_authorized(&resolve_activation(&disabled), request));
+    }
+
+    #[test]
+    fn selected_linked_private_payload_still_requires_its_applied_lock() {
+        let request = ParticleAdapterEffectRequest::from_selection(false, false, true, true);
+        assert!(request.private_particles);
+        let mut disabled = accepted_input();
+        disabled.enabled = false;
+        assert!(!effects_authorized(&resolve_activation(&disabled), request));
+        let mut stale = accepted_input();
+        stale.lock_revision = 0;
+        assert!(!effects_authorized(&resolve_activation(&stale), request));
+        assert!(effects_authorized(
+            &resolve_activation(&accepted_input()),
+            request
+        ));
+        assert!(!ParticleAdapterEffectRequest::from_selection(false, false, false, true).any());
     }
 
     #[test]

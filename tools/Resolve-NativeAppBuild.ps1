@@ -728,6 +728,10 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('        <meta-data android:name="rusty.quest.feature.experiment_control_relay" android:value="true" />')
         [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.relay_origin" android:value="https://control-relay.mesmerprism.com" />')
     }
+    if ($UsesFeatures -contains "oculus.software.handtracking" -and $Permissions -contains "com.oculus.permission.HAND_TRACKING") {
+        [void]$lines.Add('        <meta-data android:name="com.oculus.handtracking.support" android:value="HANDS_AND_CONTROLLERS" />')
+        [void]$lines.Add('        <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />')
+    }
     if ($Activities -contains "android.app.NativeActivity") {
         [void]$lines.Add('        <activity')
         [void]$lines.Add('            android:name="android.app.NativeActivity"')

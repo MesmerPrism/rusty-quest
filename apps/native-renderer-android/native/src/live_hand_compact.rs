@@ -124,6 +124,7 @@ impl Default for LiveHandCompactStats {
 pub(crate) struct LiveHandCompactFrameSet {
     pub(crate) left: Option<RecordedHandSkinningFrame>,
     pub(crate) right: Option<RecordedHandSkinningFrame>,
+    pub(crate) ui_pointer: Option<crate::native_alternate_input::HandPointerSample>,
 }
 
 impl LiveHandCompactFrameSet {
@@ -350,9 +351,36 @@ impl LiveHandCompactInput {
             LiveHandCompactFrameSet {
                 left: left_frame,
                 right: right_frame,
+                ui_pointer: right
+                    .as_ref()
+                    .and_then(|joints| hand_ui_pointer(joints, true))
+                    .or_else(|| {
+                        left.as_ref()
+                            .and_then(|joints| hand_ui_pointer(joints, false))
+                    }),
             },
             stats,
         )
+    }
+
+    /// Four tracked positions only. No rig, mesh, compact shape or adapter lock prerequisite.
+    /// Uses the same session-owned trackers/reference space/time as the visual path.
+    pub(crate) fn locate_ui_pointer(
+        &self,
+        reference_space: &xr::Space,
+        time: xr::Time,
+    ) -> Option<crate::native_alternate_input::HandPointerSample> {
+        let right = locate_hand_result(reference_space, self.right_tracker.as_ref(), time);
+        right
+            .locations
+            .as_ref()
+            .and_then(|joints| hand_ui_pointer(joints, true))
+            .or_else(|| {
+                let left = locate_hand_result(reference_space, self.left_tracker.as_ref(), time);
+                left.locations
+                    .as_ref()
+                    .and_then(|joints| hand_ui_pointer(joints, false))
+            })
     }
 
     fn tracker_ready(&self) -> bool {
@@ -384,6 +412,29 @@ fn compact_frame_from_locations(
         runtime_joint_poses,
         tip_length_rows: pack_tip_length_rows(&tip_lengths),
     })
+}
+
+fn hand_ui_pointer(
+    locations: &xr::HandJointLocations,
+    right: bool,
+) -> Option<crate::native_alternate_input::HandPointerSample> {
+    let point = |joint: xr::HandJoint| {
+        let location = &locations[joint];
+        if !location.location_flags.contains(
+            xr::SpaceLocationFlags::POSITION_VALID | xr::SpaceLocationFlags::POSITION_TRACKED,
+        ) {
+            return None;
+        }
+        let p = location.pose.position;
+        Some([p.x, p.y, p.z])
+    };
+    crate::native_alternate_input::joint_pointer(
+        point(xr::HandJoint::WRIST)?,
+        point(xr::HandJoint::INDEX_PROXIMAL)?,
+        point(xr::HandJoint::THUMB_TIP)?,
+        point(xr::HandJoint::INDEX_TIP)?,
+        right,
+    )
 }
 
 struct LocateHandResult {

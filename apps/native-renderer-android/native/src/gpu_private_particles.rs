@@ -89,6 +89,10 @@ include!(concat!(
     "/private_particle_payload_config.rs"
 ));
 
+pub(crate) const fn payload_linked() -> bool {
+    PRIVATE_PARTICLE_PAYLOAD_LINKED
+}
+
 const PARTICLE_COMPUTE_LOCAL_SIZE: u32 = 64;
 const PARTICLE_SORT_LOCAL_SIZE: u32 = 128;
 const PARTICLE_SORT_ROW_BYTES: vk::DeviceSize = 16;

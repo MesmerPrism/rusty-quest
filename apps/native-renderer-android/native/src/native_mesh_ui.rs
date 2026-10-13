@@ -262,7 +262,7 @@ impl PointerCapture {
     pub(crate) fn captured(&self) -> bool {
         self.captured
     }
-    /// Codes: 0 down,1 move,2 up,3 cancel. One authoritative controller route only.
+    /// Codes: 0 down,1 move,2 up,3 cancel. One authoritative pointer owner only.
     pub(crate) fn update(
         &mut self,
         valid: bool,

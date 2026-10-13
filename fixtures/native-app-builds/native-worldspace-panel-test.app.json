@@ -6,6 +6,8 @@
   "package_name": "io.github.mesmerprism.rustyquest.native_renderer.worldspace_panel_test",
   "requested_features": [
     "quest.native.openxr_vulkan_base",
+    "input.controllers_and_hands_optional",
+    "input.tracked_hand_pointer",
     "renderer.native_scene",
     "ui.native_mesh_panel"
   ],
@@ -29,16 +31,19 @@
       "debug.rustyquest.native_renderer.private_layer.enabled": "false",
       "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
       "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.input.source": "disabled",
       "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "false"
     }
   },
   "permission_allowlist": [],
   "declared_manifest": {
     "permissions": [
+      "com.oculus.permission.HAND_TRACKING",
       "org.khronos.openxr.permission.OPENXR",
       "org.khronos.openxr.permission.OPENXR_SYSTEM"
     ],
     "uses_features": [
+      "oculus.software.handtracking",
       "android.hardware.vr.headtracking",
       "android.opengl.gles.3.1"
     ],
@@ -56,6 +61,8 @@
     "required_disabled_modules": [],
     "required_modules": [
       "core/openxr-vulkan",
+      "input/controllers-and-hands",
+      "input/tracked-hand-pointer",
       "renderer/native-scene",
       "ui/native-mesh-panel"
     ],

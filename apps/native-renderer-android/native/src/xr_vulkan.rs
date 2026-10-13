@@ -388,6 +388,11 @@ unsafe fn run_projection_loop_inner(
         || runtime_options
             .environment_depth_settings
             .native_passthrough_required();
+    if runtime_options.render_mode.marker_value() == "native-worldspace-integration"
+        && simultaneous_decision.is_selected()
+    {
+        return Err("worldspace integration uses hands OR controllers; simultaneous input selection must be removed from the app lock".to_owned());
+    }
     let display_refresh_settings = runtime_options.display_refresh_settings.clone();
     if let Err(error) = display_refresh_settings.validate() {
         crate::marker(
@@ -2165,6 +2170,13 @@ unsafe fn run_projection_frames(
     let mut app_running = true;
     let mut frame_slot = 0_usize;
     let mut frame_count = 0_u64;
+    let alternate_input_enabled = render_mode.marker_value() == "native-worldspace-integration";
+    let mut alternate_pointer = crate::native_alternate_input::AlternatePointer::default();
+    if alternate_input_enabled {
+        crate::marker("worldspace-input", format!("status=config trackedHandPointerSelected={} compactRigInputSelected={} handPointerSource=XR_EXT_hand_tracking handAdapterRequiredForRawPointer=false simultaneousTrackingRequired=false",
+            crate::native_alternate_input::tracked_pointer_enabled_for_mode(render_mode.marker_value()),
+            compact_hand_input_source_mode.selects_live_frame()));
+    }
     let mut ui_particle_phase_frame = 0_u64;
     let experiment_frame_gate_clock = Instant::now();
     let mut experiment_frame_gate =
@@ -2276,6 +2288,7 @@ unsafe fn run_projection_frames(
                     if !focused {
                         crate::experiment_session_runtime::note_preparation_presentation(
                             crate::experiment_session::PresentationState::Unfocused);
+                        alternate_pointer.reset();
                         if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                             panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
                         }
@@ -2493,6 +2506,7 @@ unsafe fn run_projection_frames(
         trace_startup_frame(frame_count, "after-xr-begin-frame");
 
         if !frame_state.should_render {
+            alternate_pointer.reset();
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                 panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
             }
@@ -2692,9 +2706,43 @@ unsafe fn run_projection_frames(
             );
         }
 
+        let (live_hand_frames, live_hand_stats) =
+            if compact_hand_input_source_mode.selects_live_frame() {
+                live_hand_compact.locate_compact_frame(
+                    reference_space,
+                    frame_state.predicted_display_time,
+                    replay.runtime_joint_count as usize,
+                    replay.tip_length_count as usize,
+                )
+            } else {
+                let mut stats = LiveHandCompactStats::default();
+                stats.reason = if matches!(
+                    compact_hand_input_source_mode,
+                    CompactHandInputSourceMode::Disabled
+                ) {
+                    "compact-hand-input-source-disabled"
+                } else {
+                    "compact-hand-input-source-recorded-replay"
+                };
+                (LiveHandCompactFrameSet::default(), stats)
+            };
         let mut private_particle_breath_sample = None;
         let mut breath_observed_at = None;
         let mut controller_readiness = Default::default();
+        let ui_hand_sample = if renderer_focus_session_state == "FOCUSED" {
+            live_hand_frames.ui_pointer.or_else(|| {
+                crate::native_alternate_input::tracked_pointer_enabled_for_mode(
+                    render_mode.marker_value(),
+                )
+                .then(|| {
+                    live_hand_compact
+                        .locate_ui_pointer(reference_space, frame_state.predicted_display_time)
+                })
+                .flatten()
+            })
+        } else {
+            None
+        };
         if let Some(actions) = stimulus_actions.as_deref_mut() {
             let mut controller_events = actions.sync_and_poll(
                 xr_instance,
@@ -2709,14 +2757,51 @@ unsafe fn run_projection_frames(
             breath_observed_at = controller_events.breath_observed_at;
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                 let ray = controller_events.mesh_ui_ray.as_ref();
+                let controller_selected = controller_readiness.interaction_profile_ready
+                    && controller_readiness.action_ready
+                    && renderer_focus_session_state == "FOCUSED";
+                let (owner, hand_pressed, changed) = if alternate_input_enabled {
+                    alternate_pointer.update(controller_selected, ui_hand_sample)
+                } else {
+                    (
+                        crate::native_alternate_input::PointerOwner::Controllers,
+                        false,
+                        false,
+                    )
+                };
+                if changed {
+                    panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
+                }
+                let controller_owner =
+                    owner == crate::native_alternate_input::PointerOwner::Controllers;
+                let hand = ui_hand_sample;
                 let consumed = panel.controller_ray(
                     app,
-                    ray.is_some_and(|ray| ray.valid),
-                    ray.is_some_and(|ray| ray.pressed),
-                    ray.map(|ray| ray.origin).unwrap_or([0.0; 3]),
-                    ray.map(|ray| ray.direction).unwrap_or([0.0; 3]),
+                    if controller_owner {
+                        ray.is_some_and(|ray| ray.valid)
+                    } else {
+                        hand.is_some()
+                    },
+                    if controller_owner {
+                        ray.is_some_and(|ray| ray.pressed)
+                    } else {
+                        hand_pressed
+                    },
+                    if controller_owner {
+                        ray.map(|ray| ray.origin).unwrap_or([0.0; 3])
+                    } else {
+                        hand.map(|ray| ray.origin).unwrap_or([0.0; 3])
+                    },
+                    if controller_owner {
+                        ray.map(|ray| ray.direction).unwrap_or([0.0; 3])
+                    } else {
+                        hand.map(|ray| ray.direction).unwrap_or([0.0; 3])
+                    },
                 )?;
-                if consumed {
+                if changed || frame_count % 120 == 0 {
+                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers={} handPointerSource=tracked-joints-wrist-index-proximal handPinchPressed={} handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), alternate_input_enabled, hand_pressed));
+                }
+                if consumed || (alternate_input_enabled && !controller_selected) {
                     controller_events.stimulus_randomize_triggered = false;
                     controller_events.panel_toggle_triggered = false;
                     controller_events.developer_panel_triggered = false;
@@ -2724,6 +2809,8 @@ unsafe fn run_projection_frames(
                     controller_events.private_particle_recenter_triggered = false;
                     controller_events.projection_target_inputs.clear();
                     controller_events.environment_depth_alignment_inputs.clear();
+                    controller_events.native_controller_breath_sample = None;
+                    breath_observed_at = None;
                 }
             }
             for input in controller_events.projection_target_inputs {
@@ -2811,6 +2898,25 @@ unsafe fn run_projection_frames(
                 && gpu_private_particle_renderer.is_some()
             {
                 private_particle_world_anchor.recenter(particle_sort_eye_projection, frame_count);
+            }
+        }
+        let worldspace_controllers_selected = alternate_input_enabled
+            && controller_readiness.interaction_profile_ready
+            && controller_readiness.action_ready;
+        if alternate_input_enabled && stimulus_actions.is_none() {
+            if let Some(panel) = mesh_ui_panel.as_deref_mut() {
+                let (_, pressed, changed) = alternate_pointer.update(false, ui_hand_sample);
+                if changed {
+                    panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
+                }
+                let hand = ui_hand_sample;
+                panel.controller_ray(
+                    app,
+                    hand.is_some(),
+                    pressed,
+                    hand.map(|ray| ray.origin).unwrap_or([0.0; 3]),
+                    hand.map(|ray| ray.direction).unwrap_or([0.0; 3]),
+                )?;
             }
         }
         let (route_action, route_revision) =
@@ -3017,6 +3123,7 @@ unsafe fn run_projection_frames(
         effective_diagnostic_settings.enabled &=
             mesh_ui_controls.is_none_or(|controls| controls.diagnostics);
         let effective_grafts_enabled = hand_mesh_graft_copies_enabled
+            && !worldspace_controllers_selected
             && mesh_ui_controls.is_none_or(|controls| controls.grafts && controls.hands);
         let effective_graft_scale = hand_mesh_graft_copy_scale
             * mesh_ui_controls
@@ -3216,26 +3323,6 @@ unsafe fn run_projection_frames(
         );
         frame_timings.guide_graph_ms = elapsed_ms(stage_started);
         let stage_started = Instant::now();
-        let (live_hand_frames, live_hand_stats) =
-            if compact_hand_input_source_mode.selects_live_frame() {
-                live_hand_compact.locate_compact_frame(
-                    reference_space,
-                    frame_state.predicted_display_time,
-                    replay.runtime_joint_count as usize,
-                    replay.tip_length_count as usize,
-                )
-            } else {
-                let mut stats = LiveHandCompactStats::default();
-                stats.reason = if matches!(
-                    compact_hand_input_source_mode,
-                    CompactHandInputSourceMode::Disabled
-                ) {
-                    "compact-hand-input-source-disabled"
-                } else {
-                    "compact-hand-input-source-recorded-replay"
-                };
-                (LiveHandCompactFrameSet::default(), stats)
-            };
         simultaneous_hands_controllers.observe_readiness(IndependentInputReadiness {
             hand_adapter_applied: simultaneous_hands_controllers.is_selected(),
             hand_tracker_ready: live_hand_stats.tracker_ready,
@@ -3269,8 +3356,9 @@ unsafe fn run_projection_frames(
             frame_count,
             hand_mesh_visual_material_settings,
         );
-        let selected_primary_live_hand_frame = compact_hand_input_source_mode
+        let selected_primary_live_hand_frame = (compact_hand_input_source_mode
             .selects_live_frame()
+            && !worldspace_controllers_selected)
             .then(|| live_hand_frames.primary_frame())
             .flatten();
         let selected_primary_live_hand = if selected_primary_live_hand_frame.is_some() {
@@ -3282,8 +3370,9 @@ unsafe fn run_projection_frames(
         } else {
             "none"
         };
-        let selected_secondary_live_hand_frame = compact_hand_input_source_mode
+        let selected_secondary_live_hand_frame = (compact_hand_input_source_mode
             .selects_live_frame()
+            && !worldspace_controllers_selected)
             .then(|| live_hand_frames.secondary_frame())
             .flatten();
         let selected_secondary_live_hand = if selected_secondary_live_hand_frame.is_some() {
@@ -3537,6 +3626,10 @@ unsafe fn run_projection_frames(
         if let Some(controls) = mesh_ui_controls {
             hand_mesh_visual_stats.primary.visible &= controls.hands;
             hand_mesh_visual_stats.secondary.visible &= controls.hands;
+        }
+        if worldspace_controllers_selected {
+            hand_mesh_visual_stats.primary.visible = false;
+            hand_mesh_visual_stats.secondary.visible = false;
         }
         let hand_anchor_particle_stats = GpuHandAnchorParticleFrameSetStats::new(
             &hand_mesh_visual_stats,
@@ -3929,7 +4022,8 @@ unsafe fn run_projection_frames(
             &live_hand_frames,
             &views,
             compact_hand_input_source_mode.selects_live_frame()
-                && effective_diagnostic_settings.enabled,
+                && effective_diagnostic_settings.enabled
+                && !worldspace_controllers_selected,
             effective_diagnostic_settings,
             projection_metadata,
             &projection_target_state,

@@ -84,6 +84,7 @@ mod lsl_transport_bridge;
 mod manifold_breath_bridge;
 mod manifold_pose_publisher;
 mod manifold_scalar_driver_bridge;
+mod native_alternate_input;
 mod native_app_settings;
 #[cfg(target_os = "android")]
 mod native_camera;
@@ -320,15 +321,16 @@ fn runtime_permissions_for_route(
 fn particle_adapter_effect_request(
     runtime_options: &native_renderer_options::NativeRendererRuntimeOptions,
 ) -> particle_adapter_consumer::ParticleAdapterEffectRequest {
-    particle_adapter_consumer::ParticleAdapterEffectRequest {
-        environment_depth_particles: runtime_options
+    particle_adapter_consumer::ParticleAdapterEffectRequest::from_selection(
+        runtime_options
             .environment_depth_settings
             .mode_draws_particles(),
-        hand_anchor_particles: runtime_options.hand_anchor_particle_settings.enabled,
-        private_particles: runtime_options
+        runtime_options.hand_anchor_particle_settings.enabled,
+        runtime_options
             .render_mode
             .requests_private_particle_recenter_input(),
-    }
+        gpu_private_particles::payload_linked(),
+    )
 }
 
 #[cfg(target_os = "android")]

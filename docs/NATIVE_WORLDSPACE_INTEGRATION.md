@@ -1,5 +1,47 @@
 # Native worldspace integration probe
 
+## Hands or controllers
+
+Worldspace mode uses one input owner at a time. An active recognized controller
+interaction profile takes priority; otherwise the mesh UI can use a tracked hand.
+The right hand takes priority over a valid left-hand fallback. Its app-derived ray
+runs from the wrist toward the index proximal joint; thumb/index tip separation
+drives pinch with 25mm press and 40mm release thresholds. A newly tracked hand
+must first open its pinch. Ownership changes, focus loss, missing tracking and
+non-rendering frames cancel drag capture. This is a basic tracked-joint pointer,
+not a claim of the platform's hand-aim extension or controller-input proof.
+
+Joints use the existing `XR_EXT_hand_tracking` trackers, projection reference
+space and current predicted display timestamp. No extra frame loop is created.
+When controller input owns the worldspace frame, live hand visuals, diagnostic
+hand overlays and graft copies are suppressed. Ordinary controller actions remain
+available; events captured by the panel are consumed before world controls.
+
+The app feature closure should retain `input.controllers_and_hands_optional`
+and the selected live-hand/visual features, but omit
+`input.simultaneous_hands_and_controllers`. Remove its enabled property and
+resolver-derived activation binding from the private runtime closure. Worldspace
+mode rejects an accidentally selected simultaneous adapter. The manifest resolver
+emits `com.oculus.handtracking.support=HANDS_AND_CONTROLLERS` and hand version
+`V2.0` only when both the optional hand feature and hand permission are selected.
+This permits either input mode at launch without claiming simultaneous tracking.
+
+The public foundation additionally selects `input.tracked_hand_pointer`. Its
+explicit packaged flag enables a four-joint UI sample even while compact mesh
+input is disabled. It needs neither a hand-adapter lock nor a private or recorded
+rig input: the pointer consumes positions directly in the projection reference
+space. The existing hand tracker owns the raw acquisition, using position-valid
+and position-tracked flags on all four joints (`0x2 | 0x8` in OpenXR). A private
+live-skinning composition can select this feature as well; it reuses its existing
+current compact sample when available and polls raw joints only as a fallback.
+Live GPU rig mapping still requires that composition's independently applied
+hand-adapter lock. The pointer feature never substitutes for that lock.
+
+Pure host tests cover bounded ray construction, pinch hysteresis, controller
+priority, hand switching and tracking loss. Resolver tests cover manifest
+eligibility. Hand usability, launch without controllers and wearer-visible mode
+switching still require validation of the exact replacement APK on a headset.
+
 The `native-worldspace-integration` render mode composes camera effects, resident
 GPU particles, live GPU hand meshes, hand graft copies and a world-positioned UI
 mesh in one native OpenXR/Vulkan session. The mode is opt-in. Existing closed
