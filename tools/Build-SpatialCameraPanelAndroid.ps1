@@ -35,6 +35,7 @@ param(
     [string]$PrivateFeatureAssetDir = "",
     [string]$PrivateFeatureResourceDir = "",
     [string]$EmbeddedDuplexProductInputRoot = "",
+    [ValidateRange(300000,3600000)][ValidateScript({ $_ % 60000 -eq 0 })][long]$EmbeddedDuplexSetupHorizonMs = 300000,
     [string]$ProductId = "",
     [string]$AppId = "",
     [string]$AppLabel = "",
@@ -1343,6 +1344,7 @@ $embeddedMediaBuildInputsSha256 = Get-StringSha256 -Value $embeddedMediaBuildInp
 Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
 $sourceVersionMetadata=New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) -Enabled:$UseSourceCompositionVersionName
 $buildInputDescriptor = [ordered]@{
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
     source_commit = $sourceHead
     source_tree = $sourceTree
@@ -1466,6 +1468,7 @@ $nativeIdentityDescriptor = [ordered]@{
     distortion_speed_scale = $resolvedDistortionSpeedScale
     environment_depth_owner = $EnvironmentDepthOwner
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
@@ -1511,6 +1514,7 @@ $shellIdentityDescriptor = [ordered]@{
     private_assets_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_assets) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_assets.sha256 }
     private_resources_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_resources) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_resources.sha256 }
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
@@ -2021,6 +2025,7 @@ try {
     $env:RUSTY_QUEST_ANDROID_NDK_VERSION = Split-Path -Leaf $NdkHome
     $env:JAVA_HOME = $JavaHome
     $env:GRADLE_USER_HOME = $gradleUserHome
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS = $EmbeddedDuplexSetupHorizonMs.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $resolvedProductId
     $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $appBuildDir
     $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $rootBuildDir
@@ -2488,6 +2493,7 @@ $apkInspection = [ordered]@{
     app_owned_rust_native_receipt_count = $nativeReceiptPayloadEntries.Count
     embedded_media_additional_native_payload_count = $unexpectedEmbeddedMediaNativePayload.Count
     embedded_media_rust_linkage = "statically-linked-once-in-spatial-camera-panel-native-receipt"
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_inputs = [ordered]@{
         configured = ($null -ne $embeddedDuplexProductInputs)
         closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
@@ -2604,6 +2610,7 @@ $manifest = [ordered]@{
         native_payload_count = 0
         rust_linkage = [string]$embeddedMediaArtifactInspection.rust_linkage
     }
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_inputs = [ordered]@{
         configured = ($null -ne $embeddedDuplexProductInputs)
         closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
@@ -3231,6 +3238,7 @@ $manifestPath = Join-Path $OutDir "build-manifest.json"
 [void](Set-TextFileIfChanged -Path $manifestPath -Value ($manifest | ConvertTo-Json -Depth 12))
 
 $runCapsule = [ordered]@{
+    embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.apk_run_capsule.v1"
     capsule_id = "spatial-$($resolvedAppId.Replace('.', '-'))-$($buildInputFingerprint.Substring(0, 12))"
     app_id = $resolvedAppId

@@ -63,6 +63,7 @@ struct Pending {
     identity: rusty_manifold_admission::ManifoldClientIdentity,
     grant_id: DottedId,
     prior_grant_expiry: u64,
+    root_horizon_ms: u64,
     lease_id: DottedId,
     token_expiry: u64,
     grant_issue: Option<ManifoldAdmissionReceipt>,
@@ -255,6 +256,9 @@ impl QuestBrokerRuntimeProvider {
                     "renewal requires one current outer media lease",
                 ));
             };
+            let root_horizon_ms = broker
+                .admission_snapshot()
+                .root_renewal_horizon_ms(&grant.grant_id);
             let expiry = now_ms
                 .checked_add(5_000)
                 .ok_or_else(rejected)?
@@ -266,8 +270,8 @@ impl QuestBrokerRuntimeProvider {
                         .ok_or_else(rejected)?,
                 );
             if expiry <= now_ms
-                || now_ms.checked_add(300_000).ok_or_else(rejected)? <= grant.expires_at_ms
-                || now_ms.checked_add(300_000).ok_or_else(rejected)? <= lease.expires_at_ms
+                || now_ms.checked_add(root_horizon_ms).ok_or_else(rejected)? <= grant.expires_at_ms
+                || now_ms.checked_add(root_horizon_ms).ok_or_else(rejected)? <= lease.expires_at_ms
             {
                 return Err(phase_rejected("renewal grant and outer deadlines must advance within their bounded owner policy"));
             }
@@ -283,6 +287,7 @@ impl QuestBrokerRuntimeProvider {
                 identity: grant.identity.clone(),
                 grant_id: grant.grant_id.clone(),
                 prior_grant_expiry: grant.expires_at_ms,
+                root_horizon_ms,
                 lease_id: lease.lease_id.clone(),
                 token_expiry: expiry,
                 grant_issue: None,
@@ -325,7 +330,10 @@ impl QuestBrokerRuntimeProvider {
                 )?,
                 grant_id: pending.grant_id.clone(),
                 prior_expires_at_ms: pending.prior_grant_expiry,
-                expires_at_ms: pending.now_ms.checked_add(300_000).ok_or_else(rejected)?,
+                expires_at_ms: pending
+                    .now_ms
+                    .checked_add(pending.root_horizon_ms)
+                    .ok_or_else(rejected)?,
                 accepted_evidence_id: pending.proof.request_id.clone(),
                 accepted_evidence_sha256: format!(
                     "sha256:{}",
@@ -410,7 +418,7 @@ impl QuestBrokerRuntimeProvider {
                     expected_authority_revision: broker
                         .control_lease_authority_snapshot()
                         .authority_revision,
-                    requested_ttl_ms: 300_000,
+                    requested_ttl_ms: pending.root_horizon_ms,
                     renewal_reason: DottedId::new("reason.quest.concurrent.current-signed-pair")
                         .expect("fixed reason"),
                     requested_at_ms: pending.now_ms,
