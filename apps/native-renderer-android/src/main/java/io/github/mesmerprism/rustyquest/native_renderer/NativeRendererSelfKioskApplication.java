@@ -38,6 +38,7 @@ public final class NativeRendererSelfKioskApplication extends Application {
                 resumed.put(a.getClass().getName(), true);
                 departures.remove(a.getClass().getName());
                 NativeRendererSelfKioskService.resumePendingTerminal(a);
+                reconcileSelectedBleOwner();
             }
             @Override public void onActivityPaused(Activity a) {
                 if (!own(a)) return;
@@ -78,6 +79,17 @@ public final class NativeRendererSelfKioskApplication extends Application {
     private boolean own(Activity activity) {
         return activity != null && getPackageName().equals(activity.getPackageName())
             && NativeRendererForegroundGuardPolicy.isAllowedComponent(activity.getClass().getName());
+    }
+
+    private static void reconcileSelectedBleOwner() {
+        try {
+            Class.forName("io.github.mesmerprism.rustyquest.native_renderer.BreathCompositionPanelModule")
+                .getMethod("reconcileCurrentExperimentSessionBleOwner").invoke(null);
+        } catch (ClassNotFoundException disabledModule) {
+            // Other app compositions do not select the experiment transport.
+        } catch (ReflectiveOperationException unavailableOwner) {
+            Log.w("RustyQuestSelfKiosk", "status=ble-resume-reconciliation-unavailable", unavailableOwner);
+        }
     }
 
     private void remember(Activity a) {

@@ -701,6 +701,9 @@ function New-GeneratedAndroidManifestText {
     [void]$lines.Add(('        android:label="{0}"' -f [System.Security.SecurityElement]::Escape($ApplicationLabel)))
     [void]$lines.Add('        android:theme="@android:style/Theme.Material.NoActionBar">')
     [void]$lines.Add('        <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />')
+    if ($Receivers -contains "NativeRendererBootReceiver") {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.boot_autostart" android:value="true" />')
+    }
     if ($Activities -contains "android.app.NativeActivity") {
         [void]$lines.Add('        <activity')
         [void]$lines.Add('            android:name="android.app.NativeActivity"')
@@ -767,6 +770,13 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('                <category android:name="com.oculus.intent.category.2D" />')
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
+    }
+    if ($Receivers -contains "NativeRendererBootReceiver") {
+        [void]$lines.Add('        <receiver android:name="io.github.mesmerprism.rustyquest.native_renderer.NativeRendererBootReceiver" android:exported="false">')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="android.intent.action.BOOT_COMPLETED" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </receiver>')
     }
     if ($Receivers -contains "PolarSensorCommandReceiver") {
         # `android.permission.DUMP` is the platform's shell-operator boundary
@@ -1365,9 +1375,12 @@ if ($hasPrivateAssetRequest) {
     $privateAssetClosure = $privateAssetValidation.closure
 }
 foreach ($receiver in $receivers) {
-    if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver", "BreathCompositionCommandReceiver")) {
+    if ($receiver -notin @("PolarSensorCommandReceiver", "LslPanelCommandReceiver", "BreathCompositionCommandReceiver", "NativeRendererBootReceiver")) {
         throw "Android receiver surface contains an unsupported closed-world receiver: $receiver"
     }
+}
+if (($receivers -ccontains 'NativeRendererBootReceiver') -ne ($selectedFeatureIds -ccontains 'ui.experiment_boot_autostart')) {
+    throw 'Own-app boot receiver requires its exact selected feature.'
 }
 $claimsSimultaneousHandsControllers = @($requiredMarkers | Where-Object {
     [string]$_ -match 'simultaneousHandsControllers(Selected|Ready)=true'
