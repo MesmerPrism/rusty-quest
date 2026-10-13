@@ -176,6 +176,7 @@ struct ProcessState {
 }
 
 // Observation only: no callback, credential, configuration body, or cleanup authority.
+#[derive(Clone, PartialEq, Eq)]
 struct InitializationFailure {
     attempt: u64,
     config_sha256: String,
@@ -286,30 +287,51 @@ fn initialization_failure_read_with_capability(
     capability: &NativeCapability,
 ) -> Result<Option<serde_json::Value>, String> {
     capability.require_live()?;
-    let state = process().lock().map_err(|_| "process state poisoned")?;
-    if state.initializing || state.closing || state.lease_integrity_failed {
-        return Err("initialization diagnostic busy".into());
-    }
-    if state.host.is_some() {
-        return Ok(None);
-    }
-    let failure = state
-        .initialization_failure
-        .as_ref()
-        .ok_or("initialization diagnostic unavailable")?;
-    if failure.binding != capability.binding
-        || failure.native_generation != capability.generation
-        || failure.attempt != state.initialization_attempt
-    {
-        return Err("initialization diagnostic identity changed".into());
-    }
-    let route = prepared_route()
-        .lock()
-        .map_err(|_| "packaged route slot poisoned")?;
-    if route.as_ref().map(|(sha, _)| sha.as_str()) != Some(failure.config_sha256.as_str()) {
-        return Err("initialization diagnostic route changed".into());
-    }
+    let failure = {
+        let state = process().lock().map_err(|_| "process state poisoned")?;
+        if state.initializing || state.closing || state.lease_integrity_failed {
+            return Err("initialization diagnostic busy".into());
+        }
+        if state.host.is_some() {
+            return Ok(None);
+        }
+        let failure = state
+            .initialization_failure
+            .as_ref()
+            .ok_or("initialization diagnostic unavailable")?;
+        if failure.binding != capability.binding
+            || failure.native_generation != capability.generation
+            || failure.attempt != state.initialization_attempt
+        {
+            return Err("initialization diagnostic identity changed".into());
+        }
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "packaged route slot poisoned")?;
+        if route.as_ref().map(|(sha, _)| sha.as_str()) != Some(failure.config_sha256.as_str()) {
+            return Err("initialization diagnostic route changed".into());
+        }
+        failure.clone()
+    };
+    // require_live may re-enter Java/app source. Never retain either native
+    // mutex across that callback; afterwards rejoin the exact same observation.
     capability.require_live()?;
+    {
+        let state = process().lock().map_err(|_| "process state poisoned")?;
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "packaged route slot poisoned")?;
+        if state.initializing
+            || state.closing
+            || state.lease_integrity_failed
+            || state.host.is_some()
+            || state.initialization_attempt != failure.attempt
+            || state.initialization_failure.as_ref() != Some(&failure)
+            || route.as_ref().map(|(sha, _)| sha.as_str()) != Some(failure.config_sha256.as_str())
+        {
+            return Err("initialization diagnostic changed during live check".into());
+        }
+    }
     Ok(Some(
         json!({"schema":"rusty.quest.embedded_duplex.owner_diagnostic_native_read.v1",
         "native_executor_generation": failure.native_generation,
