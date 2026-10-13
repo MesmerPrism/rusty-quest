@@ -225,10 +225,26 @@ final class EmbeddedDuplexPackagedInputs {
 
     /** Transfers only the verified asset closure to the native config assembler. */
     JSONObject packagedConfigRequest(JSONObject runtimeBindings) throws Exception {
-        fields(runtimeBindings, "adapter_id", "admission_authority_id", "grant_id",
+        String[] runtimeFields = {"adapter_id", "admission_authority_id", "grant_id",
                 "grant_expires_at_ms", "lease_expires_at_ms", "max_token_ttl_ms",
                 "embedded_duplex", "validation_epoch_entropy_hex",
-                "validation_wall_unix_ms", "validation_monotonic_elapsed_ns");
+                "validation_wall_unix_ms", "validation_monotonic_elapsed_ns"};
+        boolean hasSetupPolicy = runtimeBindings.has("setup_credential_horizon_ms");
+        if (hasSetupPolicy) {
+            runtimeFields = Arrays.copyOf(runtimeFields, runtimeFields.length + 1);
+            runtimeFields[runtimeFields.length - 1] = "setup_credential_horizon_ms";
+        }
+        fields(runtimeBindings, runtimeFields);
+        if (hasSetupPolicy) {
+            Object value = runtimeBindings.get("setup_credential_horizon_ms");
+            if (!(value instanceof Long || value instanceof Integer))
+                throw new IllegalArgumentException("setup horizon must be an exact integer");
+            long horizon = ((Number) value).longValue();
+            if (horizon < EmbeddedDuplexSetupCredentials.MIN_HORIZON_MS
+                    || horizon > EmbeddedDuplexSetupCredentials.MAX_HORIZON_MS
+                    || horizon % 60_000L != 0L)
+                throw new IllegalArgumentException("setup horizon bounds");
+        }
         JSONObject manifest = new JSONObject(manifestJson);
         JSONObject identity = manifest.getJSONObject("package");
         JSONObject lifecycle = new JSONObject(lifecycleJson());
@@ -244,6 +260,8 @@ final class EmbeddedDuplexPackagedInputs {
                 "validation_wall_unix_ms", "validation_monotonic_elapsed_ns"}) {
             request.put(key, runtimeBindings.get(key));
         }
+        if (hasSetupPolicy) request.put("setup_credential_horizon_ms",
+                runtimeBindings.get("setup_credential_horizon_ms"));
         request.put("product_spec", exact("product-spec.json"));
         request.put("product_lock", exact("accepted-product-lock.json"));
         request.put("client_lock", exact("client-lock.json"));
