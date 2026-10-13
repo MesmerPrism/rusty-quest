@@ -1,0 +1,50 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.experiment_session_relay",
+  "module_path": "ui/experiment-session-relay",
+  "module_kind": "same-apk-outbound-authenticated-relay",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Optional outbound HTTPS adapter carrying the common gateway signed commands and original receipts through an explicitly approved relay origin.",
+  "provides": [
+    "ui.experiment_session_relay"
+  ],
+  "depends_on": [
+    "ui.experiment_session_command_gateway"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "android.permission.INTERNET"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Only a proposed approved HTTPS origin is public configuration; scope tokens, controller secrets, private payloads and runtime evidence remain external."
+}
