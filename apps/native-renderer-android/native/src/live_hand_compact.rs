@@ -10,6 +10,9 @@ use openxr as xr;
 
 use crate::recorded_hand_replay::{RecordedHandGpuPose, RecordedHandSkinningFrame};
 
+#[path = "live_hand_rig_selection.rs"]
+mod rig_selection;
+
 const RUNTIME_JOINTS: [xr::HandJoint; 21] = [
     xr::HandJoint::PALM,
     xr::HandJoint::WRIST,
@@ -128,30 +131,8 @@ pub(crate) struct LiveHandCompactFrameSet {
 }
 
 impl LiveHandCompactFrameSet {
-    pub(crate) fn primary_frame(&self) -> Option<&RecordedHandSkinningFrame> {
-        self.left.as_ref().or(self.right.as_ref())
-    }
-
-    pub(crate) fn primary_handedness(&self) -> Option<&'static str> {
-        if self.left.is_some() {
-            Some("left")
-        } else if self.right.is_some() {
-            Some("right")
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn secondary_frame(&self) -> Option<&RecordedHandSkinningFrame> {
-        if self.left.is_some() {
-            self.right.as_ref()
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn secondary_handedness(&self) -> Option<&'static str> {
-        (self.left.is_some() && self.right.is_some()).then_some("right")
+    pub(crate) fn frame_for_rig(&self, rig_handedness: &str) -> Option<&RecordedHandSkinningFrame> {
+        rig_selection::frame_for_rig(self.left.as_ref(), self.right.as_ref(), rig_handedness)
     }
 }
 

@@ -47,7 +47,9 @@ current compact sample when available and polls raw joints only as a fallback.
 Live GPU rig mapping still requires that composition's independently applied
 hand-adapter lock. The pointer feature never substitutes for that lock. Worldspace
 never uses recorded poses as a fallback: missing live compact input hides the
-corresponding hand, while the static topology/bind rig remains available. Other
+corresponding hand, while the static topology/bind rig remains available. Live
+poses are selected by each resident rig's handedness: right-only tracking stays
+on the right rig and never promotes right poses into the left bind mesh. Other
 render modes keep their existing replay policies. The short `worldspace-hand-input`
 marker reports per-hand active/ready/source/locate state, shape counts and reason
 every 120 frames and on state changes; raw pointer input remains rig-independent.

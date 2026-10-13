@@ -3454,16 +3454,16 @@ unsafe fn run_projection_frames(
             frame_count,
             hand_mesh_visual_material_settings,
         );
+        // Each GPU skinning renderer owns a fixed bind mesh/palette. Tracking loss
+        // must not promote the opposite hand's poses into that resident rig.
         let selected_primary_live_hand_frame = (compact_hand_input_source_mode
             .selects_live_frame()
             && !worldspace_controllers_selected)
-            .then(|| live_hand_frames.primary_frame())
+            .then(|| live_hand_frames.frame_for_rig(&replay.handedness))
             .flatten();
-        let selected_primary_live_hand = if selected_primary_live_hand_frame.is_some() {
-            live_hand_frames
-                .primary_handedness()
-                .unwrap_or_else(|| handedness_label(&replay.handedness))
-        } else if compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode) {
+        let selected_primary_live_hand = if selected_primary_live_hand_frame.is_some()
+            || compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode)
+        {
             handedness_label(&replay.handedness)
         } else {
             "none"
@@ -3471,13 +3471,11 @@ unsafe fn run_projection_frames(
         let selected_secondary_live_hand_frame = (compact_hand_input_source_mode
             .selects_live_frame()
             && !worldspace_controllers_selected)
-            .then(|| live_hand_frames.secondary_frame())
+            .then(|| live_hand_frames.frame_for_rig(&secondary_replay.handedness))
             .flatten();
-        let selected_secondary_live_hand = if selected_secondary_live_hand_frame.is_some() {
-            live_hand_frames
-                .secondary_handedness()
-                .unwrap_or_else(|| handedness_label(&secondary_replay.handedness))
-        } else if compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode) {
+        let selected_secondary_live_hand = if selected_secondary_live_hand_frame.is_some()
+            || compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode)
+        {
             handedness_label(&secondary_replay.handedness)
         } else {
             "none"
@@ -4238,7 +4236,11 @@ unsafe fn run_projection_frames(
                         .image_rect(rect),
                 ),
         ];
-        let projection_layer_flags = if render_mode.projection_layer_alpha_blend() {
+        let projection_layer_flags = if crate::native_scene_composition::projection_alpha_blend(
+            render_mode.uses_scene_depth(),
+            native_passthrough_requested,
+            render_mode.projection_layer_alpha_blend(),
+        ) {
             xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA
                 | xr::CompositionLayerFlags::CORRECT_CHROMATIC_ABERRATION
         } else {
@@ -5760,7 +5762,11 @@ unsafe fn record_projection_diagnostic(
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
     let mut visual_stats = ReplayVisualStats::default();
-    let passthrough_alpha_clear = render_mode.projection_layer_alpha_blend();
+    let passthrough_alpha_clear = crate::native_scene_composition::projection_alpha_blend(
+        render_mode.uses_scene_depth(),
+        environment_depth_settings.native_passthrough_required(),
+        render_mode.projection_layer_alpha_blend(),
+    );
     let stimulus_volume_route = render_mode.uses_stimulus_volume();
     let custom_stereo_projection = render_mode.uses_custom_stereo_projection();
     let draw_base_hand_meshes = should_draw_base_hand_meshes(
@@ -7409,7 +7415,11 @@ impl NativePassthroughRuntime {
             format!(
                 "status=active passthroughExtension=XR_FB_passthrough nativePassthroughLayerActive=true passthroughCompositionLayer=CompositionLayerPassthroughFB passthroughPurpose=RECONSTRUCTION environmentBlendModeAlphaSupported={} environmentBlendMode=OPAQUE projectionLayerAlphaBlend={} passthroughLayerAlphaBlend=true {}",
                 alpha_blend_supported,
-                render_mode.projection_layer_alpha_blend(),
+                crate::native_scene_composition::projection_alpha_blend(
+                    render_mode.uses_scene_depth(),
+                    native_passthrough_requested,
+                    render_mode.projection_layer_alpha_blend(),
+                ),
                 passthrough_style_settings.marker_fields(),
             ),
         );
