@@ -10,7 +10,7 @@ val embeddedDuplexSetupHorizonMs = providers.environmentVariable("RUSTY_QUEST_SP
   .orElse("300000").map { raw ->
     require(raw.matches(Regex("[0-9]+"))) { "Invalid embedded duplex setup horizon" }
     val value = raw.toLongOrNull() ?: error("Embedded duplex setup horizon overflow")
-    require(value in 300_000L..3_600_000L) { "Embedded duplex setup horizon must be 300000..3600000 ms" }
+    require(value in 300_000L..3_600_000L && value % 60_000L == 0L) { "Embedded duplex setup horizon must be whole minutes in 300000..3600000 ms" }
     value
   }
 

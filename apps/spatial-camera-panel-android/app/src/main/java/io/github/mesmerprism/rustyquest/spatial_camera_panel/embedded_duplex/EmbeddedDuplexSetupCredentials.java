@@ -8,7 +8,7 @@ public final class EmbeddedDuplexSetupCredentials {
     public final long horizonMs, issuedAtMs, expiresAtMs;
 
     private EmbeddedDuplexSetupCredentials(boolean fixture, long horizonMs, long issuedAtMs) {
-        if (horizonMs < MIN_HORIZON_MS || horizonMs > MAX_HORIZON_MS
+        if (horizonMs < MIN_HORIZON_MS || horizonMs > MAX_HORIZON_MS || horizonMs % 60_000L != 0L
                 || fixture && horizonMs != MIN_HORIZON_MS || issuedAtMs <= 0L
                 || issuedAtMs > Long.MAX_VALUE - horizonMs)
             throw new IllegalArgumentException("setup credential issuance bounds");

@@ -39,13 +39,13 @@ public final class SetupHost {
      EmbeddedDuplexSetupCredentials p=EmbeddedDuplexSetupCredentials.issue(false,horizon,100);
      yes(p.expiresAtMs==100+horizon && p.horizonMs==horizon && p.issuedAtMs==100);
    }
-   for(long horizon:new long[]{0,299999,3600001,Long.MAX_VALUE})deny(()->EmbeddedDuplexSetupCredentials.issue(false,horizon,100));
+   for(long horizon:new long[]{0,299999,300001,3600001,Long.MAX_VALUE})deny(()->EmbeddedDuplexSetupCredentials.issue(false,horizon,100));
    deny(()->EmbeddedDuplexSetupCredentials.issue(false,300000,0));
    deny(()->EmbeddedDuplexSetupCredentials.issue(false,300000,Long.MAX_VALUE-299999));
    deny(()->EmbeddedDuplexSetupCredentials.issue(true,1800000,100));
    EmbeddedDuplexEnrollment e=new EmbeddedDuplexEnrollment();
    EmbeddedDuplexSessionInputs a=EmbeddedDuplexSessionInputs.createRealPeer(e);
-   yes(a.setupCredentials.horizonMs==1800000 && a.runtimeBindings.getLong("grant_expires_at_ms")==a.setupCredentials.expiresAtMs);
+   yes(a.runtimeBindings.getLong("setup_credential_horizon_ms")==1800000 && a.setupCredentials.horizonMs==1800000 && a.runtimeBindings.getLong("grant_expires_at_ms")==a.setupCredentials.expiresAtMs);
    yes(a.runtimeBindings.getLong("lease_expires_at_ms")==a.setupCredentials.expiresAtMs && a.runtimeBindings.getLong("max_token_ttl_ms")==60000);
    io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.selected=true;
    EmbeddedDuplexSessionInputs b=EmbeddedDuplexSessionInputs.createRealPeer(e);
@@ -77,7 +77,7 @@ if($p.Count-ne1){throw 'Missing exact setup horizon parameter'}
 $bind=[scriptblock]::Create('param('+$p[0].Extent.Text+')'+[Environment]::NewLine+'$EmbeddedDuplexSetupHorizonMs')
 if((& $bind)-ne300000){throw 'Default policy changed'}
 foreach($v in @(300000,1800000,3600000)){if((& $bind $v)-ne$v){throw 'Selected policy differs'}}
-foreach($v in @(299999,3600001)){try{& $bind $v;throw 'Invalid horizon admitted'}catch {if($_.FullyQualifiedErrorId -notlike "ParameterArgumentValidationError*"){throw}}}
+foreach($v in @(299999,300001,3600001)){try{& $bind $v;throw 'Invalid horizon admitted'}catch {if($_.FullyQualifiedErrorId -notlike "ParameterArgumentValidationError*"){throw}}}
 Write-Output 'Actual public build argument bounds/default PASS; no build invoked'
 """, encoding="utf-8")
             subprocess.run(["pwsh","-NoProfile","-File",str(ps),"-Builder",str(ROOT / "tools/Build-SpatialCameraPanelAndroid.ps1")],check=True)

@@ -35,7 +35,7 @@ param(
     [string]$PrivateFeatureAssetDir = "",
     [string]$PrivateFeatureResourceDir = "",
     [string]$EmbeddedDuplexProductInputRoot = "",
-    [ValidateRange(300000,3600000)][long]$EmbeddedDuplexSetupHorizonMs = 300000,
+    [ValidateRange(300000,3600000)][ValidateScript({ $_ % 60000 -eq 0 })][long]$EmbeddedDuplexSetupHorizonMs = 300000,
     [string]$ProductId = "",
     [string]$AppId = "",
     [string]$AppLabel = "",

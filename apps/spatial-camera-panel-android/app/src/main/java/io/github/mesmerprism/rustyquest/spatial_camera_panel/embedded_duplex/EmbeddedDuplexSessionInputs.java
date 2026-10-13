@@ -65,6 +65,7 @@ final class EmbeddedDuplexSessionInputs {
                 .put("adapter_id", enrollment.adapterId)
                 .put("admission_authority_id", enrollment.admissionAuthorityId)
                 .put("grant_id", grantId)
+                .put("setup_credential_horizon_ms", credentials.horizonMs)
                 .put("grant_expires_at_ms", credentials.expiresAtMs)
                 .put("lease_expires_at_ms", credentials.expiresAtMs)
                 .put("max_token_ttl_ms", Math.min(enrollment.maxTokenTtlMs, concurrentOwnPeer ? 120_000L : 60_000L))
