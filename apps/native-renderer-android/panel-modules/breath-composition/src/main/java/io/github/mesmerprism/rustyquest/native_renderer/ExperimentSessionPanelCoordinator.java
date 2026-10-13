@@ -630,7 +630,9 @@ final class ExperimentSessionPanelCoordinator {
         if (receipt.generation < state.generation) { nativeStateAcceptanceReason = "generation_regression"; return false; }
         boolean provenArm = arm!=null && state.phase==ExperimentSessionPanelState.Phase.ARMING
             && !state.pendingOperationId.isEmpty() && receipt.accepted
-            && "active".equals(receipt.phase) && "armed".equals(receipt.controlState)
+            && "active".equals(receipt.phase)
+            && ("armed".equals(receipt.controlState) || "running".equals(receipt.controlState)
+                || "paused".equals(receipt.controlState))
             && arm.matches(state.pendingOperationId,state.generation+1L,state.activeCondition,receipt,epoch);
         boolean pendingMatch = !state.pendingOperationId.isEmpty()
             && (state.pendingOperationId.equals(receipt.operationId) || provenArm);

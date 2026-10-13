@@ -279,6 +279,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         final String operation;
         final long startedAtElapsedMs;
         final long serverGeneration;
+        final long nativeOwnerEpoch;
         final ExperimentSessionControlCapability.Fence sessionFence;
         final long armGeneration;
         final String armCondition;
@@ -308,6 +309,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             this.startedAtElapsedMs = SystemClock.elapsedRealtime();
             ExperimentSessionBleServer server = remoteServer();
             this.serverGeneration = server == null ? 0L : server.currentGeneration();
+            this.nativeOwnerEpoch = server == null ? 0L : server.currentNativeEpoch();
             this.sessionFence=fence;
         }
     }
@@ -360,6 +362,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private static final ExperimentSessionAndroidShell.UiSink REMOTE_SINK =
         new ExperimentSessionAndroidShell.UiSink() {
             @Override public boolean observesSubmittedCommand() { return true; }
+            @Override public boolean retainsDurableCommand(String operationId, long epoch) {
+                RemotePending pending = remotePending;
+                ExperimentSessionBleServer server = remoteServer();
+                return pending != null && pending.awaitsDurableNativeOutcome()
+                    && !pending.nativeId.isEmpty() && pending.nativeId.equals(operationId)
+                    && epoch == EXPERIMENT_SESSION_SHELL.currentLaunchEpochForUi()
+                    && server != null
+                    && server.acceptsStatusRead(pending.serverGeneration, pending.nativeOwnerEpoch);
+            }
             @Override public boolean acceptsExperimentSessionCallbacks(long epoch) {
                 return epoch == EXPERIMENT_SESSION_SHELL.currentLaunchEpochForUi();
             }
@@ -388,12 +399,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
                 ExperimentSessionBleServer server = remoteServer();
                 if (server == null) return;
+                if (!server.acceptsStatusRead(pending.serverGeneration, pending.nativeOwnerEpoch)) return;
                 if ("arm".equals(pending.operation) && readback.receipt.accepted
                         && readback.armAcceptance != null
                         && readback.armAcceptance.matches(pending.nativeId, pending.armGeneration,
                             pending.armCondition, readback)
                         && state.generation == pending.armGeneration
-                        && state.phase == ExperimentSessionPanelState.Phase.ARMED
+                        && (state.phase == ExperimentSessionPanelState.Phase.ARMED
+                            || state.phase == ExperimentSessionPanelState.Phase.RUNNING
+                            || state.phase == ExperimentSessionPanelState.Phase.PAUSED)
                         && state.pendingOperationId.isEmpty()) {
                     server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId,
                         "confirmed", "Condition armed by the Quest runtime.");
@@ -5305,6 +5319,23 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         == projection.optLong("generation", -2L);
                 if (restartReceipt && !"saved".equals(recordingStatus)) accepted = false;
                 ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
+                String activeCondition = before.activeCondition;
+                if (projection.has("condition_id")) {
+                    Object nativeCondition = projection.opt("condition_id");
+                    if (nativeCondition == JSONObject.NULL && !"active".equals(phase)) {
+                        activeCondition = "none";
+                    } else if (nativeCondition instanceof String
+                            && ((String)nativeCondition).matches("condition-[ab]")) {
+                        activeCondition = (String)nativeCondition;
+                    } else {
+                        throw new IllegalArgumentException("authoritative-session-condition-invalid");
+                    }
+                } else if ("active".equals(phase)) {
+                    throw new IllegalArgumentException("authoritative-active-session-condition-unavailable");
+                } else if ("idle".equals(phase)) {
+                    // Legacy idle status did not always carry this optional identity.
+                    activeCondition = "none";
+                }
                 boolean startingOperation = start && expected != null
                     && expected.operationId.equals(operationId);
                 if (startingOperation && "active".equals(phase)
@@ -5339,7 +5370,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         phase,
                         projection.optBoolean("audio_technical_hold", false)
                             ? "audio-error" : projection.optString("control_state", ""),
-                        before.activeCondition,
+                        activeCondition,
                         "active".equals(phase),
                         projection.optString("completion", ""),
                         projection.optLong("active_time_ms", 0L),

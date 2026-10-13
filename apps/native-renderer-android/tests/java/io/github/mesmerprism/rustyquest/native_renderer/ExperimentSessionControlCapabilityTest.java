@@ -7,7 +7,7 @@ public final class ExperimentSessionControlCapabilityTest {
  static void require(boolean b,String why){if(!b)throw new AssertionError(why);}
  interface Checked {void run() throws Exception;}
  static void deny(Checked f,String why)throws Exception{try{f.run();}catch(IllegalArgumentException|SecurityException e){return;}throw new AssertionError(why);}
- static JSONObject read()throws Exception{return new JSONObject().put("recording",true).put("profile_identity_bound",true).put("audio_identity_bound",true).put("generation",7L).put("runtime_epoch",3L).put("session_key","utc-ns-00000000000000000042").put("condition_id","condition-a").put("non_audio_profile_sha256",repeat("1",64)).put("activation_binding_sha256",repeat("2",64)).put("control_state","armed");}
+ static JSONObject read()throws Exception{return new JSONObject().put("phase","active").put("profile_identity_bound",true).put("audio_identity_bound",true).put("generation",7L).put("runtime_epoch",3L).put("session_key","utc-ns-00000000000000000042").put("condition_id","condition-a").put("non_audio_profile_sha256",repeat("1",64)).put("activation_binding_sha256",repeat("2",64)).put("control_state","armed");}
  static String repeat(String s,int n){StringBuilder b=new StringBuilder();while(n-->0)b.append(s);return b.toString();}
  static JSONObject polar()throws Exception{return new JSONObject().put("closed",false).put("acc_requested",true).put("ecg_requested",false)
   .put("acc_pmd_ack_running",true).put("ecg_pmd_ack_running",false).put("acc_data_receiving_observed",true).put("ecg_data_receiving_observed",false)
@@ -108,6 +108,8 @@ public final class ExperimentSessionControlCapabilityTest {
   polarControls();
   ExperimentSessionControlCapability c=new ExperimentSessionControlCapability();JSONObject r=read();JSONObject status=new JSONObject().put("g",7L).put("p","ARMED").put("pending",false);
   JSONObject q=c.offer(status,r,9,11,2,1000);String ref=q.getString("s");require(q.getLong("g")==7,"actual generation");
+  require(!r.has("recording"),"actual sparse native producer has phase, no recording member");
+  for(String phase:new String[]{"idle","failed","unknown"})require(new ExperimentSessionControlCapability().offer(status,read().put("phase",phase).put("recording",true),9,11,2,1000)==null,"synthetic recording cannot override actual phase");
   ExperimentSessionControlCapability.Fence f=c.admit(ref,7,"start",1100,9,11,2);JSONObject command=f.nativeCommand("native-op",123456);require(command.getString("expected_binding_sha256").equals(repeat("2",64)),"binding retained");
   deny(()->c.admit(ref,8,"start",1100,9,11,2),"wrong generation");deny(()->c.admit(ref,7,"pause",1100,9,11,2),"wrong state op");deny(()->c.admit(ref,7,"start",2501,9,11,2),"expired");deny(()->c.admit(ref,7,"start",999,9,11,2),"clock regression");deny(()->c.admit(ref,7,"start",1100,10,11,2),"carrier");deny(()->c.admit(ref,7,"start",1100,9,12,2),"owner");deny(()->c.admit(ref,7,"start",1100,9,11,3),"owner epoch");
   r.put("runtime_epoch",4L);String next=c.offer(status,r,9,11,2,1200).getString("s");require(!ref.equals(next),"epoch rotates");deny(()->c.admit(ref,7,"start",1201,9,11,2),"old reference retired");

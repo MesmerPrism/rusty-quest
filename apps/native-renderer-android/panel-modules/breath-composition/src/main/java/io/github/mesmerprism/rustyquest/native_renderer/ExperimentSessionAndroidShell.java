@@ -104,6 +104,8 @@ final class ExperimentSessionAndroidShell {
     interface UiSink {
         /** Process command observer, independent of the replaceable Activity presentation. */
         default boolean observesSubmittedCommand() { return false; }
+        /** Exact process-owned durable mapping; ordinary observers retain their deadline. */
+        default boolean retainsDurableCommand(String operationId, long launchEpoch) { return false; }
         boolean acceptsExperimentSessionCallbacks(long launchEpoch);
         void onExperimentSessionReadback(SessionReadback readback);
         void onExperimentSessionTerminal(TerminalResult result);
@@ -686,8 +688,13 @@ final class ExperimentSessionAndroidShell {
         owner.schedule(new Runnable() {
             @Override public void run() {
                 requireWorkerThread();
-                if (!isCurrentEpoch(epoch) || cleanupConsumed
-                        || clock.elapsedRealtimeMillis() > deadlineMs) return;
+                if (!isCurrentEpoch(epoch) || cleanupConsumed) return;
+                UiSink observer = sink.get();
+                boolean retained = expected != null
+                    && ("arm".equals(expected.operation) || "restart-to-experimenter".equals(expected.operation))
+                    && observer != null && observer.observesSubmittedCommand()
+                    && observer.retainsDurableCommand(expected.operationId, epoch);
+                if (clock.elapsedRealtimeMillis() > deadlineMs && !retained) return;
                 try {
                     SessionReadback readback = readStatus();
                     dispatchReadback(sink, epoch, readback);
@@ -841,7 +848,10 @@ final class ExperimentSessionAndroidShell {
                 && readback.armAcceptance.matches(expected.operationId,
                     expected.expectedGeneration + 1L, expected.condition, readback)
                 && readback.receipt.accepted
-                && "armed".equals(readback.receipt.controlState)) return false;
+                && "active".equals(readback.receipt.phase)
+                && ("armed".equals(readback.receipt.controlState)
+                    || "running".equals(readback.receipt.controlState)
+                    || "paused".equals(readback.receipt.controlState))) return false;
         if (!expected.operationId.equals(readback.receipt.operationId)) return true;
         if (!readback.receipt.accepted) return false;
         if ("restart-to-experimenter".equals(expected.operation)) {

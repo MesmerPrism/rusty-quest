@@ -7,6 +7,7 @@ public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
         submittedCommandObserverSurvivesPanelReplacement();
         durableArmCorrelationSurvivesLaterAudioOperation();
+        retainedDurableArmObservationSurvivesDeadline();
         headlessExplicitStatusIsDelivered();
         explicitStatusLifetimeFences();
         carrierStatusTargetFencesEligibilityToDelivery();
@@ -29,6 +30,54 @@ public final class ExperimentSessionAndroidShellTest {
         definitiveClockRejectionRecoversWithFreshAttempt(true);
         definitiveRejectionRecoveryIsBoundedAndReasonSpecific();
         System.out.println("ExperimentSessionAndroidShellTest PASS");
+    }
+
+    private static void retainedDurableArmObservationSurvivesDeadline() throws Exception {
+        for(final String mode:new String[]{"retained","retired-carrier","wrong-id","retired-launch","ordinary"}) {
+            final java.util.concurrent.LinkedBlockingQueue<Runnable> callbacks=new java.util.concurrent.LinkedBlockingQueue<>();
+            final FakeClock clock=new FakeClock();clock.millis=40001L;clock.nanos=40001000000L;
+            final FakeBridge bridge=new FakeBridge(false);
+            final ExperimentSessionPanelCoordinator panel=new ExperimentSessionPanelCoordinator();
+            panel.admitTrustedColdLaunch(1L);
+            final ExperimentSessionPanelCoordinator.NativeCommand arm=panel.arm("condition-a",0);
+            final String outerId="1111111111111111";final String[] confirmed={""};
+            ExperimentSessionAndroidShell.Codec codec=new FakeCodec(){
+                @Override public ExperimentSessionAndroidShell.SessionReadback parse(String raw,ExperimentSessionPanelCoordinator.NativeCommand expected,boolean start){
+                    ExperimentSessionPanelCoordinator.NativeReceipt receipt=new ExperimentSessionPanelCoordinator.NativeReceipt(
+                        "later-presentation",true,false,1L,7L,"active","running","condition-a",true,false,
+                        "ready",true,0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"none");
+                    return new ExperimentSessionAndroidShell.SessionReadback(receipt,"accepted","ready","ready","ready","not-requested",0L,-1L,"","","none","",1L,"accepted","")
+                        .withArmAcceptance(new ExperimentSessionAndroidShell.ArmAcceptance(arm.operationId,1L,1L,"condition-a",true));
+                }
+            };
+            ExperimentSessionAndroidShell.UiSink sink=new ExperimentSessionAndroidShell.UiSink(){
+                public boolean observesSubmittedCommand(){return true;}
+                public boolean retainsDurableCommand(String id,long epoch){return "retained".equals(mode)&&arm.operationId.equals(id)&&epoch==1L;}
+                public boolean acceptsExperimentSessionCallbacks(long epoch){return epoch==1L;}
+                public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback r){
+                    panel.acceptNativeReadback(r.runtimeEpoch,r.receipt,r.statusReadCompletedNanos,clock.nanos,true,r.armAcceptance);
+                    require(r.armAcceptance.matches(arm.operationId,1L,"condition-a",r));
+                    require(panel.snapshot().pendingOperationId.isEmpty());
+                    require(panel.snapshot().phase==ExperimentSessionPanelState.Phase.RUNNING);
+                    confirmed[0]=outerId;
+                }
+                public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult r){throw new AssertionError("Arm is not terminal save");}
+            };
+            ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,clock,
+                new ExperimentSessionAndroidShell.UiDispatcher(){public void post(Runnable r){callbacks.add(r);}public boolean isUiThread(){return false;}});
+            try {
+                shell.beginExplicitLaunchEpoch("retired-launch".equals(mode)?2L:1L);
+                java.lang.reflect.Method poll=ExperimentSessionAndroidShell.class.getDeclaredMethod("scheduleStatusPoll",java.lang.ref.WeakReference.class,long.class,long.class,ExperimentSessionPanelCoordinator.NativeCommand.class,boolean.class);
+                poll.setAccessible(true);
+                ExperimentSessionPanelCoordinator.NativeCommand expected="wrong-id".equals(mode)?new ExperimentSessionPanelCoordinator.NativeCommand("arm","foreign-id",0L,"condition-a"):arm;
+                poll.invoke(shell,new java.lang.ref.WeakReference<ExperimentSessionAndroidShell.UiSink>(sink),1L,20001L,expected,true);
+                Runnable callback=callbacks.poll("retained".equals(mode)?2000L:600L,TimeUnit.MILLISECONDS);
+                if("retained".equals(mode)){require(callback!=null);callback.run();equal(outerId,confirmed[0]);}
+                else {require(callback==null);equal("",confirmed[0]);}
+                equal(0,bridge.submissions); // Observing after40s never replays Arm.
+            }finally{shell.closeForTest();}
+        }
+        System.out.println("Retained original Arm after40s / running durable witness / exactID / carrier and launch retirement / no replay PASS");
     }
 
     private static void durableArmCorrelationSurvivesLaterAudioOperation() throws Exception {
@@ -755,7 +804,7 @@ public final class ExperimentSessionAndroidShellTest {
         }
     }
 
-    private static final class FakeCodec implements ExperimentSessionAndroidShell.Codec {
+    private static class FakeCodec implements ExperimentSessionAndroidShell.Codec {
         ExperimentSessionPanelCoordinator.NativeCommand last;
         final long statusGeneration;
         int encodings;

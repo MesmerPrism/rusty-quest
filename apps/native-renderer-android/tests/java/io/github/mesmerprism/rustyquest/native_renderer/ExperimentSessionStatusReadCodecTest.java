@@ -27,6 +27,23 @@ public final class ExperimentSessionStatusReadCodecTest {
             completed, now, "accepted".equals(r.commandStatus));
     }
     public static void main(String[] args) throws Exception {
+        for(String control:new String[]{"armed","running","paused"}) {
+            EXPERIMENT_SESSION_PANEL=new ExperimentSessionPanelCoordinator();
+            ExperimentSessionPanelCoordinator.NativeCommand original=EXPERIMENT_SESSION_PANEL.arm("condition-a",100);
+            JSONObject actualShape=response("accepted","accepted");
+            actualShape.getJSONObject("readback").put("phase","active").put("control_state",control)
+                .put("generation",1L).put("revision",7L).put("condition_id","condition-a")
+                .put("last_operation_id","native-openxr-submitted-ready-later")
+                .put("arm_operation_id",original.operationId).put("arm_generation",1L)
+                .put("arm_runtime_epoch",1L).put("arm_condition","condition-a")
+                .put("arm_durable_checkpoint",true).put("profile_identity_bound",true)
+                .put("audio_identity_bound",true).put("active_time_ms",30002L);
+            check(!actualShape.getJSONObject("readback").has("recording"),"actual native status omits recording member");
+            ExperimentSessionAndroidShell.SessionReadback parsed=new ExperimentSessionJsonCodec().parse(actualShape.toString(),null,false);
+            check(parsed.receipt.recording && parsed.armAcceptance!=null,"sparse actual phase expresses recording and retained checkpoint");
+            check(EXPERIMENT_SESSION_PANEL.acceptNativeReadback(parsed.runtimeEpoch,parsed.receipt,40000000001L,40000000002L,true,parsed.armAcceptance),"late original Arm checkpoint admitted after40s");
+            check(EXPERIMENT_SESSION_PANEL.snapshot().pendingOperationId.isEmpty(),"retained original pending Arm clears after later control event");
+        }
         for (String last : new String[] {"none", "failed", "rejected"}) {
             EXPERIMENT_SESSION_PANEL = new ExperimentSessionPanelCoordinator();
             JSONObject raw = response(last, "accepted");

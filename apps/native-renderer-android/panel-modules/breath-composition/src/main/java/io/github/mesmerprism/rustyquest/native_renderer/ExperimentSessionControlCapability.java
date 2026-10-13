@@ -37,7 +37,9 @@ final class ExperimentSessionControlCapability {
     synchronized JSONObject offer(JSONObject status,JSONObject nativeReadback,long server,long owner,
             long ownerEpoch,long now,String independentPolarTuple) throws Exception {
         if(nativeReadback==null || now<=0 || server<=0 || owner<=0 || ownerEpoch<=0
-                || !Boolean.TRUE.equals(nativeReadback.opt("recording"))
+                // The native status contract expresses recording with phase=active.
+                // It does not emit a separate recording member.
+                || !"active".equals(nativeReadback.opt("phase"))
                 || !Boolean.TRUE.equals(nativeReadback.opt("profile_identity_bound"))
                 || !Boolean.TRUE.equals(nativeReadback.opt("audio_identity_bound"))
                 || !Boolean.FALSE.equals(status.opt("pending"))) { clear();return null; }

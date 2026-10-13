@@ -54,6 +54,23 @@ rotates with server/native owner/epoch, session/runtime epoch, generation,
 condition, profile or source binding. Failed readback, pending work, invalid
 shape or expiry withdraws admission. q.g must equal the status native generation.
 
+The native readback represents recording by `phase=active`; it has no separate
+`recording` member. Its active `condition_id` must be the actual string
+`condition-a` or `condition-b`. An explicit null on idle clears the condition;
+legacy idle status may omit it. Missing, null or mistyped active identity fails
+closed instead of inheriting the previous Java view.
+
+Arm confirmation joins the original browser/native mapping to its durable Arm
+checkpoint, generation, runtime epoch and actual condition. A later presentation
+or audio operation may become the last native operation without replacing that
+checkpoint. The same proof remains valid if participant controls have already
+advanced the current session to running or paused; it never confirms another
+generation or owner. Observation after the ordinary shell deadline continues
+only for an exact retained Arm/Save Next mapping on the live carrier/native epoch
+and launch. Carrier retirement, replacement, cleanup or mapping settlement ends
+that exception. Other commands keep their existing observation deadline. No
+observer timeout authorizes replay or changes native writer durability.
+
 The closed v2 envelope is {v,id,op,s,g,n,mac?}, at most240 UTF8 bytes. Gated mode
 requires the first16 HMAC-SHA256 bytes of
 RQEC2|challenge|id|op|s|g|nonce. Open mode retains its explicit existing policy.
