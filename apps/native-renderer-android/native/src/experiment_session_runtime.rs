@@ -4204,6 +4204,10 @@ mod tests {
         assert_eq!(saved["readback"]["active_time_ms"], 0);
         assert_eq!(saved["readback"]["shutdown_status"], "not-requested");
         assert_eq!(saved["readback"]["finalized_session_generation"], 1);
+        // The durable identity is published inside terminal effects. Wait for
+        // the original operation's final acknowledgement before inspecting
+        // worker-internal generation cleanup that follows those effects.
+        wait_for(&runtime, "\"last_operation_id\":\"remote-save-next\"");
         assert_eq!(runtime.active_generation.load(Ordering::Acquire), 0);
         assert!(!runtime.worker_finished());
         drop(runtime);
