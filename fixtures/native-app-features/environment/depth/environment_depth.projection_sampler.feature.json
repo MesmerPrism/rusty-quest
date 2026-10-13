@@ -49,7 +49,8 @@
       "environment_depth"
     ],
     "expected_render_modes": [
-      "custom-stereo-projection"
+      "custom-stereo-projection",
+      "native-worldspace-integration"
     ]
   },
   "build_inputs": {

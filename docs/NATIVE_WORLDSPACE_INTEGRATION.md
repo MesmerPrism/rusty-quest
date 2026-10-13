@@ -152,6 +152,26 @@ Keep source, feature lock, APK hash and exact headset tied to each capture. Repo
 UI command application, visible behavior and timing evidence separately. A built
 APK is a candidate until its live checks pass.
 
+## Optional passthrough and environment sampler
+
+The existing `environment_depth.projection_sampler` feature can also be selected
+with `native-worldspace-integration`. It declares scene permission and the
+passthrough manifest feature, requests the runtime provider, and requires native
+passthrough. Its resolved permission/app-op pregrant remains mandatory before
+first launch; the app also requests scene permission when this provider is
+selected. Worldspace composition then uses source alpha and a transparent clear,
+including when the Android mesh panel is present. A panel-only build without this
+selection retains its opaque neutral background. Other render-mode alpha
+policies remain unchanged.
+
+The sampler feeds the camera/compositor path. The hands, particles, and panel
+still use virtual-scene D32 depth; selecting the sampler does not provide those
+draws with real-environment occlusion. Passthrough composition, virtual-scene
+depth, and environment-depth sampling need separate effective markers and live
+validation. Downstream camera selection must choose its intended normal
+composition rather than a diagnostic shader output; passthrough cannot change
+the meaning of that selection.
+
 ## Camera result metadata
 
 Optional Camera2 capture metadata is read only when its tag is present in that

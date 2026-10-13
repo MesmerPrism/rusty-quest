@@ -99,6 +99,8 @@ mod native_controller_breath_state;
 mod native_mesh_ui;
 #[cfg(any(test, target_os = "android"))]
 mod native_pointer_visual;
+#[cfg(any(test, target_os = "android"))]
+mod native_scene_composition;
 mod native_renderer_camera_options;
 mod native_renderer_diagnostics_contract;
 mod native_renderer_display_composite_options;
@@ -318,6 +320,9 @@ fn runtime_permissions_for_route(
         )
     {
         permissions.push("com.oculus.permission.HAND_TRACKING");
+    }
+    if runtime_options.environment_depth_settings.runtime_provider_requested() {
+        permissions.push("horizonos.permission.USE_SCENE");
     }
     permissions.sort_unstable();
     permissions.dedup();

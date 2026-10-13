@@ -515,7 +515,11 @@ unsafe fn run_projection_loop_inner(
             alpha_blend_supported,
             environment_blend_modes_marker(&environment_blend_modes),
             environment_blend_mode,
-            runtime_options.render_mode.projection_layer_alpha_blend(),
+            crate::native_scene_composition::projection_alpha_blend(
+                runtime_options.render_mode.uses_scene_depth(),
+                native_passthrough_requested,
+                runtime_options.render_mode.projection_layer_alpha_blend(),
+            ),
             runtime_options.render_mode.camera_runtime_mode(),
             runtime_options.render_mode.disabled_camera_projection_path(),
             runtime_options.passthrough_style_settings.marker_fields(),
@@ -5904,17 +5908,19 @@ unsafe fn record_projection_diagnostic(
                 gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
             }
         }
-        let background = if mesh_ui_panel.is_some() {
+        let opaque_background = if mesh_ui_panel.is_some() {
             crate::native_pointer_visual::NEUTRAL_WORLDSPACE_CLEAR
         } else if stimulus_volume_route || render_mode.uses_solid_black_background() {
             [0.0, 0.0, 0.0, 1.0]
-        } else if passthrough_alpha_clear {
-            [0.0, 0.0, 0.0, 0.0]
         } else if eye_index == 0 {
             [0.012, 0.030, 0.038, 1.0]
         } else {
             [0.034, 0.016, 0.050, 1.0]
         };
+        let background = crate::native_scene_composition::projection_clear_color(
+            passthrough_alpha_clear,
+            opaque_background,
+        );
         if hand_mesh_visual_stats.graft_copies_visible() {
             if let Some(renderer) = gpu_hand_mesh_visual_renderer {
                 if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
