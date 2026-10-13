@@ -124,6 +124,19 @@ final class ExperimentSessionBleServer {
     private int invalidProofs;
     private long blockedUntilMs;
     private boolean active;
+    interface GatewayReceiptListener {
+        void receipt(JSONObject receipt);
+        boolean known(JSONObject body)throws Exception;
+        boolean reserve(JSONObject body)throws Exception;
+        JSONObject original(String id)throws Exception;
+    }
+    private static final class GatewayDuplicate extends RuntimeException { }
+    private GatewayReceiptListener gatewayReceiptListener;
+    private String gatewayDevice="",gatewayEpoch="0";
+    synchronized void gatewayBinding(GatewayReceiptListener listener,String device,String epoch){gatewayReceiptListener=listener;gatewayDevice=device;gatewayEpoch=epoch;}
+    private boolean commandGatewayAttached;
+    synchronized void attachCommandGateway(boolean attached) { commandGatewayAttached=attached; if(attached&&serverGeneration==0)serverGeneration++; }
+    private boolean controlAvailable(){return (active||commandGatewayAttached)&&nativeOwnerIdentity>0&&nativeOwnerEpoch>0;}
     private long serverGeneration;
     private long nativeOwnerIdentity;
     private long nativeOwnerEpoch;
@@ -170,17 +183,20 @@ final class ExperimentSessionBleServer {
         return prefs.getBoolean(OPEN, current != null && current.openControlDefault());
     }
     synchronized boolean active() { return active; }
-    synchronized long currentGeneration() { return active ? serverGeneration : 0L; }
-    synchronized long currentNativeEpoch() { return active ? nativeOwnerEpoch : 0L; }
+    synchronized long currentGeneration() { return controlAvailable() ? serverGeneration : 0L; }
+    synchronized long currentNativeEpoch() { return controlAvailable() ? nativeOwnerEpoch : 0L; }
     synchronized boolean acceptsStatusRead(long generation, long epoch) {
-        return active && generation > 0L && generation == serverGeneration
+        return controlAvailable() && generation > 0L && generation == serverGeneration
             && epoch > 0L && epoch == nativeOwnerEpoch;
     }
     synchronized boolean acceptsNativeEpoch(long epoch) {
-        return active && epoch > 0L && epoch == nativeOwnerEpoch;
+        return controlAvailable() && epoch > 0L && epoch == nativeOwnerEpoch;
+    }
+    synchronized boolean acceptsNativeOwner(long identity,long epoch) {
+        return controlAvailable()&&identity==nativeOwnerIdentity&&epoch==nativeOwnerEpoch;
     }
     synchronized boolean updateReceiptForGeneration(long generation,String id,String state,String detail) {
-        if(!active || generation!=serverGeneration) return false;
+        if(!controlAvailable() || generation!=serverGeneration) return false;
         updateReceipt(id,state,detail);return true;
     }
     synchronized String pairingCode() { return active && !openControl() ? code : ""; }
@@ -190,6 +206,7 @@ final class ExperimentSessionBleServer {
         if (identity <= 0L || epoch <= 0L || identity <= nativeOwnerHighWater) return false;
         stopWithReason("native-owner-replaced");
         latestOwnerReceipt=null;admissionTimes.clear();effectTimes.clear();
+        if(commandGatewayAttached)serverGeneration++;
         nativeOwnerHighWater = identity;
         nativeOwnerIdentity = identity;
         nativeOwnerEpoch = epoch;
@@ -300,7 +317,7 @@ final class ExperimentSessionBleServer {
             return;
         }
         try {
-            final long generation = ++serverGeneration;
+            final long generation = commandGatewayAttached ? serverGeneration : ++serverGeneration;
             GenerationCallback callback = new GenerationCallback(generation);
             gatt = manager.openGattServer(context, callback);
             if (gatt == null) throw new IllegalStateException("gatt-open-failed");
@@ -332,8 +349,9 @@ final class ExperimentSessionBleServer {
     }
 
     private synchronized void stopWithReason(String reason) {
+        if(reason.startsWith("native-owner-")){gatewayReceiptListener=null;gatewayDevice="";gatewayEpoch="0";}
         long retiredGeneration = serverGeneration;
-        serverGeneration++;
+        if(!commandGatewayAttached)serverGeneration++;
         active = false;
         sessionControl.clear();
         polarControl.clear();
@@ -369,6 +387,7 @@ final class ExperimentSessionBleServer {
             receipt.put("publish_ms",now);
             if(effectTimes.containsKey(id))receipt.put("effect_ns",effectTimes.get(id));
             latestOwnerReceipt = new JSONObject(receipt.toString());
+            if(gatewayReceiptListener!=null)gatewayReceiptListener.receipt(receipt);
             if(id.equals(shellOperationId))latestOwnerReceipt.put("operator_origin","shell-experiment-operator-v1");
             byte[] bytes = jsonBytes(receipt.toString());
             for (Peer peer : peers.values()) {
@@ -544,7 +563,8 @@ final class ExperimentSessionBleServer {
                     read(device, requestId, offset, peer.statusRead);
                 } else if (CHALLENGE.equals(uuid)) {
                     read(device, requestId, offset,
-                        jsonBytes("{\"v\":1,\"n\":\"" + peer.challenge + "\"}"));
+                        jsonBytes("{\"v\":1,\"n\":\"" + peer.challenge + "\""
+                            +(gatewayDevice.isEmpty()?"":",\"d\":\""+gatewayDevice+"\",\"ge\":\""+gatewayEpoch+"\"")+"}"));
                 } else if (RECEIPT.equals(uuid)) {
                     if (offset == 0 || peer.receiptRead == null) {
                         // Reconnection observes the original current-owner outcome without
@@ -629,6 +649,11 @@ final class ExperimentSessionBleServer {
                                 if (invalidProofs >= 5) blockedUntilMs = SystemClock.elapsedRealtime() + 60000L;
                                 throw new SecurityException("authentication-failed");
                             }
+                            if(commandGatewayAttached&&gatewayReceiptListener==null)throw new SecurityException("gateway-owner-rebinding");
+                            if(gatewayReceiptListener!=null&&gatewayReceiptListener.known(body)) {
+                                peer.lastCommandId=id;peer.receipt=jsonBytes(gatewayReceiptListener.original(id).toString());peer.receiptRead=null;
+                                throw new GatewayDuplicate();
+                            }
                             if(polarVersion) {
                                 polarNativeFence=polarControl.nativeFence();
                                 polarRequest=polarControl.admit(session,sessionGeneration,operation,
@@ -643,9 +668,15 @@ final class ExperimentSessionBleServer {
                             peer.lastCommandId = id;
                         }
                         if(setupVersion && setupRequest.getLong("g")!=nativeOwnerEpoch)throw new SecurityException("setup-native-epoch-stale");
+                        if(gatewayReceiptListener!=null&&!gatewayReceiptListener.reserve(body)) {
+                            Peer peer=peers.get(device);peer.receipt=jsonBytes(gatewayReceiptListener.original(id).toString());peer.receiptRead=null;
+                            throw new GatewayDuplicate();
+                        }
                         accepted = new CommandRequest(id, operation, condition, bias,sessionFence,polarRequest,polarNativeFence);
                         accepted.setupRequest=setupRequest;
                         updateReceipt(id, "accepted", "Command admitted by Quest BLE transport.");
+                        response = BluetoothGatt.GATT_SUCCESS;
+                    } catch (GatewayDuplicate original) {
                         response = BluetoothGatt.GATT_SUCCESS;
                     } catch (Exception rejected) {
                         response = BluetoothGatt.GATT_FAILURE;

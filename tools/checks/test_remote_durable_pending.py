@@ -69,7 +69,7 @@ final class ExperimentSessionAndroidShell {
  static class TerminalResult {boolean shouldFinish,saved;TerminalResult(boolean finish,boolean saved){this.shouldFinish=finish;this.saved=saved;}}
 }
 final class ExperimentSessionBleServer {
- long serverGeneration=7,nativeOwnerIdentity=1,nativeOwnerEpoch=3,nativeOwnerHighWater=1;boolean active=true;
+ long serverGeneration=7,nativeOwnerIdentity=1,nativeOwnerEpoch=3,nativeOwnerHighWater=1;boolean active=true,commandGatewayAttached=false;
  int updates;String state="",id="";
  long currentGeneration(){return active?serverGeneration:0;}
  long currentNativeEpoch(){return nativeOwnerEpoch;}
@@ -81,6 +81,7 @@ final class ExperimentSessionBleServer {
  __OWNER_START__
  __OWNER_END__
 }
+final class ExperimentSessionCommandGateway {static ExperimentSessionCommandGateway existing(){return null;} void nativeOwnerChanged(long i,long e,boolean l){}}
 final class ControlPanelActivity {static int starts;static void startConditionAudio(long generation,String id,String condition){starts++;}}
 final class BreathCompositionPanelModule {
  boolean experimentShellDestroyed;

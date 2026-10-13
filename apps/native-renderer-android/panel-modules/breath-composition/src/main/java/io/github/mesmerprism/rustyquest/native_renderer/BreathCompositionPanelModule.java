@@ -343,6 +343,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     static void prepareExperimentSessionBleOwner(Context context) {
         remoteContext = context.getApplicationContext();
         ExperimentSessionBleServer.process(remoteContext, REMOTE_DELEGATE);
+        if(ExperimentSessionCommandGateway.featurePackaged(remoteContext))ExperimentSessionCommandGateway.process(remoteContext,REMOTE_DELEGATE);
     }
 
     static void experimentSessionBleOwnerChanged(long identity, long epoch, boolean live) {
@@ -351,6 +352,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         boolean changed = live ? server.nativeOwnerStarted(identity, epoch)
             : server.nativeOwnerEnded(identity, epoch);
         if (changed) {
+            ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
+            if(gateway!=null)gateway.nativeOwnerChanged(identity,epoch,live);
             RemoteStatusObserver old=remoteStatusObserver;
             remoteStatusObserver=null;
             if (old != null) old.target.retire();
@@ -1528,6 +1531,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private void appendExperimenterPhoneControl(LinearLayout root) {
+        appendExperimenterNetworkControl(root);
         if (!ExperimentSessionBleServer.featurePackaged(this)) return;
         final ExperimentSessionBleServer server =
             ExperimentSessionBleServer.process(this, REMOTE_DELEGATE);
@@ -1561,6 +1565,73 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         });
         phone.addView(mode);
         root.addView(phone);
+    }
+
+    private void appendExperimenterNetworkControl(LinearLayout root) {
+        if(!ExperimentSessionCommandGateway.featurePackaged(this))return;
+        final ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.process(this,REMOTE_DELEGATE);
+        LinearLayout network=panelCard("Network control");
+        network.addView(text(gateway.enabled()?(gateway.trustedLanAllowed()?"Trusted LAN controller enrolled":"Encrypted relay controller enrolled; LAN off"):"Network control off",15,PANEL_FG));
+        network.addView(text("Only enable on a trusted network. Local HTTP control is authenticated but unencrypted.",13,PANEL_MUTED));
+        Button enroll=button(gateway.enabled()?"Replace trusted controller":"Approve trusted LAN controller");
+        enroll.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
+            new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Approve trusted LAN control?")
+                .setMessage("This controller may operate the current app session. Local HTTP exposes traffic to this network. Continue only on a trusted LAN.")
+                .setNegativeButton("Cancel",null).setPositiveButton("Approve",new android.content.DialogInterface.OnClickListener(){
+                    @Override public void onClick(android.content.DialogInterface dialog,int which){try{
+                        JSONObject binding=gateway.enrollFromHeadset(true);
+                        android.widget.TextView details=new android.widget.TextView(BreathCompositionPanelModule.this);
+                        details.setText("Controller: "+binding.getString("controller")+"\nKey: "+binding.getString("key")+"\nDevice: "+binding.getString("device")+"\n"+gateway.localAddresses());details.setTextIsSelectable(true);details.setPadding(24,24,24,24);
+                        new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Enter this once on your controller").setView(details).setPositiveButton("Done",null).show();
+                        replaceBreathCompositionPanelContent("home");
+                    }catch(Exception failure){updateStatus("Network enrollment unavailable.");}}
+                }).show();
+        }});network.addView(enroll);
+        if(!gateway.relayOrigin().isEmpty()) {
+            Button encrypted=button("Approve encrypted relay controller only");encrypted.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
+                new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Approve encrypted relay control?")
+                    .setMessage("Replace the enrolled controller and disable local HTTP control. The approved HTTPS relay can carry authenticated app commands after you enter its session details.")
+                    .setNegativeButton("Cancel",null).setPositiveButton("Approve",new android.content.DialogInterface.OnClickListener(){@Override public void onClick(android.content.DialogInterface dialog,int which){try{
+                        JSONObject binding=gateway.enrollFromHeadset(false);android.widget.TextView details=new android.widget.TextView(BreathCompositionPanelModule.this);
+                        details.setText("Controller: "+binding.getString("controller")+"\nKey: "+binding.getString("key")+"\nDevice: "+binding.getString("device")+"\nLocal HTTP listener is off.");details.setTextIsSelectable(true);details.setPadding(24,24,24,24);
+                        new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Enter this once on your controller").setView(details).setPositiveButton("Done",null).show();replaceBreathCompositionPanelContent("home");
+                    }catch(Exception failure){updateStatus("Encrypted enrollment unavailable.");}}}).show();
+            }});network.addView(encrypted);
+        }
+        if(gateway.enabled()){
+            if(gateway.trustedLanAllowed())network.addView(text(gateway.localAddresses(),13,PANEL_MUTED));
+            if(gateway.trustedLanAllowed()&&ExperimentSessionDirectNetwork.featurePackaged(this)) {
+                for(final String route:new String[]{"hotspot","wifi_direct"}) {
+                    Button start=button("Create "+("hotspot".equals(route)?"temporary hotspot":"Wi-Fi Direct group"));
+                    start.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){try{
+                        if(checkSelfPermission(ExperimentSessionDirectNetwork.requiredPermission())!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+                            ExperimentSessionDirectNetwork.requestPermissions(BreathCompositionPanelModule.this,9402);return;}
+                        gateway.startDirectFromHeadset(route);updateStatus("Temporary network requested. Open join details after creation.");
+                    }catch(Exception failure){updateStatus("Temporary network unavailable on this device.");}}});network.addView(start);
+                }
+                Button join=button("Show temporary network join details");join.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){try{
+                    new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Temporary network")
+                        .setMessage(gateway.directJoinDetails().toString()+"\n"+gateway.localAddresses()).setPositiveButton("Done",null).show();
+                }catch(Exception failure){updateStatus("Network join details unavailable.");}}});network.addView(join);
+            }
+            if(!gateway.relayOrigin().isEmpty()) {
+                Button relay=button("Connect approved HTTPS relay");relay.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
+                    final android.widget.EditText sessionId=new android.widget.EditText(BreathCompositionPanelModule.this);sessionId.setHint("Relay session ID");
+                    final android.widget.EditText token=new android.widget.EditText(BreathCompositionPanelModule.this);token.setHint("Device route token");
+                    token.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+                    final android.widget.EditText expiry=new android.widget.EditText(BreathCompositionPanelModule.this);expiry.setHint("Host expiry timestamp (milliseconds)");expiry.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+                    LinearLayout fields=new LinearLayout(BreathCompositionPanelModule.this);fields.setOrientation(LinearLayout.VERTICAL);fields.addView(sessionId);fields.addView(token);fields.addView(expiry);
+                    new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Connect "+gateway.relayOrigin()).setView(fields)
+                        .setNegativeButton("Cancel",null).setPositiveButton("Connect until host expiry",new android.content.DialogInterface.OnClickListener(){
+                            @Override public void onClick(android.content.DialogInterface dialog,int which){try{gateway.startRelayFromHeadset(sessionId.getText().toString().trim(),token.getText().toString().trim(),Long.parseLong(expiry.getText().toString().trim()));updateStatus("HTTPS relay connection requested.");}catch(Exception failure){updateStatus("Relay connection unavailable.");}}
+                        }).show();
+                }});network.addView(relay);
+            }
+            Button stopRoutes=button("Stop relay and temporary networks");stopRoutes.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.stopRoutesFromHeadset();updateStatus("Optional network routes stopped.");}});network.addView(stopRoutes);
+
+            Button revoke=button("Revoke network controller");revoke.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.revokeFromHeadset();replaceBreathCompositionPanelContent("home");}});network.addView(revoke);
+        }
+        root.addView(network);
     }
 
     private void handleRemoteOpenPolarIntent(Intent intent) {

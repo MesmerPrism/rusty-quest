@@ -27,6 +27,8 @@ $harness=@"
 package io.github.mesmerprism.rustyquest.native_renderer;
 import org.json.JSONObject;import java.util.*;import java.nio.charset.StandardCharsets;
 final class PolarReceiptProducerHarness {
+ interface GatewayReceiptListener {void receipt(JSONObject receipt);}
+ GatewayReceiptListener gatewayReceiptListener;
  static class SystemClock {static long elapsedRealtime(){return java.lang.System.nanoTime()/1000000L;}}
  final Map<String,Long> admissionTimes=new HashMap<>(),effectTimes=new HashMap<>();
  static class Peer {String lastCommandId;byte[] receipt,receiptRead;}
