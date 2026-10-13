@@ -2,6 +2,8 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 
 public final class ExperimentSessionPanelCoordinatorTest {
     public static void main(String[] args) {
+        restartFinalizationShapePolicy();
+        remoteVrSaveReadbackPolicy();
         originalArmAcknowledgementResolvesLaterAudioReadback();
         nativeReadbackObservationPolicy();
         nativeStatusSnapshotPolicy();
@@ -16,6 +18,67 @@ public final class ExperimentSessionPanelCoordinatorTest {
         guidanceBiasPendingPolicy();
         closedRuntimeEpochResetsGenerationButRecreationDoesNot();
         System.out.println("ExperimentSessionPanelCoordinatorTest PASS");
+    }
+
+    private static void restartFinalizationShapePolicy() {
+        for (String route : new String[]{"show-experimenter", "none"}) {
+            Object[] fields = {"idle", route, "remote-vr", "panel-restart-2", "panel-restart-2", 1L, 1};
+            check(finalization(fields), "actual local/remote producer finalization admitted");
+            for (int field : new int[]{0, 1, 3, 4, 5, 6}) {
+                Object[] bad = fields.clone(); bad[field] = null;
+                check(!finalization(bad), "missing finalization field rejected");
+            }
+            for (Object malformed : new Object[]{"1", 1.0, true, -1, 0, 2L}) {
+                for (int field : new int[]{5, 6}) {
+                    Object[] bad = fields.clone(); bad[field] = malformed;
+                    check(!finalization(bad), "mistyped/wrong finalization generation rejected");
+                }
+            }
+            Object[] bad = fields.clone(); bad[3] = "other-operation";
+            check(!finalization(bad), "wrong finalized operation rejected");
+            bad = fields.clone(); bad[3] = ""; bad[4] = "";
+            check(!finalization(bad), "empty matching operation IDs are not proof");
+            bad = fields.clone(); bad[0] = "active";
+            check(!finalization(bad), "active phase cannot prove finalization");
+        }
+        for (Object mode : new Object[]{null, "", "local-panel", true}) {
+            check(!finalization(new Object[]{"idle", "none", mode, "save", "save", 1L, 1L}),
+                "no-route finalization requires explicit remote-vr mode");
+        }
+        check(finalization(new Object[]{"idle", "show-experimenter", null, "save", "save", 1L, 1L}),
+            "legacy local producer without preparation mode remains compatible");
+    }
+
+    private static boolean finalization(Object[] f) {
+        return ExperimentSessionPanelCoordinator.restartFinalizationMatches(f[0], f[1], f[2],
+            f[3], f[4], f[5], f[6]);
+    }
+
+    private static void remoteVrSaveReadbackPolicy() {
+        for (int mode = 0; mode < 11; mode++) {
+            ExperimentSessionPanelCoordinator c = new ExperimentSessionPanelCoordinator();
+            c.acceptRuntimeEpoch(7L);
+            ExperimentSessionPanelCoordinator.NativeCommand start = c.start("condition-a");
+            check(c.acceptNativeReadback(7L, receipt(start.operationId, true, false, 1L, 1L,
+                "active", true, "none", 0L, 0L, 0L, 0L, 0L), 100L, 101L), "active precondition");
+            ExperimentSessionPanelCoordinator.NativeCommand save = c.restartToExperimenter(c.allocateRouteEvent());
+            check(save != null, "same actual save command for local and remote preparation");
+            boolean accepted = c.acceptNativeReadback(7L,
+                receipt(mode == 1 ? "another-save" : save.operationId, mode != 9, mode != 4,
+                    mode == 2 ? 2L : 1L, mode == 3 ? 0L : 2L, mode == 5 ? "active" : "idle", mode == 6,
+                    mode == 7 ? "open-developer" : mode == 10 ? "show-experimenter" : "none",
+                    mode == 8 ? 0L : 1L, 1L, 0L, 0L, 0L, mode != 10), 200L, 201L);
+            if (mode == 0 || mode == 10) {
+                check(accepted && c.snapshot().phase == ExperimentSessionPanelState.Phase.IDLE
+                    && c.snapshot().pendingOperationId.isEmpty() && !c.snapshot().recording,
+                    "exact durable local/remote save clears pending and admits idle");
+                check(c.arm("condition-b") != null, "saved session admits next condition");
+            } else {
+                check(c.snapshot().phase != ExperimentSessionPanelState.Phase.IDLE
+                    && c.arm("condition-b") == null, "invalid save proof never prepares a replacement recording: " + mode);
+            }
+        }
+        System.out.println("Local/remote save finalization type/identity/revision/route guards PASS");
     }
 
     private static void originalArmAcknowledgementResolvesLaterAudioReadback() {
@@ -606,13 +669,33 @@ public final class ExperimentSessionPanelCoordinatorTest {
         long earlyOne,
         long earlyTwo
     ) {
+        return receipt(operation, accepted, durable, generation, revision, phase, recording,
+            route, routeRevision, completeOne, completeTwo, earlyOne, earlyTwo, false);
+    }
+
+    private static ExperimentSessionPanelCoordinator.NativeReceipt receipt(
+        String operation,
+        boolean accepted,
+        boolean durable,
+        long generation,
+        long revision,
+        String phase,
+        boolean recording,
+        String route,
+        long routeRevision,
+        long completeOne,
+        long completeTwo,
+        long earlyOne,
+        long earlyTwo,
+        boolean remotePreparationFinalization
+    ) {
         return new ExperimentSessionPanelCoordinator.NativeReceipt(
-            operation, accepted, durable, generation, revision, phase,
+            operation, accepted, durable, generation, revision, phase, "",
             recording ? ExperimentSessionPanelCoordinator.CONDITION_ONE : "none",
-            recording, false, "ready", true,
+            recording, "", 0L, false, "ready", true,
             completeOne, completeTwo, earlyOne, earlyTwo,
             true, true, false, completeOne + completeTwo, earlyOne + earlyTwo, 0L,
-            route, routeRevision, "test"
+            route, routeRevision, "test", remotePreparationFinalization
         );
     }
 

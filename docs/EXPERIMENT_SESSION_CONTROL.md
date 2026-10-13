@@ -33,6 +33,12 @@ submitted immersive frame without opening the settings Activity. Recording
 recovery still completes before readiness. Save Next retains its original
 durable finalization, recorded reason, generation and operation receipt, then
 returns to idle preparation with official active time zero and no panel route.
+Java save acknowledgement admits both the local `show-experimenter` route and
+remote preparation's `none` route. The remote route requires the explicit
+`remote-vr` mode; both require a nonempty exact finalized operation, a positive
+exact finalized generation, accepted operation status and the writer's saved
+result. The coordinator retains its pending-operation, generation and newer
+route-revision checks. A saved recording does not require continued XR focus.
 The native worker and app owner remain alive for browser control. Arm and
 official Start keep their existing audio, recording and frame prerequisites.
 

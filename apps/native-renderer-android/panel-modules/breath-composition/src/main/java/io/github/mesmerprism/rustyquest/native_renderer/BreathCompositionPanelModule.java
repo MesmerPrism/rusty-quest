@@ -5445,11 +5445,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 JSONObject recordingResult = projection.optJSONObject("recording_result");
                 String recordingStatus = recordingResult == null
                     ? "unknown" : recordingResult.optString("status", "unknown");
-                boolean restartReceipt = "idle".equals(phase)
-                    && "show-experimenter".equals(routeAction)
-                    && operationId.equals(projection.optString("finalized_operation_id", ""))
-                    && projection.optLong("finalized_session_generation", -1L)
-                        == projection.optLong("generation", -2L);
+                boolean restartReceipt = ExperimentSessionPanelCoordinator.restartFinalizationMatches(
+                    projection.opt("phase"), projection.opt("route_action"),
+                    projection.opt("preparation_mode"), projection.opt("last_operation_id"),
+                    projection.opt("finalized_operation_id"), projection.opt("generation"),
+                    projection.opt("finalized_session_generation"));
                 if (restartReceipt && !"saved".equals(recordingStatus)) accepted = false;
                 ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
                 String activeCondition = before.activeCondition;
@@ -5538,7 +5538,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                                 + "/"
                                 + projection.optString(
                                     "kiosk_enforcement",
-                                    "not-enforced")
+                                    "not-enforced"),
+                        durable && "none".equals(routeAction)
                     );
                 return new ExperimentSessionAndroidShell.SessionReadback(
                     receipt,

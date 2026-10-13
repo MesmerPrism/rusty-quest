@@ -39,10 +39,29 @@ final class ExperimentSessionPanelCoordinator {
         }
     }
 
+    // Raw fields retain JSON type information: strings/floats are not generation evidence.
+    // Focus and presentation do not determine whether the writer already saved a recording.
+    static boolean restartFinalizationMatches(Object phase, Object routeAction,
+            Object preparationMode, Object operationId, Object finalizedOperationId,
+            Object generation, Object finalizedGeneration) {
+        if (!"idle".equals(phase)
+                || !("show-experimenter".equals(routeAction)
+                    || ("none".equals(routeAction) && "remote-vr".equals(preparationMode)))
+                || !(operationId instanceof String) || ((String) operationId).isEmpty()
+                || !operationId.equals(finalizedOperationId)
+                || (!(generation instanceof Integer) && !(generation instanceof Long))
+                || (!(finalizedGeneration instanceof Integer) && !(finalizedGeneration instanceof Long))) {
+            return false;
+        }
+        long current = ((Number) generation).longValue();
+        return current > 0L && current == ((Number) finalizedGeneration).longValue();
+    }
+
     static final class NativeReceipt {
         final String operationId;
         final boolean accepted;
         final boolean durable;
+        final boolean remotePreparationFinalization;
         final long generation;
         final long revision;
         final String phase;
@@ -170,9 +189,49 @@ final class ExperimentSessionPanelCoordinator {
             long routeActionRevision,
             String detail
         ) {
+            this(
+                operationId, accepted, durable, generation, revision, phase,
+                controlState, activeCondition, recording, completion, activeTimeMs, recovery,
+                storageStatus, kioskRequested, completedOne, completedTwo, stoppedEarlyOne,
+                stoppedEarlyTwo, perConditionCountsAvailable, countsAvailable, countsInvalid,
+                completedTotal, stoppedEarlyTotal, errors, routeAction, routeActionRevision, detail, false
+            );
+        }
+
+        NativeReceipt(
+            String operationId,
+            boolean accepted,
+            boolean durable,
+            long generation,
+            long revision,
+            String phase,
+            String controlState,
+            String activeCondition,
+            boolean recording,
+            String completion,
+            long activeTimeMs,
+            boolean recovery,
+            String storageStatus,
+            boolean kioskRequested,
+            long completedOne,
+            long completedTwo,
+            long stoppedEarlyOne,
+            long stoppedEarlyTwo,
+            boolean perConditionCountsAvailable,
+            boolean countsAvailable,
+            boolean countsInvalid,
+            long completedTotal,
+            long stoppedEarlyTotal,
+            long errors,
+            String routeAction,
+            long routeActionRevision,
+            String detail,
+            boolean remotePreparationFinalization
+        ) {
             this.operationId = safe(operationId);
             this.accepted = accepted;
             this.durable = durable;
+            this.remotePreparationFinalization = remotePreparationFinalization;
             this.generation = Math.max(0L, generation);
             this.revision = Math.max(0L, revision);
             this.phase = safe(phase);
@@ -697,8 +756,13 @@ final class ExperimentSessionPanelCoordinator {
             return true;
         }
         if (state.phase == ExperimentSessionPanelState.Phase.SAVING) {
+            // The codec grants durability only for an exact finalized saved operation.
+            // Remote VR preparation deliberately publishes no panel route.
             boolean exactRoute = receipt.durable
-                && "show-experimenter".equals(receipt.routeAction)
+                && ("show-experimenter".equals(receipt.routeAction)
+                    || (receipt.remotePreparationFinalization
+                        && "none".equals(receipt.routeAction) && "idle".equals(receipt.phase)
+                        && !receipt.recording))
                 && receipt.routeActionRevision > state.routeActionRevision;
             if (!exactRoute || (!state.pendingOperationId.isEmpty() && !pendingMatch)) {
                 nativeStateAcceptanceReason = "saving_route_not_durable";

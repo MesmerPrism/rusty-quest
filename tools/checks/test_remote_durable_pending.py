@@ -215,6 +215,47 @@ final class ActualRemoteArmHarness {
   }
   JSONObject missing=durable("original","armed");missing.getJSONObject("readback").remove("condition_id");
   boolean denied=false;try{codec.parse(missing.toString(),null,false);}catch(IllegalArgumentException expected){denied=true;}check(denied,"active native identity must be present");
+  for(String route:new String[]{"none","show-experimenter"})for(int change=0;change<15;change++){
+   SystemClock.now=1000;server=new ExperimentSessionBleServer();EXPERIMENT_SESSION_PANEL=new ExperimentSessionPanelCoordinator();
+   EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(3L);
+   ExperimentSessionPanelCoordinator.NativeCommand start=EXPERIMENT_SESSION_PANEL.start("condition-a");
+   JSONObject active=response("active","condition-a",1L,start.operationId);
+   active.getJSONObject("readback").put("profile_identity_bound",true).put("audio_identity_bound",true);
+   remotePending=null;sink.onExperimentSessionReadback(codec.parse(active.toString(),start,true));
+   ExperimentSessionPanelCoordinator.NativeCommand save=EXPERIMENT_SESSION_PANEL.restartToExperimenter(EXPERIMENT_SESSION_PANEL.allocateRouteEvent());
+   check(save!=null,"production Save Next admitted after real active readback");
+   remotePending=new RemotePending("original-save-browser",save.operationId,"save-next");
+   JSONObject raw=response("idle",JSONObject.NULL,1L,save.operationId),p=raw.getJSONObject("readback");
+   p.put("revision",8L).put("route_action",route).put("route_action_revision",1L)
+    .put("preparation_mode",route.equals("none")?"remote-vr":"local-panel")
+    .put("vr_preparation",false).put("presentation","unfocused")
+    .put("finalized_operation_id",save.operationId).put("finalized_session_generation",1L)
+    .put("recording_result",new JSONObject().put("status","saved").put("completed",true));
+   if(change==1)p.put("finalized_operation_id","other-save");
+   if(change==2)p.put("finalized_session_generation",2L);
+   if(change==3)p.put("finalized_session_generation",1.5);
+   if(change==4)p.put("finalized_session_generation","1");
+   if(change==5)p.remove("finalized_operation_id");
+   if(change==6)p.getJSONObject("recording_result").put("status","unsaved");
+   if(change==7)p.put("last_operation_status","rejected");
+   if(change==8){p.put("preparation_mode","local-panel");p.put("route_action","none");}
+   if(change==9)p.put("route_action","open-developer");
+   if(change==10)p.put("generation",2L).put("finalized_session_generation",2L);
+   if(change==11)server.serverGeneration++;
+   if(change==12)server.nativeOwnerEpoch++;
+   if(change==13)p.put("last_operation_id","other-save");
+   if(change==14)p.put("route_action_revision",0L);
+   SystemClock.now=40000L;
+   ExperimentSessionAndroidShell.SessionReadback observed=codec.parse(raw.toString(),save,false);
+   sink.onExperimentSessionReadback(observed);
+   if(change==0){
+    check(observed.receipt.durable,"actual parser retains saved writer durability");
+    check(observed.receipt.remotePreparationFinalization==route.equals("none"),"explicit remote proof never invented for local route");
+    check(remotePending==null&&server.id.equals("original-save-browser")&&server.state.equals("confirmed"),"actual codec/coordinator/sink confirms exact original save on both routes");
+    check(EXPERIMENT_SESSION_PANEL.snapshot().phase==ExperimentSessionPanelState.Phase.IDLE,"confirmed save leaves native projection idle");
+    int updates=server.updates;sink.onExperimentSessionReadback(observed);check(server.updates==updates,"repeat save callback cannot replay receipt");
+   }else check(!server.state.equals("confirmed"),"hostile save finalization cannot confirm: "+route+" case "+change);
+  }
   if(args.length==1){
    JSONObject captured=new JSONObject(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(args[0])),java.nio.charset.StandardCharsets.UTF_8));
    JSONObject nativeResponse=captured.getJSONObject("native_response"),nativeState=nativeResponse.getJSONObject("readback");
@@ -230,7 +271,7 @@ final class ActualRemoteArmHarness {
    check(remotePending==null&&server.state.equals("confirmed")&&server.id.equals(captured.getJSONObject("owner_receipt").getString("id")),"private captured original sparse status settles same outer receipt without replay");
    System.out.println("PASS private actual sparse producer payload replay; original native/outer ID correlation; modeled first-epoch Java view; no device or transport effect");
   }
-  System.out.println("PASS "+checks+" real sparse codec -> coordinator -> extracted original Arm receipt at11.27s and40s; condition/null/retirement exact joins; no transport or device effects");
+  System.out.println("PASS "+checks+" real sparse codec -> coordinator -> original Arm and local/remote Save receipts; type/operation/generation/durability/retirement joins; no transport or device effects");
  }
 }
 '''
