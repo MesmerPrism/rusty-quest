@@ -252,3 +252,30 @@ physical retirement barrier unresolved. The separate-store host controls execute
 the exact native prepare/current-source code with real signatures and production
 Broker validators; Java persistence, clock and platform completion are modeled.
 No host result identifies the incoming packet or cause of a prior device failure.
+## Failed initialization observation
+
+The existing debug `owner_failure_diagnostic` read also supports an initialization
+failure before native host publication. Its native v1 envelope contains a versioned
+`initialization_failure.v1` observation with a process-local attempt number,
+runtime digest, app-record digest, app/native generations, and a closed static
+reason code. Provider initialization preserves only a fixed code for the typed
+`QuestBrokerRuntimeError` category, without formatting its payload. Unknown
+variants and error strings are redacted; configuration bodies, keys,
+credentials and exception messages are never exported. This is observation only,
+not authority, successful host construction, or cleanup certification.
+
+The existing process mutex owns this record. Accepted initialization clears the
+previous record before construction; successful route cleanup removes it. Reads
+require the current live capability, matching staged digest and app record, and
+no initialization/close in progress. Java additionally joins the current FAILED
+host's held runtime and app-record digests. Published-host diagnostics keep their
+existing callback path. Capability loss and panics do not fabricate a readable
+failure. The existing pending fence and cleanup obligations are unchanged.
+
+`tools/checks/Test-InitializationFailureDiagnosticHost.py` executes the production
+state, initializer, diagnostic and cleanup-commit bodies, plus the Java owner
+method, with modeled capability/host/JNI inputs. Typed provider payloads are
+modeled in this harness; actual enum compatibility is checked by the native
+Android compile. No cleanup prerequisite outside the commit block is simulated
+as an actual platform observation.
+The Android-target native typecheck is separate; neither proves installed behavior.
