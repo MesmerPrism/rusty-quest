@@ -41,6 +41,8 @@ struct Prepare {
 #[derive(Clone, Serialize, Deserialize)]
 struct Original {
     ticket: AndroidMediaExecutionTicket,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_ticket: Option<AndroidMediaExecutionTicket>,
     effect: Option<AuthenticatedOwnerEffect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_authority: Option<OwnerDispatchAuthorityProjection>,
@@ -492,10 +494,33 @@ pub(super) struct RetainingRegistry {
     pub(super) callbacks: JavaOwnerCallbacks,
 }
 impl AuthenticatedOwnerRegistry for RetainingRegistry {
+    fn current_executor_generation(&self) -> Result<u64, String> {
+        self.callbacks.current_executor_generation()
+    }
+    fn execute_remote_and_verify(
+        &mut self,
+        authority: &OwnerDispatchAuthorityProjection,
+        source: &AndroidMediaExecutionTicket,
+        target: &AndroidMediaExecutionTicket,
+        mode: AndroidMediaExecutionMode,
+    ) -> Result<AuthenticatedOwnerEffect, String> {
+        self.execute_bound(Some(authority), source, target, mode)
+    }
     fn execute_and_verify(
         &mut self,
         authority: Option<&OwnerDispatchAuthorityProjection>,
         ticket: &AndroidMediaExecutionTicket,
+        mode: AndroidMediaExecutionMode,
+    ) -> Result<AuthenticatedOwnerEffect, String> {
+        self.execute_bound(authority, ticket, ticket, mode)
+    }
+}
+impl RetainingRegistry {
+    fn execute_bound(
+        &mut self,
+        authority: Option<&OwnerDispatchAuthorityProjection>,
+        ticket: &AndroidMediaExecutionTicket,
+        target_ticket: &AndroidMediaExecutionTicket,
         mode: AndroidMediaExecutionMode,
     ) -> Result<AuthenticatedOwnerEffect, String> {
         self.cleanup.require_state()?;
@@ -552,6 +577,7 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
                 key(ticket),
                 Original {
                     ticket: ticket.clone(),
+                    target_ticket: Some(target_ticket.clone()),
                     effect: None,
                     source_authority: authority.cloned(),
                     retained_enrollment,
@@ -562,7 +588,7 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
         let effect = AuthenticatedOwnerRegistry::execute_and_verify(
             &mut self.callbacks,
             authority,
-            ticket,
+            target_ticket,
             mode,
         )?;
         if retain_forward {

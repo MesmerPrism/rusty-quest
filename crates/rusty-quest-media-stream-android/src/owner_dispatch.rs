@@ -15,14 +15,15 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{AndroidMediaExecutionMode, AndroidMediaExecutionTicket, AndroidMediaOwnerReadback};
+use crate::{AndroidMediaExecutionMode, AndroidMediaExecutionTicket, AndroidMediaOwnerReadback, OwnerTargetBinding, RemoteOwnerDispatchProof};
+use crate::remote_owner_dispatch::{bind_target_ticket, target_binding_key, is_terminal_owner_request};
 
 /// Signed request schema for a remote platform owner.
 pub const OWNER_DISPATCH_REQUEST_SCHEMA: &str =
     "rusty.quest.android.media.owner_dispatch_request.v1";
 /// Signed response schema for a remote platform owner.
 pub const OWNER_DISPATCH_RESPONSE_SCHEMA: &str =
-    "rusty.quest.android.media.owner_dispatch_response.v1";
+    "rusty.quest.android.media.owner_dispatch_response.v2";
 /// Signed full-product activation notice schema.
 pub const PRODUCT_ACTIVATION_REQUEST_SCHEMA: &str =
     "rusty.quest.android.media.product_activation_request.v1";
@@ -136,6 +137,9 @@ pub struct OwnerDispatchRequest {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthenticatedOwnerEffect {
+    /// Source-side authenticated dispatch proof; absent in raw Java results.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_dispatch: Option<Box<RemoteOwnerDispatchProof>>,
     /// Exact raw registry readback.
     pub readback: AndroidMediaOwnerReadback,
     /// Exact raw readback JSON whose digest Java checked.
@@ -185,6 +189,9 @@ pub enum OwnerDispatchStatus {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerDispatchResponse {
+    /// Receiver-derived execution ticket, signed alongside untouched Java evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_ticket: Option<AndroidMediaExecutionTicket>,
     /// Schema.
     #[serde(rename = "$schema")]
     pub schema_id: String,
@@ -208,6 +215,9 @@ pub struct OwnerDispatchResponse {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerDispatchReplaySnapshot {
+    /// Receiver incarnation retained before any platform call, including uncertainty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub target_bindings: BTreeMap<String, OwnerTargetBinding>,
     /// Requests committed before entering the process-local registry.
     pub pending_request_sha256: BTreeMap<String, String>,
     /// Exact signed responses committed after registry verification.
@@ -380,6 +390,23 @@ pub trait ProductActivationReplayStore: Send {
 /// Internal process registry bridge. Implementations must call Java
 /// `execute`, then `verifyAndReadEvidence`, and return the consumed evidence.
 pub trait AuthenticatedOwnerRegistry: Send {
+    /// Observe the live installed native registry incarnation; never use caller fields.
+    fn current_executor_generation(&self) -> Result<u64, String> {
+        Err("registry generation unavailable".into())
+    }
+
+    /// Execute an authenticated source request through its receiver-derived ticket.
+    /// Retaining registries keep the original source and target identities separately.
+    fn execute_remote_and_verify(
+        &mut self,
+        authority: &OwnerDispatchAuthorityProjection,
+        source: &AndroidMediaExecutionTicket,
+        target: &AndroidMediaExecutionTicket,
+        mode: AndroidMediaExecutionMode,
+    ) -> Result<AuthenticatedOwnerEffect, String> {
+        let _ = source;
+        self.execute_and_verify(Some(authority), target, mode)
+    }
     /// Executes and verifies exactly once without holding authority locks.
     ///
     /// # Errors
@@ -698,8 +725,16 @@ impl crate::AndroidMediaOwnerExecutor for CompositeAndroidMediaOwnerExecutor {
                     .execute(peer_id, projection, ticket.clone(), mode, now_ms)?
             }
         };
-        validate_effect(ticket, mode, &effect)?;
-        let readback = effect.readback.clone();
+        let readback = if let Some(proof) = &effect.remote_dispatch {
+            let target_effect = proof.verify(ticket, &proof.enrolled_target_key_id, &proof.enrolled_target_key)?;
+            let mut raw = effect.clone();
+            raw.remote_dispatch = None;
+            if raw != target_effect { return Err("remote effect differs from signed target".into()); }
+            proof.clone().source_readback(ticket, &proof.enrolled_target_key_id, &proof.enrolled_target_key)?
+        } else {
+            validate_effect(ticket, mode, &effect)?;
+            effect.readback.clone()
+        };
         self.verified
             .lock()
             .map_err(|_| "verified effect lock poisoned".to_owned())?
@@ -716,7 +751,9 @@ impl crate::AndroidMediaOwnerExecutor for CompositeAndroidMediaOwnerExecutor {
             .lock()
             .ok()
             .and_then(|mut verified| verified.remove(&ticket.capability))
-            .is_some_and(|(expected, effect)| expected == *ticket && effect.readback == *readback)
+            .is_some_and(|(expected, effect)| expected == *ticket && if let Some(proof) = &effect.remote_dispatch {
+                proof.validate_source_readback(ticket, readback).is_ok()
+            } else { effect.readback == *readback })
     }
 }
 
@@ -1051,6 +1088,14 @@ where
         if target_peer_id.is_empty()
             || replay.pending_request_sha256.len() > MAX_OWNER_DISPATCH_PENDING
             || replay.terminal.len() > MAX_OWNER_DISPATCH_REPLAYS
+            || replay.target_bindings.len() > MAX_OWNER_DISPATCH_REPLAYS
+            || replay.target_bindings.iter().any(|(key, binding)| {
+                !valid_sha256(key) || binding.source.executor_generation == 0
+                    || binding.source.capability.is_empty() || binding.source.action_id.is_empty()
+                    || crate::remote_owner_dispatch::validate_target_ticket(&binding.source, &binding.target).is_err()
+                    || binding.cleanup_source.as_ref().is_some_and(|cleanup|
+                        !crate::remote_owner_dispatch::valid_retained_cleanup_source(&binding.source, cleanup))
+            })
             || serde_json::to_vec(&replay)
                 .map_or(true, |bytes| bytes.len() > MAX_OWNER_DISPATCH_REPLAY_BYTES)
             || replay
@@ -1102,6 +1147,7 @@ where
                 &request_sha256,
                 OwnerDispatchStatus::Uncertain,
                 None,
+                None,
                 Some("pending_compensation_required".to_owned()),
             );
         }
@@ -1124,7 +1170,17 @@ where
         self.verifier
             .verify_current(&request, &signing_bytes, &signature)?;
 
-        // Persistable uncertainty is established before crossing into platform code.
+        // Authenticate original bytes before deriving any target-local execution identity.
+        let generation = self.registry.current_executor_generation()?;
+        let binding_key = target_binding_key(&request)?;
+        let (target_ticket, binding) = bind_target_ticket(
+            &request, generation, self.replay.target_bindings.get(&binding_key))?;
+        if !self.replay.target_bindings.contains_key(&binding_key)
+            && self.replay.target_bindings.len() >= MAX_OWNER_DISPATCH_REPLAYS {
+            return Err("target binding capacity".into());
+        }
+        let previous_binding = self.replay.target_bindings.insert(binding_key.clone(), binding);
+        // Persistable uncertainty and the fixed target identity precede platform code.
         self.replay
             .pending_request_sha256
             .insert(request.dispatch_id.clone(), request_sha256.clone());
@@ -1132,15 +1188,16 @@ where
             self.replay
                 .pending_request_sha256
                 .remove(&request.dispatch_id);
+            if let Some(previous) = previous_binding {
+                self.replay.target_bindings.insert(binding_key, previous);
+            } else { self.replay.target_bindings.remove(&binding_key); }
             return Err(format!("dispatch pending persistence: {error}"));
         }
-        let execution = self.registry.execute_and_verify(
-            Some(&request.authority),
-            &request.ticket,
-            request.mode,
+        let execution = self.registry.execute_remote_and_verify(
+            &request.authority, &request.ticket, &target_ticket, request.mode,
         );
         let (status, effect, failure) = match execution {
-            Ok(effect) if validate_effect(&request.ticket, request.mode, &effect).is_ok() => {
+            Ok(effect) if validate_effect(&target_ticket, request.mode, &effect).is_ok() => {
                 (OwnerDispatchStatus::Completed, Some(effect), None)
             }
             Ok(_) => (
@@ -1158,11 +1215,15 @@ where
             &request.dispatch_id,
             &request_sha256,
             status,
+            Some(target_ticket),
             effect,
             failure,
         )?;
         let response = decode_response_frame(&encoded)?;
         let mut committed = self.replay.clone();
+        if status == OwnerDispatchStatus::Completed && is_terminal_owner_request(&request) {
+            committed.target_bindings.get_mut(&binding_key).ok_or("target binding lost")?.terminal = true;
+        }
         committed
             .pending_request_sha256
             .remove(&request.dispatch_id);
@@ -1184,10 +1245,12 @@ where
         dispatch_id: &str,
         request_sha256: &str,
         status: OwnerDispatchStatus,
+        target_ticket: Option<AndroidMediaExecutionTicket>,
         effect: Option<AuthenticatedOwnerEffect>,
         failure: Option<String>,
     ) -> Result<Vec<u8>, String> {
         let mut response = OwnerDispatchResponse {
+            target_ticket,
             schema_id: OWNER_DISPATCH_RESPONSE_SCHEMA.to_owned(),
             dispatch_id: dispatch_id.to_owned(),
             request_sha256: request_sha256.to_owned(),
@@ -1316,8 +1379,15 @@ impl<T: OwnerDispatchTransport, S: OwnerDispatchSigner> RemoteOwnerDispatchExecu
             .map_err(|_| "dispatch response signature".to_owned())?;
         match (response.status, response.effect) {
             (OwnerDispatchStatus::Completed, Some(effect)) => {
-                validate_effect(&request.ticket, request.mode, &effect)?;
-                Ok(effect)
+                let proof = RemoteOwnerDispatchProof {
+                    request: request.clone(), response_bytes: response_frame,
+                    enrolled_target_key: self.executor_key.to_bytes(),
+                    enrolled_target_key_id: self.executor_key_id.clone(),
+                };
+                let mut authenticated = proof.verify(&request.ticket, &self.executor_key_id, &self.executor_key.to_bytes())?;
+                if authenticated != effect { return Err("remote decoded effect differs".into()); }
+                authenticated.remote_dispatch = Some(Box::new(proof));
+                Ok(authenticated)
             }
             (OwnerDispatchStatus::Uncertain, _) => {
                 Err("remote platform effect uncertain".to_owned())
@@ -1402,7 +1472,8 @@ pub(crate) fn validate_effect(
     let parsed: AndroidMediaOwnerReadback = serde_json::from_str(&effect.readback_json)
         .map_err(|_| "verified readback JSON is invalid".to_owned())?;
     let readback_digest = sha256_prefixed(effect.readback_json.as_bytes());
-    if verified.schema_id != VERIFIED_OWNER_EFFECT_SCHEMA
+    if effect.remote_dispatch.is_some() || effect.readback.remote_dispatch.is_some()
+        || verified.schema_id != VERIFIED_OWNER_EFFECT_SCHEMA
         || parsed != effect.readback
         || crate::validate_readback(ticket, &effect.readback).is_err()
         || verified.receipt_id != effect.readback.receipt_id
@@ -1427,7 +1498,7 @@ pub(crate) fn validate_effect(
     Ok(())
 }
 
-fn encode_request_frame(request: &OwnerDispatchRequest) -> Result<Vec<u8>, String> {
+pub(crate) fn encode_request_frame(request: &OwnerDispatchRequest) -> Result<Vec<u8>, String> {
     let (metadata, payload) = request_wire_parts(request, true)?;
     encode_wire_frame(&metadata, &payload)
 }
@@ -1452,7 +1523,7 @@ fn encode_response_frame(response: &OwnerDispatchResponse) -> Result<Vec<u8>, St
     encode_wire_frame(&metadata, &payload)
 }
 
-fn decode_response_frame(frame: &[u8]) -> Result<OwnerDispatchResponse, String> {
+pub(crate) fn decode_response_frame(frame: &[u8]) -> Result<OwnerDispatchResponse, String> {
     let (metadata, payload) = decode_wire_frame(frame)?;
     let mut value: serde_json::Value = serde_json::from_slice(metadata)
         .map_err(|_| "invalid dispatch response metadata".to_owned())?;
@@ -1734,7 +1805,7 @@ fn valid_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn sha256_prefixed(bytes: &[u8]) -> String {
+pub(crate) fn sha256_prefixed(bytes: &[u8]) -> String {
     format!("sha256:{}", encode_hex(&Sha256::digest(bytes)))
 }
 
@@ -2003,6 +2074,7 @@ mod tests {
     }
 
     impl AuthenticatedOwnerRegistry for TestRegistry {
+        fn current_executor_generation(&self) -> Result<u64, String> { Ok(7) }
         fn execute_and_verify(
             &mut self,
             authority: Option<&OwnerDispatchAuthorityProjection>,
@@ -2014,7 +2086,8 @@ mod tests {
             }
             *self.calls.lock().expect("calls") += 1;
             let readback = AndroidMediaOwnerReadback {
-                remote_cleanup: None,
+                remote_dispatch: None,
+            remote_cleanup: None,
                 schema_id: crate::ANDROID_MEDIA_READBACK_SCHEMA.to_owned(),
                 capability: ticket.capability.clone(),
                 executor_generation: ticket.executor_generation,
@@ -2038,6 +2111,7 @@ mod tests {
             };
             let readback_json = serde_json::to_string(&readback).expect("readback");
             Ok(AuthenticatedOwnerEffect {
+                remote_dispatch: None,
                 verified: VerifiedOwnerEffect {
                     schema_id: VERIFIED_OWNER_EFFECT_SCHEMA.to_owned(),
                     receipt_id: readback.receipt_id.clone(),
@@ -2054,6 +2128,8 @@ mod tests {
             })
         }
     }
+
+    mod generation_tests { include!("owner_dispatch_generation_tests.rs"); }
 
     fn ticket() -> AndroidMediaExecutionTicket {
         AndroidMediaExecutionTicket {

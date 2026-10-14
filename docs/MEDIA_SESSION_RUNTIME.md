@@ -79,6 +79,25 @@ its mutex during platform callbacks; concurrent/re-entrant access must return
 a bounded busy result. Do not wait for platform callbacks on the main Looper
 or while holding a Java monitor or registry/authority lock.
 
+Ordinary remote owner dispatch authenticates the original source ticket before
+deriving an execution ticket from the receiver's live native registry generation.
+Only that generation changes; capability, action, authority, owner and resource
+fields remain exact. The two native counters need not be equal and neither is
+the app process generation. The receiver durably binds the original action to
+its target incarnation before calling the registry. Compensation and abort/Stop
+cleanup reuse that binding; an incarnation change or missing original binding
+rejects instead of rebasing cleanup onto a replacement registry.
+
+The signed owner-dispatch response v2 carries the target execution ticket and
+untouched Java readback/verification bytes. The source executor verifies this
+response against its independently enrolled target key and retains a typed
+original-request/target-response proof. Its source completion is a separate
+projection containing that proof, never a relabeled Java readback or digest.
+Exact cached retries remain observations and cannot execute the effect twice;
+a different dispatch cannot repeat the same original forward effect. The
+existing separately authenticated retained revoker cleanup protocol keeps its
+own independent preparation and authority requirements.
+
 Partial Start failure compensates the uncertain attempt and previously
 completed owners in reverse order, including late callbacks that may have
 created a resource. The generic runtime has no asynchronous uncertain-Stop

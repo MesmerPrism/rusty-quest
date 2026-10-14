@@ -413,7 +413,8 @@ mod tests {
         ) -> Result<AuthenticatedOwnerEffect, String> {
             self.0.fetch_add(1, Ordering::SeqCst);
             let readback = AndroidMediaOwnerReadback {
-                remote_cleanup: None,
+                remote_dispatch: None,
+            remote_cleanup: None,
                 schema_id: ANDROID_MEDIA_READBACK_SCHEMA.into(),
                 capability: target.capability.clone(),
                 executor_generation: target.executor_generation,
@@ -448,6 +449,7 @@ mod tests {
                 detail_sha256: format!("sha256:{}", "d".repeat(64)),
             };
             Ok(AuthenticatedOwnerEffect {
+                remote_dispatch: None,
                 readback,
                 readback_json,
                 verified,

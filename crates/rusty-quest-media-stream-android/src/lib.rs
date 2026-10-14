@@ -3,11 +3,13 @@
 
 mod owner_dispatch;
 mod remote_cleanup_proof;
+mod remote_owner_dispatch;
 mod retained_cleanup;
 mod retained_cleanup_server;
 
 pub use owner_dispatch::*;
 pub use remote_cleanup_proof::*;
+pub use remote_owner_dispatch::*;
 pub use retained_cleanup::*;
 pub use retained_cleanup_server::*;
 
@@ -83,6 +85,9 @@ pub struct AndroidMediaExecutionTicket {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AndroidMediaOwnerReadback {
+    /// Authenticated ordinary target effect, distinct from this source projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_dispatch: Option<Box<RemoteOwnerDispatchProof>>,
     /// Authenticated target-owned Stop effect, separate from source action identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_cleanup: Option<Box<RemoteRetainedCleanupEffect>>,
@@ -233,6 +238,7 @@ impl AndroidMediaOwnerExecutor for DeterministicAndroidMediaOwnerExecutor {
         }
         .to_owned();
         let readback = AndroidMediaOwnerReadback {
+            remote_dispatch: None,
             remote_cleanup: None,
             schema_id: ANDROID_MEDIA_READBACK_SCHEMA.to_owned(),
             capability: ticket.capability.clone(),
@@ -664,6 +670,13 @@ pub fn validate_readback(
             .validate_source_readback(ticket, readback)
             .map_err(|_| AndroidMediaContractError::InvalidProviderEvidence)?;
     }
+    if let Some(proof) = &readback.remote_dispatch {
+        if readback.remote_cleanup.is_some() {
+            return Err(AndroidMediaContractError::InvalidProviderEvidence);
+        }
+        proof.validate_source_readback(ticket, readback)
+            .map_err(|_| AndroidMediaContractError::InvalidProviderEvidence)?;
+    }
     Ok(MediaStreamOwnerProviderReadback {
         action_id: readback.action_id.clone(),
         authority_epoch_id: readback.authority_epoch_id.clone(),
@@ -728,6 +741,7 @@ mod tests {
 
     fn readback(ticket: &AndroidMediaExecutionTicket) -> AndroidMediaOwnerReadback {
         AndroidMediaOwnerReadback {
+            remote_dispatch: None,
             remote_cleanup: None,
             schema_id: ANDROID_MEDIA_READBACK_SCHEMA.to_owned(),
             capability: ticket.capability.clone(),

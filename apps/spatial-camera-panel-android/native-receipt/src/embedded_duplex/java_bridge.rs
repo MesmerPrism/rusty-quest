@@ -207,6 +207,11 @@ impl JavaOwnerCallbacks {
 }
 
 impl AuthenticatedOwnerRegistry for JavaOwnerCallbacks {
+    fn current_executor_generation(&self) -> Result<u64, String> {
+        self.capability.require_live()?;
+        Ok(self.capability.generation)
+    }
+
     fn execute_and_verify(
         &mut self,
         authority: Option<&OwnerDispatchAuthorityProjection>,
