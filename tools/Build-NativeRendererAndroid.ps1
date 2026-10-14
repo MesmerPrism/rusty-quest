@@ -4,6 +4,7 @@ param(
     [string]$NdkHome = $env:ANDROID_NDK_HOME,
     [string]$OpenXrLoader = "S:\Work\tools\Quest\openxr-loader\libopenxr_loader.so",
     [string]$OutDir = "",
+    [string]$RetainedCargoTargetDirectory = "",
     [string]$Keystore = "",
     [string]$AppBuildLock = "",
     [string]$RecordedHandCaptureDir = "",
@@ -526,6 +527,27 @@ $intermediateIdentity = if ($script:BuildUsesLock) {
     "unlocked-{0}" -f ([string]$sourceComposition.fingerprint).Substring(0, 8)
 }
 $cargoTargetDir = Join-Path $targetRoot ("apk-i\n\{0}\cargo" -f $intermediateIdentity)
+$sourceIsolatedCargoTargetDir = $cargoTargetDir
+if (-not [string]::IsNullOrWhiteSpace($RetainedCargoTargetDirectory)) {
+    if (-not $script:BuildUsesLock) { throw 'Retained native Cargo cache requires an exact app feature lock.' }
+    $retainedFull = [IO.Path]::GetFullPath($RetainedCargoTargetDirectory).TrimEnd('\')
+    $ownedCacheRoot = [IO.Path]::GetFullPath((Join-Path $targetRoot 'apk-i\n')).TrimEnd('\')
+    if (-not $retainedFull.StartsWith($ownedCacheRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        (Split-Path -Leaf $retainedFull) -ne 'cargo' -or
+        -not (Test-Path -LiteralPath $retainedFull -PathType Container)) {
+        throw 'Retained Cargo cache must be an existing native intermediate cargo directory in this checkout.'
+    }
+    $cacheCursor = $retainedFull
+    while ($cacheCursor -and $cacheCursor.Length -ge $resolvedTargetRoot.Length) {
+        if ((Get-Item -LiteralPath $cacheCursor).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Retained Cargo cache ancestors cannot be links.'
+        }
+        $cacheCursor = Split-Path -Parent $cacheCursor
+    }
+    # Reuse compiler intermediates only. Fresh output, source composition,
+    # feature inputs and actual Cargo compilation remain required.
+    $cargoTargetDir = $retainedFull
+}
 $apkUnsigned = Join-Path $OutDir "rusty-quest-native-renderer-unsigned.apk"
 $apkUnaligned = Join-Path $OutDir "rusty-quest-native-renderer-unaligned.apk"
 $apkAligned = Join-Path $OutDir "rusty-quest-native-renderer-aligned.apk"
@@ -2155,6 +2177,8 @@ $manifest = [ordered]@{
     source_dependencies = $sourceDependencies
     output_policy = "content-addressed-app-lock-source-composition"
     isolated_cargo_target_dir = $cargoTargetDir
+    source_isolated_cargo_target_dir = $sourceIsolatedCargoTargetDir
+    cargo_target_directory_policy = if ([string]::IsNullOrWhiteSpace($RetainedCargoTargetDirectory)) { 'source-isolated' } else { 'retained-checkout-native-cache' }
     native_app_settings_path = if ([string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) { "" } else { $nativeAppSettingsPath }
     native_app_settings_sha256 = if ([string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) { "" } else { Get-FileSha256 -Path $nativeAppSettingsPath }
     app_build_manifest_input = $manifestInputPath

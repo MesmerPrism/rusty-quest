@@ -383,7 +383,7 @@ fn finish_native_activity(app: &android_activity::AndroidApp) -> Result<(), Stri
     use jni::{objects::JObject, jni_sig, jni_str, JavaVM};
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
     let raw = app.activity_as_ptr() as jni::sys::jobject;
-    vm.attach_current_thread(|env| {
+    vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
         let activity = unsafe { env.as_cast_raw::<JObject>(&raw)? };
         env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[])?;
         Ok(())
