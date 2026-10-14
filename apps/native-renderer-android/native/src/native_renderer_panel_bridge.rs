@@ -1188,7 +1188,7 @@ pub(crate) fn prepare_app_owner(app: &android_activity::AndroidApp) -> Result<()
         let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererAppStatusBridge")?;
         let class = JClass::for_name_with_loader(env, name, true, loader)?;
         env.call_static_method(class, jni_str!("prepare"),
-            jni_sig!("(Landroid/content/Context;)V"), &[JValue::Object(activity)])?;
+            jni_sig!("(Landroid/content/Context;)V"), &[JValue::Object(&activity)])?;
         Ok(())
     }).map_err(|error| format!("app-owner-preparation-failed:{error}"))
 }
