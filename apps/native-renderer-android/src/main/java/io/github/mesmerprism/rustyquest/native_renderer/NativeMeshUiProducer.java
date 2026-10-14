@@ -125,7 +125,11 @@ public final class NativeMeshUiProducer {
             Class<?> module=Class.forName("io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity");
             module.getMethod("attachNativeMeshSessionControls",Activity.class,LinearLayout.class,
                 java.util.function.BooleanSupplier.class).invoke(null,activity,layout,
-                    (java.util.function.BooleanSupplier)() -> current==this && root!=null);
+                    new java.util.function.BooleanSupplier() {
+                        @Override public boolean getAsBoolean() {
+                            return current==NativeMeshUiProducer.this && root!=null;
+                        }
+                    });
         } catch(ClassNotFoundException unselected) {
             // Neutral mesh-only apps do not acquire experiment or recording authority.
         } catch(Exception failure) {
