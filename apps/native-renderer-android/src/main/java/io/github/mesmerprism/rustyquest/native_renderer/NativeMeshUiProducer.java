@@ -120,6 +120,18 @@ public final class NativeMeshUiProducer {
         layout.addView(title);
         status = text(context, "Live Android UI • waiting for control", 18);
         layout.addView(status);
+        try {
+            // The closed panel source selection owns this optional adapter and all session effects.
+            Class<?> module=Class.forName("io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity");
+            module.getMethod("attachNativeMeshSessionControls",Activity.class,LinearLayout.class,
+                java.util.function.BooleanSupplier.class).invoke(null,activity,layout,
+                    (java.util.function.BooleanSupplier)() -> current==this && root!=null);
+        } catch(ClassNotFoundException unselected) {
+            // Neutral mesh-only apps do not acquire experiment or recording authority.
+        } catch(Exception failure) {
+            status.setText("Session panel unavailable; app owner did not attach.");
+            Log.e(TAG,"event=session-panel-unavailable",failure);
+        }
         button(context, layout, "Start / stop diagnostic animation", 1);
         button(context, layout, "Recorded reference overlay (not selected in this test)", 2);
         button(context, layout, "Toggle joint and wireframe diagnostics", 3);

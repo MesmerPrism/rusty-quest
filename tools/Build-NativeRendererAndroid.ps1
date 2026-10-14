@@ -7,6 +7,9 @@ param(
     [string]$Keystore = "",
     [string]$AppBuildLock = "",
     [string]$RecordedHandCaptureDir = "",
+    # An explicitly admitted pre-generated source avoids opening raw capture inputs.
+    [string]$PreparedHandRigSource = "",
+    [string]$ExpectedPreparedHandRigSourceSha256 = "",
     [int]$RecordedHandFrameLimit = 12,
     [switch]$RequireRecordedHandCapture,
     [switch]$AllowUnlockedDevelopmentBuild,
@@ -713,6 +716,15 @@ final class GeneratedEmbeddedManifoldRuntimeConfig {
     $generatedEmbeddedRuntimeConfigPath,
     $generatedEmbeddedRuntimeConfigSource,
     (New-Object System.Text.UTF8Encoding($false)))
+$standaloneExperimentOwner = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_owner'
+if ($standaloneExperimentOwner) {
+    if ($selectedPanelModuleId -cne 'experiment-session-owner' -or $selectedPanelEntrySimpleName -cne 'ExperimentSessionOwnerPanelModule') { throw 'Standalone experiment owner requires its exact panel source closure.' }
+    if (-not $appBuildEnvByName.ContainsKey('RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED') -or $appBuildEnvByName['RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED'] -cne 'false') { throw 'Standalone experiment owner requires explicitly disabled kiosk policy.' }
+    $denied = @($appBuildLockObject.selected_feature_ids | Where-Object { $_ -match '(?i)polar|soft_kiosk|experiment_session_(ble|command_gateway|direct_network|relay|hub_status)|boot_autostart|stream|video' })
+    if ($denied.Count -gt 0) { throw "Standalone experiment owner excludes selected transport/runtime features: $($denied -join ', ')" }
+    $manifest = [IO.File]::ReadAllText($generatedManifestPath)
+    if ($manifest -match '(?i)BLUETOOTH|FOREGROUND_SERVICE|RECEIVE_BOOT_COMPLETED|ACCESS_NETWORK_STATE|ACCESS_WIFI_STATE|SelfKiosk|SoftKiosk|BootReceiver|Gateway|Relay|Stream|Video') { throw 'Standalone experiment owner manifest contains an excluded transport/runtime declaration.' }
+}
 $generatedControlPanelActivityPath = ""
 # Generate the inert bridge before panel selection, including no-panel APKs.
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererAppStatusBridge.psm1') -Force
@@ -723,9 +735,10 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     # not let its audio/profile/native dependencies leak into another panel's
     # generated Java closure: those closures deliberately omit that source
     # family and its JNI declarations.
-    $isExperimentSessionPanel = $selectedPanelModuleId -ceq "breath-composition-controls"
-    $usesPolarSessionRuntime = $isExperimentSessionPanel -or
+    $isExperimentSessionPanel = $selectedPanelModuleId -ceq "breath-composition-controls" -or $standaloneExperimentOwner
+    $usesPolarSessionRuntime = ($isExperimentSessionPanel -and -not $standaloneExperimentOwner) -or
         $selectedPanelModuleId -ceq "polar-controls"
+    $standaloneExperimentOwnerJava = if ($standaloneExperimentOwner) { 'true' } else { 'false' }
     $experimentSessionProfileSha256 = if ($appBuildEnvByName.ContainsKey("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_PROFILE_SHA256")) {
         [string]$appBuildEnvByName["RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_EXPERIMENT_SESSION_PROFILE_SHA256"]
     } else { "" }
@@ -746,6 +759,12 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
 "@
     } elseif ($selectedPanelModuleId -ceq "polar-controls") {
         ""
+    } elseif ($standaloneExperimentOwner) {
+@"
+    static native String nativeApplyBreathCompositionCommand(String commandJson);
+    static native String nativeInitializeExperimentSessionRuntime(String appPrivateFilesRoot);
+    static native String nativeReadBreathCompositionStatus();
+"@
     } elseif ($selectedPanelModuleId -ceq "breath-composition-controls") {
 @"
     static native String nativeSubmitLiveDepthAlignment(String alignmentJson);
@@ -800,7 +819,7 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     $experimentSessionHubHook = ''
     $appHubSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_hub_status_provider'
     $appBleSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_ble_control'
-    if ($appHubSelected -or $appBleSelected) {
+    if ($appHubSelected -or $appBleSelected -or $standaloneExperimentOwner) {
         if (-not $isExperimentSessionPanel) { throw 'Hub provider requires the breath composition panel.' }
         $experimentSessionHubHook = @'
     static void prepareExperimentSessionAppOwner(android.content.Context context) {
@@ -809,9 +828,15 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     }
 '@
     }
-    if ($appHubSelected -or $appBleSelected -or $usesPolarSessionRuntime) {
-        [System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource -Selected:$appHubSelected -BleSelected:$appBleSelected -PolarSelected:$usesPolarSessionRuntime), [System.Text.UTF8Encoding]::new($false))
+    if ($appHubSelected -or $appBleSelected -or $usesPolarSessionRuntime -or $standaloneExperimentOwner) {
+        [System.IO.File]::WriteAllText($generatedAppStatusBridgePath, (New-NativeRendererAppStatusBridgeSource -Selected:$appHubSelected -BleSelected:$appBleSelected -PolarSelected:$usesPolarSessionRuntime -OwnerSelected:$standaloneExperimentOwner), [System.Text.UTF8Encoding]::new($false))
     }
+    $experimentSessionPolarCleanup = if ($usesPolarSessionRuntime) {
+@'
+        try { clean = PolarSensorRuntime.closeExistingFromOwner(); }
+        catch (Exception error) { clean = false; }
+'@
+    } else { '' }
     $generatedControlPanelActivitySource = @"
 package io.github.mesmerprism.rustyquest.native_renderer;
 
@@ -901,7 +926,7 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                             }
                         },
                         exactFilesRoot,
-                        EXPERIMENT_SESSION_ANCHORS);
+                        EXPERIMENT_SESSION_ANCHORS, $standaloneExperimentOwnerJava);
                 experimentSessionClosure = closure;
                 if (closure.phaseAudioEntries.length == 3) {
                     ConditionAudioContract.Provider[] phaseProviders = new ConditionAudioContract.Provider[3];
@@ -1238,8 +1263,7 @@ $polarBleStopHooks
             throw new IllegalStateException("terminal cleanup must run off main");
         boolean clean = true;
         PanelImmersiveHandoff.setCompletionListener(null);
-        try { clean = PolarSensorRuntime.closeExistingFromOwner(); }
-        catch (Exception error) { clean = false; }
+$experimentSessionPolarCleanup
         BreathPhaseAudioAndroidOwner phaseAudio=breathPhaseAudioOwner;
         if(phaseAudio!=null){
             phaseAudio.close();
@@ -1643,6 +1667,28 @@ $experimentSessionOnCreate
 $panelNativeMethods
 }
 "@
+    if ($standaloneExperimentOwner) {
+        # The command/audio owner above is shared verbatim. No kiosk class may occur in this variant.
+        $start = $generatedControlPanelActivitySource.IndexOf('    static boolean admitExplicitColdExperimentShell(')
+        $end = $generatedControlPanelActivitySource.IndexOf('    static int panelBackgroundColor()', $start)
+        if ($start -lt 0 -or $end -lt 0) { throw 'Standalone presentation facade boundaries missing.' }
+        $presentation = @'
+    static boolean requestPanelPresentationFromNative(String route) {
+        synchronized (PRESENTATION_LOCK) {
+            if (terminalIntentAdmitted || presentationGeneration == Long.MAX_VALUE) return false;
+            presentationGeneration++;
+            return true;
+        }
+    }
+
+'@
+        $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Substring(0,$start) + $presentation + $generatedControlPanelActivitySource.Substring($end)
+        $generatedControlPanelActivitySource = [regex]::Replace($generatedControlPanelActivitySource,
+            '(?s)        NativeRendererSoftKioskCoordinator.process\(\).beginTransition\(.*?2_000L\);\r?\n', '')
+        $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Replace('        if (requestCode == 60612) NativeRendererSelfKioskApplication.endSystemPrompt(this);', '')
+        $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Replace('        NativeRendererSelfKioskApplication.userLeaveHint(this);', '')
+        if ($generatedControlPanelActivitySource -match 'SelfKiosk|SoftKiosk|PolarSensorRuntime|ExperimentSessionBle|Gateway|Relay|Lsl') { throw 'Standalone generated facade contains an excluded owner.' }
+    }
     if (-not [string]::IsNullOrWhiteSpace($experimentSessionHubHook)) {
         $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Insert(
             $generatedControlPanelActivitySource.LastIndexOf('}'), $experimentSessionHubHook + [Environment]::NewLine)
@@ -1719,7 +1765,20 @@ if (-not [string]::IsNullOrWhiteSpace($questionnaireAssetDir)) {
     $questionnaireAssetsPackaged = $true
 }
 
-if ($RequireRecordedHandCapture -and [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
+if (-not [string]::IsNullOrWhiteSpace($PreparedHandRigSource)) {
+    if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) { throw 'Select one hand source, not both raw capture and prepared input.' }
+    if ($ExpectedPreparedHandRigSourceSha256 -cnotmatch '^[0-9a-f]{64}$') { throw 'Prepared hand input requires its exact expected SHA256.' }
+    $PreparedHandRigSource = (Resolve-Path -LiteralPath $PreparedHandRigSource).Path
+    if ((Get-FileHash -LiteralPath $PreparedHandRigSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedPreparedHandRigSourceSha256) {
+        throw 'Prepared hand source hash mismatch.'
+    }
+    $preparedHand = Get-Content -Raw -LiteralPath $PreparedHandRigSource | ConvertFrom-Json
+    if ($preparedHand.schema -cne 'rusty.quest.native_renderer.recorded_hand_replay_source.v1' -or
+        $preparedHand.recorded_input_equivalent -cne $true -or @($preparedHand.hands).Count -ne 2) {
+        throw 'Prepared hand source must be the admitted provider-derived two-hand source, never the public fallback.'
+    }
+} elseif (-not [string]::IsNullOrWhiteSpace($ExpectedPreparedHandRigSourceSha256)) { throw 'Prepared hand source digest has no selected input.' }
+if ($RequireRecordedHandCapture -and [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir) -and [string]::IsNullOrWhiteSpace($PreparedHandRigSource)) {
     throw "-RequireRecordedHandCapture needs -RecordedHandCaptureDir so the APK cannot silently fall back to the public metadata-only replay shape."
 }
 $resolvedRecordedHandCaptureDir = ""
@@ -1732,6 +1791,16 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
 
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
+if ($standaloneExperimentOwner) {
+    $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java',
+        'NativeRendererExperimentLaunchAuthority.java','NativeRendererExperimentLauncherPolicy.java',
+        'NativeRendererWriterAcknowledgedExitPolicy.java','PanelImmersiveHandoff.java',
+        'PanelImmersiveHandoffLifecyclePolicy.java','PanelImmersiveHandoffProofPolicy.java',
+        'PanelModule.java','PanelModuleRegistry.java')
+    $sourceFiles = @($sourceFiles | Where-Object { [IO.Path]::GetFileName($_) -cin $standaloneBaseSources })
+    if ($sourceFiles.Count -ne $standaloneBaseSources.Count) { throw 'Standalone base Java source closure is incomplete.' }
+    if (@($panelSourceFiles | Where-Object { [IO.Path]::GetFileName($_) -match 'Ble|Polar|Gateway|Relay|Lsl|Kiosk|BreathCompositionPanelModule' }).Count -gt 0) { throw 'Standalone panel source closure contains an excluded owner.' }
+}
 $sharedBrokerClientJavaRoot = Join-Path $repoRoot "crates\rusty-quest-broker-client\android"
 $sharedBrokerClientJava = Get-ChildItem -LiteralPath $sharedBrokerClientJavaRoot -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
@@ -1749,6 +1818,10 @@ $sourceFiles = @($sourceFiles) +
     @($sharedBrokerClientJava) +
     @($sharedBrokerTransportJava) +
     @($generatedEmbeddedRuntimeConfigPath)
+if ($standaloneExperimentOwner) {
+    # Embedded transport/media Java remains outside the independent owner package.
+    $sourceFiles = @($sourceFiles | Where-Object { $_ -notin $sharedBrokerClientJava -and $_ -notin $sharedBrokerTransportJava -and $_ -cne $generatedEmbeddedRuntimeConfigPath })
+}
 # Debug control is a separate closed source set; provider-off builds do not
 # compile either the provider class or its authority suffix.
 $debugSources = @()
@@ -1799,6 +1872,7 @@ $previousAndroidHome = $env:ANDROID_HOME
 $previousNdkHome = $env:ANDROID_NDK_HOME
 $previousLinker = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
 $previousRecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR
+$previousPreparedHandRigSource = $env:RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE
 $previousRecordedHandFrameLimit = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT
 $previousAppBuildEnv = @{}
 $rustyLslBackendPackaged = Test-TruthyBuildEnvValue -Value (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_RUSTY_LSL_ANDROID" -AppBuildEnvByName $appBuildEnvByName)
@@ -1829,11 +1903,20 @@ try {
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT -ErrorAction SilentlyContinue
     }
+    if ([string]::IsNullOrWhiteSpace($PreparedHandRigSource)) {
+        Remove-Item Env:\RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE -ErrorAction SilentlyContinue
+    } else {
+        if ((Get-FileHash -LiteralPath $PreparedHandRigSource -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedPreparedHandRigSourceSha256) { throw 'Prepared hand source changed before compilation.' }
+        $env:RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE = $PreparedHandRigSource
+    }
     Invoke-Checked "native renderer cargo build" $cargoCommand.Source $cargoBuildArguments
 } finally {
     $env:ANDROID_HOME = $previousAndroidHome
     $env:ANDROID_NDK_HOME = $previousNdkHome
     $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $previousLinker
+    if ($null -eq $previousPreparedHandRigSource) {
+        Remove-Item Env:\RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE -ErrorAction SilentlyContinue
+    } else { $env:RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE = $previousPreparedHandRigSource }
     if ($null -eq $previousRecordedHandCaptureDir) {
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
     } else {
@@ -1973,6 +2056,9 @@ $manifest = [ordered]@{
     panel_runtime_widening_allowed = $false
     panel_source_closure_asset = if ([string]::IsNullOrWhiteSpace($selectedPanelModuleId)) { "" } else { "panel-source-closure.json" }
     panel_source_closure = $panelSourceClosure
+    prepared_hand_rig_source = if ([string]::IsNullOrWhiteSpace($PreparedHandRigSource)) { $null } else {
+        @{ path=$PreparedHandRigSource; sha256=$ExpectedPreparedHandRigSourceSha256; provider_qualification='caller-admitted-derived-input'; runtime_pose_source='live-tracking-selected-separately' }
+    }
     panel_java_sources = if ($null -eq $panelSourceClosure) { @() } else { @($panelSourceClosure.source_files) }
     java_compile_source_count = @($sourceFiles).Count
     java_compile_sources = @($sourceFiles | ForEach-Object { [System.IO.Path]::GetFullPath([string]$_) })

@@ -22,7 +22,7 @@ public final class ExperimentSessionStatusReadCodecTest {
     }
     private static void read(JSONObject raw, long completed, long now) {
         ExperimentSessionAndroidShell.SessionReadback r =
-            new ExperimentSessionJsonCodec().parse(raw.toString(), null, false);
+            new ExperimentSessionJsonCodec(() -> EXPERIMENT_SESSION_PANEL).parse(raw.toString(), null, false);
         EXPERIMENT_SESSION_PANEL.acceptNativeReadback(r.runtimeEpoch, r.receipt,
             completed, now, "accepted".equals(r.commandStatus));
     }
@@ -39,7 +39,7 @@ public final class ExperimentSessionStatusReadCodecTest {
                 .put("arm_durable_checkpoint",true).put("profile_identity_bound",true)
                 .put("audio_identity_bound",true).put("active_time_ms",30002L);
             check(!actualShape.getJSONObject("readback").has("recording"),"actual native status omits recording member");
-            ExperimentSessionAndroidShell.SessionReadback parsed=new ExperimentSessionJsonCodec().parse(actualShape.toString(),null,false);
+            ExperimentSessionAndroidShell.SessionReadback parsed=new ExperimentSessionJsonCodec(() -> EXPERIMENT_SESSION_PANEL).parse(actualShape.toString(),null,false);
             check(parsed.receipt.recording && parsed.armAcceptance!=null,"sparse actual phase expresses recording and retained checkpoint");
             check(EXPERIMENT_SESSION_PANEL.acceptNativeReadback(parsed.runtimeEpoch,parsed.receipt,40000000001L,40000000002L,true,parsed.armAcceptance),"late original Arm checkpoint admitted after40s");
             check(EXPERIMENT_SESSION_PANEL.snapshot().pendingOperationId.isEmpty(),"retained original pending Arm clears after later control event");
@@ -48,7 +48,7 @@ public final class ExperimentSessionStatusReadCodecTest {
             EXPERIMENT_SESSION_PANEL = new ExperimentSessionPanelCoordinator();
             JSONObject raw = response(last, "accepted");
             ExperimentSessionAndroidShell.SessionReadback r =
-                new ExperimentSessionJsonCodec().parse(raw.toString(), null, false);
+                new ExperimentSessionJsonCodec(() -> EXPERIMENT_SESSION_PANEL).parse(raw.toString(), null, false);
             check(!r.receipt.accepted && !r.receipt.durable,
                 "status must not promote last command " + last);
             read(raw, 100L, 100L);

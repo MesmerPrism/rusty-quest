@@ -248,13 +248,32 @@ final class ExperimentSessionPackagedClosure {
 
     private ExperimentSessionPackagedClosure() {}
 
+    static void requireOwnerProfilePolicy(String schema, Object kioskRequested, boolean standaloneOwner) {
+        if (standaloneOwner) {
+            if (!"rusty.viscereality.experiment_session_profile.standalone.v2".equals(schema))
+                fail("experiment-session-standalone-profile-schema-required");
+            if (!Boolean.FALSE.equals(kioskRequested))
+                fail("experiment-session-standalone-kiosk-policy-must-be-false");
+        } else if (!OUTER_SCHEMA.equals(schema)) {
+            fail("experiment-session-outer-schema-invalid");
+        }
+    }
+
     static Result prepare(byte[] featureLockBytes, AssetReader assets, Path filesRoot,
             Anchors anchors) throws Exception {
+        return prepare(featureLockBytes, assets, filesRoot, anchors, false);
+    }
+
+    static Result prepare(byte[] featureLockBytes, AssetReader assets, Path filesRoot,
+            Anchors anchors, boolean standaloneOwner) throws Exception {
         if (featureLockBytes == null || assets == null || filesRoot == null || anchors == null) {
             fail("experiment-session-packaged-closure-input-missing");
         }
         Map<String, Object> lock = object(parse(strictUtf8(featureLockBytes,
             "feature-lock")), "feature-lock");
+        Object selected = lock.get("selected_feature_ids");
+        boolean selectedOwner = selected instanceof List && ((List<?>) selected).contains("ui.experiment_session_owner");
+        if (selectedOwner != standaloneOwner) fail("experiment-session-owner-selection-mismatch");
         Map<String, Object> buildInputs = object(lock.get("build_inputs"), "build_inputs");
         Map<String, Object> closure = object(buildInputs.get("private_asset_closure"),
             "private_asset_closure");
@@ -326,9 +345,8 @@ final class ExperimentSessionPackagedClosure {
             "recording_default", "kiosk_requested_default", "non_audio_profile",
             "non_audio_profile_sha256", "radius_observation", "runtime_projection",
             "conditions");
-        if (!OUTER_SCHEMA.equals(string(profile, "schema_id"))) {
-            fail("experiment-session-outer-schema-invalid");
-        }
+        requireOwnerProfilePolicy(string(profile, "schema_id"),
+            profile.get("kiosk_requested_default"), standaloneOwner);
 
         Map<String, ConditionIdentity> outerConditions = parseOuterConditions(profile);
         String nonAudioProfileSha256 = string(profile, "non_audio_profile_sha256");

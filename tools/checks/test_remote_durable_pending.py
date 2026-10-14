@@ -142,8 +142,8 @@ final class BreathCompositionPanelModule {
 
         # Use the real codec + coordinator, then the extracted actual remote callback.
         # Native responses follow the sparse producer shape; platform boundaries are inert.
-        codec_start = module.index("    private static final class ExperimentSessionJsonCodec")
-        codec_end = module.index("    private final class SliderControl {", codec_start)
+        codec_source = (panel / "ExperimentSessionJsonCodec.java").read_text(encoding="utf-8")
+        codec = codec_source[codec_source.index("final class ExperimentSessionJsonCodec"):].replace("final class ExperimentSessionJsonCodec", "private static final class ExperimentSessionJsonCodec", 1)
         actual = r'''
 package io.github.mesmerprism.rustyquest.native_renderer;
 import java.lang.ref.WeakReference;import org.json.JSONObject;import android.os.SystemClock;
@@ -178,7 +178,7 @@ final class ActualRemoteArmHarness {
   return raw;
  }
  public static void main(String[]args)throws Exception{
-  ActualRemoteArmHarness sink=new ActualRemoteArmHarness();ExperimentSessionJsonCodec codec=new ExperimentSessionJsonCodec();
+  ActualRemoteArmHarness sink=new ActualRemoteArmHarness();ExperimentSessionJsonCodec codec=new ExperimentSessionJsonCodec(() -> EXPERIMENT_SESSION_PANEL);
   for(long at:new long[]{11270L,40000L})for(String control:new String[]{"armed","running","paused"}){
    SystemClock.now=1000;server=new ExperimentSessionBleServer();EXPERIMENT_SESSION_PANEL=new ExperimentSessionPanelCoordinator();
    ExperimentSessionPanelCoordinator.NativeCommand original=EXPERIMENT_SESSION_PANEL.arm("condition-a",100);
@@ -277,7 +277,7 @@ final class ActualRemoteArmHarness {
 '''
         actual = actual.replace("__SERVER__", extract(harness, "final class ExperimentSessionBleServer"))
         actual = actual.replace("__PENDING__", parts["pending"])
-        actual = actual.replace("__CODEC__", module[codec_start:codec_end])
+        actual = actual.replace("__CODEC__", codec)
         actual = actual.replace("__READBACK__", parts["readback"].replace("BreathCompositionPanelModule", "ActualRemoteArmHarness"))
         integrated = output / "ActualRemoteArmHarness.java"
         integrated.write_text(actual, encoding="utf-8")

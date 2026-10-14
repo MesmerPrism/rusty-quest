@@ -30,11 +30,8 @@ RunHost 'app-owner-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$Js
 RunHost 'lifetime-tests' 'java' @('-cp',"$hostOut$([IO.Path]::PathSeparator)$JsonJar",'io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionHubLifetimeTest')
 
 # Test the actual codec, not a synthesized already-accepted NativeReceipt.
-$panelText=[IO.File]::ReadAllText((Join-Path $panel 'BreathCompositionPanelModule.java'))
-$codecStart=$panelText.IndexOf('    private static final class ExperimentSessionJsonCodec')
-$codecEnd=$panelText.IndexOf('    private final class SliderControl {',$codecStart)
-if($codecStart-lt0-or$codecEnd-lt0){throw 'Production codec extraction missing'}
-$codec=$panelText.Substring($codecStart,$codecEnd-$codecStart)
+$codec=[IO.File]::ReadAllText((Join-Path $panel 'ExperimentSessionJsonCodec.java'))
+$codec=$codec.Substring($codec.IndexOf('final class ExperimentSessionJsonCodec')).Replace('final class ExperimentSessionJsonCodec','private static final class ExperimentSessionJsonCodec')
 $template=Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSessionStatusReadCodecTest.java"
 $hostCodec=Join-Path $OutputRoot 'ExperimentSessionStatusReadCodecTest.java'
 $templateText=[IO.File]::ReadAllText($template)

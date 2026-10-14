@@ -102,3 +102,7 @@ cargo test -p rusty-quest-feature-activation -p rusty-quest-particle-adapter -p 
 Application promotion additionally requires its workspace lock checks and,
 when runtime behavior is claimed, explicit serial-scoped device evidence for
 both applied and damaged inputs with cleanup and bounded fatal scanning.
+
+The opt-in [standalone experiment owner](EXPERIMENT_SESSION_STANDALONE_OWNER.md)
+uses its own panel source closure and selected profile policy. It reuses the
+existing command/audio owner while excluding kiosk and remote transports.

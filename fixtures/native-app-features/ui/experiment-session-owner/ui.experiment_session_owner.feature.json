@@ -1,0 +1,106 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.experiment_session_owner",
+  "module_path": "ui/experiment-session-owner",
+  "module_kind": "same-apk-session-owner",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Standalone controller-driven session presentation with the existing native recording owner and verified audio closure; no remote transports or watchdog.",
+  "provides": [
+    "ui.experiment_session_owner"
+  ],
+  "depends_on": [
+    "ui.same_apk_control_panel"
+  ],
+  "incompatible_with": [
+    "ui.breath_composition_control_panel",
+    "ui.same_apk_soft_kiosk",
+    "ui.experiment_session_ble_control",
+    "ui.experiment_session_command_gateway",
+    "ui.experiment_session_direct_network",
+    "ui.experiment_session_relay",
+    "ui.experiment_session_hub_status_provider",
+    "ui.experiment_boot_autostart",
+    "input.breath.polar_acc_assessment"
+  ],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED",
+        "value": "false"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "panel_composition": {
+    "schema": "rusty.quest.native_renderer.panel_composition.v1",
+    "selected_module_id": "experiment-session-owner",
+    "denied_module_ids": [
+      "breath-composition-controls",
+      "polar-controls",
+      "lsl-controls",
+      "stimulus-volume"
+    ],
+    "modules": [
+      {
+        "module_id": "experiment-session-owner",
+        "entry_class": "io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionOwnerPanelModule",
+        "dependencies": [
+          "condition-audio-runtime"
+        ],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/experiment-session-owner/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionOwnerPanelModule.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionAndroidShell.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionJsonCodec.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPanelCoordinator.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPanelState.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPanelViewPolicy.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionStatusObservation.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPackagedClosure.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionControlCapability.java",
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionUiControlHandoff.java"
+        ]
+      },
+      {
+        "module_id": "condition-audio-runtime",
+        "entry_class": "",
+        "dependencies": [],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/condition-audio/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ConditionAudioAndroidMediaBackendFactory.java",
+          "apps/native-renderer-android/panel-modules/condition-audio/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ConditionAudioContract.java",
+          "apps/native-renderer-android/panel-modules/condition-audio/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ConditionAudioRuntime.java",
+          "apps/native-renderer-android/panel-modules/condition-audio/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathPhaseAudioEngine.java",
+          "apps/native-renderer-android/panel-modules/condition-audio/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathPhaseAudioAndroidOwner.java"
+        ]
+      }
+    ]
+  },
+  "public_private_boundary": "Generic presentation only. The existing native session owner and packaged profile/audio identities remain authoritative. No product profile or transport identity is embedded."
+}

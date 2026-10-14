@@ -1,0 +1,77 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "particles.anchor_echo.rows.composable",
+  "module_path": "particles/anchor-echo/rows-composable",
+  "module_kind": "particle-anchor-echo",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Resident GPU particle anchor and bounded echo rows appended after main and tracer billboards. Explicit native world-scene composition.",
+  "provides": [
+    "particles.anchor_echo.rows"
+  ],
+  "depends_on": [
+    "renderer.private_particles.composable"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "native-worldspace-integration"
+    ]
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA"
+      },
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "privateParticleAnchorEchoOutputMode=merged-billboard-output-after-tracers",
+      "privateParticleDrawBudgetIncludesAnchorEcho=",
+      "privateParticleAnchorEchoCpuUploadPerFrame=false",
+      "privateParticleDiagnosticLegacyReductionsAvailability=unavailable-v2-validity-masked"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Anchor/echo rows are generic resident GPU billboard infrastructure; downstream apps own the private anchor source and effect vocabulary."
+}

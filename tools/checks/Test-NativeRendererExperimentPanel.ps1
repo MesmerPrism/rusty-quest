@@ -12,6 +12,7 @@ $panelRoot = Join-Path $repo 'apps/native-renderer-android/panel-modules/breath-
 $polarRoot = Join-Path $repo 'apps/native-renderer-android/panel-modules/polar/src/main/java/io/github/mesmerprism/rustyquest/native_renderer'
 $testRoot = Join-Path $repo 'apps/native-renderer-android/tests/java/io/github/mesmerprism/rustyquest/native_renderer'
 $module = Join-Path $panelRoot 'BreathCompositionPanelModule.java'
+$codec = Join-Path $panelRoot 'ExperimentSessionJsonCodec.java'
 $viewPolicy = Join-Path $panelRoot 'ExperimentSessionPanelViewPolicy.java'
 $coordinator = Join-Path $panelRoot 'ExperimentSessionPanelCoordinator.java'
 $polar = Join-Path $polarRoot 'PolarSensorPanel.java'
@@ -55,13 +56,13 @@ Assert-Contains $module 'PROVENANCE_EXPLICIT_USER_LAUNCH'
 Assert-Contains $module 'EXTRA_LAUNCH_EPOCH'
 Assert-Contains $coordinator 'admitTrustedColdLaunch'
 Assert-Contains $coordinator 'awaitNativeRestartRoute'
-Assert-Contains $module 'by_condition'
+Assert-Contains $codec 'by_condition'
 Assert-Contains $module 'condition-a'
 Assert-Contains $module 'condition-b'
 Assert-Contains $module 'storage_status'
 Assert-Contains $module 'recovery_status'
-Assert-Contains $module 'kiosk_enforcement'
-Assert-Contains $module 'validNonNegativeLong'
+Assert-Contains $codec 'kiosk_enforcement'
+Assert-Contains $codec 'validNonNegativeLong'
 Assert-Contains $viewPolicy 'Saving…'
 Assert-Contains $viewPolicy 'Unclassified/recovered:'
 Assert-Contains $viewPolicy 'invalid native readback'
@@ -257,6 +258,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'PanelImmersiveHandoffProofPolicy.java'),
         (Join-Path $panelRoot 'BreathCompositionCommandReceiver.java'),
         (Join-Path $panelRoot 'BreathCompositionPanelModule.java'),
+        (Join-Path $panelRoot 'ExperimentSessionJsonCodec.java'),
         (Join-Path $panelRoot 'ExperimentSessionBleNamePolicy.java'),
         (Join-Path $panelRoot 'ExperimentSessionBleProtocol.java'),
         (Join-Path $panelRoot 'ExperimentSessionControlCapability.java'),

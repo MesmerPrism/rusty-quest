@@ -1,0 +1,64 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "breath.composition.controller_only",
+  "module_path": "breath/composition-controller-only",
+  "module_kind": "closed-world-composition",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Exact-lock controller breath composition without sensor or legacy panel dependencies.",
+  "provides": [
+    "breath.composition.direct_four_way"
+  ],
+  "depends_on": [
+    "input.breath.controller_assessment",
+    "mapping.breath.state",
+    "mapping.breath.volume"
+  ],
+  "incompatible_with": [
+    "breath.composition.closed_world",
+    "input.breath.polar_acc_assessment"
+  ],
+  "exclusive_groups": {
+    "breath_composition_transport": "same-process-direct"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.breath_composition.controller_projection": "dynamic-axis",
+      "debug.rustyquest.native_renderer.breath_composition.enabled": "true",
+      "debug.rustyquest.native_renderer.breath_composition.stale_millis": "500",
+      "debug.rustyquest.native_renderer.breath_composition.polar_acc_assessment.enabled": "false"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=breath-composition",
+      "featureLockActive=true",
+      "transport=same-process-direct"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns closed-world source/mapping selection, lifecycle, generation fencing, and neutral readback only."
+}

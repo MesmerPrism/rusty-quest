@@ -59,6 +59,16 @@ const MAX_COMMAND_BYTES: usize = 32 * 1024;
 const MAX_OPERATION_HISTORY: usize = 64;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const SUBMITTED_FRAME_STALL_NS: u64 = 500_000_000;
+
+// Packaging binds the standalone owner policy to its admitted profile. An
+// absent selection preserves the legacy contract; this reports no kiosk effect.
+fn kiosk_requested_policy() -> bool {
+    match option_env!("RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED") {
+        Some("false") => false,
+        Some("true") | None => true,
+        Some(_) => panic!("invalid packaged experiment kiosk policy"),
+    }
+}
 const PRODUCER_LOSS_COUNT_BITS: u32 = 32;
 const PRODUCER_LOSS_COUNT_MASK: u64 = u32::MAX as u64;
 const EXPERIMENT_SESSION_RUNTIME_PROJECTION_SCHEMA: &str =
@@ -385,7 +395,7 @@ impl Projection {
                     "recent_bytes_hashed": self.recovery_work.recent_bytes_hashed,
                 },
                 "finalization_timings": self.finalization_timings.value(),
-                "kiosk_requested": true,
+                "kiosk_requested": kiosk_requested_policy(),
                 "kiosk_effective": "unknown",
                 "kiosk_enforcement": "not-enforced",
                 "last_operation_id": self.last_operation_id,

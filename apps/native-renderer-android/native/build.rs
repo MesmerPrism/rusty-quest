@@ -56,6 +56,8 @@ fn main() {
         "cargo:rerun-if-changed=../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json"
     );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER");
@@ -707,6 +709,13 @@ const PRIVATE_LAYER_GUIDE_OUTPUTS: [(&str, &str); 6] = [
 
 fn write_recorded_hand_replay_source(out_dir: &Path) {
     let output = out_dir.join("recorded_hand_replay_source.json");
+    if let Ok(prepared) = env::var("RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE") {
+        assert!(!prepared.trim().is_empty(), "selected prepared hand input is empty");
+        assert!(env::var("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR").is_err(), "ambiguous hand inputs");
+        println!("cargo:rerun-if-changed={prepared}");
+        fs::copy(&prepared, &output).expect("selected prepared hand source is unavailable");
+        return;
+    }
     if let Ok(capture_dir) = env::var("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR") {
         let capture_dir = PathBuf::from(capture_dir);
         if capture_dir.is_dir() {

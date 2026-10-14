@@ -1,7 +1,7 @@
 # Build-selected Java composition; no assets, device effects or admission authority.
 function New-NativeRendererAppStatusBridgeSource {
     [CmdletBinding()]
-    param([switch]$Selected, [switch]$BleSelected, [switch]$PolarSelected)
+    param([switch]$Selected, [switch]$BleSelected, [switch]$PolarSelected, [switch]$OwnerSelected)
     $body = if ($Selected) {
 @'
     private static ExperimentSessionAppStatusOwner owner;
@@ -56,10 +56,19 @@ function New-NativeRendererAppStatusBridgeSource {
 '@
     } else {
 @'
-    static void prepare(android.content.Context context) { prepareBle(context); }
+    static void prepare(android.content.Context context) { prepareOwner(context); prepareBle(context); }
     public static void changed(long identity, long epoch, boolean live) { changedBle(identity, epoch, live); }
     public static void lifecycle(long identity, long epoch, boolean resumed) { }
 '@
+    }
+    $ownerBody = if ($OwnerSelected) {
+@'
+    private static void prepareOwner(android.content.Context context) {
+        ControlPanelActivity.prepareExperimentSessionAppOwner(context);
+    }
+'@
+    } else {
+        '    private static void prepareOwner(android.content.Context context) { }'
     }
     $bleBody = if ($BleSelected) {
 @'
@@ -99,7 +108,7 @@ function New-NativeRendererAppStatusBridgeSource {
     static void trustedColdLaunch(android.content.Context context, long epoch) { }
 '@
     }
-    return "package io.github.mesmerprism.rustyquest.native_renderer;`n/** Selected application composition; feature off is inert. */`npublic final class NativeRendererAppStatusBridge {`n" + $body + "`n" + $bleBody + "`n" + $polarBody + "`n}"
+    return "package io.github.mesmerprism.rustyquest.native_renderer;`n/** Selected application composition; feature off is inert. */`npublic final class NativeRendererAppStatusBridge {`n" + $body + "`n" + $ownerBody + "`n" + $bleBody + "`n" + $polarBody + "`n}"
 }
 function Write-NativeRendererJavaSourceResponse {
     param([Parameter(Mandatory)][string[]]$SourceFiles,

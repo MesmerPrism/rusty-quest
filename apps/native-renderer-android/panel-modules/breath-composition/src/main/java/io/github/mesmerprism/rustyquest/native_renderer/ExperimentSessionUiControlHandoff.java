@@ -22,7 +22,8 @@ final class ExperimentSessionUiControlHandoff implements Runnable {
    long now=owner.nowMs();if(now<opened||now-opened>5000){finish("handoff-timeout-no-dispatch");return;}
    JSONObject current=owner.read();
    String state="start".equals(fence.operation)?"armed":"paused";
-   if(!Boolean.TRUE.equals(current.opt("recording"))
+   // Native readback owns recording state through phase; no recording member is emitted.
+   if(!"active".equals(current.opt("phase"))
        || !state.equals(current.optString("control_state"))
        || ExperimentSessionControlCapability.positive(current,"generation")!=fence.generation
        || ExperimentSessionControlCapability.positive(current,"runtime_epoch")!=fence.epoch

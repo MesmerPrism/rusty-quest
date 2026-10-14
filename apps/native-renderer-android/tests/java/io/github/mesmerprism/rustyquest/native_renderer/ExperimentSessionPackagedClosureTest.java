@@ -13,6 +13,24 @@ public final class ExperimentSessionPackagedClosureTest {
     private static final String AUDIO_B_SHA = repeat('b');
 
     public static void main(String[] args) throws Exception {
+        ExperimentSessionPackagedClosure.requireOwnerProfilePolicy(
+            "rusty.viscereality.experiment_session_profile.standalone.v2", Boolean.FALSE, true);
+        for (Object kiosk : new Object[]{null, Boolean.TRUE, "false", Integer.valueOf(0)}) {
+            boolean denied=false;
+            try { ExperimentSessionPackagedClosure.requireOwnerProfilePolicy(
+                "rusty.viscereality.experiment_session_profile.standalone.v2", kiosk, true); }
+            catch (IllegalArgumentException expected) { denied=true; }
+            if (!denied) throw new AssertionError("standalone rejects ambiguous or requested kiosk");
+        }
+        for (boolean standalone : new boolean[]{false,true}) {
+            boolean denied=false;
+            try { ExperimentSessionPackagedClosure.requireOwnerProfilePolicy(standalone
+                ? "rusty.viscereality.experiment_session_profile.v1"
+                : "rusty.viscereality.experiment_session_profile.standalone.v2", Boolean.FALSE, standalone); }
+            catch (IllegalArgumentException expected) { denied=true; }
+            if (!denied) throw new AssertionError("profile schema cannot cross owner routes");
+        }
+
         validClosureMaterializesExactBytesAndBuildsOnlyAudio();
         validatedOpenControlDefaults();
         validGuidanceClosureMaterializesAndBindsAudio();
