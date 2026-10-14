@@ -281,3 +281,13 @@ modeled in this harness; actual enum compatibility is checked by the native
 Android compile. No cleanup prerequisite outside the commit block is simulated
 as an actual platform observation.
 The Android-target native typecheck is separate; neither proves installed behavior.
+
+This host gate requires Cargo, a JDK (`javac` and `java`), and a provisioned
+`org.json` JAR. Select the JAR with `--java-json-jar` or `RUSTY_QUEST_JSON_JAR`;
+the existing owner Gradle cache is a fallback. A missing JAR fails before the
+controls run and does not earn a skipped pass. Default aggregate registration
+is deferred until dependency provisioning has an owner; invoke this focused
+gate explicitly with its required inputs. Cargo can acquire its ordinary test dependencies;
+use `--offline` only after provisioning the registry. The result records the
+selected JAR digest. No Android SDK, Gradle build, APK, or device is invoked by
+this focused gate.

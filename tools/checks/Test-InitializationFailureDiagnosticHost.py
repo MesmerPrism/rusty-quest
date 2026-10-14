@@ -8,7 +8,10 @@ from pathlib import Path
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root',required=True);p.add_argument('--output',required=True)
+    p.add_argument('--java-json-jar', help='Explicit provisioned org.json JAR; otherwise RUSTY_QUEST_JSON_JAR or the owner Gradle cache')
+    p.add_argument('--offline', action='store_true', help='Use only an already provisioned Cargo registry')
     a=p.parse_args();root=Path(a.root).resolve();out=Path(a.output).resolve()
+    jar=json_jar(a.java_json_jar)
     out.mkdir(parents=True,exist_ok=False);(out/'src').mkdir()
     source=root/'apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex/runtime_host.rs'
     raw=source.read_bytes();text=raw.decode()
@@ -22,24 +25,35 @@ def main():
     harness=PRELUDE+state+initialization+cleanup+TESTS
     (out/'Cargo.toml').write_text('[package]\nname="initialization-failure-controls"\nversion="0.0.0"\nedition="2021"\n[dependencies]\nserde_json="1"\n[workspace]\n')
     (out/'src/lib.rs').write_text(harness)
-    run=subprocess.run(['cargo','test','--offline','--','--test-threads=1'],cwd=out,capture_output=True)
+    command=['cargo','test']+(['--offline'] if a.offline else [])+['--','--test-threads=1']
+    run=subprocess.run(command,cwd=out,capture_output=True)
     (out/'stdout.log').write_bytes(run.stdout);(out/'stderr.log').write_bytes(run.stderr)
     assert source.read_bytes()==raw,'production source changed'
-    if run.returncode == 0: java_controls(root,out)
+    if run.returncode == 0: java_controls(root,out,jar)
     result=dict(exit=run.returncode,source_sha256=hashlib.sha256(raw).hexdigest(),
+        java_json_jar_sha256=hashlib.sha256(jar.read_bytes()).hexdigest(),
         limits='Production state/initializer/diagnostic and cleanup-commit bodies plus Java owner diagnostic method; modeled host, capability, route and JNI. Cleanup prerequisites outside commit block not executed. No Android typecheck, device validation, or cleanup claim.')
     (out/'RESULT.json').write_text(json.dumps(result,indent=2))
     print(run.stdout.decode(errors='replace'));print(run.stderr.decode(errors='replace'))
     raise SystemExit(run.returncode)
 
-def java_controls(root,out):
+def json_jar(explicit=None):
+    selected=explicit or os.environ.get('RUSTY_QUEST_JSON_JAR')
+    if selected:
+        jar=Path(selected).resolve(strict=True)
+        if not jar.is_file():raise ValueError('Provisioned org.json input must be a JAR file')
+        return jar
+    jars=sorted((Path.home()/'.gradle/caches/modules-2/files-2.1/org.json/json').rglob('json-*.jar'))
+    if not jars:
+        raise ValueError('Provision org.json and select --java-json-jar or RUSTY_QUEST_JSON_JAR; the owner Gradle cache is also supported. Java controls cannot be skipped.')
+    return jars[-1].resolve(strict=True)
+
+def java_controls(root,out,jar):
     source=root/'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexProcessHost.java'
     raw=source.read_bytes();text=raw.decode()
     method=text[text.index('    CompletableFuture<String> ownerFailureDiagnosticRead('):text.index('    CompletableFuture<String> ownCaptureDiagnostic(')]
-    jars=sorted((Path(os.environ['USERPROFILE'])/'.gradle/caches/modules-2/files-2.1/org.json/json').rglob('json-*.jar'))
-    assert jars,'Cached owner org.json jar required'
     (out/'DiagnosticJavaHost.java').write_text(JAVA_PREFIX+method+JAVA_TESTS)
-    for name,args in [('javac',['javac','-cp',str(jars[-1]),'-d',str(out),str(out/'DiagnosticJavaHost.java')]),('java',['java','-cp',str(out)+os.pathsep+str(jars[-1]),'DiagnosticJavaHost'])]:
+    for name,args in [('javac',['javac','-cp',str(jar),'-d',str(out),str(out/'DiagnosticJavaHost.java')]),('java',['java','-cp',str(out)+os.pathsep+str(jar),'DiagnosticJavaHost'])]:
         run=subprocess.run(args,capture_output=True);(out/(name+'.stdout')).write_bytes(run.stdout);(out/(name+'.stderr')).write_bytes(run.stderr)
         assert run.returncode==0,run.stderr.decode(errors='replace')
     assert source.read_bytes()==raw
