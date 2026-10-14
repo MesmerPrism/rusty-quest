@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
+        replacedPresentationCannotDispatch();
         headlessArmWaitsForAudioReadiness();
         submittedCommandObserverSurvivesPanelReplacement();
         durableArmCorrelationSurvivesLaterAudioOperation();
@@ -31,6 +32,32 @@ public final class ExperimentSessionAndroidShellTest {
         definitiveClockRejectionRecoversWithFreshAttempt(true);
         definitiveRejectionRecoveryIsBoundedAndReasonSpecific();
         System.out.println("ExperimentSessionAndroidShellTest PASS");
+    }
+
+    private static void replacedPresentationCannotDispatch() throws Exception {
+        FakeBridge bridge = new FakeBridge(false);
+        ExperimentSessionAndroidShell shell = ExperimentSessionAndroidShell.createForTest(
+            bridge, new FakeCodec(), new FakeClock(), new DirectDispatcher());
+        Sink panel = new Sink(), mesh = new Sink();
+        final int[] dispatched = {0};
+        try {
+            shell.beginExplicitLaunchEpoch(1L);
+            shell.attach(panel);
+            require(shell.isCurrentUiAttachment(panel, 1L));
+            shell.attach(mesh);
+            // Both surfaces remain alive: only the attached shell presentation may dispatch.
+            if (shell.isCurrentUiAttachment(panel, 1L)) dispatched[0]++;
+            equal(0, dispatched[0]);
+            require(shell.isCurrentUiAttachment(mesh, 1L));
+            shell.attach(panel); // Retired sinks cannot recover authority by reattaching.
+            reject(shell.isCurrentUiAttachment(panel, 1L));
+            require(shell.isCurrentUiAttachment(mesh, 1L));
+            shell.beginExplicitLaunchEpoch(2L);
+            reject(shell.isCurrentUiAttachment(mesh, 1L));
+            shell.detach(mesh);
+            reject(shell.isCurrentUiAttachment(mesh, 2L));
+        } finally { shell.closeForTest(); }
+        System.out.println("Presentation replacement PASS old direct dispatch blocked / retired reattach / launch / detach");
     }
 
     private static void headlessArmWaitsForAudioReadiness() throws Exception {

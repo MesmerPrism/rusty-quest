@@ -275,6 +275,15 @@ final class ExperimentSessionAndroidShell {
         resumePendingTerminal();
     }
 
+    /** Presentation authority only; does not create or transfer the recording owner. */
+    boolean isCurrentUiAttachment(UiSink sink, long expectedLaunchEpoch) {
+        synchronized (admissionLock) {
+            return sink != null && attachedSink.get() == sink
+                && !retiredSinks.containsKey(sink) && !cleanupConsumed
+                && launchEpoch == expectedLaunchEpoch;
+        }
+    }
+
     boolean resumePendingTerminal() {
         final Runnable recovery;
         synchronized (admissionLock) {

@@ -128,7 +128,10 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
                 public void onStopTrackingTouch(SeekBar bar) { }
             }); layout.addView(slider);
         }
-        boolean live() { return current.getAsBoolean() && !activity.isFinishing() && !activity.isDestroyed(); }
+        boolean live() {
+            return current.getAsBoolean() && !activity.isFinishing() && !activity.isDestroyed()
+                && EXPERIMENT_SESSION_SHELL.isCurrentUiAttachment(this, epoch);
+        }
         void start() {
             epoch=EXPERIMENT_SESSION_SHELL.currentLaunchEpochForUi();
             EXPERIMENT_SESSION_SHELL.initialize(activity.getFilesDir().getAbsolutePath(),this);
