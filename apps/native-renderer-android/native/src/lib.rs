@@ -352,19 +352,20 @@ fn particle_adapter_effect_request(
 fn hand_adapter_effect_request(
     runtime_options: &native_renderer_options::NativeRendererRuntimeOptions,
 ) -> hand_adapter_consumer::HandAdapterEffectRequest {
-    hand_adapter_consumer::HandAdapterEffectRequest {
-        live_hand_input: runtime_options
+    hand_adapter_consumer::HandAdapterEffectRequest::from_selection(
+        native_geometry_selection::hand_geometry_enabled(),
+        runtime_options
             .compact_hand_input_source_mode
             .selects_live_frame(),
-        default_hand_visual: runtime_options
+        runtime_options
             .render_mode
             .requests_openxr_default_hand_visual(),
-        graft_copies: runtime_options.render_mode.forces_graft_copies()
+        runtime_options.render_mode.forces_graft_copies()
             || runtime_options.hand_mesh_graft_copies_enabled,
-        real_hand_meshes: runtime_options.render_mode.forces_real_hand_meshes()
+        runtime_options.render_mode.forces_real_hand_meshes()
             || runtime_options.hand_mesh_real_hands_visible,
-        hand_anchor_particles: runtime_options.hand_anchor_particle_settings.enabled,
-    }
+        runtime_options.hand_anchor_particle_settings.enabled,
+    )
 }
 
 #[cfg(target_os = "android")]
@@ -464,25 +465,35 @@ fn android_main(app: android_activity::AndroidApp) {
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());
     native_renderer_panel_bridge::install_packaged_control_panel_mode(&native_app_settings);
-    let initialization = experiment_session_runtime::initialize_from_android_app(&app);
-    let initialized = initialization.is_ok();
+    let initialization = native_renderer_panel_bridge::prepare_before_initialize(
+        || native_renderer_panel_bridge::prepare_app_owner(&app),
+        || experiment_session_runtime::initialize_from_android_app(&app),
+    );
     match initialization {
-        Err(error) => marker(
-            "experiment-session-runtime",
-            format!("status=error reason={}", sanitize(&error)),
-        ),
+        Err(error) => {
+            marker("experiment-session-runtime",
+                format!("status=error reason={}", sanitize(&error)));
+            keep_activity_alive_after_error(&app);
+            return;
+        }
         Ok(()) => marker(
             "experiment-session-runtime",
-            "status=ready inventoryStatus=inventory-unavailable startAdmitted=false",
+            "status=ready initializationCompleted=true",
         ),
     }
     let proposed_identity = NEXT_IMMERSIVE_OWNER.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-    let claimed = if initialized {
-        experiment_session_runtime::capture_immersive_owner_runtime(proposed_identity)
-    } else { Err("native-owner-initialization-failed".to_owned()) };
+    let claimed = experiment_session_runtime::capture_immersive_owner_runtime(proposed_identity);
     let (identity, epoch, runtime) = match claimed {
-        Ok((epoch, runtime)) if epoch > 0 && epoch <= i64::MAX as u64 => (proposed_identity, epoch, Some(runtime)),
-        _ => { marker("hub-status", "app_owner_start_ineligible"); (0, 0, None) }
+        Ok((epoch, runtime)) if epoch > 0 && epoch <= i64::MAX as u64 => {
+            marker("experiment-session-runtime", format!(
+                "status=owner-captured immersiveOwnerIdentity={proposed_identity} runtimeEpoch={epoch}"));
+            (proposed_identity, epoch, Some(runtime))
+        }
+        _ => {
+            marker("hub-status", "app_owner_start_ineligible");
+            keep_activity_alive_after_error(&app);
+            return;
+        }
     };
     let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner { app: &app, identity, epoch, runtime };
     android_events::status_owner_started(identity, epoch);

@@ -4258,6 +4258,39 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires an exact fixture produced by the canonical Java materializer"]
+    fn compiled_inventory_reads_actual_java_cold_materialization() {
+        let root = PathBuf::from(std::env::var("RQ_TEST_COLD_FILES_ROOT").unwrap());
+        let profile = std::env::var("RQ_TEST_COLD_PROFILE_SHA256").unwrap();
+        let provider = std::env::var("RQ_TEST_COLD_PROVIDER_SHA256").unwrap();
+        let inventory = std::env::var("RQ_TEST_COLD_INVENTORY_SHA256").unwrap();
+        let anchors = CompiledExperimentAnchors {
+            profile_sha256: Some(&profile),
+            provider_manifest_sha256: Some(&provider),
+            provider_inventory_sha256: Some(&inventory),
+        };
+        assert!(load_compiled_experiment_inventory(&root, anchors).unwrap().is_some());
+
+        // Preserve the verified Java output. Only this create-new negative fixture
+        // is damaged; no recording history or accepted materialization is changed.
+        let negative = PathBuf::from(std::env::var("RQ_TEST_COLD_NEGATIVE_ROOT").unwrap());
+        fs::create_dir(&negative).unwrap();
+        let selected = negative.join("viscereality-recordings")
+            .join("packaged-closures").join(&profile);
+        fs::create_dir_all(&selected).unwrap();
+        let good = materialization::selected_directory(&root, &profile).unwrap();
+        let mut damaged = fs::read(good.join(EXPERIMENT_SESSION_PROFILE_FILE)).unwrap();
+        damaged.push(b' ');
+        fs::write(selected.join(EXPERIMENT_SESSION_PROFILE_FILE), damaged).unwrap();
+        assert_eq!(load_compiled_experiment_inventory(&negative, anchors).unwrap_err(),
+            "experiment-session-profile-digest-mismatch");
+        fs::remove_file(selected.join(EXPERIMENT_SESSION_PROFILE_FILE)).unwrap();
+        assert!(load_compiled_experiment_inventory(&negative, anchors).unwrap_err()
+            .starts_with("materialized-file:"));
+        println!("actual-java-cold-materialization accepted; tampered and missing profile rejected");
+    }
+
+    #[test]
     fn compiled_inventory_absent_anchors_is_unavailable_without_file_access() {
         let files_root = temp_root("compiled-anchors-absent")
             .parent()

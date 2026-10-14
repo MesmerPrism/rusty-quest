@@ -856,8 +856,13 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
     if ($appHubSelected -or $appBleSelected -or $standaloneExperimentOwner) {
         if (-not $isExperimentSessionPanel) { throw 'Hub provider requires the breath composition panel.' }
         $experimentSessionHubHook = @'
-    static void prepareExperimentSessionAppOwner(android.content.Context context) {
-        ownerApplicationContext = context.getApplicationContext();
+    static synchronized void prepareExperimentSessionAppOwner(android.content.Context context) {
+        if (context == null) throw new SecurityException("owner-application-context-unavailable");
+        android.content.Context application = context.getApplicationContext();
+        if (application == null || (preparedClosureApplicationContext != null
+                && preparedClosureApplicationContext != application))
+            throw new SecurityException("owner-application-context-mismatch");
+        ownerApplicationContext = application;
         installConditionAudioFromPackagedClosure(ownerApplicationContext.getFilesDir().toString());
     }
 '@
@@ -900,6 +905,8 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
     private static boolean terminalFinishConsumed;
     // EXPERIMENT_SESSION_SHELL_BEGIN
     private static volatile android.content.Context ownerApplicationContext;
+    private static android.content.Context preparedClosureApplicationContext;
+    private static String preparedClosureFilesRoot;
     private static volatile ConditionAudioRuntime conditionAudioRuntime;
     private static volatile BreathPhaseAudioAndroidOwner breathPhaseAudioOwner;
     private static volatile ExperimentSessionPackagedClosure.Result experimentSessionClosure;
@@ -935,11 +942,16 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
         return nativeInitializeExperimentSessionRuntime(appPrivateFilesRoot);
     }
 
-    private static void installConditionAudioFromPackagedClosure(String appPrivateFilesRoot) {
+    private static synchronized void installConditionAudioFromPackagedClosure(String appPrivateFilesRoot) {
         android.content.Context context = ownerApplicationContext;
+        if (preparedClosureApplicationContext != null
+                && (preparedClosureApplicationContext != context
+                    || !preparedClosureFilesRoot.equals(appPrivateFilesRoot)))
+            throw new SecurityException("prepared-owner-scope-mismatch");
         ConditionAudioContract.TrustedPackagedInventory inventory =
             ConditionAudioContract.TrustedPackagedInventory.unavailable(
                 "packaged-inventory-not-loaded");
+        ExperimentSessionPackagedClosure.Result verifiedClosure = null;
         RuntimeException closureFailure = null;
         if (context == null) {
             closureFailure = new IllegalStateException("owner-application-context-unavailable");
@@ -961,18 +973,7 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                         },
                         exactFilesRoot,
                         EXPERIMENT_SESSION_ANCHORS, $standaloneExperimentOwnerJava);
-                experimentSessionClosure = closure;
-                if (closure.phaseAudioEntries.length == 3) {
-                    ConditionAudioContract.Provider[] phaseProviders = new ConditionAudioContract.Provider[3];
-                    for (int i=0;i<3;i++) {
-                        ExperimentSessionPackagedClosure.AudioEntry e=closure.phaseAudioEntries[i];
-                        phaseProviders[i]=new ConditionAudioContract.Provider(e.conditionId,
-                            "packaged-native-app-provider",e.logicalDestination,e.sourceSha256,e.sourceBytes,e.mediaType);
-                    }
-                    breathPhaseAudioOwner=new BreathPhaseAudioAndroidOwner(assets,
-                        phaseProviders[0],phaseProviders[1],phaseProviders[2]);
-                }
-
+                verifiedClosure = closure;
                 if (closure.active) {
                     ConditionAudioContract.Provider[] providers =
                         new ConditionAudioContract.Provider[closure.audioEntries.length];
@@ -1007,11 +1008,24 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                     "experiment-session-packaged-closure-rejected", error);
             }
         }
-        android.content.res.AssetManager assets = context == null ? null : context.getAssets();
+        if (closureFailure != null) throw closureFailure;
+        final android.content.res.AssetManager assets = context.getAssets();
+        BreathPhaseAudioAndroidOwner preparedPhaseOwner = null;
+        if (verifiedClosure.phaseAudioEntries.length == 3 && breathPhaseAudioOwner == null) {
+            ConditionAudioContract.Provider[] phaseProviders = new ConditionAudioContract.Provider[3];
+            for (int i=0;i<3;i++) {
+                ExperimentSessionPackagedClosure.AudioEntry e=verifiedClosure.phaseAudioEntries[i];
+                phaseProviders[i]=new ConditionAudioContract.Provider(e.conditionId,
+                    "packaged-native-app-provider",e.logicalDestination,e.sourceSha256,e.sourceBytes,e.mediaType);
+            }
+            preparedPhaseOwner=new BreathPhaseAudioAndroidOwner(assets,
+                phaseProviders[0],phaseProviders[1],phaseProviders[2]);
+        }
+        try {
         conditionAudioRuntime = ConditionAudioRuntime.installAppLifetime(
             inventory,
             assets == null ? null : new ConditionAudioAndroidMediaBackendFactory(assets,
-                experimentSessionClosure != null && experimentSessionClosure.phaseAudioEntries.length == 3),
+                verifiedClosure.phaseAudioEntries.length == 3),
             new ConditionAudioContract.ReceiptSink() {
                 @Override public void onReceipt(ConditionAudioContract.Receipt receipt) {
                     android.util.Log.i("RustyQuestNativeRenderer",
@@ -1055,7 +1069,14 @@ public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
                     }
                 }
             });
-        if (closureFailure != null) throw closureFailure;
+        } catch (RuntimeException error) {
+            if (preparedPhaseOwner != null) preparedPhaseOwner.close();
+            throw error;
+        }
+        if (preparedPhaseOwner != null) breathPhaseAudioOwner = preparedPhaseOwner;
+        experimentSessionClosure = verifiedClosure;
+        preparedClosureApplicationContext = context;
+        preparedClosureFilesRoot = appPrivateFilesRoot;
     }
 
     /** Binds a panel arm/start request to the verified packaged profile and audio asset. */

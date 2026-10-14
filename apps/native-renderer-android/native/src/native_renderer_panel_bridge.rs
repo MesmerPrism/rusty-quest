@@ -1165,6 +1165,66 @@ mod startup_gate_tests {
     }
 }
 
+pub(crate) fn prepare_before_initialize(
+    prepare: impl FnOnce() -> Result<(), String>,
+    initialize: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    prepare()?;
+    initialize()
+}
+
+/// Canonical packaged-closure preparation; feature-OFF bridge is inert.
+/// Exceptions prevent native initialization and immersive-owner capture.
+#[cfg(target_os = "android")]
+pub(crate) fn prepare_app_owner(app: &android_activity::AndroidApp) -> Result<(), String> {
+    use jni::{jni_sig, jni_str, objects::{JClass, JClassLoader, JObject, JValue}, JavaVM};
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<()> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let loader = env.call_method(&activity, jni_str!("getClassLoader"),
+            jni_sig!("()Ljava/lang/ClassLoader;"), &[])?.l()?;
+        let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
+        let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererAppStatusBridge")?;
+        let class = JClass::for_name_with_loader(env, name, true, loader)?;
+        env.call_static_method(class, jni_str!("prepare"),
+            jni_sig!("(Landroid/content/Context;)V"), &[JValue::Object(activity)])?;
+        Ok(())
+    }).map_err(|error| format!("app-owner-preparation-failed:{error}"))
+}
+
+#[cfg(test)]
+mod cold_owner_preparation_tests {
+    use super::prepare_before_initialize;
+    use std::cell::RefCell;
+
+    #[test]
+    fn canonical_preparation_precedes_native_initialization() {
+        let calls = RefCell::new(Vec::new());
+        assert!(prepare_before_initialize(
+            || { calls.borrow_mut().push("prepare"); Ok(()) },
+            || { calls.borrow_mut().push("initialize"); Ok(()) },
+        ).is_ok());
+        assert_eq!(*calls.borrow(), ["prepare", "initialize"]);
+    }
+
+    #[test]
+    fn failed_preparation_does_not_enter_native_initialization() {
+        let calls = RefCell::new(Vec::new());
+        assert_eq!(prepare_before_initialize(
+            || { calls.borrow_mut().push("prepare"); Err("bad-closure".into()) },
+            || { calls.borrow_mut().push("initialize"); Ok(()) },
+        ), Err("bad-closure".into()));
+        assert_eq!(*calls.borrow(), ["prepare"]);
+    }
+
+    #[test]
+    fn initialization_failure_stays_failed_after_successful_preparation() {
+        assert_eq!(prepare_before_initialize(|| Ok(()), || Err("bad-materialization".into())),
+            Err("bad-materialization".into()));
+    }
+}
+
 /// Application-context composition only: no Activity global reference escapes
 /// this synchronous JNI call. Java fences the exact native identity and epoch.
 #[cfg(target_os = "android")]

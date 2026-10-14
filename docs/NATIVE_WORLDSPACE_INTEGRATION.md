@@ -172,6 +172,15 @@ anchors keep their existing owners. The particles-only route omits the probe's
 diagnostic animation/scale tuple from particle compute; canonical accepted
 settings remain the controls.
 
+NativeActivity cold startup synchronously prepares the selected canonical Java
+packaged closure before Rust inventory initialization and immersive-owner
+capture. Verification failure stops startup. Repeated panel preparation
+re-verifies the same application/files scope and preserves the condition and
+phase audio owners; failed verification installs neither owner. Compact live
+hand input requires compiled hand geometry, while raw UI pointer tracking
+remains independent. Explicit visual, mesh, graft and anchor effects still
+require the applied hand lock.
+
 The selected `ui.experiment_session_owner` presents local Home, Particles,
 Breath, Status and experiment workflow pages through its closed Java inventory.
 The real standalone Activity and native Presentation share the local panel;

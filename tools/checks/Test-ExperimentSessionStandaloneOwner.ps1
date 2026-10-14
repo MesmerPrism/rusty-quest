@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param([string]$RepoRoot = (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)),
       [Parameter(Mandatory)][string]$OutputRoot,
-      [string]$AndroidJar)
+      [string]$AndroidJar,
+      [string]$FeatureLockPath)
 $ErrorActionPreference = 'Stop'
 if (Test-Path -LiteralPath $OutputRoot) { throw 'Create-new output required.' }
 $null = New-Item -ItemType Directory -Path $OutputRoot
@@ -30,6 +31,14 @@ foreach ($standalone in @($false,$true)) {
     $selected = if ($standalone) { @('ui.experiment_session_owner') } else { @('ui.experiment_session_ble_control','ui.same_apk_soft_kiosk') }
     $appBuildLockObject = [pscustomobject]@{ selected_feature_ids = $selected }
     $appBuildEnvByName = @{ RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED = 'false' }
+    if ($standalone -and $FeatureLockPath) {
+        # Explicit fixture input only; this does not qualify a successor APK lock.
+        $appBuildLockObject = Get-Content -LiteralPath $FeatureLockPath -Raw | ConvertFrom-Json
+        $appBuildEnvByName = @{}
+        foreach ($input in $appBuildLockObject.build_inputs.env) {
+            $appBuildEnvByName[[string]$input.name] = [string]$input.value
+        }
+    }
     Invoke-Expression $generation
     $javaByVariant[$variant] = [IO.File]::ReadAllText($generatedControlPanelActivityPath)
 }
