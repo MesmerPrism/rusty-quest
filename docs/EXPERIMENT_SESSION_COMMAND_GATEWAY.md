@@ -26,6 +26,32 @@ GET/POST, Content-Type and explicitly responds to local-network preflight.
 Supported browsers must grant Local Network Access for public HTTPS to private
 HTTP; browsers that block this route need the separately selected HTTPS relay.
 
+The HTTP adapter admits at most ten reader tasks, with two core threads and
+up to eight additional readers that retire after thirty seconds idle. It uses
+direct handoff instead of a queued backlog: idle accepted TCP connections must
+not make a valid request wait through multiple five-second socket-read timeout
+waves. Saturated capacity closes the new socket without owner dispatch. The
+five-second socket-read timeout, five-second main-thread wait, exact Origin,
+request size/parser checks and gateway authentication are unchanged. This fixes
+a reproduced host starvation schedule; it does not by itself identify the cause
+of any particular browser timeout or prove actual Quest LAN performance.
+
+After reserving a loopback test port, run the focused host regression:
+
+```text
+python tools/checks/test_experiment_gateway_http.py --json-jar <org-json-jar> --port <reserved-port>
+```
+
+The test compiles the production HTTP adapter and gateway protocol with an inert
+owner. Its temporary adapter copy restricts only the bind address to loopback;
+parser, executor, read deadlines and response handling remain production code.
+It exercises six idle sockets plus a valid request, ten-reader overload, excess
+worker retirement, owned idle socket/listener cleanup, exact Origin/preflight,
+malformed/oversized requests, authenticated status, replay and retired-owner
+denial. Synthetic keys and no Android runtime are used. Cleanup of active idle
+readers retains the existing five-second read timeout; this is not an immediate
+socket-cancellation or absolute whole-request deadline guarantee.
+
 POST carries exactly these seven fields:
 
 ```json

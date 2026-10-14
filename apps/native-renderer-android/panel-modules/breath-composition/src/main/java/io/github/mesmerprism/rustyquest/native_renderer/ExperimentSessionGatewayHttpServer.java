@@ -8,7 +8,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONObject;
@@ -17,7 +17,8 @@ import org.json.JSONObject;
 final class ExperimentSessionGatewayHttpServer implements AutoCloseable {
     private final ExperimentSessionCommandGateway owner;
     private final int port;
-    private final ThreadPoolExecutor workers=new ThreadPoolExecutor(2,2,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<Runnable>(8));
+    // Keep ten admitted connections bounded without queuing valid requests behind idle readers.
+    private final ThreadPoolExecutor workers=new ThreadPoolExecutor(2,10,30,TimeUnit.SECONDS,new SynchronousQueue<Runnable>());
     private volatile ServerSocket server;
     ExperimentSessionGatewayHttpServer(ExperimentSessionCommandGateway owner,int port){this.owner=owner;this.port=port;}
     void start()throws Exception {
