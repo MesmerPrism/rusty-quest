@@ -23,7 +23,7 @@ final class NativeLocalControlPanel implements AutoCloseable {
     }
     private final Context context;private final Host host;private final NativeLocalPanelBridge bridge;
     private final NativeLocalControlController controller;
-    private final LinearLayout root,body;private final ScrollView scroll;private final TextView message;
+    private final LinearLayout root,body;private final ScrollView scroll;private final TextView message,ownerReadback;
     private final Map<String,Integer> positions=new LinkedHashMap<String,Integer>();
     private final Map<String,Button> sessionButtons=new LinkedHashMap<String,Button>();
     private TextView sessionReadback,storageReadback,patternReadback,breathReadback,particleReadback,combinedReadback;
@@ -38,14 +38,16 @@ final class NativeLocalControlPanel implements AutoCloseable {
             topics.addView(tab,new LinearLayout.LayoutParams(0,64,1));
         }root.addView(topics);
         root.addView(button("Return to VR",new Runnable(){public void run(){if(host.current())host.returnToVr();}}));
-        message=text("Reading authoritative local state",14);root.addView(message);
+        ownerReadback=text("Session readback pending",14);root.addView(ownerReadback);
+        message=text("",14);message.setVisibility(View.GONE);root.addView(message);
         scroll=new ScrollView(context);scroll.setFillViewport(true);body=column();scroll.addView(body);
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        bridge=new NativeLocalPanelBridge(application,new NativeLocalPanelBridge.Target(){public boolean current(){return !closed&&NativeLocalControlPanel.this.host.current()&&NativeLocalControlPanel.this.host.settingsReady();}public void outcome(String value){message.setText(value);}});
+        bridge=new NativeLocalPanelBridge(application,new NativeLocalPanelBridge.Target(){public boolean current(){return !closed&&NativeLocalControlPanel.this.host.current()&&NativeLocalControlPanel.this.host.settingsReady();}public void outcome(String value){NativeLocalControlPanel.this.outcome(value);}});
         controller=new NativeLocalControlController(bridge);show("home");
     }
     View view(){return root;}
-    void outcome(String value){if(!closed)message.setText(value);}
+    void outcome(String value){if(!closed){message.setText(value);message.setVisibility(View.VISIBLE);}}
+    void ownerReadback(String value){if(!closed)ownerReadback.setText(value);}
     private static String title(String value){return Character.toUpperCase(value.charAt(0))+value.substring(1);}
     void show(final String topic){
         if(closed)return;
@@ -173,7 +175,7 @@ final class NativeLocalControlPanel implements AutoCloseable {
         final Runnable render=new Runnable(){public void run(){double value=min+(max-min)*bar.getProgress()/bar.getMax();display.setText(label+": "+(integral?Long.toString(Math.round(value)):String.format(java.util.Locale.ROOT,"%.3f",value))+unit);}};render.run();
         bar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar value,int progress,boolean user){render.run();if(user)changed.changed(min+(max-min)*progress/bar.getMax());}public void onStartTrackingTouch(SeekBar value){}public void onStopTrackingTouch(SeekBar value){}});parent.addView(display);parent.addView(bar,new LinearLayout.LayoutParams(-1,64));
     }
-    void suspend(){if(!closed){pageEpoch=controller.navigate();bridge.cancelQueued();message.setText("Panel paused; queued local edits retired. Accepted native commands are not replayed.");}}
-    void resume(){if(!closed)show(page);}
+    void suspend(){if(!closed){pageEpoch=controller.navigate();bridge.cancelQueued();ownerReadback.setText("Session readback paused");outcome("Panel paused; queued local edits retired. Accepted native commands are not replayed.");}}
+    void resume(){if(!closed){ownerReadback.setText("Session readback pending");show(page);}}
     public void close(){if(closed)return;closed=true;controller.close();bridge.close();}
 }

@@ -10,6 +10,37 @@ import org.json.JSONObject;
 final class NativeLocalControlController {
     static final String PARTICLE_SCHEMA="rusty.quest.native_renderer.private_particle_dynamics.v1";
     static final String BREATH_SCHEMA="rusty.quest.breath_composition.command.v1";
+    /** Display-only observation; never enables a command or changes coordinator authority. */
+    static final class ReadbackHeader {
+        // Three missed 500 ms polls. Expiry changes this label only.
+        static final long DISPLAY_FRESH_NANOS=1_500_000_000L;
+        private long epoch, completed;
+        private String state="pending";
+        void reset(){epoch=0;completed=0;state="pending";}
+        void failed(){state="unavailable";}
+        void receive(String commandStatus,String initializationStatus,long sourceEpoch,
+                long sourceCompleted,long now,boolean observed,long witnessEpoch,long witnessReadId){
+            if("initializing".equals(initializationStatus)){reset();return;}
+            if(!"accepted".equals(commandStatus)||!"ready".equals(initializationStatus)
+                    ||sourceEpoch<=0||sourceCompleted<=0||sourceCompleted>now||!observed
+                    ||witnessEpoch!=sourceEpoch||witnessReadId!=sourceCompleted){failed();return;}
+            // An old/repeated callback cannot renew freshness or clear a later failure.
+            if(sourceCompleted<=completed)return;
+            epoch=sourceEpoch;completed=sourceCompleted;state="observed";
+        }
+        String text(long now,boolean observed,long witnessEpoch,long witnessReadId){
+            if("pending".equals(state))return "Session readback pending";
+            if(!"observed".equals(state))return "Session readback unavailable; waiting for an accepted read";
+            if(now<completed||now-completed>DISPLAY_FRESH_NANOS||!observed
+                    ||witnessEpoch!=epoch||witnessReadId!=completed)
+                return "Session readback stale; waiting for a fresh accepted read";
+            return "Session readback current · epoch "+epoch;
+        }
+        static boolean readFailure(String detail){
+            return detail!=null&&(detail.startsWith("initialize-unavailable:")
+                ||detail.startsWith("status-unavailable:")||detail.startsWith("status-poll-unavailable:"));
+        }
+    }
     interface Host {
         boolean current(); long nowMs(); long wallMs();
         void schedule(Runnable task,long delayMs);

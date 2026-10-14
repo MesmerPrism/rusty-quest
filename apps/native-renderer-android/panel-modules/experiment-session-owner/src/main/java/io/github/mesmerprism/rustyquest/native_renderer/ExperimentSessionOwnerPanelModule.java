@@ -204,12 +204,13 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
         final java.util.function.BooleanSupplier current;
         final Handler handler = new Handler(Looper.getMainLooper());
         final NativeLocalControlPanel panel;
+        final NativeLocalControlController.ReadbackHeader readbackHeader=new NativeLocalControlController.ReadbackHeader();
         boolean closed, hostResumed=true;
         final android.app.Application.ActivityLifecycleCallbacks lifecycle=new android.app.Application.ActivityLifecycleCallbacks(){
             public void onActivityCreated(Activity value,android.os.Bundle saved){}
             public void onActivityStarted(Activity value){}
             public void onActivityResumed(Activity value){if(value==activity&&!closed){hostResumed=true;panel.resume();EXPERIMENT_SESSION_SHELL.replayCurrentTerminal(NativeMeshSessionControls.this,epoch);EXPERIMENT_SESSION_SHELL.requestStatus(NativeMeshSessionControls.this);}}
-            public void onActivityPaused(Activity value){if(value==activity&&!closed){hostResumed=false;panel.suspend();retireHandoff(false);}}
+            public void onActivityPaused(Activity value){if(value==activity&&!closed){hostResumed=false;readbackHeader.reset();panel.suspend();retireHandoff(false);}}
             public void onActivityStopped(Activity value){}
             public void onActivitySaveInstanceState(Activity value,android.os.Bundle saved){}
             public void onActivityDestroyed(Activity value){if(value==activity)close();}
@@ -264,7 +265,7 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
             EXPERIMENT_SESSION_SHELL.initialize(activity.getFilesDir().getAbsolutePath(),this);
             handler.postDelayed(new Runnable(){public void run(){
                 if(!attached()){close();return;}
-                if(live())EXPERIMENT_SESSION_SHELL.requestStatus(NativeMeshSessionControls.this);
+                if(live()){refreshReadbackHeader();EXPERIMENT_SESSION_SHELL.requestStatus(NativeMeshSessionControls.this);}
                 handler.postDelayed(this,500);
             }},500);
         }
@@ -272,16 +273,26 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
         public boolean acceptsExperimentSessionTerminalCallbacks(long value){return hostResumed&&attached()&&value==epoch&&EXPERIMENT_SESSION_SHELL.isCurrentTerminalUiAttachment(this,epoch);}
         public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult result) {
             if(result==null||!acceptsExperimentSessionTerminalCallbacks(epoch))return;
+            if(NativeLocalControlController.ReadbackHeader.readFailure(result.detail)){
+                readbackHeader.failed();refreshReadbackHeader();return;
+            }
             panel.outcome(result.shouldFinish&&result.saved?(EXPERIMENT_SESSION_SHELL.localTerminalScope().idleWithoutRecording?"No recording to save; waiting for renderer shutdown.":"Recording saved; waiting for renderer shutdown."):"Save and exit pending: "+result.detail+"; saved=false");
             if(result.shouldFinish&&result.saved)ControlPanelActivity.finishStandaloneTerminal(activity,EXPERIMENT_SESSION_SHELL.localTerminalScope(),result);
             else panel.refresh();
         }
         public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback readback) {
-            if(!live() || readback==null || readback.receipt==null)return;
+            if(!live())return;
+            if(readback==null||readback.receipt==null){readbackHeader.failed();refreshReadbackHeader();return;}
             EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
             EXPERIMENT_SESSION_PANEL.acceptNativeReadback(readback.runtimeEpoch,readback.receipt,
                 readback.statusReadCompletedNanos,SystemClock.elapsedRealtimeNanos(),
                 "accepted".equals(readback.commandStatus),readback.armAcceptance);
+            long observedAt=SystemClock.elapsedRealtimeNanos();
+            ExperimentSessionPanelCoordinator.NativeStatusSnapshot witness=EXPERIMENT_SESSION_PANEL.nativeStatusSnapshot(observedAt);
+            readbackHeader.receive(readback.commandStatus,readback.initializationStatus,
+                readback.runtimeEpoch,readback.statusReadCompletedNanos,observedAt,
+                witness.observed,witness.runtimeEpoch,witness.readId);
+            refreshReadbackHeader();
             ExperimentSessionPanelState state=EXPERIMENT_SESSION_PANEL.snapshot();
             if(!EXPERIMENT_SESSION_SHELL.localTerminalPending() && state.phase==ExperimentSessionPanelState.Phase.ARMING && state.recording)
                 ControlPanelActivity.startConditionAudio(state.generation,"session-arm-"+state.generation,state.activeCondition);
@@ -293,6 +304,12 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
                 } catch (Exception unavailable) { panel.outcome("Operator outcome unknown; no replay."); }
             }
             panel.refresh();
+        }
+        void refreshReadbackHeader(){
+            if(!live())return;
+            long now=SystemClock.elapsedRealtimeNanos();
+            ExperimentSessionPanelCoordinator.NativeStatusSnapshot witness=EXPERIMENT_SESSION_PANEL.nativeStatusSnapshot(now);
+            panel.ownerReadback(readbackHeader.text(now,witness.observed,witness.runtimeEpoch,witness.readId));
         }
         JSONObject nativeState() throws Exception {
             if(!live())throw new SecurityException("mesh-owner-retired");return processNativeState();

@@ -188,6 +188,12 @@ the legacy composite panel also uses the extracted sparse particle-patch
 builder. Particle changes submit edited named fields through the existing JNI
 queue and require a matching renderer-effective revision before reporting
 application. Hydration, retired pages and detached producers issue no edits.
+The session readback header is separate from local command outcomes. It reports
+current only after an accepted, initialized read matches the coordinator's
+runtime epoch and completion witness. After three missed 500 ms polls its label
+becomes stale; this display threshold grants no command authority. Pause resets
+the observation, and read failures remain unavailable until a newer accepted
+read arrives. The header does not attest physical input, audio or saved output.
 In-view choices stay within the panel's routed touch surface. Sensor, network,
 kiosk and camera capabilities require their separate explicit selections.
 

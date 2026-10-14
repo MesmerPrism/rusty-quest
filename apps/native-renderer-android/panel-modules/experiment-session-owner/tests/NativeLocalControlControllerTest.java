@@ -68,5 +68,67 @@ public final class NativeLocalControlControllerTest {
         size.put("enabled",true);check(NativeLocalControlController.particleSummary(receipt).contains("Base: 0.200 m"),"enabled native size missing");
         receipt.put("effective_revision",7);check(NativeLocalControlController.particleSummary(receipt).contains("remain provisional"),"mismatched revision displayed as effective");
     }
-    public static void main(String[] args)throws Exception{patches();lifecycle();receiptsAndBreath();honestReadback();System.out.println("NativeLocalControlControllerTest PASS");}
+    static void everyDriverAndMaterial()throws Exception{
+        for(int slot=0;slot<8;slot++){
+            Host host=new Host();NativeLocalControlController controller=new NativeLocalControlController(host);long page=controller.navigate();
+            double value=(slot+1)/10.0;controller.edit(page,"driver_values01."+slot,value,"sphere-radius-percent");host.advance(180);
+            check(host.particles.size()==1,"driver did not reach actual production queue: "+slot);
+            JSONObject command=host.particles.get(0),particle=command.getJSONObject("private_particles");
+            check(particle.length()==2&&particle.getJSONObject("driver_values01").length()==1
+                &&particle.getJSONObject("driver_values01").getDouble(Integer.toString(slot))==value,"driver changed siblings: "+slot);
+            JSONObject control=particle.getJSONArray("driver_controls").getJSONObject(0);
+            check(particle.getJSONArray("driver_controls").length()==1&&control.getInt("target_slot")==slot
+                &&"direct".equals(control.getString("mode")),"wrong actual driver control: "+slot);
+            long revision=command.getLong("revision");host.status=new JSONObject().put("status","applied").put("candidate_revision",revision).put("effective_revision",revision);host.advance(100);
+            check(host.outcome.equals("Renderer applied particle revision "+revision),"driver acknowledgement missing: "+slot);
+        }
+        for(String preset:new String[]{"packaged-default","current-additive","premultiplied-alpha-over","premultiplied-alpha-over-depth","premultiplied-alpha-over-depth-facing","reference-material-emulation"}){
+            Host host=new Host();NativeLocalControlController controller=new NativeLocalControlController(host);long page=controller.navigate();
+            controller.edit(page,"material",preset,"sphere-radius-percent");host.advance(180);
+            check(host.particles.size()==1,"material did not reach actual production queue: "+preset);
+            JSONObject command=host.particles.get(0),particle=command.getJSONObject("private_particles");
+            check(particle.length()==1&&particle.getJSONObject("material").length()==1
+                &&preset.equals(particle.getJSONObject("material").getString("preset")),"material changed siblings: "+preset);
+            long revision=command.getLong("revision");host.status=new JSONObject().put("status","applied").put("candidate_revision",revision).put("effective_revision",revision).put("private_particles",particle);host.advance(100);
+            check(host.outcome.equals("Renderer applied particle revision "+revision)
+                &&NativeLocalControlController.particleSummary(host.status).contains("Material: "+preset),"material acknowledgement missing: "+preset);
+        }
+    }
+    static void sessionReadbackHeader(){
+        NativeLocalControlController.ReadbackHeader header=new NativeLocalControlController.ReadbackHeader();
+        long t=10_000_000_000L;
+        check(header.text(t,false,0,0).contains("pending"),"new panel claimed a readback");
+        header.receive("accepted","ready",4,t,t,true,4,t);
+        check(header.text(t,true,4,t).equals("Session readback current · epoch 4"),"matching accepted witness not displayed");
+        check(header.text(t+NativeLocalControlController.ReadbackHeader.DISPLAY_FRESH_NANOS+1,true,4,t).contains("stale"),"expired readback displayed current");
+        check(header.text(t,true,5,t).contains("stale")&&header.text(t,true,4,t+1).contains("stale"),"different owner/read witness displayed current");
+        check(header.text(t-1,true,4,t).contains("stale"),"clock reversal displayed current");
+        header.failed();header.receive("accepted","ready",4,t,t,true,4,t);
+        check(header.text(t,true,4,t).contains("unavailable"),"duplicate callback cleared a later failure");
+        header.receive("accepted","ready",4,t+1,t+1,true,4,t+1);
+        check(header.text(t+1,true,4,t+1).contains("current"),"new accepted read did not recover");
+        header.receive("rejected","ready",4,t+2,t+2,true,4,t+2);
+        check(header.text(t+2,true,4,t+2).contains("unavailable"),"rejected status claimed current");
+        header.receive("accepted","initializing",4,t+3,t+3,true,4,t+3);
+        check(header.text(t+3,true,4,t+3).contains("pending"),"initialization pending claimed current");
+        header.receive("accepted","ready",4,t+4,t+4,false,4,t+4);
+        check(header.text(t+4,true,4,t+4).contains("unavailable"),"unobserved projection claimed current");
+        header.receive("accepted","ready",4,t+5,t+5,true,5,t+5);
+        check(header.text(t+5,true,5,t+5).contains("unavailable"),"wrong epoch witness admitted");
+        header.receive("accepted","ready",4,t+6,t+6,true,4,t+5);
+        check(header.text(t+6,true,4,t+5).contains("unavailable"),"old completion witness admitted");
+        header.receive("accepted","ready",4,t+8,t+7,true,4,t+8);
+        check(header.text(t+7,true,4,t+8).contains("unavailable"),"future completion admitted");
+        header.receive("accepted","ready",0,t+9,t+9,true,0,t+9);
+        check(header.text(t+9,true,0,t+9).contains("unavailable"),"zero epoch admitted");
+        header.receive("accepted","ready",4,0,t+10,true,4,0);
+        check(header.text(t+10,true,4,0).contains("unavailable"),"missing completion admitted");
+        header.reset();check(header.text(t+11,true,4,t+1).contains("pending"),"pause/reset retained old current state");
+        check(NativeLocalControlController.ReadbackHeader.readFailure("status-unavailable:test")
+            &&NativeLocalControlController.ReadbackHeader.readFailure("initialize-unavailable:test")
+            &&NativeLocalControlController.ReadbackHeader.readFailure("status-poll-unavailable:test")
+            &&!NativeLocalControlController.ReadbackHeader.readFailure("terminal-save-pending")
+            &&!NativeLocalControlController.ReadbackHeader.readFailure(null),"read failure confused with terminal authority");
+    }
+    public static void main(String[] args)throws Exception{patches();lifecycle();receiptsAndBreath();honestReadback();everyDriverAndMaterial();sessionReadbackHeader();System.out.println("NativeLocalControlControllerTest PASS");}
 }
