@@ -4030,7 +4030,14 @@ mod tests {
         runtime.apply_command_json(&start_command(&root, "retained-start"));
         wait_for(&runtime, "\"phase\":\"active\"");
         runtime.apply_command_json(&command("restart-to-experimenter", "retained-save-next", 1, 2_000));
-        let saved: Value = serde_json::from_str(&wait_for(&runtime, "\"last_operation_id\":\"retained-save-next\"")).unwrap();
+        wait_for(&runtime, "\"last_operation_id\":\"retained-save-next\"");
+        // The operation receipt is published before the final controller readback
+        // refresh. Observe its completed idle identity tuple, not that transient
+        // receipt with the previous session's identity still cached.
+        let saved: Value = serde_json::from_str(&wait_for(&runtime, "\"profile_identity_bound\":false")).unwrap();
+        assert_eq!(saved["readback"]["last_operation_id"], "retained-save-next");
+        assert_eq!(saved["readback"]["last_operation_status"], "accepted");
+        assert_eq!(saved["readback"]["finalized_operation_id"], "retained-save-next");
         assert_eq!(saved["readback"]["phase"], "idle");
         assert_eq!(saved["readback"]["generation"], 1);
         assert_eq!(saved["readback"]["recording_result"]["status"], "saved");
@@ -4067,24 +4074,56 @@ mod tests {
     #[test]
     fn queued_local_terminal_rechecks_owner_on_same_worker_before_save_exit() {
         let root = temp_root("local-terminal-queued-owner");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
         let runtime = runtime(&root);
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         runtime.claim_immersive_owner(1).unwrap();
+        runtime.apply_command_json(&start_command(&root, "local-owner-start"));
+        wait_for(&runtime, "\"phase\":\"active\"");
+        let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
+        let projection = runtime.projection.read().unwrap();
+        let generation = projection.generation;
+        let fence = LocalTerminalFence { scope: LocalTerminalScope {
+            owner_identity: 1, runtime_epoch: runtime.runtime_epoch, generation,
+            session_key: projection.session_key.clone().unwrap(),
+            condition_id: projection.condition_id.clone().unwrap(),
+            profile_sha256: projection.non_audio_profile_sha256.clone().unwrap(),
+            binding_sha256: binding["snapshot"]["activation_binding_sha256"].as_str().unwrap().to_owned(),
+        }, owner: Arc::clone(&runtime.immersive_owner_identity), gate: Arc::clone(&runtime.local_terminal_gate) };
+        assert!(fence.matches(&projection), "queued scope must be valid before owner replacement");
+        drop(projection);
         let (entered, entered_rx) = mpsc::sync_channel(1);
         let (resume, resume_rx) = mpsc::channel();
         runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
         entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        let fence = LocalTerminalFence { scope: LocalTerminalScope { owner_identity: 1, runtime_epoch: 1,
-            generation: 0, session_key: String::new(), condition_id: String::new(), profile_sha256: String::new(), binding_sha256: "a".repeat(64) },
-            owner: Arc::clone(&runtime.immersive_owner_identity), gate: Arc::clone(&runtime.local_terminal_gate) };
-        runtime.terminal_sender.send(WorkerMessage::Command { raw: command("save-and-exit", "stale-local", 0, 1),
-            received_at: Instant::now(), terminal_claim: None, local_terminal_fence: Some(fence) }).unwrap();
+        assert!(runtime.apply_local_terminal(&command("save-and-exit", "stale-local", generation, 2_000), fence.scope.clone())
+            .contains("\"command_status\":\"queued\""));
+        {
+            let gate = runtime.producer_gate.read().unwrap();
+            assert_eq!(gate.terminal_claims, 1);
+            assert!(!gate.accepting, "actual terminal admission must establish the producer cutoff");
+        }
         runtime.claim_immersive_owner(2).unwrap();
+        assert!(!fence.matches(&runtime.projection.read().unwrap()));
         resume.send(()).unwrap();
         let rejected = wait_for(&runtime, "local-terminal-owner-fence-mismatch");
         assert!(rejected.contains("\"shutdown_ack_revision\":0"));
         assert!(!runtime.worker_finished());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !runtime.producer_gate.read().unwrap().accepting && Instant::now() < deadline { thread::yield_now(); }
+        {
+            let gate = runtime.producer_gate.read().unwrap();
+            assert!(gate.accepting, "rejected stale scope must release its own cutoff");
+            assert_eq!(gate.terminal_claims, 0);
+            assert_eq!(gate.generation, generation);
+        }
+        assert_eq!(runtime.active_generation.load(Ordering::Acquire), generation);
+        assert!(runtime.writer_slot.lock().unwrap().is_some());
+        assert!(matches!(runtime.try_offer(SessionRecord::Event(SessionEvent {
+            observed_at: MonotonicNanos::new(2_100), kind: SessionEventKind::ImmersiveActive,
+        })), OfferOutcome::Accepted { .. }), "the still-current writer must accept records after rejection");
         runtime.shutdown_captured_immersive_owner(2).unwrap();
+        assert!(runtime.status_json().contains("\"status\":\"saved\""));
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
@@ -4114,6 +4153,7 @@ mod tests {
     #[test]
     fn failed_renderer_cleanup_never_becomes_retired() {
         let root = temp_root("renderer-retirement-error");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
         let runtime = runtime(&root);
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         runtime.claim_immersive_owner(1).unwrap();
@@ -4135,6 +4175,7 @@ mod tests {
     #[test]
     fn retirement_is_pending_until_cleanup_and_remains_readable_after_owner_release() {
         let root = temp_root("renderer-retirement-ack");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
         let runtime = runtime(&root);
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         runtime.claim_immersive_owner(1).unwrap();
@@ -4741,7 +4782,12 @@ mod tests {
         wait_for(&runtime, "\"control_state\":\"arming\"");
         runtime.apply_command_json(&command("audio-prepared", "prepared", 1, 2000));
         wait_for(&runtime, "\"control_receipt_revision\":1");
-        runtime.note_submitted_frame(1, 1);
+        assert!(runtime.note_submitted_frame(1, 1));
+        // This fixture supplies an explicit synthetic command clock. Real host
+        // elapsed time can exceed the frame-stall deadline during file reads and
+        // advance the reducer beyond its next tiny command timestamp. Disable
+        // that independent timer bridge; dedicated timer/stall fixtures cover it.
+        *runtime.monotonic_bridge.lock().unwrap() = None;
         runtime.apply_command_json(&json!({ "schema":EXPERIMENT_SESSION_COMMAND_SCHEMA, "operation":"presentation",
             "operation_id":"present", "expected_generation":1, "elapsed_realtime_ns":3000, "presentation":"immersive-active" }).to_string());
         wait_for(&runtime, "\"presentation\":\"immersive-active\"");
