@@ -204,7 +204,16 @@ final class EmbeddedDuplexBootstrap {
         }
         fields(startup, "remote_key_id", "remote_public_key_hex", "route_grant_id",
                 "device_peers");
-        fields(replay, "pending_request_sha256", "terminal");
+        // Native dispatch replay retains target-local bindings after remote effects.
+        // Older snapshots omit this map; preserve either complete form for Rust.
+        if (replay.has("target_bindings")) {
+            fields(replay, "pending_request_sha256", "terminal", "target_bindings");
+            replay.getJSONObject("target_bindings");
+        } else {
+            fields(replay, "pending_request_sha256", "terminal");
+        }
+        replay.getJSONObject("pending_request_sha256");
+        replay.getJSONObject("terminal");
         fields(activationReplay, "pending_request_sha256", "terminal");
         String remotePublic = startup.getString("remote_public_key_hex");
         String remoteKeyId = startup.getString("remote_key_id");

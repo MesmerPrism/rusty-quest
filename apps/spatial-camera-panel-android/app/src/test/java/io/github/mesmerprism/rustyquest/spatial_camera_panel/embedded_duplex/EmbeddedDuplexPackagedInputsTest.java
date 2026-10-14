@@ -179,6 +179,67 @@ public final class EmbeddedDuplexPackagedInputsTest {
                 .put("packaged_route", route);
     }
 
+    @Test public void runtimeBootstrapPreservesClosedDispatchReplayVersions() throws Exception {
+        EmbeddedDuplexPackagedInputs inputs = Fixture.valid().load(
+                EmbeddedDuplexPackagedInputs.InstalledRole.PEER_B);
+        JSONObject runtime = new JSONObject()
+                .put("adapter_id", "adapter.neutral")
+                .put("admission_authority_id", "admission.neutral")
+                .put("grant_id", "grant.neutral")
+                .put("grant_expires_at_ms", 3000).put("lease_expires_at_ms", 3000)
+                .put("max_token_ttl_ms", 1000).put("embedded_duplex", new JSONObject())
+                .put("validation_epoch_entropy_hex", repeat('a', 64))
+                .put("validation_wall_unix_ms", 1000).put("validation_monotonic_elapsed_ns", 1000);
+        EmbeddedDuplexBootstrap.Prepared prepared = EmbeddedDuplexBootstrap.prepare(inputs, runtime,
+                request -> fakeAssembly(new JSONObject(request), null).toString());
+        byte[] remotePublic = new byte[32];
+        Arrays.fill(remotePublic, (byte) 0x11);
+        JSONObject startup = new JSONObject()
+                .put("remote_key_id", "ed25519." + sha256(remotePublic))
+                .put("remote_public_key_hex", repeat('1', 64))
+                .put("route_grant_id", "grant.route")
+                .put("device_peers", new JSONArray()
+                        .put(new JSONObject().put("device_id", "device.fixture.a").put("peer_id", "peer.fixture.a"))
+                        .put(new JSONObject().put("device_id", "device.fixture.b").put("peer_id", "peer.fixture.b")));
+        JSONObject activation = new JSONObject().put("pending_request_sha256", new JSONObject())
+                .put("terminal", new JSONObject());
+        JSONObject legacy = new JSONObject(activation.toString());
+        JSONObject current = new JSONObject(legacy.toString())
+                // Deliberately opaque map members: Rust owns their semantic validation.
+                .put("target_bindings", new JSONObject().put("binding.fixture",
+                        new JSONObject().put("retained_nested_value", new JSONArray().put(35).put(36))))
+                .put("pending_request_sha256", new JSONObject().put("dispatch.fixture", repeat('3', 64)))
+                .put("terminal", new JSONObject().put("dispatch.fixture",
+                        new JSONObject().put("retained_nested_value", "opaque-native-response")));
+        for (JSONObject replay : new JSONObject[] {legacy, current}) {
+            String original = replay.toString();
+            JSONObject bootstrap = EmbeddedDuplexBootstrap.runtimeBootstrap(prepared,
+                    "ed25519." + repeat('2', 64), startup, replay, activation);
+            assertEquals(original, replay.toString());
+            assertEquals(original, bootstrap.getJSONObject("replay").toString());
+            assertEquals(activation.toString(), bootstrap.getJSONObject("activation_replay").toString());
+        }
+        JSONObject unknown = new JSONObject(current.toString()).put("unknown", new JSONObject());
+        assertThrows(IllegalStateException.class, () -> EmbeddedDuplexBootstrap.runtimeBootstrap(
+                prepared, "ed25519." + repeat('2', 64), startup, unknown, activation));
+        JSONObject missing = new JSONObject(current.toString());
+        missing.remove("terminal");
+        assertThrows(IllegalStateException.class, () -> EmbeddedDuplexBootstrap.runtimeBootstrap(
+                prepared, "ed25519." + repeat('2', 64), startup, missing, activation));
+        for (JSONObject replay : new JSONObject[] {legacy, current}) {
+            for (String field : new String[] {"pending_request_sha256", "terminal", "target_bindings"}) {
+                if (!replay.has(field)) continue;
+                for (Object wrong : new Object[] {new JSONArray(), "map", 1, true, JSONObject.NULL}) {
+                    JSONObject malformed = new JSONObject(replay.toString()).put(field, wrong);
+                    assertThrows(org.json.JSONException.class, () -> EmbeddedDuplexBootstrap.runtimeBootstrap(
+                            prepared, "ed25519." + repeat('2', 64), startup, malformed, activation));
+                }
+            }
+        }
+        assertThrows(IllegalStateException.class, () -> EmbeddedDuplexBootstrap.runtimeBootstrap(
+                prepared, "ed25519." + repeat('2', 64), startup, current, current));
+    }
+
     @Test public void installedIdentityAndBuildFixedManifestHashAreMandatory() throws Exception {
         Fixture fixture = Fixture.valid();
         assertThrows(IllegalStateException.class, () -> EmbeddedDuplexPackagedInputs.load(

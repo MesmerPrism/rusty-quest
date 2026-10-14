@@ -53,6 +53,15 @@ on errors or panic. It preserves the staged route and every retained cleanup
 obligation; releasing the gate neither proves no effects nor permits a poisoned
 capability to bootstrap a successor.
 
+The Java bootstrap reader accepts the closed two-map dispatch replay form and
+its current three-map form with `target_bindings`. Each dispatch field must be
+a JSON object. The full replay object is forwarded unchanged to Rust, which
+owns validation of retained tickets, target bindings and signed responses.
+Activation replay remains closed to its two existing maps. Reading a compatible
+snapshot confers neither fresh execution authority nor old cleanup credit.
+The production Java packaged-input tests cover both dispatch forms, unchanged
+forwarding, malformed maps and unknown fields; these are host controls only.
+
 The permanent native record currently stores a schema, counter and checksum.
 The app-record-to-native-incarnation mapping is held in memory and returned by
 live admission readback. This is not a durable restore mapping or a cleanup
