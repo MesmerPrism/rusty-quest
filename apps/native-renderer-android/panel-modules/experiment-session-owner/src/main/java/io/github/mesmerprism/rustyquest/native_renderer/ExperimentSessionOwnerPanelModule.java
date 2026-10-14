@@ -25,7 +25,9 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
         ScrollView scroll = new ScrollView(this);
         scroll.addView(content);
         setContentView(scroll);
-        attachNativeMeshSessionControls(this, content, () -> !destroyed);
+        attachNativeMeshSessionControls(this, content, new java.util.function.BooleanSupplier() {
+            @Override public boolean getAsBoolean() { return !destroyed; }
+        });
     }
     @Override protected void onDestroy() { destroyed=true; super.onDestroy(); }
     private static final ExperimentSessionPanelCoordinator EXPERIMENT_SESSION_PANEL =
@@ -61,7 +63,9 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
                     return ControlPanelActivity.closeExperimentResourcesFromOwner();
                 }
             },
-            new ExperimentSessionJsonCodec(() -> EXPERIMENT_SESSION_PANEL),
+            new ExperimentSessionJsonCodec(new java.util.function.Supplier<ExperimentSessionPanelCoordinator>() {
+                @Override public ExperimentSessionPanelCoordinator get() { return EXPERIMENT_SESSION_PANEL; }
+            }),
             new ExperimentSessionAndroidShell.Clock() {
                 @Override public long elapsedRealtimeMillis() {
                     return SystemClock.elapsedRealtime();
@@ -114,7 +118,9 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
                 Button button=new Button(layout.getContext()); button.setAllCaps(false);
                 button.setText("arm-a".equals(op)?"Arm condition A":"arm-b".equals(op)?"Arm condition B":
                     "save-next".equals(op)?"Finish and save session":op);
-                button.setEnabled(false); button.setOnClickListener(v -> dispatch(op));
+                button.setEnabled(false); button.setOnClickListener(new android.view.View.OnClickListener() {
+                    @Override public void onClick(android.view.View view) { dispatch(op); }
+                });
                 buttons.put(op,button); layout.addView(button,new LinearLayout.LayoutParams(-1,68));
             }
             TextView label=new TextView(layout.getContext()); label.setTextColor(Color.WHITE);
