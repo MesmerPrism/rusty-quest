@@ -78,8 +78,8 @@ pub(crate) fn bind_target_ticket(
     generation: u64,
     existing: Option<&OwnerTargetBinding>,
 ) -> Result<(AndroidMediaExecutionTicket, OwnerTargetBinding), String> {
-    if generation == 0 {
-        return Err("target generation unavailable".into());
+    if generation == 0 || request.ticket.executor_generation == 0 {
+        return Err("source or target generation unavailable".into());
     }
     let source = &request.ticket;
     let terminal = is_terminal_owner_request(request);
@@ -150,7 +150,7 @@ pub(crate) fn validate_target_ticket(
 ) -> Result<(), String> {
     let mut expected = source.clone();
     expected.executor_generation = target.executor_generation;
-    if target.executor_generation == 0 || &expected != target {
+    if source.executor_generation == 0 || target.executor_generation == 0 || &expected != target {
         return Err("remote source/target ticket mismatch".into());
     }
     Ok(())

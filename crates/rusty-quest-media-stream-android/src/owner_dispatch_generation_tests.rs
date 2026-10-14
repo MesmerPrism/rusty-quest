@@ -621,3 +621,66 @@ fn remote_target_and_raw_readback_proofs_reject_tampering_and_foreign_keys() {
     wrapper.provider_handle_id.push('x');
     assert!(crate::validate_readback(&source, &wrapper).is_err());
 }
+
+#[test]
+fn signed_source_generation_zero_rejects_before_target_binding_or_effect() {
+    let calls = Arc::new(Mutex::new(0));
+    let commits = Arc::new(Mutex::new(Vec::new()));
+    let mut server = OwnerDispatchServer::restore(
+        "peer.b".into(),
+        TestVerifier {
+            key: SigningKey::from_bytes(&[1; 32]).verifying_key(),
+        },
+        GenerationRegistry {
+            generation: Arc::new(std::sync::atomic::AtomicU64::new(29)),
+            calls: calls.clone(),
+            tickets: Arc::new(Mutex::new(Vec::new())),
+            fail_first: false,
+        },
+        TestSigner {
+            id: "target.key".into(),
+            key: SigningKey::from_bytes(&[2; 32]),
+        },
+        Box::new(TestClock),
+        OwnerDispatchReplaySnapshot::default(),
+        Box::new(TestStore {
+            commits: commits.clone(),
+        }),
+    )
+    .unwrap();
+    let mut preparer = generation_client(generation_server(
+        Arc::new(std::sync::atomic::AtomicU64::new(29)),
+        Arc::new(Mutex::new(0)),
+        Arc::new(Mutex::new(Vec::new())),
+        false,
+        OwnerDispatchReplaySnapshot::default(),
+    ));
+    let mut source = arm_ticket();
+    source.executor_generation = 0;
+    let request = preparer
+        .prepare_request(
+            "peer.b".into(),
+            projection(),
+            source.clone(),
+            AndroidMediaExecutionMode::Execute,
+            1_000,
+        )
+        .unwrap();
+    let result = server.handle_frame(&encode_request_frame(&request).unwrap());
+    eprintln!(
+        "signed source=0, receiver=29: rejected={}, provider_calls={}, journal_commits={}",
+        result.is_err(),
+        *calls.lock().unwrap(),
+        commits.lock().unwrap().len()
+    );
+    assert!(result.is_err());
+    assert_eq!(*calls.lock().unwrap(), 0);
+    assert!(commits.lock().unwrap().is_empty());
+    assert_eq!(
+        server.replay_snapshot(),
+        OwnerDispatchReplaySnapshot::default()
+    );
+    let mut target = source.clone();
+    target.executor_generation = 29;
+    assert!(crate::remote_owner_dispatch::validate_target_ticket(&source, &target).is_err());
+}
