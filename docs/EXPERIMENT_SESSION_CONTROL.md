@@ -143,6 +143,10 @@ only for an exact retained Arm/Save Next mapping on the live carrier/native epoc
 and launch. Carrier retirement, replacement, cleanup or mapping settlement ends
 that exception. Other commands keep their existing observation deadline. No
 observer timeout authorizes replay or changes native writer durability.
+The native `active` phase with `arming` control state is intermediate: the
+process command observer continues polling through asynchronous audio preparation
+until the checkpoint and armed/running/paused state agree, even without a panel.
+An exact command rejection still terminates that command's observation.
 
 The closed v2 envelope is {v,id,op,s,g,n,mac?}, at most240 UTF8 bytes. Gated mode
 requires the first16 HMAC-SHA256 bytes of

@@ -852,6 +852,13 @@ final class ExperimentSessionAndroidShell {
                 && ("armed".equals(readback.receipt.controlState)
                     || "running".equals(readback.receipt.controlState)
                     || "paused".equals(readback.receipt.controlState))) return false;
+        // Arm's active phase precedes asynchronous audio readiness. Keep the
+        // original process observer polling until the retained checkpoint and
+        // ready control state above agree, or this exact command is rejected.
+        if ("arm".equals(expected.operation)) {
+            return !expected.operationId.equals(readback.receipt.operationId)
+                || readback.receipt.accepted;
+        }
         if (!expected.operationId.equals(readback.receipt.operationId)) return true;
         if (!readback.receipt.accepted) return false;
         if ("restart-to-experimenter".equals(expected.operation)) {

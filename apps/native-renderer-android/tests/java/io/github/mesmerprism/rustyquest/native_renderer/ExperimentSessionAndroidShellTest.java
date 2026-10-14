@@ -5,6 +5,7 @@ import java.util.concurrent.TimeUnit;
 
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
+        headlessArmWaitsForAudioReadiness();
         submittedCommandObserverSurvivesPanelReplacement();
         durableArmCorrelationSurvivesLaterAudioOperation();
         retainedDurableArmObservationSurvivesDeadline();
@@ -30,6 +31,68 @@ public final class ExperimentSessionAndroidShellTest {
         definitiveClockRejectionRecoversWithFreshAttempt(true);
         definitiveRejectionRecoveryIsBoundedAndReasonSpecific();
         System.out.println("ExperimentSessionAndroidShellTest PASS");
+    }
+
+    private static void headlessArmWaitsForAudioReadiness() throws Exception {
+        final java.util.concurrent.LinkedBlockingQueue<Runnable> callbacks = new java.util.concurrent.LinkedBlockingQueue<>();
+        final java.util.concurrent.atomic.AtomicBoolean audioReady = new java.util.concurrent.atomic.AtomicBoolean();
+        final FakeClock clock = new FakeClock();
+        final FakeBridge bridge = new FakeBridge(false);
+        final ExperimentSessionPanelCoordinator panel = new ExperimentSessionPanelCoordinator();
+        panel.acceptRuntimeEpoch(1L);
+        final ExperimentSessionPanelCoordinator.NativeCommand arm = panel.arm("condition-a", 0);
+        final String outerId = "1111111111111111";
+        final String[] confirmed = {""};
+        FakeCodec codec = new FakeCodec() {
+            @Override public ExperimentSessionAndroidShell.SessionReadback parse(String raw,
+                    ExperimentSessionPanelCoordinator.NativeCommand expected, boolean start) {
+                boolean ready = audioReady.get();
+                ExperimentSessionPanelCoordinator.NativeReceipt receipt = new ExperimentSessionPanelCoordinator.NativeReceipt(
+                    ready ? "later-audio-prepared" : arm.operationId, true, false, 1L, ready ? 3L : 1L,
+                    "active", ready ? "armed" : "arming", "condition-a", true, false,
+                    "ready", true, 0L, 0L, 0L, 0L, true, true, false, 0L, 0L, 0L, "none", 0L, "none");
+                return new ExperimentSessionAndroidShell.SessionReadback(receipt, "accepted", "ready", "ready",
+                    "ready", "not-requested", 0L, -1L, "", "", "none", "", 1L, "accepted", "")
+                    .withArmAcceptance(new ExperimentSessionAndroidShell.ArmAcceptance(arm.operationId, 1L, 1L, "condition-a", true));
+            }
+        };
+        ExperimentSessionAndroidShell.UiSink processObserver = new ExperimentSessionAndroidShell.UiSink() {
+            public boolean observesSubmittedCommand() { return true; }
+            public boolean retainsDurableCommand(String id, long epoch) { return arm.operationId.equals(id) && epoch == 1L; }
+            public boolean acceptsExperimentSessionCallbacks(long epoch) { return epoch == 1L; }
+            public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback r) {
+                panel.acceptNativeReadback(r.runtimeEpoch, r.receipt, r.statusReadCompletedNanos, clock.nanos, true, r.armAcceptance);
+                ExperimentSessionPanelState state = panel.snapshot();
+                if (r.armAcceptance.matches(arm.operationId, 1L, "condition-a", r)
+                        && state.phase == ExperimentSessionPanelState.Phase.ARMED && state.pendingOperationId.isEmpty()) {
+                    confirmed[0] = outerId;
+                }
+            }
+            public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult r) { }
+        };
+        ExperimentSessionAndroidShell shell = ExperimentSessionAndroidShell.createForTest(bridge, codec, clock,
+            new ExperimentSessionAndroidShell.UiDispatcher() {
+                public void post(Runnable r) { callbacks.add(r); }
+                public boolean isUiThread() { return false; }
+            });
+        try {
+            shell.beginExplicitLaunchEpoch(1L);
+            // No Activity/panel attached: only the submitted process observer owns the receipt.
+            shell.submit(arm, true, processObserver);
+            Runnable first = callbacks.poll(2, TimeUnit.SECONDS);
+            require(first != null); first.run();
+            equal("", confirmed[0]);
+            require(panel.snapshot().phase == ExperimentSessionPanelState.Phase.ARMING);
+            audioReady.set(true);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (confirmed[0].isEmpty() && System.nanoTime() < deadline) {
+                Runnable next = callbacks.poll(250, TimeUnit.MILLISECONDS);
+                if (next != null) next.run();
+            }
+            if (!outerId.equals(confirmed[0])) throw new AssertionError("Headless Arm polling stopped before delayed audio readiness");
+            equal(1, codec.encodings); // Polling never resubmits Arm or invents a new receipt ID.
+        } finally { shell.closeForTest(); }
+        System.out.println("Headless active/arming then delayed audio-ready / overwritten latest ID / original receipt / no replay PASS");
     }
 
     private static void retainedDurableArmObservationSurvivesDeadline() throws Exception {
@@ -110,6 +173,17 @@ public final class ExperimentSessionAndroidShellTest {
         require(!((Boolean)poll.invoke(null,readback,command,true)));
         require((Boolean)poll.invoke(null,readback.withArmAcceptance(null),command,true));
         require((Boolean)poll.invoke(null,mismatchedReadback,command,true));
+        for (boolean accepted : new boolean[]{true, false}) {
+            ExperimentSessionPanelCoordinator.NativeReceipt exact = new ExperimentSessionPanelCoordinator.NativeReceipt(
+                "original-arm", accepted, false, 1L, 3L, "active", "armed", "condition-a", true, false,
+                "ready", true, 0L, 0L, 0L, 0L, true, true, false, 0L, 0L, 0L, "none", 0L, "none");
+            ExperimentSessionAndroidShell.SessionReadback withoutCheckpoint = new ExperimentSessionAndroidShell.SessionReadback(
+                exact, accepted ? "accepted" : "rejected", "ready", "ready", "ready", "not-requested", 0L, -1L, "",
+                "", "none", "", 7L, accepted ? "accepted" : "rejected", "");
+            // An exact latest ID alone cannot substitute for the durable checkpoint;
+            // an exact definitive rejection still terminates observation.
+            require(((Boolean)poll.invoke(null,withoutCheckpoint,command,true)) == accepted);
+        }
         System.out.println("Durable original Arm / audio replacement / generation / runtime / condition / no save fabrication controls PASS");
     }
 
