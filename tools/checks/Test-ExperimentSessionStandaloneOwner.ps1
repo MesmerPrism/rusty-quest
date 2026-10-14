@@ -13,6 +13,7 @@ $generation = $builder.Substring($begin, $end-$begin)
 # Resolve the owning module from the explicit repository; no candidate APK build is invoked.
 $generation = $generation.Replace("Import-Module (Join-Path `$PSScriptRoot 'lib/NativeRendererAppStatusBridge.psm1') -Force", '')
 Import-Module (Join-Path $RepoRoot 'tools/lib/NativeRendererAppStatusBridge.psm1') -Force
+Import-Module (Join-Path $RepoRoot 'tools/lib/NativeRendererStandaloneTerminalFacade.psm1') -Force
 $standaloneDescriptor = Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'fixtures/native-app-features/ui/experiment-session-owner/ui.experiment_session_owner.feature.json') | ConvertFrom-Json
 if (@($standaloneDescriptor.depends_on).Count -ne 1 -or $standaloneDescriptor.depends_on[0] -cne 'ui.same_apk_control_panel') { throw 'Standalone owner dependency widened.' }
 $declaredSources = @($standaloneDescriptor.panel_composition.modules | ForEach-Object { $_.source_files })

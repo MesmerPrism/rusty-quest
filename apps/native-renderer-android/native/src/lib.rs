@@ -50,6 +50,8 @@ mod environment_depth_surface_support;
 mod experiment_session;
 mod experiment_session_runtime;
 #[cfg(target_os = "android")]
+mod native_standalone_terminal_jni;
+#[cfg(target_os = "android")]
 mod gpu_environment_depth_particle_stats;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particles;
@@ -765,6 +767,8 @@ fn android_main(app: android_activity::AndroidApp) {
 
     match xr_vulkan::run_projection_loop(
         &app,
+        _experiment_session_immersive_owner.runtime.as_deref().map(|runtime|
+            (runtime, _experiment_session_immersive_owner.identity)),
         camera_runtime.as_ref(),
         runtime_options,
         simultaneous_hands_controllers_decision,

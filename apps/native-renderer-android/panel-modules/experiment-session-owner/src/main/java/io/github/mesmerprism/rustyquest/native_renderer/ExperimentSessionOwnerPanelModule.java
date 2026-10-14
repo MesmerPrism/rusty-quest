@@ -53,6 +53,25 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
                 @Override public String audioShutdownStatus() {
                     return ControlPanelActivity.conditionAudioShutdownStatus();
                 }
+                @Override public boolean validateLocalTerminalScope(ExperimentSessionAndroidShell.LocalTerminalScope scope){
+                    try{
+                        if(ControlPanelActivity.nativeReadExperimentSessionImmersiveOwnerIdentity()!=scope.ownerId)return false;
+                        JSONObject state=processNativeState();
+                        if(scope.idle){
+                            JSONObject recording=state.optJSONObject("recording_result");
+                            String status=recording==null?"":recording.optString("status","");
+                            if(!"idle".equals(state.optString("phase"))||!("none".equals(status)||"saved".equals(status))
+                                ||scope.idleWithoutRecording!="none".equals(status))return false;
+                        }
+                        return state.optLong("runtime_epoch",-1)==scope.runtimeEpoch&&state.optLong("generation",-1)==scope.sessionGeneration
+                            &&scope.sessionKey.equals(nullableIdentity(state,"session_key"))&&scope.condition.equals(nullableIdentity(state,"condition_id"))
+                            &&scope.profileSha256.equals(nullableIdentity(state,"non_audio_profile_sha256"))&&scope.bindingSha256.equals(state.optString("activation_binding_sha256"));
+                    }catch(Exception unavailable){return false;}
+                }
+                @Override public boolean admitLocalTerminal(ExperimentSessionAndroidShell.LocalTerminalScope scope){return ControlPanelActivity.admitStandaloneTerminal(scope);}
+                @Override public String applyLocalTerminal(String command,ExperimentSessionAndroidShell.LocalTerminalScope scope){
+                    return ControlPanelActivity.nativeApplyExperimentSessionTerminalWithFence(command,scope.ownerId,scope.runtimeEpoch,scope.sessionGeneration,scope.sessionKey,scope.condition,scope.profileSha256,scope.bindingSha256);
+                }
                 @Override public boolean cleanupAfterAcknowledgement() {
                     return ControlPanelActivity.closeExperimentResourcesFromOwner();
                 }
@@ -85,6 +104,7 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
                 }
             }
         );
+    static boolean isLocalTerminalScopeCurrent(ExperimentSessionAndroidShell.LocalTerminalScope scope){return EXPERIMENT_SESSION_SHELL.isLocalTerminalScopeCurrent(scope);}
     /** Native mesh presentation adapter; the existing process shell and reducer retain authority. */
     public static AutoCloseable attachNativeMeshSessionControls(Activity activity, LinearLayout layout,
             java.util.function.BooleanSupplier current) {
@@ -127,6 +147,7 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
     // Presentation continuation only; native runtime and the one Shell retain command authority.
     private static ProcessHandoff processHandoff;
     private static ExperimentSessionUiCommandReceipt processCommand;
+    private static String nullableIdentity(JSONObject state,String key){return state.isNull(key)?"":state.optString(key,"");}
     private static JSONObject processNativeState() throws Exception {
         JSONObject n=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
             new JSONObject().put("schema",ExperimentSessionPanelCoordinator.SCHEMA).put("operation","status").toString())).getJSONObject("readback");
@@ -187,7 +208,7 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
         final android.app.Application.ActivityLifecycleCallbacks lifecycle=new android.app.Application.ActivityLifecycleCallbacks(){
             public void onActivityCreated(Activity value,android.os.Bundle saved){}
             public void onActivityStarted(Activity value){}
-            public void onActivityResumed(Activity value){if(value==activity&&!closed){hostResumed=true;panel.resume();EXPERIMENT_SESSION_SHELL.requestStatus(NativeMeshSessionControls.this);}}
+            public void onActivityResumed(Activity value){if(value==activity&&!closed){hostResumed=true;panel.resume();EXPERIMENT_SESSION_SHELL.replayCurrentTerminal(NativeMeshSessionControls.this,epoch);EXPERIMENT_SESSION_SHELL.requestStatus(NativeMeshSessionControls.this);}}
             public void onActivityPaused(Activity value){if(value==activity&&!closed){hostResumed=false;panel.suspend();retireHandoff(false);}}
             public void onActivityStopped(Activity value){}
             public void onActivitySaveInstanceState(Activity value,android.os.Bundle saved){}
@@ -204,7 +225,9 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
         public boolean current(){return live();}
         public void outcome(String value){if(live())panel.outcome(value);}
         public ExperimentSessionPanelState state(){return EXPERIMENT_SESSION_PANEL.snapshot();}
-        public boolean commandReady(){return live()&&processCommand==null&&state().pendingOperationId.isEmpty()&&(processHandoff==null||!processHandoff.pending());}
+        public boolean commandReady(){return live()&&!EXPERIMENT_SESSION_SHELL.localTerminalPending()&&processCommand==null&&state().pendingOperationId.isEmpty()&&(processHandoff==null||!processHandoff.pending());}
+        public boolean settingsReady(){return live()&&!EXPERIMENT_SESSION_SHELL.localTerminalPending();}
+        public boolean canSaveExit(){return live()&&(EXPERIMENT_SESSION_SHELL.localTerminalPending()?EXPERIMENT_SESSION_SHELL.localTerminalRetryReady():commandReady()&&"ready".equals(state().storageStatus)&&state().phase!=ExperimentSessionPanelState.Phase.SAVING&&state().phase!=ExperimentSessionPanelState.Phase.FINALIZING);}
         public void action(String operation){dispatch(operation);}
         public void navigationChanged(){retireHandoff(true);}
         void retireHandoff(boolean navigation){if(processHandoff!=null&&processHandoff.from(this)&&processHandoff.scope.retire(navigation))processHandoff.cancel();}
@@ -220,8 +243,8 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
             }
             return Math.max(0,bias);
         }
-        public boolean bias(int value){if(!live()||!EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(value))return false;bias=value;return true;}
-        public void returnToVr(){if(live()&&activity instanceof ControlPanelActivity)ControlPanelActivity.closePanelAndReturnToImmersive(activity);}
+        public boolean bias(int value){if(!settingsReady()||!EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(value))return false;bias=value;return true;}
+        public void returnToVr(){if(settingsReady()&&activity instanceof ControlPanelActivity)ControlPanelActivity.closePanelAndReturnToImmersive(activity);}
         public void close(){
             if(closed)return;closed=true;handler.removeCallbacksAndMessages(null);
             activity.getApplication().unregisterActivityLifecycleCallbacks(lifecycle);
@@ -229,11 +252,11 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
             panel.close();layout.removeView(panel.view());EXPERIMENT_SESSION_SHELL.detach(this);
         }
         boolean live() {
-            return hostResumed && attached();
+            return hostResumed && attached()&&EXPERIMENT_SESSION_SHELL.isCurrentUiAttachment(this,epoch);
         }
         boolean attached(){
             return !closed && current.getAsBoolean() && !activity.isFinishing() && !activity.isDestroyed()
-                && EXPERIMENT_SESSION_SHELL.isCurrentUiAttachment(this, epoch);
+                && (EXPERIMENT_SESSION_SHELL.isCurrentUiAttachment(this, epoch)||EXPERIMENT_SESSION_SHELL.isCurrentTerminalUiAttachment(this,epoch));
         }
         void start() {
             activity.getApplication().registerActivityLifecycleCallbacks(lifecycle);
@@ -246,8 +269,12 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
             }},500);
         }
         public boolean acceptsExperimentSessionCallbacks(long value) { return live() && value==epoch; }
+        public boolean acceptsExperimentSessionTerminalCallbacks(long value){return hostResumed&&attached()&&value==epoch&&EXPERIMENT_SESSION_SHELL.isCurrentTerminalUiAttachment(this,epoch);}
         public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult result) {
-            if(live())panel.outcome("Terminal outcome requires the existing app shutdown owner.");
+            if(result==null||!acceptsExperimentSessionTerminalCallbacks(epoch))return;
+            panel.outcome(result.shouldFinish&&result.saved?(EXPERIMENT_SESSION_SHELL.localTerminalScope().idleWithoutRecording?"No recording to save; waiting for renderer shutdown.":"Recording saved; waiting for renderer shutdown."):"Save and exit pending: "+result.detail+"; saved=false");
+            if(result.shouldFinish&&result.saved)ControlPanelActivity.finishStandaloneTerminal(activity,EXPERIMENT_SESSION_SHELL.localTerminalScope(),result);
+            else panel.refresh();
         }
         public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback readback) {
             if(!live() || readback==null || readback.receipt==null)return;
@@ -256,7 +283,7 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
                 readback.statusReadCompletedNanos,SystemClock.elapsedRealtimeNanos(),
                 "accepted".equals(readback.commandStatus),readback.armAcceptance);
             ExperimentSessionPanelState state=EXPERIMENT_SESSION_PANEL.snapshot();
-            if(state.phase==ExperimentSessionPanelState.Phase.ARMING && state.recording)
+            if(!EXPERIMENT_SESSION_SHELL.localTerminalPending() && state.phase==ExperimentSessionPanelState.Phase.ARMING && state.recording)
                 ControlPanelActivity.startConditionAudio(state.generation,"session-arm-"+state.generation,state.activeCondition);
             if (processCommand != null) {
                 try {
@@ -276,6 +303,15 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
         void dispatch(String operation) {
             if(!live())return;
             try {
+                if("save-exit".equals(operation)){
+                    if(!canSaveExit())throw new SecurityException("terminal-ui-admission-unavailable");
+                    if(EXPERIMENT_SESSION_SHELL.localTerminalPending()){EXPERIMENT_SESSION_SHELL.resumePendingTerminal();panel.outcome("Resuming the pending exit; no accepted command is replayed.");return;}
+                    JSONObject n=nativeState();long ownerId=ControlPanelActivity.nativeReadExperimentSessionImmersiveOwnerIdentity();
+                    ExperimentSessionAndroidShell.LocalTerminalScope scope=new ExperimentSessionAndroidShell.LocalTerminalScope(epoch,ownerId,n.getLong("runtime_epoch"),n.getLong("generation"),nullableIdentity(n,"session_key"),nullableIdentity(n,"condition_id"),nullableIdentity(n,"non_audio_profile_sha256"),n.getString("activation_binding_sha256"),n.getJSONObject("recording_result").getString("status"));
+                    if(!live()||!EXPERIMENT_SESSION_SHELL.beginLocalTerminal(scope,this))throw new SecurityException("terminal-ui-owner-retired-or-pending");
+                    retireHandoff(true);panel.suspend();panel.resume();panel.outcome("Saving and closing; waiting for writer and audio acknowledgements.");panel.refresh();return;
+                }
+                if(EXPERIMENT_SESSION_SHELL.localTerminalPending())throw new SecurityException("terminal-exit-pending");
                 if(processCommand!=null || !EXPERIMENT_SESSION_PANEL.snapshot().pendingOperationId.isEmpty() || processHandoff!=null && processHandoff.pending())
                     throw new SecurityException("session-operation-pending");
                 if(operation.startsWith("arm-")) {

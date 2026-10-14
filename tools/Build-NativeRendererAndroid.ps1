@@ -722,6 +722,7 @@ final class GeneratedEmbeddedManifoldRuntimeConfig {
     $generatedEmbeddedRuntimeConfigPath,
     $generatedEmbeddedRuntimeConfigSource,
     (New-Object System.Text.UTF8Encoding($false)))
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererStandaloneTerminalFacade.psm1') -Force
 $standaloneExperimentOwner = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.experiment_session_owner'
 if ($standaloneExperimentOwner) {
     if ($selectedPanelModuleId -cne 'experiment-session-owner' -or $selectedPanelEntrySimpleName -cne 'ExperimentSessionOwnerPanelModule') { throw 'Standalone experiment owner requires its exact panel source closure.' }
@@ -767,6 +768,10 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
         ""
     } elseif ($standaloneExperimentOwner) {
 @"
+    static native long nativeReadExperimentSessionImmersiveOwnerIdentity();
+    static native String nativeApplyExperimentSessionTerminalWithFence(String commandJson, long ownerId, long runtimeEpoch, long generation, String sessionKey, String conditionId, String profileSha256, String bindingSha256);
+    static native String nativeRequestExperimentSessionRendererRetirement(long ownerId, long runtimeEpoch, long generation, String operationId, long shutdownAckRevision);
+    static native String nativeReadExperimentSessionRendererRetirement(long ownerId, long runtimeEpoch, long generation, String operationId, long shutdownAckRevision);
     static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
     static native String nativeApplyBreathCompositionCommand(String commandJson);
     static native String nativeInitializeExperimentSessionRuntime(String appPrivateFilesRoot);
@@ -1689,6 +1694,7 @@ $panelNativeMethods
     }
 
 '@
+        $presentation += New-NativeRendererStandaloneTerminalFacadeSource
         $generatedControlPanelActivitySource = $generatedControlPanelActivitySource.Substring(0,$start) + $presentation + $generatedControlPanelActivitySource.Substring($end)
         $generatedControlPanelActivitySource = [regex]::Replace($generatedControlPanelActivitySource,
             '(?s)        NativeRendererSoftKioskCoordinator.process\(\).beginTransition\(.*?2_000L\);\r?\n', '')

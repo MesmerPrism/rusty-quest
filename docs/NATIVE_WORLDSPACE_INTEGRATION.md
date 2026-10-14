@@ -190,6 +190,24 @@ stereo panel, targeting/scroll/drag, hand/controller ownership changes, effectiv
 settings, calibration, audio/recording and saving separately. Syntax and host
 admission checks do not establish those live effects.
 
+Local Save and exit uses the same session worker, durable writer and audio
+shutdown barrier as the existing terminal command. Its captured native owner,
+runtime epoch, actual generation, session identity and binding are rechecked on
+that worker before cutoff. A preparation state after Save-next retains its real
+generation; it does not invent a new recording or reuse an old active identity.
+Paused hosts replay only the exact cached terminal result on their current
+attachment. Temporary busy readback keeps observing the accepted command.
+
+Renderer retirement requires the exact finalized operation/generation/shutdown
+acknowledgement, a joined worker and a closed writer. The captured projection
+loop requests OpenXR exit, completes its ordinary GPU/UI/XR cleanup, then
+finishes its NativeActivity. Cleanup failure retains the resource error and
+cannot report retired. The Java continuation validates every retirement scope
+field; an uncertain request is never replayed, while an explicit request-side
+not-ready response allows a bounded retry. A read response cannot reopen that
+request. The selected facade has production host fixtures and typed JNI exports;
+actual Android linking, lifecycle and headset shutdown require their own checks.
+
 ## Optional passthrough and environment sampler
 
 The existing `environment_depth.projection_sampler` feature can also be selected

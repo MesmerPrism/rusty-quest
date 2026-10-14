@@ -294,6 +294,7 @@ pub(crate) fn probe(
 
 pub(crate) fn run_projection_loop(
     app: &android_activity::AndroidApp,
+    session_owner: Option<(&crate::experiment_session_runtime::ExperimentSessionRuntime, u64)>,
     camera_runtime: Option<&NativeCameraRuntime>,
     runtime_options: NativeRendererRuntimeOptions,
     simultaneous_decision: ActivationDecision,
@@ -347,6 +348,7 @@ pub(crate) fn run_projection_loop(
     let result = unsafe {
         run_projection_loop_inner(
             app,
+            session_owner,
             camera_runtime,
             runtime_options,
             simultaneous_decision,
@@ -356,6 +358,14 @@ pub(crate) fn run_projection_loop(
             video_projection_metadata,
         )
     };
+    if let Some((runtime, owner)) = session_owner {
+        if runtime.renderer_retirement_pending(owner) {
+            // inner success means device idle, UI producer retired, and all XR/Vulkan
+            // resources destroyed. Never finish the Activity on quarantined cleanup.
+            let retirement_result = result.clone().and_then(|()| finish_native_activity(app));
+            runtime.complete_renderer_retirement(owner, retirement_result);
+        }
+    }
     if let Err(error) = &result {
         crate::marker(
             "openxr-projection",
@@ -369,8 +379,20 @@ pub(crate) fn run_projection_loop(
     result
 }
 
+fn finish_native_activity(app: &android_activity::AndroidApp) -> Result<(), String> {
+    use jni::{objects::JObject, jni_sig, jni_str, JavaVM};
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let raw = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&raw)? };
+        env.call_method(&activity, jni_str!("finish"), jni_sig!("()V"), &[])?;
+        Ok(())
+    }).map_err(|e| format!("terminal-native-activity-finish:{e}"))
+}
+
 unsafe fn run_projection_loop_inner(
     app: &android_activity::AndroidApp,
+    session_owner: Option<(&crate::experiment_session_runtime::ExperimentSessionRuntime, u64)>,
     camera_runtime: Option<&NativeCameraRuntime>,
     runtime_options: NativeRendererRuntimeOptions,
     simultaneous_decision: ActivationDecision,
@@ -1511,6 +1533,7 @@ unsafe fn run_projection_loop_inner(
     let mut projection_swapchain: Option<ProjectionSwapchain> = None;
     let loop_result = run_projection_frames(
         app,
+        session_owner,
         &xr_instance,
         system,
         &vk_device,
@@ -1653,6 +1676,8 @@ unsafe fn run_projection_loop_inner(
             native_passthrough,
             stimulus_actions,
             live_hand_compact,
+            hand_mesh_capture_recorder,
+            hand_joint_capture_recorder,
             session,
             frame_wait,
             frame_stream,
@@ -1716,8 +1741,22 @@ unsafe fn run_projection_loop_inner(
     vk_device.destroy_command_pool(cmd_pool, None);
     vk_device.destroy_render_pass(render_pass, None);
     drop(openxr_environment_depth_runtime);
-    drop(native_passthrough);
-    drop((session, frame_wait, frame_stream, reference_space));
+    if let Some(passthrough) = native_passthrough {
+        // The layer borrows the parent handle but only retains the session Arc.
+        drop(passthrough.layer);
+        drop(passthrough._passthrough);
+    }
+    // Space and HandTracker own SessionInner references. Release every session
+    // child before the final session handle, while its Vulkan binding is alive.
+    // Capture is absent in particles-only, but the legacy rig route owns trackers.
+    drop(stimulus_actions);
+    drop(live_hand_compact);
+    drop(hand_mesh_capture_recorder);
+    drop(hand_joint_capture_recorder);
+    drop(reference_space);
+    drop(frame_wait);
+    drop(frame_stream);
+    drop(session);
     vk_device.destroy_device(None);
     vk_instance.destroy_instance(None);
 
@@ -2190,6 +2229,7 @@ unsafe fn ensure_openxr_environment_depth_runtime(
 #[allow(clippy::too_many_arguments)]
 unsafe fn run_projection_frames(
     app: &android_activity::AndroidApp,
+    session_owner: Option<(&crate::experiment_session_runtime::ExperimentSessionRuntime, u64)>,
     xr_instance: &xr::Instance,
     system: xr::SystemId,
     vk_device: &ash::Device,
@@ -2366,8 +2406,9 @@ unsafe fn run_projection_frames(
                 ),
             );
         }
-        if !app_running {
-            if experiment_shutdown_route_armed && !experiment_shutdown_finish_observed {
+        let retirement_requested = session_owner.is_some_and(|(r, id)| r.renderer_retirement_pending(id));
+        if !app_running || retirement_requested {
+            if !app_running && experiment_shutdown_route_armed && !experiment_shutdown_finish_observed {
                 experiment_shutdown_finish_observed = true;
                 crate::marker(
                     "experiment-session-native-shutdown",
@@ -2376,6 +2417,7 @@ unsafe fn run_projection_frames(
             }
             match session.request_exit() {
                 Ok(()) | Err(xr::sys::Result::ERROR_SESSION_NOT_RUNNING) => {}
+                Err(error) if retirement_requested => return Err(format!("terminal-request-openxr-exit:{error}")),
                 Err(error) => crate::marker(
                     "openxr-session",
                     format!("event=request-exit-error error={error}"),
@@ -2442,6 +2484,7 @@ unsafe fn run_projection_frames(
                     );
                     match event.state() {
                         xr::SessionState::READY => {
+                            if retirement_requested { continue; }
                             simultaneous_hands_controllers.resume(xr_instance, session)?;
                             session
                                 .begin(VIEW_TYPE)
@@ -2567,7 +2610,7 @@ unsafe fn run_projection_frames(
         }
 
         if !session_running {
-            if !app_running {
+            if !app_running || retirement_requested {
                 break;
             }
             std::thread::sleep(Duration::from_millis(25));

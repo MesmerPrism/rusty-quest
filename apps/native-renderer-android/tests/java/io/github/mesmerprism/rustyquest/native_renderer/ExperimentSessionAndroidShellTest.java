@@ -5,6 +5,17 @@ import java.util.concurrent.TimeUnit;
 
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
+        localTerminalCurrentOwnerAndReplacement();
+        localTerminalPausedCompletionReplaysOnSameSink();
+        localTerminalBusyObservationRetainsPendingExit();
+        localTerminalRetainedGenerationIdle();
+        localTerminalQueuedReplayCannotReplaceNewCompletion();
+        localTerminalFailureBarriers();
+        localTerminalActiveRequiresSavedArchive();
+        localTerminalUnknownNeverReplays();
+        localTerminalPreDispatchRecovery();
+        localTerminalAudioRecoveryRetainsCutoffIdentity();
+        localTerminalScheduledAudioReadRecovery();
         replacedPresentationCannotDispatch();
         headlessArmWaitsForAudioReadiness();
         submittedCommandObserverSurvivesPanelReplacement();
@@ -32,6 +43,148 @@ public final class ExperimentSessionAndroidShellTest {
         definitiveClockRejectionRecoversWithFreshAttempt(true);
         definitiveRejectionRecoveryIsBoundedAndReasonSpecific();
         System.out.println("ExperimentSessionAndroidShellTest PASS");
+    }
+
+    private static ExperimentSessionAndroidShell.LocalTerminalScope localScope(){
+        return new ExperimentSessionAndroidShell.LocalTerminalScope(1,11,1,0,"","","",String.join("",java.util.Collections.nCopies(64,"a")),"none");
+    }
+    private static void awaitLocalFinish(Sink sink)throws Exception{
+        long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
+        while((sink.result==null||!sink.result.shouldFinish)&&System.nanoTime()<end)Thread.sleep(10);
+        require(sink.result!=null&&sink.result.shouldFinish&&sink.result.saved);
+    }
+    private static void localTerminalCurrentOwnerAndReplacement()throws Exception{
+        FakeBridge bridge=new FakeBridge(false);FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());
+        Sink old=new Sink(),current=new Sink(),replacement=new Sink();
+        try{
+            shell.beginExplicitLaunchEpoch(1);shell.attach(old);shell.attach(current);
+            reject(shell.beginLocalTerminal(localScope(),old));equal(0,bridge.audioStops);
+            require(shell.beginLocalTerminal(localScope(),current));reject(shell.beginLocalTerminal(localScope(),current));awaitLocalFinish(current);
+            reject(shell.isCurrentUiAttachment(current,1));require(shell.isCurrentTerminalUiAttachment(current,1));
+            shell.attach(replacement);awaitLocalFinish(replacement);reject(shell.isCurrentTerminalUiAttachment(current,1));
+            equal(1,bridge.submissions);equal(1,bridge.audioStops);equal(1,bridge.cleanups);equal(1,codec.encodings);
+            reject(shell.beginLocalTerminal(localScope(),replacement));
+        }finally{shell.closeForTest();}
+    }
+    private static void localTerminalPausedCompletionReplaysOnSameSink()throws Exception{
+        FakeBridge bridge=new FakeBridge(false);FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());Sink sink=new Sink(),stale=new Sink();
+        try{
+            shell.beginExplicitLaunchEpoch(1);shell.attach(stale);shell.attach(sink);sink.acceptTerminal=false;
+            require(shell.beginLocalTerminal(localScope(),sink));
+            require(sink.pausedTerminalAttempt.await(2,TimeUnit.SECONDS));
+            require(shell.replayCurrentTerminal(sink,1));equal(0,sink.terminalCallbacks);reject(shell.replayCurrentTerminal(stale,1));
+            sink.acceptTerminal=true;require(shell.replayCurrentTerminal(sink,1));awaitLocalFinish(sink);
+            equal(1,sink.terminalCallbacks);equal(1,bridge.submissions);equal(1,bridge.cleanups);equal(1,codec.encodings);
+            reject(shell.isCurrentUiAttachment(sink,1));require(shell.isCurrentTerminalUiAttachment(sink,1));
+        }finally{shell.closeForTest();}
+    }
+    private static void localTerminalBusyObservationRetainsPendingExit()throws Exception{
+        FakeBridge bridge=new FakeBridge(false);bridge.localBusyThenAck=true;FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());Sink sink=new Sink();
+        try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(localScope(),sink));awaitLocalFinish(sink);require(bridge.localPostDispatchReads>=2);equal(1,bridge.submissions);equal(1,codec.encodings);equal(1,bridge.cleanups);}
+        finally{shell.closeForTest();}
+    }
+
+    private static void localTerminalRetainedGenerationIdle()throws Exception{
+        String hash=String.join("",java.util.Collections.nCopies(64,"a"));
+        for(final String captured:new String[]{"none","saved"}){
+            FakeBridge bridge=new FakeBridge(false);
+            FakeCodec codec=new FakeCodec(1){
+                @Override public ExperimentSessionAndroidShell.SessionReadback parse(String raw,ExperimentSessionPanelCoordinator.NativeCommand expected,boolean start){
+                    ExperimentSessionAndroidShell.SessionReadback r=super.parse(raw,expected,start);
+                    return new ExperimentSessionAndroidShell.SessionReadback(r.receipt,r.commandStatus,r.initializationStatus,r.inventoryStatus,r.recordingRootStatus,r.shutdownStatus,r.shutdownAckRevision,r.finalizedSessionGeneration,r.finalizedOperationId,r.detail,captured,r.recordingError,r.runtimeEpoch,r.lastOperationStatus,r.lastOperationReason);
+                }
+            };
+            ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());Sink sink=new Sink();
+            try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);ExperimentSessionAndroidShell.LocalTerminalScope scope=new ExperimentSessionAndroidShell.LocalTerminalScope(1,11,1,1,"","","",hash,captured);require(scope.idle);require(scope.idleWithoutRecording=="none".equals(captured));require(shell.beginLocalTerminal(scope,sink));awaitLocalFinish(sink);equal(1L,sink.result.sessionGeneration);equal(1,bridge.submissions);}
+            finally{shell.closeForTest();}
+        }
+        for(String invalid:new String[]{"unsaved","error","unknown"}){
+            try{new ExperimentSessionAndroidShell.LocalTerminalScope(1,11,1,1,"","","",hash,invalid);throw new AssertionError("invalid idle result admitted");}catch(IllegalArgumentException expected){}
+        }
+        try{new ExperimentSessionAndroidShell.LocalTerminalScope(1,11,1,1,"","condition-a",hash,hash,"saved");throw new AssertionError("partial identity admitted");}catch(IllegalArgumentException expected){}
+    }
+
+    private static void localTerminalQueuedReplayCannotReplaceNewCompletion()throws Exception{
+        final java.util.concurrent.LinkedBlockingQueue<Runnable> queued=new java.util.concurrent.LinkedBlockingQueue<Runnable>();
+        final CountDownLatch posted=new CountDownLatch(5);
+        ExperimentSessionAndroidShell.UiDispatcher dispatcher=new ExperimentSessionAndroidShell.UiDispatcher(){
+            public void post(Runnable task){queued.add(task);posted.countDown();}public boolean isUiThread(){return false;}
+        };
+        FakeBridge bridge=new FakeBridge(false);bridge.throwStatusOnce=true;FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),dispatcher);Sink sink=new Sink();
+        try{
+            shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(localScope(),sink));
+            long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+            while(!shell.localTerminalRetryReady()&&System.nanoTime()<end)Thread.sleep(5);
+            require(shell.localTerminalRetryReady());
+            // Keep both the original pending delivery and its cached replay queued.
+            while(!shell.replayCurrentTerminal(sink,1)&&System.nanoTime()<end)Thread.sleep(5);
+            require(shell.resumePendingTerminal());require(posted.await(2,TimeUnit.SECONDS));
+            Runnable task;while((task=queued.poll())!=null)task.run();
+            // Only the newest receipt is delivered; stale queued pending receipts are suppressed.
+            awaitLocalFinish(sink);equal(1,sink.terminalCallbacks);equal(1,bridge.submissions);equal(1,bridge.cleanups);
+            require(shell.replayCurrentTerminal(sink,1));Runnable replay=queued.poll(1,TimeUnit.SECONDS);require(replay!=null);replay.run();require(sink.result.shouldFinish);equal(2,sink.terminalCallbacks);
+            // Cache still owns the completed result; repeated observation never dispatches native work.
+            equal(1,codec.encodings);
+        }finally{shell.closeForTest();}
+    }
+
+    private static void localTerminalFailureBarriers()throws Exception{
+        for(int failure=0;failure<4;failure++){
+            FakeBridge bridge=new FakeBridge(failure==0);bridge.recordingFailure=failure==1;bridge.cleanupFailure=failure==2;bridge.localAudioFailure=failure==3;
+            ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,new FakeCodec(),new FakeClock(),new DirectDispatcher());Sink sink=new Sink();
+            try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(localScope(),sink));require(sink.terminal.await(2,TimeUnit.SECONDS));reject(sink.result.shouldFinish);reject(sink.result.saved);equal(1,bridge.cleanups);}
+            finally{shell.closeForTest();}
+        }
+        FakeBridge bridge=new FakeBridge(false);bridge.localScopeCurrent=false;
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,new FakeCodec(),new FakeClock(),new DirectDispatcher());Sink sink=new Sink();
+        try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(localScope(),sink));require(sink.terminal.await(2,TimeUnit.SECONDS));equal(0,bridge.audioStops);equal(0,bridge.submissions);reject(sink.result.saved);}
+        finally{shell.closeForTest();}
+    }
+    private static void localTerminalActiveRequiresSavedArchive()throws Exception{
+        for(final boolean saved:new boolean[]{false,true}){
+            FakeBridge bridge=new FakeBridge(false);
+            FakeCodec codec=new FakeCodec(1){
+                @Override public ExperimentSessionAndroidShell.SessionReadback parse(String raw,ExperimentSessionPanelCoordinator.NativeCommand expected,boolean start){
+                    ExperimentSessionAndroidShell.SessionReadback r=super.parse(raw,expected,start);
+                    return new ExperimentSessionAndroidShell.SessionReadback(r.receipt,r.commandStatus,r.initializationStatus,r.inventoryStatus,r.recordingRootStatus,r.shutdownStatus,r.shutdownAckRevision,r.finalizedSessionGeneration,r.finalizedOperationId,r.detail,saved&&"complete".equals(r.shutdownStatus)?"saved":r.recordingResult,r.recordingError,r.runtimeEpoch,r.lastOperationStatus,r.lastOperationReason);
+                }
+            };
+            ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());Sink sink=new Sink();
+            String hash=String.join("",java.util.Collections.nCopies(64,"a"));
+            try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(new ExperimentSessionAndroidShell.LocalTerminalScope(1,11,1,1,"utc-ns-00000000000000000042","condition-a",hash,hash,"none"),sink));require(sink.terminal.await(2,TimeUnit.SECONDS));require(sink.result.saved==saved&&sink.result.shouldFinish==saved);equal(1,bridge.submissions);}
+            finally{shell.closeForTest();}
+        }
+    }
+
+    private static void localTerminalUnknownNeverReplays()throws Exception{
+        FakeBridge bridge=new FakeBridge(false);bridge.throwAfterLocalApply=true;FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());Sink sink=new Sink();
+        try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(localScope(),sink));awaitLocalFinish(sink);equal(1,bridge.submissions);equal(1,codec.encodings);equal(1,bridge.cleanups);reject(shell.resumePendingTerminal());}
+        finally{shell.closeForTest();}
+    }
+    private static void localTerminalPreDispatchRecovery()throws Exception{
+        FakeBridge bridge=new FakeBridge(false);bridge.throwStatusOnce=true;FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());Sink sink=new Sink();
+        try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(localScope(),sink));require(sink.terminal.await(2,TimeUnit.SECONDS));equal(0,bridge.submissions);reject(sink.result.saved);require(shell.resumePendingTerminal());awaitLocalFinish(sink);equal(1,bridge.audioStops);equal(1,bridge.submissions);equal(1,codec.encodings);}
+        finally{shell.closeForTest();}
+    }
+
+    private static void localTerminalAudioRecoveryRetainsCutoffIdentity()throws Exception{
+        FakeClock clock=new FakeClock();FakeBridge bridge=new FakeBridge(false);bridge.throwAudioOnce=true;bridge.localValidationClock=clock;FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,clock,new DirectDispatcher());Sink sink=new Sink();
+        try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(localScope(),sink));require(sink.terminal.await(2,TimeUnit.SECONDS));equal(1,bridge.audioStops);equal(0,bridge.submissions);require(shell.localTerminalRetryReady());require(shell.resumePendingTerminal());awaitLocalFinish(sink);equal(1,bridge.audioStops);equal(1,bridge.submissions);equal(1,codec.encodings);equal(clock.nanos,bridge.firstDispatchAt);}
+        finally{shell.closeForTest();}
+    }
+
+    private static void localTerminalScheduledAudioReadRecovery()throws Exception{
+        FakeBridge bridge=new FakeBridge(false);bridge.throwScheduledAudioRead=true;FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());Sink sink=new Sink();
+        try{shell.beginExplicitLaunchEpoch(1);shell.attach(sink);require(shell.beginLocalTerminal(localScope(),sink));require(sink.terminal.await(2,TimeUnit.SECONDS));equal(1,bridge.audioStops);equal(0,bridge.submissions);require(shell.localTerminalRetryReady());require(shell.resumePendingTerminal());awaitLocalFinish(sink);equal(1,bridge.audioStops);equal(1,bridge.submissions);equal(1,codec.encodings);}
+        finally{shell.closeForTest();}
     }
 
     private static void replacedPresentationCannotDispatch() throws Exception {
@@ -772,6 +925,9 @@ public final class ExperimentSessionAndroidShellTest {
         boolean lateAck;
         boolean malformed;
         boolean cleanupFailure;
+        boolean localBusyThenAck;int localPostDispatchReads;
+        boolean throwScheduledAudioRead;int scheduledAudioReads;
+        boolean localScopeCurrent=true,throwAfterLocalApply,throwStatusOnce,throwAudioOnce,localAudioFailure;FakeClock localValidationClock;
         boolean initialBusy;
         volatile boolean rejectAdmission;
         String busyReason = "terminal-admission-busy";
@@ -856,10 +1012,11 @@ public final class ExperimentSessionAndroidShellTest {
                 }
                 acceptedStops++;
                 accepted.countDown();
-                if (lateAck) return "queued";
+                if (lateAck || localBusyThenAck) return "queued";
                 return recordingFailure ? "terminal-unsaved"
                     : failShutdown ? "terminal-error" : "terminal-complete";
             }
+            if(throwStatusOnce){throwStatusOnce=false;throw new IllegalStateException("one-time-status-failure");}
             statusReads++;
             if (pendingRejectedReadback) {
                 pendingRejectedReadback = false;
@@ -867,12 +1024,20 @@ public final class ExperimentSessionAndroidShellTest {
                 return "monotonic-rejected-status";
             }
             if (initialBusy && statusReads == 1) return "readback-busy";
+            if(localBusyThenAck&&submissions>0)return ++localPostDispatchReads==1?"readback-busy":"terminal-complete";
             if (releaseAck) return "terminal-complete";
             return "status";
         }
 
+        @Override public boolean validateLocalTerminalScope(ExperimentSessionAndroidShell.LocalTerminalScope scope){if(localValidationClock!=null)localValidationClock.nanos+=1000;return localScopeCurrent&&scope.runtimeEpoch==1;}
+        @Override public boolean admitLocalTerminal(ExperimentSessionAndroidShell.LocalTerminalScope scope){return localScopeCurrent;}
+        @Override public String applyLocalTerminal(String command,ExperimentSessionAndroidShell.LocalTerminalScope scope){
+            if(!localScopeCurrent)throw new SecurityException("captured-owner-retired");String response=apply(command);
+            if(throwAfterLocalApply){releaseAck=true;throw new IllegalStateException("accepted-response-lost");}return response;
+        }
         @Override public boolean requestAudioStop(long generation, String operationId) {
             audioStops++;
+            if(throwAudioOnce){throwAudioOnce=false;throw new IllegalStateException("audio-stop-response-unavailable");}
             return true;
         }
 
@@ -882,6 +1047,8 @@ public final class ExperimentSessionAndroidShellTest {
         }
 
         @Override public String audioShutdownStatus() {
+            if(throwScheduledAudioRead){scheduledAudioReads++;if(scheduledAudioReads==1)return "pending";if(scheduledAudioReads==2)throw new IllegalStateException("scheduled-audio-read-failed");}
+            if(localAudioFailure)return "error";
             if (delayRestartAudio) {
                 restartAudioPolls++;
                 return restartAudioPolls < 3 ? "pending" : "complete";
@@ -984,6 +1151,9 @@ public final class ExperimentSessionAndroidShellTest {
         final CountDownLatch terminal = new CountDownLatch(1);
         volatile ExperimentSessionAndroidShell.TerminalResult result;
         volatile int terminalCallbacks;
+        volatile boolean acceptTerminal=true;
+        final CountDownLatch pausedTerminalAttempt=new CountDownLatch(1);
+        @Override public boolean acceptsExperimentSessionTerminalCallbacks(long launchEpoch){boolean allowed=acceptTerminal&&acceptsExperimentSessionCallbacks(launchEpoch);if(!allowed)pausedTerminalAttempt.countDown();return allowed;}
 
         @Override public boolean acceptsExperimentSessionCallbacks(long launchEpoch) {
             return launchEpoch > 0L;

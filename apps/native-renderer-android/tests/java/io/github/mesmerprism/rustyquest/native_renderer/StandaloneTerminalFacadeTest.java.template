@@ -1,0 +1,98 @@
+package io.github.mesmerprism.rustyquest.native_renderer;
+
+// The production PowerShell facade is inserted verbatim at the marker by the
+// owning helper. Android lifecycle/clock/queue are deterministic host substitutes.
+class ControlPanelActivity extends android.app.Activity {
+    static final Object PRESENTATION_LOCK = new Object();
+    static boolean terminalIntentAdmitted, terminalFinishConsumed;
+    static int requests, reads;
+    static boolean requestThrows;
+    static final java.util.ArrayDeque<String> replies = new java.util.ArrayDeque<>();
+    static String nativeRequestExperimentSessionRendererRetirement(long a,long b,long c,String d,long e) {
+        requests++; if(requestThrows)throw new IllegalStateException("lost-response"); return replies.remove();
+    }
+    static String nativeReadExperimentSessionRendererRetirement(long a,long b,long c,String d,long e) {
+        reads++;return replies.remove();
+    }
+    /*TERMINAL_FACADE*/
+    static void reset() {
+        standaloneTerminalScope=null;standaloneTerminalExit=null;terminalIntentAdmitted=false;
+        terminalFinishConsumed=false;requests=reads=0;requestThrows=false;replies.clear();
+        android.os.Handler.clear();android.os.SystemClock.now=0;
+    }
+}
+class ExperimentSessionAndroidShell {
+    static final class LocalTerminalScope {
+        long ownerId=7,launchEpoch=2,runtimeEpoch=3,sessionGeneration=9;
+    }
+    static final class TerminalResult {
+        boolean shouldFinish=true,saved=true;long sessionGeneration=9,shutdownAckRevision=4;
+        String operationId="panel-save-and-exit-1";
+    }
+}
+class ExperimentSessionOwnerPanelModule {
+    static ExperimentSessionAndroidShell.LocalTerminalScope current;
+    static boolean isLocalTerminalScopeCurrent(ExperimentSessionAndroidShell.LocalTerminalScope s){return s==current;}
+}
+class NativeRendererExperimentLaunchAuthority {static void invalidatePending(){}}
+
+public final class StandaloneTerminalFacadeTest {
+    static ExperimentSessionAndroidShell.LocalTerminalScope scope;
+    static ExperimentSessionAndroidShell.TerminalResult result;
+    static ControlPanelActivity panel;
+    static void start(){
+        ControlPanelActivity.reset();scope=new ExperimentSessionAndroidShell.LocalTerminalScope();
+        result=new ExperimentSessionAndroidShell.TerminalResult();panel=new ControlPanelActivity();
+        ExperimentSessionOwnerPanelModule.current=scope;
+        check(ControlPanelActivity.admitStandaloneTerminal(scope),"admit exact scope");
+        check(ControlPanelActivity.admitStandaloneTerminal(scope),"idempotent admission");
+    }
+    static org.json.JSONObject receipt(String status){return new org.json.JSONObject()
+        .put("schema","rusty.quest.native_renderer_retirement.v1").put("status",status)
+        .put("owner_identity",scope.ownerId).put("runtime_epoch",scope.runtimeEpoch)
+        .put("generation",scope.sessionGeneration).put("operation_id",result.operationId)
+        .put("shutdown_ack_revision",result.shutdownAckRevision);}
+    static void finish(){ControlPanelActivity.finishStandaloneTerminal(panel,scope,result);}
+    static void check(boolean yes,String message){if(!yes)throw new AssertionError(message);}
+    static void settle(){for(int i=0;i<200 && android.os.Handler.runNext();i++){}check(android.os.Handler.empty(),"bounded queue");}
+    public static void main(String[] args){
+        start();ControlPanelActivity.replies.add(receipt("pending").toString());
+        ControlPanelActivity.replies.add(receipt("retired").toString());finish();finish();settle();
+        check(ControlPanelActivity.requests==1&&ControlPanelActivity.reads==1&&panel.finishes==1,"exact success once");
+
+        start();ControlPanelActivity.replies.add(receipt("not-ready").toString());
+        ControlPanelActivity.replies.add(receipt("pending").toString());
+        ControlPanelActivity.replies.add(receipt("retired").toString());finish();settle();
+        check(ControlPanelActivity.requests==2&&ControlPanelActivity.reads==1&&panel.finishes==1,"known no-admission retry only");
+
+        start();ControlPanelActivity.replies.add(receipt("pending").toString());
+        ControlPanelActivity.replies.add(receipt("not-ready").toString());finish();settle();
+        check(ControlPanelActivity.requests==1&&ControlPanelActivity.reads==1&&panel.finishes==0,"read cannot reopen request");
+
+        String[] fields={"schema","owner_identity","runtime_epoch","generation","operation_id","shutdown_ack_revision"};
+        for(String field:fields){start();org.json.JSONObject bad=receipt("retired");
+            Object previous=bad.get(field);bad.put(field,previous instanceof Number?((Number)previous).longValue()+1:"wrong");
+            ControlPanelActivity.replies.add(bad.toString());finish();settle();
+            check(panel.finishes==0&&ControlPanelActivity.requests==1&&ControlPanelActivity.reads==0,"damaged "+field);}
+        start();ControlPanelActivity.replies.add(receipt("retired").put("owner_identity","7").toString());finish();settle();
+        check(panel.finishes==0,"string number rejected");
+        start();ControlPanelActivity.replies.add(receipt("retired").toString().replace("\"owner_identity\":7","\"owner_identity\":7.0"));finish();settle();
+        check(panel.finishes==0,"fractional number encoding rejected");
+
+        start();ControlPanelActivity.requestThrows=true;finish();settle();finish();settle();
+        check(ControlPanelActivity.requests==1&&ControlPanelActivity.reads==0&&panel.finishes==0,"ambiguous dispatch no replay");
+        start();ControlPanelActivity.replies.add("{bad");finish();settle();
+        check(ControlPanelActivity.requests==1&&panel.finishes==0,"malformed receipt no replay");
+
+        start();ControlPanelActivity.replies.add(receipt("pending").toString());finish();android.os.Handler.runNext();
+        ExperimentSessionOwnerPanelModule.current=new ExperimentSessionAndroidShell.LocalTerminalScope();settle();
+        check(ControlPanelActivity.reads==0&&panel.finishes==0,"replacement suppresses old completion");
+        start();finish();android.os.SystemClock.now=20_000;settle();
+        check(ControlPanelActivity.requests==0&&panel.finishes==0,"timeout no request");
+        start();result.saved=false;finish();settle();check(ControlPanelActivity.requests==0,"unsaved never retires");
+        start();scope.sessionGeneration=0;result.sessionGeneration=0;
+        ControlPanelActivity.replies.add(receipt("retired").toString());finish();settle();
+        check(panel.finishes==1,"exact clean idle retirement");
+        System.out.println("PASS production standalone terminal facade: identity, no replay, replacement, deadline and clean idle");
+    }
+}

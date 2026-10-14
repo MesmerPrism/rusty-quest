@@ -581,12 +581,98 @@ enum ParsedOperation {
 #[derive(Clone, Debug)]
 struct ParsedCommand {
     operator_fence: Option<OperatorFence>,
+    local_terminal_fence: Option<LocalTerminalFence>,
     operation_id: String,
     expected_generation: u64,
     at: MonotonicNanos,
     value: Value,
     operation: ParsedOperation,
     received_at: Instant,
+}
+
+/// Captured local terminal metadata, deliberately outside the command wire schema.
+#[derive(Clone, Debug)]
+pub(crate) struct LocalTerminalScope {
+    pub(crate) owner_identity: u64,
+    pub(crate) runtime_epoch: u64,
+    pub(crate) generation: u64,
+    pub(crate) session_key: String,
+    pub(crate) condition_id: String,
+    pub(crate) profile_sha256: String,
+    pub(crate) binding_sha256: String,
+}
+
+#[derive(Clone, Debug)]
+struct LocalTerminalFence {
+    scope: LocalTerminalScope,
+    owner: Arc<AtomicU64>,
+    gate: Arc<Mutex<()>>,
+}
+
+impl LocalTerminalFence {
+    fn matches(&self, projection: &Projection) -> bool {
+        let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap_or(Value::Null);
+        self.matches_with_binding(projection, binding["snapshot"]["activation_binding_sha256"].as_str())
+    }
+
+    fn matches_with_binding(&self, projection: &Projection, binding: Option<&str>) -> bool {
+        let s = &self.scope;
+        self.owner.load(Ordering::Acquire) == s.owner_identity
+            && s.owner_identity > 0 && s.owner_identity < i64::MAX as u64
+            && s.runtime_epoch > 0 && projection.runtime_epoch == s.runtime_epoch
+            && projection.generation == s.generation
+            && projection.initialization_status == "ready" && projection.inventory_status == "ready"
+            && valid_sha256(&s.binding_sha256)
+            && binding == Some(s.binding_sha256.as_str())
+            && if s.session_key.is_empty() && s.condition_id.is_empty() && s.profile_sha256.is_empty() {
+                projection.phase == SessionPhase::Idle
+                    && matches!(projection.recording_result, RecordingResult::None | RecordingResult::Saved { .. })
+                    && projection.session_key.is_none() && projection.condition_id.is_none()
+                    && projection.non_audio_profile_sha256.is_none()
+            } else {
+                s.generation > 0 && !s.session_key.is_empty() && !s.condition_id.is_empty()
+                    && projection.session_key.as_deref() == Some(s.session_key.as_str())
+                    && projection.condition_id.as_deref() == Some(s.condition_id.as_str())
+                    && projection.non_audio_profile_sha256.as_deref() == Some(s.profile_sha256.as_str())
+                    && valid_sha256(&s.profile_sha256)
+            }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RendererRetirementScope {
+    pub(crate) owner_identity: u64,
+    pub(crate) runtime_epoch: u64,
+    pub(crate) generation: u64,
+    pub(crate) operation_id: String,
+    pub(crate) shutdown_ack_revision: u64,
+}
+
+#[derive(Debug)]
+struct RendererRetirement {
+    scope: RendererRetirementScope,
+    status: &'static str,
+    reason: String,
+}
+
+fn retirement_response(scope: &RendererRetirementScope, status: &str, reason: &str) -> String {
+    json!({"schema":"rusty.quest.native_renderer_retirement.v1", "status":status,
+        "owner_identity":scope.owner_identity, "runtime_epoch":scope.runtime_epoch,
+        "generation":scope.generation, "operation_id":scope.operation_id,
+        "shutdown_ack_revision":scope.shutdown_ack_revision, "reason_code":reason}).to_string()
+}
+
+fn terminal_receipt_matches(p: &Projection, s: &RendererRetirementScope) -> bool {
+    p.runtime_epoch == s.runtime_epoch && s.runtime_epoch > 0
+        && s.owner_identity > 0 && s.owner_identity < i64::MAX as u64
+        && p.phase == SessionPhase::Closed && p.shutdown_status == "complete"
+        && s.shutdown_ack_revision > 0 && p.shutdown_ack_revision == s.shutdown_ack_revision
+        && p.generation == s.generation && p.finalized_session_generation == s.generation
+        && !s.operation_id.is_empty() && p.finalized_operation_id.as_deref() == Some(s.operation_id.as_str())
+        && (s.generation > 0 && matches!(p.recording_result, RecordingResult::Saved { .. })
+            || p.recording_result == RecordingResult::None
+                && p.session_key.is_none() && p.condition_id.is_none() && p.non_audio_profile_sha256.is_none()
+                && p.initialization_status == "ready" && p.inventory_status == "ready")
 }
 
 #[derive(Clone, Debug)]
@@ -862,7 +948,11 @@ impl SessionWorker {
         }
     }
 
-    fn process_raw(&mut self, raw: String, received_at: Instant) {
+    fn process_raw(&mut self, raw: String, received_at: Instant, fence: Option<LocalTerminalFence>) {
+        // Serializes only native owner transitions with this same worker command.
+        // No registry or Java callback participates in this gate.
+        let gate = fence.as_ref().map(|f| Arc::clone(&f.gate));
+        let _owner_guard = gate.as_ref().map(|g| g.lock().unwrap_or_else(|e| e.into_inner()));
         if is_status_command(&raw) {
             self.refresh_controller_projection();
             return;
@@ -874,13 +964,26 @@ impl SessionWorker {
                 return;
             }
         };
-        let parsed = match parse_mutating_command(value, received_at) {
+        let mut parsed = match parse_mutating_command(value, received_at) {
             Ok(command) => command,
             Err((operation, reason)) => {
                 self.publish_rejection(operation, reason);
                 return;
             }
         };
+        parsed.local_terminal_fence = fence;
+        if let Some(fence) = &parsed.local_terminal_fence {
+            let projection = self.projection.read().unwrap_or_else(|e| e.into_inner());
+            let matches = matches!(parsed.operation, ParsedOperation::SaveAndExit)
+                && parsed.expected_generation == fence.scope.generation
+                && fence.matches(&projection)
+                && self.trusted_inventory.as_ref().is_some_and(|i| i.validate().is_ok());
+            drop(projection);
+            if !matches {
+                self.publish_operation(&parsed.operation_id, "rejected", "local-terminal-owner-fence-mismatch", None);
+                return;
+            }
+        }
         if let Some(previous) = self
             .history
             .iter()
@@ -1789,6 +1892,7 @@ enum WorkerMessage {
         raw: String,
         received_at: Instant,
         terminal_claim: Option<u64>,
+        local_terminal_fence: Option<LocalTerminalFence>,
     },
     ImmersiveOwnerDestroyed {
         acknowledgement: SyncSender<Result<(), String>>,
@@ -1804,7 +1908,9 @@ enum WorkerMessage {
 pub(crate) struct ExperimentSessionRuntime {
     preparation_presentation_observation: Arc<AtomicU64>,
     runtime_epoch: u64,
-    immersive_owner_identity: AtomicU64,
+    immersive_owner_identity: Arc<AtomicU64>,
+    local_terminal_gate: Arc<Mutex<()>>,
+    renderer_retirement: Mutex<Option<RendererRetirement>>,
     recording_root: PathBuf,
     command_sender: SyncSender<WorkerMessage>,
     terminal_sender: SyncSender<WorkerMessage>,
@@ -1948,7 +2054,9 @@ impl ExperimentSessionRuntime {
         Ok(Self {
             preparation_presentation_observation,
             runtime_epoch,
-            immersive_owner_identity: AtomicU64::new(0),
+            immersive_owner_identity: Arc::new(AtomicU64::new(0)),
+            local_terminal_gate: Arc::new(Mutex::new(())),
+            renderer_retirement: Mutex::new(None),
             recording_root: runtime_recording_root,
             command_sender,
             terminal_sender,
@@ -1994,6 +2102,10 @@ impl ExperimentSessionRuntime {
     }
 
     pub(crate) fn apply_command_json(&self, raw: &str) -> String {
+        self.apply_command_json_with_fence(raw, None)
+    }
+
+    fn apply_command_json_with_fence(&self, raw: &str, local_terminal_fence: Option<LocalTerminalFence>) -> String {
         if raw.len() > MAX_COMMAND_BYTES {
             return self.cached(|cache| &cache.command_too_large);
         }
@@ -2045,6 +2157,7 @@ impl ExperimentSessionRuntime {
         };
         match sender.try_send(WorkerMessage::Command {
             raw: raw.to_owned(),
+            local_terminal_fence,
             received_at: Instant::now(),
             terminal_claim: terminal_gate.as_ref().and_then(|(generation, _, gate)| {
                 (gate.generation == *generation).then_some(*generation)
@@ -2087,6 +2200,66 @@ impl ExperimentSessionRuntime {
         }
     }
 
+    fn apply_local_terminal(&self, raw: &str, scope: LocalTerminalScope) -> String {
+        if raw.len() > MAX_COMMAND_BYTES { return self.cached(|cache| &cache.command_too_large); }
+        let fence = LocalTerminalFence { scope, owner: Arc::clone(&self.immersive_owner_identity),
+            gate: Arc::clone(&self.local_terminal_gate) };
+        let gate = Arc::clone(&fence.gate);
+        let _owner_guard = gate.lock().unwrap_or_else(|e| e.into_inner());
+        let projection = self.projection.read().unwrap_or_else(|e| e.into_inner());
+        let parsed = parse_command_value(raw).ok().and_then(|v| parse_mutating_command(v, Instant::now()).ok());
+        let valid = parsed.is_some_and(|p| matches!(p.operation, ParsedOperation::SaveAndExit)
+            && p.expected_generation == fence.scope.generation) && fence.matches(&projection);
+        if !valid { return projection.response_json("rejected", "local-terminal-owner-fence-mismatch"); }
+        drop(projection);
+        self.apply_command_json_with_fence(raw, Some(fence))
+    }
+
+    fn retirement_json(&self, scope: RendererRetirementScope, request: bool) -> String {
+        let _owner_guard = self.local_terminal_gate.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.renderer_retirement.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = state.as_ref() {
+            return if existing.scope == scope {
+                retirement_response(&scope, existing.status, &existing.reason)
+            } else { retirement_response(&scope, "error", "retirement-scope-mismatch") };
+        }
+        if !request { return retirement_response(&scope, "error", "retirement-not-requested"); }
+        if self.immersive_owner_identity.load(Ordering::Acquire) != scope.owner_identity
+            || !self.projection.read().ok().is_some_and(|p| terminal_receipt_matches(&p, &scope)) {
+            return retirement_response(&scope, "error", "terminal-receipt-mismatch");
+        }
+        if !self.worker_finished() {
+            return retirement_response(&scope, "not-ready", "terminal-worker-not-finished");
+        }
+        if let Err(error) = self.join_finished_worker() {
+            *state = Some(RendererRetirement { scope: scope.clone(), status: "error", reason: error.clone() });
+            return retirement_response(&scope, "error", &error);
+        }
+        if !self.writer_slot.lock().ok().is_some_and(|writer| writer.is_none()) {
+            return retirement_response(&scope, "error", "recording-writer-not-closed");
+        }
+        *state = Some(RendererRetirement { scope: scope.clone(), status: "pending", reason: "accepted".to_owned() });
+        retirement_response(&scope, "pending", "accepted")
+    }
+
+    /// Only the captured renderer may consume this existing runtime's request.
+    pub(crate) fn renderer_retirement_pending(&self, owner_identity: u64) -> bool {
+        self.immersive_owner_identity.load(Ordering::Acquire) == owner_identity
+            && self.renderer_retirement.lock().ok().is_some_and(|s| s.as_ref().is_some_and(|r|
+                r.scope.owner_identity == owner_identity && r.scope.runtime_epoch == self.runtime_epoch && r.status == "pending"))
+    }
+
+    pub(crate) fn complete_renderer_retirement(&self, owner_identity: u64, result: Result<(), String>) {
+        let mut state = self.renderer_retirement.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(r) = state.as_mut().filter(|r| r.scope.owner_identity == owner_identity
+            && r.scope.runtime_epoch == self.runtime_epoch && r.status == "pending") {
+            match result {
+                Ok(()) => { r.status = "retired"; r.reason = "gpu-xr-ui-resources-retired".to_owned(); }
+                Err(error) => { r.status = "error"; r.reason = error; }
+            }
+        }
+    }
+
     fn worker_finished(&self) -> bool {
         self.worker
             .try_lock()
@@ -2125,6 +2298,7 @@ impl ExperimentSessionRuntime {
     }
 
     fn claim_immersive_owner(&self, identity: u64) -> Result<(), String> {
+        let _guard = self.local_terminal_gate.lock().unwrap_or_else(|e| e.into_inner());
         if identity == 0 || identity >= i64::MAX as u64 { return Err("native-owner-invalid".to_owned()); }
         let mut prior = self.immersive_owner_identity.load(Ordering::Acquire);
         loop {
@@ -2140,8 +2314,11 @@ impl ExperimentSessionRuntime {
         // This claim fences the exact captured runtime. A former owner cannot
         // shut down a replacement on this Arc, and retirement cannot acquire a
         // new owner while its terminal request/acknowledgement is pending.
-        if self.immersive_owner_identity.compare_exchange(identity, u64::MAX,
-                Ordering::AcqRel, Ordering::Acquire).is_err() { return Ok(false); }
+        {
+            let _guard = self.local_terminal_gate.lock().unwrap_or_else(|e| e.into_inner());
+            if self.immersive_owner_identity.compare_exchange(identity, u64::MAX,
+                    Ordering::AcqRel, Ordering::Acquire).is_err() { return Ok(false); }
+        }
         self.shutdown_for_immersive_owner_destroyed().map(|()| true)
     }
 
@@ -2342,8 +2519,9 @@ fn run_worker(
                 raw,
                 received_at,
                 terminal_claim,
+                local_terminal_fence,
             }) => {
-                worker.process_raw(raw, received_at);
+                worker.process_raw(raw, received_at, local_terminal_fence);
                 if let Some(generation) = terminal_claim {
                     let mut gate = worker
                         .producer_gate
@@ -2401,9 +2579,9 @@ fn run_worker(
         }
         match command_receiver.recv_timeout(Duration::from_millis(10)) {
             Ok(WorkerMessage::Command {
-                raw, received_at, ..
+                raw, received_at, local_terminal_fence, ..
             }) => {
-                worker.process_raw(raw, received_at);
+                worker.process_raw(raw, received_at, local_terminal_fence);
                 if worker.stop_after_ack {
                     break;
                 }
@@ -2883,6 +3061,7 @@ pub(crate) fn request_control_from_native(
         raw,
         received_at: Instant::now(),
         terminal_claim: None,
+        local_terminal_fence: None,
     }) {
         Ok(()) => NativeControlAdmission::Queued,
         Err(TrySendError::Full(_)) => NativeControlAdmission::Retryable,
@@ -2948,6 +3127,26 @@ pub(crate) fn current_route_action() -> (RouteAction, u64) {
     };
     let packed = runtime.route_state.load(Ordering::Acquire);
     (RouteAction::from_code(packed & 0xff), packed >> 8)
+}
+
+pub(crate) fn immersive_owner_identity() -> u64 {
+    runtime().ok().map(|r| r.immersive_owner_identity.load(Ordering::Acquire))
+        .filter(|id| *id > 0 && *id < i64::MAX as u64).unwrap_or(0)
+}
+
+pub(crate) fn apply_terminal_with_fence(raw: &str, scope: LocalTerminalScope) -> String {
+    match runtime() {
+        Ok(r) => r.apply_local_terminal(raw, scope),
+        Err(_) => json!({"schema":"rusty.quest.experiment_session.response.v1", "command_status":"rejected",
+            "reason_code":"runtime-unavailable", "readback":{}}).to_string(),
+    }
+}
+
+pub(crate) fn renderer_retirement_json(scope: RendererRetirementScope, request: bool) -> String {
+    match runtime() {
+        Ok(r) if r.runtime_epoch == scope.runtime_epoch => r.retirement_json(scope, request),
+        _ => retirement_response(&scope, "error", "runtime-unavailable-or-replaced"),
+    }
 }
 
 pub(crate) fn current_terminal_route_receipt() -> Option<(u64, String)> {
@@ -3392,6 +3591,7 @@ fn parse_mutating_command(
     };
     Ok(ParsedCommand {
         operator_fence,
+        local_terminal_fence: None,
         operation_id,
         expected_generation,
         at,
@@ -3777,6 +3977,186 @@ mod tests {
                 "4444444444444444444444444444444444444444444444444444444444444444",
             ),
         }
+    }
+
+    #[test]
+    fn local_terminal_scope_distinguishes_real_idle_and_every_active_identity_field() {
+        let binding = "a".repeat(64);
+        let owner = Arc::new(AtomicU64::new(7));
+        let mut fence = LocalTerminalFence { scope: LocalTerminalScope {
+            owner_identity: 7, runtime_epoch: 3, generation: 0, session_key: String::new(),
+            condition_id: String::new(), profile_sha256: String::new(), binding_sha256: binding.clone(),
+        }, owner: Arc::clone(&owner), gate: Arc::new(Mutex::new(())) };
+        let mut p = Projection { runtime_epoch: 3, initialization_status: "ready", inventory_status: "ready", ..Projection::default() };
+        assert!(fence.matches_with_binding(&p, Some(&binding)));
+        fence.scope.profile_sha256 = "b".repeat(64);
+        assert!(!fence.matches_with_binding(&p, Some(&binding))); // Idle must not invent a profile.
+        p.generation = 5; p.phase = SessionPhase::Active;
+        p.session_key = Some("session".to_owned()); p.condition_id = Some("condition-a".to_owned());
+        p.non_audio_profile_sha256 = Some(fence.scope.profile_sha256.clone());
+        fence.scope.generation = 5; fence.scope.session_key = "session".to_owned(); fence.scope.condition_id = "condition-a".to_owned();
+        assert!(fence.matches_with_binding(&p, Some(&binding)));
+        for damaged in 0..7 {
+            let mut bad = fence.clone();
+            match damaged { 0 => bad.scope.owner_identity += 1, 1 => bad.scope.runtime_epoch += 1,
+                2 => bad.scope.generation += 1, 3 => bad.scope.session_key.push('x'),
+                4 => bad.scope.condition_id.push('x'), 5 => bad.scope.profile_sha256 = "c".repeat(64),
+                _ => bad.scope.binding_sha256 = "d".repeat(64) }
+            assert!(!bad.matches_with_binding(&p, Some(&binding)));
+        }
+        owner.store(8, Ordering::Release);
+        assert!(!fence.matches_with_binding(&p, Some(&binding)));
+        owner.store(7, Ordering::Release);
+        p.phase = SessionPhase::Idle;
+        p.session_key = None; p.condition_id = None; p.non_audio_profile_sha256 = None;
+        fence.scope.session_key.clear(); fence.scope.condition_id.clear(); fence.scope.profile_sha256.clear();
+        p.recording_result = RecordingResult::Saved { completed: false };
+        assert!(fence.matches_with_binding(&p, Some(&binding))); // Retains generation five.
+        p.recording_result = RecordingResult::None;
+        assert!(fence.matches_with_binding(&p, Some(&binding)));
+        p.recording_result = RecordingResult::Unsaved { completed: false, error: RecordingFailure::Finalize };
+        assert!(!fence.matches_with_binding(&p, Some(&binding)));
+        p.recording_result = RecordingResult::Saved { completed: false };
+        p.phase = SessionPhase::Closed;
+        assert!(!fence.matches_with_binding(&p, Some(&binding)));
+    }
+
+    #[test]
+    fn retained_idle_generation_saves_and_retires_through_canonical_fenced_worker() {
+        let root = temp_root("retained-idle-terminal");
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        runtime.claim_immersive_owner(1).unwrap();
+        runtime.apply_command_json(&start_command(&root, "retained-start"));
+        wait_for(&runtime, "\"phase\":\"active\"");
+        runtime.apply_command_json(&command("restart-to-experimenter", "retained-save-next", 1, 2_000));
+        let saved: Value = serde_json::from_str(&wait_for(&runtime, "\"last_operation_id\":\"retained-save-next\"")).unwrap();
+        assert_eq!(saved["readback"]["phase"], "idle");
+        assert_eq!(saved["readback"]["generation"], 1);
+        assert_eq!(saved["readback"]["recording_result"]["status"], "saved");
+        for field in ["session_key", "condition_id", "non_audio_profile_sha256"] {
+            assert!(saved["readback"][field].is_null());
+        }
+        let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
+        let scope = LocalTerminalScope { owner_identity: 1, runtime_epoch: runtime.runtime_epoch,
+            generation: 1, session_key: String::new(), condition_id: String::new(), profile_sha256: String::new(),
+            binding_sha256: binding["snapshot"]["activation_binding_sha256"].as_str().unwrap().to_owned() };
+        let raw = command("save-and-exit", "retained-idle-exit", 1, 3_000);
+        let mut partial = scope.clone(); partial.condition_id = "condition-a".to_owned();
+        assert!(runtime.apply_local_terminal(&raw, partial).contains("local-terminal-owner-fence-mismatch"));
+        let mut coerced = scope.clone(); coerced.generation = 0;
+        assert!(runtime.apply_local_terminal(&command("save-and-exit", "coerced-idle-exit", 0, 3_000), coerced)
+            .contains("local-terminal-owner-fence-mismatch"));
+        assert!(runtime.apply_local_terminal(&raw, scope).contains("\"command_status\":\"queued\""));
+        let closed: Value = serde_json::from_str(&wait_for(&runtime, "\"shutdown_status\":\"complete\"")).unwrap();
+        assert_eq!(closed["readback"]["generation"], 1);
+        assert_eq!(closed["readback"]["finalized_session_generation"], 1);
+        assert_eq!(closed["readback"]["recording_result"]["status"], "saved");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !runtime.worker_finished() && Instant::now() < deadline { thread::yield_now(); }
+        let retirement = RendererRetirementScope { owner_identity: 1, runtime_epoch: runtime.runtime_epoch,
+            generation: 1, operation_id: "retained-idle-exit".to_owned(),
+            shutdown_ack_revision: closed["readback"]["shutdown_ack_revision"].as_u64().unwrap() };
+        assert!(runtime.retirement_json(retirement.clone(), true).contains("\"status\":\"pending\""));
+        runtime.complete_renderer_retirement(1, Ok(()));
+        assert!(runtime.retirement_json(retirement, false).contains("\"status\":\"retired\""));
+        runtime.shutdown_captured_immersive_owner(1).unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn queued_local_terminal_rechecks_owner_on_same_worker_before_save_exit() {
+        let root = temp_root("local-terminal-queued-owner");
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        runtime.claim_immersive_owner(1).unwrap();
+        let (entered, entered_rx) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::channel();
+        runtime.command_sender.send(WorkerMessage::PauseForTest { entered, resume: resume_rx }).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let fence = LocalTerminalFence { scope: LocalTerminalScope { owner_identity: 1, runtime_epoch: 1,
+            generation: 0, session_key: String::new(), condition_id: String::new(), profile_sha256: String::new(), binding_sha256: "a".repeat(64) },
+            owner: Arc::clone(&runtime.immersive_owner_identity), gate: Arc::clone(&runtime.local_terminal_gate) };
+        runtime.terminal_sender.send(WorkerMessage::Command { raw: command("save-and-exit", "stale-local", 0, 1),
+            received_at: Instant::now(), terminal_claim: None, local_terminal_fence: Some(fence) }).unwrap();
+        runtime.claim_immersive_owner(2).unwrap();
+        resume.send(()).unwrap();
+        let rejected = wait_for(&runtime, "local-terminal-owner-fence-mismatch");
+        assert!(rejected.contains("\"shutdown_ack_revision\":0"));
+        assert!(!runtime.worker_finished());
+        runtime.shutdown_captured_immersive_owner(2).unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn retirement_receipt_requires_saved_active_or_explicit_clean_idle_and_exact_tuple() {
+        let scope = RendererRetirementScope { owner_identity: 7, runtime_epoch: 3, generation: 9,
+            operation_id: "finish".to_owned(), shutdown_ack_revision: 2 };
+        let mut p = Projection { runtime_epoch: 3, generation: 9, phase: SessionPhase::Closed,
+            shutdown_status: "complete", shutdown_ack_revision: 2, finalized_session_generation: 9,
+            finalized_operation_id: Some("finish".to_owned()), recording_result: RecordingResult::Saved { completed: false }, ..Projection::default() };
+        assert!(terminal_receipt_matches(&p, &scope));
+        for damaged in 0..5 {
+            let mut bad = scope.clone();
+            match damaged { 0 => bad.runtime_epoch += 1, 1 => bad.generation += 1,
+                2 => bad.operation_id.push('x'), 3 => bad.shutdown_ack_revision += 1, _ => bad.owner_identity = 0 }
+            assert!(!terminal_receipt_matches(&p, &bad));
+        }
+        p.recording_result = RecordingResult::None;
+        assert!(!terminal_receipt_matches(&p, &scope));
+        let idle = RendererRetirementScope { generation: 0, ..scope };
+        p.generation = 0; p.finalized_session_generation = 0;
+        assert!(!terminal_receipt_matches(&p, &idle));
+        p.initialization_status = "ready"; p.inventory_status = "ready";
+        assert!(terminal_receipt_matches(&p, &idle));
+    }
+
+    #[test]
+    fn failed_renderer_cleanup_never_becomes_retired() {
+        let root = temp_root("renderer-retirement-error");
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        runtime.claim_immersive_owner(1).unwrap();
+        runtime.apply_command_json(&command("save-and-exit", "retire-error", 0, 1));
+        wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !runtime.worker_finished() && Instant::now() < deadline { thread::yield_now(); }
+        let scope = RendererRetirementScope { owner_identity: 1, runtime_epoch: runtime.runtime_epoch,
+            generation: 0, operation_id: "retire-error".to_owned(), shutdown_ack_revision: runtime.projection.read().unwrap().shutdown_ack_revision };
+        assert!(runtime.retirement_json(scope.clone(), true).contains("\"status\":\"pending\""));
+        runtime.complete_renderer_retirement(1, Err("device-idle-failed".to_owned()));
+        runtime.complete_renderer_retirement(1, Ok(()));
+        assert!(runtime.retirement_json(scope.clone(), false).contains("\"status\":\"error\""));
+        assert!(runtime.retirement_json(scope, true).contains("device-idle-failed"));
+        runtime.shutdown_captured_immersive_owner(1).unwrap();
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn retirement_is_pending_until_cleanup_and_remains_readable_after_owner_release() {
+        let root = temp_root("renderer-retirement-ack");
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        runtime.claim_immersive_owner(1).unwrap();
+        runtime.apply_command_json(&command("save-and-exit", "retire-idle", 0, 1));
+        wait_for(&runtime, "\"shutdown_status\":\"complete\"");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !runtime.worker_finished() && Instant::now() < deadline { thread::yield_now(); }
+        let p = runtime.projection.read().unwrap();
+        let scope = RendererRetirementScope { owner_identity: 1, runtime_epoch: runtime.runtime_epoch,
+            generation: 0, operation_id: "retire-idle".to_owned(), shutdown_ack_revision: p.shutdown_ack_revision };
+        drop(p);
+        assert!(runtime.retirement_json(scope.clone(), true).contains("\"status\":\"pending\""));
+        assert!(runtime.renderer_retirement_pending(1));
+        assert!(!runtime.renderer_retirement_pending(2));
+        runtime.complete_renderer_retirement(2, Ok(()));
+        assert!(runtime.retirement_json(scope.clone(), false).contains("\"status\":\"pending\""));
+        runtime.complete_renderer_retirement(1, Ok(()));
+        runtime.shutdown_captured_immersive_owner(1).unwrap();
+        assert!(runtime.retirement_json(scope.clone(), false).contains("\"status\":\"retired\""));
+        let mut wrong = scope; wrong.operation_id.push('x');
+        assert!(runtime.retirement_json(wrong, false).contains("retirement-scope-mismatch"));
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
     fn runtime(root: &Path) -> ExperimentSessionRuntime {

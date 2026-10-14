@@ -72,6 +72,11 @@ final class ExperimentSessionAndroidShell {
         boolean requestAudioRestartStop(long sessionGeneration, String operationId);
         String audioShutdownStatus();
         boolean cleanupAfterAcknowledgement();
+        default boolean validateLocalTerminalScope(LocalTerminalScope scope) { return false; }
+        default boolean admitLocalTerminal(LocalTerminalScope scope) { return false; }
+        default String applyLocalTerminal(String commandJson, LocalTerminalScope scope) {
+            throw new UnsupportedOperationException("local-terminal-fenced-native-bridge-unavailable");
+        }
     }
 
     interface Codec {
@@ -108,6 +113,9 @@ final class ExperimentSessionAndroidShell {
         default boolean retainsDurableCommand(String operationId, long launchEpoch) { return false; }
         boolean acceptsExperimentSessionCallbacks(long launchEpoch);
         void onExperimentSessionReadback(SessionReadback readback);
+        default boolean acceptsExperimentSessionTerminalCallbacks(long epoch) {
+            return acceptsExperimentSessionCallbacks(epoch);
+        }
         void onExperimentSessionTerminal(TerminalResult result);
     }
 
@@ -217,6 +225,26 @@ final class ExperimentSessionAndroidShell {
         }
     }
 
+    /** Captured local UI/native identity, never a synthesized kiosk event. */
+    static final class LocalTerminalScope {
+        final long launchEpoch, ownerId, runtimeEpoch, sessionGeneration;
+        final String sessionKey, condition, profileSha256, bindingSha256;
+        final boolean idle, idleWithoutRecording;
+        LocalTerminalScope(long launch,long ownerIdentity,long runtime,long generation,String session,String condition,String profile,String binding,String recordingResult){
+            if(launch<=0||ownerIdentity<=0||runtime<=0||generation<0||session==null||condition==null
+                    ||profile==null||binding==null||!binding.matches("[0-9a-f]{64}"))
+                throw new IllegalArgumentException("local-terminal-identity-invalid");
+            idle=session.isEmpty()&&condition.isEmpty()&&profile.isEmpty();
+            idleWithoutRecording=idle&&"none".equals(recordingResult);
+            if(idle){
+                if(!idleWithoutRecording&&!"saved".equals(recordingResult))throw new IllegalArgumentException("idle-terminal-recording-result-invalid");
+            }else if(generation<=0||!session.matches("utc-ns-[0-9]{20}")||!condition.matches("condition-[ab]")||!profile.matches("[0-9a-f]{64}"))
+                throw new IllegalArgumentException("local-terminal-session-invalid");
+            launchEpoch=launch;ownerId=ownerIdentity;runtimeEpoch=runtime;sessionGeneration=generation;sessionKey=session;
+            this.condition=condition;profileSha256=profile;bindingSha256=binding;
+        }
+    }
+
     static final class TerminalResult {
         final boolean shouldFinish;
         final boolean saved;
@@ -247,6 +275,11 @@ final class ExperimentSessionAndroidShell {
     private final Object admissionLock = new Object();
     private long launchEpoch;
     private boolean terminalAdmitted;
+    private LocalTerminalScope localTerminalScope;
+    private boolean localTerminalDispatched;
+    private boolean localTerminalFacadeAdmitted,localTerminalAudioAttempted;
+    private ExperimentSessionPanelCoordinator.NativeCommand localTerminalCommand;
+    private NativeRendererWriterAcknowledgedExitPolicy localTerminalPolicy;
     private long terminalGuardGeneration;
     private long terminalHomeEpisode;
     private String initializedRoot = "";
@@ -271,7 +304,8 @@ final class ExperimentSessionAndroidShell {
             if (previous != null && previous != sink) retiredSinks.put(previous, Boolean.TRUE);
             attachedSink = new WeakReference<UiSink>(sink);
         }
-        if (latestTerminal != null) dispatchTerminal(attachedSink, currentLaunchEpoch(), latestTerminal);
+        TerminalResult cached=latestTerminal;
+        if (cached != null) postTerminal(currentLaunchEpoch(),cached);
         resumePendingTerminal();
     }
 
@@ -282,6 +316,18 @@ final class ExperimentSessionAndroidShell {
                 && !retiredSinks.containsKey(sink) && !cleanupConsumed
                 && launchEpoch == expectedLaunchEpoch;
         }
+    }
+
+    /** Replays only the cached receipt to its current terminal presentation; never reissues work. */
+    boolean replayCurrentTerminal(UiSink sink,long expectedLaunchEpoch) {
+        final TerminalResult result;
+        synchronized(admissionLock) {
+            if(!isCurrentTerminalUiAttachment(sink,expectedLaunchEpoch))return false;
+            result=latestTerminal;
+        }
+        if(result==null)return false;
+        postTerminal(expectedLaunchEpoch,result);
+        return true;
     }
 
     boolean resumePendingTerminal() {
@@ -358,6 +404,8 @@ final class ExperimentSessionAndroidShell {
             launchEpoch = admittedLaunchEpoch;
             if (owner.isShutdown()) owner = newOwner();
             terminalAdmitted = false;
+            localTerminalScope = null;
+            localTerminalDispatched = false;localTerminalFacadeAdmitted=false;localTerminalAudioAttempted=false;localTerminalCommand=null;localTerminalPolicy=null;
             terminalGuardGeneration = 0L;
             terminalHomeEpisode = 0L;
             latestTerminal = null;
@@ -531,6 +579,42 @@ final class ExperimentSessionAndroidShell {
         }
     }
 
+    boolean localTerminalRetryReady(){synchronized(admissionLock){return localTerminalScope!=null&&terminalAdmitted&&!cleanupConsumed&&terminalRecovery!=null&&!localTerminalDispatched;}}
+    boolean localTerminalPending(){synchronized(admissionLock){return localTerminalScope!=null&&terminalAdmitted;}}
+    boolean isCurrentTerminalUiAttachment(UiSink sink,long expectedLaunchEpoch){
+        synchronized(admissionLock){return sink!=null&&attachedSink.get()==sink&&!retiredSinks.containsKey(sink)
+            &&launchEpoch==expectedLaunchEpoch&&localTerminalScope!=null&&terminalAdmitted;}
+    }
+    boolean isLocalTerminalScopeCurrent(LocalTerminalScope scope){synchronized(admissionLock){return scope!=null&&scope==localTerminalScope&&terminalAdmitted&&scope.launchEpoch==launchEpoch;}}
+    LocalTerminalScope localTerminalScope(){synchronized(admissionLock){return localTerminalScope;}}
+    boolean beginLocalTerminal(LocalTerminalScope scope,UiSink sink){
+        if(scope==null||sink==null)return false;
+        synchronized(admissionLock){
+            if(terminalAdmitted||cleanupConsumed||scope.launchEpoch!=launchEpoch
+                ||attachedSink.get()!=sink||retiredSinks.containsKey(sink))return false;
+            terminalAdmitted=true;localTerminalScope=scope;localTerminalDispatched=false;
+            terminalInitializationDeadline=clock.elapsedRealtimeMillis()+POLL_TIMEOUT_MS;
+        }
+        final WeakReference<UiSink> target=new WeakReference<UiSink>(sink);
+        owner.execute(new Runnable(){public void run(){beginLocalTerminalOnOwner(target,scope);}});
+        return true;
+    }
+    private void beginLocalTerminalOnOwner(WeakReference<UiSink> target,LocalTerminalScope scope){
+        requireWorkerThread();if(!terminalIdentityCurrent(scope.launchEpoch,0L,0L))return;
+        try{
+            if(!nativeBridge.validateLocalTerminalScope(scope))throw new SecurityException("local-terminal-owner-changed");
+            if(!localTerminalFacadeAdmitted){
+                if(!nativeBridge.admitLocalTerminal(scope))throw new SecurityException("local-terminal-admission-rejected");
+                localTerminalFacadeAdmitted=true;
+            }
+            beginTerminalOnOwner(target,scope.launchEpoch,0L,0L);
+        }catch(Throwable error){
+            Runnable retry=new Runnable(){public void run(){beginLocalTerminalOnOwner(target,scope);}};
+            retainTerminalRecovery(retry);
+            dispatchTerminal(target,scope.launchEpoch,new TerminalResult(false,false,scope.sessionGeneration,"",0L,"local-terminal-before-dispatch-unavailable:"+marker(error)));
+        }
+    }
+
     boolean beginTerminal(long guardGeneration, long homeEpisode, UiSink sink) {
         attach(sink);
         final long epoch;
@@ -580,9 +664,12 @@ final class ExperimentSessionAndroidShell {
                     || !"ready".equals(status.initializationStatus)) {
                 throw new IllegalStateException("authoritative-session-generation-unavailable");
             }
+            LocalTerminalScope local=localTerminalScope;
+            if(local!=null&&(status.runtimeEpoch!=local.runtimeEpoch||status.receipt.generation!=local.sessionGeneration
+                    ||!nativeBridge.validateLocalTerminalScope(local)))throw new SecurityException("local-terminal-owner-changed-before-stop");
             long sessionGeneration = status.receipt.generation;
-            String operationId = "panel-save-and-exit-"
-                + terminalOperationSequence.incrementAndGet();
+            String operationId = local!=null&&localTerminalCommand!=null?localTerminalCommand.operationId:
+                "panel-save-and-exit-" + terminalOperationSequence.incrementAndGet();
             NativeRendererWriterAcknowledgedExitPolicy exitPolicy =
                 new NativeRendererWriterAcknowledgedExitPolicy();
             if (exitPolicy.beginExit(sessionGeneration, operationId)
@@ -595,8 +682,15 @@ final class ExperimentSessionAndroidShell {
             ExperimentSessionPanelCoordinator.NativeCommand command =
                 new ExperimentSessionPanelCoordinator.NativeCommand(
                     "save-and-exit", operationId, sessionGeneration, "");
-            boolean audioStopAccepted = nativeBridge.requestAudioStop(
-                sessionGeneration, operationId + "-audio-stop");
+            if(local!=null){
+                if(localTerminalCommand==null){localTerminalCommand=command;localTerminalPolicy=exitPolicy;}
+                else{command=localTerminalCommand;exitPolicy=localTerminalPolicy;}
+            }
+            boolean audioStopAccepted=true;
+            if(local==null||!localTerminalAudioAttempted){
+                if(local!=null)localTerminalAudioAttempted=true;
+                audioStopAccepted=nativeBridge.requestAudioStop(sessionGeneration,operationId+"-audio-stop");
+            }
             if (audioStopAccepted && "pending".equals(nativeBridge.audioShutdownStatus())) {
                 scheduleTerminalAudioPoll(sink, epoch, guardGeneration, homeEpisode, exitPolicy,
                     command, clock.elapsedRealtimeMillis() + POLL_TIMEOUT_MS);
@@ -605,6 +699,10 @@ final class ExperimentSessionAndroidShell {
             continueTerminalAfterAudio(sink, epoch, guardGeneration, homeEpisode, exitPolicy,
                 command, clock.elapsedRealtimeMillis() + POLL_TIMEOUT_MS);
         } catch (Throwable error) {
+            if(localTerminalScope!=null){
+                Runnable retry=new Runnable(){public void run(){if(terminalIdentityCurrent(epoch,guardGeneration,homeEpisode))beginTerminalOnOwner(sink,epoch,guardGeneration,homeEpisode);}};
+                retainTerminalRecovery(retry);
+            }
             dispatchTerminal(sink, epoch, new TerminalResult(
                 false, false, 0L, "", 0L,
                 "terminal-native-unavailable:" + marker(error)));
@@ -619,15 +717,30 @@ final class ExperimentSessionAndroidShell {
             @Override public void run() {
                 requireWorkerThread();
                 if (!terminalIdentityCurrent(epoch, guardGeneration, homeEpisode)) return;
-                String audioStatus = nativeBridge.audioShutdownStatus();
-                if ("pending".equals(audioStatus)
-                        && clock.elapsedRealtimeMillis() <= deadlineMs) {
-                    scheduleTerminalAudioPoll(sink, epoch, guardGeneration, homeEpisode,
+                try {
+                    String audioStatus = nativeBridge.audioShutdownStatus();
+                    if ("pending".equals(audioStatus)
+                            && clock.elapsedRealtimeMillis() <= deadlineMs) {
+                        scheduleTerminalAudioPoll(sink, epoch, guardGeneration, homeEpisode,
+                            exitPolicy, command, deadlineMs);
+                        return;
+                    }
+                    continueTerminalAfterAudio(sink, epoch, guardGeneration, homeEpisode,
                         exitPolicy, command, deadlineMs);
-                    return;
+                } catch (Throwable error) {
+                    if (localTerminalScope != null) {
+                        retainTerminalRecovery(new Runnable() {
+                            @Override public void run() {
+                                if (terminalIdentityCurrent(epoch, guardGeneration, homeEpisode))
+                                    scheduleTerminalAudioPoll(sink, epoch, guardGeneration, homeEpisode,
+                                        exitPolicy, command, terminalInitializationDeadline);
+                            }
+                        });
+                    }
+                    dispatchTerminal(sink, epoch, new TerminalResult(false, false,
+                        command.expectedGeneration, command.operationId, 0L,
+                        "terminal-audio-status-unavailable:" + marker(error)));
                 }
-                continueTerminalAfterAudio(sink, epoch, guardGeneration, homeEpisode,
-                    exitPolicy, command, deadlineMs);
             }
         }, POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
@@ -638,17 +751,27 @@ final class ExperimentSessionAndroidShell {
             ExperimentSessionPanelCoordinator.NativeCommand command, long deadlineMs) {
         try {
             boolean audioClean = "complete".equals(nativeBridge.audioShutdownStatus());
-            // Audio shutdown may yield while native presentation/completion events advance.
-            // Sample the cutoff immediately before first dispatch, then freeze every replay.
+            LocalTerminalScope local=localTerminalScope;
+            if(local!=null){
+                if(localTerminalDispatched){scheduleTerminalPoll(sink,epoch,guardGeneration,homeEpisode,exitPolicy,command,deadlineMs,audioClean);return;}
+                if(!nativeBridge.validateLocalTerminalScope(local))throw new SecurityException("local-terminal-owner-changed-before-cutoff");
+            }
+            // All potentially blocking validation precedes the one physical cutoff sample.
+            // Legacy retries retain these exact bytes; local dispatch is never replayed.
             if (terminalCommandJson == null) terminalCommandJson = codec.command(command, false,
                 clock.elapsedRealtimeNanos(), clock.utcNanos());
-            SessionReadback response = codec.parse(nativeBridge.apply(terminalCommandJson), command, false);
+            if(local!=null)localTerminalDispatched=true;
+            SessionReadback response = codec.parse(local==null?nativeBridge.apply(terminalCommandJson):nativeBridge.applyLocalTerminal(terminalCommandJson,local), command, false);
             dispatchReadback(sink, epoch, response);
             // A replay can reach a closed worker after the original stop succeeded.
             // Its exact finalized acknowledgement takes precedence over transport rejection.
             if (finishTerminalIfReady(sink, epoch, exitPolicy, command, response, audioClean)) return;
             if (handleDefinitiveTerminalRejection(sink, epoch, guardGeneration, homeEpisode,
                     command, response, audioClean)) return;
+            if(local!=null&&retryable(response)){
+                dispatchTerminal(sink,epoch,new TerminalResult(false,false,command.expectedGeneration,command.operationId,0L,"terminal-admission-unknown-observe-only-no-replay"));
+                scheduleTerminalPoll(sink,epoch,guardGeneration,homeEpisode,exitPolicy,command,deadlineMs,audioClean);return;
+            }
             if (retryable(response)) {
                 if (clock.elapsedRealtimeMillis() <= deadlineMs) {
                     owner.schedule(new Runnable() {
@@ -679,6 +802,12 @@ final class ExperimentSessionAndroidShell {
             scheduleTerminalPoll(sink, epoch, guardGeneration, homeEpisode, exitPolicy,
                 command, deadlineMs, audioClean);
         } catch (Throwable error) {
+            if(localTerminalScope!=null){
+                dispatchTerminal(sink,epoch,new TerminalResult(false,false,command.expectedGeneration,command.operationId,0L,"terminal-admission-outcome-unknown-no-replay:"+marker(error)));
+                if(localTerminalDispatched)scheduleTerminalPoll(sink,epoch,guardGeneration,homeEpisode,exitPolicy,command,deadlineMs,false);
+                else retainTerminalRecovery(new Runnable(){public void run(){if(terminalIdentityCurrent(epoch,guardGeneration,homeEpisode))continueTerminalAfterAudio(sink,epoch,guardGeneration,homeEpisode,exitPolicy,command,terminalInitializationDeadline);}});
+                return;
+            }
             retainTerminalRecovery(new Runnable() {
                 @Override public void run() {
                     if (terminalIdentityCurrent(epoch, guardGeneration, homeEpisode))
@@ -738,6 +867,9 @@ final class ExperimentSessionAndroidShell {
                 try {
                     SessionReadback readback = readStatus();
                     dispatchReadback(sink, epoch, readback);
+                    if(localTerminalScope!=null&&readback!=null&&readback.receipt!=null&&readback.runtimeEpoch>0L&&"ready".equals(readback.initializationStatus)&&readback.runtimeEpoch!=localTerminalScope.runtimeEpoch){
+                        dispatchTerminal(sink,epoch,new TerminalResult(false,false,command.expectedGeneration,command.operationId,0L,"terminal-owner-changed-outcome-unknown-no-replay"));return;
+                    }
                     if (!finishTerminalIfReady(
                             sink, epoch, exitPolicy, command, readback, audioClean)
                             && !handleDefinitiveTerminalRejection(sink, epoch, guardGeneration,
@@ -768,6 +900,12 @@ final class ExperimentSessionAndroidShell {
                 || !command.operationId.equals(readback.finalizedOperationId)) {
             return false;
         }
+        if(localTerminalScope!=null){
+            if(readback.runtimeEpoch!=localTerminalScope.runtimeEpoch)return false;
+            String audio=nativeBridge.audioShutdownStatus();
+            if("pending".equals(audio))return false;
+            audioClean="complete".equals(audio);
+        }
         if (cleanupConsumed) return true;
         cleanupConsumed = true;
         boolean resourcesClean;
@@ -775,21 +913,22 @@ final class ExperimentSessionAndroidShell {
         catch (Throwable error) { resourcesClean = false; }
         boolean saved = audioClean && resourcesClean && "complete".equals(readback.shutdownStatus)
             && ("saved".equals(readback.recordingResult)
-                || (command.expectedGeneration == 0L && "none".equals(readback.recordingResult)));
+                || ((localTerminalScope==null?command.expectedGeneration==0L:localTerminalScope.idleWithoutRecording) && "none".equals(readback.recordingResult)));
         String receiptId = "shutdown-ack-" + readback.shutdownAckRevision;
         if (!exitPolicy.acknowledgeWriter(
                 command.expectedGeneration, command.operationId, receiptId, saved)) {
             return false;
         }
-        boolean finish = exitPolicy.requestFinish(command.expectedGeneration, command.operationId)
-            == NativeRendererWriterAcknowledgedExitPolicy.Action.FINISH_AND_REMOVE_TASK;
+        boolean finish = (localTerminalScope==null||saved)
+            && exitPolicy.requestFinish(command.expectedGeneration, command.operationId)
+                == NativeRendererWriterAcknowledgedExitPolicy.Action.FINISH_AND_REMOVE_TASK;
         dispatchTerminal(sink, epoch, new TerminalResult(
             finish, saved, command.expectedGeneration, command.operationId,
             readback.shutdownAckRevision,
             saved ? "shutdown-complete" : "shutdown-error-unsaved"));
         owner.shutdownNow();
         synchronized (this) { if (statusObserver != null) statusObserver.shutdownNow(); }
-        return finish;
+        return true;
     }
 
     private boolean handleDefinitiveTerminalRejection(WeakReference<UiSink> sink, long epoch,
@@ -805,7 +944,7 @@ final class ExperimentSessionAndroidShell {
         // A definitive reducer rejection proves this operation never stopped the writer.
         // Only clock regression permits a new attempt; ambiguous/admitted operations keep
         // their original identity and bytes, including their original cutoff timestamp.
-        if (!"MonotonicTimeRegression".equals(readback.lastOperationReason)
+        if (localTerminalScope!=null || !"MonotonicTimeRegression".equals(readback.lastOperationReason)
                 || !audioClean || terminalRebases >= MAX_TERMINAL_REBASES) {
             dispatchTerminal(sink, epoch, new TerminalResult(false, false,
                 command.expectedGeneration, command.operationId, 0L,
@@ -910,14 +1049,24 @@ final class ExperimentSessionAndroidShell {
 
     private void dispatchTerminal(WeakReference<UiSink> sink, long epoch,
             TerminalResult result) {
-        if (!isCurrentEpoch(epoch)) return;
-        latestTerminal = result;
+        synchronized(admissionLock) {
+            if(epoch!=launchEpoch)return;
+            latestTerminal=result;
+        }
+        postTerminal(epoch,result);
+    }
+
+    /** Delivery never republishes an old cached result over a newer worker receipt. */
+    private void postTerminal(long epoch,TerminalResult result) {
         uiDispatcher.post(new Runnable() {
             @Override public void run() {
                 UiSink target;
-                synchronized (admissionLock) { target = attachedSink.get(); }
+                synchronized (admissionLock) {
+                    if(epoch!=launchEpoch||latestTerminal!=result)return;
+                    target = attachedSink.get();
+                }
                 if (isCurrentEpoch(epoch) && target != null
-                        && target.acceptsExperimentSessionCallbacks(epoch)) {
+                        && target.acceptsExperimentSessionTerminalCallbacks(epoch)) {
                     target.onExperimentSessionTerminal(result);
                 }
             }
@@ -940,8 +1089,8 @@ final class ExperimentSessionAndroidShell {
             long homeEpisode) {
         synchronized (admissionLock) {
             return expectedEpoch == launchEpoch && terminalAdmitted
-                && terminalGuardGeneration == guardGeneration
-                && terminalHomeEpisode == homeEpisode;
+                && (localTerminalScope!=null || (terminalGuardGeneration == guardGeneration
+                && terminalHomeEpisode == homeEpisode));
         }
     }
 

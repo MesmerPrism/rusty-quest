@@ -18,7 +18,7 @@ import org.json.JSONObject;
 final class NativeLocalControlPanel implements AutoCloseable {
     interface Host extends NativeLocalPanelBridge.Target {
         ExperimentSessionPanelState state();
-        boolean commandReady(); void action(String operation); void navigationChanged();
+        boolean commandReady(); boolean settingsReady(); boolean canSaveExit(); void action(String operation); void navigationChanged();
         int bias(); boolean bias(int value); void returnToVr();
     }
     private final Context context;private final Host host;private final NativeLocalPanelBridge bridge;
@@ -41,7 +41,7 @@ final class NativeLocalControlPanel implements AutoCloseable {
         message=text("Reading authoritative local state",14);root.addView(message);
         scroll=new ScrollView(context);scroll.setFillViewport(true);body=column();scroll.addView(body);
         root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
-        bridge=new NativeLocalPanelBridge(application,new NativeLocalPanelBridge.Target(){public boolean current(){return !closed&&NativeLocalControlPanel.this.host.current();}public void outcome(String value){message.setText(value);}});
+        bridge=new NativeLocalPanelBridge(application,new NativeLocalPanelBridge.Target(){public boolean current(){return !closed&&NativeLocalControlPanel.this.host.current()&&NativeLocalControlPanel.this.host.settingsReady();}public void outcome(String value){message.setText(value);}});
         controller=new NativeLocalControlController(bridge);show("home");
     }
     View view(){return root;}
@@ -127,6 +127,7 @@ final class NativeLocalControlPanel implements AutoCloseable {
         else if("controls".equals(page)){LinearLayout card=card("Controller controls");card.addView(text("Calibration: hold right B for 1.25 seconds. Start/resume: hold Right Grip + A for at least 0.75 seconds, then release after the pulse. Pause: Right Grip + B. Release between gestures.",16));card.addView(text("Use the pointer trigger or hand pinch to click, drag sliders and scroll. Session state changes only after authoritative receipts.",15));}
         else if("condition".equals(page)){guidance(card("Choose condition"));sessionButton("arm-a","Arm condition A");sessionButton("arm-b","Arm condition B");}
         else{sessionButton("start","Start official run");sessionButton("pause","Pause official run");sessionButton("resume","Resume official run");sessionButton("save-next","Save session & prepare next");}
+        sessionButton("save-exit","Save and exit");
         sessionReadback=text("Waiting for session owner",15);body.addView(sessionReadback);
         body.addView(button("Refresh status",new Runnable(){public void run(){refresh();}}));
         final String[] pages={"prepare","controls","condition","session"};int index=0;while(index<pages.length-1&&!pages[index].equals(page))index++;
@@ -134,7 +135,7 @@ final class NativeLocalControlPanel implements AutoCloseable {
         if(index<pages.length-1){final String next=pages[index+1];nextButton=button("Next",new Runnable(){public void run(){show(next);}});body.addView(nextButton);}
         body.addView(button("Open developer settings",new Runnable(){public void run(){show("home");}}));
     }
-    private void sessionButton(final String operation,String label){final long captured=pageEpoch;Button button=button(label,new Runnable(){public void run(){if(pageEpoch==captured&&host.current()&&host.commandReady())host.action(operation);}});sessionButtons.put(operation,button);body.addView(button);}
+    private void sessionButton(final String operation,String label){final long captured=pageEpoch;Button button=button(label,new Runnable(){public void run(){if(pageEpoch==captured&&host.current()&&("save-exit".equals(operation)?host.canSaveExit():host.commandReady()))host.action(operation);}});sessionButtons.put(operation,button);body.addView(button);}
     void refresh(){
         if(closed||!host.current())return;
         ExperimentSessionPanelState state=host.state();ExperimentSessionPanelViewPolicy.ViewState view=ExperimentSessionPanelViewPolicy.project(state);
@@ -147,7 +148,7 @@ final class NativeLocalControlPanel implements AutoCloseable {
         for(Map.Entry<String,Button> entry:sessionButtons.entrySet()){
             String operation=entry.getKey();boolean allowed=operation.startsWith("arm-")?view.startEnabled&&"track-ready".equals(ControlPanelActivity.conditionAudioReadiness("arm-a".equals(operation)?ExperimentSessionPanelCoordinator.CONDITION_ONE:ExperimentSessionPanelCoordinator.CONDITION_TWO)):
                 "start".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.ARMED:"pause".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.RUNNING:"resume".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.PAUSED:ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state);
-            entry.getValue().setEnabled(host.commandReady()&&allowed);
+            entry.getValue().setEnabled("save-exit".equals(operation)?host.canSaveExit():host.commandReady()&&allowed);
         }
         if(nextButton!=null)nextButton.setEnabled(!view.saving&&(!"condition".equals(page)||state.hasActiveSession()));
         try{
