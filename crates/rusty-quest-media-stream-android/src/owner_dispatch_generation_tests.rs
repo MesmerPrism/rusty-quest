@@ -1,6 +1,95 @@
 use super::*;
 
 #[test]
+fn remote_arm_identity_joins_product_activation_after_source_projection() {
+    let mut all_joined = true;
+    for target_generation in [29, 30] {
+        let mut client = generation_client(generation_server(
+            Arc::new(std::sync::atomic::AtomicU64::new(target_generation)),
+            Arc::new(Mutex::new(0)),
+            Arc::new(Mutex::new(Vec::new())),
+            false,
+            OwnerDispatchReplaySnapshot::default(),
+        ));
+        let source = arm_ticket();
+        let authority = projection();
+        let effect = client
+            .execute(
+                "peer.b".into(),
+                authority.clone(),
+                source.clone(),
+                AndroidMediaExecutionMode::Execute,
+                1_000,
+            )
+            .unwrap();
+        let target = effect
+            .remote_dispatch
+            .as_ref()
+            .unwrap()
+            .verify(
+                &source,
+                "target.key",
+                &SigningKey::from_bytes(&[2; 32]).verifying_key().to_bytes(),
+            )
+            .unwrap();
+        let wrapper = effect
+            .remote_dispatch
+            .clone()
+            .unwrap()
+            .source_readback(
+                &source,
+                "target.key",
+                &SigningKey::from_bytes(&[2; 32]).verifying_key().to_bytes(),
+            )
+            .unwrap();
+        crate::validate_readback(&source, &wrapper).unwrap();
+        // Broker activation material copies the seven completion identities verbatim.
+        let proof = ProductActivationProof {
+            action_id: source.action_id.clone(),
+            provider_epoch_id: source.authority_epoch_id.clone(),
+            client_id: source.client_id.clone(),
+            lease_id: source.lease_id.clone(),
+            runtime_spec_id: authority.platform_runtime_spec_id.clone(),
+            resulting_runtime_revision: source.expected_runtime_revision + 2,
+            owner_receipt_ids: vec![
+                "cleanup.1".into(),
+                wrapper.receipt_id.clone(),
+                "route.1".into(),
+                "socket.1".into(),
+                "codec.1".into(),
+                "processor.1".into(),
+                "source.1".into(),
+            ],
+            completion_sha256: sha256_prefixed(b"native completion fixture"),
+        };
+        let joined = proof
+            .owner_receipt_ids
+            .contains(&target.verified.receipt_id);
+        eprintln!(
+            "RQ_ACTIVATION_JOIN_CASE={}",
+            serde_json::json!({
+                "trusted_target_generation": target_generation, "authority": authority,
+                "target_ticket": client.transport.0.replay_snapshot().target_bindings.values()
+                    .next().unwrap().target,
+                "target_readback": target.readback, "target_verified": target.verified,
+                "proof": proof, "source_projected_generation": wrapper.executor_generation,
+            })
+        );
+        all_joined &= joined;
+        assert_eq!(target.readback_json, effect.readback_json);
+        assert_eq!(
+            target.verified.readback_sha256,
+            effect.verified.readback_sha256
+        );
+        assert_eq!(wrapper.executor_generation, source.executor_generation);
+    }
+    assert!(
+        all_joined,
+        "source completion lost the authenticated target ARM identity"
+    );
+}
+
+#[test]
 fn composite_consumes_target_proof_and_verifies_source_projection_once() {
     let calls = Arc::new(Mutex::new(0));
     let mut source = arm_ticket();

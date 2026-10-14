@@ -220,7 +220,8 @@ impl RemoteOwnerDispatchProof {
         Ok(effect)
     }
 
-    /// Project source action identity without changing target evidence or Java hashes.
+    /// Project source generation while preserving the authenticated target receipt
+    /// identity needed by downstream activation and all raw Java evidence.
     pub fn source_readback(
         self,
         source: &AndroidMediaExecutionTicket,
@@ -230,7 +231,6 @@ impl RemoteOwnerDispatchProof {
         let effect = self.verify(source, key_id, key)?;
         let mut wrapper = effect.readback;
         wrapper.executor_generation = source.executor_generation;
-        wrapper.receipt_id = format!("remote-owner.{}", sha256_prefixed(&self.response_bytes));
         wrapper.remote_dispatch = Some(Box::new(self));
         Ok(wrapper)
     }
