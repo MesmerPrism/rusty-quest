@@ -48,6 +48,16 @@ class StateTests(unittest.TestCase):
         s.reply(key, response)
         self.assertEqual(s.wait(key, job), response)
         with self.assertRaises(Rejected): s.reply(key, response)
+    def test_live_bias_payload_and_owner_confirmation_are_opaque(self):
+        s = Session(config()); s.poll(identity())
+        payload = json.dumps(dict(v=2,id="b"*16,op="set-bias",s="c"*32,g=7,n="d"*16,b=75),separators=(",", ":"))
+        request = dict(v=1,action="command",payload=payload,mac="owner-authenticated")
+        key, job = s.enqueue(request)
+        self.assertEqual(s.poll(identity())["request"], request)
+        response = dict(payload=json.dumps(dict(v=1,id="b"*16,state="confirmed",detail="bias saved")),mac="owner-reply")
+        s.reply(key,response)
+        self.assertEqual(s.wait(key,job),response)
+
     def test_identity_epoch_and_expiry_revoke(self):
         s = Session(config()); s.poll(identity())
         s.poll(dict(identity(), route="changed_hint"))

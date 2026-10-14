@@ -3,7 +3,23 @@
 `ui.same_apk_soft_kiosk` explicitly selects `NativeRendererSelfKioskApplication`
 and the private same-process `NativeRendererSelfKioskService`. NativeActivity remains
 the only MAIN/VR/LAUNCHER surface. The existing frame-submission gate opens the
-landscape ControlPanelActivity after the first current-session frame.
+landscape ControlPanelActivity after the first current-session frame in local-panel
+mode. Packaged remote-vr preparation consumes the same one-shot launcher epoch
+after that submitted-frame gate without opening the panel. The Java callback binds
+the exact retained NativeActivity, positive XR session generation and pending launch
+epoch, then arms the immersive target and starts the service synchronously within that
+current submitted-frame callback. No launch/coordinator lock spans the platform
+service call. Destroyed/replaced actors, stale epochs and replay reject.
+
+Status distinguishes unarmed, service-missing, service-failed and awaiting-presentation.
+Starting means an actual admitted foreground-service start is pending; its ten-second
+callback bound reports failure if no service connection arrives. Its service-attempt
+identity survives presentation-generation changes; stale timeout callbacks cannot
+fail a replacement attempt. Sleep, lock and absent target observations clear ready
+without triggering recovery or changing escape accounting. Ready requires both
+service connection and observation of the selected own-app presentation. Requested
+configuration alone cannot establish readiness. Existing escape/recovery policy and
+permission settings remain authoritative.
 
 ## Own-app observation and return
 

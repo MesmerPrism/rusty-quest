@@ -14,7 +14,7 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    session_recording_clock::SessionTimestampKey,
+    session_recording_clock::{SessionTimestampKey, SourceClock},
     session_recording_contract::{
         ConditionKey, ExperimentIdentity, SessionCounts, SessionEventKind,
         SESSION_CHECKPOINT_SCHEMA, SESSION_FINAL_SCHEMA, SESSION_MANIFEST_SCHEMA,
@@ -302,6 +302,7 @@ fn recover_from_checkpoint(
 struct ValidatedManifest {
     condition: ConditionKey,
     experiment_identity: Option<ExperimentIdentity>,
+    breath_tracking_configuration: Option<Value>,
 }
 
 fn validate_manifest(
@@ -325,9 +326,21 @@ fn validate_manifest(
         .map(|identity| ExperimentIdentity::parse_encoded(identity, &condition))
         .transpose()
         .map_err(str::to_owned)?;
+    let breath_tracking_configuration = value.get("breath_tracking_configuration").filter(|v| !v.is_null()).cloned();
+    if let Some(configuration) = &breath_tracking_configuration {
+        crate::breath_composition_runtime::validate_tracking_configuration(configuration).map_err(str::to_owned)?;
+        if value["clock_anchor"]["monotonic_ns"].as_u64().is_none_or(|arm_at|
+            configuration["prepared_monotonic_ns"].as_u64().is_none_or(|prepared| prepared < arm_at)) {
+            return Err("recording-tracking-prepared-time-invalid".to_owned());
+        }
+        if experiment_identity.as_ref().is_none_or(|identity| identity.breath_guidance.is_none()) {
+            return Err("recording-tracking-configuration-without-guidance".to_owned());
+        }
+    }
     Ok(ValidatedManifest {
         condition,
         experiment_identity,
+        breath_tracking_configuration,
     })
 }
 
@@ -455,7 +468,20 @@ fn validate_terminal_value(
         return Err("recording-directory-stream-set-invalid".to_owned());
     }
     let mut lifecycle = LifecycleEvidence::default();
-    for (name, expected_length) in &lengths {
+    if value.get("breath_tracking_configuration").filter(|v| !v.is_null()) != manifest.breath_tracking_configuration.as_ref() {
+        return Err("recording-tracking-terminal-mismatch".to_owned());
+    }
+    let initial_bias = manifest.experiment_identity.as_ref().map_or(0, |i| i.breath_guidance_bias_percent);
+    let mut bias_history = BiasHistory {
+        breath_tracking_configuration: manifest.breath_tracking_configuration.clone(),
+        guidance_bound: manifest.experiment_identity.as_ref().is_some_and(|i| i.breath_guidance.is_some()),
+        revisions: vec![(initial_bias, 0)],
+        generation: manifest.breath_tracking_configuration.as_ref().and_then(|v|v["experiment_generation"].as_u64()),
+        operation_ids: BTreeSet::new(),
+    };
+    // Establish the committed decision chain before validating references in breath rows.
+    for (name, expected_length) in lengths.iter().filter(|(name, _)| name.as_str() == "events.jsonl")
+        .chain(lengths.iter().filter(|(name, _)| name.as_str() != "events.jsonl")) {
         let actual_length = fs::metadata(directory.join(name))
             .map_err(|error| format!("recording-stream-metadata:{error}"))?
             .len();
@@ -469,6 +495,7 @@ fn validate_terminal_value(
             started_at,
             &manifest.condition,
             manifest.experiment_identity.is_some(),
+            &mut bias_history,
         )?;
         if name == "events.jsonl" {
             lifecycle = evidence;
@@ -476,6 +503,17 @@ fn validate_terminal_value(
     }
     if lifecycle.started != 1 {
         return Err("recording-lifecycle-start-invalid".to_owned());
+    }
+    if let Some(state) = value.get("breath_guidance_state") {
+        let (percent, _) = bias_history.revisions.last().expect("initial revision");
+        if state.as_object().is_none_or(|o| o.len() != 3)
+            || state["bias_percent"].as_u64() != Some(u64::from(*percent))
+            || state["bias_revision"].as_u64() != Some((bias_history.revisions.len() - 1) as u64)
+            || state["decision_status"].as_str() != Some("committed-before-application") {
+            return Err("recording-bias-terminal-state-invalid".to_owned());
+        }
+    } else if bias_history.revisions.len() > 1 {
+        return Err("recording-bias-terminal-state-missing".to_owned());
     }
     if lifecycle.completed > 1 || completed != (lifecycle.completed == 1) {
         return Err("recording-lifecycle-completion-inconsistent".to_owned());
@@ -585,6 +623,51 @@ enum RowLifecycle {
     Completed,
 }
 
+struct BiasHistory {
+    breath_tracking_configuration: Option<Value>,
+    guidance_bound: bool,
+    revisions: Vec<(u8, u64)>,
+    generation: Option<u64>,
+    operation_ids: BTreeSet<String>,
+}
+
+impl BiasHistory {
+    fn observe(&mut self, row: &Value, stream: &str) -> Result<(), String> {
+        if stream == "events.jsonl" && row["event"].as_str() == Some("breath-guidance-bias-changed") {
+            let revision = row["bias_revision"].as_u64().unwrap_or(0);
+            let generation = row["generation"].as_u64().unwrap_or(0);
+            let old = row["old_bias_percent"].as_u64().unwrap_or(101);
+            let new = row["new_bias_percent"].as_u64().unwrap_or(101);
+            let at = row["observed_monotonic_ns"].as_u64().unwrap_or(0);
+            let (previous, previous_at) = self.revisions.last().expect("initial revision");
+            let operation = row["operation_id"].as_str().unwrap_or("");
+            if !self.guidance_bound || revision != self.revisions.len() as u64
+                || generation == 0 || self.generation.is_some_and(|g| g != generation)
+                || old != u64::from(*previous) || new > 100 || at < *previous_at
+                || operation.is_empty() || !self.operation_ids.insert(operation.to_owned()) {
+                return Err("recording-bias-history-invalid".to_owned());
+            }
+            self.generation = Some(generation);
+            self.revisions.push((new as u8, at));
+        } else if stream == "breath.jsonl" {
+            let revision = match row.get("guidance_bias_revision") {
+                Some(value) => value.as_u64().ok_or_else(|| "recording-breath-bias-revision-invalid".to_owned())?,
+                None if self.revisions.len() == 1 => return Ok(()), // Historical immutable rows.
+                None => return Err("recording-breath-bias-revision-missing".to_owned()),
+            };
+            let (percent, committed_at) = usize::try_from(revision).ok()
+                .and_then(|index| self.revisions.get(index))
+                .ok_or_else(|| "recording-breath-bias-revision-unknown".to_owned())?;
+            let applied = row["guidance_bias_percent"].as_u64().unwrap_or(0);
+            if (applied != 0 && applied != u64::from(*percent))
+                || row["observed_monotonic_ns"].as_u64().unwrap_or(0) < *committed_at {
+                return Err("recording-breath-bias-decision-mismatch".to_owned());
+            }
+        }
+        Ok(())
+    }
+}
+
 fn validate_stream_prefix(
     path: &Path,
     stream_name: &str,
@@ -592,6 +675,7 @@ fn validate_stream_prefix(
     started_at: &SessionTimestampKey,
     condition: &ConditionKey,
     strict_source_clocks: bool,
+    bias_history: &mut BiasHistory,
 ) -> Result<LifecycleEvidence, String> {
     if expected_length == 0 {
         return Ok(LifecycleEvidence::default());
@@ -623,9 +707,15 @@ fn validate_stream_prefix(
             strict_source_clocks,
         )? {
             RowLifecycle::None => {}
-            RowLifecycle::Started => lifecycle.started = lifecycle.started.saturating_add(1),
+            RowLifecycle::Started => {
+                if row.get("breath_tracking_configuration").filter(|v| !v.is_null()) != bias_history.breath_tracking_configuration.as_ref() {
+                    return Err("recording-tracking-started-mismatch".to_owned());
+                }
+                lifecycle.started = lifecycle.started.saturating_add(1);
+            },
             RowLifecycle::Completed => lifecycle.completed = lifecycle.completed.saturating_add(1),
         }
+        bias_history.observe(&row, stream_name)?;
     }
     if consumed != expected_length {
         return Err("recording-stream-prefix-length-mismatch".to_owned());
@@ -690,6 +780,16 @@ fn validate_row(
                 .and_then(SessionEventKind::parse)
                 .ok_or_else(|| "recording-stream-row-field-invalid:event".to_owned())?;
             match event {
+                SessionEventKind::BiasChanged => {
+                    for field in ["generation", "old_bias_percent", "new_bias_percent", "bias_revision"] { require_u64(object, field)?; }
+                    if object.get("decision_status").and_then(Value::as_str) != Some("committed-before-application")
+                        || object.get("operation_id").and_then(Value::as_str).is_none_or(|s| s.is_empty() || s.len() > 96
+                            || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-/".contains(&b)))
+                        || !matches!(object.get("operator_origin").and_then(Value::as_str), Some("shell-experiment-operator-v1" | "ble-session-v2" | "ui-session-v2")) {
+                        return Err("recording-bias-event-invalid".to_owned());
+                    }
+                    RowLifecycle::None
+                }
                 SessionEventKind::Started => RowLifecycle::Started,
                 SessionEventKind::CompletionReached => RowLifecycle::Completed,
                 _ => RowLifecycle::None,
@@ -749,6 +849,26 @@ fn validate_row(
             RowLifecycle::None
         }
         "breath" => {
+            if object.contains_key("assessment_source") {
+                require_enum(object,"assessment_source", &["controller","polar-acc"])?;
+                require_enum(object,"tracking_status", &["disabled","calibrating","valid","missing","stale","malformed","out-of-order","rejected-motion","rejected-rotation"])?;
+                if row["sampled_clock"] != SourceClock::OpenXrTime.as_str()
+                    || row["observed_source_clock"] != SourceClock::OpenXrTime.as_str() {
+                    return Err("recording-assessment-source-clock-mismatch".to_owned());
+                }
+                if row["assessment_source"] == "polar-acc" && row["tracking_status"] == "valid"
+                    && !object.contains_key("polar_source_provenance") {
+                    return Err("recording-valid-polar-provenance-missing".to_owned());
+                }
+            } else if object.contains_key("tracking_status") {
+                return Err("recording-tracking-status-source-missing".to_owned());
+            }
+            if let Some(provenance)=object.get("polar_source_provenance") {
+                if row["assessment_source"] != "polar-acc" { return Err("recording-polar-provenance-source-mismatch".to_owned()); }
+                crate::session_recording_contract::validate_breath_polar_provenance(provenance,
+                    row["sampled_time_ns"].as_u64().ok_or("recording-polar-sampled-time-invalid")?,
+                    row["observed_source_time_ns"].as_u64().ok_or("recording-polar-observed-time-invalid")?).map_err(str::to_owned)?;
+            }
             for field in ["source_sequence", "sampled_time_ns", "settings_revision"] {
                 require_u64(object, field)?;
             }
@@ -1025,7 +1145,7 @@ mod tests {
         let started_at = SessionTimestampKey::parse("utc-ns-01725000000000000000").unwrap();
         let condition = ConditionKey::parse("condition-a").unwrap();
         for (sequence, event) in SessionEventKind::ALL.into_iter().enumerate() {
-            let row = json!({
+            let mut row = json!({
                 "schema": SESSION_ROW_SCHEMA,
                 "record_sequence": sequence as u64,
                 "kind": "event",
@@ -1035,6 +1155,16 @@ mod tests {
                 "observed_utc_ns": sequence as u64 + 2,
                 "event": event.as_str(),
             });
+            if event == SessionEventKind::BiasChanged {
+                assert!(validate_row(&row, "events.jsonl", &started_at, &condition, true).is_err());
+                row["generation"] = serde_json::json!(1);
+                row["bias_revision"] = serde_json::json!(1);
+                row["old_bias_percent"] = serde_json::json!(0);
+                row["new_bias_percent"] = serde_json::json!(60);
+                row["operation_id"] = serde_json::json!("canonical-bias-change");
+                row["operator_origin"] = serde_json::json!("ui-session-v2");
+                row["decision_status"] = serde_json::json!("committed-before-application");
+            }
             let expected = match event {
                 SessionEventKind::Started => RowLifecycle::Started,
                 SessionEventKind::CompletionReached => RowLifecycle::Completed,

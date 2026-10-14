@@ -20,6 +20,7 @@ final class NativeRendererExperimentLaunchAuthority {
     private static long lastIssuedEpoch;
     private static long pendingEpoch;
     private static boolean nativeActivityCreateSeen;
+    private static java.lang.ref.WeakReference<Activity> launchActivity = new java.lang.ref.WeakReference<>(null);
 
     private NativeRendererExperimentLaunchAuthority() {
     }
@@ -46,6 +47,7 @@ final class NativeRendererExperimentLaunchAuthority {
             return 0L;
         }
         nativeActivityCreateSeen = true;
+        launchActivity = new java.lang.ref.WeakReference<>(activity);
         long epoch = issueAdmitted(SystemClock.elapsedRealtimeNanos());
         NativeRendererAppStatusBridge.trustedColdLaunch(activity, epoch);
         return epoch;
@@ -76,6 +78,24 @@ final class NativeRendererExperimentLaunchAuthority {
         return true;
     }
 
+    /** Exact live owner, called only after the current immersive session submitted a frame. */
+    static boolean consumeRemotePreparation(Activity activity, long epoch, long xrGeneration) {
+        synchronized (NativeRendererExperimentLaunchAuthority.class) {
+            if (activity == null || activity != launchActivity.get() || activity.isFinishing()
+                    || !"android.app.NativeActivity".equals(activity.getClass().getName())
+                    || xrGeneration <= 0L || epoch <= 0L || epoch != pendingEpoch
+                    || !(activity.getApplicationContext() instanceof NativeRendererSelfKioskApplication)) return false;
+            if (!consume(PROVENANCE_EXPLICIT_USER_LAUNCH, epoch)) return false;
+            if (!NativeRendererSoftKioskCoordinator.process().armFromExplicitColdLaunch(epoch,
+                    NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+                    NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER)) return false;
+        }
+        // Context service startup is thread-safe. Keep the current native submitted-frame
+        // callback synchronous, with no launch/coordinator lock across platform callbacks.
+        NativeRendererSelfKioskApplication.armed(activity);
+        return true;
+    }
+
     /** Read-only bridge from the live immersive process to the exact pending panel handoff. */
     static synchronized long pendingEpochForImmersiveStartup() {
         return pendingEpoch;
@@ -84,5 +104,6 @@ final class NativeRendererExperimentLaunchAuthority {
     static synchronized void invalidatePending() {
         pendingEpoch = 0L;
         nativeActivityCreateSeen = false;
+        launchActivity.clear();
     }
 }

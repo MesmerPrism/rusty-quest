@@ -195,7 +195,11 @@ if (-not $resolvedTempRoot.StartsWith($tempBase, [StringComparison]::OrdinalIgno
 try {
     $classes = Join-Path $resolvedTempRoot 'classes'
     [IO.Directory]::CreateDirectory($classes) | Out-Null
+    Import-Module (Join-Path $repo 'tools/lib/NativeRendererAppStatusBridge.psm1') -Force
+    $bridge = Join-Path $resolvedTempRoot 'NativeRendererAppStatusBridge.java'
+    [IO.File]::WriteAllText($bridge,(New-NativeRendererAppStatusBridgeSource),[Text.UTF8Encoding]::new($false))
     $sources = @(
+        $bridge,
         $policyPath,
         $homePolicyPath,
         $coordinatorPath,

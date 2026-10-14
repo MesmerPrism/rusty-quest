@@ -6,8 +6,9 @@ immersive presentation, frame, wearer result or acoustic observation.
 
 | Operation | Controller / panel | CLI | Web |
 | --- | --- | --- | --- |
-| Arm selected condition and locked bias | Experimenter condition controls | arm with requested_condition/requested_bias | Existing v1 arm carries condition/bias |
+| Arm selected condition and initial bias | Experimenter condition controls | arm with requested_condition/requested_bias | Existing v1 arm carries condition/bias |
 | Official Start | Right Grip+A / Start official run | official-start | v2 start |
+| Set live breathing bias | Session Apply live bias | set-bias with bias_percent | v2 set-bias carries b |
 | Pause | Right Grip+B / Pause official run | pause | v2 pause |
 | Resume | Right Grip+A / Resume official run | resume | v2 resume |
 | Save and prepare next | Panel Save session & prepare next | save-next | Existing v1 save-next |
@@ -16,8 +17,15 @@ immersive presentation, frame, wearer result or acoustic observation.
 | Open Polar setup | Panel Polar | open-polar | Existing v1 open-polar |
 | Status | Panel refresh | status | Status characteristic |
 
-Pending bias is configuration for the next Arm, not an independent mutation of
-an active session. Developer tuning, Polar scan/connect/stream controls and
+Pending bias configures the next Arm. The separate `set-bias` operation changes
+an active session in Armed, Running or Paused, including after durable completion.
+It requires a bound packaged breathing pattern and an integer percent from 0 to 100.
+Every adapter submits `operator-set-bias` to the same serialized native owner with
+the existing runtime/session/generation/condition/profile/binding fences. The owner
+persists the change before applied acknowledgement; status exposes current
+`breath_guidance.bias_percent`, `bias_revision`, `last_operation_id` and the original
+`arm_bias_percent`. A later live change cannot invalidate the original Arm receipt.
+The headset and browser show current bias separately from the requested slider value. Developer tuning, Polar scan/connect/stream controls and
 private settings keep their separate existing typed contracts; this table does
 not turn them into unrestricted session operations.
 
@@ -70,7 +78,9 @@ rusty.quest.experiment_session.operator_command.v1. Status has only schema and
 operation. Mutations additionally bind unique16hex operation_id, expected PID,
 UID, process start ticks, APK SHA, source binding SHA, runtime epoch, session
 generation/key, condition/profile and operator_origin shell-experiment-operator-v1.
-Arm alone adds requested_condition (condition-a/b) and requested_bias (0..100).
+Arm adds requested_condition (condition-a/b) and requested_bias (0..100).
+Set-bias adds only bias_percent (integer 0..100); it uses the direct native operator
+route, preserving the same debug caller and installed-APK fences.
 No current recording is represented by expected_session_key '-' and empty
 condition/profile with generation0; native runtime epoch stays positive.
 
@@ -222,3 +232,22 @@ Windows fallback tests do not prove Android metadata behavior. The retained
 12,655-checkpoint fixture reports metadata overhead without a wall-clock pass
 threshold. Android target compilation and live app-private filesystem/readback
 qualification remain necessary before claiming device latency improvement.
+
+## Live browser bias and clock projection
+
+The current session capability `q.o` advertises `set-bias` only with a packaged
+pattern. Its v2 command has exactly `v,id,op,s,g,n,b` plus optional BLE `mac`.
+For this operation only, RQEC2 appends `|b` after the nonce; the percent is therefore
+authenticated. Other v2 commands reject `b`. Wi-Fi, direct and relay gateways carry
+the same closed payload inside their existing authenticated envelope. The shared
+command journal binds the percent to the original ID and returns its original
+receipt across transports; changed payloads under that ID reject without replay.
+
+Compact status `bg` is `[effective_percent, revision]`. `ms` is the native official
+active clock; `pm` is separate preparation elapsed time while Armed. The browser
+renders an obvious MM:SS clock with official zero before Start, frozen time while
+Paused, and continued time beyond the completion threshold while still Running.
+It does not extrapolate authoritative elapsed time locally. Optional sensor and
+count summaries may be omitted to preserve live controls, bias and clock within
+the existing 480-byte status limit. Paused completed sessions retain Resume and
+Finish controls, and successful status refresh clears a preceding connection error.

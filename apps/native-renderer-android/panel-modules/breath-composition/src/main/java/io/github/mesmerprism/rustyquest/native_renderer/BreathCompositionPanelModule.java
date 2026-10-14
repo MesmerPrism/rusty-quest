@@ -217,7 +217,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     return ControlPanelActivity.closeExperimentResourcesFromOwner();
                 }
             },
-            new ExperimentSessionJsonCodec(() -> EXPERIMENT_SESSION_PANEL),
+            new ExperimentSessionJsonCodec(),
             new ExperimentSessionAndroidShell.Clock() {
                 @Override public long elapsedRealtimeMillis() {
                     return SystemClock.elapsedRealtime();
@@ -283,8 +283,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         final ExperimentSessionControlCapability.Fence sessionFence;
         final long armGeneration;
         final String armCondition;
+        int requestedBias = -1;
         boolean awaitsDurableNativeOutcome() {
-            return "arm".equals(operation) || "save-next".equals(operation)
+            return "arm".equals(operation) || "set-bias".equals(operation) || "save-next".equals(operation)
                 || "save-exit".equals(operation);
         }
         RemotePending(String browserId, String nativeId, String operation) {
@@ -522,9 +523,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     }else if(exact && pending.nativeId.equals(readback.optString("operator_operation_id"))
                             && "ble-session-v2".equals(readback.optString("operator_origin"))
                             && "applied".equals(readback.optString("operator_operation_status"))
-                            && expected.equals(readback.optString("control_state"))) {
+                            && ("set-bias".equals(pending.operation)
+                                ? readback.optJSONObject("breath_guidance")!=null
+                                    && readback.getJSONObject("breath_guidance").optInt("bias_percent",-1)==pending.requestedBias
+                                    && pending.nativeId.equals(readback.getJSONObject("breath_guidance").optString("last_operation_id"))
+                                : expected.equals(readback.optString("control_state")))) {
                         if(server!=null)server.updateReceiptForGeneration(pending.serverGeneration,pending.browserId,
-                            "confirmed","Native session operation applied.");
+                            "confirmed","set-bias".equals(pending.operation)?"Breathing bias applied and saved: "+pending.requestedBias+"%.":"Native session operation applied.");
                         remotePending=null;
                     }else if(pending.nativeId.equals(readback.optString("last_operation_id"))
                             && ("rejected".equals(readback.optString("last_operation_status"))
@@ -617,6 +622,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                             ExperimentSessionPanelCoordinator.CONDITION_TWO)))
                     .put("pending", !state.pendingOperationId.isEmpty() || remotePending != null || !remoteSetupPendingId.isEmpty());
                 JSONObject nativePresentation=sessionControlReadback();
+                if(nativePresentation!=null && nativePresentation.optLong("runtime_epoch",-1)==epoch
+                        && nativePresentation.optLong("generation",-1)==state.generation) {
+                    status.put("ms",nativePresentation.optLong("active_time_ms",state.activeTimeMs));
+                    if("armed".equals(nativePresentation.optString("control_state")))
+                        status.put("pm",nativePresentation.optLong("preparation_elapsed_ms",0));
+                    JSONObject guidance=nativePresentation.optJSONObject("breath_guidance");
+                    if(guidance!=null && guidance.optBoolean("identity_bound",false))
+                        status.put("bg",new JSONArray().put(guidance.getInt("bias_percent")).put(guidance.optLong("bias_revision",0)));
+                }
                 BreathCompositionPanelModule visiblePanel=remotePanel.get();
                 String presentation="unknown";
                 if(visiblePanel!=null&&visiblePanel.canRenderRemotePolarInPlace()||"panel".equals(NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext)))presentation="panel";
@@ -681,11 +695,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     try {
                         if(request.sessionFence.server!=server.currentGeneration())throw new SecurityException("carrier-replaced");
                         remotePending=new RemotePending(request.id,nativeId,request.operation,request.sessionFence);
+                        remotePending.requestedBias=request.bias;
                         server.updateReceipt(request.id,"pending","Waiting for the native session operation.");
                         // This is the same serialized native session owner used by controller input.
                         // The worker rechecks the full current session/generation/epoch tuple.
-                        ControlPanelActivity.applyExperimentSessionCommand(request.sessionFence.nativeCommand(
-                            nativeId,SystemClock.elapsedRealtimeNanos()).toString());
+                        JSONObject command=request.sessionFence.nativeCommand(nativeId,SystemClock.elapsedRealtimeNanos());
+                        if("set-bias".equals(request.operation))command.put("bias_percent",request.bias);
+                        JSONObject admission=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));
+                        if(!"queued".equals(admission.optString("command_status")))throw new SecurityException("native-not-queued");
                     }catch(Exception denied) {
                         server.updateReceipt(request.id,"rejected","Session owner admission failed.");remotePending=null;
                     }
@@ -807,8 +824,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         NativeRendererSoftKioskCoordinator.Effectiveness effectiveness =
             NativeRendererSoftKioskCoordinator.process().snapshot().effectiveness;
         switch (effectiveness) {
-            case READY_ARMED:
-            case READY_DISARMED: return "ready";
+            case READY_ARMED: return "ready";
+            case READY_DISARMED: return "unarmed";
+            case WATCHDOG_MISSING: return "service-missing";
+            case WATCHDOG_FAILED: return "service-failed";
+            case WATCHDOG_AWAITING_PRESENTATION: return "awaiting-presentation";
             case WATCHDOG_STARTING: return "starting";
             case TERMINAL: return "ending";
             default: return "attention";
@@ -1712,7 +1732,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         experimenterGuidanceBias.setInteractive(patternOne || patternTwo);
         start.addView(experimenterGuidanceBias.view);
         start.addView(text(
-            "0% is fully signal-driven feedback. Higher values increasingly favor the timestamped guided-breathing phase; 100% is guidance-dominant but still requires valid Polar tracking. The selected value is locked when the condition is armed.",
+            "0% is fully signal-driven feedback. Higher values increasingly favor the timestamped guided-breathing phase; 100% is guidance-dominant but still requires valid Polar tracking. The selected value is applied when armed; use the live session bias control to change it during a run.",
             13, PANEL_MUTED));
         experimenterStartOne = button("Arm Condition 1");
         experimenterStartTwo = button("Arm Condition 2");
@@ -1779,6 +1799,41 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             }});
             root.addView(control);
         }
+        try {
+            JSONObject current=REMOTE_DELEGATE.sessionControlReadback();
+            JSONObject guidance=current==null?null:current.optJSONObject("breath_guidance");
+            if(guidance!=null && guidance.optBoolean("identity_bound",false) && state.hasActiveSession()) {
+                final SliderControl liveBias=new SliderControl("Live breathing bias",0.0,100.0,guidance.getInt("bias_percent"),100,"%",true,new Runnable(){@Override public void run(){}});
+                root.addView(liveBias.view);
+                final TextView biasResult=text("Current bias: "+guidance.getInt("bias_percent")+"%",14,PANEL_FG);root.addView(biasResult);
+                Button applyBias=button("Apply live bias");root.addView(applyBias);
+                applyBias.setEnabled(state.pendingOperationId.isEmpty());
+                applyBias.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
+                    try {
+                        if(remotePending!=null || !EXPERIMENT_SESSION_PANEL.snapshot().pendingOperationId.isEmpty())throw new SecurityException("operation-pending");
+                        JSONObject n=REMOTE_DELEGATE.sessionControlReadback();
+                        ExperimentSessionControlCapability.Fence fence=new ExperimentSessionControlCapability.Fence("",n.getString("session_key"),n.getString("condition_id"),n.getString("non_audio_profile_sha256"),n.getString("activation_binding_sha256"),"set-bias",n.getLong("generation"),n.getLong("runtime_epoch"),0,0,0);
+                        final String id="ui-bias-"+ExperimentSessionBleProtocol.newHex(8);
+                        JSONObject command=fence.nativeCommand(id,SystemClock.elapsedRealtimeNanos()).put("operator_origin","ui-session-v2").put("bias_percent",liveBias.intValue());
+                        JSONObject admitted=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));
+                        if(!"queued".equals(admitted.optString("command_status")))throw new SecurityException("native-not-queued");
+                        applyBias.setEnabled(false);biasResult.setText("Waiting for saved bias confirmation…");
+                        final long epoch=fence.epoch;
+                        new Handler(Looper.getMainLooper()).postDelayed(new Runnable(){@Override public void run(){
+                            if(experimentShellDestroyed)return;
+                            try {
+                                JSONObject n=REMOTE_DELEGATE.sessionControlReadback();
+                                if(n==null||n.optLong("runtime_epoch",-1)!=epoch)throw new SecurityException("owner-changed");
+                                JSONObject bg=n.optJSONObject("breath_guidance");
+                                if(id.equals(n.optString("operator_operation_id"))&&"applied".equals(n.optString("operator_operation_status"))&&bg!=null&&id.equals(bg.optString("last_operation_id"))){biasResult.setText("Applied and saved: "+bg.getInt("bias_percent")+"%");applyBias.setEnabled(true);return;}
+                                if(id.equals(n.optString("last_operation_id"))&&("failed".equals(n.optString("last_operation_status"))||"rejected".equals(n.optString("last_operation_status"))))throw new SecurityException("native-rejected");
+                                new Handler(Looper.getMainLooper()).postDelayed(this,500);
+                            }catch(Exception failure){biasResult.setText("Bias result unavailable; check current state before retrying.");}
+                        }},500);
+                    }catch(Exception failure){biasResult.setText("Bias change not admitted; refresh current session state.");}
+                }});
+            }
+        }catch(Exception unavailable){root.addView(text("Live bias unavailable",14,PANEL_MUTED));}
         root.addView(text("Start / resume: Right Grip + A · Pause: Right Grip + B · Hold at least 0.75 seconds, then release after the pulse.", 14, PANEL_MUTED));
         root.addView(text("Use Return to VR above, or press B three times again, without changing the session state.", 14, PANEL_MUTED));
         LinearLayout sessions = panelCard("Session status");
@@ -4204,25 +4259,107 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private JSONObject buildPrivateParticleDynamicsPatchJson(Set<String> patchFields)
         throws Exception {
-        if(patchFields==null||patchFields.isEmpty())throw new IllegalArgumentException("empty-particle-patch");
-        java.util.Map<String,Object> edits=new java.util.LinkedHashMap<String,Object>();
-        for(String field:patchFields){
-            if(field.startsWith("size."))edits.put("size.mode",privateParticleSizeModeWire());
-            if("visual_scale".equals(field))edits.put(field,privateParticleVisualScale.value());
-            else if("world_anchor_scale_m".equals(field))edits.put(field,privateParticleWorldAnchorScale.value());
-            else if("size.mode".equals(field))edits.put(field,privateParticleSizeModeWire());
-            else if("size.world_meters".equals(field))edits.put(field,privateParticleSizeWorldMeters.value());
-            else if("size.sphere_radius_percent".equals(field))edits.put(field,privateParticleSizeSpherePercent.value());
-            else if("size.oscillation_percent".equals(field))edits.put(field,privateParticleSizeOscillationPercent.value());
-            else if(field.startsWith("driver_values01.")){int slot=Integer.parseInt(field.substring(16));if(slot<0||slot>=privateParticleDrivers.length)throw new IllegalArgumentException("driver-slot-range");edits.put(field,privateParticleDrivers[slot].value());}
-            else if("tracer.draw_slots_per_oscillator".equals(field))edits.put(field,privateParticleTracerDrawSlots.intValue());
-            else if("tracer.lifetime_seconds".equals(field))edits.put(field,privateParticleTracerLifetime.value());
-            else if("tracer.copies_per_second".equals(field))edits.put(field,privateParticleTracerCopies.value());
-            else if("material".equals(field))edits.put(field,privateParticleMaterialPresetWire());
-            else if("heartbeat_pulse".equals(field))edits.put(field,privateParticlePolarRrOrbitBoost!=null&&privateParticlePolarRrOrbitBoost.isChecked()?"polar-rr-orbit-boost":"disabled");
-            else throw new IllegalArgumentException("unsupported-particle-field:"+field);
+        if (patchFields == null || patchFields.isEmpty()) {
+            throw new IllegalArgumentException("particle field patch must not be empty");
         }
-        return NativeLocalControlController.particlePatch(edits,NativeLocalControlController.nextRevision(System.currentTimeMillis()));
+        JSONObject privateParticles = new JSONObject();
+        JSONObject size = new JSONObject();
+        JSONObject driverValues = new JSONObject();
+        JSONArray driverControls = new JSONArray();
+        JSONObject tracer = new JSONObject();
+        for (String field : patchFields) {
+            if ("visual_scale".equals(field)) {
+                privateParticles.put("visual_scale", privateParticleVisualScale.value());
+            } else if ("world_anchor_scale_m".equals(field)) {
+                privateParticles.put(
+                    "world_anchor_scale_m",
+                    privateParticleWorldAnchorScale.value()
+                );
+            } else if ("size.mode".equals(field)) {
+                size.put("enabled", true);
+                size.put("mode", privateParticleSizeModeWire());
+            } else if ("size.world_meters".equals(field)) {
+                size.put("enabled", true);
+                size.put("mode", privateParticleSizeModeWire());
+                size.put("world_meters", privateParticleSizeWorldMeters.value());
+            } else if ("size.sphere_radius_percent".equals(field)) {
+                size.put("enabled", true);
+                size.put("mode", privateParticleSizeModeWire());
+                size.put(
+                    "sphere_radius_percent",
+                    privateParticleSizeSpherePercent.value()
+                );
+            } else if ("size.oscillation_percent".equals(field)) {
+                size.put("enabled", true);
+                size.put("mode", privateParticleSizeModeWire());
+                size.put(
+                    "oscillation_percent",
+                    privateParticleSizeOscillationPercent.value()
+                );
+            } else if (field.startsWith("driver_values01.")) {
+                int index = Integer.parseInt(field.substring("driver_values01.".length()));
+                if (index < 0 || index >= privateParticleDrivers.length) {
+                    throw new IllegalArgumentException("particle driver patch index out of range");
+                }
+                driverValues.put(Integer.toString(index), privateParticleDrivers[index].value());
+                driverControls.put(
+                    new JSONObject()
+                        .put("target_slot", index)
+                        .put("mode", "direct")
+                );
+            } else if ("tracer.draw_slots_per_oscillator".equals(field)) {
+                tracer.put(
+                    "draw_slots_per_oscillator",
+                    privateParticleTracerDrawSlots.intValue()
+                );
+            } else if ("tracer.lifetime_seconds".equals(field)) {
+                tracer.put("lifetime_seconds", privateParticleTracerLifetime.value());
+            } else if ("tracer.copies_per_second".equals(field)) {
+                tracer.put("copies_per_second", privateParticleTracerCopies.value());
+            } else if ("material".equals(field)) {
+                privateParticles.put(
+                    "material",
+                    new JSONObject().put("preset", privateParticleMaterialPresetWire())
+                );
+            } else if ("heartbeat_pulse".equals(field)) {
+                privateParticles.put(
+                    "heartbeat_pulse",
+                    new JSONObject().put(
+                        "mode",
+                        privateParticlePolarRrOrbitBoost != null
+                                && privateParticlePolarRrOrbitBoost.isChecked()
+                            ? "polar-rr-orbit-boost"
+                            : "disabled"
+                    )
+                );
+            } else {
+                throw new IllegalArgumentException("unsupported particle patch field: " + field);
+            }
+        }
+        if (size.length() > 0) {
+            privateParticles.put("size", size);
+        }
+        if (driverValues.length() > 0) {
+            privateParticles.put("driver_values01", driverValues);
+            privateParticles.put("driver_controls", driverControls);
+        }
+        if (tracer.length() > 0) {
+            privateParticles.put("tracer", tracer);
+        }
+        JSONObject source = new JSONObject()
+            .put("surface", "same_apk_panel")
+            .put("transport", "jni_live_queue");
+        JSONObject apply = new JSONObject()
+            .put("mode", "apply-on-next-safe-frame")
+            .put("expected_effective_revision", -1);
+        return new JSONObject()
+            .put("schema", PRIVATE_PARTICLE_DYNAMICS_SCHEMA)
+            .put("profile_id", "same-apk-private-particle-field-patch")
+            .put("revision", System.currentTimeMillis())
+            .put("update_mode", "field-patch")
+            .put("source", source)
+            .put("private_particles", privateParticles)
+            .put("apply", apply);
     }
 
     private String privateParticleSizeModeWire() {
@@ -5255,6 +5392,276 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    /** JSON adapter invoked exclusively by {@link ExperimentSessionAndroidShell}'s worker. */
+    private static final class ExperimentSessionJsonCodec
+            implements ExperimentSessionAndroidShell.Codec {
+        @Override
+        public String statusCommand() {
+            try {
+                return new JSONObject()
+                    .put("schema", ExperimentSessionPanelCoordinator.SCHEMA)
+                    .put("operation", "status")
+                    .toString();
+            } catch (Exception error) {
+                throw new IllegalStateException("could not encode session status", error);
+            }
+        }
+
+        @Override
+        public String command(
+                ExperimentSessionPanelCoordinator.NativeCommand command,
+                boolean start,
+                long elapsedRealtimeNanos,
+                long utcNanos) {
+            try {
+                JSONObject request = new JSONObject()
+                    .put("schema", ExperimentSessionPanelCoordinator.SCHEMA)
+                    .put("operation", command.operation)
+                    .put("operation_id", command.operationId)
+                    .put("expected_generation", command.expectedGeneration)
+                    .put("elapsed_realtime_ns", elapsedRealtimeNanos);
+                if (start) {
+                    request
+                        .put("condition", command.condition)
+                        .put(
+                            "completion_threshold_ms",
+                            ExperimentSessionPanelCoordinator.COMPLETION_THRESHOLD_MS
+                        )
+                        .put("breath_guidance_bias_percent",
+                            command.breathGuidanceBiasPercent)
+                        .put("started_at_utc_ns", utcNanos);
+                }
+                return request.toString();
+            } catch (Exception error) {
+                throw new IllegalStateException("could not encode session command", error);
+            }
+        }
+
+        @Override
+        public String statusResponseReason(String responseJson) {
+            try { return new JSONObject(responseJson).optString("reason_code", "unknown"); }
+            catch (Exception unavailable) { return "unknown"; }
+        }
+
+        @Override
+        public ExperimentSessionAndroidShell.SessionReadback parse(
+                String responseJson,
+                ExperimentSessionPanelCoordinator.NativeCommand expected,
+                boolean start) {
+            try {
+                JSONObject response = new JSONObject(responseJson == null ? "{}" : responseJson);
+                if (!"rusty.quest.experiment_session.response.v1".equals(
+                        response.optString("schema", ""))) {
+                    throw new IllegalArgumentException("unexpected session response schema");
+                }
+                String commandStatus = response.optString("command_status", "rejected");
+                JSONObject projection = response.optJSONObject("readback");
+                if (projection == null) {
+                    throw new IllegalArgumentException("session response omitted readback");
+                }
+                if (!validNonNegativeLong(projection, "generation")) {
+                    String unavailableReason = response.optString("reason_code", "");
+                    if ("rejected".equals(commandStatus)
+                            && ExperimentSessionAndroidShell.retryableReason(unavailableReason)) {
+                        return new ExperimentSessionAndroidShell.SessionReadback(null,
+                            commandStatus, "unavailable", "unavailable", "unavailable",
+                            "not-requested", 0L, -1L, "", unavailableReason, "unknown", "", 0L, "", "");
+                    }
+                    throw new IllegalArgumentException("authoritative-session-generation-unavailable");
+                }
+                JSONObject counts = projection.optJSONObject("counts");
+                JSONObject byCondition = counts == null
+                    ? null : counts.optJSONObject("by_condition");
+                JSONObject conditionOne = byCondition == null
+                    ? null : byCondition.optJSONObject("condition-a");
+                JSONObject conditionTwo = byCondition == null
+                    ? null : byCondition.optJSONObject("condition-b");
+                boolean countsAvailable = validNonNegativeLong(counts, "completed")
+                    && validNonNegativeLong(counts, "stopped_early")
+                    && validNonNegativeLong(counts, "errors");
+                boolean countsInvalid = counts != null && !countsAvailable;
+                boolean perConditionCounts = countsAvailable
+                    && validNonNegativeLong(conditionOne, "completed")
+                    && validNonNegativeLong(conditionOne, "stopped_early")
+                    && validNonNegativeLong(conditionOne, "errors")
+                    && validNonNegativeLong(conditionTwo, "completed")
+                    && validNonNegativeLong(conditionTwo, "stopped_early")
+                    && validNonNegativeLong(conditionTwo, "errors");
+                String operationId = projection.optString("last_operation_id", "");
+                String operationStatus = projection.optString(
+                    "last_operation_status",
+                    commandStatus
+                );
+                boolean accepted = "accepted".equals(operationStatus);
+                String phase = projection.optString("phase", "");
+                String routeAction = projection.optString("route_action", "none");
+                JSONObject recordingResult = projection.optJSONObject("recording_result");
+                String recordingStatus = recordingResult == null
+                    ? "unknown" : recordingResult.optString("status", "unknown");
+                boolean restartReceipt = ExperimentSessionPanelCoordinator.restartFinalizationMatches(
+                    projection.opt("phase"), projection.opt("route_action"),
+                    projection.opt("preparation_mode"), projection.opt("last_operation_id"),
+                    projection.opt("finalized_operation_id"), projection.opt("generation"),
+                    projection.opt("finalized_session_generation"));
+                if (restartReceipt && !"saved".equals(recordingStatus)) accepted = false;
+                ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
+                String activeCondition = before.activeCondition;
+                if (projection.has("condition_id")) {
+                    Object nativeCondition = projection.opt("condition_id");
+                    if (nativeCondition == JSONObject.NULL && !"active".equals(phase)) {
+                        activeCondition = "none";
+                    } else if (nativeCondition instanceof String
+                            && ((String)nativeCondition).matches("condition-[ab]")) {
+                        activeCondition = (String)nativeCondition;
+                    } else {
+                        throw new IllegalArgumentException("authoritative-session-condition-invalid");
+                    }
+                } else if ("active".equals(phase)) {
+                    throw new IllegalArgumentException("authoritative-active-session-condition-unavailable");
+                } else if ("idle".equals(phase)) {
+                    // Legacy idle status did not always carry this optional identity.
+                    activeCondition = "none";
+                }
+                boolean startingOperation = start && expected != null
+                    && expected.operationId.equals(operationId);
+                if (startingOperation && "active".equals(phase)
+                        && (!projection.optBoolean("profile_identity_bound", false)
+                            || !projection.optBoolean("audio_identity_bound", false))) {
+                    accepted = false;
+                }
+                JSONObject guidanceProjection = projection.optJSONObject("breath_guidance");
+                boolean guidanceExpected = startingOperation && "pattern-ready".equals(
+                    ControlPanelActivity.conditionBreathGuidanceReadiness(expected.condition));
+                if (guidanceExpected
+                        && (guidanceProjection == null
+                            || !guidanceProjection.optBoolean("identity_bound", false)
+                            || guidanceProjection.optInt("arm_bias_percent", guidanceProjection.optInt("bias_percent", -1))
+                                != expected.breathGuidanceBiasPercent)) {
+                    accepted = false;
+                }
+                boolean durable = accepted && restartReceipt
+                    && "saved".equals(recordingStatus);
+                String responseReason = response.optString("reason_code", "");
+                String projectionReason = projection.optString("last_reason", "");
+                String reason = restartReceipt && !"saved".equals(recordingStatus)
+                    ? "recording-not-saved" : !projectionReason.isEmpty() && !"none".equals(projectionReason)
+                    ? projectionReason : responseReason;
+                ExperimentSessionPanelCoordinator.NativeReceipt receipt =
+                    new ExperimentSessionPanelCoordinator.NativeReceipt(
+                        operationId,
+                        accepted,
+                        durable,
+                        projection.optLong("generation", 0L),
+                        projection.optLong("revision", 0L),
+                        phase,
+                        projection.optBoolean("audio_technical_hold", false)
+                            ? "audio-error" : projection.optString("control_state", ""),
+                        activeCondition,
+                        "active".equals(phase),
+                        projection.optString("completion", ""),
+                        projection.optLong("active_time_ms", 0L),
+                        "running".equals(projection.optString("recovery_status", "not-run"))
+                            || "error".equals(
+                                projection.optString("recovery_status", "not-run")),
+                        projection.optString("storage_status", "unavailable"),
+                        projection.optBoolean("kiosk_requested", true),
+                        conditionOne == null ? 0L : conditionOne.optLong("completed", 0L),
+                        conditionTwo == null ? 0L : conditionTwo.optLong("completed", 0L),
+                        conditionOne == null
+                            ? 0L : conditionOne.optLong("stopped_early", 0L),
+                        conditionTwo == null
+                            ? 0L : conditionTwo.optLong("stopped_early", 0L),
+                        perConditionCounts,
+                        countsAvailable,
+                        countsInvalid,
+                        counts == null ? 0L : counts.optLong("completed", 0L),
+                        counts == null ? 0L : counts.optLong("stopped_early", 0L),
+                        counts == null ? 0L : counts.optLong("errors", 0L),
+                        routeAction,
+                        projection.optLong("route_action_revision", 0L),
+                        projection.optBoolean("audio_technical_hold", false)
+                            ? "audio-technical-hold"
+                            : startingOperation && !accepted
+                            ? "Condition was not armed: " + emptySessionReason(reason) + "."
+                            : reason
+                                + " · recovery="
+                                + projection.optString("recovery_status", "unavailable")
+                                + " · kiosk="
+                                + projection.optString("kiosk_effective", "unknown")
+                                + "/"
+                                + projection.optString(
+                                    "kiosk_enforcement",
+                                    "not-enforced"),
+                        durable && "none".equals(routeAction)
+                    );
+                return new ExperimentSessionAndroidShell.SessionReadback(
+                    receipt,
+                    commandStatus,
+                    projection.optString("initialization_status", "unavailable"),
+                    projection.optString("inventory_status", "inventory-unavailable"),
+                    projection.optString("recording_root_status", "unavailable"),
+                    projection.optString("shutdown_status", "not-requested"),
+                    projection.optLong("shutdown_ack_revision", 0L),
+                    projection.optLong("finalized_session_generation", 0L),
+                    projection.optString("finalized_operation_id", ""),
+                    reason,
+                    recordingStatus,
+                    recordingResult == null ? "" : recordingResult.optString("error", ""),
+                    projection.optLong("runtime_epoch", 0L),
+                    projection.optString("last_operation_status", ""),
+                    projection.optString("last_reason", "")
+                ).withArmAcceptance(parseArmAcceptance(projection));
+            } catch (RuntimeException error) {
+                throw error;
+            } catch (Exception error) {
+                throw new IllegalArgumentException("could not parse session response", error);
+            }
+        }
+
+        private static ExperimentSessionAndroidShell.ArmAcceptance parseArmAcceptance(JSONObject value) {
+            if (!Boolean.TRUE.equals(value.opt("arm_durable_checkpoint"))
+                    || !Boolean.TRUE.equals(value.opt("profile_identity_bound"))
+                    || !Boolean.TRUE.equals(value.opt("audio_identity_bound"))) return null;
+            for (String field : new String[]{"arm_generation", "arm_runtime_epoch"}) {
+                Object raw=value.opt(field);
+                if (!(raw instanceof Integer) && !(raw instanceof Long)) return null;
+                if (((Number)raw).longValue() <= 0L) return null;
+            }
+            Object id=value.opt("arm_operation_id"),condition=value.opt("arm_condition");
+            if (!(id instanceof String) || ((String)id).isEmpty()
+                    || !(condition instanceof String) || ((String)condition).isEmpty()) return null;
+            return new ExperimentSessionAndroidShell.ArmAcceptance((String)id,
+                ((Number)value.opt("arm_generation")).longValue(),
+                ((Number)value.opt("arm_runtime_epoch")).longValue(),(String)condition,true);
+        }
+
+        private static boolean validNonNegativeLong(JSONObject value, String field) {
+            if (value == null || !value.has(field) || value.isNull(field)) return false;
+            Object raw = value.opt(field);
+            if (!(raw instanceof Number)) return false;
+            Number number = (Number) raw;
+            double floating = number.doubleValue();
+            long integer = number.longValue();
+            return !Double.isNaN(floating)
+                && !Double.isInfinite(floating)
+                && floating == (double) integer
+                && integer >= 0L;
+        }
+
+        private static String emptySessionReason(String reason) {
+            if ("profile-identity-not-packaged".equals(reason)) {
+                return "the packaged study profile identity did not match";
+            }
+            if ("audio-identity-not-packaged".equals(reason)) {
+                return "the packaged condition audio identity did not match";
+            }
+            if (reason == null || reason.isEmpty() || "none".equals(reason)) {
+                return "native admission was rejected";
+            }
+            return reason;
+        }
     }
 
     private final class SliderControl {

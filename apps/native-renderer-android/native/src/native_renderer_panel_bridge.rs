@@ -288,7 +288,7 @@ impl ControlPanelCommandPoller {
             return;
         };
         if packaged_preparation_mode() == crate::experiment_session::PreparationMode::RemoteVr {
-            match consume_remote_preparation_launch(app, epoch) {
+            match consume_remote_preparation_launch(app, epoch, openxr_session_generation) {
                 Ok(true) => crate::marker("experiment-session-panel", format!(
                     "event=remote-vr-preparation status=launch-consumed launchEpoch={} submittedFrame={} panelOpened=false officialActiveTimeMs=0", epoch, submitted_frame)),
                 Ok(false) => crate::marker("experiment-session-panel", "event=remote-vr-preparation status=launch-rejected panelOpened=false"),
@@ -1067,7 +1067,7 @@ fn pending_experiment_launch_epoch(
 }
 
 #[cfg(target_os = "android")]
-fn consume_remote_preparation_launch(app: &android_activity::AndroidApp, epoch: u64) -> Result<bool, String> {
+fn consume_remote_preparation_launch(app: &android_activity::AndroidApp, epoch: u64, openxr_session_generation: u64) -> Result<bool, String> {
     use jni::{jni_sig, jni_str, objects::{JClass, JClassLoader, JObject, JValue}, JavaVM};
     let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
     let activity = app.activity_as_ptr() as jni::sys::jobject;
@@ -1077,9 +1077,8 @@ fn consume_remote_preparation_launch(app: &android_activity::AndroidApp, epoch: 
         let loader: JClassLoader = env.cast_local::<JClassLoader>(loader)?;
         let name = env.new_string("io.github.mesmerprism.rustyquest.native_renderer.NativeRendererExperimentLaunchAuthority")?;
         let authority = JClass::for_name_with_loader(env, name, true, loader)?;
-        let provenance = env.new_string(PROVENANCE_EXPLICIT_USER_LAUNCH)?;
-        env.call_static_method(authority, jni_str!("consume"), jni_sig!("(Ljava/lang/String;J)Z"),
-            &[JValue::Object(&provenance), JValue::Long(epoch as i64)])?.z()
+        env.call_static_method(authority, jni_str!("consumeRemotePreparation"), jni_sig!("(Landroid/app/Activity;JJ)Z"),
+            &[JValue::Object(&activity), JValue::Long(epoch as i64), JValue::Long(openxr_session_generation as i64)])?.z()
     }).map_err(|error| format!("remote preparation launch consumption failed: {error}"))
 }
 

@@ -50,6 +50,22 @@ fn xr_time_micros(value: xr::Time) -> BreathTimestampMicros {
     BreathTimestampMicros::new(u64::try_from(nanos).unwrap_or_default() / 1_000)
 }
 
+/// Observe Java's actual clock at this render boundary. The supplied OpenXR
+/// value is a predicted display target, not a simultaneous clock reading.
+fn observe_polar_presentation_clock(app: &android_activity::AndroidApp, predicted: xr::Time) {
+    use jni::{jni_sig, jni_str, JavaVM};
+    let vm=unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let readings=vm.attach_current_thread(|env| -> jni::errors::Result<(i64,i64)> {
+        let system=env.find_class(jni_str!("java/lang/System"))?;
+        let before=env.call_static_method(&system,jni_str!("nanoTime"),jni_sig!("()J"),&[])?.j()?;
+        let after=env.call_static_method(&system,jni_str!("nanoTime"),jni_sig!("()J"),&[])?.j()?;
+        Ok((before,after))
+    });
+    let (before,after)=readings.ok().filter(|(before,after)|*before>0 && *after>=*before).unwrap_or((0,0));
+    crate::polar_composition_adapters::install_polar_presentation_clock_pair(
+        u64::try_from(predicted.as_nanos()).unwrap_or(0),before as u64,after as u64);
+}
+
 fn right_thumbstick_binding_enabled(
     projection_controls_enabled: bool,
     projection_joystick_controls_enabled: bool,
@@ -608,6 +624,10 @@ impl StimulusVolumeActions {
             ),
         );
 
+        // A successful new action owner belongs to the newly created XR session.
+        crate::polar_composition_adapters::begin_polar_presentation_owner();
+        // Ingress guard is released before invalidating the composition owner.
+        crate::breath_composition_runtime::invalidate_polar_clock_owner();
         Ok(Some(Self {
             action_set,
             right_primary_randomize,
@@ -861,6 +881,7 @@ impl StimulusVolumeActions {
 
     pub(crate) fn sync_and_poll<G>(
         &mut self,
+        app: &android_activity::AndroidApp,
         instance: &xr::Instance,
         session: &xr::Session<G>,
         reference_space: &xr::Space,
@@ -871,6 +892,12 @@ impl StimulusVolumeActions {
     ) -> NativeRendererControllerEvents {
         let mut events = NativeRendererControllerEvents::default();
         let observed_at = xr_time_micros(predicted_display_time);
+        if crate::breath_composition_runtime::effective_request()
+            .is_some_and(|request| request.source == BreathCompositionSource::PolarAcc) {
+            observe_polar_presentation_clock(app,predicted_display_time);
+        } else {
+            crate::polar_composition_adapters::install_polar_presentation_clock_pair(0,0,0);
+        }
         events.breath_observed_at = Some(observed_at);
         if crate::breath_composition_runtime::controller_adapter_available() {
             self.apply_composition_controller_actions(observed_at);

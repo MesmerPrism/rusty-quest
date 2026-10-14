@@ -11,6 +11,8 @@ $test=Join-Path $repo "apps/native-renderer-android/tests/java/$pkg/ExperimentSe
 if($LASTEXITCODE-ne0){throw 'Gateway protocol compilation failed'}
 & java -cp "$OutputRoot$([IO.Path]::PathSeparator)$JsonJar" io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionGatewayProtocolTest
 if($LASTEXITCODE-ne0){throw 'Gateway protocol tests failed'}
+& python (Join-Path $PSScriptRoot 'test_experiment_gateway_bias.py') --json-jar $JsonJar
+if($LASTEXITCODE-ne0){throw 'Gateway closed live-bias parser tests failed'}
 & python (Join-Path $PSScriptRoot 'test_experiment_gateway_dedupe.py') --repo $repo --json-jar $JsonJar
 if($LASTEXITCODE-ne0){throw 'Gateway original receipt/dedupe tests failed'}
 & python (Join-Path $PSScriptRoot 'test_experiment_gateway_ble_journal.py') --repo $repo --json-jar $JsonJar

@@ -162,9 +162,16 @@ public final class NativeRendererSelfKioskApplication extends Application {
 
     public static void armed(Context context) {
         if (!(context.getApplicationContext() instanceof NativeRendererSelfKioskApplication)) return;
+        NativeRendererSoftKioskCoordinator coordinator = NativeRendererSoftKioskCoordinator.process();
+        final long attempt = coordinator.beginSelfServiceStart();
+        if (attempt == 0L) return;
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(new Runnable() { @Override public void run() {
+            coordinator.failSelfServiceStart(attempt);
+        }}, 10000L);
         try {
             context.startForegroundService(new Intent(context, NativeRendererSelfKioskService.class));
         } catch (RuntimeException error) {
+            coordinator.failSelfServiceStart(attempt);
             Log.w("RustyQuestSelfKiosk", "status=watchdog-start-failed", error);
         }
     }

@@ -85,17 +85,32 @@ final class ExperimentSessionBleProtocol {
     static boolean validSessionFields(String id,String operation,String session,long generation,String nonce) {
         return isLowerHex(id,16) && isLowerHex(session,32) && isLowerHex(nonce,16)
             && generation>0 && generation<=9007199254740991L
-            && ("start".equals(operation) || "pause".equals(operation) || "resume".equals(operation));
+            && ("start".equals(operation) || "pause".equals(operation) || "resume".equals(operation) || "set-bias".equals(operation));
+    }
+
+    static int sessionBias(org.json.JSONObject body) throws Exception {
+        boolean bias = "set-bias".equals(body.opt("op"));
+        if (!bias) { if (body.has("b")) throw new IllegalArgumentException("unexpected-bias"); return 0; }
+        Object value = body.opt("b");
+        if (!(value instanceof Integer) && !(value instanceof Long)) throw new IllegalArgumentException("integer-bias-required");
+        long n = ((Number)value).longValue();
+        if (n < 0 || n > 100) throw new IllegalArgumentException("bias-range");
+        return (int)n;
     }
 
     static boolean verifySession(String code,String challenge,String id,String operation,
             String session,long generation,String nonce,String suppliedMac) {
+        return verifySession(code,challenge,id,operation,session,generation,nonce,suppliedMac,0);
+    }
+    static boolean verifySession(String code,String challenge,String id,String operation,
+            String session,long generation,String nonce,String suppliedMac,int bias) {
+        if(bias < 0 || bias > 100) return false;
         if(code==null || !isLowerHex(challenge,32) || !isLowerHex(suppliedMac,32)
                 || !validSessionFields(id,operation,session,generation,nonce)) return false;
         try {
             Mac hmac=Mac.getInstance("HmacSHA256");
             hmac.init(new SecretKeySpec(code.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
-            byte[] expected=hmac.doFinal(("RQEC2|"+challenge+"|"+id+"|"+operation+"|"+session+"|"+generation+"|"+nonce).getBytes(StandardCharsets.UTF_8));
+            byte[] expected=hmac.doFinal(("RQEC2|"+challenge+"|"+id+"|"+operation+"|"+session+"|"+generation+"|"+nonce+("set-bias".equals(operation)?"|"+bias:"")).getBytes(StandardCharsets.UTF_8));
             return MessageDigest.isEqual(java.util.Arrays.copyOf(expected,16),fromHex(suppliedMac));
         } catch(Exception denied) {return false;}
     }
@@ -289,6 +304,11 @@ final class PolarStopBleCapability {
         // Readiness and presentation have priority over optional diagnostics.
         if(candidate.has("y"))for(String field:new String[]{"done","early","ms","k","rec","co","bt","po","pf","f","r"}) {
             if(candidate.toString().getBytes(StandardCharsets.UTF_8).length<=430)break;
+            candidate.remove(field);
+        }
+        // Active bias and clock are operational readback; omit optional preparation/sensor summaries first.
+        if(candidate.has("bg"))for(String field:new String[]{"done","early","bt","po","pf","f","a","b"}) {
+            if(candidate.toString().getBytes(StandardCharsets.UTF_8).length<=445)break;
             candidate.remove(field);
         }
         // Preserve the pre-existing optional q fallback before considering the new grant.

@@ -13,6 +13,10 @@ public final class ExperimentSessionDebugOperatorTest {
   JSONObject extra=new JSONObject(good.toString()).put("shell","anything");deny(()->ExperimentSessionDebugOperator.validateShape(extra));
   JSONObject missing=new JSONObject(good.toString());missing.remove("expected_condition");deny(()->ExperimentSessionDebugOperator.validateShape(missing));
   JSONObject unknown=new JSONObject(good.toString()).put("operation","inject-tick");deny(()->ExperimentSessionDebugOperator.validateShape(unknown));
+  JSONObject bias=new JSONObject(good.toString()).put("operation","set-bias").put("bias_percent",0);ExperimentSessionDebugOperator.validateShape(bias);
+  bias.put("bias_percent",100);ExperimentSessionDebugOperator.validateShape(bias);
+  for(Object wrong:new Object[]{-1,101,50.5,true,"50",JSONObject.NULL}) {JSONObject bad=new JSONObject(bias.toString()).put("bias_percent",wrong);deny(()->ExperimentSessionDebugOperator.validateShape(bad));}
+  JSONObject noBias=new JSONObject(bias.toString());noBias.remove("bias_percent");deny(()->ExperimentSessionDebugOperator.validateShape(noBias));
   JSONObject arm=new JSONObject(good.toString()).put("operation","arm").put("requested_condition","condition-b").put("requested_bias",100);ExperimentSessionDebugOperator.validateShape(arm);arm.put("requested_bias",101);deny(()->ExperimentSessionDebugOperator.validateShape(arm));arm.put("requested_bias",100.5);deny(()->ExperimentSessionDebugOperator.validateShape(arm));
   for(String op:new String[]{"save-next","save-exit","return-vr","open-polar"})ExperimentSessionDebugOperator.validateShape(new JSONObject(good.toString()).put("operation",op));
   JSONObject enroll=new JSONObject(good.toString()).put("operation","enroll-trusted-lan")

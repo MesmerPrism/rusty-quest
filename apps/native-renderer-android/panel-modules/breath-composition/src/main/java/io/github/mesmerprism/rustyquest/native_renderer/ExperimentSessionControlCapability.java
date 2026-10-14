@@ -25,6 +25,7 @@ final class ExperimentSessionControlCapability {
         }
     }
     private String tuple="", reference="", allowed="";
+    private boolean biasAllowed;
     private JSONObject projection;
     private long observed,server,owner,ownerEpoch;
 
@@ -55,15 +56,20 @@ final class ExperimentSessionControlCapability {
         if(nextAllowed.isEmpty() || !state.equalsIgnoreCase(string(status,"p"))) {clear();return null;}
         String nextTuple=server+"|"+owner+"|"+ownerEpoch+"|"+epoch+"|"+generation+"|"+session+"|"+condition+"|"+profile+"|"+binding+"|"+independentPolarTuple;
         if(!nextTuple.equals(tuple)){reference=ExperimentSessionOpaqueIdentity.newHex(16);tuple=nextTuple;}
+        JSONObject guidance=nativeReadback.optJSONObject("breath_guidance");
+        biasAllowed=guidance!=null && guidance.optBoolean("identity_bound",false) && guidance.opt("bias_percent") instanceof Number
+            && guidance.optInt("bias_percent",-1)>=0 && guidance.optInt("bias_percent",101)<=100
+            && "pattern-ready".equals(status.optJSONArray("b")==null ? "" : status.getJSONArray("b").optString("condition-a".equals(condition)?0:1));
         this.projection=new JSONObject(nativeReadback.toString());this.observed=now;
         this.server=server;this.owner=owner;this.ownerEpoch=ownerEpoch;this.allowed=nextAllowed;
+        JSONArray operations=new JSONArray().put(nextAllowed);if(biasAllowed)operations.put("set-bias");
         return new JSONObject().put("v",2).put("s",reference).put("g",generation)
-            .put("o",new JSONArray().put(nextAllowed));
+            .put("o",operations);
     }
 
     synchronized Fence admit(String ref,long gen,String operation,long now,long server,long owner,long ownerEpoch) throws Exception {
         if(projection==null || now<observed || now-observed>1500 || !reference.equals(ref)
-                || !allowed.equals(operation) || gen!=positive(projection,"generation")
+                || !(allowed.equals(operation) || biasAllowed && "set-bias".equals(operation)) || gen!=positive(projection,"generation")
                 || server!=this.server || owner!=this.owner || ownerEpoch!=this.ownerEpoch)
             throw new SecurityException("session-capability-stale-or-mismatched");
         return new Fence(reference,string(projection,"session_key"),string(projection,"condition_id"),

@@ -19,7 +19,7 @@ if((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
 $raw=[IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $RequestPath).Path)
 if($raw.Length -eq 0 -or $raw.Length -gt 4096){throw 'Request exceeds closed provider bound'}
 $shape=[Text.Encoding]::UTF8.GetString($raw)|ConvertFrom-Json -Depth 30
-if($shape.schema -cne 'rusty.quest.experiment_session.operator_command.v1' -or $shape.operation -cnotin @('status','official-start','pause','resume','arm','save-next','save-exit','return-vr','open-polar','ping','enroll-trusted-lan')){throw 'Unsupported closed owner request'}
+if($shape.schema -cne 'rusty.quest.experiment_session.operator_command.v1' -or $shape.operation -cnotin @('status','set-bias','official-start','pause','resume','arm','save-next','save-exit','return-vr','open-polar','ping','enroll-trusted-lan')){throw 'Unsupported closed owner request'}
 $enrollment=$shape.operation -ceq 'enroll-trusted-lan'
 $secretPath=$null
 if($enrollment){

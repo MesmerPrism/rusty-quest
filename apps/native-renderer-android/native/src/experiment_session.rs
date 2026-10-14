@@ -362,6 +362,10 @@ impl ExperimentSessionController {
         self.active_time_ns
     }
 
+    pub(crate) fn active_interval_started(&self) -> Option<MonotonicNanos> {
+        self.active_since
+    }
+
     pub(crate) fn completion(&self) -> CompletionProgress {
         self.completion
     }

@@ -223,6 +223,7 @@ impl BreathGuidanceTimeline {
             .partition_point(|segment| segment.end_ms <= official_active_time_ms);
         let segment = self.segments.get(index)?;
         (official_active_time_ms >= segment.start_ms).then_some(BreathGuidanceTarget {
+            bias_revision: 0,
             expected_phase: segment.phase.common(),
             expected_phase_token: segment.phase.as_str(),
             bias_percent,
@@ -243,6 +244,7 @@ impl BreathGuidanceTimeline {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BreathGuidanceTarget {
+    pub(crate) bias_revision: u64,
     pub(crate) expected_phase: CommonBreathPhase,
     pub(crate) expected_phase_token: &'static str,
     pub(crate) bias_percent: u8,

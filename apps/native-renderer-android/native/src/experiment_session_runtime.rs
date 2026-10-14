@@ -35,7 +35,7 @@ use crate::{
         UtcEpochNanos,
     },
     session_recording_contract::{
-        AudioAssetIdentity, BreathObservation, BreathPhase, ConditionKey, EffectiveRadiusProfile,
+        AudioAssetIdentity, BiasChange, BreathObservation, BreathPhase, ConditionKey, EffectiveRadiusProfile,
         EffectiveRadiusSnapshotObservation, ExperimentIdentity, FinalizationReason, PolarAccBatch,
         PolarAccSample, PolarEcgBatch, PolarEcgSample, PolarHeartRateObservation, SessionCounts,
         SessionEvent, SessionEventKind, SessionRecord, SessionStartSpec,
@@ -253,6 +253,12 @@ struct Projection {
     audio_identity_bound: bool,
     breath_guidance_identity_bound: bool,
     breath_guidance_bias_percent: u8,
+    breath_guidance_bias_revision: u64,
+    breath_guidance_arm_bias_percent: u8,
+    breath_guidance_last_operation_id: Option<String>,
+    recording_started_ns: Option<u64>,
+    official_started_ns: Option<u64>,
+    recording_ended_ns: Option<u64>,
     producer_retry_drops: u64,
     metric_status: &'static str,
     initialization_status: &'static str,
@@ -311,6 +317,12 @@ impl Default for Projection {
             audio_identity_bound: false,
             breath_guidance_identity_bound: false,
             breath_guidance_bias_percent: 0,
+            breath_guidance_bias_revision: 0,
+            breath_guidance_arm_bias_percent: 0,
+            breath_guidance_last_operation_id: None,
+            recording_started_ns: None,
+            official_started_ns: None,
+            recording_ended_ns: None,
             producer_retry_drops: 0,
             metric_status: "actual-runtime-radius-with-configured-deformation-envelopes",
             initialization_status: "initializing",
@@ -326,7 +338,36 @@ impl Default for Projection {
 }
 
 impl Projection {
+    fn observed_now(&self, now_ns: Option<u64>, frame_generation: u64, frame_sequence: u64, frame_ns: u64) -> Option<u64> {
+        if self.phase == SessionPhase::Active
+            && self.control_state == crate::experiment_session::ExperimentControlState::Running
+            && self.presentation == PresentationState::ImmersiveActive {
+            let last_live_ns = if frame_generation == self.generation && frame_sequence > 0 {
+                frame_ns.saturating_add(SUBMITTED_FRAME_STALL_NS)
+            } else { self.active_interval_started_ns.unwrap_or(0) };
+            now_ns.map(|now| now.min(last_live_ns))
+        } else { now_ns }
+    }
     fn response_json(&self, command_status: &str, reason_code: &str) -> String {
+        self.response_json_at(command_status, reason_code, None)
+    }
+
+    fn response_json_at(&self, command_status: &str, reason_code: &str, now_ns: Option<u64>) -> String {
+        self.response_json_clocks(command_status, reason_code, now_ns, now_ns)
+    }
+
+    fn response_json_clocks(&self, command_status: &str, reason_code: &str, now_ns: Option<u64>, active_now_ns: Option<u64>) -> String {
+        let now_ns = self.recording_ended_ns.or(now_ns);
+        let active_time_ns = self.active_time_ns.saturating_add(
+            self.active_interval_started_ns.zip(active_now_ns)
+                .filter(|_| self.phase == SessionPhase::Active
+                    && self.control_state == crate::experiment_session::ExperimentControlState::Running
+                    && self.presentation == PresentationState::ImmersiveActive)
+                .map_or(0, |(start, now)| now.saturating_sub(start)));
+        let recording_elapsed_ns = self.recording_started_ns.zip(now_ns)
+            .map_or(0, |(start, now)| now.saturating_sub(start));
+        let preparation_elapsed_ns = self.recording_started_ns.zip(self.official_started_ns.or(now_ns))
+            .map_or(0, |(start, end)| end.saturating_sub(start));
         json!({
             "schema": EXPERIMENT_SESSION_RESPONSE_SCHEMA,
             "command_status": command_status,
@@ -359,10 +400,15 @@ impl Projection {
                     && self.phase == SessionPhase::Idle
                     && self.presentation == PresentationState::ImmersiveActive
                     && self.initialization_status == "ready" && self.recovery_status == "complete",
-                "active_time_ms": self.active_time_ns / 1_000_000,
+                "active_time_ms": active_time_ns / 1_000_000,
+                "recording_elapsed_ms": recording_elapsed_ns / 1_000_000,
+                "preparation_elapsed_ms": preparation_elapsed_ns / 1_000_000,
                 "breath_guidance": {
                     "identity_bound": self.breath_guidance_identity_bound,
                     "bias_percent": self.breath_guidance_bias_percent,
+                    "bias_revision": self.breath_guidance_bias_revision,
+                    "arm_bias_percent": self.breath_guidance_arm_bias_percent,
+                    "last_operation_id": self.breath_guidance_last_operation_id,
                     "clock": "official-active-time-ms",
                 },
                 "completion": completion_token(self.completion),
@@ -554,10 +600,13 @@ struct ActiveBreathGuidance {
     generation: u64,
     timeline: Arc<BreathGuidanceTimeline>,
     bias_percent: u8,
+    bias_revision: u64,
+    changed_at: MonotonicNanos,
 }
 
 #[derive(Clone, Debug)]
 enum ParsedOperation {
+    SetBias(u8),
     Start {
         arm: bool,
         condition: ConditionKey,
@@ -708,6 +757,11 @@ struct ProducerGate {
 }
 
 trait RecordingBackend: Send {
+    fn prepare_guided_breath(&mut self, at_ns: u64, generation: u64, operation_id: &str) -> Result<Value, String> {
+        crate::breath_composition_runtime::prepare_guided_arm(at_ns, generation, operation_id)
+            .map_err(|reason| format!("guided-breath-preparation:{reason}"))
+    }
+    fn record_bias_change(&self, change: BiasChange) -> Result<(), String>;
     fn record_control(
         &self,
         generation: u64,
@@ -784,6 +838,9 @@ impl ActualRecordingBackend {
 }
 
 impl RecordingBackend for ActualRecordingBackend {
+    fn record_bias_change(&self, change: BiasChange) -> Result<(), String> {
+        self.writer()?.record_bias_change(change)?.receive()
+    }
     fn record_control(
         &self,
         generation: u64,
@@ -871,8 +928,9 @@ struct SessionWorker {
     producer_retry_drops: Arc<AtomicU64>,
     monotonic_bridge: Arc<Mutex<Option<(MonotonicNanos, Instant)>>>,
     history: VecDeque<OperationHistoryEntry>,
+    bias_history: Vec<OperationHistoryEntry>,
     next_reducer_operation: u64,
-    pending_start: Option<(SessionStartSpec, StartIdentity, Instant)>,
+    pending_start: Option<(SessionStartSpec, StartIdentity, Instant, String)>,
     current_identity: Option<ExperimentIdentity>,
     last_presentation: PresentationState,
     recording_root: PathBuf,
@@ -925,6 +983,7 @@ impl SessionWorker {
             producer_retry_drops,
             monotonic_bridge,
             history: VecDeque::new(),
+            bias_history: Vec::new(),
             next_reducer_operation: 0,
             pending_start: None,
             current_identity: None,
@@ -984,9 +1043,15 @@ impl SessionWorker {
                 return;
             }
         }
+        // A queued Pause/Save must not charge a renderer stall merely because the
+        // worker was busy. Never advance automatic time beyond this request's
+        // timestamp; an older request after an already-published freeze retains
+        // the reducer's explicit MonotonicTimeRegression disposition.
+        self.reconcile_submitted_frame_stall(Some(parsed.at));
         if let Some(previous) = self
             .history
             .iter()
+            .chain(self.bias_history.iter())
             .find(|entry| entry.id == parsed.operation_id)
         {
             if previous.value == parsed.value {
@@ -999,6 +1064,10 @@ impl SessionWorker {
                     None,
                 );
             }
+            return;
+        }
+        if matches!(parsed.operation, ParsedOperation::SetBias(_)) && self.bias_history.len() >= 4096 {
+            self.publish_operation(&parsed.operation_id, "rejected", "bias-operation-history-full", None);
             return;
         }
         self.remember(&parsed);
@@ -1051,6 +1120,10 @@ impl SessionWorker {
                 return;
             }
         }
+        if let ParsedOperation::SetBias(bias) = parsed.operation {
+            self.apply_bias_change(&parsed, bias);
+            return;
+        }
         let resolved_identity = match &parsed.operation {
             ParsedOperation::Start {
                 condition,
@@ -1067,6 +1140,7 @@ impl SessionWorker {
             _ => None,
         };
         let command = match &parsed.operation {
+            ParsedOperation::SetBias(_) => unreachable!("bias handled before reducer"),
             ParsedOperation::Start {
                 arm,
                 condition,
@@ -1075,6 +1149,7 @@ impl SessionWorker {
                 identity,
             } => {
                 let spec = SessionStartSpec {
+                    breath_tracking_configuration: None,
                     started_at: SessionTimestampKey::from_utc(UtcEpochNanos::new(*utc_ns)),
                     condition: condition.clone(),
                     completion_threshold_ns: *completion_threshold_ns,
@@ -1083,7 +1158,7 @@ impl SessionWorker {
                         .clone()
                         .expect("resolved start identity"),
                 };
-                self.pending_start = Some((spec, identity.clone(), parsed.received_at));
+                self.pending_start = Some((spec, identity.clone(), parsed.received_at, parsed.operation_id.clone()));
                 if *arm {
                     SessionCommand::Arm {
                         condition: condition.clone(),
@@ -1183,6 +1258,72 @@ impl SessionWorker {
         }
     }
 
+    fn apply_bias_change(&mut self, parsed: &ParsedCommand, bias_percent: u8) {
+        use crate::experiment_session::ExperimentControlState;
+        let generation = self.controller.generation();
+        let rejection = if parsed.expected_generation != generation {
+            Some("bias-generation-stale")
+        } else if self.controller.phase() != SessionPhase::Active
+            || !matches!(self.controller.control_state(), ExperimentControlState::Armed | ExperimentControlState::Running | ExperimentControlState::Paused) {
+            Some("bias-session-not-ready")
+        } else if self.controller.last_monotonic().is_some_and(|last| parsed.at < last) {
+            Some("bias-clock-regressed")
+        } else { None };
+        if let Some(reason) = rejection {
+            self.publish_operation(&parsed.operation_id, "rejected", reason, None);
+            return;
+        }
+        let prior = self.active_breath_guidance.read().unwrap_or_else(|e| e.into_inner()).clone();
+        let Some(prior) = prior.filter(|g| g.generation == generation) else {
+            self.publish_operation(&parsed.operation_id, "rejected", "bias-guidance-unavailable", None);
+            return;
+        };
+        if parsed.at < prior.changed_at {
+            self.publish_operation(&parsed.operation_id, "rejected", "bias-clock-regressed", None);
+            return;
+        }
+        let Some(revision) = prior.bias_revision.checked_add(1) else {
+            self.publish_operation(&parsed.operation_id, "rejected", "bias-revision-exhausted", None);
+            return;
+        };
+        let origin = parsed.operator_fence.as_ref().expect("set-bias requires operator fence").origin;
+        let change = BiasChange {
+            observed_at: parsed.at, generation, operation_id: parsed.operation_id.clone(),
+            operator_origin: origin.to_owned(), old_bias_percent: prior.bias_percent,
+            new_bias_percent: bias_percent, bias_revision: revision,
+        };
+        // The writer retains ownership through fsync/checkpoint completion. An uncertain
+        // outcome terminates this recording; neither application nor automatic retry is safe.
+        if let Err(error) = self.backend.record_bias_change(change) {
+            self.completion_persistence_failure = Some(error.clone());
+            if let Ok(stopping) = self.apply_internal(parsed.at, SessionCommand::RestartToExperimenter) {
+                self.refresh_controller_projection();
+                let _ = self.process_effects(stopping.effects, parsed.at);
+            }
+            self.projection_write(|p| {
+                p.operator_origin = origin;
+                p.operator_operation_id = Some(parsed.operation_id.clone());
+                p.operator_operation_status = "failed";
+            });
+            self.publish_operation(&parsed.operation_id, "failed", format!("recording-bias-persistence:{error}"), None);
+            return;
+        }
+        *self.active_breath_guidance.write().unwrap_or_else(|e| e.into_inner()) =
+            Some(ActiveBreathGuidance { bias_percent, bias_revision: revision, changed_at: parsed.at, ..prior });
+        self.projection_write(|p| {
+            p.operator_origin = origin;
+            p.operator_operation_id = Some(parsed.operation_id.clone());
+            p.operator_operation_status = "applied";
+            p.breath_guidance_last_operation_id = Some(parsed.operation_id.clone());
+            p.breath_guidance_bias_percent = bias_percent;
+            p.breath_guidance_bias_revision = revision;
+            p.revision = p.revision.saturating_add(1);
+            p.last_operation_id = Some(parsed.operation_id.clone());
+            p.last_operation_status = "accepted";
+            p.last_reason = "none".to_owned();
+        });
+    }
+
     fn resolve_start_identity(
         &self,
         condition: &ConditionKey,
@@ -1261,7 +1402,7 @@ impl SessionWorker {
         for effect in effects {
             match effect {
                 SessionEffect::PrepareRecording { generation, .. } => {
-                    let (spec, identity, received_at) = self
+                    let (mut spec, identity, received_at, operation_id) = self
                         .pending_start
                         .take()
                         .ok_or_else(|| "session-start-contract-missing".to_owned())?;
@@ -1271,16 +1412,20 @@ impl SessionWorker {
                             .recover(&self.recording_root)
                             .and_then(|recovery| {
                                 self.set_recovery(&recovery);
+                                if spec.experiment_identity.breath_guidance.is_some() {
+                                    let boundary_at = at.get().saturating_add(received_at.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64);
+                                    spec.breath_tracking_configuration = Some(self.backend.prepare_guided_breath(boundary_at, generation, &operation_id)?);
+                                } else if crate::breath_composition_runtime::effective_request().is_some() {
+                                    // Preserve optional non-guided composition startup, but
+                                    // propagate a selected owner's failure before recording.
+                                    crate::breath_composition_runtime::ensure_running_for_experiment_arm()
+                                        .map_err(|reason| format!("breath-preparation:{reason}"))?;
+                                }
                                 self.backend.prepare(generation, spec.clone())
                             });
                     match preparation {
                         Ok(()) => {
                             let _ = identity;
-                            // Arming owns the pre-roll lifecycle: the participant must be able
-                            // to verify breathing before the official controller start. This is
-                            // opt-in and inert for builds without an effective breath selection.
-                            let _ = crate::breath_composition_runtime::
-                                ensure_running_for_experiment_arm();
                             self.current_identity = Some(spec.experiment_identity.clone());
                             self.current_session_key = Some(spec.started_at.as_str().to_owned());
                             let active_guidance = spec
@@ -1302,6 +1447,8 @@ impl SessionWorker {
                                             "session-breath-guidance-contract-missing".to_owned()
                                         })?;
                                     Ok(ActiveBreathGuidance {
+                                        changed_at: spec.clock_anchor.monotonic,
+                                        bias_revision: 0,
                                         generation,
                                         timeline: Arc::clone(&packaged.timeline),
                                         bias_percent: spec
@@ -1314,6 +1461,12 @@ impl SessionWorker {
                                 .active_breath_guidance
                                 .write()
                                 .unwrap_or_else(|poisoned| poisoned.into_inner()) = active_guidance;
+                            self.projection_write(|projection| {
+                                projection.recording_started_ns = Some(spec.clock_anchor.monotonic.get());
+                                projection.official_started_ns = None;
+                                projection.recording_ended_ns = None;
+                                projection.breath_guidance_last_operation_id = None;
+                            });
                             *self
                                 .effective_radius_profile
                                 .write()
@@ -1398,6 +1551,9 @@ impl SessionWorker {
                         return Err(format!("recording-control-persistence:{error}"));
                     }
                     self.projection_write(|projection| {
+                        if kind == SessionEventKind::OfficialStart {
+                            projection.official_started_ns = Some(at.get());
+                        }
                         projection.control_receipt_generation = self.controller.generation();
                         projection.control_receipt_revision =
                             projection.control_receipt_revision.saturating_add(1);
@@ -1456,6 +1612,7 @@ impl SessionWorker {
                     threshold_reached,
                 } => {
                     self.projection_write(|projection| {
+                        projection.recording_ended_ns = Some(at.get());
                         projection.finalization_timings = Default::default();
                     });
                     // The recording actor writes the typed restart/exit event as
@@ -1675,6 +1832,7 @@ impl SessionWorker {
     }
 
     fn process_immersive_owner_destroyed(&mut self) -> Result<(), String> {
+        self.reconcile_submitted_frame_stall(None);
         let at = match (
             current_from_bridge(&self.monotonic_bridge),
             self.controller.last_monotonic(),
@@ -1691,10 +1849,10 @@ impl SessionWorker {
         result
     }
 
-    fn process_timed_tick(&mut self) {
-        let Some(now) = current_from_bridge(&self.monotonic_bridge) else {
-            return;
-        };
+    fn reconcile_submitted_frame_stall(&mut self, command_at: Option<MonotonicNanos>) -> bool {
+        let Some(mut now) = current_from_bridge(&self.monotonic_bridge) else { return false; };
+        if let Some(command_at) = command_at { now = now.min(command_at); }
+        if self.controller.last_monotonic().is_some_and(|last| now < last) { return false; }
         if self.controller.presentation() == PresentationState::ImmersiveActive {
             let generation = self.controller.generation();
             let submitted_generation = self.submitted_frame_generation.load(Ordering::Acquire);
@@ -1704,21 +1862,29 @@ impl SessionWorker {
                 || submitted_sequence == 0
                 || now.get().saturating_sub(submitted_at) > SUBMITTED_FRAME_STALL_NS
             {
+                let stopped_at = MonotonicNanos::new(submitted_at.saturating_add(SUBMITTED_FRAME_STALL_NS)
+                    .min(now.get()).max(self.controller.last_monotonic().map_or(0, MonotonicNanos::get)));
                 match self.apply_internal(
-                    now,
+                    stopped_at,
                     SessionCommand::PresentationChanged(PresentationState::Unfocused),
                 ) {
                     Ok(outcome) => {
                         self.refresh_controller_projection();
-                        if let Err(error) = self.process_effects(outcome.effects, now) {
+                        if let Err(error) = self.process_effects(outcome.effects, stopped_at) {
                             self.publish_rejection(None, &error);
                         }
                     }
                     Err(error) => self.publish_rejection(None, &error),
                 }
-                return;
+                return true;
             }
         }
+        false
+    }
+
+    fn process_timed_tick(&mut self) {
+        if self.reconcile_submitted_frame_stall(None) { return; }
+        let Some(now) = current_from_bridge(&self.monotonic_bridge) else { return; };
         let Some(deadline) = self.controller.completion_deadline() else {
             return;
         };
@@ -1749,6 +1915,10 @@ impl SessionWorker {
     }
 
     fn remember(&mut self, parsed: &ParsedCommand) {
+        if matches!(parsed.operation, ParsedOperation::SetBias(_)) {
+            self.bias_history.push(OperationHistoryEntry { id: parsed.operation_id.clone(), value: parsed.value.clone() });
+            return;
+        }
         if self.history.len() == MAX_OPERATION_HISTORY {
             self.history.pop_front();
         }
@@ -1835,7 +2005,7 @@ impl SessionWorker {
             projection.active_interval_started_ns = (self.controller.control_state()
                 == crate::experiment_session::ExperimentControlState::Running
                 && self.controller.presentation() == PresentationState::ImmersiveActive)
-                .then(|| self.controller.last_monotonic().map(MonotonicNanos::get))
+                .then(|| self.controller.active_interval_started().map(MonotonicNanos::get))
                 .flatten();
             projection.completion = self.controller.completion();
             projection.recording_result = self.controller.recording_result();
@@ -1848,10 +2018,13 @@ impl SessionWorker {
                 .current_identity
                 .as_ref()
                 .is_some_and(|identity| identity.breath_guidance.is_some());
-            projection.breath_guidance_bias_percent = self
+            projection.breath_guidance_arm_bias_percent = self
                 .current_identity
                 .as_ref()
                 .map_or(0, |identity| identity.breath_guidance_bias_percent);
+            let guidance = self.active_breath_guidance.read().unwrap_or_else(|e| e.into_inner());
+            projection.breath_guidance_bias_percent = guidance.as_ref().map_or(0, |g| g.bias_percent);
+            projection.breath_guidance_bias_revision = guidance.as_ref().map_or(0, |g| g.bias_revision);
             projection.producer_retry_drops =
                 producer_loss_count(&self.producer_retry_drops, self.controller.generation());
         });
@@ -2190,7 +2363,20 @@ impl ExperimentSessionRuntime {
     }
 
     pub(crate) fn status_json(&self) -> String {
-        self.cached(|cache| &cache.accepted)
+        if self.readback_cache.try_read().is_err() {
+            return self.cached(|cache| &cache.accepted);
+        }
+        match self.projection.try_read() {
+            Ok(projection) => {
+                let now = self.current_elapsed_realtime_ns();
+                let active_now = projection.observed_now(now,
+                    self.submitted_frame_generation.load(Ordering::Acquire),
+                    self.submitted_frame_sequence.load(Ordering::Acquire),
+                    self.submitted_frame_elapsed_ns.load(Ordering::Acquire));
+                projection.response_json_clocks("accepted", "none", now, active_now)
+            },
+            Err(_) => self.cached(|cache| &cache.accepted),
+        }
     }
 
     fn cached(&self, select: impl FnOnce(&ReadbackCache) -> &String) -> String {
@@ -2431,6 +2617,12 @@ impl ExperimentSessionRuntime {
         {
             return None;
         }
+        if projection.observed_now(Some(now_ns),
+            self.submitted_frame_generation.load(Ordering::Acquire),
+            self.submitted_frame_sequence.load(Ordering::Acquire),
+            self.submitted_frame_elapsed_ns.load(Ordering::Acquire)) != Some(now_ns) {
+            return None;
+        }
         let generation = projection.generation;
         let mut active_time_ns = projection.active_time_ns;
         if let Some(started_ns) = projection.active_interval_started_ns {
@@ -2442,7 +2634,8 @@ impl ExperimentSessionRuntime {
         if guidance.generation != generation {
             return None;
         }
-        let target = guidance.timeline.intended_target_at(active_time_ns / 1_000_000, guidance.bias_percent)?;
+        let mut target = guidance.timeline.intended_target_at(active_time_ns / 1_000_000, guidance.bias_percent)?;
+        target.bias_revision = guidance.bias_revision;
         let (index, start, end) = guidance.timeline.phase_segment_at(target.official_active_time_ms)?;
         Some((generation, index, start, end, target))
     }
@@ -2522,6 +2715,7 @@ fn run_worker(
                 local_terminal_fence,
             }) => {
                 worker.process_raw(raw, received_at, local_terminal_fence);
+                worker.reconcile_submitted_frame_stall(None);
                 if let Some(generation) = terminal_claim {
                     let mut gate = worker
                         .producer_gate
@@ -2564,9 +2758,17 @@ fn run_worker(
         // Terminal work is always checked first. One read acknowledgement per
         // iteration cannot consume the mutation lane or alter its product receipt.
         if let Ok(observation) = observation_receiver.try_recv() {
-            let response = match worker.readback_cache.try_read() {
-                Ok(cache) => cache.accepted.clone(),
-                Err(_) => "{\"schema\":\"rusty.quest.experiment_session.response.v1\",\"command_status\":\"rejected\",\"reason_code\":\"readback-busy\",\"readback\":{}}".to_owned(),
+            let cache_available = worker.readback_cache.try_read().is_ok();
+            let response = match worker.projection.try_read() {
+                Ok(projection) if cache_available => {
+                    let now = current_from_bridge(&worker.monotonic_bridge).map(MonotonicNanos::get);
+                    let active_now = projection.observed_now(now,
+                        worker.submitted_frame_generation.load(Ordering::Acquire),
+                        worker.submitted_frame_sequence.load(Ordering::Acquire),
+                        worker.submitted_frame_elapsed_ns.load(Ordering::Acquire));
+                    projection.response_json_clocks("accepted", "none", now, active_now)
+                },
+                _ => "{\"schema\":\"rusty.quest.experiment_session.response.v1\",\"command_status\":\"rejected\",\"reason_code\":\"readback-busy\",\"readback\":{}}".to_owned(),
             };
             let _ = observation.acknowledgement.try_send(response);
         }
@@ -2582,6 +2784,9 @@ fn run_worker(
                 raw, received_at, local_terminal_fence, ..
             }) => {
                 worker.process_raw(raw, received_at, local_terminal_fence);
+                // Also runs after a blocking writer operation and with a busy
+                // command lane; freshness cannot depend on recv_timeout firing.
+                worker.reconcile_submitted_frame_stall(None);
                 if worker.stop_after_ack {
                     break;
                 }
@@ -3294,6 +3499,9 @@ pub(crate) fn record_polar_heart_rate(
 }
 
 pub(crate) fn record_breath_assessment(
+    assessment_source: &'static str,
+    tracking_status: &'static str,
+    polar_source_provenance: Option<crate::polar_composition_adapters::PolarPresentationProvenance>,
     source_sequence: u64,
     sampled_at_micros: u64,
     sampled_at_clock: SourceClock,
@@ -3303,6 +3511,7 @@ pub(crate) fn record_breath_assessment(
     unbiased_phase: BreathPhase,
     guidance_phase: Option<BreathPhase>,
     guidance_bias_percent: u8,
+    guidance_bias_revision: u64,
     guidance_active_time_ms: Option<u64>,
     volume01: Option<f32>,
     quality01: f32,
@@ -3312,6 +3521,10 @@ pub(crate) fn record_breath_assessment(
         return OfferOutcome::NotAccepting;
     };
     try_offer_record(SessionRecord::Breath(BreathObservation {
+        assessment_source: Some(assessment_source),
+        tracking_status: Some(tracking_status),
+        polar_source_provenance,
+        guidance_bias_revision,
         source_sequence,
         sampled_at: SourceTimestamp {
             clock: sampled_at_clock,
@@ -3421,10 +3634,12 @@ fn parse_mutating_command(
         .and_then(Value::as_str)
         .ok_or_else(|| failure("operation-invalid"))?;
     let operator_fence = if operation_name.starts_with("operator-") {
-        require_common_fields(object, &[
+        let mut operator_fields = vec![
             "operator_origin", "expected_runtime_epoch", "expected_session_key",
             "expected_condition", "expected_profile_sha256", "expected_binding_sha256",
-        ]).map_err(|reason| failure(reason))?;
+        ];
+        if operation_name == "operator-set-bias" { operator_fields.push("bias_percent"); }
+        require_common_fields(object, &operator_fields).map_err(|reason| failure(reason))?;
         let origin = match object.get("operator_origin").and_then(Value::as_str) {
             Some("shell-experiment-operator-v1") => "shell-experiment-operator-v1",
             Some("ble-session-v2") => "ble-session-v2",
@@ -3446,6 +3661,9 @@ fn parse_mutating_command(
         Some(OperatorFence { origin, runtime_epoch, session_key, condition_id, profile_sha256, binding_sha256 })
     } else { None };
     let operation = match operation_name {
+        "operator-set-bias" => ParsedOperation::SetBias(object.get("bias_percent")
+            .and_then(Value::as_u64).filter(|bias| *bias <= 100)
+            .ok_or_else(|| failure("bias-percent-invalid"))? as u8),
         "operator-official-start" => ParsedOperation::OfficialStart,
         "operator-pause" => ParsedOperation::Pause,
         "operator-resume" => ParsedOperation::Resume,
@@ -3858,6 +4076,8 @@ mod tests {
     };
 
     static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    include!("experiment_session_live_bias_tests.rs");
 
     fn temp_root(label: &str) -> PathBuf {
         std::env::temp_dir()
@@ -4508,6 +4728,10 @@ mod tests {
     }
 
     struct DamageBackend {
+        guided_composition: Option<crate::breath_composition_runtime::BreathCompositionRuntime>,
+        bias_delay: Duration,
+        bias_entered: Option<Arc<AtomicBool>>,
+        bias_release: Option<Arc<AtomicBool>>,
         fail_control_once: AtomicBool,
         inner: ActualRecordingBackend,
         recover_delay: Duration,
@@ -4525,6 +4749,10 @@ mod tests {
             loss: Arc<OnceLock<ExternalLossRecorder>>,
         ) -> Self {
             Self {
+                guided_composition: None,
+                bias_delay: Duration::ZERO,
+                bias_entered: None,
+                bias_release: None,
                 fail_control_once: AtomicBool::new(false),
                 inner: ActualRecordingBackend::new(slot, loss),
                 recover_delay: Duration::ZERO,
@@ -4539,6 +4767,23 @@ mod tests {
     }
 
     impl RecordingBackend for DamageBackend {
+        fn prepare_guided_breath(&mut self, at_ns: u64, generation: u64, operation_id: &str) -> Result<Value, String> {
+            match self.guided_composition.as_mut() {
+                Some(runtime) => runtime.prepare_guided_arm(at_ns, generation, operation_id),
+                None => crate::breath_composition_runtime::prepare_guided_arm(at_ns, generation, operation_id),
+            }.map_err(|reason| format!("guided-breath-preparation:{reason}"))
+        }
+        fn record_bias_change(&self, change: BiasChange) -> Result<(), String> {
+            if let Some(entered) = &self.bias_entered { entered.store(true, Ordering::Release); }
+            if let Some(release) = &self.bias_release {
+                while !release.load(Ordering::Acquire) { thread::sleep(Duration::from_millis(1)); }
+            }
+            thread::sleep(self.bias_delay);
+            if self.fail_control_once.swap(false, Ordering::AcqRel) {
+                return Err("injected-bias-checkpoint-failure".to_owned());
+            }
+            self.inner.record_bias_change(change)
+        }
         fn record_control(
             &self,
             generation: u64,
@@ -4728,11 +4973,17 @@ mod tests {
         wait_for(&runtime, "\"vr_preparation\":true");
         runtime.apply_command_json(&start_command(&root, "remote-recording"));
         wait_for(&runtime, "\"phase\":\"active\"");
-        let mut presented: Value = serde_json::from_str(&command("presentation", "remote-frame", 1, 1_100)).unwrap();
+        // Preparation's old presentation is not a submitted frame for the new
+        // recording. Use the owner's actual clock for subsequent requests so
+        // an automatic freshness reduction cannot make fixture timestamps stale.
+        assert!(runtime.note_submitted_frame(1, 1));
+        let mut presented: Value = serde_json::from_str(&command("presentation", "remote-frame", 1,
+            runtime.current_elapsed_realtime_ns().unwrap())).unwrap();
         presented["presentation"] = json!("immersive-active");
         runtime.apply_command_json(&presented.to_string());
         wait_for(&runtime, "\"presentation\":\"immersive-active\"");
-        runtime.apply_command_json(&command("restart-to-experimenter", "remote-save-next", 1, 2_000));
+        let saved_at = runtime.current_elapsed_realtime_ns().unwrap();
+        runtime.apply_command_json(&command("restart-to-experimenter", "remote-save-next", 1, saved_at));
         let saved: Value = serde_json::from_str(&wait_for(&runtime, "\"finalized_operation_id\":\"remote-save-next\"")).unwrap();
         assert_eq!(saved["readback"]["phase"], "idle");
         assert_eq!(saved["readback"]["route_action"], "none");
@@ -4742,7 +4993,7 @@ mod tests {
         assert_eq!(saved["readback"]["finalized_session_generation"], 1);
         assert!(!runtime.producer_gate.read().unwrap().accepting);
         assert!(matches!(runtime.try_offer(SessionRecord::Event(SessionEvent {
-            observed_at: MonotonicNanos::new(2_001), kind: SessionEventKind::ImmersiveActive,
+            observed_at: MonotonicNanos::new(saved_at + 1), kind: SessionEventKind::ImmersiveActive,
         })), OfferOutcome::NotAccepting));
         // The durable identity is published inside terminal effects. Wait for
         // the original operation's final acknowledgement before inspecting
@@ -4971,6 +5222,10 @@ mod tests {
         assert_eq!(runtime.active_generation.load(Ordering::Acquire), 1);
         assert!(matches!(
             runtime.try_offer(SessionRecord::Breath(BreathObservation {
+                assessment_source: None,
+                tracking_status: None,
+                polar_source_provenance: None,
+                guidance_bias_revision: 0,
                 source_sequence: 1,
                 sampled_at: SourceTimestamp {
                     clock: SourceClock::OpenXrTime,
@@ -5638,6 +5893,10 @@ mod tests {
         assert!(!runtime.producer_gate.read().unwrap().accepting);
         assert!(matches!(
             runtime.try_offer(SessionRecord::Breath(BreathObservation {
+                assessment_source: None,
+                tracking_status: None,
+                polar_source_provenance: None,
+                guidance_bias_revision: 0,
                 source_sequence: 1,
                 sampled_at: SourceTimestamp {
                     clock: SourceClock::OpenXrTime,

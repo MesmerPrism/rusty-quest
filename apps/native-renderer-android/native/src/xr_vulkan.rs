@@ -2906,6 +2906,7 @@ unsafe fn run_projection_frames(
         };
         if let Some(actions) = stimulus_actions.as_deref_mut() {
             let mut controller_events = actions.sync_and_poll(
+                app,
                 xr_instance,
                 session,
                 reference_space,

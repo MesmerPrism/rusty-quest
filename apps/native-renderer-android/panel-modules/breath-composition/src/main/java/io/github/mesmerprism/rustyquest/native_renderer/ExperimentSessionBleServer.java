@@ -615,6 +615,7 @@ final class ExperimentSessionBleServer {
                         } else if(sessionVersion) {
                             Set<String> fields=new HashSet<>(Arrays.asList("v","id","op","s","g","n"));
                             if(body.has("mac"))fields.add("mac");
+                            if("set-bias".equals(body.optString("op")))fields.add("b");
                             if(body.length()!=fields.size())throw new IllegalArgumentException("closed-session-command-required");
                             for(String field:fields)if(!body.has(field))throw new IllegalArgumentException("missing-session-command-field");
                             id=ExperimentSessionControlCapability.string(body,"id");
@@ -623,7 +624,7 @@ final class ExperimentSessionBleServer {
                             nonce=ExperimentSessionControlCapability.string(body,"n");
                             sessionGeneration=ExperimentSessionControlCapability.positive(body,"g");
                             if(body.has("mac"))ExperimentSessionControlCapability.string(body,"mac");
-                            condition="";bias=0;
+                            condition="";bias=ExperimentSessionBleProtocol.sessionBias(body);
                             if(!ExperimentSessionBleProtocol.validSessionFields(id,operation,session,sessionGeneration,nonce))
                                 throw new IllegalArgumentException("invalid-session-command");
                         } else if (body.optInt("v", 0) != 1
@@ -640,7 +641,7 @@ final class ExperimentSessionBleServer {
                             }
                             boolean authenticated=setupVersion ? ExperimentSessionBleProtocol.verifySetup(code,peer.challenge,body) : polarVersion ? ExperimentSessionBleProtocol.verifyPolar(
                                 code,peer.challenge,id,operation,session,sessionGeneration,nonce,body.optString("mac","")) : sessionVersion ? ExperimentSessionBleProtocol.verifySession(
-                                code,peer.challenge,id,operation,session,sessionGeneration,nonce,body.optString("mac",""))
+                                code,peer.challenge,id,operation,session,sessionGeneration,nonce,body.optString("mac",""),bias)
                                 : ExperimentSessionBleProtocol.verify(
                                     code, peer.challenge, id, operation, condition, bias, nonce,
                                     body.optString("mac", ""));

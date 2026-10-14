@@ -340,6 +340,10 @@ impl LossSnapshot {
 }
 
 enum ControlCommand {
+    RecordBiasChange {
+        change: crate::session_recording_contract::BiasChange,
+        reply: mpsc::Sender<Result<(), String>>,
+    },
     RecordControl {
         generation: u64,
         at: MonotonicNanos,
@@ -491,6 +495,16 @@ impl SessionRecordingWriter {
                 kind,
                 reply,
             })
+            .map_err(|_| "recording-writer-closed".to_owned())?;
+        Ok(ControlReceipt { receiver })
+    }
+
+    pub(crate) fn record_bias_change(
+        &self,
+        change: crate::session_recording_contract::BiasChange,
+    ) -> Result<ControlReceipt<()>, String> {
+        let (reply, receiver) = mpsc::channel();
+        self.control_sender.send(ControlCommand::RecordBiasChange { change, reply })
             .map_err(|_| "recording-writer-closed".to_owned())?;
         Ok(ControlReceipt { receiver })
     }
@@ -739,6 +753,37 @@ fn handle_control(
                     receipt
                 })
             };
+            let _ = reply.send(result);
+        }
+        ControlCommand::RecordBiasChange { change, reply } => {
+            let generation = change.generation;
+            let result = active.as_mut().ok_or_else(|| "recording-not-active".to_owned())
+                .and_then(|recording| {
+                    if recording.generation != generation {
+                        return Err("recording-generation-stale".to_owned());
+                    }
+                    if let Some(error) = recording.last_error.as_ref() {
+                        return Err(format!("recording-writer-fault:{error}"));
+                    }
+                    let previous_bias = recording.last_bias_change.as_ref();
+                    let previous_percent = previous_bias.map_or(recording.spec.experiment_identity.breath_guidance_bias_percent, |c| c.new_bias_percent);
+                    let previous_revision = previous_bias.map_or(0, |c| c.bias_revision);
+                    if recording.spec.experiment_identity.breath_guidance.is_none()
+                        || change.old_bias_percent != previous_percent
+                        || change.bias_revision != previous_revision + 1
+                        || previous_bias.is_some_and(|c| change.observed_at < c.observed_at) {
+                        return Err("recording-bias-chain-invalid".to_owned());
+                    }
+                    recording.write_record(recording.written_sequence, &SessionRecord::BiasChange(change.clone()))?;
+                    recording.last_bias_change = Some(change);
+                    recording.checkpoint(recording.completion_durable,
+                        loss_snapshot(admission, external_loss, generation)).map(|_| ())
+                });
+            if let Err(error) = &result {
+                if let Some(recording) = active.as_mut().filter(|recording| recording.generation == generation) {
+                    recording.last_error = Some(error.clone());
+                }
+            }
             let _ = reply.send(result);
         }
         ControlCommand::RecordControl {
@@ -995,6 +1040,7 @@ fn release_queued_bytes(queued_bytes: &AtomicUsize, payload_bytes: usize) {
 }
 
 struct ActiveRecording {
+    last_bias_change: Option<crate::session_recording_contract::BiasChange>,
     generation: u64,
     spec: SessionStartSpec,
     directory: PathBuf,
@@ -1035,6 +1081,7 @@ impl ActiveRecording {
                     "started_at_utc": spec.started_at.as_str(),
                     "condition": spec.condition.as_str(),
                     "experiment_identity": spec.experiment_identity.encoded_value(),
+                    "breath_tracking_configuration": spec.breath_tracking_configuration,
                     "completion_threshold_ns": spec.completion_threshold_ns,
                     "clock_anchor": {
                         "monotonic_clock": "android-elapsed-realtime",
@@ -1042,7 +1089,7 @@ impl ActiveRecording {
                         "utc_epoch_ns": spec.clock_anchor.utc.get()
                     },
                     "session_identifier_policy": "utc-start-date-time-only",
-                    "runtime_generation_persisted": false
+                    "runtime_generation_persisted": true
                 }),
             )?;
             let mut streams = BTreeMap::new();
@@ -1055,6 +1102,7 @@ impl ActiveRecording {
                 streams.insert(name, BufWriter::with_capacity(256 * 1024, file));
             }
             let mut recording = Self {
+                last_bias_change: None,
                 generation,
                 spec,
                 directory: directory.clone(),
@@ -1215,6 +1263,8 @@ impl ActiveRecording {
                 "started_at_utc": self.spec.started_at.as_str(),
                 "condition": self.spec.condition.as_str(),
                 "experiment_identity": self.spec.experiment_identity.encoded_value(),
+                "breath_tracking_configuration": self.spec.breath_tracking_configuration,
+                "breath_guidance_state": self.committed_bias_state(),
                 "completed": completed,
                 "last_accepted_sequence": self.written_sequence,
                 "last_consumed_sequence": self.consumed_sequence,
@@ -1255,6 +1305,8 @@ impl ActiveRecording {
                 "started_at_utc": self.spec.started_at.as_str(),
                 "condition": self.spec.condition.as_str(),
                 "experiment_identity": self.spec.experiment_identity.encoded_value(),
+                "breath_tracking_configuration": self.spec.breath_tracking_configuration,
+                "breath_guidance_state": self.committed_bias_state(),
                 "completed": self.completion_durable,
                 "completion_threshold_ns": self.spec.completion_threshold_ns,
                 "stop_reason": reason.as_str(),
@@ -1288,6 +1340,14 @@ impl ActiveRecording {
             lengths.insert((*name).to_owned(), length);
         }
         Ok(lengths)
+    }
+
+    fn committed_bias_state(&self) -> Value {
+        json!({
+            "bias_percent": self.last_bias_change.as_ref().map_or(self.spec.experiment_identity.breath_guidance_bias_percent, |c| c.new_bias_percent),
+            "bias_revision": self.last_bias_change.as_ref().map_or(0, |c| c.bias_revision),
+            "decision_status": "committed-before-application"
+        })
     }
 }
 
@@ -1517,6 +1577,7 @@ pub(crate) mod tests {
     pub(crate) fn spec(utc: u64) -> SessionStartSpec {
         let utc = UtcEpochNanos::new(utc);
         SessionStartSpec {
+            breath_tracking_configuration: None,
             started_at: SessionTimestampKey::from_utc(utc),
             condition: ConditionKey::parse("condition-a").unwrap(),
             completion_threshold_ns: DEFAULT_COMPLETION_THRESHOLD_NS,
@@ -1571,6 +1632,10 @@ pub(crate) mod tests {
 
     fn breath(at: u64) -> SessionRecord {
         SessionRecord::Breath(BreathObservation {
+            assessment_source: None,
+            tracking_status: None,
+            polar_source_provenance: None,
+            guidance_bias_revision: 0,
             source_sequence: at,
             sampled_at: SourceTimestamp {
                 clock: SourceClock::OpenXrTime,
@@ -1590,6 +1655,42 @@ pub(crate) mod tests {
             quality01: 1.0,
             settings_revision: 3,
         })
+    }
+
+    #[test]
+    fn bias_checkpoint_failure_remains_sticky_after_storage_repair() {
+        let root = temp_root("bias-checkpoint-failure");
+        let writer = SessionRecordingWriter::spawn(config(root.clone(), 16, 1000)).unwrap();
+        let mut start = spec(1_725_000_000_000_000_000);
+        start.experiment_identity.breath_guidance = Some(crate::breath_guidance::BreathGuidanceAssetIdentity {
+            logical_destination: "breath-guidance/condition-a.json".to_owned(),
+            source_sha256: "55".repeat(32), source_bytes: 123, media_type: "application/json".to_owned(),
+        });
+        let prepared = writer.prepare(1, start).unwrap().receive().unwrap();
+        let original_length = fs::metadata(prepared.directory.join("events.jsonl")).unwrap().len();
+        fs::create_dir(prepared.directory.join("checkpoint-00000000000000000002.json")).unwrap();
+        let result = writer.record_bias_change(crate::session_recording_contract::BiasChange {
+            observed_at: MonotonicNanos::new(2000), generation:1, operation_id:"bias-disk-failure".to_owned(),
+            operator_origin:"ui-session-v2".to_owned(), old_bias_percent:0,new_bias_percent:60,bias_revision:1,
+        }).unwrap().receive();
+        assert!(result.is_err());
+        let failed_event_bytes = fs::read(prepared.directory.join("events.jsonl")).unwrap();
+        fs::remove_dir(prepared.directory.join("checkpoint-00000000000000000002.json")).unwrap();
+        // Storage is writable again, but this actor has already lost durability.
+        // Without the sticky-fault admission check this valid next revision succeeds.
+        let second = writer.record_bias_change(crate::session_recording_contract::BiasChange {
+            observed_at: MonotonicNanos::new(2500), generation:1, operation_id:"bias-after-fault".to_owned(),
+            operator_origin:"ui-session-v2".to_owned(), old_bias_percent:60,new_bias_percent:80,bias_revision:2,
+        }).unwrap().receive();
+        assert!(second.unwrap_err().starts_with("recording-writer-fault:"));
+        assert_eq!(fs::read(prepared.directory.join("events.jsonl")).unwrap(), failed_event_bytes);
+        assert!(writer.try_finalize(1, MonotonicNanos::new(3000), FinalizationReason::SaveAndExit, false)
+            .unwrap().receive().is_err());
+        writer.shutdown(Duration::from_secs(2)).unwrap();
+        let recovery = crate::session_recording_recovery::recover_recordings(&root).unwrap();
+        assert_eq!(recovery.sessions[0].durable_stream_lengths["events.jsonl"], original_length);
+        assert!(fs::metadata(prepared.directory.join("events.jsonl")).unwrap().len() > original_length);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2208,6 +2309,10 @@ pub(crate) mod tests {
                 rr_interval_ms: Some(f32::INFINITY),
             }),
             SessionRecord::Breath(BreathObservation {
+                assessment_source: None,
+                tracking_status: None,
+                polar_source_provenance: None,
+                guidance_bias_revision: 0,
                 source_sequence: 3,
                 sampled_at: SourceTimestamp {
                     clock: SourceClock::OpenXrTime,
@@ -2228,6 +2333,10 @@ pub(crate) mod tests {
                 settings_revision: 1,
             }),
             SessionRecord::Breath(BreathObservation {
+                assessment_source: None,
+                tracking_status: None,
+                polar_source_provenance: None,
+                guidance_bias_revision: 0,
                 source_sequence: 4,
                 sampled_at: SourceTimestamp {
                     clock: SourceClock::OpenXrTime,

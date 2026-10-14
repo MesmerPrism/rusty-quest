@@ -16,7 +16,8 @@ class GatewayBleJournalTest {
   final ExperimentSessionBleServer[] slot=new ExperimentSessionBleServer[1];
   ExperimentSessionBleServer owner=ExperimentSessionBleServer.process(context,new ExperimentSessionBleServer.Delegate(){
    public boolean openControlDefault(){return true;}
-   public JSONObject snapshot(){return new JSONObject();}
+   public JSONObject snapshot()throws Exception{return new JSONObject().put("g",7).put("p","RUNNING").put("pending",false).put("b",new org.json.JSONArray().put("pattern-ready").put("no-pattern"));}
+   public JSONObject sessionControlReadback()throws Exception{return new JSONObject().put("phase","active").put("profile_identity_bound",true).put("audio_identity_bound",true).put("generation",7).put("runtime_epoch",7).put("session_key","utc-ns-00000000000000000042").put("condition_id","condition-a").put("non_audio_profile_sha256",String.join("",java.util.Collections.nCopies(64,"a"))).put("activation_binding_sha256",String.join("",java.util.Collections.nCopies(64,"b"))).put("control_state","running").put("breath_guidance",new JSONObject().put("identity_bound",true).put("bias_percent",20));}
    public void dispatch(ExperimentSessionBleServer.CommandRequest request){effects++;slot[0].updateReceipt(request.id,"pending","original app callback");}
   });slot[0]=owner;owner.nativeOwnerStarted(1,7);
   final ExperimentSessionCommandJournal journal=new ExperimentSessionCommandJournal();
@@ -41,6 +42,13 @@ class GatewayBleJournalTest {
   server.callback.onCharacteristicReadRequest(peer,4,0,receipt);JSONObject observed=new JSONObject(new String(server.lastBytes,"UTF-8"));
   check(observed.getString("id").equals(network.getString("id"))&&observed.getString("state").equals("pending"),"BLE reads original network receipt exact ID");
   network.put("nonce","4444444444444444").put("condition","condition-b");server.callback.onCharacteristicWriteRequest(peer,5,command,false,true,0,network.toString().getBytes("UTF-8"));Handler.drain();check(effects==1,"cross-route ID conflict cannot effect");
+  BluetoothGattCharacteristic status=new BluetoothGattCharacteristic(java.util.UUID.fromString(ExperimentSessionBleProtocol.STATUS),2,1);
+  server.callback.onCharacteristicReadRequest(peer,6,0,status);JSONObject published=new JSONObject(new String(server.lastBytes,"UTF-8"));
+  JSONObject bias=new JSONObject().put("v",2).put("id","cccccccccccccccc").put("op","set-bias").put("s",published.getJSONObject("q").getString("s")).put("g",7).put("b",75).put("n","5555555555555555");
+  server.callback.onCharacteristicWriteRequest(peer,7,command,false,true,0,bias.toString().getBytes("UTF-8"));Handler.drain();check(effects==2,"actual BLE live bias dispatch");
+  bias.put("n","6666666666666666");server.callback.onCharacteristicWriteRequest(peer,8,command,false,true,0,bias.toString().getBytes("UTF-8"));Handler.drain();check(effects==2,"live bias original no redispatch");
+  bias.put("n","7777777777777777").put("b",76);server.callback.onCharacteristicWriteRequest(peer,9,command,false,true,0,bias.toString().getBytes("UTF-8"));Handler.drain();check(effects==2,"changed percent same ID denied");
+  bias.put("id","dddddddddddddddd").put("n","8888888888888888").put("b",75.5);server.callback.onCharacteristicWriteRequest(peer,10,command,false,true,0,bias.toString().getBytes("UTF-8"));Handler.drain();check(effects==2,"fractional percent denied by production parser");
   System.out.println("PASS actual production BLE callback + shared journal: original Arm BLE/network recovery, inverse lost reply, original exact receipt, changed payload denial, once-only app handler");
  }
 }

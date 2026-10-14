@@ -259,10 +259,11 @@ public final class ExperimentSessionCommandGateway {
             if(!ExperimentSessionBleProtocol.validCommandFields(id,op,condition,bias,nonce))throw new IllegalArgumentException("invalid-command");
             request=new ExperimentSessionBleServer.CommandRequest(id,op,condition,bias);
         }else if(v==2) {
-            if(body.length()!=6)throw new IllegalArgumentException("closed-session-command-required");
+            if(body.length()!=("set-bias".equals(op)?7:6))throw new IllegalArgumentException("closed-session-command-required");
+            int bias=ExperimentSessionBleProtocol.sessionBias(body);
             String ref=ExperimentSessionGatewayProtocol.string(body,"s"),nonce=ExperimentSessionGatewayProtocol.string(body,"n");long revision=ExperimentSessionControlCapability.positive(body,"g");
             if(!ExperimentSessionBleProtocol.validSessionFields(id,op,ref,revision,nonce))throw new IllegalArgumentException("invalid-session-command");
-            request=new ExperimentSessionBleServer.CommandRequest(id,op,"",0,session.admit(ref,revision,op,now,generation,identity,epoch));
+            request=new ExperimentSessionBleServer.CommandRequest(id,op,"",bias,session.admit(ref,revision,op,now,generation,identity,epoch));
         }else if(v==3) {
             PolarStopBleCapability.Wire wire=PolarStopBleCapability.parse(body);JSONObject fence=polar.nativeFence();
             request=new ExperimentSessionBleServer.CommandRequest(id,op,"",0,null,polar.admit(wire.reference,wire.revision,op,now,generation,identity,epoch),fence);

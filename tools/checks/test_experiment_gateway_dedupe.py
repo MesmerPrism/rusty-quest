@@ -62,6 +62,13 @@ final class GatewayDedupeHarness {
   mixed.carrier.updateReceipt(id,"confirmed","late native arm callback");check(mixed.ownerExchange("receipt",new JSONObject().put("id",id)).getString("state").equals("confirmed"),"BLE original completion queryable over network");
   String next="9999999999999999";network.put("id",next);mixed.ownerExchange("command",network);ble.put("id",next);
   check(mixed.journal.known(ble)&&!mixed.journal.reserve(ble)&&mixed.journal.original(next).getString("state").equals("pending")&&mixed.dispatches==1,"network original retry on BLE consumes existing receipt once");
+  GatewayDedupeHarness liveBias=new GatewayDedupeHarness();
+  JSONObject bias=new JSONObject().put("v",2).put("id",id).put("op","set-bias").put("s","cccccccccccccccccccccccccccccccc").put("g",7).put("n","1111111111111111").put("b",75);
+  liveBias.ownerExchange("command",bias);bias.put("n","2222222222222222");
+  liveBias.ownerExchange("command",bias);check(liveBias.dispatches==1,"live bias retry cannot replay");
+  JSONObject changedBias=new JSONObject(bias.toString()).put("b",76);
+  try{liveBias.ownerExchange("command",changedBias);throw new AssertionError("changed bias ID reused");}catch(SecurityException expected){}
+  liveBias.carrier.updateReceipt(id,"confirmed","bias saved");check(liveBias.ownerExchange("receipt",new JSONObject().put("id",id)).getString("state").equals("confirmed"),"bias original durable acknowledgement");
   h.carrier.live=false;try{h.ownerExchange("command",command);throw new AssertionError("retired owner receipt accepted");}catch(SecurityException expected){}
   System.out.println("PASS production gateway owner admission: once-only dispatch, canonical ID binding, original pending/late confirmation, exact receipt, no capacity eviction, retired owner denial; inert handler callbacks");
  }

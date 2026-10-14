@@ -17,13 +17,16 @@ final class NativeRendererSoftKioskCoordinator {
     private static final NativeRendererSoftKioskCoordinator PROCESS_INSTANCE =
         new NativeRendererSoftKioskCoordinator();
 
-    enum ServiceState { MISSING_OR_DISABLED, CONNECTED, INTERRUPTED, REVOKED }
+    enum ServiceState { MISSING_OR_DISABLED, START_PENDING, START_FAILED, CONNECTED, INTERRUPTED, REVOKED }
     enum HomeSurfaceState { UNKNOWN, RESOLVING, RESOLVED, UNAVAILABLE }
     enum Effectiveness {
         READY_ARMED,
         READY_DISARMED,
         NEEDS_ACCESSIBILITY_SETUP,
         WATCHDOG_STARTING,
+        WATCHDOG_MISSING,
+        WATCHDOG_FAILED,
+        WATCHDOG_AWAITING_PRESENTATION,
         INTERRUPTED,
         REVOKED,
         DEGRADED_HOME_RESOLVING,
@@ -165,11 +168,28 @@ final class NativeRendererSoftKioskCoordinator {
     private boolean activeRecoveryIsHome;
     private int recoveryAttempts;
     private boolean selfWatchdog;
+    private boolean selfPresentationObserved;
+    private long selfServiceStartAttempt;
     private long selfPromptDeadlineMs = Long.MIN_VALUE;
 
     static NativeRendererSoftKioskCoordinator process() { return PROCESS_INSTANCE; }
 
     synchronized void useSelfWatchdog() { selfWatchdog = true; }
+
+    synchronized long beginSelfServiceStart() {
+        if (!selfWatchdog || !armed || terminal || serviceState == ServiceState.CONNECTED
+                || serviceState == ServiceState.START_PENDING) return 0L;
+        if (selfServiceStartAttempt == Long.MAX_VALUE) throw new IllegalStateException("service start identity exhausted");
+        selfServiceStartAttempt++;
+        updateServiceState(ServiceState.START_PENDING);
+        return selfServiceStartAttempt;
+    }
+
+    synchronized void failSelfServiceStart(long attempt) {
+        if (attempt > 0L && attempt == selfServiceStartAttempt && serviceState == ServiceState.START_PENDING)
+            updateServiceState(ServiceState.START_FAILED);
+    }
+
 
     synchronized boolean selfRecoverySuppressed(long nowMs) {
         return nowMs <= selfPromptDeadlineMs || promptActive(nowMs) || transitionActive(nowMs);
@@ -197,6 +217,7 @@ final class NativeRendererSoftKioskCoordinator {
             // Observation only clears a handoff when the app-selected target arrives.
             // The other own surface remains allowed but never changes recovery intent.
             if (presentation.componentClass.equals(component)) {
+                selfPresentationObserved = true;
                 transitionDeadlineMs = Long.MIN_VALUE;
             }
             deferredForeground = null;
@@ -206,11 +227,16 @@ final class NativeRendererSoftKioskCoordinator {
         return action(ActionKind.NONE, 0L, false, 0);
     }
 
+    synchronized void observeSelfPresentationAbsent(long observedGeneration) {
+        if (selfWatchdog && generation == observedGeneration) selfPresentationObserved = false;
+    }
+
     synchronized Action observeSelfDeparture(long observedGeneration, long departureId, long nowMs) {
         if (!selfWatchdog || serviceState != ServiceState.CONNECTED || !armed || terminal
                 || policy == null || generation != observedGeneration || nowMs < 0L) {
             return action(ActionKind.NOT_EFFECTIVE, 0L, false, 0);
         }
+        selfPresentationObserved = false;
         if (selfRecoverySuppressed(nowMs)) return action(ActionKind.SUPPRESSED_TRANSITION, 0L, false, 0);
         ensureRecoveryEpisode("own-app", "own-presentation-absent", false, 0L);
         return fromPolicyDecision(policy.observeSelfDeparture(generation, departureId, nowMs),
@@ -270,10 +296,12 @@ final class NativeRendererSoftKioskCoordinator {
         generation = launchEpoch;
         explicitLaunchEpoch = launchEpoch;
         presentation = requestedPresentation;
+        selfPresentationObserved = false;
         panelRoute = normalizePanelRoute(requestedPanelRoute);
         transitionDeadlineMs = Long.MIN_VALUE;
         terminalHomeEpisode = 0L;
         armed = true;
+        selfPresentationObserved = false;
         terminal = false;
         selfPromptDeadlineMs = Long.MIN_VALUE;
         promptLease = null;
@@ -291,6 +319,7 @@ final class NativeRendererSoftKioskCoordinator {
                 || !policy.beginTransition(nextGeneration, requestedPresentation)) return false;
         generation = nextGeneration;
         presentation = requestedPresentation;
+        selfPresentationObserved = false;
         panelRoute = normalizePanelRoute(requestedPanelRoute);
         transitionDeadlineMs = saturatingAdd(nowMs, durationMs);
         promptLease = null;
@@ -413,6 +442,7 @@ final class NativeRendererSoftKioskCoordinator {
     synchronized void updateServiceState(ServiceState nextState) {
         if (nextState == null) throw new IllegalArgumentException("service state is required");
         serviceState = nextState;
+        if (nextState != ServiceState.CONNECTED) selfPresentationObserved = false;
         if (nextState != ServiceState.CONNECTED && policy != null) {
             policy.cancelRecovery();
             deferredForeground = null;
@@ -563,12 +593,15 @@ final class NativeRendererSoftKioskCoordinator {
 
     private Effectiveness effectiveness() {
         if (terminal) return Effectiveness.TERMINAL;
+        if (selfWatchdog && !armed) return Effectiveness.READY_DISARMED;
+        if (selfWatchdog && serviceState == ServiceState.START_PENDING) return Effectiveness.WATCHDOG_STARTING;
+        if (selfWatchdog && serviceState == ServiceState.START_FAILED) return Effectiveness.WATCHDOG_FAILED;
         if (serviceState == ServiceState.MISSING_OR_DISABLED) {
-            return selfWatchdog ? Effectiveness.WATCHDOG_STARTING : Effectiveness.NEEDS_ACCESSIBILITY_SETUP;
+            return selfWatchdog ? Effectiveness.WATCHDOG_MISSING : Effectiveness.NEEDS_ACCESSIBILITY_SETUP;
         }
         if (serviceState == ServiceState.INTERRUPTED) return Effectiveness.INTERRUPTED;
         if (serviceState == ServiceState.REVOKED) return Effectiveness.REVOKED;
-        if (selfWatchdog) return armed ? Effectiveness.READY_ARMED : Effectiveness.READY_DISARMED;
+        if (selfWatchdog) return selfPresentationObserved ? Effectiveness.READY_ARMED : Effectiveness.WATCHDOG_AWAITING_PRESENTATION;
         if (homeSurfaceState == HomeSurfaceState.UNAVAILABLE) {
             return Effectiveness.UNAVAILABLE_HOME_SURFACE;
         }

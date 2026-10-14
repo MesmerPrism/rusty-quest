@@ -104,7 +104,35 @@ public final class ExperimentSessionControlCapabilityTest {
   deny(()->sensorCap.admit(old,0,"stop-acc",2101,9,11,2),"old shared sensor record retired");
   System.out.println("PASS production Polar capability/codec: max signed command="+wireBytes+"B; full representative armed/audio/connected status with independent session+Polar grants="+full.length+"B; full safe-integer maximum base="+maximumBaseBytes+"B remains unavailable; strict parser/shared native/sensor/revision/domain negatives");
  }
+ static void liveBias()throws Exception {
+  ExperimentSessionControlCapability cap=new ExperimentSessionControlCapability();
+  JSONObject n=read().put("breath_guidance",new JSONObject().put("identity_bound",true).put("bias_percent",20));
+  JSONObject status=new JSONObject().put("g",7).put("p","ARMED").put("pending",false).put("b",new org.json.JSONArray().put("pattern-ready").put("no-pattern"));
+  for(String state:new String[]{"armed","running","paused"}) {
+   n.put("control_state",state);status.put("p",state.toUpperCase(java.util.Locale.ROOT));
+   JSONObject offer=cap.offer(status,n,9,11,2,1000);
+   require(offer.getJSONArray("o").toString().contains("set-bias"),"live bias offered in "+state);
+   ExperimentSessionControlCapability.Fence fence=cap.admit(offer.getString("s"),7,"set-bias",1100,9,11,2);
+   JSONObject cmd=fence.nativeCommand("bias-test",123).put("bias_percent",75);
+   require(cmd.getString("operation").equals("operator-set-bias")&&cmd.getString("expected_session_key").equals(n.getString("session_key")),"same native owner and session fence");
+   deny(()->cap.admit(offer.getString("s"),7,"set-bias",2501,9,11,2),"stale bias capability");
+  }
+  for(Object invalid:new Object[]{-1,101,1.5,true,"50"})deny(()->ExperimentSessionBleProtocol.sessionBias(new JSONObject().put("op","set-bias").put("b",invalid)),"closed bias integer");
+  deny(()->ExperimentSessionBleProtocol.sessionBias(new JSONObject().put("op","set-bias")),"missing bias");
+  deny(()->ExperimentSessionBleProtocol.sessionBias(new JSONObject().put("op","pause").put("b",50)),"bias is not generic field");
+  String code="ABCDEFGH2345",challenge=repeat("a",32),id=repeat("b",16),ref=repeat("c",32),nonce=repeat("d",16);
+  Mac mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(code.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
+  String sig=ExperimentSessionBleProtocol.hex(mac.doFinal(("RQEC2|"+challenge+"|"+id+"|set-bias|"+ref+"|7|"+nonce+"|75").getBytes(StandardCharsets.UTF_8)),16);
+  require(ExperimentSessionBleProtocol.verifySession(code,challenge,id,"set-bias",ref,7,nonce,sig,75),"bias proof exact");
+  require(!ExperimentSessionBleProtocol.verifySession(code,challenge,id,"set-bias",ref,7,nonce,sig,74),"bias tamper denied");
+  JSONObject base=new JSONObject("{\"v\":1,\"m\":\"open\",\"p\":\"RUNNING\",\"g\":7,\"r\":5,\"c\":\"condition-a\",\"rec\":true,\"co\":\"DURABLE\",\"ms\":125000,\"st\":\"ready\",\"k\":\"ready\",\"pending\":false}");
+  base.put("bg",new org.json.JSONArray().put(75).put(2)).put("q",cap.offer(status,n,9,11,2,1200));
+  JSONObject projected=new JSONObject(new String(new PolarStopBleCapability().projectBoundedStatus(base,null),StandardCharsets.UTF_8));
+  require(projected.has("q")&&projected.has("bg")&&projected.getLong("ms")==125000,"live bias grant/effective readback/clock retained");
+  System.out.println("PASS live bias exact session/state capability, integer shape, HMAC percent tamper and bounded readback");
+ }
  public static void main(String[]args)throws Exception{
+  liveBias();
   polarControls();
   ExperimentSessionControlCapability c=new ExperimentSessionControlCapability();JSONObject r=read();JSONObject status=new JSONObject().put("g",7L).put("p","ARMED").put("pending",false);
   JSONObject q=c.offer(status,r,9,11,2,1000);String ref=q.getString("s");require(q.getLong("g")==7,"actual generation");

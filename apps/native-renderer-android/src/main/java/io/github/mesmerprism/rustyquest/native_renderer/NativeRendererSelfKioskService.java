@@ -134,6 +134,7 @@ public final class NativeRendererSelfKioskService extends Service {
             panelFocused, immersiveFocused);
         boolean present = NativeRendererForegroundGuardPolicy.matchesDesiredOwnedSurface(
             state.presentation, observedOwnComponent);
+        if (!present || protectedState) coordinator.observeSelfPresentationAbsent(state.generation);
         String component = present ? observedOwnComponent : state.presentation.componentClass;
         // Quest can show Meta Navigator while NativeActivity stays resumed. Its own
         // window loses focus, but no lifecycle pause arrives until our return launch.

@@ -1517,8 +1517,15 @@ $polarRuntimeReopenFromExplicitLaunch
             NativeRendererSoftKioskCoordinator.process().snapshot().effectiveness;
         switch (effectiveness) {
             case READY_ARMED:
-            case READY_DISARMED:
                 return "ready";
+            case READY_DISARMED:
+                return "unarmed";
+            case WATCHDOG_MISSING:
+                return "service-missing";
+            case WATCHDOG_FAILED:
+                return "service-failed";
+            case WATCHDOG_AWAITING_PRESENTATION:
+                return "awaiting-presentation";
             case WATCHDOG_STARTING:
                 return "starting";
             case TERMINAL:

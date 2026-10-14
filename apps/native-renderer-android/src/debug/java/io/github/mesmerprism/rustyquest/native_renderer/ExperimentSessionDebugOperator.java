@@ -38,7 +38,7 @@ final class ExperimentSessionDebugOperator {
             return new JSONObject().put("schema","rusty.quest.experiment_session.operator_receipt.v1")
                 .put("operation",operation).put("native_response",receipt).toString();
         }
-        boolean legacy = !read && !"official-start".equals(operation) && !"pause".equals(operation) && !"resume".equals(operation);
+        boolean legacy = !read && !"set-bias".equals(operation) && !"official-start".equals(operation) && !"pause".equals(operation) && !"resume".equals(operation);
         if (legacy) return new JSONObject().put("schema","rusty.quest.experiment_session.operator_receipt.v1")
             .put("native_response",BreathCompositionPanelModule.queueExperimentOperator(request)).toString();
         JSONObject command = new JSONObject()
@@ -55,6 +55,7 @@ final class ExperimentSessionDebugOperator {
                 .put("expected_profile_sha256", request.getString("expected_profile_sha256"))
                 .put("expected_binding_sha256", request.getString("expected_binding_sha256"));
         }
+        if ("set-bias".equals(operation)) command.put("bias_percent",request.getInt("bias_percent"));
         JSONObject nativeResponse = new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));
         JSONObject enrollment=new JSONObject().put("available",false);
         ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
@@ -74,13 +75,14 @@ final class ExperimentSessionDebugOperator {
     static void validateShape(JSONObject request) throws Exception {
         String operation = request.getString("operation");
         boolean read = "status".equals(operation);
-        if (!read && !"enroll-trusted-lan".equals(operation) && !"official-start".equals(operation) && !"pause".equals(operation)
+        if (!read && !"set-bias".equals(operation) && !"enroll-trusted-lan".equals(operation) && !"official-start".equals(operation) && !"pause".equals(operation)
                 && !"resume".equals(operation) && !ExperimentSessionBleProtocol.supportedOperation(operation)) throw new SecurityException("operator-operation-invalid");
         String[] fields = read ? new String[] {"schema", "operation"} : new String[] {
             "schema", "operation", "operation_id", "expected_pid", "expected_uid",
             "expected_process_start_ticks", "expected_apk_sha256", "expected_binding_sha256",
             "expected_runtime_epoch", "expected_generation", "expected_session_key",
             "expected_condition", "expected_profile_sha256", "operator_origin"};
+        if ("set-bias".equals(operation)) { String[] extended=java.util.Arrays.copyOf(fields,fields.length+1);extended[fields.length]="bias_percent";fields=extended; }
         if ("arm".equals(operation)) { String[] extended=java.util.Arrays.copyOf(fields,fields.length+2); extended[fields.length]="requested_condition";extended[fields.length+1]="requested_bias";fields=extended; }
         if ("enroll-trusted-lan".equals(operation)) {
             String[] extended=java.util.Arrays.copyOf(fields,fields.length+4);
@@ -95,13 +97,14 @@ final class ExperimentSessionDebugOperator {
                 if(!Boolean.TRUE.equals(raw))throw new SecurityException("trusted-lan-consent-required");
             } else if (field.equals("expected_native_owner_identity") || field.equals("expected_gateway_lifecycle_revision") || field.equals("expected_pid") || field.equals("expected_uid")
                     || field.equals("expected_process_start_ticks") || field.equals("expected_runtime_epoch")
-                    || field.equals("expected_generation") || field.equals("requested_bias")) {
+                    || field.equals("expected_generation") || field.equals("requested_bias") || field.equals("bias_percent")) {
                 if (!(raw instanceof Integer) && !(raw instanceof Long))
                     throw new SecurityException("operator-integer-field-required");
-                if (((Number) raw).longValue() < 0L || (((Number) raw).longValue()==0L && !field.equals("expected_generation") && !field.equals("requested_bias")))
+                if (((Number) raw).longValue() < 0L || (((Number) raw).longValue()==0L && !field.equals("expected_generation") && !field.equals("requested_bias") && !field.equals("bias_percent")))
                     throw new SecurityException("operator-positive-field-required");
             } else if (!(raw instanceof String)) throw new SecurityException("operator-string-field-required");
         }
+        if ("set-bias".equals(operation) && request.getLong("bias_percent")>100) throw new SecurityException("operator-bias-invalid");
         if ("arm".equals(operation) && (!request.getString("requested_condition").matches("condition-[ab]") || request.getLong("requested_bias")>100)) throw new SecurityException("operator-arm-selection-invalid");
         if (!"rusty.quest.experiment_session.operator_command.v1".equals(request.getString("schema"))) throw new SecurityException("operator-schema-invalid");
     }
