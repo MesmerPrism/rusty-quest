@@ -108,7 +108,7 @@ final class ExperimentSessionUiCommandReceipt {
     ExperimentSessionUiCommandReceipt(ExperimentSessionControlCapability.Fence fence,String id) {
         this.fence=fence; this.id=id;
     }
-    String observe(org.json.JSONObject current) {
+    String observe(org.json.JSONObject current) throws Exception {
         if (current == null
                 || ExperimentSessionControlCapability.positive(current,"generation")!=fence.generation
                 || ExperimentSessionControlCapability.positive(current,"runtime_epoch")!=fence.epoch
