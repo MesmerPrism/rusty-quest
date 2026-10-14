@@ -164,6 +164,8 @@ impl Host {
 
 #[derive(Default)]
 struct ProcessState {
+    initialization_attempt: u64,
+    initialization_failure: Option<InitializationFailure>,
     initializing: bool,
     closing: bool,
     host_leases: usize,
@@ -171,6 +173,179 @@ struct ProcessState {
     host: Option<Host>,
     last_closed_sha256: Option<String>,
     last_peer_close_receipt: Option<String>,
+}
+
+// Observation only: no callback, credential, configuration body, or cleanup authority.
+#[derive(Clone, PartialEq, Eq)]
+struct InitializationFailure {
+    attempt: u64,
+    config_sha256: String,
+    binding: super::process_fence::AppBinding,
+    native_generation: u64,
+    reason: &'static str,
+}
+
+// Match only the typed category; never format or serialize error payloads.
+fn provider_initialization_reason(
+    error: &rusty_quest_broker_authority::QuestBrokerRuntimeError,
+) -> &'static str {
+    use rusty_quest_broker_authority::QuestBrokerRuntimeError as E;
+    match error {
+        E::SchemaMismatch => "provider_schema_rejected",
+        E::LegacyRuntimeConfigRequiresRebuild => "provider_legacy_config_rejected",
+        E::BridgeModeMismatch => "provider_bridge_mode_rejected",
+        E::InvalidProviderEpoch => "provider_epoch_rejected",
+        E::InvalidAuthorityClock => "provider_authority_clock_rejected",
+        E::ControlLeaseBootstrap => "provider_control_lease_bootstrap_rejected",
+        E::RebindConfigMismatch => "provider_rebind_config_rejected",
+        E::PackagedDigestMismatch => "provider_packaged_digest_rejected",
+        E::PackagedConfigDigestMismatch => "provider_config_digest_rejected",
+        E::PackagedProductLockMismatch => "provider_product_lock_rejected",
+        E::ClientLockInvalid => "provider_client_lock_rejected",
+        E::GrantClosureMismatch => "provider_grant_closure_rejected",
+        E::MediaSelectionMismatch => "provider_media_selection_rejected",
+        E::MediaCrossBindingMismatch => "provider_media_cross_binding_rejected",
+        E::MediaProductFeatureMismatch => "provider_media_feature_rejected",
+        E::MediaLifecycleAuthorityMismatch => "provider_media_lifecycle_authority_rejected",
+        E::MediaPeerRuntimeConfig => "provider_media_peer_config_rejected",
+        E::RuntimeLockPoisoned => "provider_runtime_lock_rejected",
+        E::MediaDescriptorBinding(_) => "provider_media_descriptor_rejected",
+        E::MediaRuntime(_) => "provider_media_runtime_rejected",
+        E::MediaPeerRuntime(_) => "provider_media_peer_runtime_rejected",
+        E::Adapter(_) => "provider_adapter_rejected",
+        E::ControlLeaseAuthority(_) => "provider_control_lease_authority_rejected",
+        E::RuntimeState(_) => "provider_runtime_state_rejected",
+        E::Admission(_) => "provider_admission_rejected",
+        E::AdmissionProjection(_) => "provider_admission_projection_rejected",
+        E::Decode(_) => "provider_decode_rejected",
+        E::Encode(_) => "provider_encode_rejected",
+        _ => "provider_unclassified_rejected",
+    }
+}
+
+fn initialization_reason(reason: &str) -> &'static str {
+    match reason {
+        "provider_schema_rejected" => "provider_schema_rejected",
+        "provider_legacy_config_rejected" => "provider_legacy_config_rejected",
+        "provider_bridge_mode_rejected" => "provider_bridge_mode_rejected",
+        "provider_epoch_rejected" => "provider_epoch_rejected",
+        "provider_authority_clock_rejected" => "provider_authority_clock_rejected",
+        "provider_control_lease_bootstrap_rejected" => "provider_control_lease_bootstrap_rejected",
+        "provider_rebind_config_rejected" => "provider_rebind_config_rejected",
+        "provider_packaged_digest_rejected" => "provider_packaged_digest_rejected",
+        "provider_config_digest_rejected" => "provider_config_digest_rejected",
+        "provider_product_lock_rejected" => "provider_product_lock_rejected",
+        "provider_client_lock_rejected" => "provider_client_lock_rejected",
+        "provider_grant_closure_rejected" => "provider_grant_closure_rejected",
+        "provider_media_selection_rejected" => "provider_media_selection_rejected",
+        "provider_media_cross_binding_rejected" => "provider_media_cross_binding_rejected",
+        "provider_media_feature_rejected" => "provider_media_feature_rejected",
+        "provider_media_lifecycle_authority_rejected" => {
+            "provider_media_lifecycle_authority_rejected"
+        }
+        "provider_media_peer_config_rejected" => "provider_media_peer_config_rejected",
+        "provider_runtime_lock_rejected" => "provider_runtime_lock_rejected",
+        "provider_media_descriptor_rejected" => "provider_media_descriptor_rejected",
+        "provider_media_runtime_rejected" => "provider_media_runtime_rejected",
+        "provider_media_peer_runtime_rejected" => "provider_media_peer_runtime_rejected",
+        "provider_adapter_rejected" => "provider_adapter_rejected",
+        "provider_control_lease_authority_rejected" => "provider_control_lease_authority_rejected",
+        "provider_runtime_state_rejected" => "provider_runtime_state_rejected",
+        "provider_admission_rejected" => "provider_admission_rejected",
+        "provider_admission_projection_rejected" => "provider_admission_projection_rejected",
+        "provider_decode_rejected" => "provider_decode_rejected",
+        "provider_encode_rejected" => "provider_encode_rejected",
+        "provider_unclassified_rejected" => "provider_unclassified_rejected",
+        "Own feature module duplicated" => "feature_module_duplicated",
+        "Own feature activation scope rejected" => "feature_scope_rejected",
+        "Own feature exact lock authentication rejected" => "feature_authentication_rejected",
+        "Own feature runtime input rejected" => "feature_input_rejected",
+        "Own feature client locks disagree" => "feature_locks_disagree",
+        "compiled Own provider authenticated feature absent" => "compiled_feature_absent",
+        "invalid embedded input" => "input_decode_rejected",
+        "installed product identity ambiguous" => "installed_identity_ambiguous",
+        "installed signing certificate prefix" | "installed signing certificate bounds" => {
+            "installed_signer_rejected"
+        }
+        "embedded bridge required" => "bridge_kind_rejected",
+        "invalid embedded pair binding" => "pair_binding_rejected",
+        "packaged owner placement rejected" => "outgoing_placement_rejected",
+        "packaged incoming placement rejected" => "incoming_placement_rejected",
+        "outgoing runtime spec missing" => "outgoing_spec_missing",
+        "incoming runtime spec missing" => "incoming_spec_missing",
+        "packaged runtime initialization rejected" => "runtime_provider_rejected",
+        "embedded authority unavailable" => "embedded_authority_unavailable",
+        "owner executor rejected" => "owner_executor_rejected",
+        "retained cleanup replay decode" => "cleanup_replay_decode_rejected",
+        _ => "unclassified_initialization_failure",
+    }
+}
+
+// None selects the unchanged published-host diagnostic. An absent or stale
+// unpublished attempt is an error, never a cached observation from another owner.
+fn initialization_failure_read_with_capability(
+    capability: &NativeCapability,
+) -> Result<Option<serde_json::Value>, String> {
+    capability.require_live()?;
+    let failure = {
+        let state = process().lock().map_err(|_| "process state poisoned")?;
+        if state.initializing || state.closing || state.lease_integrity_failed {
+            return Err("initialization diagnostic busy".into());
+        }
+        if state.host.is_some() {
+            return Ok(None);
+        }
+        let failure = state
+            .initialization_failure
+            .as_ref()
+            .ok_or("initialization diagnostic unavailable")?;
+        if failure.binding != capability.binding
+            || failure.native_generation != capability.generation
+            || failure.attempt != state.initialization_attempt
+        {
+            return Err("initialization diagnostic identity changed".into());
+        }
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "packaged route slot poisoned")?;
+        if route.as_ref().map(|(sha, _)| sha.as_str()) != Some(failure.config_sha256.as_str()) {
+            return Err("initialization diagnostic route changed".into());
+        }
+        failure.clone()
+    };
+    // require_live may re-enter Java/app source. Never retain either native
+    // mutex across that callback; afterwards rejoin the exact same observation.
+    capability.require_live()?;
+    {
+        let state = process().lock().map_err(|_| "process state poisoned")?;
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "packaged route slot poisoned")?;
+        if state.initializing
+            || state.closing
+            || state.lease_integrity_failed
+            || state.host.is_some()
+            || state.initialization_attempt != failure.attempt
+            || state.initialization_failure.as_ref() != Some(&failure)
+            || route.as_ref().map(|(sha, _)| sha.as_str()) != Some(failure.config_sha256.as_str())
+        {
+            return Err("initialization diagnostic changed during live check".into());
+        }
+    }
+    Ok(Some(
+        json!({"schema":"rusty.quest.embedded_duplex.owner_diagnostic_native_read.v1",
+        "native_executor_generation": failure.native_generation,
+        "app_process_generation": failure.binding.generation,
+        "initialization_failure": {"schema":"rusty.quest.embedded_duplex.initialization_failure.v1",
+            "attempt":failure.attempt, "stage":"native_initialize", "reason_code":failure.reason,
+            "runtime_config_sha256":failure.config_sha256, "app_record_sha256":failure.binding.record_sha256,
+            "host_published":false, "cleanup_certified":false, "authority_granted":false}}),
+    ))
+}
+
+pub(super) fn initialization_failure_read() -> Result<Option<serde_json::Value>, String> {
+    let capability = native_fence_jni::active()?;
+    initialization_failure_read_with_capability(&capability)
 }
 
 struct HostLease(Host);
@@ -443,6 +618,7 @@ fn close_no_media_runtime_with_capability(
         let removed = state.host.take();
         route.take();
         state.last_closed_sha256 = Some(expected_sha.to_owned());
+        state.initialization_failure = None;
         state.closing = false;
         removed
     };
@@ -494,8 +670,10 @@ fn initialize(
     callback: JObject<'_>,
 ) -> Result<String, String> {
     let capability = native_fence_jni::active()?;
+    let attempted_sha = expected_sha.clone();
     initialize_with_capability(
         &capability,
+        &attempted_sha,
         || {
             build_host(
                 env,
@@ -531,6 +709,7 @@ impl Drop for InitializationGuard {
 
 fn initialize_with_capability<T, R>(
     capability: &NativeCapability,
+    expected_sha: &str,
     build: impl FnOnce() -> Result<T, String>,
     publish: impl FnOnce(&mut ProcessState, T) -> Result<R, String>,
 ) -> Result<R, String> {
@@ -540,13 +719,31 @@ fn initialize_with_capability<T, R>(
         if state.initializing || state.closing || state.host.is_some() {
             return Err("embedded runtime already owned".into());
         }
+        exact_staged_route(expected_sha)?;
+        state.initialization_attempt = state
+            .initialization_attempt
+            .checked_add(1)
+            .ok_or("initialization attempt exhausted")?;
+        state.initialization_failure = None;
         state.initializing = true;
     }
     let _initialization = InitializationGuard;
     let built = build();
     capability.require_live()?;
     let mut state = process().lock().map_err(|_| "process state poisoned")?;
-    publish(&mut state, built?)
+    match built {
+        Ok(value) => publish(&mut state, value),
+        Err(reason) => {
+            state.initialization_failure = Some(InitializationFailure {
+                attempt: state.initialization_attempt,
+                config_sha256: expected_sha.to_owned(),
+                binding: capability.binding.clone(),
+                native_generation: capability.generation,
+                reason: initialization_reason(&reason),
+            });
+            Err(reason)
+        }
+    }
 }
 
 fn authenticate_own_capture_lock(
@@ -767,7 +964,7 @@ fn build_host(
             i64::try_from(clock.now_ms()?).map_err(|_| "authority clock overflow")?,
             monotonic_ns()?,
         )
-        .map_err(|_| "packaged runtime initialization rejected")?;
+        .map_err(|error| provider_initialization_reason(&error))?;
     let authority = provider
         .embedded_duplex_authority()
         .map_err(|_| "embedded authority unavailable")?;
@@ -1637,12 +1834,122 @@ mod no_media_close_tests {
     }
 
     #[test]
+    fn initialization_diagnostic_is_redacted_attempt_bound_and_cleared_by_cleanup() {
+        let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
+        reset_with_staged_route();
+        let fail = |reason: &str| {
+            let result: Result<(), String> = initialize_with_capability(
+                &fence.capability,
+                SHA,
+                || Err::<(), _>(reason.into()),
+                |_, _| panic!("failure must not publish"),
+            );
+            assert!(result.is_err());
+            initialization_failure_read_with_capability(&fence.capability)
+                .unwrap()
+                .unwrap()
+        };
+        let first = fail("packaged runtime initialization rejected");
+        assert_eq!(
+            first["initialization_failure"]["reason_code"],
+            "runtime_provider_rejected"
+        );
+        assert_eq!(first["initialization_failure"]["attempt"], 1);
+        assert_eq!(
+            first["initialization_failure"]["runtime_config_sha256"],
+            SHA
+        );
+        assert_eq!(first["initialization_failure"]["cleanup_certified"], false);
+        let second = fail("private-key-and-config-must-never-be-serialized");
+        assert_eq!(second["initialization_failure"]["attempt"], 2);
+        assert_eq!(
+            second["initialization_failure"]["reason_code"],
+            "unclassified_initialization_failure"
+        );
+        assert!(!second.to_string().contains("private-key"));
+        assert!(fence.close(OTHER_SHA).is_err());
+        assert!(initialization_failure_read_with_capability(&fence.capability).is_ok());
+        fence.close(SHA).unwrap();
+        assert!(process().lock().unwrap().initialization_failure.is_none());
+        assert!(initialization_failure_read_with_capability(&fence.capability).is_err());
+    }
+
+    #[test]
+    fn initialization_diagnostic_denies_changed_identity_route_and_inflight_attempt() {
+        let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
+        reset_with_staged_route();
+        let _: Result<(), String> = initialize_with_capability(
+            &fence.capability,
+            SHA,
+            || Err::<(), _>("invalid embedded pair binding".into()),
+            |_, _| Ok(()),
+        );
+        {
+            let mut state = process().lock().unwrap();
+            state.initializing = true;
+        }
+        assert!(initialization_failure_read_with_capability(&fence.capability).is_err());
+        process().lock().unwrap().initializing = false;
+        prepared_route().lock().unwrap().as_mut().unwrap().0 = OTHER_SHA.into();
+        assert!(initialization_failure_read_with_capability(&fence.capability).is_err());
+        prepared_route().lock().unwrap().as_mut().unwrap().0 = SHA.into();
+        process()
+            .lock()
+            .unwrap()
+            .initialization_failure
+            .as_mut()
+            .unwrap()
+            .native_generation += 1;
+        assert!(initialization_failure_read_with_capability(&fence.capability).is_err());
+        process()
+            .lock()
+            .unwrap()
+            .initialization_failure
+            .as_mut()
+            .unwrap()
+            .native_generation -= 1;
+        *fence.source.0.lock().unwrap() = "damaged".into();
+        assert!(initialization_failure_read_with_capability(&fence.capability).is_err());
+    }
+
+    #[test]
+    fn accepted_next_initialization_clears_previous_diagnostic_before_build() {
+        let _serial = TEST_GATE.lock().unwrap();
+        let fence = NativeFenceFixture::new();
+        reset_with_staged_route();
+        let _: Result<(), String> = initialize_with_capability(
+            &fence.capability,
+            SHA,
+            || Err::<(), _>("invalid embedded input".into()),
+            |_, _| Ok(()),
+        );
+        initialize_with_capability(
+            &fence.capability,
+            SHA,
+            || {
+                assert!(process().lock().unwrap().initialization_failure.is_none());
+                assert!(initialization_failure_read_with_capability(&fence.capability).is_err());
+                Ok(())
+            },
+            |state, _| {
+                assert!(state.initialization_failure.is_none());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(initialization_failure_read_with_capability(&fence.capability).is_err());
+    }
+
+    #[test]
     fn construction_failure_unwinds_and_allows_exact_retry_without_clearing_route() {
         let _serial = TEST_GATE.lock().unwrap();
         let fence = NativeFenceFixture::new();
         reset_with_staged_route();
         let result: Result<(), String> = initialize_with_capability(
             &fence.capability,
+            SHA,
             || Err::<(), _>("construction failed".into()),
             |_, _| panic!("failed construction must not publish"),
         );
@@ -1654,6 +1961,7 @@ mod no_media_close_tests {
         assert!(fence.capability.require_live().is_ok());
         let result = initialize_with_capability(
             &fence.capability,
+            SHA,
             || Ok(7_u8),
             |state, value| {
                 assert!(state.initializing);
@@ -1676,6 +1984,7 @@ mod no_media_close_tests {
         reset_with_staged_route();
         let result: Result<(), String> = initialize_with_capability(
             &fence.capability,
+            SHA,
             || {
                 *fence.source.0.lock().unwrap() = "damaged".into();
                 Ok(())
@@ -1691,6 +2000,7 @@ mod no_media_close_tests {
         assert!(prepared_route().lock().unwrap().is_some());
         let retry: Result<(), String> = initialize_with_capability(
             &fence.capability,
+            SHA,
             || panic!("poisoned capability must reject before reconstruction"),
             |_, _: ()| Ok(()),
         );
@@ -1706,6 +2016,7 @@ mod no_media_close_tests {
         *fence.source.0.lock().unwrap() = "damaged".into();
         let result: Result<(), String> = initialize_with_capability(
             &fence.capability,
+            SHA,
             || panic!("invalid capability must reject before construction"),
             |_, _: ()| Ok(()),
         );
@@ -1724,6 +2035,7 @@ mod no_media_close_tests {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _: Result<(), String> = initialize_with_capability(
                 &fence.capability,
+                SHA,
                 || panic!("construction unwind"),
                 |_, _: ()| Ok(()),
             );

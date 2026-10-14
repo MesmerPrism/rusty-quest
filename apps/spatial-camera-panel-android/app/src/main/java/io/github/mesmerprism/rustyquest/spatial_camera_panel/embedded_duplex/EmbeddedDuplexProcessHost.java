@@ -233,6 +233,18 @@ final class EmbeddedDuplexProcessHost {
                     || nativeRead.getLong("app_process_generation") != processFence.generation()) {
                 throw new IllegalStateException("owner diagnostic lineage changed");
             }
+            if (nativeRead.has("initialization_failure")) {
+                JSONObject failure = nativeRead.getJSONObject("initialization_failure");
+                if (phase.get() != Phase.FAILED
+                        || !"rusty.quest.embedded_duplex.initialization_failure.v1".equals(failure.getString("schema"))
+                        || failure.getLong("attempt") <= 0
+                        || !runtimeConfigSha256.equals(failure.getString("runtime_config_sha256"))
+                        || !nativeAppRecordSha256.equals(failure.getString("app_record_sha256"))
+                        || failure.getBoolean("host_published") || failure.getBoolean("cleanup_certified")
+                        || failure.getBoolean("authority_granted")) {
+                    throw new IllegalStateException("initialization diagnostic lineage changed");
+                }
+            }
             processFence.requireLive(processFence.generation());
             return new JSONObject().put("schema", "rusty.quest.embedded_duplex.owner_failure_diagnostic_read.v1")
                     .put("challenge", challenge).put("process_epoch_id", processFence.epochId())
