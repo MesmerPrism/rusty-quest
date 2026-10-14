@@ -4,12 +4,7 @@ import android.app.Activity;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
-import android.graphics.Color;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.TextView;
-import android.widget.Button;
-import android.widget.SeekBar;
 import org.json.JSONObject;
 
 /** Standalone presentation adapter for the existing process shell and native session owner. */
@@ -17,19 +12,18 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
     public static final String MODULE_ID = "experiment-session-owner";
     public String panelModuleId() { return MODULE_ID; }
     private boolean destroyed;
+    private AutoCloseable panelAttachment;
     @Override protected void onCreate(android.os.Bundle state) {
         super.onCreate(state);
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(24,24,24,24);
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(content);
-        setContentView(scroll);
-        attachNativeMeshSessionControls(this, content, new java.util.function.BooleanSupplier() {
+        setContentView(content);
+        panelAttachment=attachNativeMeshSessionControls(this, content, new java.util.function.BooleanSupplier() {
             @Override public boolean getAsBoolean() { return !destroyed; }
         });
     }
-    @Override protected void onDestroy() { destroyed=true; super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed=true; try { if(panelAttachment!=null)panelAttachment.close(); } catch(Exception ignored){} super.onDestroy(); }
     private static final ExperimentSessionPanelCoordinator EXPERIMENT_SESSION_PANEL =
         new ExperimentSessionPanelCoordinator();
     private static final ExperimentSessionAndroidShell EXPERIMENT_SESSION_SHELL =
@@ -92,64 +86,168 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
             }
         );
     /** Native mesh presentation adapter; the existing process shell and reducer retain authority. */
-    public static void attachNativeMeshSessionControls(Activity activity, LinearLayout layout,
+    public static AutoCloseable attachNativeMeshSessionControls(Activity activity, LinearLayout layout,
             java.util.function.BooleanSupplier current) {
         ControlPanelActivity.prepareExperimentSessionAppOwner(activity.getApplicationContext());
-        new NativeMeshSessionControls(activity, layout, current).start();
+        return new PresentationAttachment(activity,layout,current);
+    }
+    /** Recreates only a retired presentation sink when its actual host resumes. */
+    private static final class PresentationAttachment implements AutoCloseable,android.app.Application.ActivityLifecycleCallbacks {
+        final Activity activity;final LinearLayout layout;final java.util.function.BooleanSupplier current;
+        NativeMeshSessionControls controls;boolean closed;
+        PresentationAttachment(Activity activity,LinearLayout layout,java.util.function.BooleanSupplier current){
+            this.activity=activity;this.layout=layout;this.current=current;
+            try{replace();activity.getApplication().registerActivityLifecycleCallbacks(this);}
+            catch(RuntimeException failure){close();throw failure;}
+            catch(Error failure){close();throw failure;}
+        }
+        void replace(){
+            if(closed||!current.getAsBoolean()||activity.isFinishing()||activity.isDestroyed())return;
+            if(controls!=null)controls.close();
+            controls=new NativeMeshSessionControls(activity,layout,current);
+            try{controls.start();}
+            catch(RuntimeException failure){controls.close();throw failure;}
+            catch(Error failure){controls.close();throw failure;}
+        }
+        public void close(){if(closed)return;closed=true;activity.getApplication().unregisterActivityLifecycleCallbacks(this);if(controls!=null){controls.close();controls=null;}}
+        public void onActivityResumed(Activity value){
+            if(value!=activity||closed||!current.getAsBoolean())return;
+            if(controls==null||!controls.attached()){
+                try{replace();}catch(RuntimeException failure){android.util.Log.e("RQNativeRenderer","event=panel-reattach-failed",failure);}
+            }
+        }
+        public void onActivityCreated(Activity value,android.os.Bundle saved){}
+        public void onActivityStarted(Activity value){}
+        public void onActivityPaused(Activity value){}
+        public void onActivityStopped(Activity value){}
+        public void onActivitySaveInstanceState(Activity value,android.os.Bundle saved){}
+        public void onActivityDestroyed(Activity value){if(value==activity)close();}
     }
 
-    private static final class NativeMeshSessionControls implements ExperimentSessionAndroidShell.UiSink {
+    // Presentation continuation only; native runtime and the one Shell retain command authority.
+    private static ProcessHandoff processHandoff;
+    private static ExperimentSessionUiCommandReceipt processCommand;
+    private static JSONObject processNativeState() throws Exception {
+        JSONObject n=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
+            new JSONObject().put("schema",ExperimentSessionPanelCoordinator.SCHEMA).put("operation","status").toString())).getJSONObject("readback");
+        JSONObject b=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
+        if(!Boolean.TRUE.equals(b.opt("feature_lock_active"))||!Boolean.TRUE.equals(b.opt("activation_binding_matches")))throw new SecurityException("feature-inactive");
+        return n.put("activation_binding_sha256",b.getString("activation_binding_sha256"));
+    }
+    private static void dispatchProcessOperator(ExperimentSessionControlCapability.Fence fence,String id,JSONObject command)throws Exception{
+        if(processCommand!=null)throw new SecurityException("operator-command-pending");
+        processCommand=new ExperimentSessionUiCommandReceipt(fence,id);
+        JSONObject response=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));
+        if("rejected".equals(response.optString("command_status"))){processCommand=null;throw new SecurityException("native-command-rejected");}
+        if(!"queued".equals(response.optString("command_status")))throw new SecurityException("native-dispatch-outcome-unknown-no-replay");
+    }
+    private static final class ProcessHandoff implements ExperimentSessionUiControlHandoff.Owner {
+        final java.lang.ref.WeakReference<NativeMeshSessionControls> origin;
+        final long launchEpoch;final ExperimentSessionControlCapability.Fence fence;final String id;
+        final Handler callbacks=new Handler(Looper.getMainLooper());final ExperimentSessionUiControlHandoff task;
+        final ExperimentSessionUiControlHandoff.TransferScope scope;
+        ProcessHandoff(NativeMeshSessionControls source,ExperimentSessionControlCapability.Fence fence,String id){
+            origin=new java.lang.ref.WeakReference<NativeMeshSessionControls>(source);launchEpoch=source.epoch;this.fence=fence;this.id=id;
+            scope=new ExperimentSessionUiControlHandoff.TransferScope(launchEpoch);
+            task=new ExperimentSessionUiControlHandoff(this,fence,id);
+        }
+        boolean pending(){return task.pending();}
+        boolean from(NativeMeshSessionControls value){return origin.get()==value;}
+        void cancel(){scope.retire(true);task.cancel();callbacks.removeCallbacksAndMessages(null);if(processHandoff==this)processHandoff=null;}
+        void requireCurrent(){
+            NativeMeshSessionControls source=origin.get();
+            if(processHandoff!=this||!scope.current(EXPERIMENT_SESSION_SHELL.currentLaunchEpochForUi(),source!=null&&source.live()))throw new SecurityException("handoff-owner-retired");
+        }
+        public JSONObject read()throws Exception{requireCurrent();return processNativeState();}
+        public void returnVr(){
+            requireCurrent();NativeMeshSessionControls source=origin.get();
+            if(source!=null&&source.activity instanceof ControlPanelActivity){
+                scope.transfer();
+                try{ControlPanelActivity.closePanelAndReturnToImmersive(source.activity);}
+                catch(RuntimeException failure){scope.abortTransfer();throw failure;}
+            }
+        }
+        public void dispatch(JSONObject request)throws Exception{requireCurrent();dispatchProcessOperator(fence,id,request);}
+        public void schedule(Runnable run,long delay){callbacks.postDelayed(run,delay);}
+        public long nowMs(){return SystemClock.elapsedRealtime();}public long nowNs(){return SystemClock.elapsedRealtimeNanos();}
+        public void outcome(String value){
+            NativeMeshSessionControls source=origin.get();if(!scope.transferred()&&source!=null&&source.live())source.panel.outcome(value);
+            android.util.Log.i("RQNativeRenderer","channel=session-control origin=ui-session-v2 outcome="+value);
+            if(!task.pending()&&processHandoff==this)processHandoff=null;
+        }
+    }
+
+    private static final class NativeMeshSessionControls implements ExperimentSessionAndroidShell.UiSink, NativeLocalControlPanel.Host, AutoCloseable {
         final Activity activity;
         final LinearLayout layout;
         final java.util.function.BooleanSupplier current;
         final Handler handler = new Handler(Looper.getMainLooper());
-        final TextView status;
-        final java.util.Map<String, Button> buttons = new java.util.LinkedHashMap<>();
+        final NativeLocalControlPanel panel;
+        boolean closed, hostResumed=true;
+        final android.app.Application.ActivityLifecycleCallbacks lifecycle=new android.app.Application.ActivityLifecycleCallbacks(){
+            public void onActivityCreated(Activity value,android.os.Bundle saved){}
+            public void onActivityStarted(Activity value){}
+            public void onActivityResumed(Activity value){if(value==activity&&!closed){hostResumed=true;panel.resume();EXPERIMENT_SESSION_SHELL.requestStatus(NativeMeshSessionControls.this);}}
+            public void onActivityPaused(Activity value){if(value==activity&&!closed){hostResumed=false;panel.suspend();retireHandoff(false);}}
+            public void onActivityStopped(Activity value){}
+            public void onActivitySaveInstanceState(Activity value,android.os.Bundle saved){}
+            public void onActivityDestroyed(Activity value){if(value==activity)close();}
+        };
         long epoch;
-        int bias;
-        ExperimentSessionUiControlHandoff handoff;
-        ExperimentSessionUiCommandReceipt pendingCommand;
+        int bias=-1;
         NativeMeshSessionControls(Activity activity, LinearLayout layout,
                 java.util.function.BooleanSupplier current) {
             this.activity=activity; this.layout=layout; this.current=current;
-            status=new TextView(layout.getContext()); status.setTextColor(Color.WHITE);
-            status.setText("Session owner: reading authoritative state"); layout.addView(status);
-            for (String op : new String[]{"arm-a","arm-b","start","pause","resume","save-next"}) {
-                Button button=new Button(layout.getContext()); button.setAllCaps(false);
-                button.setText("arm-a".equals(op)?"Arm condition A":"arm-b".equals(op)?"Arm condition B":
-                    "save-next".equals(op)?"Finish and save session":op);
-                button.setEnabled(false); button.setOnClickListener(new android.view.View.OnClickListener() {
-                    @Override public void onClick(android.view.View view) { dispatch(op); }
-                });
-                buttons.put(op,button); layout.addView(button,new LinearLayout.LayoutParams(-1,68));
-            }
-            TextView label=new TextView(layout.getContext()); label.setTextColor(Color.WHITE);
-            label.setText("Breath guidance bias: 0%"); layout.addView(label);
-            SeekBar slider=new SeekBar(layout.getContext()); slider.setMax(100);
-            slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-                public void onProgressChanged(SeekBar bar,int value,boolean user) {
-                    if(user){bias=value;label.setText("Breath guidance bias: "+value+"%");}
+            panel=new NativeLocalControlPanel(layout.getContext(),activity.getApplicationContext(),this);
+            layout.addView(panel.view(),new LinearLayout.LayoutParams(-1,0,1));
+        }
+        public boolean current(){return live();}
+        public void outcome(String value){if(live())panel.outcome(value);}
+        public ExperimentSessionPanelState state(){return EXPERIMENT_SESSION_PANEL.snapshot();}
+        public boolean commandReady(){return live()&&processCommand==null&&state().pendingOperationId.isEmpty()&&(processHandoff==null||!processHandoff.pending());}
+        public void action(String operation){dispatch(operation);}
+        public void navigationChanged(){retireHandoff(true);}
+        void retireHandoff(boolean navigation){if(processHandoff!=null&&processHandoff.from(this)&&processHandoff.scope.retire(navigation))processHandoff.cancel();}
+        public int bias(){
+            if(EXPERIMENT_SESSION_PANEL.pendingBreathGuidanceBiasPercent()>=0)bias=EXPERIMENT_SESSION_PANEL.pendingBreathGuidanceBiasPercent();
+            if(bias<0&&!state().hasActiveSession()){
+                for(String condition:new String[]{ExperimentSessionPanelCoordinator.CONDITION_ONE,ExperimentSessionPanelCoordinator.CONDITION_TWO}){
+                    if("pattern-ready".equals(ControlPanelActivity.conditionBreathGuidanceReadiness(condition))){
+                        int value=ControlPanelActivity.conditionBreathGuidanceDefaultBias(condition);
+                        if(EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(value))bias=value;break;
+                    }
                 }
-                public void onStartTrackingTouch(SeekBar bar) { }
-                public void onStopTrackingTouch(SeekBar bar) { }
-            }); layout.addView(slider);
+            }
+            return Math.max(0,bias);
+        }
+        public boolean bias(int value){if(!live()||!EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(value))return false;bias=value;return true;}
+        public void returnToVr(){if(live()&&activity instanceof ControlPanelActivity)ControlPanelActivity.closePanelAndReturnToImmersive(activity);}
+        public void close(){
+            if(closed)return;closed=true;handler.removeCallbacksAndMessages(null);
+            activity.getApplication().unregisterActivityLifecycleCallbacks(lifecycle);
+            retireHandoff(false);
+            panel.close();layout.removeView(panel.view());EXPERIMENT_SESSION_SHELL.detach(this);
         }
         boolean live() {
-            return current.getAsBoolean() && !activity.isFinishing() && !activity.isDestroyed()
+            return hostResumed && attached();
+        }
+        boolean attached(){
+            return !closed && current.getAsBoolean() && !activity.isFinishing() && !activity.isDestroyed()
                 && EXPERIMENT_SESSION_SHELL.isCurrentUiAttachment(this, epoch);
         }
         void start() {
+            activity.getApplication().registerActivityLifecycleCallbacks(lifecycle);
             epoch=EXPERIMENT_SESSION_SHELL.currentLaunchEpochForUi();
             EXPERIMENT_SESSION_SHELL.initialize(activity.getFilesDir().getAbsolutePath(),this);
             handler.postDelayed(new Runnable(){public void run(){
-                if(!live()){EXPERIMENT_SESSION_SHELL.detach(NativeMeshSessionControls.this);return;}
-                EXPERIMENT_SESSION_SHELL.requestStatus(NativeMeshSessionControls.this);
+                if(!attached()){close();return;}
+                if(live())EXPERIMENT_SESSION_SHELL.requestStatus(NativeMeshSessionControls.this);
                 handler.postDelayed(this,500);
             }},500);
         }
         public boolean acceptsExperimentSessionCallbacks(long value) { return live() && value==epoch; }
         public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult result) {
-            if(live())status.setText("Terminal outcome requires the existing app shutdown owner.");
+            if(live())panel.outcome("Terminal outcome requires the existing app shutdown owner.");
         }
         public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback readback) {
             if(!live() || readback==null || readback.receipt==null)return;
@@ -160,54 +258,31 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
             ExperimentSessionPanelState state=EXPERIMENT_SESSION_PANEL.snapshot();
             if(state.phase==ExperimentSessionPanelState.Phase.ARMING && state.recording)
                 ControlPanelActivity.startConditionAudio(state.generation,"session-arm-"+state.generation,state.activeCondition);
-            status.setText("Session: "+state.phase+" · active "+state.activeTimeMs+" ms · "+state.storageStatus+
-                "\n"+state.detail);
-            if (pendingCommand != null) {
+            if (processCommand != null) {
                 try {
-                    String receipt = pendingCommand.observe(nativeState());
-                    if ("applied".equals(receipt) || "rejected".equals(receipt)) pendingCommand=null;
-                    else status.append("\nOperator command: "+receipt);
-                } catch (Exception unavailable) { status.append("\nOperator outcome unknown; no replay."); }
+                    String receipt = processCommand.observe(nativeState());
+                    if ("applied".equals(receipt) || "rejected".equals(receipt) || "owner-changed-outcome-unknown".equals(receipt)) processCommand=null;
+                    else panel.outcome("Operator command: "+receipt);
+                } catch (Exception unavailable) { panel.outcome("Operator outcome unknown; no replay."); }
             }
-            boolean ready=pendingCommand==null && state.pendingOperationId.isEmpty() && (handoff==null || !handoff.pending());
-            for(java.util.Map.Entry<String,Button> entry:buttons.entrySet()) {
-                String op=entry.getKey();
-                entry.getValue().setEnabled(ready && (op.startsWith("arm-")?!state.hasActiveSession():
-                    "start".equals(op)?state.phase==ExperimentSessionPanelState.Phase.ARMED:
-                    "pause".equals(op)?state.phase==ExperimentSessionPanelState.Phase.RUNNING:
-                    "resume".equals(op)?state.phase==ExperimentSessionPanelState.Phase.PAUSED:
-                    ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state)));
-            }
+            panel.refresh();
         }
         JSONObject nativeState() throws Exception {
-            if(!live())throw new SecurityException("mesh-owner-retired");
-            JSONObject n=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
-                new JSONObject().put("schema",ExperimentSessionPanelCoordinator.SCHEMA).put("operation","status").toString())).getJSONObject("readback");
-            JSONObject b=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
-            if(!Boolean.TRUE.equals(b.opt("feature_lock_active")) || !Boolean.TRUE.equals(b.opt("activation_binding_matches")))
-                throw new SecurityException("feature-inactive");
-            return n.put("activation_binding_sha256",b.getString("activation_binding_sha256"));
+            if(!live())throw new SecurityException("mesh-owner-retired");return processNativeState();
         }
         void dispatchOperator(ExperimentSessionControlCapability.Fence fence,String id,JSONObject command) throws Exception {
-            if (!live() || pendingCommand!=null) throw new SecurityException("operator-owner-unavailable-or-pending");
-            pendingCommand=new ExperimentSessionUiCommandReceipt(fence,id);
-            JSONObject response=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));
-            if ("rejected".equals(response.optString("command_status"))) {
-                pendingCommand=null;
-                throw new SecurityException("native-command-rejected");
-            }
-            if (!"queued".equals(response.optString("command_status"))) throw new SecurityException("native-dispatch-outcome-unknown-no-replay");
+            if(!live())throw new SecurityException("operator-owner-unavailable");dispatchProcessOperator(fence,id,command);
         }
         void dispatch(String operation) {
             if(!live())return;
             try {
-                if(pendingCommand!=null || !EXPERIMENT_SESSION_PANEL.snapshot().pendingOperationId.isEmpty() || handoff!=null && handoff.pending())
+                if(processCommand!=null || !EXPERIMENT_SESSION_PANEL.snapshot().pendingOperationId.isEmpty() || processHandoff!=null && processHandoff.pending())
                     throw new SecurityException("session-operation-pending");
                 if(operation.startsWith("arm-")) {
                     String condition="arm-a".equals(operation)?ExperimentSessionPanelCoordinator.CONDITION_ONE:ExperimentSessionPanelCoordinator.CONDITION_TWO;
                     if(!"track-ready".equals(ControlPanelActivity.conditionAudioReadiness(condition)))throw new SecurityException("audio-not-ready");
                     ExperimentSessionPanelCoordinator.NativeCommand command=EXPERIMENT_SESSION_PANEL.arm(condition,
-                        "pattern-ready".equals(ControlPanelActivity.conditionBreathGuidanceReadiness(condition))?bias:0);
+                        "pattern-ready".equals(ControlPanelActivity.conditionBreathGuidanceReadiness(condition))?bias():0);
                     if(command==null)throw new SecurityException("arm-not-admitted");
                     EXPERIMENT_SESSION_SHELL.submit(command,true,this);
                 } else if("save-next".equals(operation)) {
@@ -223,27 +298,13 @@ public class ExperimentSessionOwnerPanelModule extends Activity implements Panel
                     if("pause".equals(operation)) {
                         dispatchOperator(fence,id,fence.nativeCommand(id,SystemClock.elapsedRealtimeNanos()).put("operator_origin","ui-session-v2"));
                     } else {
-                        handoff=new ExperimentSessionUiControlHandoff(new ExperimentSessionUiControlHandoff.Owner(){
-                            public JSONObject read() throws Exception { return nativeState(); }
-                            // Already in the existing NativeActivity: still wait for genuine projection readback.
-                            public void returnVr() {
-                                if (activity instanceof ControlPanelActivity)
-                                    ControlPanelActivity.closePanelAndReturnToImmersive(activity);
-                            }
-                            public void dispatch(JSONObject request) throws Exception {
-                                if(!live())throw new SecurityException("mesh-owner-retired");
-                                dispatchOperator(fence,id,request);
-                            }
-                            public void schedule(Runnable run,long delay){handler.postDelayed(run,delay);}
-                            public long nowMs(){return SystemClock.elapsedRealtime();}
-                            public long nowNs(){return SystemClock.elapsedRealtimeNanos();}
-                            public void outcome(String value){if(live())status.setText(value);}
-                        },fence,id); handoff.run();
+                        processHandoff=new ProcessHandoff(this,fence,id);
+                        processHandoff.task.run();
                     }
                 }
                 EXPERIMENT_SESSION_SHELL.requestStatus(this);
             } catch(Exception failure) {
-                status.setText("Command not confirmed; refresh authoritative session state. "+failure.getMessage());
+                panel.outcome("Command not confirmed; refresh authoritative session state. "+failure.getMessage());
             }
         }
     }

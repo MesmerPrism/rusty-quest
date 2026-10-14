@@ -27,8 +27,9 @@ When controller input owns the worldspace frame, live hand visuals, diagnostic
 hand overlays and graft copies are suppressed. Ordinary controller actions remain
 available; events captured by the panel are consumed before world controls.
 
-The app feature closure should retain `input.controllers_and_hands_optional`
-and the selected live-hand/visual features, but omit
+The combined hand-geometry feature closure should retain
+`input.controllers_and_hands_optional` and its selected live-hand/visual
+features, but omit
 `input.simultaneous_hands_and_controllers`. Remove its enabled property and
 resolver-derived activation binding from the private runtime closure. Worldspace
 mode rejects an accidentally selected simultaneous adapter. The manifest resolver
@@ -151,6 +152,43 @@ headset rendering or performance. The live probe should progress through:
 Keep source, feature lock, APK hash and exact headset tied to each capture. Report
 UI command application, visible behavior and timing evidence separately. A built
 APK is a candidate until its live checks pass.
+
+## Particles-only scene and full local controls
+
+`renderer.native_scene.particles_only` selects the existing native scene while
+excluding hand geometry resources. Its exact resolved lock supplies
+`RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED=false`; the APK builder
+rejects an unselected or ambient exclusion, contradictory geometry features,
+and prepared/captured rig inputs. The selected binary has no materialized replay
+source, hand skinning, mesh, graft, hand-anchor or capture-recorder resources.
+Generic shared shader code and renderer types remain in the source graph.
+Runtime visibility controls cannot re-enable the absent resources.
+
+Optional `input.tracked_hand_pointer` and
+`input.controllers_and_hands_optional` still use the current OpenXR tracker,
+reference space and predicted display time. Pointer input requires no mesh rig.
+Controller breath assessment, particle/tracer buffers and retained particle
+anchors keep their existing owners. The particles-only route omits the probe's
+diagnostic animation/scale tuple from particle compute; canonical accepted
+settings remain the controls.
+
+The selected `ui.experiment_session_owner` presents local Home, Particles,
+Breath, Status and experiment workflow pages through its closed Java inventory.
+The real standalone Activity and native Presentation share the local panel;
+the legacy composite panel also uses the extracted sparse particle-patch
+builder. Particle changes submit edited named fields through the existing JNI
+queue and require a matching renderer-effective revision before reporting
+application. Hydration, retired pages and detached producers issue no edits.
+In-view choices stay within the panel's routed touch surface. Sensor, network,
+kiosk and camera capabilities require their separate explicit selections.
+
+The focused admission check is
+`pwsh -NoProfile -File tools/checks/Test-NativeRendererHandGeometrySelection.ps1`.
+Java/controller fixtures, both Rust geometry selections and the exact generated
+Android source closure must pass before packaging. On a headset, verify the
+stereo panel, targeting/scroll/drag, hand/controller ownership changes, effective
+settings, calibration, audio/recording and saving separately. Syntax and host
+admission checks do not establish those live effects.
 
 ## Optional passthrough and environment sampler
 

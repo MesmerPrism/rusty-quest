@@ -4204,107 +4204,25 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private JSONObject buildPrivateParticleDynamicsPatchJson(Set<String> patchFields)
         throws Exception {
-        if (patchFields == null || patchFields.isEmpty()) {
-            throw new IllegalArgumentException("particle field patch must not be empty");
+        if(patchFields==null||patchFields.isEmpty())throw new IllegalArgumentException("empty-particle-patch");
+        java.util.Map<String,Object> edits=new java.util.LinkedHashMap<String,Object>();
+        for(String field:patchFields){
+            if(field.startsWith("size."))edits.put("size.mode",privateParticleSizeModeWire());
+            if("visual_scale".equals(field))edits.put(field,privateParticleVisualScale.value());
+            else if("world_anchor_scale_m".equals(field))edits.put(field,privateParticleWorldAnchorScale.value());
+            else if("size.mode".equals(field))edits.put(field,privateParticleSizeModeWire());
+            else if("size.world_meters".equals(field))edits.put(field,privateParticleSizeWorldMeters.value());
+            else if("size.sphere_radius_percent".equals(field))edits.put(field,privateParticleSizeSpherePercent.value());
+            else if("size.oscillation_percent".equals(field))edits.put(field,privateParticleSizeOscillationPercent.value());
+            else if(field.startsWith("driver_values01.")){int slot=Integer.parseInt(field.substring(16));if(slot<0||slot>=privateParticleDrivers.length)throw new IllegalArgumentException("driver-slot-range");edits.put(field,privateParticleDrivers[slot].value());}
+            else if("tracer.draw_slots_per_oscillator".equals(field))edits.put(field,privateParticleTracerDrawSlots.intValue());
+            else if("tracer.lifetime_seconds".equals(field))edits.put(field,privateParticleTracerLifetime.value());
+            else if("tracer.copies_per_second".equals(field))edits.put(field,privateParticleTracerCopies.value());
+            else if("material".equals(field))edits.put(field,privateParticleMaterialPresetWire());
+            else if("heartbeat_pulse".equals(field))edits.put(field,privateParticlePolarRrOrbitBoost!=null&&privateParticlePolarRrOrbitBoost.isChecked()?"polar-rr-orbit-boost":"disabled");
+            else throw new IllegalArgumentException("unsupported-particle-field:"+field);
         }
-        JSONObject privateParticles = new JSONObject();
-        JSONObject size = new JSONObject();
-        JSONObject driverValues = new JSONObject();
-        JSONArray driverControls = new JSONArray();
-        JSONObject tracer = new JSONObject();
-        for (String field : patchFields) {
-            if ("visual_scale".equals(field)) {
-                privateParticles.put("visual_scale", privateParticleVisualScale.value());
-            } else if ("world_anchor_scale_m".equals(field)) {
-                privateParticles.put(
-                    "world_anchor_scale_m",
-                    privateParticleWorldAnchorScale.value()
-                );
-            } else if ("size.mode".equals(field)) {
-                size.put("enabled", true);
-                size.put("mode", privateParticleSizeModeWire());
-            } else if ("size.world_meters".equals(field)) {
-                size.put("enabled", true);
-                size.put("mode", privateParticleSizeModeWire());
-                size.put("world_meters", privateParticleSizeWorldMeters.value());
-            } else if ("size.sphere_radius_percent".equals(field)) {
-                size.put("enabled", true);
-                size.put("mode", privateParticleSizeModeWire());
-                size.put(
-                    "sphere_radius_percent",
-                    privateParticleSizeSpherePercent.value()
-                );
-            } else if ("size.oscillation_percent".equals(field)) {
-                size.put("enabled", true);
-                size.put("mode", privateParticleSizeModeWire());
-                size.put(
-                    "oscillation_percent",
-                    privateParticleSizeOscillationPercent.value()
-                );
-            } else if (field.startsWith("driver_values01.")) {
-                int index = Integer.parseInt(field.substring("driver_values01.".length()));
-                if (index < 0 || index >= privateParticleDrivers.length) {
-                    throw new IllegalArgumentException("particle driver patch index out of range");
-                }
-                driverValues.put(Integer.toString(index), privateParticleDrivers[index].value());
-                driverControls.put(
-                    new JSONObject()
-                        .put("target_slot", index)
-                        .put("mode", "direct")
-                );
-            } else if ("tracer.draw_slots_per_oscillator".equals(field)) {
-                tracer.put(
-                    "draw_slots_per_oscillator",
-                    privateParticleTracerDrawSlots.intValue()
-                );
-            } else if ("tracer.lifetime_seconds".equals(field)) {
-                tracer.put("lifetime_seconds", privateParticleTracerLifetime.value());
-            } else if ("tracer.copies_per_second".equals(field)) {
-                tracer.put("copies_per_second", privateParticleTracerCopies.value());
-            } else if ("material".equals(field)) {
-                privateParticles.put(
-                    "material",
-                    new JSONObject().put("preset", privateParticleMaterialPresetWire())
-                );
-            } else if ("heartbeat_pulse".equals(field)) {
-                privateParticles.put(
-                    "heartbeat_pulse",
-                    new JSONObject().put(
-                        "mode",
-                        privateParticlePolarRrOrbitBoost != null
-                                && privateParticlePolarRrOrbitBoost.isChecked()
-                            ? "polar-rr-orbit-boost"
-                            : "disabled"
-                    )
-                );
-            } else {
-                throw new IllegalArgumentException("unsupported particle patch field: " + field);
-            }
-        }
-        if (size.length() > 0) {
-            privateParticles.put("size", size);
-        }
-        if (driverValues.length() > 0) {
-            privateParticles.put("driver_values01", driverValues);
-            privateParticles.put("driver_controls", driverControls);
-        }
-        if (tracer.length() > 0) {
-            privateParticles.put("tracer", tracer);
-        }
-        JSONObject source = new JSONObject()
-            .put("surface", "same_apk_panel")
-            .put("transport", "jni_live_queue");
-        JSONObject apply = new JSONObject()
-            .put("mode", "apply-on-next-safe-frame")
-            .put("expected_effective_revision", -1);
-        return new JSONObject()
-            .put("schema", PRIVATE_PARTICLE_DYNAMICS_SCHEMA)
-            .put("profile_id", "same-apk-private-particle-field-patch")
-            .put("revision", System.currentTimeMillis())
-            .put("update_mode", "field-patch")
-            .put("source", source)
-            .put("private_particles", privateParticles)
-            .put("apply", apply);
+        return NativeLocalControlController.particlePatch(edits,NativeLocalControlController.nextRevision(System.currentTimeMillis()));
     }
 
     private String privateParticleSizeModeWire() {

@@ -2,6 +2,16 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 import org.json.JSONObject;
 /** One current-owner handoff; genuine presentation readback precedes one native dispatch. */
 final class ExperimentSessionUiControlHandoff implements Runnable {
+ /** A deliberately requested Activity-to-immersive transfer may outlive its originating UI. */
+ static final class TransferScope {
+  private final long launchEpoch;private boolean transferred,retired;
+  TransferScope(long epoch){if(epoch<0)throw new IllegalArgumentException("launch-epoch");launchEpoch=epoch;}
+  void transfer(){if(retired)throw new IllegalStateException("transfer-retired");transferred=true;}
+  void abortTransfer(){transferred=false;retired=true;}
+  boolean transferred(){return transferred;}
+  boolean retire(boolean navigation){if(navigation||!transferred)retired=true;return retired;}
+  boolean current(long epoch,boolean originCurrent){return !retired&&launchEpoch==epoch&&(transferred||originCurrent);}
+ }
  interface Owner {
   JSONObject read() throws Exception;
   void returnVr() throws Exception;
@@ -17,6 +27,7 @@ final class ExperimentSessionUiControlHandoff implements Runnable {
   this.owner=owner;this.fence=fence;this.id=id;opened=owner.nowMs();
  }
  boolean pending(){return !done;}
+ void cancel(){if(!done)finish("owner-retired-no-dispatch");}
  @Override public void run(){if(done)return;
   try{
    long now=owner.nowMs();if(now<opened||now-opened>5000){finish("handoff-timeout-no-dispatch");return;}

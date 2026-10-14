@@ -474,6 +474,12 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
     throw "Unlocked development builds cannot package ControlPanelActivity; resolve an exact native-app feature lock first."
 }
 
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererHandGeometrySelection.psm1') -Force
+$handGeometrySelection = Get-NativeRendererHandGeometrySelection -FeatureLock $appBuildLockObject `
+    -BuildEnvByName $appBuildEnvByName -PreparedHandRigSource $PreparedHandRigSource `
+    -ExpectedPreparedHandRigSourceSha256 $ExpectedPreparedHandRigSourceSha256 `
+    -RecordedHandCaptureDir $RecordedHandCaptureDir -RequireRecordedHandCapture:$RequireRecordedHandCapture
+
 Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
 $sourceComposition = Get-QuestBuildSourceComposition `
     -RepoRoot ([string]$repoRoot) `
@@ -761,6 +767,7 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
         ""
     } elseif ($standaloneExperimentOwner) {
 @"
+    static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
     static native String nativeApplyBreathCompositionCommand(String commandJson);
     static native String nativeInitializeExperimentSessionRuntime(String appPrivateFilesRoot);
     static native String nativeReadBreathCompositionStatus();
@@ -1718,9 +1725,11 @@ Copy-Item -LiteralPath $embeddedRuntimeConfigPath -Destination (Join-Path $embed
 Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\native-hwb-blur-sdf-public.plan.json") `
     -Destination (Join-Path $assetsDir "native-hwb-blur-sdf-public.plan.json") `
     -Force
-Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\recorded-hand-replay-public-shape.json") `
-    -Destination (Join-Path $assetsDir "recorded-hand-replay-public-shape.json") `
-    -Force
+if ($handGeometrySelection.hand_geometry_enabled) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\recorded-hand-replay-public-shape.json") `
+        -Destination (Join-Path $assetsDir "recorded-hand-replay-public-shape.json") `
+        -Force
+}
 if (-not [string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) {
     Copy-Item -LiteralPath $nativeAppSettingsPath -Destination (Join-Path $assetsDir "native-app-settings.json") -Force
     Copy-Item -LiteralPath $appBuildLockPath -Destination (Join-Path $assetsDir "feature-lock.json") -Force
@@ -2034,10 +2043,11 @@ $manifest = [ordered]@{
     authority = "rusty.quest.native_renderer"
     target_runtime = "quest-native-openxr-vulkan"
     plan_asset = "native-hwb-blur-sdf-public.plan.json"
-    recorded_hand_replay_asset = "recorded-hand-replay-public-shape.json"
+    hand_geometry_enabled = [bool]$handGeometrySelection.hand_geometry_enabled
+    recorded_hand_replay_asset = if ($handGeometrySelection.hand_geometry_enabled) { "recorded-hand-replay-public-shape.json" } else { $null }
     source_plan_fixture = "fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json"
-    source_recorded_hand_replay_fixture = if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "fixtures/native-renderer/recorded-hand-replay-public-shape.json" } else { $resolvedRecordedHandCaptureDir }
-    recorded_hand_replay_embedded_source = if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "public-topology-shape-fixture" } else { "external-recorded-capture-build-env" }
+    source_recorded_hand_replay_fixture = if (-not $handGeometrySelection.hand_geometry_enabled) { $null } elseif ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "fixtures/native-renderer/recorded-hand-replay-public-shape.json" } else { $resolvedRecordedHandCaptureDir }
+    recorded_hand_replay_embedded_source = if (-not $handGeometrySelection.hand_geometry_enabled) { "unselected-no-hand-geometry" } elseif ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "public-topology-shape-fixture" } else { "external-recorded-capture-build-env" }
     marker_prefix = "RUSTY_QUEST_NATIVE_RENDERER"
     rust_native_activity = $true
     java_classes_packaged = $true

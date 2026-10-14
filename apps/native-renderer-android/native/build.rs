@@ -52,9 +52,6 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
-    println!(
-        "cargo:rerun-if-changed=../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json"
-    );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED");
@@ -222,7 +219,23 @@ fn main() {
     println!(
         "cargo:rustc-env=RUSTY_QUEST_NATIVE_RENDERER_GPU_DIAGNOSTICS_LEVEL={diagnostics_level}"
     );
-    write_recorded_hand_replay_source(&out_dir);
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED");
+    println!("cargo:rustc-check-cfg=cfg(native_hand_geometry_disabled)");
+    // Supplied by the owning builder from the verified particles-only feature lock.
+    // A runtime property or panel visibility control cannot re-enable these resources.
+    match env::var("RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED").as_deref() {
+        Ok("false") => {
+            for input in ["RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE",
+                          "RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR",
+                          "RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT"] {
+                assert!(env::var_os(input).is_none(), "particles-only build forbids hand input {input}");
+            }
+            println!("cargo:rustc-cfg=native_hand_geometry_disabled");
+            // Do not copy, generate, read, or substitute a rig source for this selection.
+        }
+        Ok("true") | Err(env::VarError::NotPresent) => write_recorded_hand_replay_source(&out_dir),
+        other => panic!("invalid build-locked hand geometry selection: {other:?}"),
+    }
     let private_layer_sources = private_layer_shader_sources();
     write_private_layer_payload_config(&out_dir, private_layer_sources.is_some());
     let private_particle_payload = private_particle_payload_sources();
@@ -737,6 +750,7 @@ fn write_recorded_hand_replay_source(out_dir: &Path) {
 
     let fallback =
         Path::new("../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json");
+    println!("cargo:rerun-if-changed={}", fallback.display());
     fs::copy(fallback, &output).unwrap_or_else(|error| {
         panic!(
             "failed to copy public recorded hand replay source {} -> {}: {error}",

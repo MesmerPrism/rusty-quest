@@ -5,6 +5,7 @@
 //! `RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR`; that generated bundle stays
 //! under Cargo `OUT_DIR` and is not committed.
 
+#[cfg(not(native_hand_geometry_disabled))]
 const RECORDED_HAND_REPLAY_JSON: &str = include_str!(concat!(
     env!("OUT_DIR"),
     "/recorded_hand_replay_source.json"
@@ -98,7 +99,10 @@ pub(crate) struct MeshComponentSummary {
 
 impl RecordedHandReplaySummary {
     pub(crate) fn load() -> Result<Self, String> {
-        Self::from_json_str_for_hand(RECORDED_HAND_REPLAY_JSON, "left")
+        #[cfg(native_hand_geometry_disabled)]
+        { Err("recorded hand geometry is not selected".into()) }
+        #[cfg(not(native_hand_geometry_disabled))]
+        { Self::from_json_str_for_hand(RECORDED_HAND_REPLAY_JSON, "left") }
     }
 
     fn from_json_str(json: &str) -> Result<Self, String> {
@@ -290,7 +294,10 @@ impl RecordedHandReplaySummary {
 
 impl RecordedHandReplaySet {
     pub(crate) fn load() -> Result<Self, String> {
-        Self::from_json_str(RECORDED_HAND_REPLAY_JSON)
+        #[cfg(native_hand_geometry_disabled)]
+        { Err("recorded hand geometry is not selected".into()) }
+        #[cfg(not(native_hand_geometry_disabled))]
+        { Self::from_json_str(RECORDED_HAND_REPLAY_JSON) }
     }
 
     fn from_json_str(json: &str) -> Result<Self, String> {
@@ -1229,7 +1236,7 @@ fn join_u64(values: &[u64]) -> String {
         .join(",")
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(native_hand_geometry_disabled)))]
 mod tests {
     use super::{RecordedHandReplaySet, RecordedHandReplaySummary};
 
@@ -1278,5 +1285,15 @@ mod tests {
         let markers = replay_set.marker_fields();
         assert!(markers.contains("recordedHandReplayHandSetReady=true"));
         assert!(markers.contains("recordedHandReplayRightHandDistinct="));
+    }
+}
+
+#[cfg(all(test, native_hand_geometry_disabled))]
+mod unselected_tests {
+    use super::*;
+    #[test]
+    fn no_rig_source_is_loadable() {
+        assert!(RecordedHandReplaySummary::load().is_err());
+        assert!(RecordedHandReplaySet::load().is_err());
     }
 }

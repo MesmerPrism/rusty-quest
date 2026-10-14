@@ -152,6 +152,7 @@ mod private_particle_push_abi;
 mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;
+mod native_geometry_selection;
 mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod remote_camera_projection_native_stream;

@@ -40,6 +40,7 @@ public final class NativeMeshUiProducer {
     private VirtualDisplay display;
     private Presentation presentation;
     private View root;
+    private AutoCloseable panelAttachment;
     private View cursor;
     private TextView status;
     private long downTime;
@@ -100,11 +101,8 @@ public final class NativeMeshUiProducer {
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setPadding(40, 24, 40, 24);
         layout.setBackgroundColor(Color.rgb(24, 30, 38));
-        ScrollView scroll = new ScrollView(context);
-        scroll.setFillViewport(true);
-        scroll.addView(layout);
         FrameLayout frame = new FrameLayout(context);
-        frame.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        frame.addView(layout, new FrameLayout.LayoutParams(-1, -1));
         cursor = new View(context);
         GradientDrawable dot = new GradientDrawable();
         dot.setShape(GradientDrawable.OVAL);
@@ -123,19 +121,29 @@ public final class NativeMeshUiProducer {
         try {
             // The closed panel source selection owns this optional adapter and all session effects.
             Class<?> module=Class.forName("io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity");
-            module.getMethod("attachNativeMeshSessionControls",Activity.class,LinearLayout.class,
+            Object attachment=module.getMethod("attachNativeMeshSessionControls",Activity.class,LinearLayout.class,
                 java.util.function.BooleanSupplier.class).invoke(null,activity,layout,
                     new java.util.function.BooleanSupplier() {
                         @Override public boolean getAsBoolean() {
                             return current==NativeMeshUiProducer.this && root!=null;
                         }
                     });
+            if(!(attachment instanceof AutoCloseable))throw new IllegalStateException("panel-attachment-retirement-required");
+            panelAttachment=(AutoCloseable)attachment;
+            layout.removeView(title);layout.removeView(status);
+            return; // Selected local product owns its full UI; integration diagnostics are not appended.
         } catch(ClassNotFoundException unselected) {
             // Neutral mesh-only apps do not acquire experiment or recording authority.
+        } catch(NoSuchMethodException unselected) {
+            // A different closed panel module does not expose this product adapter.
         } catch(Exception failure) {
             status.setText("Session panel unavailable; app owner did not attach.");
             Log.e(TAG,"event=session-panel-unavailable",failure);
+            return; // A failed selected owner must not expose integration controls.
         }
+        frame.removeView(layout);
+        ScrollView scroll=new ScrollView(context);scroll.setFillViewport(true);scroll.addView(layout);
+        frame.addView(scroll,0,new FrameLayout.LayoutParams(-1,-1));
         button(context, layout, "Start / stop diagnostic animation", 1);
         button(context, layout, "Recorded reference overlay (not selected in this test)", 2);
         button(context, layout, "Toggle joint and wireframe diagnostics", 3);
@@ -278,6 +286,8 @@ public final class NativeMeshUiProducer {
     private boolean close() {
         boolean released = true;
         try { cancelPointer(); } catch (RuntimeException error) { released = false; }
+        try { if(panelAttachment!=null){panelAttachment.close();panelAttachment=null;} }
+        catch(Exception error){released=false;}
         try { if (presentation != null) { presentation.dismiss(); presentation = null; } }
         catch (RuntimeException error) { released = false; }
         try { if (display != null) { display.release(); display = null; } }

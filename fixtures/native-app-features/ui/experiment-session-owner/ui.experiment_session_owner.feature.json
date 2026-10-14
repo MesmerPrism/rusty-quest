@@ -73,7 +73,8 @@
         "module_id": "experiment-session-owner",
         "entry_class": "io.github.mesmerprism.rustyquest.native_renderer.ExperimentSessionOwnerPanelModule",
         "dependencies": [
-          "condition-audio-runtime"
+          "condition-audio-runtime",
+          "private-particle-request-adapter"
         ],
         "source_files": [
           "apps/native-renderer-android/panel-modules/experiment-session-owner/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionOwnerPanelModule.java",
@@ -85,7 +86,10 @@
           "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionStatusObservation.java",
           "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionPackagedClosure.java",
           "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionControlCapability.java",
-          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionUiControlHandoff.java"
+          "apps/native-renderer-android/panel-modules/breath-composition/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ExperimentSessionUiControlHandoff.java",
+          "apps/native-renderer-android/panel-modules/experiment-session-owner/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeLocalControlController.java",
+          "apps/native-renderer-android/panel-modules/experiment-session-owner/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeLocalControlPanel.java",
+          "apps/native-renderer-android/panel-modules/experiment-session-owner/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeLocalPanelBridge.java"
         ]
       },
       {
@@ -98,6 +102,14 @@
           "apps/native-renderer-android/panel-modules/condition-audio/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/ConditionAudioRuntime.java",
           "apps/native-renderer-android/panel-modules/condition-audio/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathPhaseAudioEngine.java",
           "apps/native-renderer-android/panel-modules/condition-audio/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/BreathPhaseAudioAndroidOwner.java"
+        ]
+      },
+      {
+        "module_id": "private-particle-request-adapter",
+        "entry_class": "",
+        "dependencies": [],
+        "source_files": [
+          "apps/native-renderer-android/panel-modules/private-particle/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/PrivateParticlePanelController.java"
         ]
       }
     ]

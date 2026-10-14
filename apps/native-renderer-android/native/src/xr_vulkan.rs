@@ -298,7 +298,14 @@ pub(crate) fn run_projection_loop(
     runtime_options: NativeRendererRuntimeOptions,
     simultaneous_decision: ActivationDecision,
 ) -> Result<(), String> {
-    let replay_set = RecordedHandReplaySet::load()?;
+    crate::native_geometry_selection::validate_render_mode(runtime_options.render_mode)?;
+    let replay_set = if crate::native_geometry_selection::hand_geometry_enabled() {
+        Some(RecordedHandReplaySet::load()?)
+    } else {
+        crate::marker("native-geometry-selection",
+            "status=particles-only nativeHandGeometryEnabled=false handGeometrySelected=false recordedRigLoaded=false handSkinningResources=false handMeshResources=false graftResources=false handAnchorResources=false pointerRigIndependent=true");
+        None
+    };
     let projection_metadata = CameraProjectionMetadata::load();
     let display_composite_projection_metadata = DisplayCompositeProjectionMetadata::from_settings(
         runtime_options.display_composite_settings,
@@ -307,14 +314,16 @@ pub(crate) fn run_projection_loop(
         &runtime_options.video_projection_settings,
         &projection_metadata,
     );
-    crate::marker(
-        "recorded-hand-replay",
-        format!(
-            "status=loaded {} {} visualEffect=target-local-hand-mesh-overlay compactJointOverlayDefault=false animatedHandMeshVisualReady=pending dynamicSdfReady=pending gpuSdfFieldReady=pending cpuSdfPerFrame=false",
-            replay_set.left.marker_fields(),
-            replay_set.marker_fields()
-        ),
-    );
+    if let Some(replay_set) = replay_set.as_ref() {
+        crate::marker(
+            "recorded-hand-replay",
+            format!(
+                "status=loaded {} {} visualEffect=target-local-hand-mesh-overlay compactJointOverlayDefault=false animatedHandMeshVisualReady=pending dynamicSdfReady=pending gpuSdfFieldReady=pending cpuSdfPerFrame=false",
+                replay_set.left.marker_fields(),
+                replay_set.marker_fields()
+            ),
+        );
+    }
     crate::marker(
         "camera-projection-metadata",
         format!("status=loaded {}", projection_metadata.marker_fields()),
@@ -365,13 +374,13 @@ unsafe fn run_projection_loop_inner(
     camera_runtime: Option<&NativeCameraRuntime>,
     runtime_options: NativeRendererRuntimeOptions,
     simultaneous_decision: ActivationDecision,
-    replay_set: RecordedHandReplaySet,
+    replay_set: Option<RecordedHandReplaySet>,
     projection_metadata: CameraProjectionMetadata,
     display_composite_projection_metadata: DisplayCompositeProjectionMetadata,
     video_projection_metadata: VideoProjectionMetadata,
 ) -> Result<(), String> {
-    let replay = &replay_set.left;
-    let secondary_replay = &replay_set.right;
+    let replay = replay_set.as_ref().map(|set| &set.left);
+    let secondary_replay = replay_set.as_ref().map(|set| &set.right);
     let entry = xr::Entry::load().map_err(|error| format!("load OpenXR: {error}"))?;
     initialize_android_loader(&entry, app)?;
 
@@ -417,7 +426,8 @@ unsafe fn run_projection_loop_inner(
             runtime_options.render_mode.marker_value(),
         );
     enabled_extensions.fb_hand_tracking_mesh =
-        enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
+        crate::native_geometry_selection::hand_geometry_enabled()
+            && enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
     enabled_extensions.fb_passthrough =
         native_passthrough_requested && available_extensions.fb_passthrough;
     enabled_extensions.fb_display_refresh_rate =
@@ -792,7 +802,7 @@ unsafe fn run_projection_loop_inner(
     );
     let reference_space =
         create_projection_reference_space(&session, runtime_options.environment_depth_settings)?;
-    let mut hand_mesh_capture_recorder = LiveHandMeshCaptureRecorder::new(
+    let mut hand_mesh_capture_recorder = if replay.is_some() { Some(LiveHandMeshCaptureRecorder::new(
         app,
         &xr_instance,
         system,
@@ -800,7 +810,7 @@ unsafe fn run_projection_loop_inner(
         available_extensions.fb_hand_tracking_mesh,
         enabled_extensions.fb_hand_tracking_mesh,
         runtime_options.hand_mesh_visual_material_settings,
-    );
+    )) } else { None };
     let color_format =
         choose_swapchain_format(&session, runtime_options.swapchain_color_format_mode)?;
     let scene_depth = if runtime_options.render_mode.uses_scene_depth() {
@@ -1137,13 +1147,18 @@ unsafe fn run_projection_loop_inner(
     } else {
         None
     };
-    let mut gpu_sdf_field_renderer = if render_mode.uses_stimulus_volume() {
+    let mut gpu_sdf_field_renderer = if render_mode.uses_stimulus_volume() || replay.is_none() {
         crate::marker(
             "gpu-sdf-field",
-            "status=disabled reason=stimulus-volume-route dynamicSdfReady=false sdfVisualEffectVisible=false gpuSdfFieldReady=false",
+            if replay.is_none() {
+                "status=disabled reason=hand-geometry-unselected dynamicSdfReady=false sdfVisualEffectVisible=false gpuSdfFieldReady=false"
+            } else {
+                "status=disabled reason=stimulus-volume-route dynamicSdfReady=false sdfVisualEffectVisible=false gpuSdfFieldReady=false"
+            },
         );
         None
     } else {
+        let replay = replay.expect("selected hand replay checked above");
         match GpuSdfFieldRenderer::new(&vk_device, &memory_properties, render_pass, replay) {
             Ok(renderer) => {
                 if !sdf_visual_enabled {
@@ -1170,7 +1185,7 @@ unsafe fn run_projection_loop_inner(
             }
         }
     };
-    let mut gpu_hand_mesh_visual_renderer = if let Some(renderer) = gpu_sdf_field_renderer.as_ref()
+    let mut gpu_hand_mesh_visual_renderer = if let (Some(renderer), Some(replay)) = (gpu_sdf_field_renderer.as_ref(), replay)
     {
         let draw_resources = renderer.skinned_hand_mesh_draw_resources();
         match GpuHandMeshVisualRenderer::new(
@@ -1201,7 +1216,7 @@ unsafe fn run_projection_loop_inner(
         None
     };
     let mut gpu_hand_anchor_particle_renderer = if hand_anchor_particle_settings.enabled {
-        if let Some(renderer) = gpu_sdf_field_renderer.as_ref() {
+        if let (Some(renderer), Some(replay)) = (gpu_sdf_field_renderer.as_ref(), replay) {
             let draw_resources = renderer.skinned_hand_mesh_draw_resources();
             match GpuHandAnchorParticleRenderer::new(
                 &vk_device,
@@ -1236,9 +1251,10 @@ unsafe fn run_projection_loop_inner(
     } else {
         None
     };
-    let mut secondary_gpu_sdf_field_renderer = if render_mode.uses_stimulus_volume() {
+    let mut secondary_gpu_sdf_field_renderer = if render_mode.uses_stimulus_volume() || secondary_replay.is_none() {
         None
     } else {
+        let secondary_replay = secondary_replay.expect("selected secondary replay checked above");
         match GpuSdfFieldRenderer::new(
             &vk_device,
             &memory_properties,
@@ -1264,8 +1280,8 @@ unsafe fn run_projection_loop_inner(
             }
         }
     };
-    let mut secondary_gpu_hand_mesh_visual_renderer = if let Some(renderer) =
-        secondary_gpu_sdf_field_renderer.as_ref()
+    let mut secondary_gpu_hand_mesh_visual_renderer = if let (Some(renderer), Some(secondary_replay)) =
+        (secondary_gpu_sdf_field_renderer.as_ref(), secondary_replay)
     {
         let draw_resources = renderer.skinned_hand_mesh_draw_resources();
         match GpuHandMeshVisualRenderer::new(
@@ -1292,7 +1308,7 @@ unsafe fn run_projection_loop_inner(
         None
     };
     let mut secondary_gpu_hand_anchor_particle_renderer = if hand_anchor_particle_settings.enabled {
-        if let Some(renderer) = secondary_gpu_sdf_field_renderer.as_ref() {
+        if let (Some(renderer), Some(secondary_replay)) = (secondary_gpu_sdf_field_renderer.as_ref(), secondary_replay) {
             let draw_resources = renderer.skinned_hand_mesh_draw_resources();
             match GpuHandAnchorParticleRenderer::new(
                 &vk_device,
@@ -1324,38 +1340,40 @@ unsafe fn run_projection_loop_inner(
         None
     };
     let mut gpu_mesh_replay = GpuMeshReplayResources::default();
-    let gpu_mesh_stats = match gpu_mesh_replay.prepare_source_mesh(
-        &vk_device,
-        &memory_properties,
-        replay,
-    ) {
-        Ok(stats) => {
-            crate::marker(
-                "gpu-mesh-replay",
-                format!("status=prepared {}", stats.marker_fields()),
-            );
-            stats
-        }
-        Err(error) => {
-            crate::marker(
+    let gpu_mesh_stats = if let Some(replay) = replay {
+        match gpu_mesh_replay.prepare_source_mesh(
+            &vk_device,
+            &memory_properties,
+            replay,
+        ) {
+            Ok(stats) => {
+                crate::marker(
                     "gpu-mesh-replay",
-                    format!(
-                        "status=error reason={} topologyVertexCount={} topologyTriangleCount={} topologyIndexCount={} sourceMeshToSdfKernel=false cpuSdfPerFrame=false",
-                        crate::sanitize(&error),
-                        replay.vertex_count,
-                        replay.triangle_count,
-                        replay.index_count
-                    ),
+                    format!("status=prepared {}", stats.marker_fields()),
                 );
-            GpuMeshReplayStats {
-                topology_vertex_count: replay.vertex_count,
-                topology_triangle_count: replay.triangle_count,
-                topology_index_count: replay.index_count,
-                cpu_sdf_per_frame: false,
-                ..Default::default()
+                stats
+            }
+            Err(error) => {
+                crate::marker(
+                        "gpu-mesh-replay",
+                        format!(
+                            "status=error reason={} topologyVertexCount={} topologyTriangleCount={} topologyIndexCount={} sourceMeshToSdfKernel=false cpuSdfPerFrame=false",
+                            crate::sanitize(&error),
+                            replay.vertex_count,
+                            replay.triangle_count,
+                            replay.index_count
+                        ),
+                    );
+                GpuMeshReplayStats {
+                    topology_vertex_count: replay.vertex_count,
+                    topology_triangle_count: replay.triangle_count,
+                    topology_index_count: replay.index_count,
+                    cpu_sdf_per_frame: false,
+                    ..Default::default()
+                }
             }
         }
-    };
+    } else { GpuMeshReplayStats::default() };
     let cmds = vk_device
         .allocate_command_buffers(
             &vk::CommandBufferAllocateInfo::default()
@@ -1456,8 +1474,9 @@ unsafe fn run_projection_loop_inner(
         ),
     );
 
-    let mut hand_joint_capture_recorder =
-        LiveHandJointCaptureRecorder::new(app, hand_mesh_visual_material_settings);
+    let mut hand_joint_capture_recorder = if replay.is_some() {
+        Some(LiveHandJointCaptureRecorder::new(app, hand_mesh_visual_material_settings))
+    } else { None };
 
     // Start the Android writer only after all fallible frame-resource allocations.
     // From here every frame-loop exit joins the explicit panel/device teardown below.
@@ -1534,8 +1553,8 @@ unsafe fn run_projection_loop_inner(
         &mut gpu_timestamp_tracker,
         &mut private_extension_slot_runtime,
         &mut live_hand_compact,
-        &mut hand_joint_capture_recorder,
-        &mut hand_mesh_capture_recorder,
+        hand_joint_capture_recorder.as_mut(),
+        hand_mesh_capture_recorder.as_mut(),
         &mut simultaneous_hands_controllers,
         compact_hand_input_source_mode,
         replay_visual_proof_enabled,
@@ -1585,8 +1604,8 @@ unsafe fn run_projection_loop_inner(
         &session,
         "projection-loop-finished",
     );
-    hand_joint_capture_recorder.finish_active("projection-loop-ended");
-    hand_mesh_capture_recorder.finish_active("projection-loop-ended");
+    if let Some(recorder) = hand_joint_capture_recorder.as_mut() { recorder.finish_active("projection-loop-ended"); }
+    if let Some(recorder) = hand_mesh_capture_recorder.as_mut() { recorder.finish_active("projection-loop-ended"); }
 
     let retirement = match vk_device.device_wait_idle() {
         Ok(()) => match mesh_ui_panel.take() {
@@ -1738,7 +1757,8 @@ unsafe fn probe_inner(
     enabled_extensions.khr_vulkan_enable2 = true;
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
     enabled_extensions.fb_hand_tracking_mesh =
-        enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
+        crate::native_geometry_selection::hand_geometry_enabled()
+            && enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
     openxr_simultaneous_hands_controllers::select_extension(
         simultaneous_decision,
         &available_extensions,
@@ -2197,8 +2217,8 @@ unsafe fn run_projection_frames(
     mut native_passthrough: Option<&mut NativePassthroughRuntime>,
     mut stimulus_actions: Option<&mut StimulusVolumeActions>,
     mut gpu_stimulus_volume_renderer: Option<&mut GpuStimulusVolumeRenderer>,
-    replay: &RecordedHandReplaySummary,
-    secondary_replay: &RecordedHandReplaySummary,
+    replay: Option<&RecordedHandReplaySummary>,
+    secondary_replay: Option<&RecordedHandReplaySummary>,
     gpu_mesh_stats: &GpuMeshReplayStats,
     mut gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
     mut secondary_gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
@@ -2212,8 +2232,8 @@ unsafe fn run_projection_frames(
     gpu_timestamp_tracker: &mut GpuTimestampTracker,
     private_extension_slot_runtime: &mut PrivateExtensionSlotRuntime,
     live_hand_compact: &mut LiveHandCompactInput,
-    hand_joint_capture_recorder: &mut LiveHandJointCaptureRecorder,
-    hand_mesh_capture_recorder: &mut LiveHandMeshCaptureRecorder,
+    mut hand_joint_capture_recorder: Option<&mut LiveHandJointCaptureRecorder>,
+    mut hand_mesh_capture_recorder: Option<&mut LiveHandMeshCaptureRecorder>,
     simultaneous_hands_controllers: &mut OpenXrSimultaneousHandsControllers,
     compact_hand_input_source_mode: CompactHandInputSourceMode,
     replay_visual_proof_enabled: bool,
@@ -2803,7 +2823,7 @@ unsafe fn run_projection_frames(
         }
 
         let (live_hand_frames, live_hand_stats) =
-            if compact_hand_input_source_mode.selects_live_frame() {
+            if let Some(replay) = replay.filter(|_| compact_hand_input_source_mode.selects_live_frame()) {
                 live_hand_compact.locate_compact_frame(
                     reference_space,
                     frame_state.predicted_display_time,
@@ -2812,7 +2832,9 @@ unsafe fn run_projection_frames(
                 )
             } else {
                 let mut stats = LiveHandCompactStats::default();
-                stats.reason = if matches!(
+                stats.reason = if replay.is_none() {
+                    "hand-geometry-unselected-pointer-independent"
+                } else if matches!(
                     compact_hand_input_source_mode,
                     CompactHandInputSourceMode::Disabled
                 ) {
@@ -3222,9 +3244,9 @@ unsafe fn run_projection_frames(
         let mesh_ui_controls = mesh_ui_panel.as_ref().map(|panel| panel.frame_controls());
         let camera_output_enabled = mesh_ui_controls.is_none_or(|controls| controls.camera);
         let mut effective_diagnostic_settings = hand_mesh_visual_diagnostic_settings;
-        effective_diagnostic_settings.enabled &=
+        effective_diagnostic_settings.enabled &= replay.is_some() &&
             mesh_ui_controls.is_none_or(|controls| controls.diagnostics);
-        let effective_grafts_enabled = hand_mesh_graft_copies_enabled
+        let effective_grafts_enabled = replay.is_some() && hand_mesh_graft_copies_enabled
             && !worldspace_controllers_selected
             && mesh_ui_controls.is_none_or(|controls| controls.grafts && controls.hands);
         let effective_graft_scale = hand_mesh_graft_copy_scale
@@ -3446,343 +3468,361 @@ unsafe fn run_projection_frames(
             );
         }
         frame_timings.live_hand_ms = elapsed_ms(stage_started);
-        hand_joint_capture_recorder.update_and_record(
-            frame_count,
-            &live_hand_frames,
-            &live_hand_stats,
-            hand_mesh_visual_material_settings,
-        );
-        hand_mesh_capture_recorder.update_and_record(
-            reference_space,
-            frame_state.predicted_display_time,
-            frame_count,
-            hand_mesh_visual_material_settings,
-        );
-        // Each GPU skinning renderer owns a fixed bind mesh/palette. Tracking loss
-        // must not promote the opposite hand's poses into that resident rig.
-        let selected_primary_live_hand_frame = (compact_hand_input_source_mode
-            .selects_live_frame()
-            && !worldspace_controllers_selected)
-            .then(|| live_hand_frames.frame_for_rig(&replay.handedness))
-            .flatten();
-        let selected_primary_live_hand = if selected_primary_live_hand_frame.is_some()
-            || compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode)
-        {
-            handedness_label(&replay.handedness)
-        } else {
-            "none"
-        };
-        let selected_secondary_live_hand_frame = (compact_hand_input_source_mode
-            .selects_live_frame()
-            && !worldspace_controllers_selected)
-            .then(|| live_hand_frames.frame_for_rig(&secondary_replay.handedness))
-            .flatten();
-        let selected_secondary_live_hand = if selected_secondary_live_hand_frame.is_some()
-            || compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode)
-        {
-            handedness_label(&secondary_replay.handedness)
-        } else {
-            "none"
-        };
-        if alternate_input_enabled {
-            // Kept separate from the large scorecard so Android log limits cannot hide
-            // live readiness or substitute a recorded-frame success for live tracking.
-            let selected = compact_hand_input_source_mode.selects_live_frame()
-                && !worldspace_controllers_selected;
-            let state = format!(
-                "inputMode={} recordedPoseFallback=false trackerReady={} frameReady={} leftActive={} leftReady={} leftSource={} leftLocate={} rightActive={} rightReady={} rightSource={} rightLocate={} reason={} rigRuntimeJointCount={} rigTipLengthCount={} expectedRuntimeJointCount=21 expectedTipLengthCount=5 pointerRigIndependent=true focus={}",
-                compact_hand_input_source_mode.marker_value(), live_hand_stats.tracker_ready,
-                live_hand_stats.frame_ready, live_hand_stats.left_active, live_hand_frames.left.is_some(),
-                if selected && live_hand_frames.left.is_some() { "live-openxr" } else { "none" },
-                crate::sanitize(&live_hand_stats.left_locate_status),
-                live_hand_stats.right_active, live_hand_frames.right.is_some(),
-                if selected && live_hand_frames.right.is_some() { "live-openxr" } else { "none" },
-                crate::sanitize(&live_hand_stats.right_locate_status), live_hand_stats.reason,
-                replay.runtime_joint_count, replay.tip_length_count, renderer_focus_session_state,
-            );
-            if state != last_worldspace_hand_state || frame_count % 120 == 0 {
-                crate::marker(
-                    "worldspace-hand-input",
-                    format!(
-                        "status=current frame={} liveFrame={} liveTimestampNs={} {}",
-                        frame_count,
-                        live_hand_stats.frame_index,
-                        live_hand_stats.timestamp_ns,
-                        state
-                    ),
-                );
-                last_worldspace_hand_state = state;
-            }
-        }
-        let stage_started = Instant::now();
-        gpu_timestamp_tracker.write_stage_start(
-            vk_device,
-            cmd,
-            frame_slot,
-            GpuTimestampStage::HandSdf,
-        );
-        let gpu_sdf_stats = if let Some(renderer) = gpu_sdf_field_renderer.as_mut() {
-            match renderer.record_compute_frame(
-                vk_device,
-                cmd,
-                replay,
+        if let Some(recorder) = hand_joint_capture_recorder.as_deref_mut() {
+            recorder.update_and_record(
                 frame_count,
-                sdf_visual_enabled,
-                sdf_update_period_frames,
-                selected_primary_live_hand_frame,
-                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
-            ) {
-                Ok(stats) => {
-                    if stats.field_update_dispatched {
-                        if let Some(runtime) = camera_runtime {
-                            runtime.record_sdf_field_update();
+                &live_hand_frames,
+                &live_hand_stats,
+                hand_mesh_visual_material_settings,
+            );
+        }
+        if let Some(recorder) = hand_mesh_capture_recorder.as_deref_mut() {
+            recorder.update_and_record(
+                reference_space,
+                frame_state.predicted_display_time,
+                frame_count,
+                hand_mesh_visual_material_settings,
+            );
+        }
+        let (gpu_sdf_stats, hand_mesh_visual_stats, hand_anchor_particle_stats, stage_started) =
+            if let (Some(replay), Some(secondary_replay)) = (replay, secondary_replay) {
+                // Each GPU skinning renderer owns a fixed bind mesh/palette. Tracking loss
+                // must not promote the opposite hand's poses into that resident rig.
+                let selected_primary_live_hand_frame = (compact_hand_input_source_mode
+                    .selects_live_frame()
+                    && !worldspace_controllers_selected)
+                    .then(|| live_hand_frames.frame_for_rig(&replay.handedness))
+                    .flatten();
+                let selected_primary_live_hand = if selected_primary_live_hand_frame.is_some()
+                    || compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode)
+                {
+                    handedness_label(&replay.handedness)
+                } else {
+                    "none"
+                };
+                let selected_secondary_live_hand_frame = (compact_hand_input_source_mode
+                    .selects_live_frame()
+                    && !worldspace_controllers_selected)
+                    .then(|| live_hand_frames.frame_for_rig(&secondary_replay.handedness))
+                    .flatten();
+                let selected_secondary_live_hand = if selected_secondary_live_hand_frame.is_some()
+                    || compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode)
+                {
+                    handedness_label(&secondary_replay.handedness)
+                } else {
+                    "none"
+                };
+                if alternate_input_enabled {
+                    // Kept separate from the large scorecard so Android log limits cannot hide
+                    // live readiness or substitute a recorded-frame success for live tracking.
+                    let selected = compact_hand_input_source_mode.selects_live_frame()
+                        && !worldspace_controllers_selected;
+                    let state = format!(
+                        "inputMode={} recordedPoseFallback=false trackerReady={} frameReady={} leftActive={} leftReady={} leftSource={} leftLocate={} rightActive={} rightReady={} rightSource={} rightLocate={} reason={} rigRuntimeJointCount={} rigTipLengthCount={} expectedRuntimeJointCount=21 expectedTipLengthCount=5 pointerRigIndependent=true focus={}",
+                        compact_hand_input_source_mode.marker_value(), live_hand_stats.tracker_ready,
+                        live_hand_stats.frame_ready, live_hand_stats.left_active, live_hand_frames.left.is_some(),
+                        if selected && live_hand_frames.left.is_some() { "live-openxr" } else { "none" },
+                        crate::sanitize(&live_hand_stats.left_locate_status),
+                        live_hand_stats.right_active, live_hand_frames.right.is_some(),
+                        if selected && live_hand_frames.right.is_some() { "live-openxr" } else { "none" },
+                        crate::sanitize(&live_hand_stats.right_locate_status), live_hand_stats.reason,
+                        replay.runtime_joint_count, replay.tip_length_count, renderer_focus_session_state,
+                    );
+                    if state != last_worldspace_hand_state || frame_count % 120 == 0 {
+                        crate::marker(
+                            "worldspace-hand-input",
+                            format!(
+                                "status=current frame={} liveFrame={} liveTimestampNs={} {}",
+                                frame_count,
+                                live_hand_stats.frame_index,
+                                live_hand_stats.timestamp_ns,
+                                state
+                            ),
+                        );
+                        last_worldspace_hand_state = state;
+                    }
+                }
+                let stage_started = Instant::now();
+                gpu_timestamp_tracker.write_stage_start(
+                    vk_device,
+                    cmd,
+                    frame_slot,
+                    GpuTimestampStage::HandSdf,
+                );
+                let gpu_sdf_stats = if let Some(renderer) = gpu_sdf_field_renderer.as_mut() {
+                    match renderer.record_compute_frame(
+                        vk_device,
+                        cmd,
+                        replay,
+                        frame_count,
+                        sdf_visual_enabled,
+                        sdf_update_period_frames,
+                        selected_primary_live_hand_frame,
+                        compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
+                    ) {
+                        Ok(stats) => {
+                            if stats.field_update_dispatched {
+                                if let Some(runtime) = camera_runtime {
+                                    runtime.record_sdf_field_update();
+                                }
+                            }
+                            stats
+                        }
+                        Err(error) => {
+                            if frame_count == 0 || frame_count % 120 == 0 {
+                                crate::marker(
+                                    "gpu-sdf-field",
+                                    format!(
+                                        "status=error reason={} dynamicSdfReady=false sdfVisualEffectVisible=false sdfComputePath=native-vulkan-compute-recorded-skinned-mesh-sdf-field legacySdfComputePath=native-vulkan-compute-recorded-validation-mesh-sdf-field cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=false jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=false sourceMeshToSdfKernel=false",
+                                        crate::sanitize(&error)
+                                    ),
+                                );
+                            }
+                            GpuSdfFieldFrameStats::unavailable(replay, frame_count)
                         }
                     }
-                    stats
-                }
-                Err(error) => {
-                    if frame_count == 0 || frame_count % 120 == 0 {
-                        crate::marker(
-                            "gpu-sdf-field",
-                            format!(
-                                "status=error reason={} dynamicSdfReady=false sdfVisualEffectVisible=false sdfComputePath=native-vulkan-compute-recorded-skinned-mesh-sdf-field legacySdfComputePath=native-vulkan-compute-recorded-validation-mesh-sdf-field cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=false jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=false sourceMeshToSdfKernel=false",
-                                crate::sanitize(&error)
-                            ),
-                        );
-                    }
+                } else {
                     GpuSdfFieldFrameStats::unavailable(replay, frame_count)
-                }
-            }
-        } else {
-            GpuSdfFieldFrameStats::unavailable(replay, frame_count)
-        };
-        let secondary_gpu_sdf_stats = if let Some(renderer) =
-            secondary_gpu_sdf_field_renderer.as_mut()
-        {
-            match renderer.record_compute_frame(
-                vk_device,
-                cmd,
-                secondary_replay,
-                frame_count,
-                false,
-                sdf_update_period_frames,
-                selected_secondary_live_hand_frame,
-                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
-            ) {
-                Ok(stats) => stats,
-                Err(error) => {
-                    if frame_count == 0 || frame_count % 120 == 0 {
-                        crate::marker(
-                            "hand-mesh-visual",
-                            format!(
-                                "status=secondary-skinning-error reason={} liveHandMeshVisualBothHandsPath=primary-only",
-                                crate::sanitize(&error)
-                            ),
-                        );
+                };
+                let secondary_gpu_sdf_stats = if let Some(renderer) =
+                    secondary_gpu_sdf_field_renderer.as_mut()
+                {
+                    match renderer.record_compute_frame(
+                        vk_device,
+                        cmd,
+                        secondary_replay,
+                        frame_count,
+                        false,
+                        sdf_update_period_frames,
+                        selected_secondary_live_hand_frame,
+                        compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
+                    ) {
+                        Ok(stats) => stats,
+                        Err(error) => {
+                            if frame_count == 0 || frame_count % 120 == 0 {
+                                crate::marker(
+                                    "hand-mesh-visual",
+                                    format!(
+                                        "status=secondary-skinning-error reason={} liveHandMeshVisualBothHandsPath=primary-only",
+                                        crate::sanitize(&error)
+                                    ),
+                                );
+                            }
+                            GpuSdfFieldFrameStats::unavailable(secondary_replay, frame_count)
+                        }
                     }
+                } else {
                     GpuSdfFieldFrameStats::unavailable(secondary_replay, frame_count)
-                }
-            }
-        } else {
-            GpuSdfFieldFrameStats::unavailable(secondary_replay, frame_count)
-        };
-        gpu_timestamp_tracker.write_stage_end(
-            vk_device,
-            cmd,
-            frame_slot,
-            GpuTimestampStage::HandSdf,
-        );
-        frame_timings.hand_sdf_prepare_ms = elapsed_ms(stage_started);
-        let stage_started = Instant::now();
-        gpu_timestamp_tracker.write_stage_start(
-            vk_device,
-            cmd,
-            frame_slot,
-            GpuTimestampStage::HandMeshVisual,
-        );
-        let hand_mesh_visual_mesh_source =
-            hotload_hand_mesh_visual_mesh_source(hand_mesh_visual_mesh_source);
-        let hand_mesh_visual_material_settings =
-            hotload_hand_mesh_visual_material_settings(hand_mesh_visual_material_settings);
-        let mut primary_hand_mesh_visual_stats = if let Some(renderer) =
-            gpu_hand_mesh_visual_renderer.as_mut()
-        {
-            match renderer.record_frame(
-                replay,
-                frame_count,
-                gpu_sdf_stats.skinning_ready,
-                selected_primary_live_hand_frame,
-                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
-                selected_primary_live_hand,
-                hand_mesh_visual_mesh_source,
-                effective_diagnostic_settings,
-                hand_mesh_visual_material_settings,
-            ) {
-                Ok(stats) => stats,
-                Err(error) => {
-                    if frame_count == 0 || frame_count % 120 == 0 {
-                        crate::marker(
-                                "hand-mesh-visual",
-                                format!(
-                                    "status=error reason={} animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false",
-                                    crate::sanitize(&error)
-                                ),
-                            );
+                };
+                gpu_timestamp_tracker.write_stage_end(
+                    vk_device,
+                    cmd,
+                    frame_slot,
+                    GpuTimestampStage::HandSdf,
+                );
+                frame_timings.hand_sdf_prepare_ms = elapsed_ms(stage_started);
+                let stage_started = Instant::now();
+                gpu_timestamp_tracker.write_stage_start(
+                    vk_device,
+                    cmd,
+                    frame_slot,
+                    GpuTimestampStage::HandMeshVisual,
+                );
+                let hand_mesh_visual_mesh_source =
+                    hotload_hand_mesh_visual_mesh_source(hand_mesh_visual_mesh_source);
+                let hand_mesh_visual_material_settings =
+                    hotload_hand_mesh_visual_material_settings(hand_mesh_visual_material_settings);
+                let mut primary_hand_mesh_visual_stats = if let Some(renderer) =
+                    gpu_hand_mesh_visual_renderer.as_mut()
+                {
+                    match renderer.record_frame(
+                        replay,
+                        frame_count,
+                        gpu_sdf_stats.skinning_ready,
+                        selected_primary_live_hand_frame,
+                        compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
+                        selected_primary_live_hand,
+                        hand_mesh_visual_mesh_source,
+                        effective_diagnostic_settings,
+                        hand_mesh_visual_material_settings,
+                    ) {
+                        Ok(stats) => stats,
+                        Err(error) => {
+                            if frame_count == 0 || frame_count % 120 == 0 {
+                                crate::marker(
+                                        "hand-mesh-visual",
+                                        format!(
+                                            "status=error reason={} animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false",
+                                            crate::sanitize(&error)
+                                        ),
+                                    );
+                            }
+                            GpuHandMeshVisualFrameStats::unavailable_with_source(
+                                replay,
+                                frame_count,
+                                selected_primary_live_hand,
+                                hand_mesh_visual_mesh_source,
+                                "record-frame-error",
+                                effective_diagnostic_settings,
+                                hand_mesh_visual_material_settings,
+                            )
+                        }
                     }
+                } else {
                     GpuHandMeshVisualFrameStats::unavailable_with_source(
                         replay,
                         frame_count,
                         selected_primary_live_hand,
                         hand_mesh_visual_mesh_source,
-                        "record-frame-error",
+                        "renderer-unavailable",
                         effective_diagnostic_settings,
                         hand_mesh_visual_material_settings,
                     )
-                }
-            }
-        } else {
-            GpuHandMeshVisualFrameStats::unavailable_with_source(
-                replay,
-                frame_count,
-                selected_primary_live_hand,
-                hand_mesh_visual_mesh_source,
-                "renderer-unavailable",
-                effective_diagnostic_settings,
-                hand_mesh_visual_material_settings,
-            )
-        };
-        let mut secondary_hand_mesh_visual_stats = if let Some(renderer) =
-            secondary_gpu_hand_mesh_visual_renderer.as_mut()
-        {
-            match renderer.record_frame(
-                secondary_replay,
-                frame_count,
-                secondary_gpu_sdf_stats.skinning_ready,
-                selected_secondary_live_hand_frame,
-                compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
-                selected_secondary_live_hand,
-                hand_mesh_visual_mesh_source,
-                effective_diagnostic_settings,
-                hand_mesh_visual_material_settings,
-            ) {
-                Ok(stats) => stats,
-                Err(error) => {
-                    if frame_count == 0 || frame_count % 120 == 0 {
-                        crate::marker(
-                            "hand-mesh-visual",
-                            format!(
-                                "status=secondary-visual-error reason={} liveHandMeshVisualBothHandsPath=primary-only",
-                                crate::sanitize(&error)
-                            ),
-                        );
+                };
+                let mut secondary_hand_mesh_visual_stats = if let Some(renderer) =
+                    secondary_gpu_hand_mesh_visual_renderer.as_mut()
+                {
+                    match renderer.record_frame(
+                        secondary_replay,
+                        frame_count,
+                        secondary_gpu_sdf_stats.skinning_ready,
+                        selected_secondary_live_hand_frame,
+                        compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode),
+                        selected_secondary_live_hand,
+                        hand_mesh_visual_mesh_source,
+                        effective_diagnostic_settings,
+                        hand_mesh_visual_material_settings,
+                    ) {
+                        Ok(stats) => stats,
+                        Err(error) => {
+                            if frame_count == 0 || frame_count % 120 == 0 {
+                                crate::marker(
+                                    "hand-mesh-visual",
+                                    format!(
+                                        "status=secondary-visual-error reason={} liveHandMeshVisualBothHandsPath=primary-only",
+                                        crate::sanitize(&error)
+                                    ),
+                                );
+                            }
+                            GpuHandMeshVisualFrameStats::unavailable_with_source(
+                                secondary_replay,
+                                frame_count,
+                                selected_secondary_live_hand,
+                                hand_mesh_visual_mesh_source,
+                                "secondary-record-frame-error",
+                                effective_diagnostic_settings,
+                                hand_mesh_visual_material_settings,
+                            )
+                        }
                     }
+                } else {
                     GpuHandMeshVisualFrameStats::unavailable_with_source(
                         secondary_replay,
                         frame_count,
                         selected_secondary_live_hand,
                         hand_mesh_visual_mesh_source,
-                        "secondary-record-frame-error",
+                        "secondary-renderer-unavailable",
                         effective_diagnostic_settings,
                         hand_mesh_visual_material_settings,
                     )
+                };
+                if effective_grafts_enabled
+                    && primary_hand_mesh_visual_stats.ready
+                    && secondary_hand_mesh_visual_stats.ready
+                    && primary_hand_mesh_visual_stats.live_compact_input_frame
+                    && secondary_hand_mesh_visual_stats.live_compact_input_frame
+                {
+                    if let (Some(renderer), Some(source_frame), Some(target_frame)) = (
+                        gpu_hand_mesh_visual_renderer.as_ref(),
+                        selected_primary_live_hand_frame,
+                        selected_secondary_live_hand_frame,
+                    ) {
+                        match renderer.prepare_graft_copies(
+                            vk_device,
+                            source_frame,
+                            target_frame,
+                            effective_graft_scale,
+                        ) {
+                            Ok(copy_count) => primary_hand_mesh_visual_stats.graft_copy_count = copy_count,
+                            Err(error) => crate::marker(
+                                "hand-mesh-visual",
+                                format!(
+                                    "status=graft-primary-unavailable reason={} handMeshGraftCopiesEnabled=true handMeshGraftCopyCount=0",
+                                    crate::sanitize(&error)
+                                ),
+                            ),
+                        }
+                    }
+                    if let (Some(renderer), Some(source_frame), Some(target_frame)) = (
+                        secondary_gpu_hand_mesh_visual_renderer.as_ref(),
+                        selected_secondary_live_hand_frame,
+                        selected_primary_live_hand_frame,
+                    ) {
+                        match renderer.prepare_graft_copies(
+                            vk_device,
+                            source_frame,
+                            target_frame,
+                            effective_graft_scale,
+                        ) {
+                            Ok(copy_count) => secondary_hand_mesh_visual_stats.graft_copy_count = copy_count,
+                            Err(error) => crate::marker(
+                                "hand-mesh-visual",
+                                format!(
+                                    "status=graft-secondary-unavailable reason={} handMeshGraftCopiesEnabled=true handMeshGraftCopyCount=0",
+                                    crate::sanitize(&error)
+                                ),
+                            ),
+                        }
+                    }
                 }
-            }
-        } else {
-            GpuHandMeshVisualFrameStats::unavailable_with_source(
-                secondary_replay,
-                frame_count,
-                selected_secondary_live_hand,
-                hand_mesh_visual_mesh_source,
-                "secondary-renderer-unavailable",
-                effective_diagnostic_settings,
-                hand_mesh_visual_material_settings,
-            )
-        };
-        if effective_grafts_enabled
-            && primary_hand_mesh_visual_stats.ready
-            && secondary_hand_mesh_visual_stats.ready
-            && primary_hand_mesh_visual_stats.live_compact_input_frame
-            && secondary_hand_mesh_visual_stats.live_compact_input_frame
-        {
-            if let (Some(renderer), Some(source_frame), Some(target_frame)) = (
-                gpu_hand_mesh_visual_renderer.as_ref(),
-                selected_primary_live_hand_frame,
-                selected_secondary_live_hand_frame,
-            ) {
-                match renderer.prepare_graft_copies(
-                    vk_device,
-                    source_frame,
-                    target_frame,
+                let mut hand_mesh_visual_stats = GpuHandMeshVisualFrameSetStats::new(
+                    primary_hand_mesh_visual_stats,
+                    secondary_hand_mesh_visual_stats,
+                    effective_grafts_enabled,
                     effective_graft_scale,
-                ) {
-                    Ok(copy_count) => primary_hand_mesh_visual_stats.graft_copy_count = copy_count,
-                    Err(error) => crate::marker(
-                        "hand-mesh-visual",
-                        format!(
-                            "status=graft-primary-unavailable reason={} handMeshGraftCopiesEnabled=true handMeshGraftCopyCount=0",
-                            crate::sanitize(&error)
-                        ),
-                    ),
+                );
+                if let Some(controls) = mesh_ui_controls {
+                    hand_mesh_visual_stats.primary.visible &= controls.hands;
+                    hand_mesh_visual_stats.secondary.visible &= controls.hands;
                 }
-            }
-            if let (Some(renderer), Some(source_frame), Some(target_frame)) = (
-                secondary_gpu_hand_mesh_visual_renderer.as_ref(),
-                selected_secondary_live_hand_frame,
-                selected_primary_live_hand_frame,
-            ) {
-                match renderer.prepare_graft_copies(
-                    vk_device,
-                    source_frame,
-                    target_frame,
-                    effective_graft_scale,
-                ) {
-                    Ok(copy_count) => secondary_hand_mesh_visual_stats.graft_copy_count = copy_count,
-                    Err(error) => crate::marker(
-                        "hand-mesh-visual",
-                        format!(
-                            "status=graft-secondary-unavailable reason={} handMeshGraftCopiesEnabled=true handMeshGraftCopyCount=0",
-                            crate::sanitize(&error)
-                        ),
-                    ),
+                if worldspace_controllers_selected {
+                    hand_mesh_visual_stats.primary.visible = false;
+                    hand_mesh_visual_stats.secondary.visible = false;
                 }
-            }
-        }
-        let mut hand_mesh_visual_stats = GpuHandMeshVisualFrameSetStats::new(
-            primary_hand_mesh_visual_stats,
-            secondary_hand_mesh_visual_stats,
-            effective_grafts_enabled,
-            effective_graft_scale,
-        );
-        if let Some(controls) = mesh_ui_controls {
-            hand_mesh_visual_stats.primary.visible &= controls.hands;
-            hand_mesh_visual_stats.secondary.visible &= controls.hands;
-        }
-        if worldspace_controllers_selected {
-            hand_mesh_visual_stats.primary.visible = false;
-            hand_mesh_visual_stats.secondary.visible = false;
-        }
-        let hand_anchor_particle_stats = GpuHandAnchorParticleFrameSetStats::new(
-            &hand_mesh_visual_stats,
-            hand_anchor_particle_settings,
-        );
-        if let Some(renderer) = gpu_hand_anchor_particle_renderer.as_mut() {
-            renderer.record_compute_frame(
-                vk_device,
-                cmd,
-                &hand_anchor_particle_stats.primary,
-                hand_anchor_particle_settings,
-                frame_count,
-            );
-        }
-        if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer.as_mut() {
-            renderer.record_compute_frame(
-                vk_device,
-                cmd,
-                &hand_anchor_particle_stats.secondary,
-                hand_anchor_particle_settings,
-                frame_count,
-            );
-        }
+                let hand_anchor_particle_stats = GpuHandAnchorParticleFrameSetStats::new(
+                    &hand_mesh_visual_stats,
+                    hand_anchor_particle_settings,
+                );
+                if let Some(renderer) = gpu_hand_anchor_particle_renderer.as_mut() {
+                    renderer.record_compute_frame(
+                        vk_device,
+                        cmd,
+                        &hand_anchor_particle_stats.primary,
+                        hand_anchor_particle_settings,
+                        frame_count,
+                    );
+                }
+                if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer.as_mut() {
+                    renderer.record_compute_frame(
+                        vk_device,
+                        cmd,
+                        &hand_anchor_particle_stats.secondary,
+                        hand_anchor_particle_settings,
+                        frame_count,
+                    );
+                }
+                (gpu_sdf_stats, hand_mesh_visual_stats, hand_anchor_particle_stats, stage_started)
+            } else {
+                gpu_timestamp_tracker.write_disabled_stage(vk_device, cmd, frame_slot, GpuTimestampStage::HandSdf);
+                gpu_timestamp_tracker.write_disabled_stage(vk_device, cmd, frame_slot, GpuTimestampStage::HandMeshVisual);
+                let absent = || GpuHandMeshVisualFrameStats {
+                    readiness_reason: "hand-geometry-unselected",
+                    ..Default::default()
+                };
+                (GpuSdfFieldFrameStats::default(),
+                 GpuHandMeshVisualFrameSetStats::new(absent(), absent(), false, 1.0),
+                 GpuHandAnchorParticleFrameSetStats::default(), Instant::now())
+            };
         let openxr_environment_depth_frame =
             if environment_depth_settings.runtime_provider_requested() {
                 openxr_environment_depth_runtime
@@ -3845,13 +3885,20 @@ unsafe fn run_projection_frames(
                     private_particle_world_anchor.scale_parameter_source(),
                     private_particle_world_anchor.world_forward_axis(),
                     frame_count,
-                    mesh_ui_controls.map(|controls| {
-                        (
-                            ui_particle_phase_frame,
-                            controls.animation,
-                            0.5 + controls.particle_scale,
-                        )
-                    }),
+                    // The particles-only local panel uses canonical settings and
+                    // simulation phase. Its diagnostic panel defaults must not
+                    // acquire animation/scale authority merely by being present.
+                    if crate::native_geometry_selection::hand_geometry_enabled() {
+                        mesh_ui_controls.map(|controls| {
+                            (
+                                ui_particle_phase_frame,
+                                controls.animation,
+                                0.5 + controls.particle_scale,
+                            )
+                        })
+                    } else {
+                        None
+                    },
                 )
             } else {
                 for stage in [
@@ -3877,13 +3924,15 @@ unsafe fn run_projection_frames(
                 )?;
             }
         }
-        gpu_timestamp_tracker.write_stage_end(
-            vk_device,
-            cmd,
-            frame_slot,
-            GpuTimestampStage::HandMeshVisual,
-        );
-        frame_timings.hand_mesh_visual_ms = elapsed_ms(stage_started);
+        if replay.is_some() {
+            gpu_timestamp_tracker.write_stage_end(
+                vk_device,
+                cmd,
+                frame_slot,
+                GpuTimestampStage::HandMeshVisual,
+            );
+            frame_timings.hand_mesh_visual_ms = elapsed_ms(stage_started);
+        }
         let private_extension_stats = if camera_output_mode.private_layer_projection_enabled() {
             let stats = private_extension_slot_runtime.record_frame(
                 vk_device,
@@ -5713,7 +5762,7 @@ unsafe fn record_projection_diagnostic(
     swapchain: &ProjectionSwapchain,
     image_index: usize,
     frame_count: u64,
-    replay: &RecordedHandReplaySummary,
+    replay: Option<&RecordedHandReplaySummary>,
     render_mode: NativeRendererRenderMode,
     camera_output_mode: NativeCameraOutputMode,
     camera_direct_border_opacity: f32,
@@ -5773,7 +5822,8 @@ unsafe fn record_projection_diagnostic(
     );
     let stimulus_volume_route = render_mode.uses_stimulus_volume();
     let custom_stereo_projection = render_mode.uses_custom_stereo_projection();
-    let draw_base_hand_meshes = should_draw_base_hand_meshes(
+    let draw_recorded_replay_overlay = draw_recorded_replay_overlay && replay.is_some();
+    let draw_base_hand_meshes = replay.is_some() && should_draw_base_hand_meshes(
         hand_mesh_real_hands_visible,
         draw_recorded_replay_overlay,
         diagnostic_settings,
@@ -6323,6 +6373,7 @@ unsafe fn record_projection_diagnostic(
             }
         }
         if custom_stereo_projection
+            && replay.is_some()
             && draw_live_hand_target_overlay
             && !hand_mesh_visual_stats.any_ready()
         {
@@ -6338,7 +6389,7 @@ unsafe fn record_projection_diagnostic(
                 visual_stats = eye_visual_stats;
             }
         }
-        if custom_stereo_projection && draw_recorded_replay_overlay {
+        if let Some(replay) = replay.filter(|_| custom_stereo_projection && draw_recorded_replay_overlay) {
             let eye_visual_stats = record_recorded_hand_overlay(
                 device,
                 cmd,
