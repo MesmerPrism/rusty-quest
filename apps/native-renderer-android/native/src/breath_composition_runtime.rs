@@ -926,6 +926,62 @@ fn lock_runtime() -> MutexGuard<'static, BreathCompositionRuntime> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Host tests need a real admitted composition binding; the production default
+/// intentionally has Missing bindings. This fixture is absent from APK builds.
+#[cfg(test)]
+pub(crate) mod scoped_test_binding {
+    use super::*;
+
+    static SERIAL: Mutex<()> = Mutex::new(());
+    const TEST_BINDING: [u8; 32] = [0x6b; 32];
+
+    pub(crate) struct Guard {
+        previous: Option<BreathCompositionRuntime>,
+        // Serializes scoped test installers, not calls into the breath runtime.
+        _serial: MutexGuard<'static, ()>,
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.take() {
+                let displaced = {
+                    let mut current = lock_runtime();
+                    std::mem::replace(&mut *current, previous)
+                };
+                drop(displaced);
+            }
+        }
+    }
+
+    /// Declare this guard before session runtimes so their workers stop before
+    /// the prior breath authority is restored, including during panic unwind.
+    /// The test runner serializes other global-runtime users (--test-threads=1).
+    pub(crate) fn install() -> Guard {
+        let serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let replacement = BreathCompositionRuntime::new(BreathCompositionRuntimeConfig {
+            enabled: true,
+            packaged_activation_binding: BreathCompositionBinding::Digest(TEST_BINDING),
+            runtime_activation_binding: BreathCompositionBinding::Digest(TEST_BINDING),
+            capabilities: BreathCompositionCapabilities {
+                controller_assessment: true,
+                volume_mapping: true,
+                same_apk_panel: true,
+                ..BreathCompositionCapabilities::default()
+            },
+            ..BreathCompositionRuntimeConfig::default()
+        });
+        // Check the real authority accepted both matching bindings before touching
+        // the global. This does not claim selected input or presentation readiness.
+        assert!(replacement.snapshot().feature_lock_active);
+        assert_eq!(replacement.snapshot().feature_lock_sha256, TEST_BINDING);
+        let previous = {
+            let mut current = lock_runtime();
+            std::mem::replace(&mut *current, replacement)
+        };
+        Guard { previous: Some(previous), _serial: serial }
+    }
+}
+
 #[cfg(target_os = "android")]
 pub(crate) fn install_from_android_properties_with_defaults(
     default_lookup: impl FnMut(&str) -> Option<String>,

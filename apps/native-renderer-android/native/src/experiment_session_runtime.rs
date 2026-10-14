@@ -4023,8 +4023,15 @@ mod tests {
 
     #[test]
     fn retained_idle_generation_saves_and_retires_through_canonical_fenced_worker() {
+        let _breath_binding = crate::breath_composition_runtime::scoped_test_binding::install();
         let root = temp_root("retained-idle-terminal");
         let runtime = runtime(&root);
+        struct JoinSessionOnDrop<'a>(&'a ExperimentSessionRuntime);
+        impl Drop for JoinSessionOnDrop<'_> {
+            fn drop(&mut self) { let _ = self.0.shutdown_for_test(); }
+        }
+        // Join before restoring the outer breath fixture, even on assertion panic.
+        let _session_cleanup = JoinSessionOnDrop(&runtime);
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         runtime.claim_immersive_owner(1).unwrap();
         runtime.apply_command_json(&start_command(&root, "retained-start"));
@@ -4073,9 +4080,16 @@ mod tests {
 
     #[test]
     fn queued_local_terminal_rechecks_owner_on_same_worker_before_save_exit() {
+        let _breath_binding = crate::breath_composition_runtime::scoped_test_binding::install();
         let root = temp_root("local-terminal-queued-owner");
         fs::create_dir_all(root.parent().unwrap()).unwrap();
         let runtime = runtime(&root);
+        struct JoinSessionOnDrop<'a>(&'a ExperimentSessionRuntime);
+        impl Drop for JoinSessionOnDrop<'_> {
+            fn drop(&mut self) { let _ = self.0.shutdown_for_test(); }
+        }
+        // Join before restoring the outer breath fixture, even on assertion panic.
+        let _session_cleanup = JoinSessionOnDrop(&runtime);
         wait_for(&runtime, "\"initialization_status\":\"ready\"");
         runtime.claim_immersive_owner(1).unwrap();
         runtime.apply_command_json(&start_command(&root, "local-owner-start"));
@@ -4122,8 +4136,47 @@ mod tests {
         assert!(matches!(runtime.try_offer(SessionRecord::Event(SessionEvent {
             observed_at: MonotonicNanos::new(2_100), kind: SessionEventKind::ImmersiveActive,
         })), OfferOutcome::Accepted { .. }), "the still-current writer must accept records after rejection");
-        runtime.shutdown_captured_immersive_owner(2).unwrap();
-        assert!(runtime.status_json().contains("\"status\":\"saved\""));
+        let binding: Value = serde_json::from_str(&crate::breath_composition_runtime::status_json()).unwrap();
+        let projection = runtime.projection.read().unwrap();
+        assert_eq!(projection.phase, SessionPhase::Active);
+        let current_owner = runtime.immersive_owner_identity.load(Ordering::Acquire);
+        assert_eq!(current_owner, 2);
+        let current_fence = LocalTerminalFence { scope: LocalTerminalScope {
+            owner_identity: current_owner, runtime_epoch: runtime.runtime_epoch, generation: projection.generation,
+            session_key: projection.session_key.clone().unwrap(),
+            condition_id: projection.condition_id.clone().unwrap(),
+            profile_sha256: projection.non_audio_profile_sha256.clone().unwrap(),
+            binding_sha256: binding["snapshot"]["activation_binding_sha256"].as_str().unwrap().to_owned(),
+        }, owner: Arc::clone(&runtime.immersive_owner_identity), gate: Arc::clone(&runtime.local_terminal_gate) };
+        assert!(current_fence.matches(&projection), "current active owner must have a valid terminal scope");
+        drop(projection);
+        let session_key = current_fence.scope.session_key.clone();
+        let operation_id = "current-owner-fenced-save-exit";
+        assert!(runtime.apply_local_terminal(&command("save-and-exit", operation_id, generation, 3_000), current_fence.scope)
+            .contains("\"command_status\":\"queued\""));
+        let closed: Value = serde_json::from_str(&wait_for(&runtime, "\"shutdown_status\":\"complete\"")).unwrap();
+        assert_eq!(closed["readback"]["finalized_operation_id"], operation_id);
+        assert_eq!(closed["readback"]["finalized_session_generation"], generation);
+        assert_eq!(closed["readback"]["recording_result"]["status"], "saved");
+        let ack = closed["readback"]["shutdown_ack_revision"].as_u64().unwrap();
+        assert!(ack > 0);
+        let durable: Value = serde_json::from_slice(&fs::read(root.join(session_key).join("final.json")).unwrap()).unwrap();
+        assert_eq!(durable["saved"], true);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !runtime.worker_finished() && Instant::now() < deadline { thread::yield_now(); }
+        assert!(runtime.worker_finished());
+        let retirement = RendererRetirementScope { owner_identity: current_owner, runtime_epoch: runtime.runtime_epoch,
+            generation, operation_id: operation_id.to_owned(), shutdown_ack_revision: ack };
+        let pending: Value = serde_json::from_str(&runtime.retirement_json(retirement.clone(), true)).unwrap();
+        assert_eq!(pending["status"], "pending");
+        assert_eq!(pending["owner_identity"], current_owner);
+        assert_eq!(pending["operation_id"], operation_id);
+        runtime.complete_renderer_retirement(current_owner, Ok(()));
+        let retired: Value = serde_json::from_str(&runtime.retirement_json(retirement, false)).unwrap();
+        assert_eq!(retired["status"], "retired");
+        assert_eq!(retired["shutdown_ack_revision"], ack);
+        assert_eq!(retired["generation"], generation);
+        runtime.shutdown_captured_immersive_owner(current_owner).unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 
