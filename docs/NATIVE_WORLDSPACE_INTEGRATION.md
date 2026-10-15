@@ -13,8 +13,8 @@ tracked right grip pose supplies its local negative-Z ray; the marker identifies
 `right-aim` or `right-grip`. Mesh UI selection binds grip even without a breath
 or pose-publisher feature. Missing controller tracking releases UI ownership.
 The right hand takes priority over a valid left-hand fallback. When available,
-`XR_FB_hand_tracking_aim` supplies the aim pose and index pinch. Worldspace alone
-requests OpenXR API 1.1.53 for Meta's corrected aim flags and Shell-aligned pose;
+`XR_FB_hand_tracking_aim` supplies the aim pose and index pinch. Worldspace and
+explicitly selected original mesh UI request OpenXR API 1.1.53 for Meta's corrected aim flags and Shell-aligned pose;
 an unsupported API fails explicitly without a silent downgrade. Computed + valid
 runtime aim, an active hand and a tracked wrist are required; system gestures
 cancel input. If the extension is unavailable, the ray runs from wrist toward
@@ -22,6 +22,23 @@ index proximal, with thumb/index tip separation providing 25mm press and 40mm
 release thresholds. A newly tracked hand must first open its pinch. Ownership
 changes, focus loss, missing tracking and non-rendering frames cancel drag capture
 and remove its visual.
+
+The explicitly selected original-product panel uses interaction edges instead
+of tracked-controller hover priority. An idle tracked controller cannot block
+an open hand's next pinch. A fresh trigger or pinch takes an idle pointer;
+simultaneous fresh edges choose the controller once. The pressed owner retains
+capture through release, and competing edges during that press are discarded.
+Tracking loss, a different hand, an aim/joint source change or focus reset
+requires an open input before another press. The existing cancel-before-owner
+handoff path still supplies one Android pointer. Neutral worldspace retains
+its tracked-controller priority. This changes UI arbitration only, not original
+hand visuals, scene input or simultaneous tracking selection.
+
+Original-product UI also requests optional available `XR_FB_hand_tracking_aim`
+through the existing same-session trackers. When absent, the existing tracked
+joint ray remains; a tool's FB aim target does not establish where that different
+joint ray hits. Current markers distinguish tracked controller rays from trigger
+state, selected arbitration, actual hand source and optional aim enablement.
 
 The app draws a solid depth-tested Vulkan ray and a hit reticle independently of
 the Android UI texture. White indicates aiming, green a panel hit, and amber a

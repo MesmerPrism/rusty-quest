@@ -446,9 +446,11 @@ unsafe fn run_projection_loop_inner(
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
     enabled_extensions.fb_hand_tracking_aim = enabled_extensions.ext_hand_tracking
         && available_extensions.fb_hand_tracking_aim
-        && crate::native_alternate_input::tracked_pointer_enabled_for_mode(
+        && (crate::native_alternate_input::tracked_pointer_enabled_for_mode(
             runtime_options.render_mode.marker_value(),
-        );
+        ) || crate::native_renderer_panel_bridge::packaged_control_panel_mode_is_breath_mapping_installed()
+            && !crate::native_mesh_ui::neutral_controls_enabled()
+            && crate::native_mesh_ui::enabled_for_mode(runtime_options.render_mode.marker_value()));
     enabled_extensions.fb_hand_tracking_mesh =
         crate::native_geometry_selection::hand_geometry_enabled()
             && enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
@@ -2946,8 +2948,14 @@ unsafe fn run_projection_frames(
                     && controller_readiness.action_set_ready
                     && ray.is_some_and(|ray| ray.valid)
                     && renderer_focus_session_state == "FOCUSED";
-                let (owner, hand_pressed, changed) = if alternate_panel_pointer_enabled {
-                    alternate_pointer.update(controller_selected, ui_hand_sample)
+                let was_pointer_pressed = alternate_pointer.interaction_pressed();
+                let (owner, pointer_pressed, changed) = if alternate_panel_pointer_enabled {
+                    if original_product_mesh_panel {
+                        alternate_pointer.update_interaction(controller_selected,
+                            ray.is_some_and(|ray| ray.pressed), ui_hand_sample)
+                    } else {
+                        alternate_pointer.update(controller_selected, ui_hand_sample)
+                    }
                 } else {
                     (
                         crate::native_alternate_input::PointerOwner::Controllers,
@@ -2961,7 +2969,11 @@ unsafe fn run_projection_frames(
                 panel.set_pointer_owner(owner);
                 let controller_owner =
                     owner == crate::native_alternate_input::PointerOwner::Controllers;
-                let hand = ui_hand_sample;
+                let hand = ui_hand_sample.filter(|sample| match owner {
+                    crate::native_alternate_input::PointerOwner::RightHand => sample.right,
+                    crate::native_alternate_input::PointerOwner::LeftHand => !sample.right,
+                    _ => false,
+                });
                 let consumed = panel.controller_ray(
                     app,
                     if controller_owner {
@@ -2971,9 +2983,10 @@ unsafe fn run_projection_frames(
                         hand.is_some()
                     },
                     if controller_owner {
-                        ray.is_some_and(|ray| ray.pressed)
+                        if original_product_mesh_panel { pointer_pressed }
+                        else { ray.is_some_and(|ray| ray.pressed) }
                     } else {
-                        hand_pressed
+                        pointer_pressed
                     },
                     if controller_owner {
                         ray.map(|ray| ray.origin).unwrap_or([0.0; 3])
@@ -2986,9 +2999,9 @@ unsafe fn run_projection_frames(
                         hand.map(|ray| ray.direction).unwrap_or([0.0; 3])
                     },
                 )?;
-                if changed || frame_count % 120 == 0 {
+                if changed || original_product_mesh_panel && was_pointer_pressed != pointer_pressed || frame_count % 120 == 0 {
                     let origin = ray.filter(|r| r.valid).map(|r| r.origin).unwrap_or([0.0; 3]);
-                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} controllerPointerSource={} controllerPointerTracked={} controllerPointerOrigin={:.4},{:.4},{:.4} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired={}", frame_count, owner.marker(), worldspace_input_policy.suppresses_hand_tracking_for_controller(true), ray.filter(|r| r.valid).map(|r| r.source).unwrap_or("none"), ray.is_some_and(|r| r.valid), origin[0], origin[1], origin[2], hand.map(|h| h.source()).unwrap_or("none"), hand_pressed, panel.pointer_visual_marker(), enabled_extensions.meta_simultaneous_hands_and_controllers));
+                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} controllerPointerSource={} controllerPointerTracked={} controllerPointerOrigin={:.4},{:.4},{:.4} controllerTriggerPressed={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false handAimExtensionEnabled={} interactionArbitration={} simultaneousTrackingRequired={}", frame_count, owner.marker(), worldspace_input_policy.suppresses_hand_tracking_for_controller(true), ray.filter(|r| r.valid).map(|r| r.source).unwrap_or("none"), ray.is_some_and(|r| r.valid), origin[0], origin[1], origin[2], ray.is_some_and(|r| r.pressed), ui_hand_sample.map(|h| h.source()).unwrap_or("none"), !controller_owner && pointer_pressed, panel.pointer_visual_marker(), enabled_extensions.fb_hand_tracking_aim, if original_product_mesh_panel { "press-edge" } else { "tracked-controller-priority" }, enabled_extensions.meta_simultaneous_hands_and_controllers));
                 }
                 if consumed || (worldspace_input_policy.suppresses_hand_tracking_for_controller(true) && !controller_selected) {
                     controller_events.stimulus_randomize_triggered = false;
@@ -3113,11 +3126,20 @@ unsafe fn run_projection_frames(
             );
         if alternate_panel_pointer_enabled && stimulus_actions.is_none() {
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
-                let (owner, pressed, changed) = alternate_pointer.update(false, ui_hand_sample);
+                let was_pointer_pressed = alternate_pointer.interaction_pressed();
+                let (owner, pressed, changed) = if original_product_mesh_panel {
+                    alternate_pointer.update_interaction(false, false, ui_hand_sample)
+                } else {
+                    alternate_pointer.update(false, ui_hand_sample)
+                };
                 if changed {
                     panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
                 }
-                let hand = ui_hand_sample;
+                let hand = ui_hand_sample.filter(|sample| match owner {
+                    crate::native_alternate_input::PointerOwner::RightHand => sample.right,
+                    crate::native_alternate_input::PointerOwner::LeftHand => !sample.right,
+                    _ => false,
+                });
                 panel.set_pointer_owner(owner);
                 panel.controller_ray(
                     app,
@@ -3126,8 +3148,8 @@ unsafe fn run_projection_frames(
                     hand.map(|ray| ray.origin).unwrap_or([0.0; 3]),
                     hand.map(|ray| ray.direction).unwrap_or([0.0; 3]),
                 )?;
-                if changed || frame_count % 120 == 0 {
-                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired={}", frame_count, owner.marker(), worldspace_input_policy.suppresses_hand_tracking_for_controller(true), hand.map(|h| h.source()).unwrap_or("none"), pressed, panel.pointer_visual_marker(), enabled_extensions.meta_simultaneous_hands_and_controllers));
+                if changed || original_product_mesh_panel && was_pointer_pressed != pressed || frame_count % 120 == 0 {
+                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false handAimExtensionEnabled={} interactionArbitration={} simultaneousTrackingRequired={}", frame_count, owner.marker(), worldspace_input_policy.suppresses_hand_tracking_for_controller(true), ui_hand_sample.map(|h| h.source()).unwrap_or("none"), pressed, panel.pointer_visual_marker(), enabled_extensions.fb_hand_tracking_aim, if original_product_mesh_panel { "press-edge" } else { "tracked-controller-priority" }, enabled_extensions.meta_simultaneous_hands_and_controllers));
                 }
             }
         }
