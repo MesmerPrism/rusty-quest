@@ -778,7 +778,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 if ("open-polar".equals(request.operation)) {
                     remotePending = new RemotePending(request.id, "", "open-polar");
                     server.updateReceipt(request.id, "pending", "Opening Polar setup on Quest.");
-                    if (panel != null && panel.canRenderRemotePolarInPlace()) {
+                    if (panel != null && (panel.canRenderRemotePolarInPlace()
+                            || NativeMeshUiProducer.requestPanelVisibility(panel,true))) {
                         panel.replaceBreathCompositionPanelContent("polar");
                         panel.observeRemotePolarRender(remotePending);
                     } else {
@@ -814,7 +815,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         return new JSONObject().put("y",REMOTE_DELEGATE.polarSetupReadback()).put("receipt",server.ownerReceipt());
     }
     private static boolean isRemoteImmersiveConfirmed() {
-        try{JSONObject current=REMOTE_DELEGATE.sessionControlReadback();return current!=null&&"immersive-active".equals(current.optString("presentation"));}
+        try{JSONObject current=REMOTE_DELEGATE.sessionControlReadback();return current!=null&&"immersive-active".equals(current.optString("presentation"))&&NativeMeshUiProducer.panelVisibilityConfirmed(remotePanel.get(),false);}
         catch(Exception unknown){return false;}
     }
     private static String remoteSetupPendingId="";
@@ -934,6 +935,104 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private boolean startupPermissionFlowEligible;
     private final ExperimenterPanelShortcutPolicy experimenterPanelShortcut =
         new ExperimenterPanelShortcutPolicy();
+    private MeshPanelAttachment meshPanelAttachment;
+    private boolean activityPanelResumed;
+
+    /**
+     * Move the retained production Activity's content into the native mesh carrier.
+     * This keeps the original builders, listeners, permissions, dialogs, browser
+     * adapters and process session owner. A NativeActivity is never cast to the
+     * product Activity and an unattached Activity is never constructed here.
+     */
+    public static AutoCloseable attachNativeMeshSessionControls(Activity immersive,
+            LinearLayout carrier, java.util.function.BooleanSupplier current) {
+        if (Looper.myLooper() != Looper.getMainLooper())
+            throw new IllegalStateException("panel-attachment-requires-main-thread");
+        BreathCompositionPanelModule owner = remotePanel.get();
+        if (owner == null || owner.experimentShellDestroyed || owner.isFinishing()
+                || owner.isDestroyed() || immersive == owner || !current.getAsBoolean())
+            throw new IllegalStateException("retained-production-panel-owner-unavailable");
+        if (owner.meshPanelAttachment != null) owner.meshPanelAttachment.close();
+        return owner.new MeshPanelAttachment(immersive, carrier, current);
+    }
+
+    private View currentPanelContent() {
+        if (meshPanelAttachment != null) return meshPanelAttachment.content;
+        ViewGroup window = (ViewGroup) findViewById(android.R.id.content);
+        return window == null || window.getChildCount() == 0 ? null : window.getChildAt(0);
+    }
+
+    @Override public void setContentView(View content) {
+        if (meshPanelAttachment != null) meshPanelAttachment.replace(content);
+        else super.setContentView(content);
+    }
+
+    private final class MeshPanelAttachment implements NativeMeshUiProducer.ProductPanelAttachment,
+            android.app.Application.ActivityLifecycleCallbacks {
+        final Activity immersive;
+        final LinearLayout carrier;
+        final java.util.function.BooleanSupplier current;
+        View content;
+        boolean closed, immersiveResumed=true, visible;
+        MeshPanelAttachment(Activity immersive, LinearLayout carrier,
+                java.util.function.BooleanSupplier current) {
+            this.immersive=immersive;this.carrier=carrier;this.current=current;
+            content=currentPanelContent();
+            if(content==null)throw new IllegalStateException("production-panel-content-unavailable");
+            meshPanelAttachment=this;
+            carrier.setPadding(0,0,0,0);
+            try {
+                replace(content);
+                getApplication().registerActivityLifecycleCallbacks(this);
+                EXPERIMENT_SESSION_SHELL.requestStatus(BreathCompositionPanelModule.this);
+                Log.i(TAG,"channel=native-panel-content event=attached source=retained-production-activity");
+            } catch(RuntimeException failure) { close();throw failure; }
+        }
+        boolean active(){return !closed&&current.getAsBoolean()&&!immersive.isFinishing()
+            &&!immersive.isDestroyed()&&!experimentShellDestroyed
+            &&!BreathCompositionPanelModule.this.isFinishing()&&!BreathCompositionPanelModule.this.isDestroyed();}
+        void replace(View next) {
+            if(!active())throw new IllegalStateException("production-panel-carrier-retired");
+            if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
+            if(next.getParent() instanceof ViewGroup)((ViewGroup)next.getParent()).removeView(next);
+            content=next;
+            if(immersiveResumed)carrier.addView(next,new LinearLayout.LayoutParams(-1,0,1f));
+            else BreathCompositionPanelModule.super.setContentView(next);
+        }
+        public Activity owner(){return BreathCompositionPanelModule.this;}
+        public void outcome(String detail){if(active())updateStatus(detail);}
+        public void visibilityChanged(boolean effective){
+            if(!active())return;visible=effective;
+            if(activityPanelResumed||immersiveResumed&&visible)resumePanelProjection();else pausePanelProjection();
+            if(visible&&content!=null)content.invalidate();
+        }
+        void showInActivity(){
+            immersiveResumed=false;
+            if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
+            if(content!=null)BreathCompositionPanelModule.super.setContentView(content);
+        }
+        public void close() {
+            if(closed)return;closed=true;
+            getApplication().unregisterActivityLifecycleCallbacks(this);
+            pausePanelProjection();
+            if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
+            if(meshPanelAttachment==this)meshPanelAttachment=null;
+            if(!experimentShellDestroyed&&!BreathCompositionPanelModule.this.isFinishing()
+                    &&!BreathCompositionPanelModule.this.isDestroyed()&&content!=null)
+                BreathCompositionPanelModule.super.setContentView(content);
+            if(activityPanelResumed&&!experimentShellDestroyed)resumePanelProjection();
+            Log.i(TAG,"channel=native-panel-content event=detached");
+        }
+        public void onActivityResumed(Activity value){if(value==immersive&&active()){
+            immersiveResumed=true;replace(content);if(visible)resumePanelProjection();
+        }}
+        public void onActivityPaused(Activity value){if(value==immersive&&!closed){immersiveResumed=false;if(!activityPanelResumed)pausePanelProjection();}}
+        public void onActivityDestroyed(Activity value){if(value==immersive||value==BreathCompositionPanelModule.this)close();}
+        public void onActivityCreated(Activity value,Bundle saved){}
+        public void onActivityStarted(Activity value){}
+        public void onActivityStopped(Activity value){}
+        public void onActivitySaveInstanceState(Activity value,Bundle saved){}
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -1167,6 +1266,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onResume() {
         super.onResume();
+        activityPanelResumed=true;
+        if(meshPanelAttachment!=null)meshPanelAttachment.showInActivity();
+        resumePanelProjection();
+    }
+
+    private void resumePanelProjection() {
         closeHubStatusLifetime();
         hubStatusMarkerCount = 0;
         hubStatusLifetime = createHubStatusLifetime();
@@ -1188,6 +1293,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     @Override
     protected void onPause() {
+        activityPanelResumed=false;
+        pausePanelProjection();
+        super.onPause();
+    }
+
+    private void pausePanelProjection() {
         closeHubStatusLifetime();
         remotePanelResumed = false;
         cancelRemotePolarRender();
@@ -1200,7 +1311,6 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     + "calibrationStateOwner=native-process-shared polarOwnerRetained=true"
             );
         }
-        super.onPause();
     }
 
     @Override
@@ -1248,6 +1358,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     @Override
     protected void onDestroy() {
+        experimentShellDestroyed = true;
+        if(meshPanelAttachment!=null)meshPanelAttachment.close();
         closeHubStatusLifetime();
         cancelRemotePolarRender();
         experimentShellDestroyed = true;
@@ -1787,6 +1899,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                                 return nativeState.put("activation_binding_sha256",binding.getString("activation_binding_sha256"));
                             }
                             @Override public void returnVr(){ControlPanelActivity.closePanelAndReturnToImmersive(BreathCompositionPanelModule.this);}
+                            @Override public boolean presentationReady(){return NativeMeshUiProducer.panelVisibilityConfirmed(BreathCompositionPanelModule.this,false);}
                             @Override public void dispatch(JSONObject command) throws Exception {JSONObject admission=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));if(!"queued".equals(admission.optString("command_status")))throw new SecurityException("native-not-queued");}
                             @Override public void schedule(Runnable callback,long delay){new Handler(Looper.getMainLooper()).postDelayed(callback,delay);}
                             @Override public long nowMs(){return SystemClock.elapsedRealtime();}
@@ -1994,7 +2107,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     // Activity/content lifetime immediately before choosing an in-place route.
     private boolean canRenderRemotePolarInPlace() {
         if (!remotePanelResumed || experimentShellDestroyed || isFinishing()) return false;
-        View content = ((ViewGroup)findViewById(android.R.id.content)).getChildAt(0);
+        View content = currentPanelContent();
         return content != null && content.isAttachedToWindow() && content.isShown()
             && content.getWindowVisibility() == View.VISIBLE;
     }
@@ -2012,7 +2125,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
     private void observeRemotePolarRender(final RemotePending pending) {
         cancelRemotePolarRender();
-        final View content = ((ViewGroup)findViewById(android.R.id.content)).getChildAt(0);
+        final View content = currentPanelContent();
         if(content == null || pending.serverGeneration <= 0L) return;
         final ExperimentSessionPanelRenderReceipt receipt = new ExperimentSessionPanelRenderReceipt(
             pending.browserId,pending.serverGeneration,this,content,breathCompositionPanelNavigationEpoch);
@@ -2031,7 +2144,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         if(remoteRenderReceipt==receipt) cancelRemotePolarRender();
                         return;
                     }
-                    View current=((ViewGroup)findViewById(android.R.id.content)).getChildAt(0);
+                    View current=currentPanelContent();
                     if(receipt.complete(pending.browserId,server.currentGeneration(),BreathCompositionPanelModule.this,
                             current,breathCompositionPanelNavigationEpoch,breathCompositionPanelTopic,true,
                             remotePanelResumed,content.isAttachedToWindow(),content.isShown(),

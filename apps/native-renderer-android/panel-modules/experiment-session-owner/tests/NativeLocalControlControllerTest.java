@@ -130,5 +130,15 @@ public final class NativeLocalControlControllerTest {
             &&!NativeLocalControlController.ReadbackHeader.readFailure("terminal-save-pending")
             &&!NativeLocalControlController.ReadbackHeader.readFailure(null),"read failure confused with terminal authority");
     }
-    public static void main(String[] args)throws Exception{patches();lifecycle();receiptsAndBreath();honestReadback();everyDriverAndMaterial();sessionReadbackHeader();System.out.println("NativeLocalControlControllerTest PASS");}
+    static void terminalFeedback(){
+        ExperimentSessionPanelState.Phase running=ExperimentSessionPanelState.Phase.RUNNING;
+        check(NativeLocalControlController.terminalBlockReason(true,false,false,true,"ready",running).isEmpty(),"ready running exit blocked");
+        check(NativeLocalControlController.terminalBlockReason(true,false,false,false,"ready",running).contains("operation pending"),"pending operation became silent or admitted");
+        check(NativeLocalControlController.terminalBlockReason(true,false,false,true,"error",running).contains("storage"),"unavailable storage became silent or admitted");
+        check(NativeLocalControlController.terminalBlockReason(true,false,false,true,"ready",ExperimentSessionPanelState.Phase.SAVING).contains("already saving"),"save reentry admitted");
+        check(NativeLocalControlController.terminalBlockReason(true,true,false,false,"ready",running).contains("already requested"),"pending terminal became replay");
+        check(NativeLocalControlController.terminalBlockReason(true,true,true,false,"ready",running).isEmpty(),"exact retry continuation denied");
+        check(NativeLocalControlController.terminalBlockReason(false,true,true,true,"ready",running).contains("owner unavailable"),"retired terminal owner admitted");
+    }
+    public static void main(String[] args)throws Exception{patches();lifecycle();receiptsAndBreath();honestReadback();everyDriverAndMaterial();sessionReadbackHeader();terminalFeedback();System.out.println("NativeLocalControlControllerTest PASS");}
 }

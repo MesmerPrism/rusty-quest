@@ -10,6 +10,17 @@ import org.json.JSONObject;
 final class NativeLocalControlController {
     static final String PARTICLE_SCHEMA="rusty.quest.native_renderer.private_particle_dynamics.v1";
     static final String BREATH_SCHEMA="rusty.quest.breath_composition.command.v1";
+    /** Presentation admission reason only; the existing shell/native fence still admits exit. */
+    static String terminalBlockReason(boolean live,boolean pending,boolean retryReady,
+            boolean commandReady,String storage,ExperimentSessionPanelState.Phase phase){
+        if(!live)return "Panel owner unavailable; reopen the experimenter panel.";
+        if(pending)return retryReady?"":"Save and exit already requested; waiting for writer and audio acknowledgements.";
+        if(!commandReady)return "Session operation pending; wait for its receipt, then select Save and exit again.";
+        if(!"ready".equals(storage))return "Recording storage is not ready; refresh status before saving and exiting.";
+        if(phase==ExperimentSessionPanelState.Phase.SAVING||phase==ExperimentSessionPanelState.Phase.FINALIZING)
+            return "Recording is already saving; wait for its acknowledgement.";
+        return "";
+    }
     /** Display-only observation; never enables a command or changes coordinator authority. */
     static final class ReadbackHeader {
         // Three missed 500 ms polls. Expiry changes this label only.

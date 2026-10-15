@@ -19,6 +19,7 @@ final class ExperimentSessionUiControlHandoff implements Runnable {
   void schedule(Runnable callback,long delay);
   long nowMs(); long nowNs();
   void outcome(String state);
+  default boolean presentationReady(){return true;}
  }
  private final Owner owner;private final ExperimentSessionControlCapability.Fence fence;private final String id;
  private long opened;private boolean handoff,done;
@@ -44,7 +45,7 @@ final class ExperimentSessionUiControlHandoff implements Runnable {
        || !fence.binding.equals(ExperimentSessionControlCapability.string(current,"activation_binding_sha256"))) {
     finish("owner-changed-no-dispatch");return;
    }
-   if("immersive-active".equals(current.optString("presentation"))){
+   if("immersive-active".equals(current.optString("presentation"))&&owner.presentationReady()){
     done=true;owner.dispatch(fence.nativeCommand(id,owner.nowNs()).put("operator_origin","ui-session-v2"));
     owner.outcome("native-queued-not-applied");return;
    }

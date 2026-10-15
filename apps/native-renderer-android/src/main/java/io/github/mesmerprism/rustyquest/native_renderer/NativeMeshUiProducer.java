@@ -22,9 +22,35 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.json.JSONObject;
 
 /** App-owned Android widgets rendered into the native OpenXR mesh texture, not another Activity. */
 public final class NativeMeshUiProducer {
+    /** The retained production Activity owns all actions; this adapter owns its pixels only. */
+    public interface ProductPanelAttachment extends AutoCloseable {
+        Activity owner();
+        void visibilityChanged(boolean visible);
+        void outcome(String detail);
+    }
+static final class VisibilityReadback {
+    static Boolean applied(JSONObject receipt,long generation,long requestRevision){
+        if(receipt==null||generation<=0||requestRevision<0
+                ||!"rusty.quest.native_mesh_ui.panel_visibility.v1".equals(receipt.opt("schema"))
+                ||!"applied".equals(receipt.opt("status"))
+                ||!"native-submitted-frame".equals(receipt.opt("evidence"))
+                ||!Boolean.FALSE.equals(receipt.opt("visible_confirmation")))return null;
+        Object owner=receipt.opt("generation"),requested=receipt.opt("request_revision"),effective=receipt.opt("effective_revision");
+        if(!integer(owner)||!integer(requested)||!integer(effective))return null;
+        long revision=((Number)requested).longValue();
+        if(((Number)owner).longValue()!=generation||revision<0
+                ||requestRevision>0&&revision!=requestRevision
+                ||((Number)effective).longValue()!=revision)return null;
+        Object visible=receipt.opt("effective_visible"),target=receipt.opt("requested_visible");
+        return visible instanceof Boolean&&visible.equals(target)?(Boolean)visible:null;
+    }
+    private static boolean integer(Object value){return value instanceof Integer||value instanceof Long;}
+}
+
     // NativeActivity's platform dlopen is not this application's JNI classloader registration.
     // Register explicitly so widget callbacks resolve without another optional Java bridge.
     static { System.loadLibrary("rusty_quest_native_renderer"); }
@@ -48,6 +74,10 @@ public final class NativeMeshUiProducer {
     private long lastMove;
     private final AtomicInteger queuedPointers = new AtomicInteger();
     private volatile boolean pointerQueueInvalid;
+    private final android.os.Handler visibilityPolls = new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean visibilityObserved;
+    private boolean effectiveVisible;
+    private long visibilityRequest;
 
     private NativeMeshUiProducer(Activity activity, Surface surface, long generation) {
         this.activity = activity;
@@ -131,6 +161,7 @@ public final class NativeMeshUiProducer {
             if(!(attachment instanceof AutoCloseable))throw new IllegalStateException("panel-attachment-retirement-required");
             panelAttachment=(AutoCloseable)attachment;
             layout.removeView(title);layout.removeView(status);
+            observePanelVisibility();
             return; // Selected local product owns its full UI; integration diagnostics are not appended.
         } catch(ClassNotFoundException unselected) {
             // Neutral mesh-only apps do not acquire experiment or recording authority.
@@ -175,6 +206,54 @@ public final class NativeMeshUiProducer {
         layout.addView(graft, new LinearLayout.LayoutParams(-1, 76));
         button(context, layout, "Reset panel pose and size", 13);
         layout.addView(text(context, "Hand pinch or controller trigger: click / drag.", 16));
+    }
+
+    /** True means this actual product owner was handled, including a rejected request. */
+    public static boolean requestPanelVisibility(Activity productOwner, boolean visible) {
+        NativeMeshUiProducer producer=current;
+        if(producer==null||!(producer.panelAttachment instanceof ProductPanelAttachment)
+                ||((ProductPanelAttachment)producer.panelAttachment).owner()!=productOwner)return false;
+        final ProductPanelAttachment binding=(ProductPanelAttachment)producer.panelAttachment;
+        producer.activity.runOnUiThread(new Runnable(){public void run(){
+            if(current!=producer||producer.root==null||producer.panelAttachment!=binding)return;
+            ProductPanelAttachment attachment=(ProductPanelAttachment)producer.panelAttachment;
+            long revision=nativeSetPanelVisible(producer.generation,visible);
+            if(revision<=0){attachment.outcome("Panel visibility request was not admitted; refresh the current panel.");return;}
+            producer.visibilityRequest=revision;
+            producer.visibilityObserved=false;
+            attachment.outcome(visible?"Opening the panel; waiting for renderer acknowledgement.":"Returning to VR; waiting for renderer acknowledgement.");
+            Log.i(TAG,"event=panel-visibility-requested generation="+producer.generation+" revision="+revision+" visible="+visible);
+        }});
+        return true;
+    }
+
+    public static boolean panelVisibilityConfirmed(Activity productOwner,boolean visible){
+        NativeMeshUiProducer producer=current;
+        if(producer==null||!(producer.panelAttachment instanceof ProductPanelAttachment)
+                ||((ProductPanelAttachment)producer.panelAttachment).owner()!=productOwner)return true;
+        return producer.visibilityObserved&&producer.visibilityRequest==0&&producer.effectiveVisible==visible;
+    }
+
+    private void observePanelVisibility(){
+        if(!(panelAttachment instanceof ProductPanelAttachment))return;
+        visibilityPolls.post(new Runnable(){public void run(){
+            if(current!=NativeMeshUiProducer.this||root==null||!(panelAttachment instanceof ProductPanelAttachment))return;
+            try {
+                JSONObject receipt=new JSONObject(nativeReadPanelVisibility(generation,visibilityRequest));
+                if("stale".equals(receipt.optString("status")))visibilityRequest=0;
+                Boolean applied=VisibilityReadback.applied(receipt,generation,visibilityRequest);
+                if(applied!=null){
+                    boolean visible=applied;
+                    if(!visibilityObserved||visible!=effectiveVisible){
+                        visibilityObserved=true;effectiveVisible=visible;
+                        ((ProductPanelAttachment)panelAttachment).visibilityChanged(visible);
+                        Log.i(TAG,"event=panel-visibility-observed generation="+generation+" visible="+visible);
+                    }
+                    visibilityRequest=0;
+                }else visibilityObserved=false;
+            }catch(Exception unavailable){ /* No receipt means no effective visibility transition. */ }
+            visibilityPolls.postDelayed(this,100);
+        }});
     }
 
     private static TextView text(Context context, String value, int size) {
@@ -285,6 +364,7 @@ public final class NativeMeshUiProducer {
 
     private boolean close() {
         boolean released = true;
+        visibilityPolls.removeCallbacksAndMessages(null);
         try { cancelPointer(); } catch (RuntimeException error) { released = false; }
         try { if(panelAttachment!=null){panelAttachment.close();panelAttachment=null;} }
         catch(Exception error){released=false;}
@@ -307,4 +387,6 @@ public final class NativeMeshUiProducer {
     }
 
     private static native boolean nativeControl(long generation, int code, float value);
+    private static native long nativeSetPanelVisible(long generation, boolean visible);
+    private static native String nativeReadPanelVisibility(long generation, long requestRevision);
 }

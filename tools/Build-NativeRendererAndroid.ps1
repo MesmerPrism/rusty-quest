@@ -1633,6 +1633,7 @@ $experimentSessionTerminalAudioStop
     }
 
     static void closePanelAndReturnToImmersive(android.app.Activity activity) {
+        if (NativeMeshUiProducer.requestPanelVisibility(activity, false)) return;
         if (!(activity instanceof ControlPanelActivity)) {
             throw new IllegalStateException("Panel handoff owner is not the packaged ControlPanelActivity");
         }

@@ -137,7 +137,7 @@ final class NativeLocalControlPanel implements AutoCloseable {
         if(index<pages.length-1){final String next=pages[index+1];nextButton=button("Next",new Runnable(){public void run(){show(next);}});body.addView(nextButton);}
         body.addView(button("Open developer settings",new Runnable(){public void run(){show("home");}}));
     }
-    private void sessionButton(final String operation,String label){final long captured=pageEpoch;Button button=button(label,new Runnable(){public void run(){if(pageEpoch==captured&&host.current()&&("save-exit".equals(operation)?host.canSaveExit():host.commandReady()))host.action(operation);}});sessionButtons.put(operation,button);body.addView(button);}
+    private void sessionButton(final String operation,String label){final long captured=pageEpoch;Button button=button(label,new Runnable(){public void run(){if(pageEpoch==captured&&host.current()&&("save-exit".equals(operation)||host.commandReady()))host.action(operation);}});sessionButtons.put(operation,button);body.addView(button);}
     void refresh(){
         if(closed||!host.current())return;
         ExperimentSessionPanelState state=host.state();ExperimentSessionPanelViewPolicy.ViewState view=ExperimentSessionPanelViewPolicy.project(state);
@@ -150,7 +150,8 @@ final class NativeLocalControlPanel implements AutoCloseable {
         for(Map.Entry<String,Button> entry:sessionButtons.entrySet()){
             String operation=entry.getKey();boolean allowed=operation.startsWith("arm-")?view.startEnabled&&"track-ready".equals(ControlPanelActivity.conditionAudioReadiness("arm-a".equals(operation)?ExperimentSessionPanelCoordinator.CONDITION_ONE:ExperimentSessionPanelCoordinator.CONDITION_TWO)):
                 "start".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.ARMED:"pause".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.RUNNING:"resume".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.PAUSED:ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state);
-            entry.getValue().setEnabled("save-exit".equals(operation)?host.canSaveExit():host.commandReady()&&allowed);
+            // Terminal requests always reach host admission and its current feedback.
+            entry.getValue().setEnabled("save-exit".equals(operation)?host.current():host.commandReady()&&allowed);
         }
         if(nextButton!=null)nextButton.setEnabled(!view.saving&&(!"condition".equals(page)||state.hasActiveSession()));
         try{
