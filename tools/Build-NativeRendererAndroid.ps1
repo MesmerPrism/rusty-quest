@@ -475,6 +475,8 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
     throw "Unlocked development builds cannot package ControlPanelActivity; resolve an exact native-app feature lock first."
 }
 
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererPanelCompositionSelection.psm1') -Force
+$panelCompositionSelection = Get-NativeRendererPanelCompositionSelection -FeatureLock $appBuildLockObject -BuildEnvByName $appBuildEnvByName
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererHandGeometrySelection.psm1') -Force
 $handGeometrySelection = Get-NativeRendererHandGeometrySelection -FeatureLock $appBuildLockObject `
     -BuildEnvByName $appBuildEnvByName -PreparedHandRigSource $PreparedHandRigSource `
@@ -2098,6 +2100,7 @@ $manifest = [ordered]@{
     activity = $activityName
     entrypoint = "android.app.NativeActivity"
     authority = "rusty.quest.native_renderer"
+    panel_composition = $panelCompositionSelection
     target_runtime = "quest-native-openxr-vulkan"
     plan_asset = "native-hwb-blur-sdf-public.plan.json"
     hand_geometry_enabled = [bool]$handGeometrySelection.hand_geometry_enabled

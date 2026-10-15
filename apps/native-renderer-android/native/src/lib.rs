@@ -647,7 +647,7 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
             native_passthrough_requested,
-            runtime_options.render_mode.uses_solid_black_background(),
+            runtime_options.render_mode.uses_solid_black_background(native_passthrough_requested),
             runtime_options
                 .render_mode
                 .requests_openxr_default_hand_visual(),
@@ -671,7 +671,7 @@ fn android_main(app: android_activity::AndroidApp) {
                 "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} stimulusVolumeRoute={} {}",
                 runtime_options.render_mode.marker_value(),
                 native_passthrough_requested,
-                runtime_options.render_mode.uses_solid_black_background(),
+                runtime_options.render_mode.uses_solid_black_background(native_passthrough_requested),
                 runtime_options.render_mode.uses_stimulus_volume(),
                 runtime_options.stimulus_volume_settings.marker_fields()
             ),

@@ -111,14 +111,26 @@ impl NativeRendererRenderMode {
         )
     }
 
-    pub(crate) fn uses_solid_black_background(self) -> bool {
-        matches!(
-            self,
-            Self::SolidBlackHandsAndGrafts
-                | Self::SolidBlackOpenXrHandsAnchorParticles
-                | Self::SolidBlackPrivateParticles
-                | Self::SolidBlackStimulusVolume
+    pub(crate) fn uses_solid_black_background(self, native_passthrough_requested: bool) -> bool {
+        self.solid_black_background_selected(
+            option_env!("RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE") == Some("solid-black"),
+            native_passthrough_requested,
         )
+    }
+
+    fn solid_black_background_selected(
+        self,
+        composable_black_selected: bool,
+        native_passthrough_requested: bool,
+    ) -> bool {
+        !native_passthrough_requested
+            && (matches!(
+                self,
+                Self::SolidBlackHandsAndGrafts
+                    | Self::SolidBlackOpenXrHandsAnchorParticles
+                    | Self::SolidBlackPrivateParticles
+                    | Self::SolidBlackStimulusVolume
+            ) || (self == Self::NativeWorldspaceIntegration && composable_black_selected))
     }
 
     pub(crate) fn uses_stimulus_volume(self) -> bool {
@@ -566,6 +578,32 @@ impl Default for NativePrivateLayerSettings {
 #[cfg(test)]
 mod worldspace_source_tests {
     use super::*;
+
+    #[test]
+    fn composable_black_is_explicit_worldspace_only_and_passthrough_wins() {
+        let worldspace = NativeRendererRenderMode::NativeWorldspaceIntegration;
+        assert!(!worldspace.solid_black_background_selected(false, false));
+        assert!(worldspace.solid_black_background_selected(true, false));
+        assert!(!worldspace.solid_black_background_selected(true, true));
+        for mode in [
+            NativeRendererRenderMode::CustomStereoProjection,
+            NativeRendererRenderMode::NativePassthroughStyleOnly,
+            NativeRendererRenderMode::NativePassthroughMediaOnly,
+            NativeRendererRenderMode::NativePassthroughGraftOnly,
+            NativeRendererRenderMode::NativePassthroughStimulusVolume,
+        ] {
+            assert!(!mode.solid_black_background_selected(true, false));
+        }
+        for mode in [
+            NativeRendererRenderMode::SolidBlackHandsAndGrafts,
+            NativeRendererRenderMode::SolidBlackOpenXrHandsAnchorParticles,
+            NativeRendererRenderMode::SolidBlackPrivateParticles,
+            NativeRendererRenderMode::SolidBlackStimulusVolume,
+        ] {
+            assert!(mode.solid_black_background_selected(false, false));
+            assert!(!mode.solid_black_background_selected(true, true));
+        }
+    }
 
     #[test]
     fn worldspace_live_selection_never_allows_recorded_pose_fallback() {

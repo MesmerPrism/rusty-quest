@@ -103,7 +103,7 @@ pub(super) fn write_projection_scorecard(
         direct_projection_active && camera_output_mode.direct_hwb_forced();
     let camera_projection_path = if render_mode.uses_native_passthrough() {
         render_mode.disabled_camera_projection_path()
-    } else if render_mode.uses_solid_black_background() {
+    } else if render_mode.uses_solid_black_background(native_passthrough_requested) {
         render_mode.disabled_camera_projection_path()
     } else if remote_broker_camera_projection_active {
         "metadata-target-remote-broker-camera2-h264"
@@ -141,7 +141,7 @@ pub(super) fn write_projection_scorecard(
     let native_passthrough_real_hand_mesh_visible =
         native_passthrough_requested && hand_mesh_real_hands_visible;
     let solid_black_real_hand_mesh_visible =
-        render_mode.uses_solid_black_background() && hand_mesh_real_hands_visible;
+        render_mode.uses_solid_black_background(native_passthrough_requested) && hand_mesh_real_hands_visible;
     let hand_mesh_visual_evidence_rects =
         replay_visual_stats.hand_mesh_screen_rect_marker_fields(projection_metadata);
     let sdf_visual_evidence_rects =
@@ -203,7 +203,7 @@ pub(super) fn write_projection_scorecard(
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
             native_passthrough_requested,
-            render_mode.uses_solid_black_background(),
+            render_mode.uses_solid_black_background(native_passthrough_requested),
             render_mode.requests_openxr_default_hand_visual(),
             native_passthrough_layer_active,
             environment_blend_mode,

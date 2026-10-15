@@ -541,7 +541,7 @@ unsafe fn run_projection_loop_inner(
             "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} fbPassthroughAvailable={} fbPassthroughEnabled={} alphaBlendSupported={} environmentBlendModes={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraProjectionPath={} {}",
             runtime_options.render_mode.marker_value(),
             native_passthrough_requested,
-            runtime_options.render_mode.uses_solid_black_background(),
+            runtime_options.render_mode.uses_solid_black_background(native_passthrough_requested),
             available_extensions.fb_passthrough,
             enabled_extensions.fb_passthrough,
             alpha_blend_supported,
@@ -920,7 +920,7 @@ unsafe fn run_projection_loop_inner(
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
             native_passthrough_requested,
-            render_mode.uses_solid_black_background(),
+            render_mode.uses_solid_black_background(native_passthrough_requested),
             render_mode.requests_openxr_default_hand_visual(),
             PROP_REPLAY_VISUAL_PROOF_ENABLED,
             replay_visual_proof_enabled,
@@ -1017,7 +1017,7 @@ unsafe fn run_projection_loop_inner(
         format!(
             "status=config renderMode={} solidBlackBackground={} openxrDefaultHandVisualRequested={} handMeshVisualDiagnosticPath=property-controlled-target-local-offset-tint enabledProperty={} offsetProperty={} alphaProperty={} meshSourceProperty={} meshSourceSelection={} materialProfileProperty={} materialAlphaProperty={} materialBaseColorRProperty={} materialBaseColorGProperty={} materialBaseColorBProperty={} materialRimStrengthProperty={} graftCopiesProperty={} graftScaleProperty={} realHandsProperty={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
             render_mode.marker_value(),
-            render_mode.uses_solid_black_background(),
+            render_mode.uses_solid_black_background(native_passthrough_requested),
             render_mode.requests_openxr_default_hand_visual(),
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
@@ -1037,7 +1037,7 @@ unsafe fn run_projection_loop_inner(
             hand_mesh_graft_copy_scale,
             hand_mesh_real_hands_visible,
             native_passthrough_requested && hand_mesh_real_hands_visible,
-            render_mode.uses_solid_black_background() && hand_mesh_real_hands_visible,
+            render_mode.uses_solid_black_background(native_passthrough_requested) && hand_mesh_real_hands_visible,
             hand_mesh_visual_diagnostic_settings.marker_fields(),
             hand_mesh_visual_material_settings.marker_fields(),
         ),
@@ -3311,7 +3311,8 @@ unsafe fn run_projection_frames(
         if let Some(panel) = mesh_ui_panel.as_deref_mut() {
             panel.prepare_frame(vk_device, cmd, frame_slot)?;
         }
-        let mesh_ui_controls = mesh_ui_panel.as_ref().map(|panel| panel.frame_controls());
+        let mesh_ui_frame_controls = mesh_ui_panel.as_ref().map(|panel| panel.frame_controls());
+        let mesh_ui_controls = crate::native_mesh_ui::neutral_frame_controls(mesh_ui_frame_controls);
         let camera_output_enabled = mesh_ui_controls.is_none_or(|controls| controls.camera);
         let mut effective_diagnostic_settings = hand_mesh_visual_diagnostic_settings;
         effective_diagnostic_settings.enabled &= replay.is_some() &&
@@ -3389,7 +3390,7 @@ unsafe fn run_projection_frames(
                             camera_output_mode.marker_value(),
                             render_mode.uses_custom_stereo_projection(),
                             native_passthrough_requested,
-                            render_mode.uses_solid_black_background(),
+                            render_mode.uses_solid_black_background(native_passthrough_requested),
                         ),
                     );
             }
@@ -4470,8 +4471,8 @@ unsafe fn run_projection_frames(
             );
         }
 
-        if let Some(controls) = mesh_ui_controls {
-            if controls.animation {
+        if let Some(controls) = mesh_ui_frame_controls {
+            if mesh_ui_controls.is_some_and(|neutral| neutral.animation) {
                 ui_particle_phase_frame = ui_particle_phase_frame.saturating_add(1);
             }
             if crate::native_mesh_ui::renderer_observed_visibility(controls) {
@@ -4481,9 +4482,9 @@ unsafe fn run_projection_frames(
             if crate::native_mesh_ui::renderer_observed(controls.generation, controls.revision)
                 && (frame_count == 0 || frame_count % 120 == 0)
             {
-                crate::marker("native-mesh-ui", format!("status=renderer-observed generation={} revision={} submittedFrame={} cameraOutputRequested={} particlesDraw={} handsDraw={} graftsDraw={} effectOverride={} visibleConfirmation=false",
-                    controls.generation, controls.revision, frame_count, camera_output_enabled,
-                    private_particle_stats.visible, hand_mesh_visual_stats.any_ready() && controls.hands,
+                crate::marker("native-mesh-ui", format!("status=renderer-observed generation={} revision={} submittedFrame={} neutralControlsApplied={} cameraOutputRequested={} particlesDraw={} handsDraw={} graftsDraw={} effectOverride={} visibleConfirmation=false",
+                    controls.generation, controls.revision, frame_count, mesh_ui_controls.is_some(), camera_output_enabled,
+                    private_particle_stats.visible, hand_mesh_visual_stats.any_ready() && mesh_ui_controls.is_none_or(|neutral| neutral.hands),
                     effective_grafts_enabled, effective_private_layer_settings.layer_override));
             }
         }
@@ -5889,9 +5890,11 @@ unsafe fn record_projection_diagnostic(
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
     let mut visual_stats = ReplayVisualStats::default();
+    let native_passthrough_requested = render_mode.uses_native_passthrough()
+        || environment_depth_settings.native_passthrough_required();
     let passthrough_alpha_clear = crate::native_scene_composition::projection_alpha_blend(
         render_mode.uses_scene_depth(),
-        environment_depth_settings.native_passthrough_required(),
+        native_passthrough_requested,
         render_mode.projection_layer_alpha_blend(),
     );
     let stimulus_volume_route = render_mode.uses_stimulus_volume();
@@ -6032,15 +6035,12 @@ unsafe fn record_projection_diagnostic(
                 gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
             }
         }
-        let opaque_background = if mesh_ui_panel.is_some() {
-            crate::native_pointer_visual::NEUTRAL_WORLDSPACE_CLEAR
-        } else if stimulus_volume_route || render_mode.uses_solid_black_background() {
-            [0.0, 0.0, 0.0, 1.0]
-        } else if eye_index == 0 {
-            [0.012, 0.030, 0.038, 1.0]
-        } else {
-            [0.034, 0.016, 0.050, 1.0]
-        };
+        let opaque_background = crate::native_scene_composition::projection_opaque_background(
+            render_mode.uses_solid_black_background(native_passthrough_requested),
+            stimulus_volume_route,
+            mesh_ui_panel.map(|_| crate::native_pointer_visual::NEUTRAL_WORLDSPACE_CLEAR),
+            eye_index,
+        );
         let background = crate::native_scene_composition::projection_clear_color(
             passthrough_alpha_clear,
             opaque_background,
@@ -7443,7 +7443,7 @@ impl NativePassthroughRuntime {
                 format!(
                     "status=disabled renderMode={} nativePassthroughRequested=false solidBlackBackground={} nativePassthroughLayerActive=false",
                     render_mode.marker_value(),
-                    render_mode.uses_solid_black_background(),
+                    render_mode.uses_solid_black_background(native_passthrough_requested),
                 ),
             );
             crate::marker(

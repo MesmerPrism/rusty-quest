@@ -253,6 +253,32 @@ including when the Android mesh panel is present. A panel-only build without thi
 selection retains its opaque neutral background. Other render-mode alpha
 policies remain unchanged.
 
+The explicit `renderer.background.solid_black.composable` descriptor selects
+`RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE=solid-black` in the authenticated
+build environment. Only the native worldspace mode adopts this compile-time
+selection; ordinary scenes keep their existing backgrounds. It outranks the
+mesh panel's neutral clear, and reports `solidBlackBackground=true`. Explicit
+native passthrough overrides the selection, uses the transparent clear, and
+reports `solidBlackBackground=false`.
+
+The original product composition selects
+`renderer.private_particles.original_composable`, whose exact build input is
+`RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS=false`. The builder requires its
+native scene, mesh panel and explicit black-background feature closure. It
+rejects either composition input without its descriptor, including ambient
+values on unlocked development builds. This disables the neutral mesh demo's
+camera, diagnostics, graft, hand, replay, effect, animation and particle-scale
+overrides. Existing app settings owners continue to supply those parameters.
+Pointer dispatch, panel pose and submitted-frame visibility continue to use the
+raw mesh frame. Ordinary neutral mesh fixtures retain their controls.
+
+Visibility readback includes `neutral_controls_enabled` and
+`settings_authority`; submitted mesh markers include `neutralControlsApplied`.
+These distinguish input/visibility observation from demo-setting adoption.
+They do not establish original owner setting effects or headset appearance.
+Run `tools/checks/Test-NativeRendererPanelComposition.ps1` for admission checks
+and actual owner-module host tests in ordinary and original compile modes.
+
 The sampler feeds the camera/compositor path. The hands, particles, and panel
 still use virtual-scene D32 depth; selecting the sampler does not provide those
 draws with real-environment occlusion. Passthrough composition, virtual-scene

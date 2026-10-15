@@ -890,7 +890,7 @@ mod tests {
         );
         assert!(!options.render_mode.uses_custom_stereo_projection());
         assert!(!options.render_mode.uses_native_passthrough());
-        assert!(options.render_mode.uses_solid_black_background());
+        assert!(options.render_mode.uses_solid_black_background(false));
         assert!(!options.sdf_visual_enabled);
         assert!(options.hand_mesh_graft_copies_enabled);
         assert!(options.hand_mesh_real_hands_visible);
@@ -924,7 +924,7 @@ mod tests {
         );
         assert!(!options.render_mode.uses_custom_stereo_projection());
         assert!(!options.render_mode.uses_native_passthrough());
-        assert!(options.render_mode.uses_solid_black_background());
+        assert!(options.render_mode.uses_solid_black_background(false));
         assert!(options.render_mode.requests_openxr_default_hand_visual());
         assert!(!options.sdf_visual_enabled);
         assert!(!options.hand_mesh_graft_copies_enabled);
@@ -962,7 +962,7 @@ mod tests {
         );
         assert!(!options.render_mode.uses_custom_stereo_projection());
         assert!(!options.render_mode.uses_native_passthrough());
-        assert!(options.render_mode.uses_solid_black_background());
+        assert!(options.render_mode.uses_solid_black_background(false));
         assert!(!options.render_mode.uses_stimulus_volume());
         assert!(!options.render_mode.requests_openxr_default_hand_visual());
         assert!(options
@@ -1063,7 +1063,7 @@ mod tests {
             options.render_mode.marker_value(),
             "solid-black-stimulus-volume"
         );
-        assert!(options.render_mode.uses_solid_black_background());
+        assert!(options.render_mode.uses_solid_black_background(false));
         assert!(options.render_mode.uses_stimulus_volume());
         assert!(!options.render_mode.uses_native_passthrough());
         assert_eq!(

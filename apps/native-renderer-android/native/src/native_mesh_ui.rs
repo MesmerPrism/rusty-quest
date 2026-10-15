@@ -173,6 +173,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
         "effective_revision":state.effective_visibility_revision,
         "effective_visible":state.effective_panel_visible, "status":status,
         "evidence":"native-submitted-frame", "visible_confirmation":false,
+        "neutral_controls_enabled":neutral_controls_enabled(),
+        "settings_authority":if neutral_controls_enabled() { "neutral-mesh-demo" } else { "original-app-owners" },
     })
     .to_string();
     match env
@@ -237,6 +239,15 @@ fn head_relative_pose(position: [f32; 3], orientation: [f32; 4]) -> Option<Panel
 pub(crate) fn enabled_for_mode(mode: &str) -> bool {
     option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED") == Some("true")
         && mode == "native-worldspace-integration"
+}
+/// The original product panel owns its existing settings handlers. The neutral
+/// mesh test panel's defaults never become that product's rendering settings.
+pub(crate) fn neutral_controls_enabled() -> bool {
+    option_env!("RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS") != Some("false")
+}
+
+pub(crate) fn neutral_frame_controls(frame: Option<ControlSnapshot>) -> Option<ControlSnapshot> {
+    frame.filter(|_| neutral_controls_enabled())
 }
 /// Records host frame application only; does not claim visible GPU adoption.
 pub(crate) fn renderer_observed(generation: u64, revision: u64) -> bool {
@@ -735,6 +746,26 @@ pub(crate) mod android {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_panel_filters_demo_settings_but_retains_visibility_frame() {
+        let frame = ControlSnapshot {
+            generation: 7,
+            ..ControlSnapshot::default()
+        };
+        let neutral = neutral_frame_controls(Some(frame));
+        assert_eq!(neutral.is_some(), neutral_controls_enabled());
+        assert!(neutral_frame_controls(None).is_none());
+        let mut owner = frame;
+        let revision = set_visibility(&mut owner, 7, false).unwrap();
+        let submitted = owner;
+        assert!(observe_visibility(&mut owner, submitted));
+        assert_eq!(visibility_status(owner, 7, revision), "applied");
+        assert!(!owner.effective_panel_visible);
+        // Filtering the demo snapshot neither changes nor consumes the frame
+        // that establishes effective visibility and dispatches real panel input.
+        assert_eq!(frame.generation, owner.generation);
+        assert_eq!(frame.particle_scale, 0.5);
+    }
     #[test]
     fn visibility_request_needs_its_submitted_frame_and_preserves_scene_controls() {
         let mut state = ControlSnapshot {
