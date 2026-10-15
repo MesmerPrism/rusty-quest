@@ -133,6 +133,30 @@ static final class VisibilityReadback {
         }
     }
 
+    /** Immutable input route origin, captured before leaving the renderer thread. */
+    static final class ProductRouteIdentity {
+        final Object producer,activity;
+        final long generation;
+        ProductRouteIdentity(Object producer,Object activity,long generation){
+            this.producer=producer;this.activity=activity;this.generation=generation;
+        }
+        boolean matches(Object currentProducer,Object actualActivity,long currentGeneration){
+            return generation>0&&producer!=null&&activity!=null&&producer==currentProducer
+                &&activity==actualActivity&&generation==currentGeneration;
+        }
+    }
+    static Object captureProductRouteOwner(Activity actual,long generation){
+        NativeMeshUiProducer producer=current;
+        return producer!=null&&producer.activity==actual&&producer.generation==generation&&generation>0
+            ?new ProductRouteIdentity(producer,actual,generation):null;
+    }
+    static boolean productRouteOwnerCurrent(Object captured,Activity actual){
+        NativeMeshUiProducer producer=productProducer(actual);
+        return captured instanceof ProductRouteIdentity&&producer!=null
+            &&((ProductRouteIdentity)captured).matches(producer,actual,producer.generation)
+            &&((ProductPanelAttachment)producer.panelAttachment).presentationActive();
+    }
+
     /** Current-generation presentation rendezvous only; owns no session or command replay. */
     static final class OwnerAttachmentState {
         private Object owner;
@@ -553,7 +577,10 @@ static final class VisibilityReadback {
                 owner.ownerAttachment.resumed(owner.activityResumed());
                 owner.observeOwnerLifecycle();
                 DisplayManager manager = (DisplayManager) activity.getSystemService(Context.DISPLAY_SERVICE);
-                owner.display = manager.createVirtualDisplay("Rusty Quest mesh UI", width, height, 160, surface,
+                int densityDpi=NativeRendererActivityComponents.PRODUCT_NATIVE.equals(activity.getClass().getName())
+                    ?activity.getResources().getDisplayMetrics().densityDpi:160;
+                if(densityDpi<=0)throw new IllegalStateException("actual-activity-density-unavailable");
+                owner.display = manager.createVirtualDisplay("Rusty Quest mesh UI", width, height, densityDpi, surface,
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
                 if (owner.display == null) throw new IllegalStateException("VirtualDisplay unavailable");
                 owner.presentation = new Presentation(activity, owner.display.getDisplay()) {
@@ -567,7 +594,7 @@ static final class VisibilityReadback {
                     }
                 };
                 owner.presentation.show();
-                Log.i(TAG, "event=producer-started generation=" + generation + " source=android-presentation width=1024 height=768");
+                Log.i(TAG, "event=producer-started generation=" + generation + " source=android-presentation width="+width+" height="+height+" densityDpi="+densityDpi);
             } catch (RuntimeException error) {
                 Log.e(TAG, "event=producer-failed generation=" + generation + " reason=" + error.getClass().getSimpleName());
                 if (owner.close() && current == owner) current = null;
@@ -681,7 +708,7 @@ static final class VisibilityReadback {
             // Keep neutral mesh-only compositions free of a mandatory kiosk dependency.
             Object application=activity.getApplication();
             return Boolean.TRUE.equals(application.getClass().getDeclaredMethod("isResumed",String.class)
-                .invoke(application,activity.getClass().getName()));
+                .invoke(application,NativeRendererActivityComponents.policyClass(activity.getClass().getName())));
         }catch(ReflectiveOperationException unavailable){return activity.hasWindowFocus();}
     }
 
@@ -718,6 +745,9 @@ static final class VisibilityReadback {
     }
 
     private void bootstrapProductOwner() {
+        // The original shared controller is owned by this actual NativeActivity.
+        // Never create a Shell-managed 2D Activity to keep that controller alive.
+        if(NativeRendererActivityComponents.PRODUCT_NATIVE.equals(activity.getClass().getName()))return;
         if(productModule==null||!ownerAttachment.bootstrap()||current!=this||root==null)return;
         try {
             android.content.Intent intent=new android.content.Intent(android.content.Intent.ACTION_MAIN)
@@ -733,7 +763,13 @@ static final class VisibilityReadback {
     public static void productOwnerReady(Activity actual) {
         NativeMeshUiProducer producer=current;
         if(producer==null||producer.root==null||producer.productModule==null
-                ||!producer.productModule.isInstance(actual)||actual.isFinishing()||actual.isDestroyed())return;
+                ||actual.isFinishing()||actual.isDestroyed())return;
+        try { if(!Boolean.TRUE.equals(producer.productModule.getMethod("ownsPanelActivity",Activity.class).invoke(null,actual)))return; }
+        catch(ReflectiveOperationException unselected){return;}
+        if(actual==producer.activity){
+            if(producer.ownerAttachment.ready(actual))producer.attachProductOwner();
+            return;
+        }
         producer.ownerAttachment.ownerReady(actual,new Runnable(){public void run(){
             try{
                 producer.bootstrapReturn.set(new BootstrapReturnScope(actual));
@@ -803,7 +839,7 @@ static final class VisibilityReadback {
 
     public static boolean panelVisibilityConfirmed(Activity productOwner,boolean visible){
         NativeMeshUiProducer producer=current;
-        if(producer==null)return true; // Existing 2D-only composition retains its original foreground proof.
+        if(producer==null)return productOwner==null||!NativeRendererActivityComponents.PRODUCT_NATIVE.equals(productOwner.getClass().getName()); // Only the existing 2D route has its separate foreground proof.
         if(!(producer.panelAttachment instanceof ProductPanelAttachment)
                 ||((ProductPanelAttachment)producer.panelAttachment).owner()!=productOwner
                 ||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return producer.productSelectionResolved&&producer.productModule==null;

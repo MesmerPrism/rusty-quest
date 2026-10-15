@@ -89,6 +89,7 @@ pub(crate) fn marker_keys_are_unique(fields: &str) -> bool {
 
 pub(crate) fn renderer_focus_state_json(
     process_id: u32,
+    activity_name: Option<&str>,
     session_state: &str,
     frame_count: u64,
     submitted: bool,
@@ -96,7 +97,7 @@ pub(crate) fn renderer_focus_state_json(
 ) -> String {
     serde_json::json!({
         "schema": "rusty.quest.native_renderer.renderer_focus_state.v1",
-        "activity": "android.app.NativeActivity",
+        "activity": activity_name.filter(|name| !name.is_empty()),
         "process_id": process_id,
         "session_state": session_state,
         "frame_count": frame_count,
@@ -109,6 +110,7 @@ pub(crate) fn renderer_focus_state_json(
 pub(crate) fn write_renderer_focus_state_file(
     data_path: &Path,
     process_id: u32,
+    activity_name: Option<&str>,
     session_state: &str,
     frame_count: u64,
     submitted: bool,
@@ -116,6 +118,7 @@ pub(crate) fn write_renderer_focus_state_file(
 ) -> std::io::Result<()> {
     let body = renderer_focus_state_json(
         process_id,
+        activity_name,
         session_state,
         frame_count,
         submitted,
@@ -177,7 +180,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&directory);
         std::fs::create_dir_all(&directory).expect("create isolated test directory");
 
-        write_renderer_focus_state_file(&directory, 4242, "FOCUSED", 73, true, 9001)
+        write_renderer_focus_state_file(&directory, 4242, Some("android.app.NativeActivity"), "FOCUSED", 73, true, 9001)
             .expect("write renderer focus state");
 
         let target = directory.join(RENDERER_FOCUS_STATUS_FILE);
@@ -196,13 +199,14 @@ mod tests {
         assert_eq!(value["updated_at_unix_ms"], 9001);
         assert!(!directory.join(RENDERER_FOCUS_STAGING_FILE).exists());
 
-        write_renderer_focus_state_file(&directory, 4243, "VISIBLE", 74, false, 9002)
+        write_renderer_focus_state_file(&directory, 4243, Some("example.product.ImmersiveActivity"), "VISIBLE", 74, false, 9002)
             .expect("atomically replace renderer focus state");
         let replacement: serde_json::Value = serde_json::from_slice(
             &std::fs::read(&target).expect("read replacement renderer focus state"),
         )
         .expect("parse replacement renderer focus state");
         assert_eq!(replacement["process_id"], 4243);
+        assert_eq!(replacement["activity"], "example.product.ImmersiveActivity");
         assert_eq!(replacement["session_state"], "VISIBLE");
         assert_eq!(replacement["frame_count"], 74);
         assert_eq!(replacement["submitted"], false);
@@ -210,5 +214,15 @@ mod tests {
         assert!(!directory.join(RENDERER_FOCUS_STAGING_FILE).exists());
 
         std::fs::remove_dir_all(directory).expect("remove isolated test directory");
+    }
+
+    #[test]
+    fn unknown_activity_never_claims_the_stock_native_activity() {
+        for unknown in [None, Some("")] {
+            let value: serde_json::Value = serde_json::from_str(
+                &renderer_focus_state_json(4242, unknown, "FOCUSED", 73, true, 9001),
+            ).unwrap();
+            assert!(value["activity"].is_null());
+        }
     }
 }

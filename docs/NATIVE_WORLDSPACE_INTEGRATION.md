@@ -228,14 +228,25 @@ read arrives. The header does not attest physical input, audio or saved output.
 In-view choices stay within the panel's routed touch surface. Sensor, network,
 kiosk and camera capabilities require their separate explicit selections.
 
-When the original product Activity is selected, starting NativeActivity first
-does not imply that the original Activity/view already exists. The mesh
-producer requests that real Activity once for its current generation. The
-Activity notifies readiness after its original builders and lifecycle run;
-the producer attaches its existing view when the actual native Activity
-resumes. It reuses the original immersive presentation route, without creating
-an unattached Activity or another session owner. Late readiness can repair the
-initial missing-owner condition without restarting the app or producer.
+The combined original product panel and native mesh selection uses the real
+`NativeProductPanelActivity`, an Android `NativeActivity` subclass with the same
+native library and main loop. `BreathCompositionPanelModule` is the shared
+original controller. The ordinary 2D entry is a thin Activity adapter for that
+same controller; its builders, listeners, Polar, network, LSL, session and audio
+owners are not copied. The native host buffers the original content until its
+Presentation carrier exists and never replaces the native window's content.
+There is no Shell-managed 2D bootstrap or Activity launched onto a private
+virtual display. Native callbacks retain their actual controller; UI route
+Intents do not replace the physical MAIN/LAUNCHER Intent.
+
+The selected native host and its Presentation share the actual Activity density
+and the original inherited Material theme. Neutral mesh and standalone density
+remain unchanged. Callback retirement prevents delayed permission/results or
+old host lifecycle callbacks from entering a replacement controller. A duplicate
+2D entry relays into the current native controller without creating another
+shell or audio owner. Return-to-VR and terminal actions retain their original
+coordinator/handler routes; native presentation requests still need effective
+submitted-frame acknowledgement.
 
 Pending visibility intent stays with the exact real owner and producer
 generation. Retirement or owner replacement cannot carry that intent forward.
@@ -243,9 +254,11 @@ A selected product whose owner has not attached cannot confirm hidden-panel
 visibility; the separate ordinary 2D-only route retains its original foreground
 proof. Product operator observation can be unavailable while the real Activity
 is paused and has no active mesh attachment; that availability guard is not an
-observation exception. The host rendezvous fixture checks lifecycle/identity
-state only. Actual Activity bootstrap, focus transition and pixels still need
-runtime verification.
+observation exception. Native lifecycle resume alone does not make a hidden
+mesh UI visible. Source fixtures check actual adapter callback routing, stale
+owners, the native surface boundary, original method preservation and selected
+manifest closure. Actual lifecycle, input, dialogs and pixels still need device
+verification.
 
 The focused admission check is
 `pwsh -NoProfile -File tools/checks/Test-NativeRendererHandGeometrySelection.ps1`.
@@ -321,7 +334,7 @@ the meaning of that selection.
 
 ## Camera result metadata
 
-Original-owner bootstrap keeps one return-to-immersive obligation even when
+The retained-Activity compatibility bootstrap keeps one return-to-immersive obligation even when
 Android reports both the original panel Activity and NativeActivity resumed.
 Resumed lifecycle alone does not establish immersive focus. Real owner readiness
 uses the original full handoff once, including during reentrant attachment. A
@@ -331,6 +344,8 @@ visibility intent. Later requests use the ordinary owner/generation route. A
 dispatched or unknown handoff is not replayed because another resume arrives.
 The production state fixture covers always-resumed startup and reentrant attach;
 host passes do not establish Android focus, mesh pixels or headset acceptance.
+The combined original/native controller route above does not use this 2D
+bootstrap.
 
 Optional Camera2 capture metadata is read only when its tag is present in that
 result's `ACameraMetadata_getAllTags` inventory. The list is borrowed within the

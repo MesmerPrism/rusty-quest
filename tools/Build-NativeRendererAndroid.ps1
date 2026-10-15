@@ -262,7 +262,8 @@ $nativeAppSettingsPath = ""
 $generatedManifestPath = ""
 $manifestInputPath = Join-Path $appRoot "AndroidManifest.xml"
 $packageName = "io.github.mesmerprism.rustyquest.native_renderer"
-$activityName = "io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity"
+$selectedNativeActivityClass = "android.app.NativeActivity"
+$activityName = "io.github.mesmerprism.rustyquest.native_renderer/$selectedNativeActivityClass"
 $appBuildEnvEntries = @()
 $appBuildEnvByName = @{}
 $runtimeProfilePath = ""
@@ -390,7 +391,9 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         throw "Native app without ControlPanelActivity must carry an explicit empty panel source closure."
     }
     $packageName = [string]$appBuildLockObject.android_manifest.package_name
-    $activityName = "$packageName/android.app.NativeActivity"
+    $selectedNativeActivityClass = if (@($appBuildLockObject.selected_feature_ids) -ccontains 'ui.native_mesh_panel' -and $selectedPanelModuleId -ceq 'breath-composition-controls') { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
+    if (@($appBuildLockObject.android_manifest.activities) -cnotcontains $selectedNativeActivityClass) { throw 'Selected native Activity is absent from exact manifest closure.' }
+    $activityName = "$packageName/$selectedNativeActivityClass"
     $generatedManifestPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.android_manifest) -RepoRoot ([string]$repoRoot)
     $nativeAppSettingsPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.native_app_settings) -RepoRoot ([string]$repoRoot)
     $runtimeProfilePath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.runtime_profile) -RepoRoot ([string]$repoRoot)
@@ -892,6 +895,40 @@ if (-not [string]::IsNullOrWhiteSpace($selectedPanelModuleId)) {
         catch (Exception error) { clean = false; }
 '@
     } else { '' }
+    $sharedOriginalPanel = $selectedPanelModuleId -ceq 'breath-composition-controls'
+    $currentPanelGuard = if ($sharedOriginalPanel) { 'BreathCompositionPanelModule.controllerFor(activity) != null' } else { 'activity instanceof ControlPanelActivity' }
+    $sharedPanelFacade = if ($sharedOriginalPanel) {
+@'
+    static void originalPanelHostCreated(android.app.Activity actual) {
+        if(!NativeRendererActivityComponents.isNative(actual))throw new SecurityException("wrong-native-panel-host");
+        ownerApplicationContext=actual.getApplicationContext();
+    }
+    static int routeToNativePanelFromNative(android.app.Activity actual,android.content.Intent intent,long producerGeneration) {
+        return BreathCompositionPanelModule.queueNativePanelIntent(actual,intent,producerGeneration);
+    }
+    static boolean routeToNativePanel(android.content.Intent intent,boolean show) {
+        return BreathCompositionPanelModule.deliverToNativeOwner(intent,show);
+    }
+    static boolean closeNativeProductPanel() {
+        final android.app.Activity actual=BreathCompositionPanelModule.currentHostActivity();
+        if(!NativeRendererActivityComponents.isNative(actual))return false;
+        actual.runOnUiThread(new Runnable(){public void run(){
+            if(BreathCompositionPanelModule.controllerFor(actual)!=null)closePanelAndReturnToImmersive(actual);
+        }});
+        return true;
+    }
+    static boolean nativeProductPanel(android.app.Activity activity) {
+        return NativeRendererActivityComponents.isNative(activity)&&BreathCompositionPanelModule.controllerFor(activity)!=null;
+    }
+'@
+    } else {
+@'
+    static int routeToNativePanelFromNative(android.app.Activity actual,android.content.Intent intent,long producerGeneration) { return 0; }
+    static boolean routeToNativePanel(android.content.Intent intent,boolean show) { return false; }
+    static boolean closeNativeProductPanel() { return false; }
+    static boolean nativeProductPanel(android.app.Activity activity) { return false; }
+'@
+    }
     $generatedControlPanelActivitySource = @"
 package io.github.mesmerprism.rustyquest.native_renderer;
 
@@ -901,6 +938,7 @@ package io.github.mesmerprism.rustyquest.native_renderer;
  * remains the stable manifest/JNI/lifecycle boundary.
  */
 public final class ControlPanelActivity extends $selectedPanelEntrySimpleName {
+$sharedPanelFacade
     static final PanelModuleRegistry PACKAGED_PANEL = PanelModuleRegistry.requireExact(
         "$selectedPanelModuleId",
         $selectedPanelEntrySimpleName.MODULE_ID,
@@ -1488,13 +1526,13 @@ $polarRuntimeReopenFromExplicitLaunch
 
     static boolean beginPanelTransition(
             android.app.Activity activity, String panelRoute, long routeGeneration) {
-        if (!(activity instanceof ControlPanelActivity)) return false;
+        if (!($currentPanelGuard)) return false;
         String route = NativeRendererSoftKioskCoordinator.PANEL_ROUTE_DEVELOPER.equals(panelRoute)
             ? NativeRendererSoftKioskCoordinator.PANEL_ROUTE_DEVELOPER
             : NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER;
         return NativeRendererSoftKioskCoordinator.process().beginTransition(
             nextPresentationGeneration(routeGeneration),
-            NativeRendererForegroundGuardPolicy.Presentation.PANEL,
+            nativeProductPanel(activity) ? NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE : NativeRendererForegroundGuardPolicy.Presentation.PANEL,
             route,
             android.os.SystemClock.uptimeMillis(),
             5_000L);
@@ -1553,7 +1591,7 @@ $polarRuntimeReopenFromExplicitLaunch
 
     static boolean admitTerminalSaveAndExit(
             android.app.Activity activity, android.content.Intent intent) {
-        if (!(activity instanceof ControlPanelActivity) || intent == null) return false;
+        if (!($currentPanelGuard) || intent == null) return false;
         long guardGeneration = intent.getLongExtra(
             NativeRendererSoftKioskCoordinator.EXTRA_GUARD_GENERATION, 0L);
         long homeEpisode = intent.getLongExtra(
@@ -1582,7 +1620,7 @@ $experimentSessionTerminalAudioStop
             long sessionGeneration,
             String operationId,
             long shutdownAckRevision) {
-        if (!(activity instanceof ControlPanelActivity) || sessionGeneration < 0L
+        if (!($currentPanelGuard) || sessionGeneration < 0L
                 || operationId == null || !operationId.startsWith("panel-save-and-exit-")
                 || shutdownAckRevision <= 0L) {
             return;
@@ -1649,6 +1687,13 @@ $experimentSessionTerminalAudioStop
     }
 
     static void closePanelAndReturnToImmersive(android.app.Activity activity) {
+        if(nativeProductPanel(activity)) {
+            NativeRendererSoftKioskCoordinator.process().beginTransition(
+                nextPresentationGeneration(0L), NativeRendererForegroundGuardPolicy.Presentation.IMMERSIVE,
+                NativeRendererSoftKioskCoordinator.PANEL_ROUTE_EXPERIMENTER,android.os.SystemClock.uptimeMillis(),2_000L);
+            if(!NativeMeshUiProducer.requestPanelVisibility(activity,false))android.util.Log.w("RQNativeMeshUi","event=return-vr-unavailable source=actual-native-controller");
+            return;
+        }
         if (NativeMeshUiProducer.requestPanelVisibility(activity, false)) return;
         if (!(activity instanceof ControlPanelActivity)) {
             throw new IllegalStateException("Panel handoff owner is not the packaged ControlPanelActivity");
@@ -1668,6 +1713,7 @@ $experimentSessionTerminalAudioStop
      * task, which creates another panel instead of delivering {@code onNewIntent} to this one.
      */
     static boolean requestCloseVisiblePanelFromNative() {
+        if(closeNativeProductPanel())return true;
         final ControlPanelActivity panel = visiblePanel.get();
         if (panel == null || !panel.panelResumed || panel.isFinishing()
                 || panel.isDestroyed()) {
@@ -1875,7 +1921,7 @@ $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse
     ForEach-Object { $_.FullName }
 if ($standaloneExperimentOwner) {
     $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java',
-        'NativeRendererExperimentLaunchAuthority.java','NativeRendererExperimentLauncherPolicy.java',
+        'NativeRendererExperimentLaunchAuthority.java','NativeRendererExperimentLauncherPolicy.java','NativeRendererActivityComponents.java',
         'NativeRendererWriterAcknowledgedExitPolicy.java','PanelImmersiveHandoff.java',
         'PanelImmersiveHandoffLifecyclePolicy.java','PanelImmersiveHandoffProofPolicy.java',
         'PanelModule.java','PanelModuleRegistry.java')
@@ -2114,7 +2160,7 @@ $manifest = [ordered]@{
     app_id = if ($null -eq $appBuildLockObject) { "unlocked-development" } else { [string]$appBuildLockObject.app_id }
     package_name = $packageName
     activity = $activityName
-    entrypoint = "android.app.NativeActivity"
+    entrypoint = $selectedNativeActivityClass
     authority = "rusty.quest.native_renderer"
     meta_xr_operator_debug_layer = $metaXrOperator
     panel_composition = $panelCompositionSelection

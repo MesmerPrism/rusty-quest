@@ -499,7 +499,7 @@ Assert-Tokens ($xrVulkan + [Environment]::NewLine + $diagnosticsContract) @(
     "renderer_focus_session_state",
     "frame_count.saturating_add(1)",
     "submitted",
-    '"activity": "android.app.NativeActivity"',
+    '"activity": observed_activity_class_name',
     '"updated_at_unix_ms"',
     "SystemTime::now()"
 ) "focused submitted-frame return receipt"

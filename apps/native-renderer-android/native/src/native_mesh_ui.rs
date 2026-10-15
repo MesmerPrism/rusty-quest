@@ -224,6 +224,18 @@ pub(crate) fn renderer_observed_visibility(frame: ControlSnapshot) -> bool {
         frame,
     )
 }
+fn submitted_visibility(state: ControlSnapshot, frame: ControlSnapshot) -> Option<bool> {
+    (frame.generation != 0 && frame.generation == state.generation
+        && frame.pose_initialized
+        && frame.visibility_revision == state.effective_visibility_revision
+        && frame.panel_visible == state.effective_panel_visible)
+        .then_some(frame.panel_visible)
+}
+/// Read only after observing this exact successfully ended frame. A setter or
+/// a retired producer cannot supply submitted presentation evidence.
+pub(crate) fn renderer_submitted_visibility(frame: ControlSnapshot) -> Option<bool> {
+    submitted_visibility(snapshot(), frame)
+}
 fn visibility_status(state: ControlSnapshot, generation: u64, revision: u64) -> &'static str {
     if generation == 0 || generation != state.generation {
         "unavailable"
@@ -859,6 +871,37 @@ pub(crate) mod android {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn session_presentation_uses_the_submitted_tuple_not_a_visibility_setter() {
+        let mut state = ControlSnapshot { generation: 91, pose_initialized: true,
+            ..ControlSnapshot::default() };
+        let visible = state;
+        assert_eq!(submitted_visibility(state, visible), None);
+        observe_visibility(&mut state, visible);
+        assert_eq!(submitted_visibility(state, visible), Some(true));
+        set_visibility(&mut state, 91, false).unwrap();
+        let hidden = state;
+        // A newer hide request is not evidence that the old visible frame was hidden.
+        assert_eq!(submitted_visibility(state, visible), Some(true));
+        assert_eq!(submitted_visibility(state, hidden), None);
+        observe_visibility(&mut state, hidden);
+        assert_eq!(submitted_visibility(state, hidden), Some(false));
+        assert_eq!(submitted_visibility(state, visible), None);
+    }
+    #[test]
+    fn retired_or_uninitialized_panel_cannot_activate_session_presentation() {
+        let mut state = ControlSnapshot { generation: 92, pose_initialized: true,
+            ..ControlSnapshot::default() };
+        set_visibility(&mut state, 92, false).unwrap();
+        let hidden = state;
+        observe_visibility(&mut state, hidden);
+        assert_eq!(submitted_visibility(state, hidden), Some(false));
+        assert_eq!(submitted_visibility(state, ControlSnapshot {pose_initialized:false,..hidden}), None);
+        state.generation=93;
+        assert_eq!(submitted_visibility(state, hidden), None);
+        state.generation=0;
+        assert_eq!(submitted_visibility(state, hidden), None);
+    }
     #[test]
     fn original_panel_filters_demo_settings_but_retains_visibility_frame() {
         let frame = ControlSnapshot {

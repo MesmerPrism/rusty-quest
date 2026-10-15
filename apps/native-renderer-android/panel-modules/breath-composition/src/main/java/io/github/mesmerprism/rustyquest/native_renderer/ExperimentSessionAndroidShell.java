@@ -251,15 +251,21 @@ final class ExperimentSessionAndroidShell {
         final long sessionGeneration;
         final String operationId;
         final long shutdownAckRevision;
+        final long runtimeEpoch;
         final String detail;
 
         TerminalResult(boolean shouldFinish, boolean saved, long sessionGeneration,
                 String operationId, long shutdownAckRevision, String detail) {
+            this(shouldFinish,saved,sessionGeneration,operationId,shutdownAckRevision,detail,0L);
+        }
+        TerminalResult(boolean shouldFinish, boolean saved, long sessionGeneration,
+                String operationId, long shutdownAckRevision, String detail,long runtimeEpoch) {
             this.shouldFinish = shouldFinish;
             this.saved = saved;
             this.sessionGeneration = sessionGeneration;
             this.operationId = safe(operationId);
             this.shutdownAckRevision = Math.max(0L, shutdownAckRevision);
+            this.runtimeEpoch=runtimeEpoch;
             this.detail = safe(detail);
         }
     }
@@ -925,7 +931,7 @@ final class ExperimentSessionAndroidShell {
         dispatchTerminal(sink, epoch, new TerminalResult(
             finish, saved, command.expectedGeneration, command.operationId,
             readback.shutdownAckRevision,
-            saved ? "shutdown-complete" : "shutdown-error-unsaved"));
+            saved ? "shutdown-complete" : "shutdown-error-unsaved",readback.runtimeEpoch));
         owner.shutdownNow();
         synchronized (this) { if (statusObserver != null) statusObserver.shutdownNow(); }
         return true;

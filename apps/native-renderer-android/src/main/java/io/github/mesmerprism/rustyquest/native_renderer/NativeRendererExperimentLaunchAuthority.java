@@ -32,7 +32,7 @@ final class NativeRendererExperimentLaunchAuthority {
         int categoryCount = incoming == null || incoming.getCategories() == null
             ? 0
             : incoming.getCategories().size();
-        if (incoming == null || !NativeRendererExperimentLauncherPolicy.admits(
+        if (!NativeRendererActivityComponents.isNative(activity) || incoming == null || !NativeRendererExperimentLauncherPolicy.admits(
                 recreation,
                 incoming.getAction(),
                 incoming.getCategories() != null
@@ -42,7 +42,7 @@ final class NativeRendererExperimentLaunchAuthority {
                 component == null ? null : component.getPackageName(),
                 component == null ? null : component.getClassName(),
                 activity.getPackageName(),
-                "android.app.NativeActivity")
+                NativeRendererActivityComponents.nativeClass(activity))
                 || nativeActivityCreateSeen) {
             return 0L;
         }
@@ -82,7 +82,7 @@ final class NativeRendererExperimentLaunchAuthority {
     static boolean consumeRemotePreparation(Activity activity, long epoch, long xrGeneration) {
         synchronized (NativeRendererExperimentLaunchAuthority.class) {
             if (activity == null || activity != launchActivity.get() || activity.isFinishing()
-                    || !"android.app.NativeActivity".equals(activity.getClass().getName())
+                    || !NativeRendererActivityComponents.isNative(activity)
                     || xrGeneration <= 0L || epoch <= 0L || epoch != pendingEpoch
                     || !(activity.getApplicationContext() instanceof NativeRendererSelfKioskApplication)) return false;
             if (!consume(PROVENANCE_EXPLICIT_USER_LAUNCH, epoch)) return false;
@@ -99,6 +99,12 @@ final class NativeRendererExperimentLaunchAuthority {
     /** Read-only bridge from the live immersive process to the exact pending panel handoff. */
     static synchronized long pendingEpochForImmersiveStartup() {
         return pendingEpoch;
+    }
+    /** Startup permission UI may observe the already admitted physical launch.
+     * This creates/consumes no epoch and does not authorize session preparation. */
+    static synchronized long trustedColdEpochForOwner(Activity actual) {
+        return actual!=null&&actual==launchActivity.get()&&NativeRendererActivityComponents.isNative(actual)
+            &&!actual.isFinishing()&&!actual.isDestroyed()&&nativeActivityCreateSeen?lastIssuedEpoch:0L;
     }
 
     static synchronized void invalidatePending() {

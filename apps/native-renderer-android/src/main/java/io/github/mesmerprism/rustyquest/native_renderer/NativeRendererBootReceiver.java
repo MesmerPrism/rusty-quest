@@ -37,7 +37,7 @@ public final class NativeRendererBootReceiver extends BroadcastReceiver {
             }
             Intent launch = new Intent(Intent.ACTION_MAIN)
                 .addCategory(Intent.CATEGORY_LAUNCHER)
-                .setClassName(context.getPackageName(), "android.app.NativeActivity")
+                .setClassName(context.getPackageName(), NativeRendererActivityComponents.nativeClass(context))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(launch);
             Log.i(TAG, "status=launch-requested-unconfirmed boot_count=" + bootCount);

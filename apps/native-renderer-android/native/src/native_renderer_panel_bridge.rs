@@ -80,6 +80,23 @@ pub(crate) fn packaged_control_panel_mode_is_breath_mapping(
         .is_some_and(|value| value == "breath-mapping")
 }
 
+/// Read the class of this actual AndroidApp owner, never an Intent-selected
+/// alias or a process-global latest Activity. The caller captures it for its
+/// own projection-loop lifetime; failure remains unknown in focus readback.
+#[cfg(target_os = "android")]
+pub(crate) fn observed_activity_class_name(
+    app: &android_activity::AndroidApp,
+) -> Result<String, String> {
+    use jni::{objects::JObject, JavaVM};
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<String> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        Ok(env.get_object_class(&activity)?.get_name(env)?.to_string())
+    })
+    .map_err(|error| format!("actual Activity class observation failed: {error}"))
+}
+
 #[cfg(target_os = "android")]
 pub(crate) fn admit_explicit_native_activity_launch(
     state: &android_activity::OnCreateState,
@@ -446,7 +463,7 @@ impl ExplicitExperimentPanelStartupGate {
 }
 
 #[cfg(target_os = "android")]
-fn packaged_control_panel_mode_is_breath_mapping_installed() -> bool {
+pub(crate) fn packaged_control_panel_mode_is_breath_mapping_installed() -> bool {
     PACKAGED_CONTROL_PANEL_MODE
         .get()
         .and_then(|value| value.as_deref())
@@ -1006,6 +1023,29 @@ fn send_control_panel_intent(
         let class_loader: JClassLoader = env.cast_local::<JClassLoader>(class_loader)?;
         let panel_class_name = env.new_string(PANEL_CLASS_NAME)?;
         let panel_class = JClass::for_name_with_loader(env, panel_class_name, true, class_loader)?;
+        // Capture the renderer's producer generation before Java queues UI work.
+        // The selected original host pins that exact Activity/controller/producer;
+        // an uncertain or retired native route must not launch a replacement2D task.
+        #[cfg(feature = "native-mesh-ui")]
+        let producer_generation = crate::native_mesh_ui::snapshot().generation;
+        #[cfg(not(feature = "native-mesh-ui"))]
+        let producer_generation = 0_u64;
+        let native_route = env.call_static_method(
+            &panel_class,
+            jni_str!("routeToNativePanelFromNative"),
+            jni_sig!("(Landroid/app/Activity;Landroid/content/Intent;J)I"),
+            &[
+                JValue::Object(&activity),
+                JValue::Object(&intent),
+                JValue::Long(producer_generation as i64),
+            ],
+        )?.i()?;
+        if native_route != 0 {
+            crate::marker("native-panel-route", format!(
+                "status={} producerGeneration={} source=original-intent noReplay=true",
+                if native_route > 0 { "queued" } else { "rejected" }, producer_generation));
+            return Ok(());
+        }
         let desired_route = env.new_string(route.unwrap_or("experimenter"))?;
         env.call_static_method(
             panel_class,

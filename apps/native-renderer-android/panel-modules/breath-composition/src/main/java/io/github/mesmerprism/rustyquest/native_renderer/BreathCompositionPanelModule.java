@@ -56,8 +56,58 @@ import org.json.JSONObject;
  * low-rate command adapters, and native-effective readback projection. It is compiled only
  * when the resolved native-app lock selects the {@code breath-composition-controls} module.</p>
  */
-public class BreathCompositionPanelModule extends Activity implements PanelModule,
+public class BreathCompositionPanelModule extends BreathCompositionPanelContext implements PanelModule,
         ExperimentSessionAndroidShell.UiSink {
+    BreathCompositionPanelModule(Activity actual, boolean nativePresentation) {
+        super(actual, nativePresentation);
+    }
+    static BreathCompositionPanelModule controllerFor(Activity actual) {
+        BreathCompositionPanelModule current=remotePanel.get();
+        return current!=null&&current.hostActivity()==actual&&current.hostCurrent()?current:null;
+    }
+    static Activity currentHostActivity() {
+        BreathCompositionPanelModule current=remotePanel.get();
+        return current!=null&&current.hostCurrent()?current.hostActivity():null;
+    }
+    static BreathCompositionPanelModule createFor(Activity actual, boolean nativePresentation, Bundle state) {
+        if (Looper.myLooper()!=Looper.getMainLooper()) throw new IllegalStateException("panel-owner-requires-main-thread");
+        BreathCompositionPanelModule previous=remotePanel.get();
+        if(previous!=null&&previous.hostCurrent()) {
+            if(previous.hostActivity()==actual) throw new IllegalStateException("panel-owner-already-created");
+            if(previous.nativePresentation()) throw new IllegalStateException("native-panel-owner-already-active");
+            Bundle transferred=new Bundle();previous.onSaveInstanceState(transferred);
+            Activity retired=previous.hostActivity();previous.onDestroy();retired.finish();
+            if(state==null)state=transferred;
+        }
+        BreathCompositionPanelModule next=new BreathCompositionPanelModule(actual,nativePresentation);
+        next.onCreate(state);return next;
+    }
+    static boolean deliverToNativeOwner(Intent intent, boolean show) {
+        if(Looper.myLooper()!=Looper.getMainLooper())throw new IllegalStateException("panel-dispatch-requires-main-thread");
+        BreathCompositionPanelModule owner=remotePanel.get();
+        if(owner==null||!owner.nativePresentation()||!owner.hostCurrent())return false;
+        owner.onNewIntent(intent);
+        if(show&&(intent==null||!NativeRendererSoftKioskCoordinator.ACTION_TERMINAL_SAVE_AND_EXIT.equals(intent.getAction())))
+            NativeMeshUiProducer.requestPanelVisibility(owner.hostActivity(),true);
+        return true;
+    }
+    /** Native menu routing pins both actual controller and producer before UI defer.
+     * 0 is the unchanged ordinary2D route; selected-native rejection is never a fallback. */
+    static int queueNativePanelIntent(Activity actual,Intent intent,long producerGeneration){
+        if(actual==null||!NativeRendererActivityComponents.PRODUCT_NATIVE.equals(actual.getClass().getName()))return 0;
+        final BreathCompositionPanelModule owner=controllerFor(actual);
+        final Object origin=NativeMeshUiProducer.captureProductRouteOwner(actual,producerGeneration);
+        if(owner==null||!owner.nativePresentation()||origin==null||!NativeRendererActivityComponents.isNative(actual))return -1;
+        final Intent frozen=new Intent(intent);
+        actual.runOnUiThread(new Runnable(){public void run(){
+            if(remotePanel.get()!=owner||!owner.hostCurrent()||!NativeMeshUiProducer.productRouteOwnerCurrent(origin,actual)){
+                Log.w(TAG,"channel=native-panel-route status=rejected reason=captured-owner-retired noReplay=true");return;
+            }
+            owner.onNewIntent(frozen);
+            NativeMeshUiProducer.requestPanelVisibility(actual,true);
+        }});
+        return 1;
+    }
     public static final String MODULE_ID = "breath-composition-controls";
 
     @Override
@@ -243,7 +293,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 }
             }
         );
-    private static WeakReference<BreathCompositionPanelModule> remotePanel =
+    private static volatile WeakReference<BreathCompositionPanelModule> remotePanel =
         new WeakReference<BreathCompositionPanelModule>(null);
     private static volatile Context remoteContext;
     private static volatile RemotePending remotePending;
@@ -280,6 +330,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         final long startedAtElapsedMs;
         final long serverGeneration;
         final long nativeOwnerEpoch;
+        final ExperimentSessionTerminalCorrelation terminalOrigin;
         final ExperimentSessionControlCapability.Fence sessionFence;
         final long armGeneration;
         final String armCondition;
@@ -302,6 +353,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         RemotePending(String browserId, String nativeId, String operation,
                 long armGeneration, String armCondition,
                 ExperimentSessionControlCapability.Fence fence) {
+            this(browserId,nativeId,operation,armGeneration,armCondition,fence,null);
+        }
+        RemotePending(String browserId, String nativeId, String operation,
+                long armGeneration, String armCondition,
+                ExperimentSessionControlCapability.Fence fence, ExperimentSessionTerminalCorrelation origin) {
+            this.terminalOrigin=origin;
             this.browserId = browserId;
             this.nativeId = nativeId;
             this.operation = operation;
@@ -309,8 +366,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             this.armCondition = armCondition;
             this.startedAtElapsedMs = SystemClock.elapsedRealtime();
             ExperimentSessionBleServer server = remoteServer();
-            this.serverGeneration = server == null ? 0L : server.currentGeneration();
-            this.nativeOwnerEpoch = server == null ? 0L : server.currentNativeEpoch();
+            this.serverGeneration = origin!=null?origin.carrierGeneration:(server == null ? 0L : server.currentGeneration());
+            this.nativeOwnerEpoch = origin!=null?origin.nativeOwnerEpoch:(server == null ? 0L : server.currentNativeEpoch());
             this.sessionFence=fence;
         }
     }
@@ -318,6 +375,17 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private static ExperimentSessionBleServer remoteServer() {
         return remoteContext == null ? null : ExperimentSessionBleServer.process(
             remoteContext, REMOTE_DELEGATE);
+    }
+
+    private static void observeRemoteTerminal(ExperimentSessionAndroidShell.TerminalResult result) {
+        RemotePending pending=remotePending;
+        ExperimentSessionBleServer server=remoteServer();
+        if(pending==null||server==null||!"save-exit".equals(pending.operation))return;
+        if(server.publishTerminalObservation(pending.terminalOrigin,result)) {
+            if(remotePending==pending)remotePending=null;
+        }
+        // Unattributed/unsuccessful callbacks cannot change a replacement request.
+        // Keep the immutable mapping and existing pending receipt for recovery.
     }
 
     private static void expireRemotePendingObservation(long now) {
@@ -437,16 +505,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
             @Override public void onExperimentSessionTerminal(
                     ExperimentSessionAndroidShell.TerminalResult result) {
-                RemotePending pending = remotePending;
-                ExperimentSessionBleServer server = remoteServer();
-                if (pending != null && server != null && "save-exit".equals(pending.operation)) {
-                    server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId,
-                        result != null && result.shouldFinish && result.saved
-                            ? "confirmed" : "outcome_unknown",
-                        result != null && result.shouldFinish && result.saved
-                            ? "Recording saved; app is closing." : "Save and exit needs headset review.");
-                    remotePending = null;
-                }
+                observeRemoteTerminal(result);
             }
         };
 
@@ -753,7 +812,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     return;
                 }
                 if ("save-exit".equals(request.operation)) {
-                    remotePending = new RemotePending(request.id, "", "save-exit");
+                    ExperimentSessionTerminalCorrelation origin;
+                    try {
+                        JSONObject status=sessionControlReadback();
+                        if(status==null)throw new IllegalStateException("terminal-status-unavailable");
+                        origin=server.terminalOrigin(request.id,status.getLong("runtime_epoch"),status.getLong("generation"));
+                    }catch(Exception unavailable){
+                        server.updateReceipt(request.id,"rejected","Current terminal observation owner unavailable.");
+                        return;
+                    }
+                    remotePending = new RemotePending(request.id, "", "save-exit",-1L,"",null,origin);
                     server.updateReceipt(request.id, "pending", "Waiting for durable save and exit.");
                     if (!NativeRendererSelfKioskApplication.requestSaveAndExitFromRemote(
                             remoteContext)) {
@@ -779,7 +847,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     remotePending = new RemotePending(request.id, "", "open-polar");
                     server.updateReceipt(request.id, "pending", "Opening Polar setup on Quest.");
                     if (panel != null && (panel.canRenderRemotePolarInPlace()
-                            || NativeMeshUiProducer.requestPanelVisibility(panel,true))) {
+                            || NativeMeshUiProducer.requestPanelVisibility(panel.hostActivity(),true))) {
                         panel.replaceBreathCompositionPanelContent("polar");
                         panel.observeRemotePolarRender(remotePending);
                     } else {
@@ -815,7 +883,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         return new JSONObject().put("y",REMOTE_DELEGATE.polarSetupReadback()).put("receipt",server.ownerReceipt());
     }
     private static boolean isRemoteImmersiveConfirmed() {
-        try{JSONObject current=REMOTE_DELEGATE.sessionControlReadback();return current!=null&&"immersive-active".equals(current.optString("presentation"))&&NativeMeshUiProducer.panelVisibilityConfirmed(remotePanel.get(),false);}
+        try{JSONObject current=REMOTE_DELEGATE.sessionControlReadback();return current!=null&&"immersive-active".equals(current.optString("presentation"))&&NativeMeshUiProducer.panelVisibilityConfirmed(currentHostActivity(),false);}
         catch(Exception unknown){return false;}
     }
     private static String remoteSetupPendingId="";
@@ -965,13 +1033,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         result.put("ble",ble);
         ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
         result.put("network",gateway==null?new JSONObject().put("selected",ExperimentSessionCommandGateway.featurePackaged(this)).put("state","uninitialized"):gateway.productPanelReadback());
-        result.put("panel_visibility",NativeMeshUiProducer.productPanelVisibility(this));
-        result.put("panel_geometry",NativeMeshUiProducer.productPanelGeometry(this));
+        result.put("panel_visibility",NativeMeshUiProducer.productPanelVisibility(hostActivity()));
+        result.put("panel_geometry",NativeMeshUiProducer.productPanelGeometry(hostActivity()));
         return result;
     }
     private JSONObject invokeProductPanelOperator(String action,JSONObject parameters)throws Exception {
         requireProductPanelOperator();
-        if("panel-visible".equals(action))return NativeMeshUiProducer.requestProductPanelVisibility(this,parameters.getBoolean("visible"));
+        if("panel-visible".equals(action))return NativeMeshUiProducer.requestProductPanelVisibility(hostActivity(),parameters.getBoolean("visible"));
         if("navigate".equals(action)){
             String surface=parameters.getString("surface"),page=parameters.getString("page");
             if("experimenter".equals(surface)){
@@ -994,7 +1062,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if("ble-enabled".equals(action)||"ble-open-control".equals(action)){
             if(!ExperimentSessionBleServer.featurePackaged(this))throw new IllegalStateException("ble-feature-not-selected");
             ExperimentSessionBleServer server=remoteServer();boolean enabled=parameters.getBoolean("enabled");
-            if("ble-enabled".equals(action))server.setEnabled(enabled,this);else server.setOpenControl(enabled,this);
+            if("ble-enabled".equals(action))server.setEnabled(enabled,hostActivity());else server.setOpenControl(enabled,hostActivity());
             replaceBreathCompositionPanelContent("home");
             return new JSONObject().put("status","observed").put("enabled",server.enabled()).put("open_control",server.openControl()).put("active",server.active());
         }
@@ -1009,7 +1077,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if("network-direct-start".equals(action)){
             if(!ExperimentSessionDirectNetwork.featurePackaged(this))throw new IllegalStateException("direct-network-feature-not-selected");
             if(checkSelfPermission(ExperimentSessionDirectNetwork.requiredPermission())!=android.content.pm.PackageManager.PERMISSION_GRANTED){
-                ExperimentSessionDirectNetwork.requestPermissions(this,9402);
+                ExperimentSessionDirectNetwork.requestPermissions(hostActivity(),9402);
                 return new JSONObject().put("status","permission-requested");
             }
             gateway.startDirectFromHeadset(parameters.getString("route"));
@@ -1042,7 +1110,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             throw new IllegalStateException("panel-attachment-requires-main-thread");
         BreathCompositionPanelModule owner = remotePanel.get();
         if (owner == null || owner.experimentShellDestroyed || owner.isFinishing()
-                || owner.isDestroyed() || immersive == owner || !current.getAsBoolean())
+                || owner.isDestroyed() || owner.hostActivity() != immersive || !current.getAsBoolean())
             throw new IllegalStateException("retained-production-panel-owner-unavailable");
         if (owner.meshPanelAttachment != null) owner.meshPanelAttachment.close();
         return owner.new MeshPanelAttachment(immersive, carrier, current);
@@ -1051,15 +1119,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     /** Presentation-only bootstrap return; reuse the original actual Activity route. */
     public static void resumeNativeMeshImmersive(Activity actual) {
         BreathCompositionPanelModule owner=remotePanel.get();
-        if(owner!=actual||owner.experimentShellDestroyed||owner.isFinishing()||owner.isDestroyed())
+        if(owner==null||owner.hostActivity()!=actual||owner.experimentShellDestroyed||owner.isFinishing()||owner.isDestroyed())
             throw new IllegalStateException("retained-production-panel-owner-unavailable");
-        ControlPanelActivity.closePanelAndReturnToImmersive(owner);
+        ControlPanelActivity.closePanelAndReturnToImmersive(owner.hostActivity());
     }
 
     private View currentPanelContent() {
         if (meshPanelAttachment != null) return meshPanelAttachment.content;
-        ViewGroup window = (ViewGroup) findViewById(android.R.id.content);
-        return window == null || window.getChildCount() == 0 ? null : window.getChildAt(0);
+        return hostContent();
     }
 
     private boolean meshInputActive(){return meshPanelAttachment!=null&&meshPanelAttachment.active()
@@ -1068,11 +1135,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private android.app.AlertDialog.Builder panelDialogBuilder(){
         if(!meshInputActive())return new android.app.AlertDialog.Builder(this);
         android.content.Context themedDisplay=new android.view.ContextThemeWrapper(
-            meshPanelAttachment.carrier.getContext(),BreathCompositionPanelModule.this.getTheme());
+            meshPanelAttachment.carrier.getContext(),hostActivity().getTheme());
         return new android.app.AlertDialog.Builder(themedDisplay){
             @Override public android.app.AlertDialog show(){
                 android.app.AlertDialog dialog=create();
-                NativeMeshUiProducer.showProductDialog(BreathCompositionPanelModule.this,dialog);
+                NativeMeshUiProducer.showProductDialog(hostActivity(),dialog);
                 return dialog;
             }
         };
@@ -1080,14 +1147,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     /** Original EditText/InputConnection, with only mesh keyboard presentation substituted. */
     private final class PanelEditText extends EditText {
-        PanelEditText(){super(BreathCompositionPanelModule.this);}
+        PanelEditText(){super(hostActivity());}
         @Override protected void onAttachedToWindow(){super.onAttachedToWindow();setShowSoftInputOnFocus(!meshInputActive());}
         @Override public android.view.ActionMode startActionMode(android.view.ActionMode.Callback callback,int type){
-            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(BreathCompositionPanelModule.this,this,callback,type)
+            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(hostActivity(),this,callback,type)
                 :super.startActionMode(callback,type);
         }
         @Override public android.view.ActionMode startActionMode(android.view.ActionMode.Callback callback){
-            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(BreathCompositionPanelModule.this,this,callback,android.view.ActionMode.TYPE_PRIMARY)
+            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(hostActivity(),this,callback,android.view.ActionMode.TYPE_PRIMARY)
                 :super.startActionMode(callback);
         }
         @Override public boolean onTouchEvent(android.view.MotionEvent event){
@@ -1096,19 +1163,19 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             boolean handled=super.onTouchEvent(event);
             if(mesh&&handled&&event.getActionMasked()==android.view.MotionEvent.ACTION_UP)
                 post(new Runnable(){public void run(){if(meshInputActive())
-                    NativeMeshUiProducer.requestProductTextInput(BreathCompositionPanelModule.this,PanelEditText.this);}});
+                    NativeMeshUiProducer.requestProductTextInput(hostActivity(),PanelEditText.this);}});
             return handled;
         }
     }
 
     private final class PanelSelectableTextView extends TextView {
-        PanelSelectableTextView(){super(BreathCompositionPanelModule.this);}
+        PanelSelectableTextView(){super(hostActivity());}
         @Override public android.view.ActionMode startActionMode(android.view.ActionMode.Callback callback,int type){
-            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(BreathCompositionPanelModule.this,this,callback,type)
+            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(hostActivity(),this,callback,type)
                 :super.startActionMode(callback,type);
         }
         @Override public android.view.ActionMode startActionMode(android.view.ActionMode.Callback callback){
-            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(BreathCompositionPanelModule.this,this,callback,android.view.ActionMode.TYPE_PRIMARY)
+            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(hostActivity(),this,callback,android.view.ActionMode.TYPE_PRIMARY)
                 :super.startActionMode(callback);
         }
     }
@@ -1141,17 +1208,17 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         }
         boolean active(){return !closed&&current.getAsBoolean()&&!immersive.isFinishing()
             &&!immersive.isDestroyed()&&!experimentShellDestroyed
-            &&!BreathCompositionPanelModule.this.isFinishing()&&!BreathCompositionPanelModule.this.isDestroyed();}
+            &&!hostActivity().isFinishing()&&!hostActivity().isDestroyed();}
         void replace(View next) {
             if(!active())throw new IllegalStateException("production-panel-carrier-retired");
-            if(content!=null&&content!=next)NativeMeshUiProducer.productContentRemoved(BreathCompositionPanelModule.this,content);
+            if(content!=null&&content!=next)NativeMeshUiProducer.productContentRemoved(hostActivity(),content);
             if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
             if(next.getParent() instanceof ViewGroup)((ViewGroup)next.getParent()).removeView(next);
             content=next;
             if(immersiveResumed)carrier.addView(next,new LinearLayout.LayoutParams(-1,0,1f));
             else BreathCompositionPanelModule.super.setContentView(next);
         }
-        public Activity owner(){return BreathCompositionPanelModule.this;}
+        public Activity owner(){return hostActivity();}
         public boolean presentationActive(){return active()&&immersiveResumed;}
         public void outcome(String detail){if(active())updateStatus(detail);}
         public void visibilityChanged(boolean effective){
@@ -1160,20 +1227,20 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             if(visible&&content!=null)content.invalidate();
         }
         void showInActivity(){
-            NativeMeshUiProducer.retireProductInput(BreathCompositionPanelModule.this);
+            NativeMeshUiProducer.retireProductInput(hostActivity());
             immersiveResumed=false;
             if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
             if(content!=null)BreathCompositionPanelModule.super.setContentView(content);
         }
         public void close() {
             if(closed)return;closed=true;
-            NativeMeshUiProducer.retireProductInput(BreathCompositionPanelModule.this);
+            NativeMeshUiProducer.retireProductInput(hostActivity());
             getApplication().unregisterActivityLifecycleCallbacks(this);
             pausePanelProjection();
             if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
             if(meshPanelAttachment==this)meshPanelAttachment=null;
-            if(!experimentShellDestroyed&&!BreathCompositionPanelModule.this.isFinishing()
-                    &&!BreathCompositionPanelModule.this.isDestroyed()&&content!=null)
+            if(!experimentShellDestroyed&&!hostActivity().isFinishing()
+                    &&!hostActivity().isDestroyed()&&content!=null)
                 BreathCompositionPanelModule.super.setContentView(content);
             if(activityPanelResumed&&!experimentShellDestroyed)resumePanelProjection();
             Log.i(TAG,"channel=native-panel-content event=detached");
@@ -1182,9 +1249,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             immersiveResumed=true;replace(content);if(visible)resumePanelProjection();
         }}
         public void onActivityPaused(Activity value){if(value==immersive&&!closed){
-            NativeMeshUiProducer.retireProductInput(BreathCompositionPanelModule.this);
+            NativeMeshUiProducer.retireProductInput(hostActivity());
             immersiveResumed=false;if(!activityPanelResumed)pausePanelProjection();}}
-        public void onActivityDestroyed(Activity value){if(value==immersive||value==BreathCompositionPanelModule.this)close();}
+        public void onActivityDestroyed(Activity value){if(value==immersive||value==hostActivity())close();}
         public void onActivityCreated(Activity value,Bundle saved){}
         public void onActivityStarted(Activity value){}
         public void onActivityStopped(Activity value){}
@@ -1201,7 +1268,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         long requestedLaunchEpoch = initialIntent == null
             ? 0L : initialIntent.getLongExtra(EXTRA_LAUNCH_EPOCH, 0L);
         boolean launchAuthorityConsumed = ControlPanelActivity.consumeExplicitColdUserLaunch(
-            this,
+            hostActivity(),
             savedInstanceState != null,
             initialIntent
         );
@@ -1210,7 +1277,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             && EXPERIMENT_SESSION_PANEL.admitTrustedColdLaunch(requestedLaunchEpoch);
         boolean trustedColdMain = panelColdLaunchAdmitted
             && ControlPanelActivity.admitExplicitColdExperimentShell(
-                this,
+                hostActivity(),
                 requestedLaunchEpoch,
                 PANEL_ROUTE_EXPERIMENTER
             );
@@ -1256,13 +1323,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             experimenterGuidanceBiasPercent =
                 EXPERIMENT_SESSION_PANEL.pendingBreathGuidanceBiasPercent();
         }
-        startupPermissionFlowEligible = trustedColdMain
+        startupPermissionFlowEligible = (trustedColdMain || nativePresentation()
+                && NativeRendererExperimentLaunchAuthority.trustedColdEpochForOwner(hostActivity())>0L)
             && PANEL_ROUTE_EXPERIMENTER.equals(panelRoute);
         PolarSensorRuntime polarRuntime =
             PolarSensorRuntime.forApplication(getApplicationContext());
         if (startupPermissionFlowEligible) polarRuntime.ensureAutoConnection();
         setContentView(buildContentView());
-        if (startupPermissionFlowEligible) polarRuntime.requestStartupPermissions(this);
+        if (startupPermissionFlowEligible) polarRuntime.requestStartupPermissions(hostActivity());
         restorePanelScrollAfterLayout();
         EXPERIMENT_SESSION_SHELL.initialize(getFilesDir().getAbsolutePath(), this);
         scheduleExperimenterProjectionRefresh();
@@ -1273,7 +1341,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         boolean terminalIntent = handleTerminalSaveAndExitIntent(initialIntent);
         handleRemoteOpenPolarIntent(initialIntent);
         if (!terminalIntent) {
-            ExperimentSessionBleServer.process(this, REMOTE_DELEGATE).startFromPanel(this);
+            ExperimentSessionBleServer.process(this, REMOTE_DELEGATE).startFromPanel(hostActivity());
         }
         productPanelOperatorRegistration=ProductPanelOperator.register(new ProductPanelOperator.Owner(){
             public boolean available(){return productPanelOperatorAvailable();}
@@ -1385,8 +1453,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             panelRoute = PANEL_ROUTE_EXPERIMENTER.equals(requested)
                 ? PANEL_ROUTE_EXPERIMENTER : PANEL_ROUTE_DEVELOPER;
             breathCompositionPanelTopic = "home";
-            ControlPanelActivity.beginPanelTransition(this, panelRoute, generation);
-            NativeRendererSelfKioskApplication.ensureArmedService(this);
+            ControlPanelActivity.beginPanelTransition(hostActivity(), panelRoute, generation);
+            NativeRendererSelfKioskApplication.ensureArmedService(hostActivity());
         }
         synchronizePanelRouteFromCoordinator();
         return admitted;
@@ -1428,10 +1496,15 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onResume() {
         super.onResume();
-        activityPanelResumed=true;
-        if(meshPanelAttachment!=null)meshPanelAttachment.showInActivity();
-        resumePanelProjection();
-        NativeMeshUiProducer.productOwnerReady(this);
+        activityPanelResumed=!nativePresentation();
+        if(meshPanelAttachment!=null&&!nativePresentation())meshPanelAttachment.showInActivity();
+        if(!nativePresentation()||meshPanelAttachment!=null&&meshPanelAttachment.presentationActive()
+                &&meshPanelAttachment.visible)resumePanelProjection();
+        else {
+            pausePanelProjection();
+            PolarSensorRuntime.forApplication(getApplicationContext()).onHostResume();
+        }
+        NativeMeshUiProducer.productOwnerReady(hostActivity());
     }
 
     private void resumePanelProjection() {
@@ -1440,7 +1513,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         hubStatusLifetime = createHubStatusLifetime();
         refreshHubStatusLifetime();
         remotePanelResumed = true;
-        NativeRendererSelfKioskApplication.ensureArmedService(this);
+        NativeRendererSelfKioskApplication.ensureArmedService(hostActivity());
         PolarSensorRuntime.forApplication(getApplicationContext()).onHostResume();
         handleDisplayCompositeIntent(getIntent());
         if ("breath-mapping".equals(readControlPanelMode())) {
@@ -1521,6 +1594,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     @Override
     protected void onDestroy() {
+        if(experimentShellDestroyed)return;
         experimentShellDestroyed = true;
         try{if(productPanelOperatorRegistration!=null)productPanelOperatorRegistration.close();}
         catch(Exception unavailable){Log.w(TAG,"channel=product-panel-operator event=registration-retirement-failed");}
@@ -1538,7 +1612,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         cancelPendingPrivateParticleEffectReadback();
         invalidatePrivateParticleControls();
         if (polarSensorPanel != null) {
-            PolarSensorRuntime.forApplication(getApplicationContext()).detachPanel(this);
+            PolarSensorRuntime.forApplication(getApplicationContext()).detachPanel(hostActivity());
             polarSensorPanel = null;
         }
         super.onDestroy();
@@ -1551,7 +1625,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             return;
         }
         displayCompositeRequestInFlight = false;
-        if (resultCode != RESULT_OK || data == null) {
+        if (resultCode != Activity.RESULT_OK || data == null) {
             setStatusText("Display composite capture was not approved.");
             return;
         }
@@ -1595,13 +1669,13 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         PolarSensorRuntime.forApplication(getApplicationContext()).onRequestPermissionsResult(
-            this,
+            hostActivity(),
             requestCode,
             permissions,
             grantResults
         );
         ExperimentSessionBleServer.process(this, REMOTE_DELEGATE)
-            .onPermissionResult(this, requestCode);
+            .onPermissionResult(hostActivity(), requestCode);
     }
 
     private View buildContentView() {
@@ -1817,7 +1891,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     private void appendExperimenterKiosk(LinearLayout root) {
         ExperimentSessionPanelViewPolicy.ReadinessCard presentation =
             ExperimentSessionPanelViewPolicy.kioskCard(
-                ControlPanelActivity.softKioskUiState(this));
+                ControlPanelActivity.softKioskUiState(hostActivity()));
         LinearLayout kiosk = panelCard("Kiosk mode");
         experimenterKioskReadback = experimenterIndicator(
             kiosk, presentation.label, presentation.tone);
@@ -1848,7 +1922,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         Button toggle = button(server.enabled() ? "Turn phone control off" : "Turn phone control on");
         toggle.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View ignored) {
-                server.setEnabled(!server.enabled(), BreathCompositionPanelModule.this);
+                server.setEnabled(!server.enabled(), hostActivity());
                 replaceBreathCompositionPanelContent("home");
             }
         });
@@ -1857,7 +1931,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             ? "Require pairing code" : "Allow open control");
         mode.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View ignored) {
-                server.setOpenControl(!server.openControl(), BreathCompositionPanelModule.this);
+                server.setOpenControl(!server.openControl(), hostActivity());
                 replaceBreathCompositionPanelContent("home");
             }
         });
@@ -1903,7 +1977,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     Button start=button("Create "+("hotspot".equals(route)?"temporary hotspot":"Wi-Fi Direct group"));
                     start.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){try{
                         if(checkSelfPermission(ExperimentSessionDirectNetwork.requiredPermission())!=android.content.pm.PackageManager.PERMISSION_GRANTED){
-                            ExperimentSessionDirectNetwork.requestPermissions(BreathCompositionPanelModule.this,9402);return;}
+                            ExperimentSessionDirectNetwork.requestPermissions(hostActivity(),9402);return;}
                         gateway.startDirectFromHeadset(route);updateStatus("Temporary network requested. Open join details after creation.");
                     }catch(Exception failure){updateStatus("Temporary network unavailable on this device.");}}});network.addView(start);
                 }
@@ -1918,7 +1992,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     final android.widget.EditText token=new PanelEditText();token.setHint("Device route token");
                     token.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
                     final android.widget.EditText expiry=new PanelEditText();expiry.setHint("Host expiry timestamp (milliseconds)");expiry.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
-                    LinearLayout fields=new LinearLayout(BreathCompositionPanelModule.this);fields.setOrientation(LinearLayout.VERTICAL);fields.addView(sessionId);fields.addView(token);fields.addView(expiry);
+                    LinearLayout fields=new LinearLayout(hostActivity());fields.setOrientation(LinearLayout.VERTICAL);fields.addView(sessionId);fields.addView(token);fields.addView(expiry);
                     panelDialogBuilder().setTitle("Connect "+gateway.relayOrigin()).setView(fields)
                         .setNegativeButton("Cancel",null).setPositiveButton("Connect until host expiry",new android.content.DialogInterface.OnClickListener(){
                             @Override public void onClick(android.content.DialogInterface dialog,int which){try{gateway.startRelayFromHeadset(sessionId.getText().toString().trim(),token.getText().toString().trim(),Long.parseLong(expiry.getText().toString().trim()));updateStatus("HTTPS relay connection requested.");}catch(Exception failure){updateStatus("Relay connection unavailable.");}}
@@ -2064,8 +2138,8 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                                 if(!Boolean.TRUE.equals(binding.opt("feature_lock_active")) || !Boolean.TRUE.equals(binding.opt("activation_binding_matches")))throw new SecurityException("feature-inactive");
                                 return nativeState.put("activation_binding_sha256",binding.getString("activation_binding_sha256"));
                             }
-                            @Override public void returnVr(){ControlPanelActivity.closePanelAndReturnToImmersive(BreathCompositionPanelModule.this);}
-                            @Override public boolean presentationReady(){return NativeMeshUiProducer.panelVisibilityConfirmed(BreathCompositionPanelModule.this,false);}
+                            @Override public void returnVr(){ControlPanelActivity.closePanelAndReturnToImmersive(hostActivity());}
+                            @Override public boolean presentationReady(){return NativeMeshUiProducer.panelVisibilityConfirmed(hostActivity(),false);}
                             @Override public void dispatch(JSONObject command) throws Exception {JSONObject admission=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));if(!"queued".equals(admission.optString("command_status")))throw new SecurityException("native-not-queued");}
                             @Override public void schedule(Runnable callback,long delay){new Handler(Looper.getMainLooper()).postDelayed(callback,delay);}
                             @Override public long nowMs(){return SystemClock.elapsedRealtime();}
@@ -2202,7 +2276,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         Button saveExit = button("Save and exit");
         saveExit.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View ignored) {
-                NativeRendererSelfKioskApplication.requestSaveAndExit(BreathCompositionPanelModule.this);
+                NativeRendererSelfKioskApplication.requestSaveAndExit(hostActivity());
             }
         });
         tools.addView(saveExit);
@@ -2311,7 +2385,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                         return;
                     }
                     View current=currentPanelContent();
-                    if(receipt.complete(pending.browserId,server.currentGeneration(),BreathCompositionPanelModule.this,
+                    if(receipt.complete(pending.browserId,server.currentGeneration(),hostActivity(),
                             current,breathCompositionPanelNavigationEpoch,breathCompositionPanelTopic,true,
                             remotePanelResumed,content.isAttachedToWindow(),content.isShown(),
                             content.getWindowVisibility()==View.VISIBLE,experimentShellDestroyed||isFinishing())) {
@@ -3040,7 +3114,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             JSONObject acceptedConfig = response.optJSONObject("config");
             boolean effectiveEnabled = acceptedConfig != null
                 && acceptedConfig.optBoolean("enabled", false);
-            LslMulticastLockManager.setFromPanel(this, effectiveEnabled);
+            LslMulticastLockManager.setFromPanel(hostActivity(), effectiveEnabled);
             readback.setText(formatLslStatus(response) + "\nephemeral=true");
         } catch (Exception error) {
             readback.setText("LSL request failed: " + markerToken(error.getMessage()));
@@ -3812,19 +3886,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             ExperimentSessionAndroidShell.TerminalResult result) {
         if (result == null) return;
         hubStatusMarker("native_terminal_callback");
-        RemotePending remote = remotePending;
-        if (remote != null && "save-exit".equals(remote.operation)) {
-            ExperimentSessionBleServer server = remoteServer();
-            if (server != null) server.updateReceipt(remote.browserId,
-                result.shouldFinish && result.saved ? "confirmed" : "outcome_unknown",
-                result.shouldFinish && result.saved
-                    ? "Recording saved; app is closing." : "Save and exit needs headset review.");
-            remotePending = null;
-        }
+        observeRemoteTerminal(result);
         if (result.shouldFinish && !terminalFinishDispatched) {
             terminalFinishDispatched = true;
             ControlPanelActivity.finishTerminalSaveAndExit(
-                this,
+                hostActivity(),
                 result.saved,
                 result.sessionGeneration,
                 result.operationId,
@@ -3836,7 +3902,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private boolean handleTerminalSaveAndExitIntent(Intent intent) {
-        if (!ControlPanelActivity.admitTerminalSaveAndExit(this, intent)) {
+        if (!ControlPanelActivity.admitTerminalSaveAndExit(hostActivity(), intent)) {
             return EXPERIMENT_SESSION_SHELL.resumePendingTerminal();
         }
         long guardGeneration = intent.getLongExtra(
@@ -3954,7 +4020,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (experimenterKioskReadback != null) {
             ExperimentSessionPanelViewPolicy.ReadinessCard kiosk =
                 ExperimentSessionPanelViewPolicy.kioskCard(
-                    ControlPanelActivity.softKioskUiState(this));
+                    ControlPanelActivity.softKioskUiState(hostActivity()));
             setExperimenterText(experimenterKioskReadback, kiosk.label);
             styleExperimenterIndicator(experimenterKioskReadback, kiosk.tone);
             setExperimenterText(experimenterKioskDetail, kiosk.detail);
@@ -4275,7 +4341,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private PolarSensorPanel ensurePolarSensorPanel() {
         if (polarSensorPanel == null) {
-            polarSensorPanel = PolarSensorRuntime.forApplication(getApplicationContext()).attachPanel(this, new PolarSensorPanel.Host() {
+            polarSensorPanel = PolarSensorRuntime.forApplication(getApplicationContext()).attachPanel(hostActivity(), new PolarSensorPanel.Host() {
                 @Override
                 public void closePanelAndReturnToImmersive() {
                     BreathCompositionPanelModule.this.closePanelAndReturnToImmersive();
@@ -5389,7 +5455,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private void launchImmersiveRenderer() {
         Intent intent = new Intent(Intent.ACTION_MAIN);
-        intent.setComponent(new ComponentName(getPackageName(), "android.app.NativeActivity"));
+        intent.setComponent(new ComponentName(getPackageName(), NativeRendererActivityComponents.nativeClass(this)));
         intent.addCategory("com.oculus.intent.category.VR");
         intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(intent);
@@ -5403,7 +5469,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             refreshExperimenterAfterReadback();
             return;
         }
-        ControlPanelActivity.closePanelAndReturnToImmersive(this);
+        ControlPanelActivity.closePanelAndReturnToImmersive(hostActivity());
     }
 
     private void writeFile(String name, String content) throws Exception {
@@ -5676,7 +5742,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private String readControlPanelMode() {
         String packaged = NativeAppSettingsReader.readSetting(
-            this,
+            hostActivity(),
             "native_renderer.control_panel.mode"
         );
         if ("breath-mapping".equals(packaged)) {
@@ -5988,11 +6054,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             this.suffix = suffix;
             this.integer = integer;
             this.onUserChange = onUserChange;
-            this.view = new LinearLayout(BreathCompositionPanelModule.this);
+            this.view = new LinearLayout(hostActivity());
             this.view.setOrientation(LinearLayout.VERTICAL);
             this.view.setPadding(0, dp(6), 0, dp(4));
             this.valueLabel = text("", 13, PANEL_FG);
-            this.seekBar = new SeekBar(BreathCompositionPanelModule.this);
+            this.seekBar = new SeekBar(hostActivity());
             this.seekBar.setMax(this.steps);
             this.seekBar.setProgress(progressFor(initial));
             this.seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {

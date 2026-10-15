@@ -142,6 +142,7 @@ final class ExperimentSessionBleServer {
     private long nativeOwnerEpoch;
     private long nativeOwnerHighWater;
     private JSONObject latestOwnerReceipt;
+    private JSONObject latestTerminalReceipt;
     private int recoveryAttempts;
     private boolean recoveryScheduled;
     private long recoveryToken;
@@ -150,7 +151,39 @@ final class ExperimentSessionBleServer {
     synchronized void recordEffectTimestamp(String id,long ns){if(ExperimentSessionBleProtocol.isLowerHex(id,16)&&ns>0&&effectTimes.size()<256&&!effectTimes.containsKey(id))effectTimes.put(id,ns);}
     private String shellOperationId="";
     synchronized void markShellOperation(String id) { shellOperationId=id; }
-    synchronized JSONObject ownerReceipt() throws Exception { return latestOwnerReceipt==null?new JSONObject():new JSONObject(latestOwnerReceipt.toString()); }
+    synchronized JSONObject ownerReceipt() throws Exception {
+        JSONObject observed=latestTerminalReceipt!=null?latestTerminalReceipt:latestOwnerReceipt;
+        return observed==null?new JSONObject():new JSONObject(observed.toString());
+    }
+    synchronized ExperimentSessionTerminalCorrelation terminalOrigin(String id,long runtime,long session) {
+        if(!controlAvailable())throw new IllegalStateException("terminal-carrier-owner-unavailable");
+        return new ExperimentSessionTerminalCorrelation(id,serverGeneration,nativeOwnerIdentity,nativeOwnerEpoch,runtime,session,id.equals(shellOperationId)?"shell-experiment-operator-v1":"");
+    }
+    synchronized boolean publishTerminalObservation(ExperimentSessionTerminalCorrelation origin,
+            ExperimentSessionAndroidShell.TerminalResult terminal) {
+        if(origin==null||terminal==null||!controlAvailable())return false;
+        ExperimentSessionTerminalCorrelation.Result joined=origin.observe(serverGeneration,nativeOwnerIdentity,nativeOwnerEpoch,
+            terminal.runtimeEpoch,terminal.sessionGeneration,terminal.operationId,terminal.shutdownAckRevision,terminal.shouldFinish,terminal.saved);
+        if(joined==null)return false;
+        try {
+            if(latestTerminalReceipt!=null)return origin.requestId.equals(latestTerminalReceipt.optString("id"))
+                &&joined.operationId.equals(latestTerminalReceipt.optString("native_operation_id"))
+                &&joined.shutdownAckRevision==latestTerminalReceipt.optLong("shutdown_ack_revision",0);
+            updateReceipt(origin.requestId,"confirmed","Recording saved; app is closing.");
+            latestTerminalReceipt=new JSONObject(latestOwnerReceipt.toString())
+                .put("native_operation_id",joined.operationId).put("runtime_epoch",origin.runtimeEpoch)
+                .put("session_generation",origin.sessionGeneration).put("shutdown_ack_revision",joined.shutdownAckRevision)
+                .put("carrier_generation",origin.carrierGeneration).put("native_owner_identity",origin.nativeOwnerIdentity)
+                .put("native_owner_epoch",origin.nativeOwnerEpoch).put("saved",true).put("completed",true).put("owner_retired",false);
+            latestTerminalReceipt.remove("operator_origin");
+            if(!origin.operatorOrigin.isEmpty())latestTerminalReceipt.put("operator_origin",origin.operatorOrigin);
+            Log.i(TAG,"channel=experiment-session-terminal-receipt status=confirmed operatorId="+origin.requestId
+                +" operatorOrigin="+origin.operatorOrigin+" nativeOperationId="+joined.operationId+" runtimeEpoch="+origin.runtimeEpoch+" sessionGeneration="+origin.sessionGeneration
+                +" shutdownAckRevision="+joined.shutdownAckRevision+" carrierGeneration="+origin.carrierGeneration
+                +" nativeOwnerIdentity="+origin.nativeOwnerIdentity+" nativeOwnerEpoch="+origin.nativeOwnerEpoch+" saved=true completed=true");
+            return true;
+        }catch(Exception unavailable){return false;}
+    }
     private final ExperimentSessionControlCapability sessionControl = new ExperimentSessionControlCapability();
     private final PolarStopBleCapability polarControl = new PolarStopBleCapability();
 
@@ -205,7 +238,7 @@ final class ExperimentSessionBleServer {
     synchronized boolean nativeOwnerStarted(long identity, long epoch) {
         if (identity <= 0L || epoch <= 0L || identity <= nativeOwnerHighWater) return false;
         stopWithReason("native-owner-replaced");
-        latestOwnerReceipt=null;admissionTimes.clear();effectTimes.clear();
+        latestOwnerReceipt=null;latestTerminalReceipt=null;admissionTimes.clear();effectTimes.clear();
         if(commandGatewayAttached)serverGeneration++;
         nativeOwnerHighWater = identity;
         nativeOwnerIdentity = identity;
@@ -219,6 +252,7 @@ final class ExperimentSessionBleServer {
     synchronized boolean nativeOwnerEnded(long identity, long epoch) {
         if (identity <= 0L || identity != nativeOwnerIdentity || epoch != nativeOwnerEpoch) return false;
         latestOwnerReceipt=null;admissionTimes.clear();effectTimes.clear();
+        if(latestTerminalReceipt!=null)try{latestTerminalReceipt.put("owner_retired",true);}catch(Exception ignored){}
         nativeOwnerIdentity = 0L;
         nativeOwnerEpoch = 0L;
         recoveryToken++;recoveryScheduled=false;

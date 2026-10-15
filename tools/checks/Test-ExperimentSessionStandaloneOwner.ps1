@@ -27,7 +27,7 @@ foreach ($standalone in @($false,$true)) {
     $generatedManifestPath = Join-Path $generatedEmbeddedPackageDir 'AndroidManifest.xml'
     [IO.File]::WriteAllText($generatedManifestPath,'<manifest><application /></manifest>')
     $selectedPanelModuleId = if ($standalone) { 'experiment-session-owner' } else { 'breath-composition-controls' }
-    $selectedPanelEntrySimpleName = if ($standalone) { 'ExperimentSessionOwnerPanelModule' } else { 'BreathCompositionPanelModule' }
+    $selectedPanelEntrySimpleName = if ($standalone) { 'ExperimentSessionOwnerPanelModule' } else { 'BreathCompositionPanelActivity' }
     $selected = if ($standalone) { @('ui.experiment_session_owner') } else { @('ui.experiment_session_ble_control','ui.same_apk_soft_kiosk') }
     $appBuildLockObject = [pscustomobject]@{ selected_feature_ids = $selected }
     $appBuildEnvByName = @{ RUSTY_QUEST_NATIVE_RENDERER_EXPERIMENT_KIOSK_REQUESTED = 'false' }
@@ -58,7 +58,7 @@ foreach ($method in @('applyConditionAudioControlReceipt','applyBreathPhaseAudio
 if (-not $standaloneJava.Contains('EXPERIMENT_SESSION_ANCHORS, true)') -or -not $javaByVariant['legacy'].Contains('EXPERIMENT_SESSION_ANCHORS, false)')) { throw 'Profile route is not compile-selected.' }
 
 # Prepare the same closed base family as the production builder; no remote or media sources.
-$base = @('NativeAppSettingsReader','NativeMeshUiProducer','NativeRendererExperimentLaunchAuthority',
+$base = @('NativeAppSettingsReader','NativeMeshUiProducer','NativeRendererActivityComponents','NativeRendererExperimentLaunchAuthority',
     'NativeRendererExperimentLauncherPolicy','NativeRendererWriterAcknowledgedExitPolicy',
     'PanelImmersiveHandoff','PanelImmersiveHandoffLifecyclePolicy','PanelImmersiveHandoffProofPolicy',
     'PanelModule','PanelModuleRegistry')

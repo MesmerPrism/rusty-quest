@@ -676,6 +676,12 @@ function New-GeneratedAndroidManifestText {
         [string[]]$SelectedFeatureIds,
         [switch]$ExperimentSessionDebugOperator
     )
+    $originalNativeHost = $SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -and $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
+    $nativeActivityClass = if ($originalNativeHost) { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
+    if (($originalNativeHost -and $Activities -cnotcontains $nativeActivityClass) -or
+        (-not $originalNativeHost -and $Activities -ccontains 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity')) {
+        throw 'Native product Activity requires exactly the original panel and native mesh feature selection.'
+    }
     $lines = New-Object System.Collections.ArrayList
     [void]$lines.Add('<manifest xmlns:android="http://schemas.android.com/apk/res/android"')
     [void]$lines.Add("    package=""$([System.Security.SecurityElement]::Escape($PackageName))"">")
@@ -735,9 +741,12 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('        <meta-data android:name="com.oculus.handtracking.support" android:value="HANDS_AND_CONTROLLERS" />')
         [void]$lines.Add('        <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />')
     }
-    if ($Activities -contains "android.app.NativeActivity") {
+    if ($originalNativeHost) {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.native_renderer.original_panel_native_host" android:value="true" />')
+    }
+    if ($Activities -contains $nativeActivityClass) {
         [void]$lines.Add('        <activity')
-        [void]$lines.Add('            android:name="android.app.NativeActivity"')
+        [void]$lines.Add(('            android:name="{0}"' -f $nativeActivityClass))
         [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
         [void]$lines.Add('            android:excludeFromRecents="true"')
         [void]$lines.Add('            android:exported="true"')
@@ -1382,6 +1391,9 @@ foreach ($marker in @($requiredMarkerSet.Keys)) {
 $permissions = @(Get-SortedSet -Set $permissionsSet)
 $usesFeatures = @(Get-SortedSet -Set $usesFeaturesSet)
 $activities = @(Get-SortedSet -Set $activitiesSet)
+if ($selectedFeatureIds -ccontains 'ui.native_mesh_panel' -and $selectedFeatureIds -ccontains 'ui.breath_composition_control_panel') {
+    $activities = @($activities | ForEach-Object { if ($_ -ceq 'android.app.NativeActivity') { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { $_ } })
+}
 $receivers = @(Get-SortedSet -Set $receiversSet)
 $services = @(Get-SortedSet -Set $servicesSet)
 $queries = @(Get-SortedSet -Set $queriesSet)

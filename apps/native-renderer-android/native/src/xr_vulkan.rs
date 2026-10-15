@@ -129,6 +129,7 @@ const PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M: f32 = 1.70;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M: f32 = 0.46;
 fn write_renderer_focus_state(
     app: &android_activity::AndroidApp,
+    activity_name: Option<&str>,
     session_state: &str,
     frame_count: u64,
     submitted: bool,
@@ -143,6 +144,7 @@ fn write_renderer_focus_state(
     let _ = write_renderer_focus_state_file(
         &data_path,
         std::process::id(),
+        activity_name,
         session_state,
         frame_count,
         submitted,
@@ -2320,6 +2322,19 @@ unsafe fn run_projection_frames(
     video_projection_metadata: &VideoProjectionMetadata,
 ) -> Result<(), String> {
     let mut event_storage = xr::EventDataBuffer::new();
+    let original_product_mesh_panel =
+        crate::native_renderer_panel_bridge::packaged_control_panel_mode_is_breath_mapping_installed()
+            && !crate::native_mesh_ui::neutral_controls_enabled();
+    let mut mesh_hold_request: Option<(u64, u64, u64)> = None;
+    // Immutable identity from the actual Activity owning this loop. A failed
+    // observation must not publish a fabricated stock-Activity focus claim.
+    let renderer_focus_activity = match crate::native_renderer_panel_bridge::observed_activity_class_name(app) {
+        Ok(name) => Some(name),
+        Err(error) => {
+            crate::marker("renderer-focus-owner", format!("status=unknown reason={}", crate::sanitize(&error)));
+            None
+        }
+    };
     let mut display_refresh = NativeDisplayRefreshRuntimeState::new(display_refresh_settings);
     let mut session_running = false;
     let mut openxr_session_generation = 0_u64;
@@ -2545,6 +2560,7 @@ unsafe fn run_projection_frames(
                     }
                     write_renderer_focus_state(
                         app,
+                        renderer_focus_activity.as_deref(),
                         renderer_focus_session_state,
                         frame_count,
                         false,
@@ -3023,7 +3039,7 @@ unsafe fn run_projection_frames(
             if controller_events.experimenter_restart_triggered {
                 let generation = crate::experiment_session_runtime::current_generation();
                 if generation == 0 {
-                    if let Some(panel) = mesh_ui_panel.as_ref() {
+                    if let Some(panel) = mesh_ui_panel.as_ref().filter(|_| !original_product_mesh_panel) {
                         panel.request_visibility(true);
                     } else {
                         crate::native_renderer_panel_bridge::open_experimenter_panel(
@@ -3062,7 +3078,7 @@ unsafe fn run_projection_frames(
             if controller_events.developer_panel_triggered {
                 let generation = crate::experiment_session_runtime::current_generation();
                 if generation == 0 {
-                    if let Some(panel) = mesh_ui_panel.as_ref() {
+                    if let Some(panel) = mesh_ui_panel.as_ref().filter(|_| !original_product_mesh_panel) {
                         panel.request_visibility(true);
                     } else {
                         crate::native_renderer_panel_bridge::open_developer_panel(
@@ -3118,7 +3134,7 @@ unsafe fn run_projection_frames(
             last_experiment_session_route_revision = route_revision;
             match route_action {
                 crate::experiment_session_runtime::RouteAction::OpenDeveloper => {
-                    if let Some(panel) = mesh_ui_panel.as_ref() {
+                    if let Some(panel) = mesh_ui_panel.as_ref().filter(|_| !original_product_mesh_panel) {
                         panel.request_visibility(true);
                     } else {
                         crate::native_renderer_panel_bridge::open_developer_panel_with_route_generation(
@@ -3133,7 +3149,7 @@ unsafe fn run_projection_frames(
                     if let Some((session_generation, operation_id)) =
                         crate::experiment_session_runtime::current_terminal_route_receipt()
                     {
-                        if let Some(panel) = mesh_ui_panel.as_ref() {
+                        if let Some(panel) = mesh_ui_panel.as_ref().filter(|_| !original_product_mesh_panel) {
                             panel.request_visibility(true);
                         } else {
                             crate::native_renderer_panel_bridge::open_experimenter_panel_with_receipt(
@@ -4409,8 +4425,64 @@ unsafe fn run_projection_frames(
         if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
             renderer.confirm_submitted_frame(frame_count, private_particle_stats);
         }
+        // Only the frozen mesh tuple carried by this successful xrEndFrame is
+        // presentation evidence. A visibility setter never activates the clock.
+        let mesh_visibility_changed = mesh_ui_frame_controls
+            .map(crate::native_mesh_ui::renderer_observed_visibility);
+        let submitted_mesh_visibility = mesh_ui_frame_controls
+            .and_then(crate::native_mesh_ui::renderer_submitted_visibility);
         let experiment_generation = crate::experiment_session_runtime::current_generation();
-        if experiment_generation == 0 && frame_count % 30 == 0
+        if mesh_hold_request.is_some_and(|key| key.0 != experiment_generation) {
+            mesh_hold_request = None;
+        }
+        let mesh_unavailable_or_visible = original_product_mesh_panel
+            && submitted_mesh_visibility != Some(false);
+        // A hide may race a previously queued hold. Wait until that existing
+        // hold reaches the reducer before admitting two fresh hidden frames.
+        let mesh_hold_pending = original_product_mesh_panel && mesh_hold_request.is_some()
+            && matches!(crate::experiment_session_runtime::current_presentation(),
+                crate::experiment_session::PresentationState::ImmersiveActive
+                    | crate::experiment_session::PresentationState::Developer);
+        let mesh_holds_presentation = mesh_unavailable_or_visible || mesh_hold_pending;
+        if mesh_holds_presentation {
+            // Match the original 2D panel's loss of immersive presentation,
+            // using the existing reducer rather than changing timing policy.
+            let lost_frame_admission = experiment_frame_gate.set_focused(false);
+            if experiment_generation == 0 {
+                crate::experiment_session_runtime::note_preparation_presentation(
+                    crate::experiment_session::PresentationState::Unfocused);
+            } else if mesh_unavailable_or_visible {
+                let (producer, revision, evidence) = match (submitted_mesh_visibility, mesh_ui_frame_controls) {
+                    (Some(true), Some(controls)) => (controls.generation, controls.visibility_revision, "submitted-visible"),
+                    _ => (0, 0, "panel-admission-unavailable"),
+                };
+                let key = (experiment_generation, producer, revision);
+                if mesh_hold_request.is_none()
+                    && (lost_frame_admission
+                        || crate::experiment_session_runtime::current_presentation()
+                            == crate::experiment_session::PresentationState::ImmersiveActive) {
+                    if let Some(at) = crate::experiment_session_runtime::current_elapsed_realtime_ns() {
+                        // Retain one request for this interruption episode even
+                        // if its producer changes. Pending/unknown is not replayed.
+                        mesh_hold_request = Some(key);
+                        let id = format!("native-mesh-panel-hold-{}-{}-{}-{}",
+                            key.0, key.1, key.2, frame_count);
+                        let response = crate::experiment_session_runtime::request_presentation_from_native(
+                            &id, experiment_generation, at,
+                            crate::experiment_session::PresentationState::Unfocused);
+                        crate::marker("experiment-session-panel-presentation", format!(
+                            "generation={} producerGeneration={} visibilityRevision={} submittedFrame={} evidence={} requested=unfocused response={}",
+                            key.0, key.1, key.2, frame_count, evidence, crate::sanitize(&response)));
+                    }
+                }
+            }
+        } else if original_product_mesh_panel {
+            mesh_hold_request = None;
+            // A real focused session still needs the ordinary two advancing
+            // hidden submissions after panel presentation interrupted it.
+            experiment_frame_gate.set_focused(renderer_focus_session_state == "FOCUSED");
+        }
+        if experiment_generation == 0 && !mesh_holds_presentation && frame_count % 30 == 0
             && renderer_focus_session_state == "FOCUSED" {
             crate::experiment_session_runtime::note_preparation_presentation(
                 crate::experiment_session::PresentationState::ImmersiveActive);
@@ -4424,7 +4496,7 @@ unsafe fn run_projection_frames(
                 .elapsed()
                 .as_nanos()
                 .min(u128::from(u64::MAX)) as u64;
-            if experiment_frame_gate.note_submitted(frame_count, observed_host_ns) {
+            if !mesh_holds_presentation && experiment_frame_gate.note_submitted(frame_count, observed_host_ns) {
                 let presentation = crate::experiment_session_runtime::current_presentation();
                 if matches!(
                     presentation,
@@ -4465,6 +4537,7 @@ unsafe fn run_projection_frames(
         if frame_count == 0 || frame_count % 15 == 0 {
             write_renderer_focus_state(
                 app,
+                renderer_focus_activity.as_deref(),
                 renderer_focus_session_state,
                 frame_count.saturating_add(1),
                 true,
@@ -4495,7 +4568,7 @@ unsafe fn run_projection_frames(
                     "UNKNOWN"
                 },
             );
-            if crate::native_mesh_ui::renderer_observed_visibility(controls) {
+            if mesh_visibility_changed == Some(true) {
                 crate::marker("native-mesh-ui", format!("event=panel-visibility-effective generation={} requestRevision={} visible={} submittedFrame={} visibleConfirmation=false",
                     controls.generation, controls.visibility_revision, controls.panel_visible, frame_count));
             }

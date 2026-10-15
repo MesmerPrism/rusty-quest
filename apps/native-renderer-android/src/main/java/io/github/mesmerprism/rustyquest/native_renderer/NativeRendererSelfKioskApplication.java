@@ -35,14 +35,14 @@ public final class NativeRendererSelfKioskApplication extends Application {
             @Override public void onActivityResumed(Activity a) {
                 if (!own(a)) return;
                 remember(a);
-                resumed.put(a.getClass().getName(), true);
-                departures.remove(a.getClass().getName());
+                resumed.put(NativeRendererActivityComponents.policyClass(a.getClass().getName()), true);
+                departures.remove(NativeRendererActivityComponents.policyClass(a.getClass().getName()));
                 NativeRendererSelfKioskService.resumePendingTerminal(a);
                 reconcileSelectedBleOwner();
             }
             @Override public void onActivityPaused(Activity a) {
                 if (!own(a)) return;
-                String name = a.getClass().getName();
+                String name = NativeRendererActivityComponents.policyClass(a.getClass().getName());
                 resumed.put(name, false);
                 NativeRendererSoftKioskCoordinator c = NativeRendererSoftKioskCoordinator.process();
                 long generation = c.snapshot().generation;
@@ -58,7 +58,7 @@ public final class NativeRendererSelfKioskApplication extends Application {
             @Override public void onActivitySaveInstanceState(Activity a, Bundle b) { }
             @Override public void onActivityDestroyed(Activity a) {
                 if (!own(a)) return;
-                String name = a.getClass().getName();
+                String name = NativeRendererActivityComponents.policyClass(a.getClass().getName());
                 WeakReference<Activity> current = activities.get(name);
                 if (current != null && current.get() == a) {
                     activities.remove(name);
@@ -78,7 +78,9 @@ public final class NativeRendererSelfKioskApplication extends Application {
 
     private boolean own(Activity activity) {
         return activity != null && getPackageName().equals(activity.getPackageName())
-            && NativeRendererForegroundGuardPolicy.isAllowedComponent(activity.getClass().getName());
+            && (!NativeRendererActivityComponents.PRODUCT_NATIVE.equals(activity.getClass().getName())
+                || NativeRendererActivityComponents.isNative(activity))
+            && NativeRendererForegroundGuardPolicy.isAllowedComponent(NativeRendererActivityComponents.policyClass(activity.getClass().getName()));
     }
 
     private static void reconcileSelectedBleOwner() {
@@ -93,7 +95,7 @@ public final class NativeRendererSelfKioskApplication extends Application {
     }
 
     private void remember(Activity a) {
-        if (own(a)) activities.put(a.getClass().getName(), new WeakReference<>(a));
+        if (own(a)) activities.put(NativeRendererActivityComponents.policyClass(a.getClass().getName()), new WeakReference<>(a));
     }
 
     boolean isResumed(String component) { return Boolean.TRUE.equals(resumed.get(component)); }

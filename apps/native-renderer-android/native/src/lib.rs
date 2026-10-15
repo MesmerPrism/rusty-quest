@@ -206,7 +206,7 @@ fn android_on_create(state: &android_activity::OnCreateState) {
             Ok(Some(epoch)) => marker(
                 "experiment-session-panel",
                 format!(
-                    "event=native-activity-cold-launch status=accepted launchEpoch={} launcher=android.app.NativeActivity panelDeferredUntilSubmittedFrame=true",
+                    "event=native-activity-cold-launch status=accepted launchEpoch={} panelDeferredUntilSubmittedFrame=true",
                     epoch
                 ),
             ),
