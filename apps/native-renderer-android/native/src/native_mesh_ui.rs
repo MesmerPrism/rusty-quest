@@ -42,6 +42,10 @@ pub(crate) struct ControlSnapshot {
     pub(crate) pose_initialized: bool,
     pub(crate) initial_pose: PanelPose,
     pub(crate) pose_distance: f32,
+    pub(crate) panel_visible: bool,
+    pub(crate) visibility_revision: u64,
+    pub(crate) effective_panel_visible: bool,
+    pub(crate) effective_visibility_revision: u64,
 }
 impl Default for ControlSnapshot {
     fn default() -> Self {
@@ -64,6 +68,10 @@ impl Default for ControlSnapshot {
             pose_initialized: false,
             initial_pose: PanelPose::default(),
             pose_distance: 1.4,
+            panel_visible: true,
+            visibility_revision: 0,
+            effective_panel_visible: false,
+            effective_visibility_revision: 0,
         }
     }
 }
@@ -73,6 +81,107 @@ fn controls() -> &'static Mutex<ControlSnapshot> {
 }
 pub(crate) fn snapshot() -> ControlSnapshot {
     *controls().lock().unwrap_or_else(|p| p.into_inner())
+}
+fn set_visibility(state: &mut ControlSnapshot, generation: u64, visible: bool) -> Option<u64> {
+    if generation == 0 || state.generation != generation || state.revision >= i64::MAX as u64 {
+        return None;
+    }
+    state.revision += 1;
+    state.panel_visible = visible;
+    state.visibility_revision = state.revision;
+    Some(state.visibility_revision)
+}
+pub(crate) fn request_visibility(generation: u64, visible: bool) -> Option<u64> {
+    set_visibility(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        visible,
+    )
+}
+fn observe_visibility(state: &mut ControlSnapshot, frame: ControlSnapshot) -> bool {
+    if frame.generation == 0
+        || frame.generation != state.generation
+        || frame.visibility_revision > state.visibility_revision
+        || frame.visibility_revision < state.effective_visibility_revision
+    {
+        return false;
+    }
+    let changed = state.effective_visibility_revision != frame.visibility_revision
+        || state.effective_panel_visible != frame.panel_visible;
+    state.effective_panel_visible = frame.panel_visible;
+    state.effective_visibility_revision = frame.visibility_revision;
+    changed
+}
+/// Called only after the frame carrying this frozen visibility state was submitted.
+pub(crate) fn renderer_observed_visibility(frame: ControlSnapshot) -> bool {
+    observe_visibility(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        frame,
+    )
+}
+fn visibility_status(state: ControlSnapshot, generation: u64, revision: u64) -> &'static str {
+    if generation == 0 || generation != state.generation {
+        "unavailable"
+    } else if revision != state.visibility_revision {
+        "stale"
+    } else if state.effective_visibility_revision == revision
+        && state.effective_panel_visible == state.panel_visible
+    {
+        "applied"
+    } else {
+        "pending"
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeSetPanelVisible(
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+    generation: i64,
+    visible: jni::sys::jboolean,
+) -> i64 {
+    if generation <= 0 {
+        return 0;
+    }
+    request_visibility(generation as u64, visible).unwrap_or(0) as i64
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeReadPanelVisibility(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    generation: i64,
+    revision: i64,
+) -> jni::sys::jstring {
+    use jni::Outcome;
+    let state = snapshot();
+    let requested_revision = if revision == 0 {
+        state.visibility_revision as i64
+    } else {
+        revision
+    };
+    let status = if generation <= 0 || revision < 0 {
+        "unavailable"
+    } else {
+        visibility_status(state, generation as u64, requested_revision as u64)
+    };
+    let body = serde_json::json!({
+        "schema":"rusty.quest.native_mesh_ui.panel_visibility.v1", "generation":generation,
+        "request_revision":requested_revision, "requested_visible":state.panel_visible,
+        "effective_revision":state.effective_visibility_revision,
+        "effective_visible":state.effective_panel_visible, "status":status,
+        "evidence":"native-submitted-frame", "visible_confirmation":false,
+    })
+    .to_string();
+    match env
+        .with_env(|env| env.new_string(body).map(|s| s.into_raw()))
+        .into_outcome()
+    {
+        Outcome::Ok(value) => value,
+        Outcome::Err(_) | Outcome::Panic(_) => std::ptr::null_mut(),
+    }
 }
 /// Calibrate once from a valid central eye in the renderer's actual reference space.
 /// No floor-height assumption or continuing head lock is introduced.
@@ -626,6 +735,64 @@ pub(crate) mod android {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn visibility_request_needs_its_submitted_frame_and_preserves_scene_controls() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            ..ControlSnapshot::default()
+        };
+        assert_eq!(visibility_status(state, 7, 0), "pending");
+        let revision = set_visibility(&mut state, 7, false).unwrap();
+        assert_eq!(visibility_status(state, 7, revision), "pending");
+        assert!(state.particles && state.animation && state.hands);
+        let submitted = state;
+        assert!(observe_visibility(&mut state, submitted));
+        assert_eq!(visibility_status(state, 7, revision), "applied");
+        assert!(!state.effective_panel_visible);
+        assert!(!observe_visibility(&mut state, submitted));
+    }
+    #[test]
+    fn later_show_is_not_acknowledged_by_an_older_hidden_frame() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            ..ControlSnapshot::default()
+        };
+        let hidden_revision = set_visibility(&mut state, 7, false).unwrap();
+        let hidden_frame = state;
+        let shown_revision = set_visibility(&mut state, 7, true).unwrap();
+        assert!(observe_visibility(&mut state, hidden_frame));
+        assert_eq!(visibility_status(state, 7, hidden_revision), "stale");
+        assert_eq!(visibility_status(state, 7, shown_revision), "pending");
+        let shown_frame = state;
+        assert!(observe_visibility(&mut state, shown_frame));
+        assert_eq!(visibility_status(state, 7, shown_revision), "applied");
+        assert!(state.effective_panel_visible);
+        assert!(!observe_visibility(&mut state, hidden_frame));
+        assert!(state.effective_panel_visible);
+    }
+    #[test]
+    fn visibility_retired_generation_and_future_revision_fail_closed() {
+        let mut state = ControlSnapshot {
+            generation: 8,
+            ..ControlSnapshot::default()
+        };
+        assert!(set_visibility(&mut state, 7, false).is_none());
+        assert!(set_visibility(&mut state, 0, false).is_none());
+        assert_eq!(visibility_status(state, 7, 0), "unavailable");
+        let retired = ControlSnapshot {
+            generation: 7,
+            ..state
+        };
+        let future = ControlSnapshot {
+            visibility_revision: 10,
+            ..state
+        };
+        assert!(!observe_visibility(&mut state, retired));
+        assert!(!observe_visibility(&mut state, future));
+        state.revision = i64::MAX as u64;
+        assert!(set_visibility(&mut state, 8, false).is_none());
+        assert!(state.panel_visible);
+    }
     #[test]
     fn ray_mapping_rejects_backface_and_behind() {
         let p = PanelPose {

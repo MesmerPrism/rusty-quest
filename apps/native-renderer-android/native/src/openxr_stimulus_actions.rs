@@ -154,6 +154,7 @@ pub(crate) struct NativeMeshUiRay {
     pub(crate) pressed: bool,
     pub(crate) origin: [f32; 3],
     pub(crate) direction: [f32; 3],
+    pub(crate) source: &'static str,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -301,7 +302,11 @@ impl StimulusVolumeActions {
         let right_mesh_ui_aim = if mesh_ui_enabled {
             Some(
                 action_set
-                    .create_action::<xr::Posef>("right_mesh_ui_aim", "Right Mesh UI Aim", &[])
+                    .create_action::<xr::Posef>(
+                        "right_mesh_ui_aim",
+                        "Right Mesh UI Aim",
+                        &[right_hand_subaction_path],
+                    )
                     .map_err(|error| format!("create mesh UI aim action: {error}"))?,
             )
         } else {
@@ -362,7 +367,8 @@ impl StimulusVolumeActions {
             manifold_pose_config_from_projection_settings(&projection_target_settings);
         let right_grip_pose_binding_enabled = breath_haptics_configured
             || native_controller_breath_configured
-            || manifold_pose_config.enabled;
+            || manifold_pose_config.enabled
+            || mesh_ui_enabled;
         let composition_request = crate::breath_composition_runtime::effective_request();
         let volume_projection = if composition_request
             .is_some_and(|request| request.source == BreathCompositionSource::Controller)
@@ -693,7 +699,7 @@ impl StimulusVolumeActions {
         if let Some(action) = self.right_mesh_ui_aim.as_ref() {
             self.right_mesh_ui_aim_space = Some(
                 action
-                    .create_space(session, xr::Path::NULL, xr::Posef::IDENTITY)
+                    .create_space(session, self.right_hand_subaction_path, xr::Posef::IDENTITY)
                     .map_err(|error| format!("create mesh UI aim space: {error}"))?,
             );
         }
@@ -1617,25 +1623,39 @@ impl StimulusVolumeActions {
         reference: &xr::Space,
         time: xr::Time,
     ) -> NativeMeshUiRay {
-        let Some(action) = self.right_mesh_ui_aim.as_ref() else {
+        let locate = |action: &xr::Action<xr::Posef>, space: Option<&xr::Space>, subaction| {
+            if !action.is_active(session, subaction).unwrap_or(false) {
+                return None;
+            }
+            let location = space?.locate(reference, time).ok()?;
+            let required = xr::SpaceLocationFlags::POSITION_VALID
+                | xr::SpaceLocationFlags::ORIENTATION_VALID
+                | xr::SpaceLocationFlags::POSITION_TRACKED
+                | xr::SpaceLocationFlags::ORIENTATION_TRACKED;
+            let q = location.pose.orientation;
+            let p = location.pose.position;
+            Some(crate::native_alternate_input::ControllerPointerPose {
+                active: true,
+                tracked: location.location_flags.contains(required),
+                origin: [p.x, p.y, p.z],
+                orientation: [q.x, q.y, q.z, q.w],
+            })
+        };
+        let aim = self.right_mesh_ui_aim.as_ref().and_then(|action| {
+            locate(
+                action,
+                self.right_mesh_ui_aim_space.as_ref(),
+                self.right_hand_subaction_path,
+            )
+        });
+        let grip = locate(
+            &self.right_grip_pose,
+            self.right_grip_space.as_ref(),
+            xr::Path::NULL,
+        );
+        let Some(ray) = crate::native_alternate_input::controller_pointer(aim, grip) else {
             return NativeMeshUiRay::default();
         };
-        let Some(space) = self.right_mesh_ui_aim_space.as_ref() else {
-            return NativeMeshUiRay::default();
-        };
-        if !action.is_active(session, xr::Path::NULL).unwrap_or(false) {
-            return NativeMeshUiRay::default();
-        }
-        let Ok(location) = space.locate(reference, time) else {
-            return NativeMeshUiRay::default();
-        };
-        let required =
-            xr::SpaceLocationFlags::POSITION_VALID | xr::SpaceLocationFlags::ORIENTATION_VALID;
-        if !location.location_flags.contains(required) {
-            return NativeMeshUiRay::default();
-        }
-        let q = location.pose.orientation;
-        let origin = location.pose.position;
         let pressed = self
             .right_trigger_panel_toggle
             .state(session, xr::Path::NULL)
@@ -1647,12 +1667,9 @@ impl StimulusVolumeActions {
         NativeMeshUiRay {
             valid: true,
             pressed,
-            origin: [origin.x, origin.y, origin.z],
-            direction: [
-                -2.0 * (q.x * q.z + q.w * q.y),
-                -2.0 * (q.y * q.z - q.w * q.x),
-                -1.0 + 2.0 * (q.x * q.x + q.y * q.y),
-            ],
+            origin: ray.origin,
+            direction: ray.direction,
+            source: ray.source,
         }
     }
 

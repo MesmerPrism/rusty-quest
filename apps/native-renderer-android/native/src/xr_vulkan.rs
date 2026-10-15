@@ -2920,7 +2920,8 @@ unsafe fn run_projection_frames(
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                 let ray = controller_events.mesh_ui_ray.as_ref();
                 let controller_selected = controller_readiness.interaction_profile_ready
-                    && controller_readiness.action_ready
+                    && controller_readiness.action_set_ready
+                    && ray.is_some_and(|ray| ray.valid)
                     && renderer_focus_session_state == "FOCUSED";
                 let (owner, hand_pressed, changed) = if alternate_input_enabled {
                     alternate_pointer.update(controller_selected, ui_hand_sample)
@@ -2963,7 +2964,8 @@ unsafe fn run_projection_frames(
                     },
                 )?;
                 if changed || frame_count % 120 == 0 {
-                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), alternate_input_enabled, hand.map(|h| h.source()).unwrap_or("none"), hand_pressed, panel.pointer_visual_marker()));
+                    let origin = ray.filter(|r| r.valid).map(|r| r.origin).unwrap_or([0.0; 3]);
+                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers={} controllerPointerSource={} controllerPointerTracked={} controllerPointerOrigin={:.4},{:.4},{:.4} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), alternate_input_enabled, ray.filter(|r| r.valid).map(|r| r.source).unwrap_or("none"), ray.is_some_and(|r| r.valid), origin[0], origin[1], origin[2], hand.map(|h| h.source()).unwrap_or("none"), hand_pressed, panel.pointer_visual_marker()));
                 }
                 if consumed || (alternate_input_enabled && !controller_selected) {
                     controller_events.stimulus_randomize_triggered = false;
@@ -2986,32 +2988,44 @@ unsafe fn run_projection_frames(
             private_particle_breath_sample = controller_events.native_controller_breath_sample;
             if controller_events.stimulus_randomize_triggered {
                 if crate::native_renderer_panel_bridge::right_primary_opens_control_panel() {
-                    crate::native_renderer_panel_bridge::open_control_panel(
-                        app,
-                        frame_count,
-                        crate::native_renderer_panel_bridge::right_primary_control_panel_source(),
-                    );
+                    if let Some(panel) = mesh_ui_panel.as_ref() {
+                        panel.request_visibility(true);
+                    } else {
+                        crate::native_renderer_panel_bridge::open_control_panel(
+                            app,
+                            frame_count,
+                            crate::native_renderer_panel_bridge::right_primary_control_panel_source(),
+                        );
+                    }
                 } else if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {
                     renderer.randomize(stimulus_volume_settings, frame_count);
                 }
             }
             if controller_events.panel_toggle_triggered {
-                crate::native_renderer_panel_bridge::toggle_control_panel(
-                    app,
-                    frame_count,
-                    controller_events
-                        .panel_toggle_source
-                        .unwrap_or("controller-action"),
-                );
+                if let Some(panel) = mesh_ui_panel.as_ref() {
+                    panel.toggle_visibility();
+                } else {
+                    crate::native_renderer_panel_bridge::toggle_control_panel(
+                        app,
+                        frame_count,
+                        controller_events
+                            .panel_toggle_source
+                            .unwrap_or("controller-action"),
+                    );
+                }
             }
             if controller_events.experimenter_restart_triggered {
                 let generation = crate::experiment_session_runtime::current_generation();
                 if generation == 0 {
-                    crate::native_renderer_panel_bridge::open_experimenter_panel(
-                        app,
-                        frame_count,
-                        "right-secondary-triple-press-experimenter-idle",
-                    );
+                    if let Some(panel) = mesh_ui_panel.as_ref() {
+                        panel.request_visibility(true);
+                    } else {
+                        crate::native_renderer_panel_bridge::open_experimenter_panel(
+                            app,
+                            frame_count,
+                            "right-secondary-triple-press-experimenter-idle",
+                        );
+                    }
                 } else if let Some(elapsed_realtime_ns) =
                     crate::experiment_session_runtime::current_elapsed_realtime_ns()
                 {
@@ -3042,11 +3056,15 @@ unsafe fn run_projection_frames(
             if controller_events.developer_panel_triggered {
                 let generation = crate::experiment_session_runtime::current_generation();
                 if generation == 0 {
-                    crate::native_renderer_panel_bridge::open_developer_panel(
-                        app,
-                        frame_count,
-                        "right-trigger-triple-press-developer-idle",
-                    );
+                    if let Some(panel) = mesh_ui_panel.as_ref() {
+                        panel.request_visibility(true);
+                    } else {
+                        crate::native_renderer_panel_bridge::open_developer_panel(
+                            app,
+                            frame_count,
+                            "right-trigger-triple-press-developer-idle",
+                        );
+                    }
                 } else if let Some(elapsed_realtime_ns) =
                     crate::experiment_session_runtime::current_elapsed_realtime_ns()
                 {
@@ -3093,28 +3111,36 @@ unsafe fn run_projection_frames(
             last_experiment_session_route_revision = route_revision;
             match route_action {
                 crate::experiment_session_runtime::RouteAction::OpenDeveloper => {
-                    crate::native_renderer_panel_bridge::open_developer_panel_with_route_generation(
-                        app,
-                        frame_count,
-                        "experiment-session-menu-recall",
-                        route_revision,
-                    );
+                    if let Some(panel) = mesh_ui_panel.as_ref() {
+                        panel.request_visibility(true);
+                    } else {
+                        crate::native_renderer_panel_bridge::open_developer_panel_with_route_generation(
+                            app,
+                            frame_count,
+                            "experiment-session-menu-recall",
+                            route_revision,
+                        );
+                    }
                 }
                 crate::experiment_session_runtime::RouteAction::ShowExperimenter => {
                     if let Some((session_generation, operation_id)) =
                         crate::experiment_session_runtime::current_terminal_route_receipt()
                     {
-                        crate::native_renderer_panel_bridge::open_experimenter_panel_with_receipt(
-                            app,
-                            frame_count,
-                            "experiment-session-finalization-receipt",
-                            crate::native_renderer_panel_bridge::PanelRouteReceipt {
-                                route_generation: route_revision,
-                                provenance: "native-b-restart-v1",
-                                session_generation: Some(session_generation),
-                                operation_id: Some(&operation_id),
-                            },
-                        );
+                        if let Some(panel) = mesh_ui_panel.as_ref() {
+                            panel.request_visibility(true);
+                        } else {
+                            crate::native_renderer_panel_bridge::open_experimenter_panel_with_receipt(
+                                app,
+                                frame_count,
+                                "experiment-session-finalization-receipt",
+                                crate::native_renderer_panel_bridge::PanelRouteReceipt {
+                                    route_generation: route_revision,
+                                    provenance: "native-b-restart-v1",
+                                    session_generation: Some(session_generation),
+                                    operation_id: Some(&operation_id),
+                                },
+                            );
+                        }
                     } else {
                         crate::marker(
                             "experiment-session-panel-route",
@@ -4447,6 +4473,10 @@ unsafe fn run_projection_frames(
         if let Some(controls) = mesh_ui_controls {
             if controls.animation {
                 ui_particle_phase_frame = ui_particle_phase_frame.saturating_add(1);
+            }
+            if crate::native_mesh_ui::renderer_observed_visibility(controls) {
+                crate::marker("native-mesh-ui", format!("event=panel-visibility-effective generation={} requestRevision={} visible={} submittedFrame={} visibleConfirmation=false",
+                    controls.generation, controls.visibility_revision, controls.panel_visible, frame_count));
             }
             if crate::native_mesh_ui::renderer_observed(controls.generation, controls.revision)
                 && (frame_count == 0 || frame_count % 120 == 0)

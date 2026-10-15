@@ -1,5 +1,43 @@
 //! Exclusive hands-or-controllers input with optional runtime aim and joint fallback.
 
+/// One current action-space location. Valid-but-untracked poses can be runtime
+/// estimates (including a stationary origin), not a tracked panel pointer.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ControllerPointerPose {
+    pub(crate) active: bool,
+    pub(crate) tracked: bool,
+    pub(crate) origin: [f32; 3],
+    pub(crate) orientation: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ControllerPointerRay {
+    pub(crate) origin: [f32; 3],
+    pub(crate) direction: [f32; 3],
+    pub(crate) source: &'static str,
+}
+
+/// Prefer the runtime aim; a tracked grip supplies local -Z only when aim is
+/// unavailable. Never keep a prior frame or invent an origin from an inactive pose.
+pub(crate) fn controller_pointer(
+    aim: Option<ControllerPointerPose>,
+    grip: Option<ControllerPointerPose>,
+) -> Option<ControllerPointerRay> {
+    let ray = |pose: ControllerPointerPose, source| {
+        if !pose.active || !pose.tracked {
+            return None;
+        }
+        let sample = runtime_aim_pointer(pose.origin, pose.orientation, true, true, false, false)?;
+        Some(ControllerPointerRay {
+            origin: sample.origin,
+            direction: sample.direction,
+            source,
+        })
+    };
+    aim.and_then(|pose| ray(pose, "right-aim"))
+        .or_else(|| grip.and_then(|pose| ray(pose, "right-grip")))
+}
+
 pub(crate) fn tracked_pointer_enabled_for_mode(mode: &str) -> bool {
     tracked_pointer_selection(
         mode,
@@ -174,6 +212,116 @@ impl AlternatePointer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn controller(origin: [f32; 3]) -> ControllerPointerPose {
+        ControllerPointerPose {
+            active: true,
+            tracked: true,
+            origin,
+            orientation: [0., 0., 0., 1.],
+        }
+    }
+    #[test]
+    fn tracked_controller_motion_reaches_panel_pixels_without_origin_substitution() {
+        let first = controller_pointer(Some(controller([0.1, 0.1, 0.])), None).unwrap();
+        let moved = controller_pointer(Some(controller([0.3, 0.1, 0.])), None).unwrap();
+        assert_eq!(first.source, "right-aim");
+        assert_eq!(moved.origin, [0.3, 0.1, 0.]);
+        let panel = crate::native_mesh_ui::PanelPose::default();
+        let a = crate::native_mesh_ui::ray_pixels(panel, first.origin, first.direction).unwrap();
+        let b = crate::native_mesh_ui::ray_pixels(panel, moved.origin, moved.direction).unwrap();
+        assert!(b[0] > a[0] + 100.);
+        assert_eq!(a[1], b[1]);
+    }
+    #[test]
+    fn inactive_or_untracked_controller_default_does_not_capture_from_hand() {
+        for pose in [
+            ControllerPointerPose {
+                active: false,
+                ..controller([0.; 3])
+            },
+            ControllerPointerPose {
+                tracked: false,
+                ..controller([0.; 3])
+            },
+        ] {
+            let ray = controller_pointer(Some(pose), None);
+            assert!(ray.is_none());
+            let mut owner = AlternatePointer::default();
+            assert_eq!(
+                owner.update(ray.is_some(), Some(hand(0.05))).0,
+                PointerOwner::RightHand
+            );
+        }
+        // The reference-space origin itself is legal when actually tracked.
+        assert!(controller_pointer(Some(controller([0.; 3])), None).is_some());
+    }
+    #[test]
+    fn tracked_grip_fallback_is_current_and_aim_keeps_priority() {
+        let grip = controller([0.25, 1., -0.3]);
+        let missing_aim = ControllerPointerPose {
+            tracked: false,
+            ..controller([0.; 3])
+        };
+        let fallback = controller_pointer(Some(missing_aim), Some(grip)).unwrap();
+        assert_eq!(fallback.origin, grip.origin);
+        assert_eq!(fallback.source, "right-grip");
+        let aim = controller([-0.2, 1.1, -0.4]);
+        let preferred = controller_pointer(Some(aim), Some(grip)).unwrap();
+        assert_eq!(preferred.source, "right-aim");
+        assert_eq!(preferred.origin, aim.origin);
+        assert!(controller_pointer(None, None).is_none());
+    }
+    #[test]
+    fn malformed_controller_pose_never_becomes_a_ray() {
+        for pose in [
+            ControllerPointerPose {
+                origin: [f32::NAN, 0., 0.],
+                ..controller([0.; 3])
+            },
+            ControllerPointerPose {
+                orientation: [0.; 4],
+                ..controller([0.; 3])
+            },
+            ControllerPointerPose {
+                orientation: [0., f32::INFINITY, 0., 1.],
+                ..controller([0.; 3])
+            },
+        ] {
+            assert!(controller_pointer(Some(pose), None).is_none());
+            assert!(controller_pointer(None, Some(pose)).is_none());
+        }
+    }
+    #[test]
+    fn controller_ray_rotates_local_negative_z() {
+        let pose = ControllerPointerPose {
+            orientation: [
+                0.,
+                std::f32::consts::FRAC_1_SQRT_2,
+                0.,
+                std::f32::consts::FRAC_1_SQRT_2,
+            ],
+            ..controller([0.2, 1.2, -0.5])
+        };
+        let ray = controller_pointer(Some(pose), None).unwrap();
+        assert!((ray.direction[0] + 1.).abs() < 1e-6);
+        assert!(ray.direction[1].abs() < 1e-6);
+        assert!(ray.direction[2].abs() < 1e-6);
+    }
+    #[test]
+    fn controller_tracking_loss_cancels_drag_before_hand_handoff() {
+        let ray = controller_pointer(Some(controller([0.1, 0.1, 0.])), None).unwrap();
+        let pixels = crate::native_mesh_ui::ray_pixels(
+            crate::native_mesh_ui::PanelPose::default(),
+            ray.origin,
+            ray.direction,
+        );
+        let mut capture = crate::native_mesh_ui::PointerCapture::default();
+        assert_eq!(capture.update(true, true, pixels).unwrap().0, 0);
+        assert!(capture.captured());
+        let missing = controller_pointer(None, None);
+        assert_eq!(capture.update(missing.is_some(), false, None).unwrap().0, 3);
+        assert!(!capture.captured());
+    }
     #[test]
     fn raw_pointer_requires_explicit_package_selection_and_worldspace_mode() {
         assert!(!tracked_pointer_selection(

@@ -2,8 +2,16 @@
 
 ## Hands or controllers
 
-Worldspace mode uses one input owner at a time. An active recognized controller
-interaction profile takes priority; otherwise the mesh UI can use a tracked hand.
+Worldspace mode uses one input owner at a time. A recognized controller
+interaction profile with a current tracked pointer takes priority; otherwise
+the mesh UI can use a tracked hand. Controller aim is scoped to the right-hand
+subaction and located in the panel's reference space at predicted display time.
+An active pose needs both position/orientation valid and tracked flags, finite
+coordinates and a unit quaternion. An inactive or merely valid estimated pose
+never substitutes a default origin. If aim is unavailable, the same frame's
+tracked right grip pose supplies its local negative-Z ray; the marker identifies
+`right-aim` or `right-grip`. Mesh UI selection binds grip even without a breath
+or pose-publisher feature. Missing controller tracking releases UI ownership.
 The right hand takes priority over a valid left-hand fallback. When available,
 `XR_FB_hand_tracking_aim` supplies the aim pose and index pinch. Worldspace alone
 requests OpenXR API 1.1.53 for Meta's corrected aim flags and Shell-aligned pose;
@@ -20,6 +28,16 @@ the Android UI texture. White indicates aiming, green a panel hit, and amber a
 press. The runtime supplies input data, not these graphics; no Meta sample assets
 or new hand model are included. Existing combined GPU hand meshes remain the hand
 visuals. Both worldspace eyes use the same neutral background clear.
+
+Panel visibility is a generation-bound presentation setting. Hiding it suppresses
+the panel mesh, pointer graphics and pointer capture while the same native scene,
+recording and audio owners continue. Existing panel/menu recalls show the same
+mesh presentation through the same visibility handler. The Java facade requests
+`nativeSetPanelVisible(generation, visible)` once and receives a positive revision;
+`nativeReadPanelVisibility(generation, revision)` reports pending until a submitted
+frame carries that exact revision, or stale after a newer request. Revision zero
+reads the latest visibility snapshot without changing it. `applied` describes
+native frame submission, not acoustic output, XR focus or visible compositor proof.
 
 Joints use the existing `XR_EXT_hand_tracking` trackers, projection reference
 space and current predicted display timestamp. No extra frame loop is created.

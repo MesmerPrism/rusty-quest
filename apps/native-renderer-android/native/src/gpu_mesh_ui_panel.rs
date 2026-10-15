@@ -64,6 +64,15 @@ struct PanelPush {
     color_mode: [f32; 4],
 }
 impl GpuMeshUiPanel {
+    pub(crate) fn request_visibility(&self, visible: bool) -> bool {
+        self.producer
+            .as_ref()
+            .and_then(|p| native_mesh_ui::request_visibility(p.generation, visible))
+            .is_some()
+    }
+    pub(crate) fn toggle_visibility(&self) -> bool {
+        self.request_visibility(!native_mesh_ui::snapshot().panel_visible)
+    }
     pub(crate) fn initialize_pose(&mut self, eye: HandMeshVisualEyeProjection) -> bool {
         let Some(producer) = self.producer.as_ref() else {
             return false;
@@ -352,7 +361,11 @@ impl GpuMeshUiPanel {
         viewport: vk::Viewport,
         scissor: vk::Rect2D,
     ) {
-        if slot >= 2 || self.slots[slot].is_none() || !self.frame_controls.pose_initialized {
+        if slot >= 2
+            || self.slots[slot].is_none()
+            || !self.frame_controls.pose_initialized
+            || !self.frame_controls.panel_visible
+        {
             return;
         }
         let p = self.poses[slot];
@@ -409,6 +422,9 @@ impl GpuMeshUiPanel {
         viewport: vk::Viewport,
         scissor: vk::Rect2D,
     ) {
+        if !self.frame_controls.panel_visible {
+            return;
+        }
         let Some(visual) = self.visual else {
             return;
         };
@@ -470,6 +486,7 @@ impl GpuMeshUiPanel {
         direction: [f32; 3],
     ) -> Result<bool, String> {
         let controls = native_mesh_ui::snapshot();
+        let valid = valid && controls.pose_initialized && controls.panel_visible;
         self.visual = PointerVisual::new(
             self.pointer_owner,
             valid,
@@ -478,7 +495,6 @@ impl GpuMeshUiPanel {
             direction,
             controls.pose_initialized.then_some(controls.pose),
         );
-        let valid = valid && controls.pose_initialized;
         let pixels = native_mesh_ui::ray_pixels(controls.pose, origin, direction);
         let captured_before = self.pointer.captured();
         let event = self.pointer.update(valid, pressed, pixels);
