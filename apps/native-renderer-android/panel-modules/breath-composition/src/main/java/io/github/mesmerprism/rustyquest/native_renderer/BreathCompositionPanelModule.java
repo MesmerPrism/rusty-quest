@@ -965,10 +965,12 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         result.put("ble",ble);
         ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
         result.put("network",gateway==null?new JSONObject().put("selected",ExperimentSessionCommandGateway.featurePackaged(this)).put("state","uninitialized"):gateway.productPanelReadback());
+        result.put("panel_visibility",NativeMeshUiProducer.productPanelVisibility(this));
         return result;
     }
     private JSONObject invokeProductPanelOperator(String action,JSONObject parameters)throws Exception {
         requireProductPanelOperator();
+        if("panel-visible".equals(action))return NativeMeshUiProducer.requestProductPanelVisibility(this,parameters.getBoolean("visible"));
         if("navigate".equals(action)){
             String surface=parameters.getString("surface"),page=parameters.getString("page");
             if("experimenter".equals(surface)){
@@ -1051,6 +1053,55 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         return window == null || window.getChildCount() == 0 ? null : window.getChildAt(0);
     }
 
+    private boolean meshInputActive(){return meshPanelAttachment!=null&&meshPanelAttachment.active()
+        &&meshPanelAttachment.immersiveResumed;}
+
+    private android.app.AlertDialog.Builder panelDialogBuilder(){
+        if(!meshInputActive())return new android.app.AlertDialog.Builder(this);
+        return new android.app.AlertDialog.Builder(meshPanelAttachment.carrier.getContext()){
+            @Override public android.app.AlertDialog show(){
+                android.app.AlertDialog dialog=create();
+                NativeMeshUiProducer.showProductDialog(BreathCompositionPanelModule.this,dialog);
+                return dialog;
+            }
+        };
+    }
+
+    /** Original EditText/InputConnection, with only mesh keyboard presentation substituted. */
+    private final class PanelEditText extends EditText {
+        PanelEditText(){super(BreathCompositionPanelModule.this);}
+        @Override protected void onAttachedToWindow(){super.onAttachedToWindow();setShowSoftInputOnFocus(!meshInputActive());}
+        @Override public android.view.ActionMode startActionMode(android.view.ActionMode.Callback callback,int type){
+            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(BreathCompositionPanelModule.this,this,callback,type)
+                :super.startActionMode(callback,type);
+        }
+        @Override public android.view.ActionMode startActionMode(android.view.ActionMode.Callback callback){
+            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(BreathCompositionPanelModule.this,this,callback,android.view.ActionMode.TYPE_PRIMARY)
+                :super.startActionMode(callback);
+        }
+        @Override public boolean onTouchEvent(android.view.MotionEvent event){
+            boolean mesh=meshInputActive();
+            setShowSoftInputOnFocus(!mesh);
+            boolean handled=super.onTouchEvent(event);
+            if(mesh&&handled&&event.getActionMasked()==android.view.MotionEvent.ACTION_UP)
+                post(new Runnable(){public void run(){if(meshInputActive())
+                    NativeMeshUiProducer.requestProductTextInput(BreathCompositionPanelModule.this,PanelEditText.this);}});
+            return handled;
+        }
+    }
+
+    private final class PanelSelectableTextView extends TextView {
+        PanelSelectableTextView(){super(BreathCompositionPanelModule.this);}
+        @Override public android.view.ActionMode startActionMode(android.view.ActionMode.Callback callback,int type){
+            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(BreathCompositionPanelModule.this,this,callback,type)
+                :super.startActionMode(callback,type);
+        }
+        @Override public android.view.ActionMode startActionMode(android.view.ActionMode.Callback callback){
+            return meshInputActive()?NativeMeshUiProducer.startProductActionMode(BreathCompositionPanelModule.this,this,callback,android.view.ActionMode.TYPE_PRIMARY)
+                :super.startActionMode(callback);
+        }
+    }
+
     @Override public void setContentView(View content) {
         if (meshPanelAttachment != null) meshPanelAttachment.replace(content);
         else super.setContentView(content);
@@ -1082,6 +1133,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             &&!BreathCompositionPanelModule.this.isFinishing()&&!BreathCompositionPanelModule.this.isDestroyed();}
         void replace(View next) {
             if(!active())throw new IllegalStateException("production-panel-carrier-retired");
+            if(content!=null&&content!=next)NativeMeshUiProducer.productContentRemoved(BreathCompositionPanelModule.this,content);
             if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
             if(next.getParent() instanceof ViewGroup)((ViewGroup)next.getParent()).removeView(next);
             content=next;
@@ -1089,6 +1141,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             else BreathCompositionPanelModule.super.setContentView(next);
         }
         public Activity owner(){return BreathCompositionPanelModule.this;}
+        public boolean presentationActive(){return active()&&immersiveResumed;}
         public void outcome(String detail){if(active())updateStatus(detail);}
         public void visibilityChanged(boolean effective){
             if(!active())return;visible=effective;
@@ -1096,12 +1149,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
             if(visible&&content!=null)content.invalidate();
         }
         void showInActivity(){
+            NativeMeshUiProducer.retireProductInput(BreathCompositionPanelModule.this);
             immersiveResumed=false;
             if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
             if(content!=null)BreathCompositionPanelModule.super.setContentView(content);
         }
         public void close() {
             if(closed)return;closed=true;
+            NativeMeshUiProducer.retireProductInput(BreathCompositionPanelModule.this);
             getApplication().unregisterActivityLifecycleCallbacks(this);
             pausePanelProjection();
             if(content!=null&&content.getParent()==carrier)carrier.removeView(content);
@@ -1115,7 +1170,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         public void onActivityResumed(Activity value){if(value==immersive&&active()){
             immersiveResumed=true;replace(content);if(visible)resumePanelProjection();
         }}
-        public void onActivityPaused(Activity value){if(value==immersive&&!closed){immersiveResumed=false;if(!activityPanelResumed)pausePanelProjection();}}
+        public void onActivityPaused(Activity value){if(value==immersive&&!closed){
+            NativeMeshUiProducer.retireProductInput(BreathCompositionPanelModule.this);
+            immersiveResumed=false;if(!activityPanelResumed)pausePanelProjection();}}
         public void onActivityDestroyed(Activity value){if(value==immersive||value==BreathCompositionPanelModule.this)close();}
         public void onActivityCreated(Activity value,Bundle saved){}
         public void onActivityStarted(Activity value){}
@@ -1804,26 +1861,26 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         network.addView(text("Only enable on a trusted network. Local HTTP control is authenticated but unencrypted.",13,PANEL_MUTED));
         Button enroll=button(gateway.enabled()?"Replace trusted controller":"Approve trusted LAN controller");
         enroll.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
-            new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Approve trusted LAN control?")
+            panelDialogBuilder().setTitle("Approve trusted LAN control?")
                 .setMessage("This controller may operate the current app session. Local HTTP exposes traffic to this network. Continue only on a trusted LAN.")
                 .setNegativeButton("Cancel",null).setPositiveButton("Approve",new android.content.DialogInterface.OnClickListener(){
                     @Override public void onClick(android.content.DialogInterface dialog,int which){try{
                         JSONObject binding=gateway.enrollFromHeadset(true);
-                        android.widget.TextView details=new android.widget.TextView(BreathCompositionPanelModule.this);
+                        android.widget.TextView details=new PanelSelectableTextView();
                         details.setText("Controller: "+binding.getString("controller")+"\nKey: "+binding.getString("key")+"\nDevice: "+binding.getString("device")+"\n"+gateway.localAddresses());details.setTextIsSelectable(true);details.setPadding(24,24,24,24);
-                        new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Enter this once on your controller").setView(details).setPositiveButton("Done",null).show();
+                        panelDialogBuilder().setTitle("Enter this once on your controller").setView(details).setPositiveButton("Done",null).show();
                         replaceBreathCompositionPanelContent("home");
                     }catch(Exception failure){updateStatus("Network enrollment unavailable.");}}
                 }).show();
         }});network.addView(enroll);
         if(!gateway.relayOrigin().isEmpty()) {
             Button encrypted=button("Approve encrypted relay controller only");encrypted.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
-                new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Approve encrypted relay control?")
+                panelDialogBuilder().setTitle("Approve encrypted relay control?")
                     .setMessage("Replace the enrolled controller and disable local HTTP control. The approved HTTPS relay can carry authenticated app commands after you enter its session details.")
                     .setNegativeButton("Cancel",null).setPositiveButton("Approve",new android.content.DialogInterface.OnClickListener(){@Override public void onClick(android.content.DialogInterface dialog,int which){try{
-                        JSONObject binding=gateway.enrollFromHeadset(false);android.widget.TextView details=new android.widget.TextView(BreathCompositionPanelModule.this);
+                        JSONObject binding=gateway.enrollFromHeadset(false);android.widget.TextView details=new PanelSelectableTextView();
                         details.setText("Controller: "+binding.getString("controller")+"\nKey: "+binding.getString("key")+"\nDevice: "+binding.getString("device")+"\nLocal HTTP listener is off.");details.setTextIsSelectable(true);details.setPadding(24,24,24,24);
-                        new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Enter this once on your controller").setView(details).setPositiveButton("Done",null).show();replaceBreathCompositionPanelContent("home");
+                        panelDialogBuilder().setTitle("Enter this once on your controller").setView(details).setPositiveButton("Done",null).show();replaceBreathCompositionPanelContent("home");
                     }catch(Exception failure){updateStatus("Encrypted enrollment unavailable.");}}}).show();
             }});network.addView(encrypted);
         }
@@ -1839,18 +1896,18 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                     }catch(Exception failure){updateStatus("Temporary network unavailable on this device.");}}});network.addView(start);
                 }
                 Button join=button("Show temporary network join details");join.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){try{
-                    new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Temporary network")
+                    panelDialogBuilder().setTitle("Temporary network")
                         .setMessage(gateway.directJoinDetails().toString()+"\n"+gateway.localAddresses()).setPositiveButton("Done",null).show();
                 }catch(Exception failure){updateStatus("Network join details unavailable.");}}});network.addView(join);
             }
             if(!gateway.relayOrigin().isEmpty()) {
                 Button relay=button("Connect approved HTTPS relay");relay.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
-                    final android.widget.EditText sessionId=new android.widget.EditText(BreathCompositionPanelModule.this);sessionId.setHint("Relay session ID");
-                    final android.widget.EditText token=new android.widget.EditText(BreathCompositionPanelModule.this);token.setHint("Device route token");
+                    final android.widget.EditText sessionId=new PanelEditText();sessionId.setHint("Relay session ID");
+                    final android.widget.EditText token=new PanelEditText();token.setHint("Device route token");
                     token.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-                    final android.widget.EditText expiry=new android.widget.EditText(BreathCompositionPanelModule.this);expiry.setHint("Host expiry timestamp (milliseconds)");expiry.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+                    final android.widget.EditText expiry=new PanelEditText();expiry.setHint("Host expiry timestamp (milliseconds)");expiry.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
                     LinearLayout fields=new LinearLayout(BreathCompositionPanelModule.this);fields.setOrientation(LinearLayout.VERTICAL);fields.addView(sessionId);fields.addView(token);fields.addView(expiry);
-                    new android.app.AlertDialog.Builder(BreathCompositionPanelModule.this).setTitle("Connect "+gateway.relayOrigin()).setView(fields)
+                    panelDialogBuilder().setTitle("Connect "+gateway.relayOrigin()).setView(fields)
                         .setNegativeButton("Cancel",null).setPositiveButton("Connect until host expiry",new android.content.DialogInterface.OnClickListener(){
                             @Override public void onClick(android.content.DialogInterface dialog,int which){try{gateway.startRelayFromHeadset(sessionId.getText().toString().trim(),token.getText().toString().trim(),Long.parseLong(expiry.getText().toString().trim()));updateStatus("HTTPS relay connection requested.");}catch(Exception failure){updateStatus("Relay connection unavailable.");}}
                         }).show();
@@ -4222,7 +4279,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private EditText editText(String value, String hint, boolean multiline) {
-        EditText editText = new EditText(this);
+        EditText editText = new PanelEditText();
         editText.setText(value == null ? "" : value);
         editText.setHint(hint == null ? "" : hint);
         editText.setSingleLine(!multiline);
@@ -5475,7 +5532,19 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     }
 
     private Spinner spinner(String[] values, int selectedIndex) {
-        Spinner spinner = new Spinner(this);
+        Spinner spinner = new Spinner(this){
+            @Override public boolean performClick(){
+                if(!meshInputActive())return super.performClick();
+                if(!(getAdapter() instanceof android.widget.ListAdapter))return false;
+                final Spinner selectedSpinner=this;
+                panelDialogBuilder().setSingleChoiceItems((android.widget.ListAdapter)getAdapter(),getSelectedItemPosition(),
+                    new android.content.DialogInterface.OnClickListener(){public void onClick(android.content.DialogInterface dialog,int which){
+                        // Same Spinner selection and original OnItemSelectedListener.
+                        selectedSpinner.setSelection(which);dialog.dismiss();
+                    }}).show();
+                return true;
+            }
+        };
         ArrayAdapter<String> adapter =
             new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, values);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);

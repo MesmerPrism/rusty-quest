@@ -1,6 +1,8 @@
 package io.github.mesmerprism.rustyquest.native_renderer;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.Dialog;
 import android.app.Presentation;
 import android.content.Context;
 import android.graphics.Color;
@@ -13,13 +15,26 @@ import android.util.Log;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.Window;
+import android.view.ActionMode;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.MenuInflater;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.FrameLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.EditText;
+import android.widget.PopupMenu;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONObject;
@@ -29,6 +44,7 @@ public final class NativeMeshUiProducer {
     /** The retained production Activity owns all actions; this adapter owns its pixels only. */
     public interface ProductPanelAttachment extends AutoCloseable {
         Activity owner();
+        default boolean presentationActive(){return true;}
         void visibilityChanged(boolean visible);
         void outcome(String detail);
     }
@@ -78,6 +94,258 @@ static final class VisibilityReadback {
     private boolean visibilityObserved;
     private boolean effectiveVisible;
     private long visibilityRequest;
+    private final ArrayList<Dialog> modals = new ArrayList<Dialog>();
+    private Dialog pointerDialog;
+    private Dialog keyboard;
+    private EditText editor;
+    private TextInputSession input;
+    private EditorInfo editorInfo;
+    private boolean capitals, symbols;
+    private MeshActionMode selectionMode;
+
+    /** Android still owns allowed selection actions (including password restrictions). */
+    private final class MeshActionMode extends ActionMode {
+        final View source;final ActionMode.Callback callback;final Menu menu;final int type;
+        CharSequence title="",subtitle="";View custom;AlertDialog dialog;boolean active;
+        MeshActionMode(View source,ActionMode.Callback callback,int type){
+            this.source=source;this.callback=callback;this.type=type;
+            menu=new PopupMenu(presentation.getContext(),root).getMenu();
+        }
+        boolean start(){
+            active=true;
+            if(!callback.onCreateActionMode(this,menu)){active=false;return false;}
+            if(active)invalidate();return active;
+        }
+        public void invalidate(){
+            if(!active||!viewCurrent(source)){finish();return;}
+            callback.onPrepareActionMode(this,menu);if(!active)return;
+            final ArrayList<MenuItem> items=new ArrayList<MenuItem>();
+            for(int i=0;i<menu.size();i++){MenuItem item=menu.getItem(i);if(item.isVisible()&&item.isEnabled())items.add(item);}
+            if(items.isEmpty()){finish();return;}
+            CharSequence[] labels=new CharSequence[items.size()];for(int i=0;i<items.size();i++)labels[i]=items.get(i).getTitle();
+            if(dialog!=null)dialog.dismiss();
+            dialog=new AlertDialog.Builder(presentation.getContext()).setItems(labels,new android.content.DialogInterface.OnClickListener(){
+                public void onClick(android.content.DialogInterface ignored,int which){
+                    if(active&&viewCurrent(source))callback.onActionItemClicked(MeshActionMode.this,items.get(which));
+                    finish();
+                }}).create();
+            dialog.setOnCancelListener(new android.content.DialogInterface.OnCancelListener(){public void onCancel(android.content.DialogInterface ignored){finish();}});
+            showModal(dialog,false);
+        }
+        public void finish(){
+            if(!active)return;active=false;if(selectionMode==this)selectionMode=null;
+            if(dialog!=null){dialog.dismiss();dialog=null;}callback.onDestroyActionMode(this);
+        }
+        public void setTitle(CharSequence value){title=value;}
+        public void setTitle(int value){title=presentation.getContext().getText(value);}
+        public void setSubtitle(CharSequence value){subtitle=value;}
+        public void setSubtitle(int value){subtitle=presentation.getContext().getText(value);}
+        public void setCustomView(View value){custom=value;}
+        public Menu getMenu(){return menu;}
+        public CharSequence getTitle(){return title;}
+        public CharSequence getSubtitle(){return subtitle;}
+        public View getCustomView(){return custom;}
+        public MenuInflater getMenuInflater(){return new MenuInflater(presentation.getContext());}
+        @Override public int getType(){return type;}
+    }
+
+    /** One original editor connection; queued controls cannot retarget a replacement editor. */
+    static final class TextInputSession {
+        private final InputConnection delegate;
+        private final java.util.function.BooleanSupplier current;
+        private boolean closed;
+        TextInputSession(InputConnection delegate,java.util.function.BooleanSupplier current){this.delegate=delegate;this.current=current;}
+        boolean valid(){return !closed&&current.getAsBoolean();}
+        void commitText(String text,int position){if(valid())delegate.commitText(text,position);}
+        void performEditorAction(int action){if(valid())delegate.performEditorAction(action);}
+        void key(int code){if(valid()){
+            delegate.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,code));
+            delegate.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,code));
+        }}
+        void close(){if(closed)return;closed=true;delegate.finishComposingText();}
+    }
+
+    /** Pure input presentation rules; the real EditText still filters/validates every commit. */
+    static final class TextInputRules {
+        static String[] rows(int type,boolean caps,boolean symbols) {
+            int kind=type&android.text.InputType.TYPE_MASK_CLASS;
+            if(kind==android.text.InputType.TYPE_CLASS_NUMBER) {
+                String extras=((type&android.text.InputType.TYPE_NUMBER_FLAG_SIGNED)!=0?"-":"")
+                    +((type&android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL)!=0?".":"");
+                return new String[]{"1234567890",extras};
+            }
+            if(kind==android.text.InputType.TYPE_CLASS_PHONE)return new String[]{"1234567890","+*#()- ."};
+            if(kind==android.text.InputType.TYPE_CLASS_DATETIME)return new String[]{"1234567890","/:.- "};
+            if(symbols)return new String[]{"!@#$%^&*()","[]{}<>_=+-","\\|;:\"',.?/","`~"};
+            return caps?new String[]{"1234567890","QWERTYUIOP","ASDFGHJKL","ZXCVBNM"}
+                :new String[]{"1234567890","qwertyuiop","asdfghjkl","zxcvbnm"};
+        }
+        static boolean multiline(int type){return (type&android.text.InputType.TYPE_MASK_CLASS)==android.text.InputType.TYPE_CLASS_TEXT
+            &&(type&android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE)!=0;}
+    }
+
+    private static NativeMeshUiProducer productProducer(Activity productOwner) {
+        NativeMeshUiProducer producer=current;
+        return producer!=null&&producer.root!=null&&producer.presentation!=null&&producer.panelAttachment instanceof ProductPanelAttachment
+            &&((ProductPanelAttachment)producer.panelAttachment).owner()==productOwner?producer:null;
+    }
+
+    /** Uses the captured display/window token. The original builder retains all callbacks. */
+    public static void showProductDialog(Activity productOwner,AlertDialog dialog) {
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        if(producer==null||producer.presentation==null||producer.root==null)
+            throw new IllegalStateException("current-mesh-dialog-owner-unavailable");
+        producer.showModal(dialog,false);
+    }
+
+    public static void requestProductTextInput(Activity productOwner,EditText field) {
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        if(producer!=null)producer.openKeyboard(field);
+    }
+
+    public static ActionMode startProductActionMode(Activity productOwner,View source,ActionMode.Callback callback,int type){
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        if(producer==null||!producer.viewCurrent(source))return null;
+        if(producer.selectionMode!=null)producer.selectionMode.finish();producer.closeKeyboard();
+        MeshActionMode mode=producer.new MeshActionMode(source,callback,type);producer.selectionMode=mode;
+        if(!mode.start()){if(producer.selectionMode==mode)producer.selectionMode=null;return null;}return mode;
+    }
+
+    /** Retire transient input when the actual Activity reclaims its content or mesh hides. */
+    public static void retireProductInput(Activity productOwner) {
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        if(producer!=null)producer.closeTransientInput();
+    }
+
+    public static void productContentRemoved(Activity productOwner,View content) {
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        if(producer==null)return;
+        if(contains(content,producer.editor))producer.closeKeyboard();
+        if(producer.selectionMode!=null&&contains(content,producer.selectionMode.source))producer.selectionMode.finish();
+    }
+
+    private static boolean contains(View parent,View child) {
+        if(parent==null||child==null)return false;
+        for(View node=child;node!=null;) {
+            if(node==parent)return true;
+            node=node.getParent() instanceof View?(View)node.getParent():null;
+        }
+        return false;
+    }
+
+    private void showModal(final Dialog dialog,boolean isKeyboard) {
+        if(current!=this||presentation==null||root==null)throw new IllegalStateException("mesh-window-retired");
+        Window window=dialog.getWindow();
+        WindowManager.LayoutParams attributes=window.getAttributes();
+        attributes.type=WindowManager.LayoutParams.TYPE_APPLICATION_PANEL;
+        attributes.token=presentation.getWindow().getDecorView().getWindowToken();
+        if(attributes.token==null)throw new IllegalStateException("mesh-window-token-unavailable");
+        window.setAttributes(attributes);
+        window.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE|WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
+        dialog.setOnDismissListener(new android.content.DialogInterface.OnDismissListener(){public void onDismiss(android.content.DialogInterface ignored){
+            modals.remove(dialog);
+            if(pointerDialog==dialog)cancelPointer();
+            if(selectionMode!=null&&contains(dialog.getWindow().getDecorView(),selectionMode.source))selectionMode.finish();
+            if(dialog==keyboard){keyboard=null;retireEditor();}
+            else if(contains(dialog.getWindow().getDecorView(),editor))closeKeyboard();
+        }});
+        dialog.show();
+        if(!isKeyboard)modals.add(dialog);
+    }
+
+    private boolean viewCurrent(View source){
+        if(current!=this||root==null||source==null||!source.isAttachedToWindow()||!source.isEnabled())return false;
+        if(contains(root,source))return true;
+        for(Dialog modal:modals)if(modal.isShowing()&&contains(modal.getWindow().getDecorView(),source))return true;
+        return false;
+    }
+    private boolean editorCurrent(){return viewCurrent(editor);}
+
+    private void openKeyboard(EditText field) {
+        if(field==editor&&keyboard!=null&&editorCurrent())return;
+        closeKeyboard();editor=field;
+        if(!editorCurrent()){retireEditor();return;}
+        editor.requestFocus();editorInfo=new EditorInfo();InputConnection connection=editor.onCreateInputConnection(editorInfo);
+        if(connection==null){retireEditor();return;}
+        final EditText requested=editor;
+        input=new TextInputSession(connection,new java.util.function.BooleanSupplier(){public boolean getAsBoolean(){
+            return editor==requested&&editorCurrent();
+        }});
+        // The actual EditText keeps its password transformation and InputType filters.
+        // Neither field contents nor committed text enters a label, log, or receipt.
+        capitals=false;symbols=false;
+        keyboard=new Dialog(presentation.getContext());
+        rebuildKeyboard();
+        showModal(keyboard,true);
+        Window window=keyboard.getWindow();
+        window.setGravity(Gravity.BOTTOM);window.setLayout(-1,-2);
+    }
+
+    private void keyboardButton(LinearLayout row,String label,final Runnable action,float weight) {
+        final TextInputSession requested=input;
+        Button key=new Button(presentation.getContext());key.setText(label);key.setTextSize(16);
+        key.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){
+            if(input!=requested||!requested.valid())return;action.run();
+        }});
+        row.addView(key,new LinearLayout.LayoutParams(0,46,weight));
+    }
+
+    private void rebuildKeyboard() {
+        LinearLayout keys=new LinearLayout(presentation.getContext());keys.setOrientation(LinearLayout.VERTICAL);
+        keys.setBackgroundColor(Color.rgb(24,30,38));keys.setPadding(6,6,6,6);
+        for(String chars:TextInputRules.rows(editorInfo.inputType,capitals,symbols)) {
+            if(chars.isEmpty())continue;
+            LinearLayout row=new LinearLayout(presentation.getContext());keys.addView(row);
+            for(int i=0;i<chars.length();i++) {
+                final String value=chars.substring(i,i+1);
+                keyboardButton(row,value,new Runnable(){public void run(){input.commitText(value,1);}},1);
+            }
+        }
+        LinearLayout actions=new LinearLayout(presentation.getContext());keys.addView(actions);
+        keyboardButton(actions,"Shift",new Runnable(){public void run(){capitals=!capitals;rebuildKeyboard();}},1);
+        keyboardButton(actions,"Symbols",new Runnable(){public void run(){symbols=!symbols;rebuildKeyboard();}},1.2f);
+        keyboardButton(actions,"Space",new Runnable(){public void run(){input.commitText(" ",1);}},1.5f);
+        keyboardButton(actions,"←",new Runnable(){public void run(){editorKey(KeyEvent.KEYCODE_DPAD_LEFT);}},0.7f);
+        keyboardButton(actions,"→",new Runnable(){public void run(){editorKey(KeyEvent.KEYCODE_DPAD_RIGHT);}},0.7f);
+        keyboardButton(actions,"Delete",new Runnable(){public void run(){editorKey(KeyEvent.KEYCODE_DEL);}},1);
+        keyboardButton(actions,"Enter",new Runnable(){public void run(){
+            if(TextInputRules.multiline(editorInfo.inputType))input.commitText("\n",1);
+            else input.performEditorAction(editorInfo.imeOptions&EditorInfo.IME_MASK_ACTION);
+        }},1);
+        keyboardButton(actions,"Done",new Runnable(){public void run(){closeKeyboard();}},1);
+        keyboard.setContentView(keys);
+    }
+
+    private void editorKey(int code){input.key(code);}
+
+    private void retireEditor(){
+        TextInputSession prior=input;input=null;editorInfo=null;editor=null;capitals=false;symbols=false;
+        if(prior!=null)prior.close();
+    }
+    private void closeKeyboard(){
+        Dialog prior=keyboard;keyboard=null;retireEditor();
+        if(prior!=null){if(pointerDialog==prior)cancelPointer();prior.dismiss();}
+    }
+    private void closeTransientInput(){
+        cancelPointer();if(selectionMode!=null)selectionMode.finish();closeKeyboard();
+        for(Dialog modal:new ArrayList<Dialog>(modals))modal.dismiss();modals.clear();
+    }
+
+    private boolean hit(Dialog dialog,float x,float y){
+        if(dialog==null||!dialog.isShowing())return false;
+        View decor=dialog.getWindow().getDecorView();int[] origin=new int[2];decor.getLocationOnScreen(origin);
+        return x>=origin[0]&&y>=origin[1]&&x<origin[0]+decor.getWidth()&&y<origin[1]+decor.getHeight();
+    }
+    private Dialog dialogAt(float x,float y){
+        if(hit(keyboard,x,y))return keyboard;
+        for(int i=modals.size()-1;i>=0;i--)if(modals.get(i).isShowing())return modals.get(i);
+        return null;
+    }
+    private void dispatchPointer(MotionEvent event){
+        if(pointerDialog==null){root.dispatchTouchEvent(event);return;}
+        View decor=pointerDialog.getWindow().getDecorView();int[] origin=new int[2];decor.getLocationOnScreen(origin);
+        event.offsetLocation(-origin[0],-origin[1]);pointerDialog.dispatchTouchEvent(event);
+    }
 
     private NativeMeshUiProducer(Activity activity, Surface surface, long generation) {
         this.activity = activity;
@@ -210,27 +478,59 @@ static final class VisibilityReadback {
 
     /** True means this actual product owner was handled, including a rejected request. */
     public static boolean requestPanelVisibility(Activity productOwner, boolean visible) {
-        NativeMeshUiProducer producer=current;
-        if(producer==null||!(producer.panelAttachment instanceof ProductPanelAttachment)
-                ||((ProductPanelAttachment)producer.panelAttachment).owner()!=productOwner)return false;
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        if(producer==null||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return false;
         final ProductPanelAttachment binding=(ProductPanelAttachment)producer.panelAttachment;
         producer.activity.runOnUiThread(new Runnable(){public void run(){
             if(current!=producer||producer.root==null||producer.panelAttachment!=binding)return;
-            ProductPanelAttachment attachment=(ProductPanelAttachment)producer.panelAttachment;
-            long revision=nativeSetPanelVisible(producer.generation,visible);
-            if(revision<=0){attachment.outcome("Panel visibility request was not admitted; refresh the current panel.");return;}
-            producer.visibilityRequest=revision;
-            producer.visibilityObserved=false;
-            attachment.outcome(visible?"Opening the panel; waiting for renderer acknowledgement.":"Returning to VR; waiting for renderer acknowledgement.");
-            Log.i(TAG,"event=panel-visibility-requested generation="+producer.generation+" revision="+revision+" visible="+visible);
+            producer.requestVisibility(visible);
         }});
         return true;
+    }
+
+    private long requestVisibility(boolean visible){
+        ProductPanelAttachment attachment=(ProductPanelAttachment)panelAttachment;
+        long revision=nativeSetPanelVisible(generation,visible);
+        if(revision<=0){attachment.outcome("Panel visibility request was not admitted; refresh the current panel.");return 0;}
+        if(!visible)closeTransientInput();visibilityRequest=revision;visibilityObserved=false;
+        attachment.outcome(visible?"Opening the panel; waiting for renderer acknowledgement.":"Returning to VR; waiting for renderer acknowledgement.");
+        Log.i(TAG,"event=panel-visibility-requested generation="+generation+" revision="+revision+" visible="+visible);
+        return revision;
+    }
+
+    private static JSONObject visibilityUnavailable(String status){
+        JSONObject result=new JSONObject();try{return result.put("selected",!"not-selected".equals(status)).put("status",status);}catch(Exception impossible){return result;}
+    }
+    private JSONObject visibilityReceipt(long revision){
+        try {
+            JSONObject receipt=new JSONObject(nativeReadPanelVisibility(generation,revision));
+            Object identity=receipt.opt("generation");
+            if((identity instanceof Integer||identity instanceof Long)&&((Number)identity).longValue()==generation)return receipt;
+        }catch(Exception unavailable){ /* A failed owner read has no effective visibility proof. */ }
+        return visibilityUnavailable("unavailable");
+    }
+
+    /** Exact current producer only; no standalone Activity fallback becomes effective=true. */
+    public static JSONObject productPanelVisibility(Activity productOwner){
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        return producer==null||!((ProductPanelAttachment)producer.panelAttachment).presentationActive()
+            ?visibilityUnavailable("not-selected"):producer.visibilityReceipt(0);
+    }
+
+    public static JSONObject requestProductPanelVisibility(Activity productOwner,boolean visible)throws org.json.JSONException {
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())throw new IllegalStateException("mesh-visibility-requires-main-thread");
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        if(producer==null||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return visibilityUnavailable("not-selected");
+        long revision=producer.requestVisibility(visible);
+        return new JSONObject().put("status",revision>0?"queued":"rejected")
+            .put("panel_visibility",revision>0?producer.visibilityReceipt(revision):visibilityUnavailable("request-rejected"));
     }
 
     public static boolean panelVisibilityConfirmed(Activity productOwner,boolean visible){
         NativeMeshUiProducer producer=current;
         if(producer==null||!(producer.panelAttachment instanceof ProductPanelAttachment)
-                ||((ProductPanelAttachment)producer.panelAttachment).owner()!=productOwner)return true;
+                ||((ProductPanelAttachment)producer.panelAttachment).owner()!=productOwner
+                ||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return true;
         return producer.visibilityObserved&&producer.visibilityRequest==0&&producer.effectiveVisible==visible;
     }
 
@@ -246,6 +546,7 @@ static final class VisibilityReadback {
                     boolean visible=applied;
                     if(!visibilityObserved||visible!=effectiveVisible){
                         visibilityObserved=true;effectiveVisible=visible;
+                        if(!visible)closeTransientInput();
                         ((ProductPanelAttachment)panelAttachment).visibilityChanged(visible);
                         Log.i(TAG,"event=panel-visibility-observed generation="+generation+" visible="+visible);
                     }
@@ -303,6 +604,7 @@ static final class VisibilityReadback {
             int motion;
             if (action == 0) {
                 if (owner.down) return;
+                owner.pointerDialog=owner.dialogAt(x,y);
                 owner.down = true; owner.downTime = now; motion = MotionEvent.ACTION_DOWN;
             } else if (action == 1) {
                 if (!owner.down || now - owner.lastMove < 8) return;
@@ -314,7 +616,8 @@ static final class VisibilityReadback {
             MotionEvent event = MotionEvent.obtain(owner.downTime, now, motion,
                     Math.max(0, Math.min(1023, x)), Math.max(0, Math.min(767, y)), 0);
             event.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
-            owner.root.dispatchTouchEvent(event);
+            owner.dispatchPointer(event);
+            if(motion==MotionEvent.ACTION_UP||motion==MotionEvent.ACTION_CANCEL)owner.pointerDialog=null;
             event.recycle();
             } finally {
                 if (owner.queuedPointers.decrementAndGet() == 0) owner.pointerQueueInvalid = false;
@@ -365,6 +668,7 @@ static final class VisibilityReadback {
     private boolean close() {
         boolean released = true;
         visibilityPolls.removeCallbacksAndMessages(null);
+        try { closeTransientInput(); } catch(RuntimeException error){released=false;}
         try { cancelPointer(); } catch (RuntimeException error) { released = false; }
         try { if(panelAttachment!=null){panelAttachment.close();panelAttachment=null;} }
         catch(Exception error){released=false;}
@@ -381,8 +685,9 @@ static final class VisibilityReadback {
     private void cancelPointer() {
         if (down && root != null) {
             MotionEvent event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, 0, 0, 0);
-            root.dispatchTouchEvent(event); event.recycle(); down = false;
+            dispatchPointer(event); event.recycle(); down = false;
         }
+        pointerDialog=null;
         if (cursor != null) cursor.setVisibility(View.INVISIBLE);
     }
 
