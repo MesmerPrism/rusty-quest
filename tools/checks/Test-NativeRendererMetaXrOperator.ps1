@@ -89,6 +89,9 @@ function Archive([string]$Name,[bool]$Extra=$false) {
     try { foreach($record in @($selection.library,$selection.layer_manifest)) { $entry=$zip.CreateEntry($record.apk_path);$stream=$entry.Open();try{$stream.Write([IO.File]::ReadAllBytes($record.source_path))}finally{$stream.Dispose()} };if($Extra){[void]$zip.CreateEntry('assets/extra-metax_operator.json')} }finally{$zip.Dispose()};$path
 }
 $zip=Archive 'valid-fixture.zip';Assert-NativeRendererMetaXrOperatorArchive -Selection $selection -ApkPath $zip;$passed.Add('exact-archive-closure')
+Import-Module (Join-Path $RepoRoot 'tools/lib/NativeAppPrivateAssetProvider.psm1') -Force
+$assetRecords=@(Assert-NativeAppApkAssetArchive -ApkPath $zip -AssetRoot (Join-Path $staged 'assets'))
+if($assetRecords.Count -ne 1 -or $assetRecords[0].sha256 -cne $selection.layer_manifest.sha256){throw 'Operator manifest failed the ordinary APK asset closure.'};$passed.Add('ordinary-apk-asset-closure')
 Deny 'default-archive-leak' { Assert-NativeRendererMetaXrOperatorArchive -Selection @{enabled=$false} -ApkPath $zip }
 $extra=Archive 'extra-fixture.zip' $true
 Deny 'extra-layer-entry' { Assert-NativeRendererMetaXrOperatorArchive -Selection $selection -ApkPath $extra }

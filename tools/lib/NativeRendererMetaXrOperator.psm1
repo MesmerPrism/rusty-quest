@@ -2,8 +2,8 @@
 Set-StrictMode -Version Latest
 $script:LayerName = 'XR_APILAYER_METAX_operator'
 $script:LibraryName = 'libXrApiLayer_METAX_operator.so'
-$script:ManifestName = 'XrApiLayer_METAX_operator.json'
-$script:ManifestEntry = 'assets/openxr/1/api_layers/implicit.d/XrApiLayer_METAX_operator.json'
+$script:ManifestName = 'xr_api_layer_metax_operator.json'
+$script:ManifestEntry = 'assets/openxr/1/api_layers/implicit.d/xr_api_layer_metax_operator.json'
 $script:LibraryEntry = 'lib/arm64-v8a/libXrApiLayer_METAX_operator.so'
 
 function Read-OperatorBytes([string]$Path, [string]$ExpectedSha256, [int]$Maximum) {
