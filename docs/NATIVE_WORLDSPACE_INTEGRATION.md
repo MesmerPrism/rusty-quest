@@ -228,6 +228,25 @@ read arrives. The header does not attest physical input, audio or saved output.
 In-view choices stay within the panel's routed touch surface. Sensor, network,
 kiosk and camera capabilities require their separate explicit selections.
 
+When the original product Activity is selected, starting NativeActivity first
+does not imply that the original Activity/view already exists. The mesh
+producer requests that real Activity once for its current generation. The
+Activity notifies readiness after its original builders and lifecycle run;
+the producer attaches its existing view when the actual native Activity
+resumes. It reuses the original immersive presentation route, without creating
+an unattached Activity or another session owner. Late readiness can repair the
+initial missing-owner condition without restarting the app or producer.
+
+Pending visibility intent stays with the exact real owner and producer
+generation. Retirement or owner replacement cannot carry that intent forward.
+A selected product whose owner has not attached cannot confirm hidden-panel
+visibility; the separate ordinary 2D-only route retains its original foreground
+proof. Product operator observation can be unavailable while the real Activity
+is paused and has no active mesh attachment; that availability guard is not an
+observation exception. The host rendezvous fixture checks lifecycle/identity
+state only. Actual Activity bootstrap, focus transition and pixels still need
+runtime verification.
+
 The focused admission check is
 `pwsh -NoProfile -File tools/checks/Test-NativeRendererHandGeometrySelection.ps1`.
 Java/controller fixtures, both Rust geometry selections and the exact generated

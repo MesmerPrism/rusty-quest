@@ -1048,6 +1048,14 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         return owner.new MeshPanelAttachment(immersive, carrier, current);
     }
 
+    /** Presentation-only bootstrap return; reuse the original actual Activity route. */
+    public static void resumeNativeMeshImmersive(Activity actual) {
+        BreathCompositionPanelModule owner=remotePanel.get();
+        if(owner!=actual||owner.experimentShellDestroyed||owner.isFinishing()||owner.isDestroyed())
+            throw new IllegalStateException("retained-production-panel-owner-unavailable");
+        ControlPanelActivity.closePanelAndReturnToImmersive(owner);
+    }
+
     private View currentPanelContent() {
         if (meshPanelAttachment != null) return meshPanelAttachment.content;
         ViewGroup window = (ViewGroup) findViewById(android.R.id.content);
@@ -1423,6 +1431,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         activityPanelResumed=true;
         if(meshPanelAttachment!=null)meshPanelAttachment.showInActivity();
         resumePanelProjection();
+        NativeMeshUiProducer.productOwnerReady(this);
     }
 
     private void resumePanelProjection() {

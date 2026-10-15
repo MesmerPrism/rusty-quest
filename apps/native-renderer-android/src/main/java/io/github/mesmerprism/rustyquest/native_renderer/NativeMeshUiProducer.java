@@ -113,6 +113,42 @@ static final class VisibilityReadback {
     private EditorInfo editorInfo;
     private boolean capitals, symbols;
     private MeshActionMode selectionMode;
+    private LinearLayout productCarrier;
+    private TextView productTitle;
+    private Class<?> productModule;
+    private boolean productSelectionResolved;
+    private boolean awaitingProductOwner;
+    private OwnerAttachmentState ownerAttachment = new OwnerAttachmentState();
+    private android.app.Application.ActivityLifecycleCallbacks ownerLifecycle;
+    private final ThreadLocal<Activity> bootstrapReturningOwner=new ThreadLocal<Activity>();
+
+    /** Current-generation presentation rendezvous only; owns no session or command replay. */
+    static final class OwnerAttachmentState {
+        private Object owner;
+        private boolean bootstrapIssued, returnIssued, resumed, retired;
+        private Boolean desiredVisibility;
+        synchronized boolean bootstrap() { if(retired||bootstrapIssued)return false;bootstrapIssued=true;return true; }
+        synchronized boolean ready(Object candidate) {
+            if(retired||candidate==null||owner!=null&&owner!=candidate)return false;
+            owner=candidate;return true;
+        }
+        synchronized boolean returnToImmersive() {
+            if(retired||owner==null||resumed||returnIssued)return false;
+            returnIssued=true;return true;
+        }
+        synchronized void resumed(boolean value) { if(!retired)resumed=value; }
+        synchronized boolean resumed() { return !retired&&resumed; }
+        synchronized boolean visibility(Object candidate,boolean visible) {
+            if(retired||owner!=candidate||candidate==null)return false;
+            desiredVisibility=visible;return true;
+        }
+        synchronized Boolean takeVisibility(Object candidate) {
+            if(retired||owner!=candidate)return null;
+            Boolean value=desiredVisibility;desiredVisibility=null;return value;
+        }
+        synchronized void destroyed(Object candidate) { if(owner==candidate){owner=null;desiredVisibility=null;returnIssued=false;} }
+        synchronized void retire() { retired=true;owner=null;desiredVisibility=null; }
+    }
 
     /** Readback includes explicitly static controls only, never arbitrary displayed text. */
     static final class WidgetMetadata {
@@ -496,6 +532,8 @@ static final class VisibilityReadback {
             NativeMeshUiProducer owner = new NativeMeshUiProducer(activity, surface, generation);
             current = owner;
             try {
+                owner.ownerAttachment.resumed(owner.activityResumed());
+                owner.observeOwnerLifecycle();
                 DisplayManager manager = (DisplayManager) activity.getSystemService(Context.DISPLAY_SERVICE);
                 owner.display = manager.createVirtualDisplay("Rusty Quest mesh UI", width, height, 160, surface,
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
@@ -541,25 +579,22 @@ static final class VisibilityReadback {
         layout.addView(title);
         status = text(context, "Live Android UI • waiting for control", 18);
         layout.addView(status);
+        productCarrier=layout;productTitle=title;
         try {
             // The closed panel source selection owns this optional adapter and all session effects.
-            Class<?> module=Class.forName("io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity");
-            Object attachment=module.getMethod("attachNativeMeshSessionControls",Activity.class,LinearLayout.class,
-                java.util.function.BooleanSupplier.class).invoke(null,activity,layout,
-                    new java.util.function.BooleanSupplier() {
-                        @Override public boolean getAsBoolean() {
-                            return current==NativeMeshUiProducer.this && root!=null;
-                        }
-                    });
-            if(!(attachment instanceof AutoCloseable))throw new IllegalStateException("panel-attachment-retirement-required");
-            panelAttachment=(AutoCloseable)attachment;
-            layout.removeView(title);layout.removeView(status);
-            observePanelVisibility();
+            productModule=Class.forName("io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity");
+            productModule.getMethod("attachNativeMeshSessionControls",Activity.class,LinearLayout.class,
+                java.util.function.BooleanSupplier.class);
+            productSelectionResolved=true;
+            if(!attachProductOwner()&&(awaitingProductOwner||!ownerAttachment.resumed()))bootstrapProductOwner();
             return; // Selected local product owns its full UI; integration diagnostics are not appended.
         } catch(ClassNotFoundException unselected) {
             // Neutral mesh-only apps do not acquire experiment or recording authority.
+            productSelectionResolved=true;
         } catch(NoSuchMethodException unselected) {
             // A different closed panel module does not expose this product adapter.
+            productModule=null;
+            productSelectionResolved=true;
         } catch(Exception failure) {
             status.setText("Session panel unavailable; app owner did not attach.");
             Log.e(TAG,"event=session-panel-unavailable",failure);
@@ -601,10 +636,104 @@ static final class VisibilityReadback {
         layout.addView(text(context, "Hand pinch or controller trigger: click / drag.", 16));
     }
 
+    private void observeOwnerLifecycle() {
+        ownerLifecycle=new android.app.Application.ActivityLifecycleCallbacks(){
+            public void onActivityResumed(Activity value){if(value==activity&&current==NativeMeshUiProducer.this){
+                ownerAttachment.resumed(true);attachProductOwner();
+            }}
+            public void onActivityPaused(Activity value){if(value==activity)ownerAttachment.resumed(false);}
+            public void onActivityDestroyed(Activity value){
+                if(value==activity)ownerAttachment.retire();
+                if(panelAttachment instanceof ProductPanelAttachment&&((ProductPanelAttachment)panelAttachment).owner()==value){
+                    try{panelAttachment.close();}catch(Exception ignored){}panelAttachment=null;
+                }
+                ownerAttachment.destroyed(value);
+            }
+            public void onActivityCreated(Activity value,Bundle saved){}
+            public void onActivityStarted(Activity value){}
+            public void onActivityStopped(Activity value){}
+            public void onActivitySaveInstanceState(Activity value,Bundle saved){}
+        };
+        activity.getApplication().registerActivityLifecycleCallbacks(ownerLifecycle);
+    }
+
+    private boolean activityResumed() {
+        try {
+            // The selected original Application already tracks actual Activity lifecycle.
+            // Keep neutral mesh-only compositions free of a mandatory kiosk dependency.
+            Object application=activity.getApplication();
+            return Boolean.TRUE.equals(application.getClass().getDeclaredMethod("isResumed",String.class)
+                .invoke(application,activity.getClass().getName()));
+        }catch(ReflectiveOperationException unavailable){return activity.hasWindowFocus();}
+    }
+
+    private boolean attachProductOwner() {
+        if(current!=this||root==null||productModule==null||panelAttachment!=null||!ownerAttachment.resumed())return panelAttachment!=null;
+        try {
+            Object attachment=productModule.getMethod("attachNativeMeshSessionControls",Activity.class,LinearLayout.class,
+                java.util.function.BooleanSupplier.class).invoke(null,activity,productCarrier,
+                    new java.util.function.BooleanSupplier(){public boolean getAsBoolean(){
+                        return current==NativeMeshUiProducer.this&&root!=null;
+                    }});
+            if(!(attachment instanceof ProductPanelAttachment))throw new IllegalStateException("panel-attachment-retirement-required");
+            panelAttachment=(ProductPanelAttachment)attachment;
+            awaitingProductOwner=false;
+            Activity actual=((ProductPanelAttachment)attachment).owner();ownerAttachment.ready(actual);
+            productCarrier.removeView(productTitle);productCarrier.removeView(status);
+            Boolean desired=ownerAttachment.takeVisibility(actual);
+            if(desired!=null)requestVisibility(desired);
+            observePanelVisibility();
+            Log.i(TAG,"event=product-owner-attached generation="+generation+" source=actual-activity");
+            return true;
+        } catch(Exception failure) {
+            Throwable cause=failure instanceof java.lang.reflect.InvocationTargetException?failure.getCause():failure;
+            if(cause instanceof IllegalStateException&&"retained-production-panel-owner-unavailable".equals(cause.getMessage())){
+                awaitingProductOwner=true;
+                status.setText("Waiting for the original app panel…");
+                return false;
+            }
+            status.setText("Session panel unavailable; app owner did not attach.");
+            awaitingProductOwner=false;
+            Log.e(TAG,"event=session-panel-unavailable generation="+generation,failure);
+            return false;
+        }
+    }
+
+    private void bootstrapProductOwner() {
+        if(productModule==null||!ownerAttachment.bootstrap()||current!=this||root==null)return;
+        try {
+            android.content.Intent intent=new android.content.Intent(android.content.Intent.ACTION_MAIN)
+                .setComponent(new android.content.ComponentName(activity.getPackageName(),productModule.getName()))
+                .addCategory("com.oculus.intent.category.2D")
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT|android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            activity.startActivity(intent);
+            Log.i(TAG,"event=product-owner-bootstrap-requested generation="+generation);
+        }catch(RuntimeException failure){Log.e(TAG,"event=product-owner-bootstrap-unavailable generation="+generation,failure);}
+    }
+
+    /** Called by the real selected Activity after its original builders/lifecycle are ready. */
+    public static void productOwnerReady(Activity actual) {
+        NativeMeshUiProducer producer=current;
+        if(producer==null||producer.root==null||producer.productModule==null||producer.panelAttachment!=null
+                ||!producer.productModule.isInstance(actual)||actual.isFinishing()||actual.isDestroyed()
+                ||!producer.ownerAttachment.ready(actual))return;
+        if(producer.ownerAttachment.resumed()){producer.attachProductOwner();return;}
+        if(producer.ownerAttachment.returnToImmersive())try{
+            producer.bootstrapReturningOwner.set(actual);
+            producer.productModule.getMethod("resumeNativeMeshImmersive",Activity.class).invoke(null,actual);
+        }catch(Exception failure){Log.e(TAG,"event=product-owner-return-unavailable generation="+producer.generation,failure);}
+        finally{producer.bootstrapReturningOwner.remove();}
+    }
+
     /** True means this actual product owner was handled, including a rejected request. */
     public static boolean requestPanelVisibility(Activity productOwner, boolean visible) {
         NativeMeshUiProducer producer=productProducer(productOwner);
-        if(producer==null||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return false;
+        if(producer==null||!((ProductPanelAttachment)producer.panelAttachment).presentationActive()){
+            NativeMeshUiProducer pending=current;
+            if(pending!=null&&pending.productModule!=null&&pending.root!=null
+                    &&(visible||pending.bootstrapReturningOwner.get()!=productOwner))pending.ownerAttachment.visibility(productOwner,visible);
+            return false; // The original Activity route must still resume the actual immersive owner.
+        }
         final ProductPanelAttachment binding=(ProductPanelAttachment)producer.panelAttachment;
         producer.activity.runOnUiThread(new Runnable(){public void run(){
             if(current!=producer||producer.root==null||producer.panelAttachment!=binding)return;
@@ -653,9 +782,10 @@ static final class VisibilityReadback {
 
     public static boolean panelVisibilityConfirmed(Activity productOwner,boolean visible){
         NativeMeshUiProducer producer=current;
-        if(producer==null||!(producer.panelAttachment instanceof ProductPanelAttachment)
+        if(producer==null)return true; // Existing 2D-only composition retains its original foreground proof.
+        if(!(producer.panelAttachment instanceof ProductPanelAttachment)
                 ||((ProductPanelAttachment)producer.panelAttachment).owner()!=productOwner
-                ||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return true;
+                ||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return producer.productSelectionResolved&&producer.productModule==null;
         return producer.visibilityObserved&&producer.visibilityRequest==0&&producer.effectiveVisible==visible;
     }
 
@@ -792,6 +922,8 @@ static final class VisibilityReadback {
 
     private boolean close() {
         boolean released = true;
+        ownerAttachment.retire();
+        if(ownerLifecycle!=null){activity.getApplication().unregisterActivityLifecycleCallbacks(ownerLifecycle);ownerLifecycle=null;}
         visibilityPolls.removeCallbacksAndMessages(null);
         try { closeTransientInput(); } catch(RuntimeException error){released=false;}
         try { cancelPointer(); } catch (RuntimeException error) { released = false; }
