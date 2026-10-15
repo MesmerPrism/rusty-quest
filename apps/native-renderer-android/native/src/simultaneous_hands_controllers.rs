@@ -607,6 +607,49 @@ mod tests {
     }
 
     #[test]
+    fn compiled_original_worldspace_selection_retains_exact_activation_guards() {
+        use crate::native_renderer_visual_options::{
+            NativeRendererRenderMode, WorldspaceInputPolicy,
+        };
+        let policy =
+            NativeRendererRenderMode::NativeWorldspaceIntegration.worldspace_input_policy();
+        let lookup = |binding: Option<&str>| {
+            SimultaneousHandsControllersSettings::from_property_lookup(|key| {
+                if key == PROP_SIMULTANEOUS_HANDS_CONTROLLERS_ENABLED {
+                    Some("true".into())
+                } else if key == PROP_SIMULTANEOUS_HANDS_CONTROLLERS_ACTIVATION_BINDING_SHA256 {
+                    binding.map(str::to_owned)
+                } else {
+                    None
+                }
+            })
+        };
+        if let Some(binding) = PACKAGED_ACTIVATION_BINDING_SHA256 {
+            let selected = resolve_activation(lookup(Some(binding)), true);
+            assert!(selected.is_selected());
+            assert_eq!(
+                policy.admits_simultaneous_selection(selected.is_selected()),
+                policy != WorldspaceInputPolicy::NeutralExclusive
+            );
+            assert!(!resolve_activation(lookup(Some(binding)), false).is_selected());
+            let other = if binding == A { B } else { A };
+            assert_eq!(
+                resolve_activation(lookup(Some(other)), true),
+                ActivationDecision::Rejected(ActivationRejectReason::BindingMismatch)
+            );
+            println!(
+                "compiledWorldspaceInputPolicy={} exactSimultaneousBindingSelected=true",
+                policy.marker()
+            );
+        } else {
+            assert_eq!(
+                resolve_activation(lookup(Some(A)), true),
+                ActivationDecision::Rejected(ActivationRejectReason::PackagedBindingMissing)
+            );
+        }
+    }
+
+    #[test]
     fn activation_requires_exact_bindings_and_applied_hand_lock() {
         let cases = [
             (

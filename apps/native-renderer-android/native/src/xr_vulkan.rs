@@ -420,10 +420,10 @@ unsafe fn run_projection_loop_inner(
         || runtime_options
             .environment_depth_settings
             .native_passthrough_required();
-    if runtime_options.render_mode.marker_value() == "native-worldspace-integration"
-        && simultaneous_decision.is_selected()
+    if !runtime_options.render_mode.worldspace_input_policy()
+        .admits_simultaneous_selection(simultaneous_decision.is_selected())
     {
-        return Err("worldspace integration uses hands OR controllers; simultaneous input selection must be removed from the app lock".to_owned());
+        return Err("neutral worldspace input requires exclusive hands/controllers; simultaneous input requires the explicit original product composition".to_owned());
     }
     let display_refresh_settings = runtime_options.display_refresh_settings.clone();
     if let Err(error) = display_refresh_settings.validate() {
@@ -2325,13 +2325,15 @@ unsafe fn run_projection_frames(
     let mut app_running = true;
     let mut frame_slot = 0_usize;
     let mut frame_count = 0_u64;
-    let alternate_input_enabled = render_mode.marker_value() == "native-worldspace-integration";
+    let alternate_panel_pointer_enabled = render_mode.marker_value() == "native-worldspace-integration";
+    let worldspace_input_policy = render_mode.worldspace_input_policy();
     let mut alternate_pointer = crate::native_alternate_input::AlternatePointer::default();
     let mut last_worldspace_hand_state = String::new();
-    if alternate_input_enabled {
-        crate::marker("worldspace-input", format!("status=config trackedHandPointerSelected={} compactRigInputSelected={} handPointerSource=XR_EXT_hand_tracking handAdapterRequiredForRawPointer=false simultaneousTrackingRequired=false",
+    if alternate_panel_pointer_enabled {
+        crate::marker("worldspace-input", format!("status=config inputPolicy={} trackedHandPointerSelected={} compactRigInputSelected={} handPointerSource=XR_EXT_hand_tracking handAdapterRequiredForRawPointer=false exclusivePanelPointer=true simultaneousTrackingRequired={}",
+            worldspace_input_policy.marker(),
             crate::native_alternate_input::tracked_pointer_enabled_for_mode(render_mode.marker_value()),
-            compact_hand_input_source_mode.selects_live_frame()));
+            compact_hand_input_source_mode.selects_live_frame(), enabled_extensions.meta_simultaneous_hands_and_controllers));
     }
     let mut ui_particle_phase_frame = 0_u64;
     let experiment_frame_gate_clock = Instant::now();
@@ -2923,7 +2925,7 @@ unsafe fn run_projection_frames(
                     && controller_readiness.action_set_ready
                     && ray.is_some_and(|ray| ray.valid)
                     && renderer_focus_session_state == "FOCUSED";
-                let (owner, hand_pressed, changed) = if alternate_input_enabled {
+                let (owner, hand_pressed, changed) = if alternate_panel_pointer_enabled {
                     alternate_pointer.update(controller_selected, ui_hand_sample)
                 } else {
                     (
@@ -2965,9 +2967,9 @@ unsafe fn run_projection_frames(
                 )?;
                 if changed || frame_count % 120 == 0 {
                     let origin = ray.filter(|r| r.valid).map(|r| r.origin).unwrap_or([0.0; 3]);
-                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers={} controllerPointerSource={} controllerPointerTracked={} controllerPointerOrigin={:.4},{:.4},{:.4} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), alternate_input_enabled, ray.filter(|r| r.valid).map(|r| r.source).unwrap_or("none"), ray.is_some_and(|r| r.valid), origin[0], origin[1], origin[2], hand.map(|h| h.source()).unwrap_or("none"), hand_pressed, panel.pointer_visual_marker()));
+                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} controllerPointerSource={} controllerPointerTracked={} controllerPointerOrigin={:.4},{:.4},{:.4} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired={}", frame_count, owner.marker(), worldspace_input_policy.suppresses_hand_tracking_for_controller(true), ray.filter(|r| r.valid).map(|r| r.source).unwrap_or("none"), ray.is_some_and(|r| r.valid), origin[0], origin[1], origin[2], hand.map(|h| h.source()).unwrap_or("none"), hand_pressed, panel.pointer_visual_marker(), enabled_extensions.meta_simultaneous_hands_and_controllers));
                 }
-                if consumed || (alternate_input_enabled && !controller_selected) {
+                if consumed || (worldspace_input_policy.suppresses_hand_tracking_for_controller(true) && !controller_selected) {
                     controller_events.stimulus_randomize_triggered = false;
                     controller_events.panel_toggle_triggered = false;
                     controller_events.developer_panel_triggered = false;
@@ -2975,8 +2977,10 @@ unsafe fn run_projection_frames(
                     controller_events.private_particle_recenter_triggered = false;
                     controller_events.projection_target_inputs.clear();
                     controller_events.environment_depth_alignment_inputs.clear();
-                    controller_events.native_controller_breath_sample = None;
-                    breath_observed_at = None;
+                    if worldspace_input_policy.suppresses_hand_tracking_for_controller(true) {
+                        controller_events.native_controller_breath_sample = None;
+                        breath_observed_at = None;
+                    }
                 }
             }
             for input in controller_events.projection_target_inputs {
@@ -3082,10 +3086,11 @@ unsafe fn run_projection_frames(
                 private_particle_world_anchor.recenter(particle_sort_eye_projection, frame_count);
             }
         }
-        let worldspace_controllers_selected = alternate_input_enabled
-            && controller_readiness.interaction_profile_ready
-            && controller_readiness.action_ready;
-        if alternate_input_enabled && stimulus_actions.is_none() {
+        let worldspace_controllers_selected = worldspace_input_policy
+            .suppresses_hand_tracking_for_controller(
+                controller_readiness.interaction_profile_ready && controller_readiness.action_ready,
+            );
+        if alternate_panel_pointer_enabled && stimulus_actions.is_none() {
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                 let (owner, pressed, changed) = alternate_pointer.update(false, ui_hand_sample);
                 if changed {
@@ -3101,7 +3106,7 @@ unsafe fn run_projection_frames(
                     hand.map(|ray| ray.direction).unwrap_or([0.0; 3]),
                 )?;
                 if changed || frame_count % 120 == 0 {
-                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers=true handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), hand.map(|h| h.source()).unwrap_or("none"), pressed, panel.pointer_visual_marker()));
+                    crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusivePanelPointer=true exclusiveHandsOrControllers={} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired={}", frame_count, owner.marker(), worldspace_input_policy.suppresses_hand_tracking_for_controller(true), hand.map(|h| h.source()).unwrap_or("none"), pressed, panel.pointer_visual_marker(), enabled_extensions.meta_simultaneous_hands_and_controllers));
                 }
             }
         }
@@ -3583,14 +3588,14 @@ unsafe fn run_projection_frames(
                 } else {
                     "none"
                 };
-                if alternate_input_enabled {
+                if alternate_panel_pointer_enabled {
                     // Kept separate from the large scorecard so Android log limits cannot hide
                     // live readiness or substitute a recorded-frame success for live tracking.
                     let selected = compact_hand_input_source_mode.selects_live_frame()
                         && !worldspace_controllers_selected;
                     let state = format!(
-                        "inputMode={} recordedPoseFallback=false trackerReady={} frameReady={} leftActive={} leftReady={} leftSource={} leftLocate={} rightActive={} rightReady={} rightSource={} rightLocate={} reason={} rigRuntimeJointCount={} rigTipLengthCount={} expectedRuntimeJointCount=21 expectedTipLengthCount=5 pointerRigIndependent=true focus={}",
-                        compact_hand_input_source_mode.marker_value(), live_hand_stats.tracker_ready,
+                        "inputMode={} recordedPoseFallbackAllowed={} trackerReady={} frameReady={} leftActive={} leftReady={} leftSource={} leftLocate={} rightActive={} rightReady={} rightSource={} rightLocate={} reason={} rigRuntimeJointCount={} rigTipLengthCount={} expectedRuntimeJointCount=21 expectedTipLengthCount=5 pointerRigIndependent=true focus={}",
+                        compact_hand_input_source_mode.marker_value(), compact_hand_input_source_mode.allows_recorded_fallback_in(render_mode), live_hand_stats.tracker_ready,
                         live_hand_stats.frame_ready, live_hand_stats.left_active, live_hand_frames.left.is_some(),
                         if selected && live_hand_frames.left.is_some() { "live-openxr" } else { "none" },
                         crate::sanitize(&live_hand_stats.left_locate_status),

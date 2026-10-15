@@ -41,19 +41,32 @@ native frame submission, not acoustic output, XR focus or visible compositor pro
 
 Joints use the existing `XR_EXT_hand_tracking` trackers, projection reference
 space and current predicted display timestamp. No extra frame loop is created.
-When controller input owns the worldspace frame, live hand visuals, diagnostic
+In the neutral worldspace composition, when controller input owns the frame, live hand visuals, diagnostic
 hand overlays and graft copies are suppressed. Ordinary controller actions remain
 available; events captured by the panel are consumed before world controls.
 
-The combined hand-geometry feature closure should retain
+The neutral combined hand-geometry feature closure should retain
 `input.controllers_and_hands_optional` and its selected live-hand/visual
 features, but omit
 `input.simultaneous_hands_and_controllers`. Remove its enabled property and
 resolver-derived activation binding from the private runtime closure. Worldspace
-mode rejects an accidentally selected simultaneous adapter. The manifest resolver
+policy rejects an accidentally selected simultaneous adapter. The manifest resolver
 emits `com.oculus.handtracking.support=HANDS_AND_CONTROLLERS` and hand version
 `V2.0` only when both the optional hand feature and hand permission are selected.
 This permits either input mode at launch without claiming simultaneous tracking.
+
+The explicit original-composable product descriptor selects the separate
+`original-product` input policy through its authenticated
+`RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS=false` compile input. It retains the
+original simultaneous-tracking feature and exact activation/hand-adapter binding,
+extension availability, function resolution and session resume/pause guards.
+Controller readiness does not suppress original hand visuals, grafts, compact
+hand input or source-specific recorded visual fallback. A captured panel event
+may consume discrete world actions, but cannot discard the original controller
+breath assessment sample. The panel still arbitrates one pointer at a time;
+this is independent of underlying hand/controller tracking. Markers separate
+`exclusivePanelPointer` from `exclusiveHandsOrControllers`, identify the selected
+`inputPolicy`, and report actual selected simultaneous tracking requirements.
 
 The public foundation additionally selects `input.tracked_hand_pointer`. Its
 explicit packaged flag enables runtime aim (or its four-joint fallback) even
@@ -64,7 +77,7 @@ and position-tracked flags on all four joints (`0x2 | 0x8` in OpenXR). A private
 live-skinning composition can select this feature as well; it reuses its existing
 current compact sample when available and polls raw joints only as a fallback.
 Live GPU rig mapping still requires that composition's independently applied
-hand-adapter lock. The pointer feature never substitutes for that lock. Worldspace
+hand-adapter lock. The pointer feature never substitutes for that lock. Neutral worldspace
 never uses recorded poses as a fallback: missing live compact input hides the
 corresponding hand, while the static topology/bind rig remains available. Live
 poses are selected by each resident rig's handedness: right-only tracking stays
