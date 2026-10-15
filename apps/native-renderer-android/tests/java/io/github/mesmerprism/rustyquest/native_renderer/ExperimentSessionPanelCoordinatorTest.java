@@ -5,6 +5,7 @@ public final class ExperimentSessionPanelCoordinatorTest {
         restartFinalizationShapePolicy();
         remoteVrSaveReadbackPolicy();
         originalArmAcknowledgementResolvesLaterAudioReadback();
+        retainedArmingCheckpointAfterSaveAdmitsAudioPreparation();
         nativeReadbackObservationPolicy();
         nativeStatusSnapshotPolicy();
         launchAndRoutePolicy();
@@ -108,6 +109,59 @@ public final class ExperimentSessionPanelCoordinatorTest {
             }
         }
         System.out.println("Production ARMING/pending Arm -> later audio + exact checkpoint -> ARMED/Return controls PASS");
+    }
+
+    private static void retainedArmingCheckpointAfterSaveAdmitsAudioPreparation() {
+        for (int mode=0;mode<10;mode++) {
+            ExperimentSessionPanelCoordinator c=new ExperimentSessionPanelCoordinator();
+            c.acceptRuntimeEpoch(1L);
+            ExperimentSessionPanelCoordinator.NativeCommand first=c.arm("condition-a");
+            check(c.acceptNativeReadback(1L,new ExperimentSessionPanelCoordinator.NativeReceipt(
+                first.operationId,true,false,1L,1L,"active","armed","condition-a",true,false,
+                "ready",true,0L,0L,0L,0L,true,true,false,0L,0L,0L,"none",0L,"accepted"),100L,110L),
+                "original first condition admitted");
+            ExperimentSessionPanelCoordinator.NativeCommand save=c.restartToExperimenter(c.allocateRouteEvent());
+            check(save!=null && c.acceptNativeReadback(1L,receipt(save.operationId,true,true,1L,9L,
+                "idle",false,"none",6L,1L,0L,0L,0L,true),200L,210L),
+                "exact original SaveNext admits the second condition");
+            ExperimentSessionPanelCoordinator.NativeCommand second=c.arm("condition-b");
+            check(second!=null && "panel-arm-3".equals(second.operationId),"same original operation sequence");
+            check(c.snapshot().generation==1L && !c.snapshot().recording,"pending second Arm has no recording proof yet");
+            // The queued Arm response precedes commit; its exact last-operation
+            // receipt is then replaced by a submitted renderer event. The
+            // durable Arm ledger is the retained evidence, not another Arm.
+            ExperimentSessionPanelCoordinator.NativeReceipt submitted=new ExperimentSessionPanelCoordinator.NativeReceipt(
+                "native-openxr-submitted-ready-2-13058",mode!=9,false,2L,12L,"active","arming",
+                mode==8?"condition-a":"condition-b",true,false,
+                "ready",true,1L,0L,0L,0L,true,true,false,1L,0L,0L,"none",6L,"accepted");
+            ExperimentSessionPanelCoordinator.ArmAcceptance proof=mode==6?null:
+                new ExperimentSessionPanelCoordinator.ArmAcceptance(mode==1?"different-arm":second.operationId,
+                    mode==2?3L:2L,mode==3?2L:1L,mode==4?"condition-a":"condition-b",mode!=5);
+            boolean accepted=c.acceptNativeReadback(1L,submitted,300L,310L,mode!=7,proof);
+            if (mode==0) {
+                check(accepted && c.snapshot().generation==2L && c.snapshot().recording,
+                    "retained exact Arm checkpoint adopts the actual second recording for audio preparation");
+                check(c.snapshot().phase==ExperimentSessionPanelState.Phase.ARMING
+                    && c.snapshot().pendingOperationId.isEmpty(),"accepted Arm remains ARMING until actual audio acknowledgement");
+                check(!ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot())
+                    && !ExperimentSessionPanelViewPolicy.project(c.snapshot()).startEnabled,
+                    "recording acceptance does not claim Armed or permit early Start/Return");
+                check(c.arm("condition-b")==null,"no duplicate Arm is admitted");
+                check("native-openxr-submitted-ready-2-13058".equals(submitted.operationId)
+                    && !submitted.durable,"renderer operation and save durability are not rewritten");
+                check(c.acceptNativeReadback(1L,new ExperimentSessionPanelCoordinator.NativeReceipt(
+                    "condition-audio-prepared-2",true,false,2L,13L,"active","armed","condition-b",true,false,
+                    "ready",true,1L,0L,0L,0L,true,true,false,1L,0L,0L,"none",6L,"accepted"),400L,410L,true,proof),
+                    "actual native audio-ready readback advances the same generation");
+                check(c.snapshot().phase==ExperimentSessionPanelState.Phase.ARMED
+                    && ExperimentSessionPanelViewPolicy.canReturnToImmersive(c.snapshot()),"only native ready state admits Return");
+            } else {
+                check(!accepted && c.snapshot().generation==1L && !c.snapshot().recording
+                    && second.operationId.equals(c.snapshot().pendingOperationId),
+                    "missing/wrong/unaccepted retained evidence cannot trigger audio preparation: "+mode);
+            }
+        }
+        System.out.println("Original SaveNext -> queued Arm -> renderer receipt -> ARMING/audio-ready race guards PASS");
     }
 
     private static void nativeStatusSnapshotPolicy() {

@@ -690,7 +690,11 @@ final class ExperimentSessionPanelCoordinator {
         boolean provenArm = arm!=null && state.phase==ExperimentSessionPanelState.Phase.ARMING
             && !state.pendingOperationId.isEmpty() && receipt.accepted
             && "active".equals(receipt.phase)
-            && ("armed".equals(receipt.controlState) || "running".equals(receipt.controlState)
+            // The durable Arm checkpoint admits its recording before audio is
+            // prepared. A later renderer receipt can replace last_operation_id
+            // during that interval. Adopt ARMING so the original audio handler
+            // can prepare; only the native audio acknowledgement admits ARMED.
+            && ("arming".equals(receipt.controlState) || "armed".equals(receipt.controlState) || "running".equals(receipt.controlState)
                 || "paused".equals(receipt.controlState))
             && arm.matches(state.pendingOperationId,state.generation+1L,state.activeCondition,receipt,epoch);
         boolean pendingMatch = !state.pendingOperationId.isEmpty()
