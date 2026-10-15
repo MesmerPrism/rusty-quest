@@ -11,6 +11,14 @@ pub(crate) struct PanelPose {
     pub(crate) width: f32,
     pub(crate) height: f32,
 }
+#[derive(Clone, Copy, Debug)]
+struct SubmittedGeometry {
+    pose: PanelPose,
+    pose_revision: u64,
+    frame: u64,
+    reference_space: &'static str,
+    visible: bool,
+}
 impl Default for PanelPose {
     fn default() -> Self {
         Self {
@@ -40,6 +48,8 @@ pub(crate) struct ControlSnapshot {
     pub(crate) particle_scale: f32,
     pub(crate) pose: PanelPose,
     pub(crate) pose_initialized: bool,
+    pub(crate) pose_revision: u64,
+    submitted_geometry: Option<SubmittedGeometry>,
     pub(crate) initial_pose: PanelPose,
     pub(crate) pose_distance: f32,
     pub(crate) panel_visible: bool,
@@ -66,6 +76,8 @@ impl Default for ControlSnapshot {
             particle_scale: 0.5,
             pose: PanelPose::default(),
             pose_initialized: false,
+            pose_revision: 0,
+            submitted_geometry: None,
             initial_pose: PanelPose::default(),
             pose_distance: 1.4,
             panel_visible: true,
@@ -81,6 +93,99 @@ fn controls() -> &'static Mutex<ControlSnapshot> {
 }
 pub(crate) fn snapshot() -> ControlSnapshot {
     *controls().lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn observe_geometry(
+    state: &mut ControlSnapshot,
+    frame: ControlSnapshot,
+    submitted_frame: u64,
+    reference_space: &'static str,
+) -> bool {
+    if frame.generation == 0
+        || frame.generation != state.generation
+        || !frame.pose_initialized
+        || !matches!(reference_space, "LOCAL" | "STAGE")
+        || frame.pose_revision > state.pose_revision
+        || state.submitted_geometry.is_some_and(|prior| {
+            submitted_frame < prior.frame || frame.pose_revision < prior.pose_revision
+        })
+    {
+        return false;
+    }
+    state.submitted_geometry = Some(SubmittedGeometry {
+        pose: frame.pose,
+        pose_revision: frame.pose_revision,
+        frame: submitted_frame,
+        reference_space,
+        visible: frame.panel_visible,
+    });
+    true
+}
+
+/// Observation only: caller has submitted this exact frozen frame and completed xrEndFrame.
+pub(crate) fn renderer_observed_geometry(
+    frame: ControlSnapshot,
+    submitted_frame: u64,
+    reference_space_type: &'static str,
+) -> bool {
+    observe_geometry(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        frame,
+        submitted_frame,
+        reference_space_type,
+    )
+}
+
+fn geometry_readback(state: ControlSnapshot, generation: u64) -> serde_json::Value {
+    let status = if generation == 0 || generation != state.generation {
+        "unavailable"
+    } else if !state.pose_initialized {
+        "uninitialized"
+    } else if state
+        .submitted_geometry
+        .is_some_and(|seen| seen.pose_revision == state.pose_revision)
+    {
+        "applied"
+    } else {
+        "pending"
+    };
+    let mut value = serde_json::json!({"schema":"rusty.quest.native_mesh_ui.panel_geometry.v1","generation":generation,
+        "status":status,"pose_revision":state.pose_revision,"surface_width_pixels":WIDTH,"surface_height_pixels":HEIGHT,
+        "evidence":"native-submitted-frame","visible_confirmation":false});
+    // No current/requested pose is exposed before its actual submitted frame.
+    if status == "applied" {
+        let seen = state
+            .submitted_geometry
+            .expect("applied geometry has submitted observation");
+        value["effective_pose_revision"] = serde_json::json!(seen.pose_revision);
+        value["submitted_frame"] = serde_json::json!(seen.frame);
+        value["reference_space"] = serde_json::json!(seen.reference_space);
+        value["frame_panel_visible"] = serde_json::json!(seen.visible);
+        value["center"] = serde_json::json!(seen.pose.center);
+        value["right"] = serde_json::json!(seen.pose.right);
+        value["up"] = serde_json::json!(seen.pose.up);
+        value["width_meters"] = serde_json::json!(seen.pose.width);
+        value["height_meters"] = serde_json::json!(seen.pose.height);
+    }
+    value
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeReadPanelGeometry(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    generation: i64,
+) -> jni::sys::jstring {
+    use jni::Outcome;
+    let body = geometry_readback(snapshot(), generation.max(0) as u64).to_string();
+    match env
+        .with_env(|env| env.new_string(body).map(|s| s.into_raw()))
+        .into_outcome()
+    {
+        Outcome::Ok(value) => value,
+        Outcome::Err(_) | Outcome::Panic(_) => std::ptr::null_mut(),
+    }
 }
 fn set_visibility(state: &mut ControlSnapshot, generation: u64, visible: bool) -> Option<u64> {
     if generation == 0 || state.generation != generation || state.revision >= i64::MAX as u64 {
@@ -203,6 +308,11 @@ fn calibrate(
     let Some(pose) = head_relative_pose(position, orientation) else {
         return false;
     };
+    if state.revision >= i64::MAX as u64 {
+        return false;
+    }
+    state.revision += 1;
+    state.pose_revision = state.revision;
     state.pose = pose;
     state.initial_pose = pose;
     state.pose_initialized = true;
@@ -273,6 +383,7 @@ pub(crate) fn deactivate(generation: u64) {
 fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> bool {
     if generation == 0
         || generation != s.generation
+        || s.revision >= i64::MAX as u64
         || !value.is_finite()
         || !(0.0..=1.0).contains(&value)
     {
@@ -320,6 +431,9 @@ fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> boo
         _ => return false,
     }
     s.revision = s.revision.saturating_add(1);
+    if matches!(code, 6 | 7 | 13) {
+        s.pose_revision = s.revision;
+    }
     true
 }
 fn dot(a: [f32; 3], b: [f32; 3]) -> f32 {
@@ -454,9 +568,8 @@ pub(crate) mod android {
     use crate::acamera_sys as media;
     use crate::android_hardware_buffer::AndroidHardwareBufferHandle;
     use jni::{
-        jni_sig, jni_str,
+        JavaVM, jni_sig, jni_str,
         objects::{JClass, JClassLoader, JObject, JValue},
-        JavaVM,
     };
     use std::ptr;
     #[link(name = "android")]
@@ -765,6 +878,64 @@ mod tests {
         // that establishes effective visibility and dispatches real panel input.
         assert_eq!(frame.generation, owner.generation);
         assert_eq!(frame.particle_scale, 0.5);
+    }
+    #[test]
+    fn geometry_requires_current_submitted_pose_and_exact_reference() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            ..Default::default()
+        };
+        assert_eq!(geometry_readback(state, 7)["status"], "uninitialized");
+        assert!(calibrate(&mut state, 7, [1., 2., 3.], [0., 0., 0., 1.]));
+        assert_eq!(geometry_readback(state, 7)["status"], "pending");
+        assert!(geometry_readback(state, 7).get("center").is_none());
+        let first = state;
+        assert!(!observe_geometry(&mut state, first, 0, "LOCAL_FLOOR"));
+        assert!(observe_geometry(&mut state, first, 0, "LOCAL"));
+        let seen = geometry_readback(state, 7);
+        assert_eq!(seen["status"], "applied");
+        assert_eq!(seen["submitted_frame"], 0);
+        assert_eq!(seen["reference_space"], "LOCAL");
+        assert!((seen["center"][2].as_f64().unwrap() - 1.6).abs() < 0.001);
+        assert!(apply(&mut state, 7, 6, 1.));
+        assert_eq!(geometry_readback(state, 7)["status"], "pending");
+        assert!(geometry_readback(state, 7).get("center").is_none());
+        let moved = state;
+        assert!(observe_geometry(&mut state, moved, 4, "STAGE"));
+        assert!(!observe_geometry(&mut state, first, 3, "LOCAL"));
+        assert_eq!(geometry_readback(state, 7)["reference_space"], "STAGE");
+        assert_eq!(geometry_readback(state, 8)["status"], "unavailable");
+        assert!(geometry_readback(state, 8).get("center").is_none());
+        state.generation = 0;
+        assert!(!observe_geometry(&mut state, moved, 5, "STAGE"));
+        assert_eq!(geometry_readback(state, 7)["status"], "unavailable");
+    }
+
+    #[test]
+    fn widget_pixel_inverse_matches_actual_native_ray_mapping() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            ..Default::default()
+        };
+        let half = std::f32::consts::FRAC_1_SQRT_2;
+        assert!(calibrate(
+            &mut state,
+            7,
+            [2., 1.65, 3.],
+            [0., half, 0., half]
+        ));
+        for pixels in [[10., 20.], [512., 384.], [1000., 750.]] {
+            let pose = state.pose;
+            let normal = cross(pose.right, pose.up);
+            let target: [f32; 3] = std::array::from_fn(|i| {
+                pose.center[i]
+                    + pose.right[i] * pose.width * (pixels[0] / WIDTH as f32 - 0.5)
+                    + pose.up[i] * pose.height * (0.5 - pixels[1] / HEIGHT as f32)
+            });
+            let origin = std::array::from_fn(|i| target[i] + normal[i] * 0.4);
+            let mapped = ray_pixels(pose, origin, normal.map(|x| -x)).unwrap();
+            assert!((mapped[0] - pixels[0]).abs() < 0.001 && (mapped[1] - pixels[1]).abs() < 0.001);
+        }
     }
     #[test]
     fn visibility_request_needs_its_submitted_frame_and_preserves_scene_controls() {
