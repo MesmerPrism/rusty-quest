@@ -153,6 +153,7 @@ final class ProductPanelOperator {
     }
     private static void validate(String action, JSONObject p) {
         switch (action) {
+            case "panel-visible": keys(p,"visible"); bool(p,"visible"); break;
             case "navigate": {
                 keys(p, "surface", "page");
                 String surface = text(p, "surface", 24), page = text(p, "page", 24);

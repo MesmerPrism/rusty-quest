@@ -57,6 +57,8 @@ public final class ProductPanelOperatorTest {
         first.close();
         check(call(status()).getString("owner_token").equals(replacementToken));
         check("panel-owner-replaced".equals(call(command).getString("reason")) && invocations==2);
+        check("rejected".equals(call(invoke(replacementToken,"0000000000000005","panel-visible",new JSONObject().put("visible","true"))).getString("status")) && invocations==2);
+        check("dispatched".equals(call(invoke(replacementToken,"0000000000000005","panel-visible",new JSONObject().put("visible",true))).getString("status")) && invocations==3);
         replacement.close();
         check("rejected".equals(call(status()).getString("status")));
         System.out.println("ProductPanelOperatorTest PASS actual callbacks, re-entry, lost acknowledgement/no replay, owner replacement, thread and hostile shapes");

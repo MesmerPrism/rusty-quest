@@ -40,6 +40,7 @@ actions are:
 
 | Action | Parameters |
 | --- | --- |
+| `panel-visible` | Boolean `visible`; current mesh owner only, with original generation/revision and submitted-frame evidence in `panel_visibility` |
 | `navigate` | `surface`: `experimenter` with `page`: `prepare`, `controls`, `condition`, `session`, `polar`; or `developer` with `page`: `home`, `particles`, `breath`, `polar`, `lsl`, `status` |
 | `scroll` | Integer `delta_y`, between -8192 and 8192 |
 | `particle-patch` | Nonempty `patch` object; the original particle owner validates its existing field names, bounds and revision |
