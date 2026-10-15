@@ -6,6 +6,7 @@ import android.app.Dialog;
 import android.app.Presentation;
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
@@ -34,10 +35,17 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.EditText;
 import android.widget.PopupMenu;
+import android.widget.Spinner;
+import android.widget.AdapterView;
+import android.widget.CheckBox;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 /** App-owned Android widgets rendered into the native OpenXR mesh texture, not another Activity. */
 public final class NativeMeshUiProducer {
@@ -94,6 +102,9 @@ static final class VisibilityReadback {
     private boolean visibilityObserved;
     private boolean effectiveVisible;
     private long visibilityRequest;
+    private final IdentityHashMap<Dialog,Long> windowIds=new IdentityHashMap<Dialog,Long>();
+    private long nextWindowId=1,widgetRevision;
+    private String widgetSignature="";
     private final ArrayList<Dialog> modals = new ArrayList<Dialog>();
     private Dialog pointerDialog;
     private Dialog keyboard;
@@ -102,6 +113,118 @@ static final class VisibilityReadback {
     private EditorInfo editorInfo;
     private boolean capitals, symbols;
     private MeshActionMode selectionMode;
+
+    /** Readback includes explicitly static controls only, never arbitrary displayed text. */
+    static final class WidgetMetadata {
+        private static final HashSet<String> LABELS=new HashSet<String>(Arrays.asList(
+            "Approve","Cancel","Done","Connect until host expiry","Shift","Symbols","Space","←","→","Delete","Enter",
+            "Resume VR","Experimenter","Return to VR","Open Polar connection","Turn phone control off","Turn phone control on",
+            "Require pairing code","Allow open control","Replace trusted controller","Approve trusted LAN controller",
+            "Approve encrypted relay controller only","Create temporary hotspot","Create Wi-Fi Direct group",
+            "Show temporary network join details","Connect approved HTTPS relay","Stop relay and temporary networks","Revoke network controller",
+            "Arm Condition 1","Arm Condition 2","Start official run","Pause official run","Resume official run","Apply live bias",
+            "Refresh status","Save session & prepare next","Back","Next","Open developer settings","Save and exit",
+            "Home","Particles","Breath","Polar","LSL","Status","Next: Controls","Next: Choose condition","Session status","Prepare next run",
+            "Apply breath mapping","Apply Polar state tuning","Refresh breath state","Refresh effective state","Apply LSL configuration",
+            "Disable LSL","Reset LSL defaults","Refresh particle state","Read canonical effective snapshot","Apply selection",
+            "Start calibration","Reset","Refresh readback","Refresh effective"));
+        static JSONObject labels(String role,CharSequence buttonLabel,CharSequence hint)throws org.json.JSONException {
+            JSONObject result=new JSONObject();
+            if(("button".equals(role)||"checkbox".equals(role))&&buttonLabel!=null){
+                String value=buttonLabel.toString();
+                if(LABELS.contains(value)||value.length()==1&&value.charAt(0)>=33&&value.charAt(0)<=126)result.put("static_label",value);
+            }
+            if("textbox".equals(role)&&hint!=null){
+                String value=hint.toString();if(value.length()<=256&&!value.contains("\u0000"))result.put("hint",value);
+            }
+            return result;
+        }
+    }
+
+    static final class GeometryReadback {
+        static boolean applied(JSONObject value,long generation){
+            if(value==null||!"rusty.quest.native_mesh_ui.panel_geometry.v1".equals(value.opt("schema"))
+                ||!"applied".equals(value.opt("status"))||!"native-submitted-frame".equals(value.opt("evidence"))
+                ||!Boolean.FALSE.equals(value.opt("visible_confirmation"))||!(value.opt("frame_panel_visible") instanceof Boolean)
+                ||!integer(value.opt("generation"))||value.optLong("generation",0)!=generation||generation<=0
+                ||!integer(value.opt("pose_revision"))||value.optLong("pose_revision",-1)<0
+                ||!integer(value.opt("effective_pose_revision"))||value.optLong("pose_revision",-1)!=value.optLong("effective_pose_revision",-2)
+                ||!integer(value.opt("submitted_frame"))||value.optLong("submitted_frame",-1)<0
+                ||!Arrays.asList("LOCAL","STAGE").contains(value.opt("reference_space"))
+                ||!Integer.valueOf(1024).equals(value.opt("surface_width_pixels"))||!Integer.valueOf(768).equals(value.opt("surface_height_pixels")))return false;
+            double[] right=vector(value.optJSONArray("right")),up=vector(value.optJSONArray("up"));
+            return vector(value.optJSONArray("center"))!=null&&right!=null&&up!=null
+                &&Math.abs(dot(right,right)-1)<0.01&&Math.abs(dot(up,up)-1)<0.01&&Math.abs(dot(right,up))<0.01
+                &&positive(value.opt("width_meters"))&&positive(value.opt("height_meters"));
+        }
+        private static boolean integer(Object value){return value instanceof Integer||value instanceof Long;}
+        private static boolean positive(Object value){return value instanceof Number&&Double.isFinite(((Number)value).doubleValue())&&((Number)value).doubleValue()>0;}
+        private static double[] vector(JSONArray value){
+            if(value==null||value.length()!=3)return null;double[] result=new double[3];
+            for(int i=0;i<3;i++){Object item=value.opt(i);if(!(item instanceof Number)||!Double.isFinite(((Number)item).doubleValue()))return null;result[i]=((Number)item).doubleValue();}return result;
+        }
+        private static double dot(double[] a,double[] b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+    }
+
+    /** App-owned visible geometry. It exposes no widget mutation or generic callback route. */
+    public static JSONObject productPanelGeometry(Activity productOwner){
+        NativeMeshUiProducer producer=productProducer(productOwner);
+        if(producer==null||!((ProductPanelAttachment)producer.panelAttachment).presentationActive())return visibilityUnavailable("not-selected");
+        try{return producer.widgetGeometry();}catch(Exception unavailable){return visibilityUnavailable("unavailable");}
+    }
+
+    private JSONObject widgetGeometry()throws Exception {
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())throw new IllegalStateException("mesh-geometry-requires-main-thread");
+        JSONObject geometry=new JSONObject(nativeReadPanelGeometry(generation));
+        boolean applied=GeometryReadback.applied(geometry,generation);
+        if("applied".equals(geometry.optString("status"))&&!applied)geometry=visibilityUnavailable("unavailable");
+        boolean interactive=applied&&geometry.optBoolean("frame_panel_visible",false)&&visibilityObserved&&effectiveVisible&&visibilityRequest==0;
+        JSONArray windows=new JSONArray();
+        addWindow(windows,root,0,"root",modals.isEmpty()&&interactive);
+        for(int i=0;i<modals.size();i++){
+            Dialog modal=modals.get(i);if(!modal.isShowing())continue;
+            addWindow(windows,modal.getWindow().getDecorView(),windowIds.get(modal),"modal",i==modals.size()-1&&interactive);
+        }
+        if(keyboard!=null&&keyboard.isShowing())addWindow(windows,keyboard.getWindow().getDecorView(),windowIds.get(keyboard),"keyboard",interactive);
+        String signature=windows.toString();if(!signature.equals(widgetSignature)){widgetSignature=signature;widgetRevision++;}
+        return new JSONObject().put("schema","rusty.quest.native_mesh_ui.widget_geometry.v1").put("generation",generation)
+            .put("widget_revision",widgetRevision).put("surface_width_pixels",1024).put("surface_height_pixels",768)
+            .put("interactive",interactive).put("native_geometry",geometry).put("windows",windows)
+            .put("pointer_capture_active",down).put("capture_window_id",pointerDialog==null?0:windowIds.get(pointerDialog))
+            .put("evidence","current-android-view-layout; native-geometry-qualified-separately").put("visible_confirmation",false);
+    }
+
+    private static JSONArray bounds(View view)throws org.json.JSONException {
+        Rect local=new Rect();if(!view.isAttachedToWindow()||!view.isShown()||!view.getLocalVisibleRect(local))return null;
+        int[] location=new int[2];view.getLocationOnScreen(location);local.offset(location[0],location[1]);
+        if(!local.intersect(0,0,1024,768)||local.isEmpty())return null;
+        return new JSONArray(new int[]{local.left,local.top,local.right,local.bottom});
+    }
+    private void addWindow(JSONArray windows,View decor,long id,String layer,boolean interactive)throws Exception {
+        JSONArray widgets=new JSONArray();collectWidgets(decor,"0",widgets,interactive,id,0);
+        windows.put(new JSONObject().put("window_id",id).put("layer",layer).put("interactive",interactive)
+            .put("bounds_pixels",bounds(decor)).put("layout_pending",decor.isLayoutRequested())
+            .put("pointer_rule","keyboard".equals(layer)?"bounds-first":"modal".equals(layer)?"top-modal-fallback":"root-fallback")
+            .put("widgets",widgets));
+    }
+    private void collectWidgets(View view,String path,JSONArray widgets,boolean interactive,long windowId,int depth)throws Exception {
+        if(depth>64||widgets.length()>=512)return;
+        JSONArray rect=bounds(view);if(rect==null)return;
+        String role=view instanceof EditText?"textbox":view instanceof CheckBox?"checkbox":view instanceof Button?"button"
+            :view instanceof Spinner?"combobox":view instanceof SeekBar?"slider":view instanceof ScrollView?"scroll"
+            :view.getParent() instanceof AdapterView?"option":"";
+        if(!role.isEmpty()){
+            float x=(rect.getInt(0)+rect.getInt(2))*0.5f,y=(rect.getInt(1)+rect.getInt(3))*0.5f;
+            Dialog target=dialogAt(x,y);long targetId=target==null?0:windowIds.get(target);
+            JSONObject node=WidgetMetadata.labels(role,view instanceof Button?((Button)view).getText():null,view instanceof EditText?((EditText)view).getHint():null)
+                .put("node_path",path).put("role",role).put("resource_id",view.getId()).put("bounds_pixels",rect)
+                .put("hit_point_pixels",new JSONArray(new float[]{x,y})).put("enabled",view.isEnabled())
+                .put("interactive",interactive&&view.isEnabled()&&targetId==windowId&&!view.isLayoutRequested()).put("focused",view.hasFocus());
+            if(view.getParent() instanceof AdapterView)node.put("option_index",((AdapterView<?>)view.getParent()).getPositionForView(view));
+            widgets.put(node);
+        }
+        if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)collectWidgets(group.getChildAt(i),path+"/"+i,widgets,interactive,windowId,depth+1);}
+    }
 
     /** Android still owns allowed selection actions (including password restrictions). */
     private final class MeshActionMode extends ActionMode {
@@ -248,8 +371,10 @@ static final class VisibilityReadback {
             if(selectionMode!=null&&contains(dialog.getWindow().getDecorView(),selectionMode.source))selectionMode.finish();
             if(dialog==keyboard){keyboard=null;retireEditor();}
             else if(contains(dialog.getWindow().getDecorView(),editor))closeKeyboard();
+            windowIds.remove(dialog);
         }});
         dialog.show();
+        windowIds.put(dialog,nextWindowId++);
         if(!isKeyboard)modals.add(dialog);
     }
 
@@ -694,4 +819,5 @@ static final class VisibilityReadback {
     private static native boolean nativeControl(long generation, int code, float value);
     private static native long nativeSetPanelVisible(long generation, boolean visible);
     private static native String nativeReadPanelVisibility(long generation, long requestRevision);
+    private static native String nativeReadPanelGeometry(long generation);
 }

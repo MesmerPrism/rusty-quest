@@ -966,6 +966,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
         result.put("network",gateway==null?new JSONObject().put("selected",ExperimentSessionCommandGateway.featurePackaged(this)).put("state","uninitialized"):gateway.productPanelReadback());
         result.put("panel_visibility",NativeMeshUiProducer.productPanelVisibility(this));
+        result.put("panel_geometry",NativeMeshUiProducer.productPanelGeometry(this));
         return result;
     }
     private JSONObject invokeProductPanelOperator(String action,JSONObject parameters)throws Exception {
@@ -1058,7 +1059,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
 
     private android.app.AlertDialog.Builder panelDialogBuilder(){
         if(!meshInputActive())return new android.app.AlertDialog.Builder(this);
-        return new android.app.AlertDialog.Builder(meshPanelAttachment.carrier.getContext()){
+        android.content.Context themedDisplay=new android.view.ContextThemeWrapper(
+            meshPanelAttachment.carrier.getContext(),BreathCompositionPanelModule.this.getTheme());
+        return new android.app.AlertDialog.Builder(themedDisplay){
             @Override public android.app.AlertDialog show(){
                 android.app.AlertDialog dialog=create();
                 NativeMeshUiProducer.showProductDialog(BreathCompositionPanelModule.this,dialog);
