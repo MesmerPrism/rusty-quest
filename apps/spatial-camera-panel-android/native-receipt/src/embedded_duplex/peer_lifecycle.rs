@@ -2,6 +2,7 @@
 //! all authority identity, revisions, time and randomness remain native-owned.
 use super::*;
 use rusty_quest_broker_authority::QuestConcurrentPeerCommand;
+use rusty_quest_broker_authority::{sample_concurrent_clock, ConcurrentClockRejection, ConcurrentClockSample};
 use std::fs::File;
 use std::io::Read;
 
@@ -24,6 +25,7 @@ pub(super) struct State {
     renewal_pending: bool,
     last_failure: Option<String>,
     last_failure_action: Option<&'static str>,
+    authority_clock_read: Option<Value>,
     whole_close_requested: bool,
 }
 
@@ -130,6 +132,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "owner_failure_diagnostic":owner_diagnostic,
         "owner_failure_diagnostic_status":owner_diagnostic_status,
         "owner_transport_attempt":host.callbacks.owner_transport_attempt_read(),
+        "authority_clock_read":state.authority_clock_read,
         "native_owner_dispatch_failure":*host.owner_dispatch_failure.lock().map_err(|_| "owner diagnostic state unavailable")?,
         "activation":state.activation,"renewal_receipts":&state.renewals[state.renewals.len().saturating_sub(2)..],
         "renewal_total_completed":state.renewals.len(),
@@ -277,27 +280,37 @@ fn renew_state_after_signed_pair(
     }
     require_renewable_media(state)?;
     let renewal = serde_json::from_value(pair_proof.clone()).map_err(safe_decode)?;
-    let before = monotonic_ns()?;
-    let wall = i64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| "OS authority wall clock unavailable")?
-            .as_millis(),
-    )
-    .map_err(|_| "OS authority wall clock overflow")?;
-    let after = monotonic_ns()?;
-    let uncertainty = after
-        .checked_sub(before)
-        .ok_or("OS authority clock reversed")?
-        .checked_add(1_000_000)
-        .ok_or("OS clock uncertainty overflow")?;
-    let now = u64::try_from(wall).map_err(|_| "OS authority wall clock negative")?;
     let result = {
         let mut provider = Checkout::take(host.provider.clone())?;
-        let clock = provider
-            .get()
-            .read_concurrent_peer_clock(wall, after, uncertainty)
-            .map_err(|_| "current OS authority clock rejected")?;
+        let (sampled, observations) =
+            sample_concurrent_clock(read_os_authority_sample, |sample, uncertainty| {
+                provider
+                    .get()
+                    .read_concurrent_peer_clock_detailed(
+                        sample.wall_ms,
+                        sample.after_ns,
+                        uncertainty,
+                    )
+                    .map(|clock| (clock, sample.wall_ms))
+            });
+        // Retain the bounded observation before any provider mutation or error
+        // propagation. A failed sample leaves the existing renewal Pending.
+        state.authority_clock_read = Some(json!({
+            "schema":"rusty.quest.embedded_duplex.authority_clock_read.v1",
+            "action":"renew_authority","stage":"before_provider_renewal",
+            "clock_read_grants_authority":false,"attempt_count":observations.len(),
+            "maximum_attempts":3,"maximum_uncertainty_ns":10_000_000,
+            "maximum_wall_monotonic_delta_ms":1_000,
+            "samples":observations.iter().map(|v| json!({
+                "wall_ms":v.sample.map(|s|s.wall_ms),
+                "before_monotonic_ns":v.sample.map(|s|s.before_ns),
+                "after_monotonic_ns":v.sample.map(|s|s.after_ns),
+                "read_uncertainty_ns":v.uncertainty_ns,
+                "rejection":v.rejection.map(|r|r.code())
+            })).collect::<Vec<_>>()
+        }));
+        let (clock, wall) = sampled.map_err(|_| "current OS authority clock rejected")?;
+        let now = u64::try_from(wall).map_err(|_| "OS authority wall clock negative")?;
         provider
             .get()
             .renew_concurrent_peer_authority(&clock, &renewal, now, &entropy()?)
@@ -309,6 +322,23 @@ fn renew_state_after_signed_pair(
     state.renewed_session_proofs.push(pair_proof.clone());
     state.renewals.push(value.clone());
     Ok(value)
+}
+
+fn read_os_authority_sample() -> Result<ConcurrentClockSample, ConcurrentClockRejection> {
+    let before_ns = monotonic_ns().map_err(|_| ConcurrentClockRejection::OsReadUnavailable)?;
+    let wall_ms = i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| ConcurrentClockRejection::OsReadUnavailable)?
+            .as_millis(),
+    )
+    .map_err(|_| ConcurrentClockRejection::OsReadUnavailable)?;
+    let after_ns = monotonic_ns().map_err(|_| ConcurrentClockRejection::OsReadUnavailable)?;
+    Ok(ConcurrentClockSample {
+        wall_ms,
+        before_ns,
+        after_ns,
+    })
 }
 
 /// Called only after the signed pair child has applied its actual local owner

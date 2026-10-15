@@ -40,44 +40,63 @@ impl QuestBrokerRuntimeProvider {
         monotonic_elapsed_ns: u64,
         read_uncertainty_ns: u64,
     ) -> Result<ManifoldClockSnapshot, QuestBrokerRuntimeError> {
-        let runtime = self
-            .runtime
-            .as_ref()
-            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
-        let broker = runtime
-            .runtime
-            .read()
-            .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
-        let prior = &broker.control_lease_authority_snapshot().clock_snapshot;
-        if prior.health != ClockHealth::Healthy
-            || prior.clock_domain.as_str() != "clock.android.system"
-            || wall_unix_ms < prior.wall_unix_ms
-            || monotonic_elapsed_ns < prior.monotonic_elapsed_ns
-            || read_uncertainty_ns > 10_000_000
-        {
-            return Err(QuestBrokerRuntimeError::InvalidAuthorityClock);
-        }
-        let wall_delta = u64::try_from(wall_unix_ms - prior.wall_unix_ms)
-            .map_err(|_| QuestBrokerRuntimeError::InvalidAuthorityClock)?;
-        let monotonic_delta = (monotonic_elapsed_ns - prior.monotonic_elapsed_ns) / 1_000_000;
-        if wall_delta.abs_diff(monotonic_delta) > 1_000 {
-            return Err(QuestBrokerRuntimeError::InvalidAuthorityClock);
-        }
-        let mut clock = prior.clone();
-        let mut sequence = clock.sequence;
-        if let Some(revoker) = self.concurrent_revoker_clock() {
-            if revoker.clock_domain != prior.clock_domain
-                || revoker.clock_epoch_id != prior.clock_epoch_id
-                || wall_unix_ms < revoker.wall_unix_ms
-                || monotonic_elapsed_ns < revoker.monotonic_elapsed_ns
-            {
-                return Err(QuestBrokerRuntimeError::InvalidAuthorityClock);
+        self.read_concurrent_peer_clock_detailed(
+            wall_unix_ms,
+            monotonic_elapsed_ns,
+            read_uncertainty_ns,
+        )
+        .map_err(|reason| match reason {
+            crate::ConcurrentClockRejection::NotInitialized => {
+                QuestBrokerRuntimeError::NotInitialized
             }
-            sequence = sequence.max(revoker.sequence);
-        }
-        clock.sequence = sequence
-            .checked_add(1)
-            .ok_or(QuestBrokerRuntimeError::InvalidAuthorityClock)?;
+            crate::ConcurrentClockRejection::RuntimeLockPoisoned => {
+                QuestBrokerRuntimeError::RuntimeLockPoisoned
+            }
+            _ => QuestBrokerRuntimeError::InvalidAuthorityClock,
+        })
+    }
+
+    /// Observe the same clock bounds with a closed, payload-free rejection.
+    /// This does not publish a clock, issue authority, or change any lease.
+    ///
+    /// # Errors
+    /// Returns the exact clock-bound rejection without formatting owner errors.
+    pub fn read_concurrent_peer_clock_detailed(
+        &self,
+        wall_unix_ms: i64,
+        monotonic_elapsed_ns: u64,
+        read_uncertainty_ns: u64,
+    ) -> Result<ManifoldClockSnapshot, crate::ConcurrentClockRejection> {
+        use crate::{ConcurrentClockBounds, ConcurrentClockRejection as R};
+        let runtime = self.runtime.as_ref().ok_or(R::NotInitialized)?;
+        let broker = runtime.runtime.read().map_err(|_| R::RuntimeLockPoisoned)?;
+        let prior = &broker.control_lease_authority_snapshot().clock_snapshot;
+        let bounds = ConcurrentClockBounds {
+            healthy: prior.health == ClockHealth::Healthy,
+            identity_matches: prior.clock_domain.as_str() == "clock.android.system",
+            wall_ms: prior.wall_unix_ms,
+            monotonic_ns: prior.monotonic_elapsed_ns,
+            sequence: prior.sequence,
+        };
+        let revoker = self
+            .concurrent_revoker_clock()
+            .map(|value| ConcurrentClockBounds {
+                healthy: true,
+                identity_matches: value.clock_domain == prior.clock_domain
+                    && value.clock_epoch_id == prior.clock_epoch_id,
+                wall_ms: value.wall_unix_ms,
+                monotonic_ns: value.monotonic_elapsed_ns,
+                sequence: value.sequence,
+            });
+        let sequence = crate::validate_concurrent_clock(
+            bounds,
+            revoker,
+            wall_unix_ms,
+            monotonic_elapsed_ns,
+            read_uncertainty_ns,
+        )?;
+        let mut clock = prior.clone();
+        clock.sequence = sequence;
         clock.wall_unix_ms = wall_unix_ms;
         clock.monotonic_elapsed_ns = monotonic_elapsed_ns;
         clock.read_uncertainty_ns = read_uncertainty_ns;

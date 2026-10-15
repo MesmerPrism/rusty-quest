@@ -1,5 +1,42 @@
 # Embedded duplex finite authority and native fencing
 
+## Renewal OS-clock sampling observation
+
+The native renewal caller reads the actual OS wall clock inside a monotonic
+bracket. The existing one-millisecond quantization allowance, ten-millisecond
+maximum uncertainty and one-second wall/monotonic delta bound remain intact.
+The Broker clock validator now returns closed rejection codes for unhealthy or
+foreign accepted clocks, reversed clocks, discontinuity, revoker identity or
+clock drift, exhausted sequence, and excessive read uncertainty. Its existing
+public method preserves the previous error categories. Validation never
+publishes a clock or grants authority.
+
+Only excessive measured read uncertainty permits another fresh OS read, up to
+three samples. All hard bounds are checked before that classification; a wide
+read cannot hide another failure. No provider mutation, signing, network
+exchange, authority extension or effect is repeated by this sampling loop.
+The accepted fresh sample supplies the actual time for the unchanged provider
+renewal. A failed/exhausted read preserves the pending renewal and old receipts.
+Actual signed-expiry and current-route checks remain separate and unchanged.
+
+The existing debug peer lifecycle receipt adds optional `authority_clock_read`:
+null until a renewal clock read, otherwise a versioned bounded observation of
+the latest read, its finite rejection codes, actual wall/monotonic bracket and
+uncertainty, attempt count and unchanged numeric bounds. It contains no epoch
+identifier, key, credential, configuration body or formatted exception. Reads
+do not clear it or turn Pending into acceptance. Existing receipt schema,
+required fields, operator calls and collapsed `last_failure` text remain
+compatible; consumers that do not inspect this optional observation ignore it.
+
+`python tools/checks/Test-ConcurrentAuthorityClockHost.py --root . --output
+<new-private-output>` runs the actual production validator/sampler and extracted
+native renewal/pending bodies with modeled OS reads and provider effects.
+It covers delayed then narrow reads, hard-bound precedence, exhausted samples,
+retained pending history, and no duplicated provider effect. These host controls
+do not prove Android/JNI compatibility, deployment, the cause of a prior device
+failure, or successful renewed media. Android typecheck and an exact qualified
+artifact remain separate prerequisites for later device validation.
+
 Known-birth nonaccepting disposition v4 supports a distinct current boot after
 an externally attested complete package-UID absence. It preserves the original
 known actor birth, boot, ARM receipt, pending fence and replay records. The
