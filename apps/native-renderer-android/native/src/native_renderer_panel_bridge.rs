@@ -882,6 +882,7 @@ fn stop_current_condition_audio_for_terminal_impl(
 }
 
 #[cfg(target_os = "android")]
+#[deny(unexpected_cfgs)]
 fn send_control_panel_intent(
     app: &android_activity::AndroidApp,
     action_name: &str,
@@ -1026,10 +1027,7 @@ fn send_control_panel_intent(
         // Capture the renderer's producer generation before Java queues UI work.
         // The selected original host pins that exact Activity/controller/producer;
         // an uncertain or retired native route must not launch a replacement2D task.
-        #[cfg(feature = "native-mesh-ui")]
         let producer_generation = crate::native_mesh_ui::snapshot().generation;
-        #[cfg(not(feature = "native-mesh-ui"))]
-        let producer_generation = 0_u64;
         let native_route = env.call_static_method(
             &panel_class,
             jni_str!("routeToNativePanelFromNative"),
