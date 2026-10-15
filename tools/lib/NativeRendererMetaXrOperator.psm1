@@ -141,9 +141,9 @@ function Assert-NativeRendererMetaXrOperatorArchive {
         if (-not $Selection.enabled) { if ($entries.Count -ne 0) { throw 'Unselected Operator artifact in APK.' }; return }
         if ($entries.Count -ne 2) { throw 'Operator APK entry closure differs.' }
         foreach ($record in @($Selection.library,$Selection.layer_manifest)) {
-            $matches=@($entries | Where-Object { $_.FullName -ceq $record.apk_path })
-            if ($matches.Count -ne 1 -or $matches[0].Length -ne $record.bytes) { throw 'Operator APK path/length mismatch.' }
-            $stream=$matches[0].Open()
+            $matchingEntries=@($entries | Where-Object { $_.FullName -ceq $record.apk_path })
+            if ($matchingEntries.Count -ne 1 -or $matchingEntries[0].Length -ne $record.bytes) { throw 'Operator APK path/length mismatch.' }
+            $stream=$matchingEntries[0].Open()
             try { $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($stream)).ToLowerInvariant() } finally { $stream.Dispose() }
             if ($hash -cne $record.sha256) { throw 'Operator APK bytes mismatch.' }
         }
