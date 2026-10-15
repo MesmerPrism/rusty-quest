@@ -190,6 +190,19 @@ function Assert-SetEquals {
     }
 }
 
+function Get-SelectedNativeHostActivities {
+    param([string[]]$Activities, [string[]]$SelectedFeatureIds)
+    $originalNativeHost = $SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -and
+        $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
+    foreach ($activity in $Activities) {
+        if ($originalNativeHost -and $activity -ceq 'android.app.NativeActivity') {
+            'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity'
+        } else {
+            $activity
+        }
+    }
+}
+
 function Get-NativeRendererPropertyManifest {
     param([Parameter(Mandatory=$true)][string]$Path)
     $manifest = Read-JsonFile -Path $Path
@@ -1391,9 +1404,7 @@ foreach ($marker in @($requiredMarkerSet.Keys)) {
 $permissions = @(Get-SortedSet -Set $permissionsSet)
 $usesFeatures = @(Get-SortedSet -Set $usesFeaturesSet)
 $activities = @(Get-SortedSet -Set $activitiesSet)
-if ($selectedFeatureIds -ccontains 'ui.native_mesh_panel' -and $selectedFeatureIds -ccontains 'ui.breath_composition_control_panel') {
-    $activities = @($activities | ForEach-Object { if ($_ -ceq 'android.app.NativeActivity') { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { $_ } })
-}
+$activities = @(Get-SelectedNativeHostActivities -Activities $activities -SelectedFeatureIds $selectedFeatureIds)
 $receivers = @(Get-SortedSet -Set $receiversSet)
 $services = @(Get-SortedSet -Set $servicesSet)
 $queries = @(Get-SortedSet -Set $queriesSet)
@@ -1436,7 +1447,8 @@ if ($claimsSimultaneousHandsControllers -and
 
 Assert-SetEquals -Label "Android permission surface" -Expected (Get-StringArray $app.declared_manifest.permissions) -Actual $permissions
 Assert-SetEquals -Label "Android uses-feature surface" -Expected (Get-StringArray $app.declared_manifest.uses_features) -Actual $usesFeatures
-Assert-SetEquals -Label "Android activity surface" -Expected (Get-StringArray $app.declared_manifest.activities) -Actual $activities
+$declaredActivities = @(Get-SelectedNativeHostActivities -Activities (Get-StringArray $app.declared_manifest.activities) -SelectedFeatureIds $selectedFeatureIds)
+Assert-SetEquals -Label "Android activity surface" -Expected $declaredActivities -Actual $activities
 Assert-SetEquals -Label "Android receiver surface" -Expected (Get-StringArray $app.declared_manifest.receivers) -Actual $receivers
 Assert-SetEquals -Label "Android service surface" -Expected (Get-StringArray $app.declared_manifest.services) -Actual $services
 

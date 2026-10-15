@@ -9,10 +9,29 @@ if($errors.Count){throw 'Resolver parse failed.'}
 $definition=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'New-GeneratedAndroidManifestText'},$true)
 if($null -eq $definition){throw 'Actual manifest function missing.'}
 Invoke-Expression $definition.Extent.Text
+foreach($name in @('Get-SelectedNativeHostActivities','Assert-SetEquals')){
+    $helper=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
+    if($null -eq $helper){throw "Actual resolver helper missing: $name"}
+    Invoke-Expression $helper.Extent.Text
+}
 $native='io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity'
 $stock='android.app.NativeActivity'
 $ns='http://schemas.android.com/apk/res/android'
 $checks=0
+$originalFeatures=@('ui.native_mesh_panel','ui.breath_composition_control_panel')
+$originalActivities=@($stock,'ControlPanelActivity')
+$mapped=@(Get-SelectedNativeHostActivities -Activities $originalActivities -SelectedFeatureIds $originalFeatures)
+Assert-SetEquals -Label 'Selected original declarations and features' -Expected @($native,'ControlPanelActivity') -Actual $mapped;$checks++
+foreach($features in @(@('ui.native_mesh_panel'),@('ui.breath_composition_control_panel'),@())){
+    Assert-SetEquals -Label 'Unselected host unchanged' -Expected $originalActivities -Actual @(Get-SelectedNativeHostActivities -Activities $originalActivities -SelectedFeatureIds $features);$checks++
+}
+foreach($bad in @(@($stock,'ArbitraryActivity'),@($stock),@($stock,'ControlPanelActivity','UnexpectedActivity'))){
+    $rejected=$false
+    try{Assert-SetEquals -Label 'Hostile declaration' -Expected $mapped -Actual @(Get-SelectedNativeHostActivities -Activities $bad -SelectedFeatureIds $originalFeatures)}catch{$rejected=$true}
+    if(-not$rejected){throw 'Finite host mapping weakened declared Activity closure.'};$checks++
+}
+$descriptor=Get-Content "$repo/fixtures/native-app-features/ui/breath-composition-panel/ui.breath_composition_control_panel.feature.json" -Raw|ConvertFrom-Json
+foreach($source in $descriptor.panel_composition.modules.source_files){if(-not(Test-Path -LiteralPath (Join-Path $repo $source))){throw "Selected original source missing: $source"}};$checks++
 foreach($variant in @('product','original2d','neutral')){
     $selected=@('ui.native_mesh_panel')
     if($variant -ne 'neutral'){$selected=@('ui.breath_composition_control_panel')}
