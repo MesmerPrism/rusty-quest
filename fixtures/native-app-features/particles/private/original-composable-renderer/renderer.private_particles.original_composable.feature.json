@@ -1,0 +1,129 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.private_particles.original_composable",
+  "module_path": "particles/private/original-composable-renderer",
+  "module_kind": "particle-aggregate",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Original private-particle disabled-route defaults and diagnostics retained for explicit native world-scene composition.",
+  "provides": [
+    "render.private_particle_billboards",
+    "render.private_particle_payload_slot"
+  ],
+  "depends_on": [
+    "renderer.private_particles.composable",
+    "renderer.background.solid_black.composable"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "primary_visual": "private-particles",
+    "render_route": "native-worldspace-integration"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.render.mode": "native-worldspace-integration",
+      "debug.rustyquest.native_renderer.camera.output": "disabled",
+      "debug.rustyquest.native_renderer.display_composite.enabled": "false",
+      "debug.rustyquest.native_renderer.display_composite.feedback.enabled": "false",
+      "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.environment_depth.mode": "disabled",
+      "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.private_layer.enabled": "false",
+      "debug.rustyquest.native_renderer.projection.target.controls": "false",
+      "debug.rustyquest.native_renderer.replay.visual_proof.enabled": "false",
+      "debug.rustyquest.native_renderer.sdf.visual.enabled": "false",
+      "debug.rustyquest.native_renderer.stimulus_volume.enabled": "false",
+      "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled": "false",
+      "debug.rustyquest.native_renderer.video_projection.enabled": "false",
+      "debug.rustyquest.native_renderer.video_projection.high_rate_json_payload": "false"
+    },
+    "clear_families": [
+      "camera",
+      "display_composite",
+      "environment_depth",
+      "hand_anchor_particles",
+      "hand_mesh",
+      "passthrough_style",
+      "private_layer",
+      "projection_target",
+      "replay",
+      "sdf",
+      "stimulus_volume",
+      "video_projection"
+    ],
+    "expected_render_modes": [
+      "native-worldspace-integration"
+    ]
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS",
+        "value": "false"
+      }
+    ],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/private_particles.vert.glsl",
+      "apps/native-renderer-android/native/shaders/private_particles.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "renderMode=native-worldspace-integration",
+      "customStereoProjectionEnabled=true",
+      "nativePassthroughRequested=false",
+      "solidBlackBackground=true",
+      "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot",
+      "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-anchor",
+      "privateParticleWorldAnchorForwardAxis=",
+      "privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
+      "privateParticleComputeBasisSource=captured-world-anchor",
+      "privateParticleComputeBasisFollowCamera=false",
+      "privateParticleDiagnosticStorageBinding=9",
+      "privateParticleDiagnosticWords=24",
+      "privateParticleDiagnosticCpuFullBufferReadback=false",
+      "privateParticleDiagnosticReadbackStatus=",
+      "privateParticleDiagnosticSchema=v2",
+      "privateParticleDiagnosticSubmittedFrameId=",
+      "privateParticleDiagnosticMeasuredFrameId=",
+      "privateParticleDiagnosticMeasuredFrameLagFrames=",
+      "privateParticleDiagnosticFrameIdentityAvailable=",
+      "privateParticleDiagnosticFrameIdWords=20,21",
+      "privateParticleDiagnosticLanesVisitedWord=22",
+      "privateParticleDiagnosticSchemaValidityWord=23",
+      "privateParticleDiagnosticParticleCount=",
+      "privateParticleDiagnosticLanesVisited=",
+      "privateParticleDiagnosticValidityMask=",
+      "privateParticleDiagnosticLegacyReductionsAvailability=unavailable-v2-validity-masked",
+      "privateParticleOrderingCpuExpandedUploadPerFrame=false"
+    ],
+    "forbidden": [
+      "displayCompositeEnabled=true",
+      "environmentDepthMode=scene-particle-map",
+      "stimulusVolumeEnabled=true",
+      "videoProjectionEnabled=true"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns only the generic ABI slot, placeholder shader, and public markers; downstream repos own private particle semantics and payload data."
+}

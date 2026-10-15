@@ -27,6 +27,7 @@ $BreathCompositionActivationBindingProperty = "debug.rustyquest.native_renderer.
 $BreathCompositionExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
 $BreathCompositionDriverFeatureId = "particles.private.breath_composition_driver"
 $ComposableBreathCompositionDriverFeatureId = "particles.private.breath_composition_driver.composable"
+$ClosedWorldComposableBreathCompositionDriverFeatureId = "particles.private.breath_composition_driver.closed_world_composable"
 $BreathCompositionDriverActivationBindingProperty = "debug.rustyquest.native_renderer.private_particles.breath_composition_driver.activation.binding_sha256"
 $BreathCompositionDriverExpectedBindingBuildEnv = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_DRIVER_EXPECTED_BINDING_SHA256"
 $PrivateParticleRendererFeatureId = "renderer.private_particles"
@@ -1573,7 +1574,7 @@ if ($selectedFeatureIds -contains $BreathCompositionFeatureId -or $selectedFeatu
         name = $BreathCompositionExpectedBindingBuildEnv
         value = $breathCompositionActivationBinding
     }
-    if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId) {
+    if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId) {
         Assert-NativeRendererPropertyValue `
             -Name $BreathCompositionDriverActivationBindingProperty `
             -Value $breathCompositionActivationBinding `
@@ -1889,7 +1890,7 @@ $featureLock = [ordered]@{
             sha256 = $breathCompositionActivationBinding
         }
     } else { $null }
-    breath_composition_driver_activation = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId) {
+    breath_composition_driver_activation = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId) {
         [ordered]@{
             schema = "rusty.quest.breath_composition_driver.activation_binding.v1"
             property = $BreathCompositionDriverActivationBindingProperty
@@ -2051,7 +2052,7 @@ if ($null -ne $resultJsonCanonicalPath) {
         feature_lock_path = [System.IO.Path]::GetFullPath($featureLockPath)
         feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
         breath_composition_activation_sha256 = $breathCompositionActivationBinding
-        breath_composition_driver_activation_sha256 = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId) { $breathCompositionActivationBinding } else { $null }
+        breath_composition_driver_activation_sha256 = if ($selectedFeatureIds -contains $BreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ComposableBreathCompositionDriverFeatureId -or $selectedFeatureIds -contains $ClosedWorldComposableBreathCompositionDriverFeatureId) { $breathCompositionActivationBinding } else { $null }
         simultaneous_hands_controllers_activation_sha256 = $simultaneousHandsControllersActivationBinding
         audit_path = [System.IO.Path]::GetFullPath($auditPath)
         audit_sha256 = Get-FileSha256 -Path $auditPath
