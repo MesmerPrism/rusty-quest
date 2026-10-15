@@ -14,8 +14,7 @@
     "debug.meta_xr_operator"
   ],
   "depends_on": [
-    "quest.native.openxr_vulkan_base",
-    "renderer.native_scene"
+    "quest.native.openxr_vulkan_base"
   ],
   "incompatible_with": [],
   "exclusive_groups": {},
@@ -34,7 +33,8 @@
     "set": {},
     "clear_families": [],
     "expected_render_modes": [
-      "native-worldspace-integration"
+      "native-worldspace-integration",
+      "solid-black-private-particles"
     ]
   },
   "build_inputs": {

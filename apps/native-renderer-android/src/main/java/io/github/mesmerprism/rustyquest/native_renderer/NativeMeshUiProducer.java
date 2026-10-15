@@ -937,6 +937,44 @@ static final class VisibilityReadback {
         }});
     }
 
+    /** The actual selected NativeActivity calls this on main before its blocking super destroy.
+     * An old Activity cannot retire a replacement producer. This returns resource closure,
+     * not native reader retirement; native still consumes the same generation receipt. */
+    static boolean retireActivityProducer(Activity actual) {
+        if(android.os.Looper.myLooper()!=android.os.Looper.getMainLooper())return false;
+        NativeMeshUiProducer owner=current;
+        if(owner==null||owner.activity!=actual||owner.generation<=0)return false;
+        StopReceipt receipt=stopReceipt(owner.generation);
+        if(receipt==null)return false;
+        cancelledGeneration=owner.generation;
+        finishStop(owner,owner.generation,receipt);
+        return receipt.state==1;
+    }
+
+    private static StopReceipt stopReceipt(long generation) {
+        synchronized(stopReceipts) {
+            StopReceipt receipt=stopReceipts.get(generation);
+            if(receipt!=null)return receipt;
+            if(stopReceipts.size()>=8)return null;
+            receipt=new StopReceipt();stopReceipts.put(generation,receipt);return receipt;
+        }
+    }
+
+    private static void finishStop(NativeMeshUiProducer expected,long generation,StopReceipt receipt) {
+        if(receipt.state!=0)return;
+        boolean released=false;
+        try {
+            NativeMeshUiProducer owner=current;
+            if(owner==null||owner.generation!=generation)released=true;
+            else if(owner==expected&&owner.close()) { if(current==owner)current=null;released=true; }
+        } catch(RuntimeException failure) {
+            Log.e(TAG,"event=producer-stop-failed generation="+generation,failure);
+        } finally {
+            receipt.state=released?1:-1;
+            Log.i(TAG,"event=producer-stop-ack generation="+generation+" released="+released);
+        }
+    }
+
     /** Admission only. Native must pump NativeActivity events while polling stopStatus. */
     public static boolean requestStop(long generation) {
         if (generation <= 0) return false;
@@ -953,15 +991,7 @@ static final class VisibilityReadback {
         Log.i(TAG, "event=producer-stop-requested generation=" + generation);
         // Always enqueue behind any pending start, even if current is still null.
         activity.runOnUiThread(new Runnable() { @Override public void run() {
-            boolean released = false;
-            try {
-                NativeMeshUiProducer owner = current;
-                if (owner == null || owner.generation != generation) { released = true; }
-                else if (owner.close()) { current = null; released = true; }
-            } finally {
-                receipt.state = released ? 1 : -1;
-                Log.i(TAG, "event=producer-stop-ack generation=" + generation + " released=" + released);
-            }
+            finishStop(current,generation,receipt);
         }});
         return true;
     }

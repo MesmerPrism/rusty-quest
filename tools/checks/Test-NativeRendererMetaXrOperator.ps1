@@ -43,6 +43,14 @@ function Deny([string]$Label,[scriptblock]$Action) {
     if(-not $rejected){throw "Expected rejection: $Label"};$passed.Add($Label)
 }
 $selection=Get-NativeRendererMetaXrOperatorSelection @options
+$originalIds=@('debug.meta_xr_operator','ui.native_mesh_panel.original_product','renderer.private_particles','renderer.background.solid_black','ui.breath_composition_control_panel','input.simultaneous_hands_and_controllers')
+$originalOptions=$options.Clone();$originalOptions.FeatureLock=@{selected_feature_ids=$originalIds}
+[void](Get-NativeRendererMetaXrOperatorSelection @originalOptions);$passed.Add('original-render-mesh-closed-selection')
+foreach($required in @($originalIds | Where-Object { $_ -cne 'debug.meta_xr_operator' })) {
+    Deny ('original-missing-'+$required) { $x=$originalOptions.Clone();$x.FeatureLock=@{selected_feature_ids=@($originalIds | Where-Object { $_ -cne $required })};Get-NativeRendererMetaXrOperatorSelection @x }
+}
+Deny 'original-mixed-render-route' { $x=$originalOptions.Clone();$x.FeatureLock=@{selected_feature_ids=$originalIds+@('renderer.native_scene')};Get-NativeRendererMetaXrOperatorSelection @x }
+Deny 'original-2d-without-mesh' { $x=$originalOptions.Clone();$x.FeatureLock=@{selected_feature_ids=@('debug.meta_xr_operator','renderer.private_particles','renderer.background.solid_black')};Get-NativeRendererMetaXrOperatorSelection @x }
 $app=Get-Content -Raw -LiteralPath (Join-Path $RepoRoot 'fixtures/native-app-builds/native-worldspace-panel-test.app.json')|ConvertFrom-Json
 $app.requested_features+=@('debug.meta_xr_operator')
 $app.declared_manifest.permissions+=@('android.permission.INTERNET')

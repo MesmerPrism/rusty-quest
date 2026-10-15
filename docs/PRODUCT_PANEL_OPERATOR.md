@@ -45,6 +45,8 @@ actions are:
 | `scroll` | Integer `delta_y`, between -8192 and 8192 |
 | `particle-patch` | Nonempty `patch` object; the original particle owner validates its existing field names, bounds and revision |
 | `ble-enabled`, `ble-open-control` | Boolean `enabled` |
+| `ble-pairing-code` | Empty object; reads the current original server's pairing-required code into the private result, or reports unavailable; it does not change BLE policy |
+| `pending-guidance-bias` | Integer `bias_percent`, 0 through 100; same original next-Arm draft update, available only when a condition pattern is ready and the coordinator permits draft editing |
 | `network-enroll` | Boolean `trusted_lan`, explicit `consent: true` |
 | `network-direct-start` | `route`: `hotspot` or `wifi_direct` |
 | `network-relay-start` | Nonempty `session_id` and `token`, positive integer `expiry` in Unix milliseconds |
@@ -54,6 +56,11 @@ Existing feature selection, permissions and owner validation still apply.
 A permission request is reported as requested, not as a completed connection.
 Enrollment credentials and join details are private results. The CLI protects
 all output files with a current-user-only ACL and prints metadata only.
+The pairing code follows the same private-result policy and is excluded from
+ordinary status and geometry observations. A cached code result belongs to its
+captured owner and request; obtain a fresh request after a genuine server
+rotation. A bias draft receipt reports the requested and current pending value
+separately from its admission; it does not apply live bias or start a session.
 
 `panel_geometry` is a read-only projection for input tests. It distinguishes
 current Android widget layout from renderer-submitted plane geometry. The
@@ -85,6 +92,24 @@ observation; different bytes with the same ID are rejected. Entries are never
 evicted to permit replay. Unknown outcomes must be investigated through result
 and status queries, not a new action ID. Owner replacement prevents replay
 under the old token and does not establish whether an earlier effect occurred.
+
+## Original controller actions
+
+The selected development build can expose Meta XR Operator's standalone MCP
+proxy for command-line input tests. Bind the proxy to the exact app process,
+current XR session and owned forwarded port before sending input. Its input
+tools exercise the original controller shortcut handlers. They are separate
+from semantic session commands, and tool delivery requires application readback
+before the action is considered applied.
+
+For the original A-without-grip Recenter shortcut, use the current session's
+`openxr_set_controller_input` with right `Grip: 0` and right `A: 0`, then right
+`A: 1` with `auto_release: true` and `hold_duration: 0.2`. The renderer uses its
+actual eye projection at the eligible frame and logs the original world-anchor
+recenter. This does not use the panel's reset-pose action or a substitute head
+pose. Release the simulated input devices and retire any hand hooks when the
+owned test instance ends. The input tools' advertised schema is authoritative
+for the installed Operator version.
 
 ## Validation
 

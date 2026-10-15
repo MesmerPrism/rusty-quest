@@ -297,6 +297,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         new WeakReference<BreathCompositionPanelModule>(null);
     private static volatile Context remoteContext;
     private static volatile RemotePending remotePending;
+    private static volatile RemoteTerminalPending remoteTerminal;
     private static volatile long lastRemoteStatusPollMs;
     private static volatile RemoteStatusObserver remoteStatusObserver;
     private static final class RemoteStatusObserver {
@@ -335,6 +336,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         final long armGeneration;
         final String armCondition;
         int requestedBias = -1;
+        boolean armCheckpointObserved;
         boolean awaitsDurableNativeOutcome() {
             return "arm".equals(operation) || "set-bias".equals(operation) || "save-next".equals(operation)
                 || "save-exit".equals(operation);
@@ -372,20 +374,103 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         }
     }
 
+    /** One observation of the existing kiosk/shell action, independent of pending Arm. */
+    private static final class RemoteTerminalPending {
+        final ExperimentSessionBleServer server;
+        final ExperimentSessionTerminalCorrelation origin;
+        final ExperimentSessionAndroidShell shell;
+        final long launchEpoch;
+        long guardGeneration,homeEpisode;
+        RemoteTerminalPending(ExperimentSessionBleServer server,ExperimentSessionTerminalCorrelation origin,
+                ExperimentSessionAndroidShell shell) {
+            this.server=server;this.origin=origin;this.shell=shell;launchEpoch=shell.currentLaunchEpochForUi();
+        }
+        void ticket(NativeRendererSoftKioskCoordinator.Action action) {
+            if(remoteTerminal!=this||!server.terminalObservationCurrent(origin)
+                    ||action==null||action.kind!=NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT
+                    ||action.generation<=0||action.homeEpisodeId<=0||guardGeneration!=0)return;
+            guardGeneration=action.generation;homeEpisode=action.homeEpisodeId;
+        }
+        boolean admit(BreathCompositionPanelModule actual,ExperimentSessionAndroidShell.TerminalAdmission value) {
+            return remoteTerminal==this&&actual!=null&&actual.hostCurrent()
+                &&!actual.experimentShellDestroyed&&actual.experimentShellLaunchEpoch==launchEpoch
+                &&server.terminalObservationCurrent(origin)&&value!=null&&guardGeneration>0
+                &&value.launchEpoch==launchEpoch&&value.guardGeneration==guardGeneration&&value.homeEpisode==homeEpisode
+                &&shell.isCurrentTerminalAdmission(actual,value)
+                &&origin.admit(value.runtimeEpoch,value.sessionGeneration,value.operationId,value.rejectedPredecessor);
+        }
+    }
+
     private static ExperimentSessionBleServer remoteServer() {
         return remoteContext == null ? null : ExperimentSessionBleServer.process(
             remoteContext, REMOTE_DELEGATE);
     }
 
+    private static boolean remotePendingBlocks(String operation) {
+        return remotePending!=null&&!("save-exit".equals(operation)&&"arm".equals(remotePending.operation))
+            ||!remoteSetupPendingId.isEmpty();
+    }
+
+    private static void dispatchRemoteSaveAndExit(ExperimentSessionBleServer.CommandRequest request,ExperimentSessionBleServer server) {
+        ExperimentSessionTerminalCorrelation origin;
+        try {
+            JSONObject status=REMOTE_DELEGATE.sessionControlReadback();
+            if(status==null)throw new IllegalStateException("terminal-status-unavailable");
+            origin=server.beginTerminalObservation(request.id,status.getLong("runtime_epoch"));
+        }catch(Exception unavailable){
+            server.updateReceipt(request.id,"rejected","Current terminal observation owner unavailable.");
+            return;
+        }
+        final RemoteTerminalPending terminal=new RemoteTerminalPending(server,origin,EXPERIMENT_SESSION_SHELL);
+        remoteTerminal=terminal;
+        server.updateReceipt(request.id, "pending", "Waiting for durable save and exit.");
+        if (!NativeRendererSelfKioskApplication.requestSaveAndExitFromRemote(
+                remoteContext,new java.util.function.Consumer<NativeRendererSoftKioskCoordinator.Action>() {
+                    @Override public void accept(NativeRendererSoftKioskCoordinator.Action action){terminal.ticket(action);}
+                })) {
+            // A captured ticket already mutated the original kiosk guard. Its
+            // failed dispatch is unknown, not permission to replay terminal work.
+            if(terminal.guardGeneration>0) {
+                server.updateReceipt(request.id,"outcome_unknown","Terminal dispatch outcome unknown; retain original request.");return;
+            }
+            if(remoteTerminal==terminal)remoteTerminal=null;
+            server.abandonTerminalObservation(origin);
+            server.updateReceipt(request.id, "rejected", "Save and exit could not be admitted.");
+            return;
+        }
+        if(terminal.guardGeneration==0)server.updateReceipt(request.id,"outcome_unknown",
+            "Existing terminal action resumed without a new observation ticket; do not replay.");
+    }
+
     private static void observeRemoteTerminal(ExperimentSessionAndroidShell.TerminalResult result) {
-        RemotePending pending=remotePending;
-        ExperimentSessionBleServer server=remoteServer();
-        if(pending==null||server==null||!"save-exit".equals(pending.operation))return;
-        if(server.publishTerminalObservation(pending.terminalOrigin,result)) {
-            if(remotePending==pending)remotePending=null;
+        RemoteTerminalPending pending=remoteTerminal;
+        if(pending==null||!pending.server.terminalObservationCurrent(pending.origin))return;
+        if(pending.server.publishTerminalObservation(pending.origin,result)) {
+            observeInterruptedRemoteArm(null);
+            if(remoteTerminal==pending)remoteTerminal=null;
         }
         // Unattributed/unsuccessful callbacks cannot change a replacement request.
         // Keep the immutable mapping and existing pending receipt for recovery.
+    }
+
+    /** No panel projection/audio/auto-return. Preserve this Arm's own observable outcome. */
+    private static void observeInterruptedRemoteArm(ExperimentSessionAndroidShell.SessionReadback readback) {
+        RemotePending arm=remotePending;
+        RemoteTerminalPending terminal=remoteTerminal;
+        if(arm==null||terminal==null||!"arm".equals(arm.operation)
+                ||arm.serverGeneration!=terminal.origin.carrierGeneration||arm.nativeOwnerEpoch!=terminal.origin.nativeOwnerEpoch
+                ||!terminal.server.terminalObservationCurrent(terminal.origin))return;
+        boolean exact=readback!=null&&readback.receipt!=null&&"accepted".equals(readback.commandStatus)
+            &&readback.runtimeEpoch==terminal.origin.runtimeEpoch&&readback.receipt.accepted
+            &&readback.armAcceptance!=null&&readback.armAcceptance.matches(arm.nativeId,arm.armGeneration,arm.armCondition,readback);
+        if(exact)arm.armCheckpointObserved=true;
+        boolean ready=exact&&("armed".equals(readback.receipt.controlState)||"running".equals(readback.receipt.controlState)
+            ||"paused".equals(readback.receipt.controlState));
+        terminal.server.recordInterruptedArm(terminal.origin,arm.browserId,arm.nativeId,
+            ready?"confirmed":"outcome_unknown",ready?"Condition armed before terminal shutdown.":
+                (arm.armCheckpointObserved?"Arm interrupted before readiness; durable checkpoint observed.":
+                    "Arm outcome unknown; terminal admitted before readiness observation."),arm.armCheckpointObserved);
+        if(ready&&remotePending==arm)remotePending=null;
     }
 
     private static void expireRemotePendingObservation(long now) {
@@ -427,6 +512,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             remoteStatusObserver=null;
             if (old != null) old.target.retire();
             remotePending = null;
+            remoteTerminal = null;
             lastRemoteStatusPollMs = 0L;
         }
     }
@@ -450,6 +536,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             @Override public void onExperimentSessionReadback(
                     ExperimentSessionAndroidShell.SessionReadback readback) {
                 if (readback == null || readback.receipt == null) return;
+                if(EXPERIMENT_SESSION_SHELL.terminalAdmittedForUi()){observeInterruptedRemoteArm(readback);return;}
                 BreathCompositionPanelModule panel = remotePanel.get();
                 if (panel != null && !panel.experimentShellDestroyed) {
                     panel.onExperimentSessionReadback(readback);
@@ -472,6 +559,8 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                 ExperimentSessionBleServer server = remoteServer();
                 if (server == null) return;
                 if (!server.acceptsStatusRead(pending.serverGeneration, pending.nativeOwnerEpoch)) return;
+                if("arm".equals(pending.operation)&&readback.armAcceptance!=null
+                        &&readback.armAcceptance.matches(pending.nativeId,pending.armGeneration,pending.armCondition,readback))pending.armCheckpointObserved=true;
                 if ("arm".equals(pending.operation) && readback.receipt.accepted
                         && readback.armAcceptance != null
                         && readback.armAcceptance.matches(pending.nativeId, pending.armGeneration,
@@ -501,6 +590,10 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                 } else {
                     server.updateReceiptForGeneration(pending.serverGeneration, pending.browserId, "pending", "Awaiting native session readback.");
                 }
+            }
+
+            @Override public void onExperimentSessionReadbackDuringTerminal(ExperimentSessionAndroidShell.SessionReadback readback) {
+                observeInterruptedRemoteArm(readback);
             }
 
             @Override public void onExperimentSessionTerminal(
@@ -679,7 +772,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                             ExperimentSessionPanelCoordinator.CONDITION_ONE))
                         .put(ControlPanelActivity.conditionBreathGuidanceReadiness(
                             ExperimentSessionPanelCoordinator.CONDITION_TWO)))
-                    .put("pending", !state.pendingOperationId.isEmpty() || remotePending != null || !remoteSetupPendingId.isEmpty());
+                    .put("pending", !state.pendingOperationId.isEmpty() || remotePending != null || remoteTerminal!=null || !remoteSetupPendingId.isEmpty());
                 JSONObject nativePresentation=sessionControlReadback();
                 if(nativePresentation!=null && nativePresentation.optLong("runtime_epoch",-1)==epoch
                         && nativePresentation.optLong("generation",-1)==state.generation) {
@@ -717,6 +810,9 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             @Override public void dispatch(ExperimentSessionBleServer.CommandRequest request) {
                 ExperimentSessionBleServer server = remoteServer();
                 if (server == null) return;
+                if(remoteTerminal!=null) {
+                    server.updateReceipt(request.id,"rejected","Terminal request already awaiting its original outcome.");return;
+                }
                 if(request.setupRequest!=null) {
                     try {
                         if(remotePending!=null||!remoteSetupPendingId.isEmpty()&&!remoteSetupPendingId.equals(request.id))throw new SecurityException("another-command-pending");
@@ -745,7 +841,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                     } catch(Exception denied) { server.updateReceipt(request.id,"rejected","Polar owner admission failed."); }
                     return;
                 }
-                if (remotePending != null || !remoteSetupPendingId.isEmpty()) {
+                if (remotePendingBlocks(request.operation)) {
                     server.updateReceipt(request.id, "rejected", "Another command is awaiting confirmation.");
                     return;
                 }
@@ -811,26 +907,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                     EXPERIMENT_SESSION_SHELL.submit(nativeCommand, false, REMOTE_SINK);
                     return;
                 }
-                if ("save-exit".equals(request.operation)) {
-                    ExperimentSessionTerminalCorrelation origin;
-                    try {
-                        JSONObject status=sessionControlReadback();
-                        if(status==null)throw new IllegalStateException("terminal-status-unavailable");
-                        origin=server.terminalOrigin(request.id,status.getLong("runtime_epoch"),status.getLong("generation"));
-                    }catch(Exception unavailable){
-                        server.updateReceipt(request.id,"rejected","Current terminal observation owner unavailable.");
-                        return;
-                    }
-                    remotePending = new RemotePending(request.id, "", "save-exit",-1L,"",null,origin);
-                    server.updateReceipt(request.id, "pending", "Waiting for durable save and exit.");
-                    if (!NativeRendererSelfKioskApplication.requestSaveAndExitFromRemote(
-                            remoteContext)) {
-                        remotePending = null;
-                        server.updateReceipt(request.id, "rejected", "Save and exit could not be admitted.");
-                        return;
-                    }
-                    return;
-                }
+                if ("save-exit".equals(request.operation)) {dispatchRemoteSaveAndExit(request,server);return;}
                 if ("return-vr".equals(request.operation)) {
                     if (panel != null && !panel.experimentShellDestroyed) {
                         remotePending = new RemotePending(request.id, "", "return-vr");
@@ -1059,6 +1136,8 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         }
         if("particle-patch".equals(action))return submitPrivateParticleCandidate(
             privateParticlePatchEnvelope(new JSONObject(parameters.getJSONObject("patch").toString())),false);
+        if("ble-pairing-code".equals(action))return observeProductPairingCode();
+        if("pending-guidance-bias".equals(action))return updateProductPendingGuidanceBias(parameters.getInt("bias_percent"));
         if("ble-enabled".equals(action)||"ble-open-control".equals(action)){
             if(!ExperimentSessionBleServer.featurePackaged(this))throw new IllegalStateException("ble-feature-not-selected");
             ExperimentSessionBleServer server=remoteServer();boolean enabled=parameters.getBoolean("enabled");
@@ -1096,6 +1175,36 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             return new JSONObject().put("status","observed").put("network",gateway.productPanelReadback());
         }
         throw new IllegalArgumentException("unsupported-product-panel-action");
+    }
+
+    private JSONObject observeProductPairingCode() throws Exception {
+        requireProductPanelOperator();
+        JSONObject result=new JSONObject().put("available",false);
+        if(!ExperimentSessionBleServer.featurePackaged(this))return result.put("reason","ble-feature-not-selected");
+        ExperimentSessionBleServer server=remoteServer();
+        synchronized(server){
+            long generation=server.currentGeneration(),epoch=server.currentNativeEpoch();
+            String code=server.pairingCode();
+            result.put("server_generation",generation).put("native_owner_epoch",epoch);
+            if(generation<=0L||epoch<=0L||code.isEmpty())return result.put("reason","pairing-required-server-unavailable");
+            return result.put("available",true).put("pairing_code",code);
+        }
+    }
+
+    private JSONObject updateProductPendingGuidanceBias(int requested) throws Exception {
+        requireProductPanelOperator();
+        if(requested<0||requested>100)throw new IllegalArgumentException("bias");
+        boolean patternReady="pattern-ready".equals(ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_ONE))||"pattern-ready".equals(ControlPanelActivity.conditionBreathGuidanceReadiness(
+            ExperimentSessionPanelCoordinator.CONDITION_TWO));
+        boolean admitted=patternReady&&EXPERIMENT_SESSION_PANEL.updatePendingBreathGuidanceBiasPercent(requested);
+        if(admitted){
+            experimenterGuidanceBiasPercent=requested;
+            if(experimenterGuidanceBias!=null)experimenterGuidanceBias.setValue(requested);
+            if(developerGuidanceBias!=null)developerGuidanceBias.setValue(requested);
+        }
+        return new JSONObject().put("requested_bias_percent",requested).put("admitted",admitted)
+            .put("pending_bias_percent",EXPERIMENT_SESSION_PANEL.pendingBreathGuidanceBiasPercent());
     }
 
     /**
@@ -3835,6 +3944,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     public void onExperimentSessionReadback(
             ExperimentSessionAndroidShell.SessionReadback readback) {
         if (readback == null || readback.receipt == null) return;
+        if(EXPERIMENT_SESSION_SHELL.terminalAdmittedForUi()){observeInterruptedRemoteArm(readback);return;}
         EXPERIMENT_SESSION_PANEL.acceptRuntimeEpoch(readback.runtimeEpoch);
         ExperimentSessionPanelState before = EXPERIMENT_SESSION_PANEL.snapshot();
         long statusObservedAtNanos = android.os.SystemClock.elapsedRealtimeNanos();
@@ -3879,6 +3989,17 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             return;
         }
         refreshExperimenterAfterReadback();
+    }
+
+    @Override
+    public void onExperimentSessionTerminalAdmission(ExperimentSessionAndroidShell.TerminalAdmission admission) {
+        RemoteTerminalPending terminal=remoteTerminal;
+        if(terminal!=null&&terminal.admit(this,admission))observeInterruptedRemoteArm(null);
+    }
+
+    @Override
+    public void onExperimentSessionReadbackDuringTerminal(ExperimentSessionAndroidShell.SessionReadback readback) {
+        observeInterruptedRemoteArm(readback);
     }
 
     @Override

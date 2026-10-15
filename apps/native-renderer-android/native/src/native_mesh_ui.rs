@@ -359,8 +359,33 @@ fn head_relative_pose(position: [f32; 3], orientation: [f32; 4]) -> Option<Panel
     })
 }
 pub(crate) fn enabled_for_mode(mode: &str) -> bool {
-    option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED") == Some("true")
-        && mode == "native-worldspace-integration"
+    mesh_selection(
+        mode,
+        option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED") == Some("true"),
+        original_scene_selected(),
+    )
+}
+pub(crate) fn original_scene_selected() -> bool {
+    option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ORIGINAL_SCENE") == Some("true")
+}
+fn mesh_selection(mode: &str, packaged: bool, original_scene: bool) -> bool {
+    packaged
+        && if original_scene {
+            mode == "solid-black-private-particles"
+        } else {
+            mode == "native-worldspace-integration"
+        }
+}
+pub(crate) fn render_configuration_matches(mode: &str, scene_depth: bool) -> bool {
+    render_selection(
+        mode,
+        option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED") == Some("true"),
+        original_scene_selected(),
+        scene_depth,
+    )
+}
+fn render_selection(mode: &str, packaged: bool, original_scene: bool, scene_depth: bool) -> bool {
+    mesh_selection(mode, packaged, original_scene) && scene_depth != original_scene
 }
 /// The original product panel owns its existing settings handlers. The neutral
 /// mesh test panel's defaults never become that product's rendering settings.
@@ -871,6 +896,20 @@ pub(crate) mod android {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_overlay_is_explicit_and_does_not_enable_scene_depth_or_other_modes() {
+        let original = "solid-black-private-particles";
+        let scene = "native-worldspace-integration";
+        assert!(render_selection(original, true, true, false));
+        assert!(!render_selection(original, true, true, true));
+        assert!(!render_selection(original, false, true, false));
+        assert!(!render_selection(original, true, false, false));
+        assert!(render_selection(scene, true, false, true));
+        assert!(!render_selection(scene, true, false, false));
+        assert!(!render_selection(scene, true, true, true));
+        assert!(!mesh_selection("custom-stereo-projection", true, true));
+        assert!(!mesh_selection("solid-black-hands-and-grafts", true, true));
+    }
     #[test]
     fn session_presentation_uses_the_submitted_tuple_not_a_visibility_setter() {
         let mut state = ControlSnapshot { generation: 91, pose_initialized: true,

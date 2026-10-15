@@ -35,6 +35,17 @@ pub(crate) enum WorldspaceInputPolicy {
 }
 
 impl WorldspaceInputPolicy {
+    fn for_panel_selection(
+        mode: NativeRendererRenderMode,
+        original_product: bool,
+        original_scene_mesh: bool,
+    ) -> Self {
+        if mode == NativeRendererRenderMode::SolidBlackPrivateParticles && original_scene_mesh {
+            Self::OriginalProduct
+        } else {
+            Self::for_selection(mode, original_product)
+        }
+    }
     fn for_selection(mode: NativeRendererRenderMode, original_product: bool) -> Self {
         if mode != NativeRendererRenderMode::NativeWorldspaceIntegration {
             Self::ExistingRoute
@@ -65,10 +76,11 @@ impl WorldspaceInputPolicy {
 impl NativeRendererRenderMode {
     pub(crate) fn worldspace_input_policy(self) -> WorldspaceInputPolicy {
         // The builder admits this exact value only with the authenticated
-        // original-composable native scene/panel descriptor closure.
-        WorldspaceInputPolicy::for_selection(
+        // original-composable scene or original-renderer mesh descriptor closure.
+        WorldspaceInputPolicy::for_panel_selection(
             self,
             option_env!("RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS") == Some("false"),
+            option_env!("RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ORIGINAL_SCENE") == Some("true"),
         )
     }
 
@@ -624,6 +636,28 @@ impl Default for NativePrivateLayerSettings {
 #[cfg(test)]
 mod worldspace_source_tests {
     use super::*;
+    #[test]
+    fn original_mesh_retains_scene_policy_and_simultaneous_hand_sources() {
+        let mode = NativeRendererRenderMode::SolidBlackPrivateParticles;
+        let input = WorldspaceInputPolicy::for_panel_selection(mode, false, true);
+        assert_eq!(input, WorldspaceInputPolicy::OriginalProduct);
+        assert!(input.admits_simultaneous_selection(true));
+        assert!(!input.suppresses_hand_tracking_for_controller(true));
+        assert!(!mode.uses_scene_depth());
+        assert!(!mode.uses_custom_stereo_projection());
+        assert!(mode.uses_solid_black_background(false));
+        assert_eq!(mode.camera_runtime_mode(), "skipped-solid-black-private-particles");
+        assert_eq!(
+            WorldspaceInputPolicy::for_panel_selection(mode, false, false),
+            WorldspaceInputPolicy::ExistingRoute,
+        );
+        assert_eq!(
+            WorldspaceInputPolicy::for_panel_selection(
+                NativeRendererRenderMode::NativeWorldspaceIntegration, false, false,
+            ),
+            WorldspaceInputPolicy::NeutralExclusive,
+        );
+    }
 
     #[test]
     fn original_policy_admits_simultaneous_tracking_without_controller_hand_suppression() {

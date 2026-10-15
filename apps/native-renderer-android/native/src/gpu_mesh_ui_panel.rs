@@ -1,4 +1,4 @@
-//! Real Android Presentation texture on a depth-tested native world-space mesh.
+//! Real Android surface on a selected scene-depth mesh or original color-only overlay.
 //! All image references and descriptor sets retire only after the owning frame-slot fence.
 use crate::{
     ahardware_buffer_vulkan::{
@@ -98,12 +98,14 @@ impl GpuMeshUiPanel {
         scene_depth_enabled: bool,
         generation: u64,
         queue_family: u32,
+        render_mode: &str,
     ) -> Result<Self, String> {
-        if !native_mesh_ui::enabled_for_mode("native-worldspace-integration")
-            || !scene_depth_enabled
+        if !native_mesh_ui::render_configuration_matches(render_mode, scene_depth_enabled)
             || generation == 0
         {
-            return Err("mesh UI requires world-space scene depth and nonzero generation".into());
+            return Err(
+                "mesh UI requires its selected mode/depth policy and nonzero generation".into(),
+            );
         }
         let sampler = device
             .create_sampler(
@@ -180,7 +182,7 @@ impl GpuMeshUiPanel {
                 return Err(e.to_string());
             }
         };
-        let panel_pipeline = match pipeline(device, render_pass, layout, false) {
+        let panel_pipeline = match pipeline(device, render_pass, layout, false, scene_depth_enabled) {
             Ok(v) => v,
             Err(e) => {
                 device.destroy_pipeline_layout(layout, None);
@@ -190,7 +192,7 @@ impl GpuMeshUiPanel {
                 return Err(e);
             }
         };
-        let pointer_pipeline = match pipeline(device, render_pass, layout, true) {
+        let pointer_pipeline = match pipeline(device, render_pass, layout, true, scene_depth_enabled) {
             Ok(v) => v,
             Err(e) => {
                 device.destroy_pipeline(panel_pipeline, None);
@@ -213,7 +215,11 @@ impl GpuMeshUiPanel {
                 return Err(e);
             }
         };
-        crate::marker("native-mesh-ui",format!("event=created generation={generation} source=android-virtual-display-presentation frameOwner=native-openxr depth=scene-zbuffer"));
+        crate::marker("native-mesh-ui", format!(
+            "event=created generation={generation} source=android-virtual-display-presentation frameOwner=native-openxr renderMode={render_mode} nativeMeshUiOriginalScene={} depth={}",
+            native_mesh_ui::original_scene_selected(),
+            if scene_depth_enabled { "scene-zbuffer" } else { "color-only-overlay" },
+        ));
         Ok(Self {
             producer: Some(producer),
             ahb: ahb::AhbVulkanDevice::new(instance, device),
@@ -413,7 +419,7 @@ impl GpuMeshUiPanel {
         }
     }
     /// Solid app-owned geometry, independent of UI image adoption and descriptors.
-    /// Draw last inside the same scene pass; depth test preserves world occlusion.
+    /// Draw in the same pass. Scene mode tests depth; original UI is a color overlay.
     pub(crate) unsafe fn record_pointer_eye(
         &self,
         device: &ash::Device,
@@ -580,6 +586,7 @@ unsafe fn pipeline(
     render_pass: vk::RenderPass,
     layout: vk::PipelineLayout,
     solid_pointer: bool,
+    scene_depth_enabled: bool,
 ) -> Result<vk::Pipeline, String> {
     let vertex = words(include_bytes!(concat!(
         env!("OUT_DIR"),
@@ -636,9 +643,13 @@ unsafe fn pipeline(
         .color_write_mask(vk::ColorComponentFlags::RGBA)];
     let blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachments);
     let depth = vk::PipelineDepthStencilStateCreateInfo::default()
-        .depth_test_enable(true)
-        .depth_write_enable(!solid_pointer)
-        .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL);
+        .depth_test_enable(scene_depth_enabled)
+        .depth_write_enable(scene_depth_enabled && !solid_pointer)
+        .depth_compare_op(if scene_depth_enabled {
+            vk::CompareOp::LESS_OR_EQUAL
+        } else {
+            vk::CompareOp::ALWAYS
+        });
     let states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&states);
     let info = [vk::GraphicsPipelineCreateInfo::default()

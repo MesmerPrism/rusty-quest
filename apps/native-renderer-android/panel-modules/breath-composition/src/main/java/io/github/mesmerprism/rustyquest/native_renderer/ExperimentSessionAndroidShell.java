@@ -113,6 +113,9 @@ final class ExperimentSessionAndroidShell {
         default boolean retainsDurableCommand(String operationId, long launchEpoch) { return false; }
         boolean acceptsExperimentSessionCallbacks(long launchEpoch);
         void onExperimentSessionReadback(SessionReadback readback);
+        /** Observation only after terminal admission: never restart panel/audio effects. */
+        default void onExperimentSessionReadbackDuringTerminal(SessionReadback readback) { }
+        default void onExperimentSessionTerminalAdmission(TerminalAdmission admission) { }
         default boolean acceptsExperimentSessionTerminalCallbacks(long epoch) {
             return acceptsExperimentSessionCallbacks(epoch);
         }
@@ -245,6 +248,16 @@ final class ExperimentSessionAndroidShell {
         }
     }
 
+    /** Existing owner-thread command identity, published without admitting another command. */
+    static final class TerminalAdmission {
+        final long launchEpoch,guardGeneration,homeEpisode,runtimeEpoch,sessionGeneration;
+        final String operationId,rejectedPredecessor;
+        TerminalAdmission(long launch,long guard,long home,long runtime,long session,String operation,String predecessor) {
+            launchEpoch=launch;guardGeneration=guard;homeEpisode=home;runtimeEpoch=runtime;
+            sessionGeneration=session;operationId=operation;rejectedPredecessor=predecessor;
+        }
+    }
+
     static final class TerminalResult {
         final boolean shouldFinish;
         final boolean saved;
@@ -294,6 +307,7 @@ final class ExperimentSessionAndroidShell {
     private final java.util.WeakHashMap<UiSink, Boolean> retiredSinks =
         new java.util.WeakHashMap<UiSink, Boolean>();
     private volatile TerminalResult latestTerminal;
+    private final java.util.ArrayList<TerminalAdmission> terminalAdmissions=new java.util.ArrayList<TerminalAdmission>();
     private volatile boolean cleanupConsumed;
     private boolean terminalTimeoutReported;
     private long terminalInitializationDeadline;
@@ -310,6 +324,7 @@ final class ExperimentSessionAndroidShell {
             if (previous != null && previous != sink) retiredSinks.put(previous, Boolean.TRUE);
             attachedSink = new WeakReference<UiSink>(sink);
         }
+        postTerminalAdmissions(currentLaunchEpoch());
         TerminalResult cached=latestTerminal;
         if (cached != null) postTerminal(currentLaunchEpoch(),cached);
         resumePendingTerminal();
@@ -332,6 +347,7 @@ final class ExperimentSessionAndroidShell {
             result=latestTerminal;
         }
         if(result==null)return false;
+        postTerminalAdmissions(expectedLaunchEpoch);
         postTerminal(expectedLaunchEpoch,result);
         return true;
     }
@@ -410,6 +426,7 @@ final class ExperimentSessionAndroidShell {
             launchEpoch = admittedLaunchEpoch;
             if (owner.isShutdown()) owner = newOwner();
             terminalAdmitted = false;
+            terminalAdmissions.clear();
             localTerminalScope = null;
             localTerminalDispatched = false;localTerminalFacadeAdmitted=false;localTerminalAudioAttempted=false;localTerminalCommand=null;localTerminalPolicy=null;
             terminalGuardGeneration = 0L;
@@ -426,6 +443,13 @@ final class ExperimentSessionAndroidShell {
 
     long currentLaunchEpochForUi() {
         return currentLaunchEpoch();
+    }
+
+    boolean terminalAdmittedForUi() { synchronized(admissionLock){return terminalAdmitted;} }
+
+    boolean isCurrentTerminalAdmission(UiSink sink,TerminalAdmission value) {
+        synchronized(admissionLock){return value!=null&&sink!=null&&attachedSink.get()==sink&&!retiredSinks.containsKey(sink)
+            &&terminalAdmissions.contains(value)&&terminalIdentityCurrent(value.launchEpoch,value.guardGeneration,value.homeEpisode);}
     }
 
     void initialize(String appPrivateFilesRoot, UiSink sink) {
@@ -692,6 +716,8 @@ final class ExperimentSessionAndroidShell {
                 if(localTerminalCommand==null){localTerminalCommand=command;localTerminalPolicy=exitPolicy;}
                 else{command=localTerminalCommand;exitPolicy=localTerminalPolicy;}
             }
+            dispatchTerminalAdmission(sink,new TerminalAdmission(epoch,guardGeneration,homeEpisode,
+                status.runtimeEpoch,command.expectedGeneration,command.operationId,""));
             boolean audioStopAccepted=true;
             if(local==null||!localTerminalAudioAttempted){
                 if(local!=null)localTerminalAudioAttempted=true;
@@ -968,6 +994,9 @@ final class ExperimentSessionAndroidShell {
             new NativeRendererWriterAcknowledgedExitPolicy();
         if (freshPolicy.beginExit(fresh.expectedGeneration, fresh.operationId)
                 != NativeRendererWriterAcknowledgedExitPolicy.Action.REQUEST_WRITER_STOP) return true;
+        // Only this original, proven rejection branch authorizes a successor identity.
+        dispatchTerminalAdmission(sink,new TerminalAdmission(epoch,guardGeneration,homeEpisode,
+            readback.runtimeEpoch,fresh.expectedGeneration,fresh.operationId,command.operationId));
         owner.schedule(new Runnable() {
             @Override public void run() {
                 if (terminalIdentityCurrent(epoch, guardGeneration, homeEpisode))
@@ -1033,17 +1062,46 @@ final class ExperimentSessionAndroidShell {
         uiDispatcher.post(new Runnable() {
             @Override public void run() {
                 UiSink target;
+                boolean terminal;
                 synchronized (admissionLock) {
                     UiSink submitted = sink.get();
                     target = submitted != null && submitted.observesSubmittedCommand()
                         ? submitted : attachedSink.get();
+                    terminal=terminalAdmitted;
                 }
                 if (isCurrentEpoch(epoch) && target != null
                         && target.acceptsExperimentSessionCallbacks(epoch)) {
-                    target.onExperimentSessionReadback(readback);
+                    if(terminal)target.onExperimentSessionReadbackDuringTerminal(readback);
+                    else target.onExperimentSessionReadback(readback);
                 }
             }
         });
+    }
+
+    private void dispatchTerminalAdmission(WeakReference<UiSink> sink,TerminalAdmission admission) {
+        synchronized(admissionLock){
+            if(!terminalIdentityCurrent(admission.launchEpoch,admission.guardGeneration,admission.homeEpisode))return;
+            if(!terminalAdmissions.isEmpty()&&terminalAdmissions.get(terminalAdmissions.size()-1).operationId.equals(admission.operationId))return;
+            if(terminalAdmissions.size()>=MAX_TERMINAL_REBASES+1)return;
+            terminalAdmissions.add(admission);
+        }
+        postTerminalAdmissions(admission.launchEpoch);
+    }
+
+    /** Replays only bounded identity observations to the actual current original attachment. */
+    private void postTerminalAdmissions(long epoch) {
+        final java.util.ArrayList<TerminalAdmission> observations;
+        synchronized(admissionLock){if(epoch!=launchEpoch||terminalAdmissions.isEmpty())return;
+            observations=new java.util.ArrayList<TerminalAdmission>(terminalAdmissions);}
+        uiDispatcher.post(new Runnable(){@Override public void run(){
+            for(TerminalAdmission admission:observations){
+                UiSink target;
+                synchronized(admissionLock){target=attachedSink.get();if(!isCurrentTerminalAdmission(target,admission))return;}
+                if(target.acceptsExperimentSessionTerminalCallbacks(epoch)) {
+                    try{target.onExperimentSessionTerminalAdmission(admission);}catch(RuntimeException observationUnavailable){}
+                }
+            }
+        }});
     }
 
     private void dispatchFailure(WeakReference<UiSink> sink, long epoch,

@@ -50,6 +50,7 @@ class ExperimentSessionAndroidShell {
 }
 class ExperimentSessionBleServer {
  int published;
+ boolean terminalObservationCurrent(ExperimentSessionTerminalCorrelation origin){return origin!=null;}
  boolean publishTerminalObservation(ExperimentSessionTerminalCorrelation c,ExperimentSessionAndroidShell.TerminalResult r){
   if(c==null||r==null)return false;
   if(c.observe(2,3,4,r.runtimeEpoch,r.sessionGeneration,r.operationId,r.shutdownAckRevision,r.shouldFinish,r.saved)==null)return false;
@@ -62,8 +63,9 @@ class BreathCompositionPanelModule {
  boolean live=true; int callbacks; String value;
  boolean hostCurrent(){return live;} boolean nativePresentation(){return true;}
  void onNewIntent(Intent i){callbacks++;value=i.value;}
- static class RemotePending {String operation="save-exit";ExperimentSessionTerminalCorrelation terminalOrigin;RemotePending(ExperimentSessionTerminalCorrelation c){terminalOrigin=c;}}
- static RemotePending remotePending;static ExperimentSessionBleServer server=new ExperimentSessionBleServer();
+ static class RemoteTerminalPending {final ExperimentSessionBleServer server=BreathCompositionPanelModule.server;ExperimentSessionTerminalCorrelation origin;RemoteTerminalPending(ExperimentSessionTerminalCorrelation c){origin=c;}}
+ static RemoteTerminalPending remoteTerminal;static ExperimentSessionBleServer server=new ExperimentSessionBleServer();
+ static void observeInterruptedRemoteArm(Object readback){}
  static ExperimentSessionBleServer remoteServer(){return server;}
  static void observeRemoteTerminal(ExperimentSessionAndroidShell.TerminalResult result)
 ''' + terminal + '''
@@ -99,13 +101,13 @@ class Harness {
   check(c.observe(2,3,4,5,6,"panel-save-and-exit-7",10,true,true)==null);
   String subsequentlyRejectedShellId="ffffffffffffffff";check(!c.requestId.equals(subsequentlyRejectedShellId)&&"shell-experiment-operator-v1".equals(c.operatorOrigin));
   check(origin("").operatorOrigin.isEmpty());check(origin("untrusted-origin").operatorOrigin.isEmpty());
-  BreathCompositionPanelModule.RemotePending pending=new BreathCompositionPanelModule.RemotePending(origin(""));BreathCompositionPanelModule.remotePending=pending;
+  BreathCompositionPanelModule.RemoteTerminalPending pending=new BreathCompositionPanelModule.RemoteTerminalPending(origin(""));BreathCompositionPanelModule.remoteTerminal=pending;
   BreathCompositionPanelModule.observeRemoteTerminal(new ExperimentSessionAndroidShell.TerminalResult(99,6));
-  check(BreathCompositionPanelModule.remotePending==pending&&BreathCompositionPanelModule.server.published==0);
+  check(BreathCompositionPanelModule.remoteTerminal==pending&&BreathCompositionPanelModule.server.published==0);
   BreathCompositionPanelModule.observeRemoteTerminal(new ExperimentSessionAndroidShell.TerminalResult(0,6));
-  check(BreathCompositionPanelModule.remotePending==pending&&BreathCompositionPanelModule.server.published==0);
+  check(BreathCompositionPanelModule.remoteTerminal==pending&&BreathCompositionPanelModule.server.published==0);
   BreathCompositionPanelModule.observeRemoteTerminal(new ExperimentSessionAndroidShell.TerminalResult(5,6));
-  check(BreathCompositionPanelModule.remotePending==null&&BreathCompositionPanelModule.server.published==1);
+  check(BreathCompositionPanelModule.remoteTerminal==null&&BreathCompositionPanelModule.server.published==1);
   BreathCompositionPanelModule.observeRemoteTerminal(new ExperimentSessionAndroidShell.TerminalResult(5,6));
   check(BreathCompositionPanelModule.server.published==1);
   System.out.println("PASS "+checks);

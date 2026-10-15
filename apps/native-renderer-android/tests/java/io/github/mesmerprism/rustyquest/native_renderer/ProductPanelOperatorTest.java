@@ -59,6 +59,19 @@ public final class ProductPanelOperatorTest {
         check("panel-owner-replaced".equals(call(command).getString("reason")) && invocations==2);
         check("rejected".equals(call(invoke(replacementToken,"0000000000000005","panel-visible",new JSONObject().put("visible","true"))).getString("status")) && invocations==2);
         check("dispatched".equals(call(invoke(replacementToken,"0000000000000005","panel-visible",new JSONObject().put("visible",true))).getString("status")) && invocations==3);
+        check("rejected".equals(call(invoke(replacementToken,"0000000000000006","ble-pairing-code",new JSONObject().put("open_control",true))).getString("status")) && invocations==3);
+        String pairing=invoke(replacementToken,"0000000000000006","ble-pairing-code",new JSONObject());
+        check("dispatched".equals(call(pairing).getString("status")) && invocations==4);
+        check("dispatched".equals(call(pairing).getString("status")) && invocations==4);
+        for(Object invalidBias:new Object[]{-1,101,Long.MAX_VALUE,12.5,"25",true,JSONObject.NULL}){
+            check("rejected".equals(call(invoke(replacementToken,"0000000000000007","pending-guidance-bias",new JSONObject().put("bias_percent",invalidBias))).getString("status")) && invocations==4);
+        }
+        for(int bias:new int[]{0,100}){
+            String biasRequest=invoke(replacementToken,bias==0?"0000000000000007":"0000000000000008","pending-guidance-bias",new JSONObject().put("bias_percent",bias));
+            int before=invocations;
+            check("dispatched".equals(call(biasRequest).getString("status")) && invocations==before+1);
+            check("dispatched".equals(call(biasRequest).getString("status")) && invocations==before+1);
+        }
         replacement.close();
         check("rejected".equals(call(status()).getString("status")));
         System.out.println("ProductPanelOperatorTest PASS actual callbacks, re-entry, lost acknowledgement/no replay, owner replacement, thread and hostile shapes");

@@ -207,6 +207,13 @@
     "createFor",
     "deliverToNativeOwner",
     "queueNativePanelIntent",
-    "observeRemoteTerminal"
+    "observeRemoteTerminal",
+    "remotePendingBlocks",
+    "dispatchRemoteSaveAndExit",
+    "observeInterruptedRemoteArm",
+    "onExperimentSessionTerminalAdmission",
+    "onExperimentSessionReadbackDuringTerminal",
+    "observeProductPairingCode",
+    "updateProductPendingGuidanceBias"
   ]
 }

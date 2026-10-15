@@ -1526,6 +1526,7 @@ unsafe fn run_projection_loop_inner(
             scene_depth.is_some(),
             generation,
             queue_family_index,
+            render_mode.marker_value(),
         )?)
     } else {
         None
@@ -1944,7 +1945,8 @@ fn initialize_android_loader(
 
 fn renderer_xr_api_version(render_mode: NativeRendererRenderMode) -> xr::Version {
     // Meta's 1.1.53 behavior includes Shell-aligned hand aim and corrected aim flags.
-    if render_mode.marker_value() == "native-worldspace-integration" {
+    if render_mode.marker_value() == "native-worldspace-integration"
+        || crate::native_mesh_ui::enabled_for_mode(render_mode.marker_value()) {
         xr::Version::new(1, 1, 53)
     } else {
         xr::Version::new(1, 0, 0)
@@ -2342,7 +2344,8 @@ unsafe fn run_projection_frames(
     let mut app_running = true;
     let mut frame_slot = 0_usize;
     let mut frame_count = 0_u64;
-    let alternate_panel_pointer_enabled = render_mode.marker_value() == "native-worldspace-integration";
+    let alternate_panel_pointer_enabled = render_mode.marker_value() == "native-worldspace-integration"
+        || crate::native_mesh_ui::enabled_for_mode(render_mode.marker_value());
     let worldspace_input_policy = render_mode.worldspace_input_policy();
     let mut alternate_pointer = crate::native_alternate_input::AlternatePointer::default();
     let mut last_worldspace_hand_state = String::new();
@@ -6370,25 +6373,28 @@ unsafe fn record_projection_diagnostic(
                 }
             }
         }
-        if let Some(panel) = mesh_ui_panel {
-            panel.record_eye(
-                device,
-                cmd,
-                frame_slot,
-                eye_projection,
-                vk::Viewport {
-                    x: 0.0,
-                    y: 0.0,
-                    width: swapchain.extent.width as f32,
-                    height: swapchain.extent.height as f32,
-                    min_depth: 0.0,
-                    max_depth: 1.0,
-                },
-                vk::Rect2D {
-                    offset: vk::Offset2D::default(),
-                    extent: swapchain.extent,
-                },
-            );
+        // Existing depth-based worldspace panels retain their original scene position.
+        if swapchain.scene_depth_enabled {
+            if let Some(panel) = mesh_ui_panel {
+                panel.record_eye(
+                    device,
+                    cmd,
+                    frame_slot,
+                    eye_projection,
+                    vk::Viewport {
+                        x: 0.0,
+                        y: 0.0,
+                        width: swapchain.extent.width as f32,
+                        height: swapchain.extent.height as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0,
+                    },
+                    vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent: swapchain.extent,
+                    },
+                );
+            }
         }
         for draw_target in
             hand_anchor_particle_draw_order(hand_anchor_particle_stats, eye_projection)
@@ -6569,6 +6575,30 @@ unsafe fn record_projection_diagnostic(
             );
             if eye_index == 0 {
                 visual_stats = eye_visual_stats;
+            }
+        }
+        // The original product's color-only UI overlays all original scene draws.
+        // Its particle, half-resolution resolve, hand and graft policies stay intact.
+        if !swapchain.scene_depth_enabled {
+            if let Some(panel) = mesh_ui_panel {
+                panel.record_eye(
+                    device,
+                    cmd,
+                    frame_slot,
+                    eye_projection,
+                    vk::Viewport {
+                        x: 0.0,
+                        y: 0.0,
+                        width: swapchain.extent.width as f32,
+                        height: swapchain.extent.height as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0,
+                    },
+                    vk::Rect2D {
+                        offset: vk::Offset2D::default(),
+                        extent: swapchain.extent,
+                    },
+                );
             }
         }
         if let Some(panel) = mesh_ui_panel {

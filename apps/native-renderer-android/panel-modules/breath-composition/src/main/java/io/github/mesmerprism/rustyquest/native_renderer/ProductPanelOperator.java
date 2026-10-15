@@ -174,6 +174,11 @@ final class ProductPanelOperator {
                 // The existing particle owner validates field keys, values, bounds and revision.
                 break;
             case "ble-enabled": case "ble-open-control": keys(p,"enabled"); bool(p,"enabled"); break;
+            case "ble-pairing-code": keys(p); break;
+            case "pending-guidance-bias": {
+                keys(p,"bias_percent"); long bias = integer(p,"bias_percent");
+                if (bias < 0L || bias > 100L) throw new IllegalArgumentException("bias"); break;
+            }
             case "network-enroll": keys(p,"trusted_lan","consent"); bool(p,"trusted_lan"); bool(p,"consent");
                 if (!p.optBoolean("consent",false)) throw new IllegalArgumentException("consent"); break;
             case "network-direct-start": keys(p,"route");

@@ -391,7 +391,8 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         throw "Native app without ControlPanelActivity must carry an explicit empty panel source closure."
     }
     $packageName = [string]$appBuildLockObject.android_manifest.package_name
-    $selectedNativeActivityClass = if (@($appBuildLockObject.selected_feature_ids) -ccontains 'ui.native_mesh_panel' -and $selectedPanelModuleId -ceq 'breath-composition-controls') { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
+    $selectedMeshHost = @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.native_mesh_panel' -or @($appBuildLockObject.selected_feature_ids) -ccontains 'ui.native_mesh_panel.original_product'
+    $selectedNativeActivityClass = if ($selectedMeshHost -and $selectedPanelModuleId -ceq 'breath-composition-controls') { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
     if (@($appBuildLockObject.android_manifest.activities) -cnotcontains $selectedNativeActivityClass) { throw 'Selected native Activity is absent from exact manifest closure.' }
     $activityName = "$packageName/$selectedNativeActivityClass"
     $generatedManifestPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.android_manifest) -RepoRoot ([string]$repoRoot)
@@ -1232,6 +1233,7 @@ $polarBleStopHooks
 
     static boolean startConditionAudio(
             long sessionGeneration, String operationId, String conditionId) {
+        synchronized(PRESENTATION_LOCK){if(terminalIntentAdmitted)return false;}
         ConditionAudioRuntime runtime = conditionAudioRuntime;
         BreathPhaseAudioAndroidOwner phaseOwner=breathPhaseAudioOwner;
         if(phaseOwner!=null && !"ready".equals(phaseOwner.readiness())) return false;
@@ -1241,6 +1243,7 @@ $polarBleStopHooks
         if (readiness.state != ConditionAudioContract.TrackState.READY) return false;
         String prepareOperation = operationId + "-audio-prepare";
         synchronized (PRESENTATION_LOCK) {
+            if(terminalIntentAdmitted)return false;
             if (sessionGeneration == pendingAudioGeneration
                     && conditionId.equals(pendingAudioCondition)) {
                 return true;

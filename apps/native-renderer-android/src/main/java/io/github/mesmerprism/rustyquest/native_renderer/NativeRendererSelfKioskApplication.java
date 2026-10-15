@@ -229,11 +229,20 @@ public final class NativeRendererSelfKioskApplication extends Application {
 
     /** Same-app remote operator path; the existing terminal writer remains authoritative. */
     static boolean requestSaveAndExitFromRemote(Context context) {
+        return requestSaveAndExitFromRemote(context,null);
+    }
+
+    static boolean requestSaveAndExitFromRemote(Context context,
+            java.util.function.Consumer<NativeRendererSoftKioskCoordinator.Action> observer) {
         if (context == null || !(context.getApplicationContext()
                 instanceof NativeRendererSelfKioskApplication)) return false;
         NativeRendererSoftKioskCoordinator.Action action =
             NativeRendererSoftKioskCoordinator.process().requestExplicitTerminalExit();
         if (action.kind == NativeRendererSoftKioskCoordinator.ActionKind.BEGIN_TERMINAL_EXIT) {
+            // Observation cannot strand the already admitted original action or authorize replay.
+            if(observer!=null)try{observer.accept(action);}catch(RuntimeException unavailable){
+                Log.w("RustyQuestSelfKiosk","status=remote-terminal-observation-unavailable");
+            }
             NativeRendererSelfKioskService.dispatchTerminal(context, action);
             return true;
         }

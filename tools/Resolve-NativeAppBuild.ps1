@@ -192,7 +192,7 @@ function Assert-SetEquals {
 
 function Get-SelectedNativeHostActivities {
     param([string[]]$Activities, [string[]]$SelectedFeatureIds)
-    $originalNativeHost = $SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -and
+    $originalNativeHost = ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -or $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.original_product') -and
         $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
     foreach ($activity in $Activities) {
         if ($originalNativeHost -and $activity -ceq 'android.app.NativeActivity') {
@@ -689,7 +689,7 @@ function New-GeneratedAndroidManifestText {
         [string[]]$SelectedFeatureIds,
         [switch]$ExperimentSessionDebugOperator
     )
-    $originalNativeHost = $SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -and $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
+    $originalNativeHost = ($SelectedFeatureIds -ccontains 'ui.native_mesh_panel' -or $SelectedFeatureIds -ccontains 'ui.native_mesh_panel.original_product') -and $SelectedFeatureIds -ccontains 'ui.breath_composition_control_panel'
     $nativeActivityClass = if ($originalNativeHost) { 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity' } else { 'android.app.NativeActivity' }
     if (($originalNativeHost -and $Activities -cnotcontains $nativeActivityClass) -or
         (-not $originalNativeHost -and $Activities -ccontains 'io.github.mesmerprism.rustyquest.native_renderer.NativeProductPanelActivity')) {

@@ -1,0 +1,28 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.native_mesh_panel.original_product",
+  "module_path": "ui/native-mesh-panel-original-product",
+  "module_kind": "mesh-ui",
+  "settings_surface": { "authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile" },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Original product Activity surface and tracked panel input composited without replacing the original private-particle rendering policy.",
+  "provides": ["ui.native_mesh_panel", "ui.surface_texture", "ui.native_ray_capture"],
+  "depends_on": ["renderer.private_particles", "renderer.background.solid_black", "ui.breath_composition_control_panel"],
+  "incompatible_with": ["ui.native_mesh_panel", "renderer.native_scene", "renderer.private_particles.original_composable", "renderer.background.solid_black.composable"],
+  "exclusive_groups": {},
+  "android_manifest": { "permissions": [], "uses_features": [], "activities": [], "services": [], "queries": [] },
+  "runtime_profile": { "set": {}, "clear_families": [], "expected_render_modes": ["solid-black-private-particles"] },
+  "build_inputs": {
+    "env": [
+      { "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED", "value": "true" },
+      { "name": "RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ORIGINAL_SCENE", "value": "true" },
+      { "name": "RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS", "value": "false" }
+    ],
+    "assets": [],
+    "shaders": ["apps/native-renderer-android/native/shaders/mesh_ui_panel.vert.glsl", "apps/native-renderer-android/native/shaders/mesh_ui_panel.frag.glsl"]
+  },
+  "markers": { "required": ["renderMode=solid-black-private-particles", "customStereoProjectionEnabled=false", "solidBlackBackground=true", "nativeMeshUiOriginalScene=true"], "forbidden": [] },
+  "validation": { "quick": [], "standard": [], "device": [] },
+  "public_private_boundary": "Only reusable platform presentation resources, interfaces and markers are public; downstream algorithms and payloads remain app-owned."
+}

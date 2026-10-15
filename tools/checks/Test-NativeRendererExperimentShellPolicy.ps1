@@ -58,7 +58,7 @@ Assert-Contains $bridgePath 'OPEN_DEVELOPER_PANEL'
 Assert-Contains $bridgePath 'native_renderer_panel_route'
 Assert-Contains $vulkanPath 'open_experimenter_panel'
 Assert-Contains $vulkanPath 'open_developer_panel'
-Assert-Contains $panelPath 'ControlPanelActivity.closePanelAndReturnToImmersive(this)'
+Assert-Contains $panelPath 'ControlPanelActivity.closePanelAndReturnToImmersive(hostActivity())'
 Assert-NotContains $panelPath 'rendererReturnPending'
 Assert-NotContains $panelPath 'pollRendererReturnReadiness'
 Assert-Contains $handoffPath 'STABLE_MS = 750L'
@@ -167,6 +167,7 @@ if (-not $resolvedOutput.StartsWith($tempBase, [StringComparison]::OrdinalIgnore
 try {
     $sources = @(
         (Join-Path $javaRoot 'NativeRendererForegroundGuardPolicy.java'),
+        (Join-Path $javaRoot 'NativeRendererActivityComponents.java'),
         (Join-Path $javaRoot 'NativeRendererWriterAcknowledgedExitPolicy.java'),
         $sessionShellPath,
         $packagedClosurePath,

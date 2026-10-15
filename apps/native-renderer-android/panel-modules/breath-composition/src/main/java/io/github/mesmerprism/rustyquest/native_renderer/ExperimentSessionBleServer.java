@@ -143,6 +143,8 @@ final class ExperimentSessionBleServer {
     private long nativeOwnerHighWater;
     private JSONObject latestOwnerReceipt;
     private JSONObject latestTerminalReceipt;
+    private ExperimentSessionTerminalCorrelation terminalObservation;
+    private JSONObject interruptedArmReceipt;
     private int recoveryAttempts;
     private boolean recoveryScheduled;
     private long recoveryToken;
@@ -153,15 +155,50 @@ final class ExperimentSessionBleServer {
     synchronized void markShellOperation(String id) { shellOperationId=id; }
     synchronized JSONObject ownerReceipt() throws Exception {
         JSONObject observed=latestTerminalReceipt!=null?latestTerminalReceipt:latestOwnerReceipt;
-        return observed==null?new JSONObject():new JSONObject(observed.toString());
+        JSONObject result=observed==null?new JSONObject():new JSONObject(observed.toString());
+        if(interruptedArmReceipt!=null)result.put("interrupted_operation",new JSONObject(interruptedArmReceipt.toString()));
+        return result;
     }
     synchronized ExperimentSessionTerminalCorrelation terminalOrigin(String id,long runtime,long session) {
         if(!controlAvailable())throw new IllegalStateException("terminal-carrier-owner-unavailable");
         return new ExperimentSessionTerminalCorrelation(id,serverGeneration,nativeOwnerIdentity,nativeOwnerEpoch,runtime,session,id.equals(shellOperationId)?"shell-experiment-operator-v1":"");
     }
+    synchronized ExperimentSessionTerminalCorrelation beginTerminalObservation(String id,long runtime) {
+        if(!controlAvailable()||terminalObservation!=null)throw new IllegalStateException("terminal-observation-unavailable");
+        terminalObservation=ExperimentSessionTerminalCorrelation.pending(id,serverGeneration,nativeOwnerIdentity,nativeOwnerEpoch,
+            runtime,id.equals(shellOperationId)?"shell-experiment-operator-v1":"");
+        return terminalObservation;
+    }
+    synchronized boolean terminalObservationCurrent(ExperimentSessionTerminalCorrelation origin) {
+        return origin!=null&&origin==terminalObservation&&controlAvailable()&&origin.carrierGeneration==serverGeneration
+            &&origin.nativeOwnerIdentity==nativeOwnerIdentity&&origin.nativeOwnerEpoch==nativeOwnerEpoch;
+    }
+    synchronized void abandonTerminalObservation(ExperimentSessionTerminalCorrelation origin) {
+        if(terminalObservation==origin)terminalObservation=null;
+    }
+    synchronized void recordInterruptedArm(ExperimentSessionTerminalCorrelation origin,String id,String nativeId,
+            String state,String detail,boolean checkpointObserved) {
+        if(!terminalObservationCurrent(origin)||!ExperimentSessionBleProtocol.isLowerHex(id,16)
+                ||nativeId==null||!nativeId.matches("panel-arm-[1-9][0-9]*")
+                ||!("confirmed".equals(state)||"outcome_unknown".equals(state)))return;
+        try {
+            if(interruptedArmReceipt!=null) {
+                if(!id.equals(interruptedArmReceipt.optString("id"))||!nativeId.equals(interruptedArmReceipt.optString("native_operation_id")))return;
+                if("confirmed".equals(interruptedArmReceipt.optString("state")))return;
+                checkpointObserved|=interruptedArmReceipt.optBoolean("durable_checkpoint_observed",false);
+            }
+            updateReceipt(id,state,detail); // Existing per-ID gateway/BLE observations remain independent.
+            if(!terminalObservationCurrent(origin))return;
+            interruptedArmReceipt=new JSONObject().put("id",id).put("native_operation_id",nativeId)
+                .put("state",state).put("detail",safeDetail(detail)).put("durable_checkpoint_observed",checkpointObserved)
+                .put("terminal_request_id",origin.requestId);
+            Log.i(TAG,"channel=experiment-session-terminal-receipt status="+state+" interruptedOperatorId="+id
+                +" nativeArmOperationId="+nativeId+" terminalOperatorId="+origin.requestId+" durableCheckpointObserved="+checkpointObserved);
+        }catch(Exception unavailable){}
+    }
     synchronized boolean publishTerminalObservation(ExperimentSessionTerminalCorrelation origin,
             ExperimentSessionAndroidShell.TerminalResult terminal) {
-        if(origin==null||terminal==null||!controlAvailable())return false;
+        if(terminal==null||!terminalObservationCurrent(origin))return false;
         ExperimentSessionTerminalCorrelation.Result joined=origin.observe(serverGeneration,nativeOwnerIdentity,nativeOwnerEpoch,
             terminal.runtimeEpoch,terminal.sessionGeneration,terminal.operationId,terminal.shutdownAckRevision,terminal.shouldFinish,terminal.saved);
         if(joined==null)return false;
@@ -170,7 +207,9 @@ final class ExperimentSessionBleServer {
                 &&joined.operationId.equals(latestTerminalReceipt.optString("native_operation_id"))
                 &&joined.shutdownAckRevision==latestTerminalReceipt.optLong("shutdown_ack_revision",0);
             updateReceipt(origin.requestId,"confirmed","Recording saved; app is closing.");
-            latestTerminalReceipt=new JSONObject(latestOwnerReceipt.toString())
+            if(!terminalObservationCurrent(origin))return false;
+            latestTerminalReceipt=new JSONObject().put("v",1).put("id",origin.requestId)
+                .put("state","confirmed").put("detail","Recording saved; app is closing.")
                 .put("native_operation_id",joined.operationId).put("runtime_epoch",origin.runtimeEpoch)
                 .put("session_generation",origin.sessionGeneration).put("shutdown_ack_revision",joined.shutdownAckRevision)
                 .put("carrier_generation",origin.carrierGeneration).put("native_owner_identity",origin.nativeOwnerIdentity)
@@ -238,7 +277,7 @@ final class ExperimentSessionBleServer {
     synchronized boolean nativeOwnerStarted(long identity, long epoch) {
         if (identity <= 0L || epoch <= 0L || identity <= nativeOwnerHighWater) return false;
         stopWithReason("native-owner-replaced");
-        latestOwnerReceipt=null;latestTerminalReceipt=null;admissionTimes.clear();effectTimes.clear();
+        latestOwnerReceipt=null;latestTerminalReceipt=null;terminalObservation=null;interruptedArmReceipt=null;admissionTimes.clear();effectTimes.clear();
         if(commandGatewayAttached)serverGeneration++;
         nativeOwnerHighWater = identity;
         nativeOwnerIdentity = identity;
@@ -251,7 +290,7 @@ final class ExperimentSessionBleServer {
 
     synchronized boolean nativeOwnerEnded(long identity, long epoch) {
         if (identity <= 0L || identity != nativeOwnerIdentity || epoch != nativeOwnerEpoch) return false;
-        latestOwnerReceipt=null;admissionTimes.clear();effectTimes.clear();
+        latestOwnerReceipt=null;terminalObservation=null;admissionTimes.clear();effectTimes.clear();
         if(latestTerminalReceipt!=null)try{latestTerminalReceipt.put("owner_retired",true);}catch(Exception ignored){}
         nativeOwnerIdentity = 0L;
         nativeOwnerEpoch = 0L;
@@ -420,9 +459,14 @@ final class ExperimentSessionBleServer {
             if(admissionTimes.containsKey(id))receipt.put("admit_ms",admissionTimes.get(id));
             receipt.put("publish_ms",now);
             if(effectTimes.containsKey(id))receipt.put("effect_ns",effectTimes.get(id));
-            latestOwnerReceipt = new JSONObject(receipt.toString());
+            boolean selected=terminalObservation==null||terminalObservation.requestId.equals(id);
+            if(selected) {
+                latestOwnerReceipt = new JSONObject(receipt.toString());
+                String origin=terminalObservation!=null?terminalObservation.operatorOrigin:
+                    (id.equals(shellOperationId)?"shell-experiment-operator-v1":"");
+                if(!origin.isEmpty())latestOwnerReceipt.put("operator_origin",origin);
+            }
             if(gatewayReceiptListener!=null)gatewayReceiptListener.receipt(receipt);
-            if(id.equals(shellOperationId))latestOwnerReceipt.put("operator_origin","shell-experiment-operator-v1");
             byte[] bytes = jsonBytes(receipt.toString());
             for (Peer peer : peers.values()) {
                 if (id.equals(peer.lastCommandId)) {

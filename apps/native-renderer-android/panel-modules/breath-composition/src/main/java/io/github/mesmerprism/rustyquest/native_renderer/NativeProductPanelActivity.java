@@ -19,7 +19,13 @@ public final class NativeProductPanelActivity extends NativeActivity {
     @Override protected void onResume() { super.onResume(); if(current())controller.onResume(); }
     @Override protected void onPause() { if(current())controller.onPause(); super.onPause(); }
     private boolean current(){return controller!=null&&controller.hostCurrent();}
-    @Override protected void onDestroy() { BreathCompositionPanelModule retired=controller;controller=null;if(retired!=null)retired.onDestroy(); super.onDestroy(); }
+    @Override protected void onDestroy() {
+        // NativeActivity.super waits for its native loop. Close this Activity's writer first
+        // so that loop can observe the existing generation-specific retirement receipt.
+        NativeMeshUiProducer.retireActivityProducer(this);
+        BreathCompositionPanelModule retired=controller;controller=null;if(retired!=null)retired.onDestroy();
+        super.onDestroy();
+    }
     @Override protected void onActivityResult(int request,int result,Intent data) { super.onActivityResult(request,result,data); if(current())controller.onActivityResult(request,result,data); }
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results) { super.onRequestPermissionsResult(request,permissions,results); if(current())controller.onRequestPermissionsResult(request,permissions,results); }
     @Override public boolean dispatchKeyEvent(KeyEvent event) { return current()&&controller.dispatchKeyEvent(event)||super.dispatchKeyEvent(event); }

@@ -107,7 +107,16 @@ function Get-NativeRendererMetaXrOperatorSelection {
     $selected=$null -ne $FeatureLock -and @($FeatureLock.selected_feature_ids) -ccontains 'debug.meta_xr_operator'
     $inputs=@($LibraryPath,$LibrarySha256,$LayerManifestPath,$LayerManifestSha256)
     if (-not $selected -and -not $Enable -and @($inputs | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count -eq 0) { return [pscustomobject]@{enabled=$false;fingerprint='disabled'} }
-    if (-not $selected -or -not $Enable -or @($FeatureLock.selected_feature_ids) -cnotcontains 'renderer.native_scene') { throw 'Operator needs explicit debug opt-in and exact selected native scene feature closure.' }
+    $ids = if ($null -eq $FeatureLock) { @() } else { @($FeatureLock.selected_feature_ids) }
+    $originalMesh = $ids -ccontains 'ui.native_mesh_panel.original_product'
+    $supportedRoute = $ids -ccontains 'renderer.native_scene'
+    if ($originalMesh) {
+        $supportedRoute = $ids -cnotcontains 'renderer.native_scene' -and $ids -cnotcontains 'ui.native_mesh_panel'
+        foreach ($required in @('renderer.private_particles','renderer.background.solid_black','ui.breath_composition_control_panel','input.simultaneous_hands_and_controllers')) {
+            if ($ids -cnotcontains $required) { $supportedRoute = $false }
+        }
+    }
+    if (-not $selected -or -not $Enable -or -not $supportedRoute) { throw 'Operator needs explicit debug opt-in and an exact supported native scene or original mesh feature closure.' }
     [xml]$xml=[IO.File]::ReadAllText($AndroidManifestPath)
     $ns=[Xml.XmlNamespaceManager]::new($xml.NameTable); $ns.AddNamespace('a','http://schemas.android.com/apk/res/android')
     if ($xml.SelectNodes('/manifest/application',$ns).Count -ne 1 -or $xml.SelectSingleNode('/manifest/application/@a:debuggable',$ns).Value -cne 'true' -or $xml.SelectNodes('/manifest/uses-permission[@a:name="android.permission.INTERNET"]',$ns).Count -ne 1 -or $xml.SelectNodes('/manifest/uses-feature[@a:name="com.oculus.experimental.enabled"]',$ns).Count -ne 1 -or $xml.SelectNodes('/manifest/uses-feature[@a:name="com.oculus.experimental.enabled" and @a:required="false"]',$ns).Count -ne 1) { throw 'Operator requires a debuggable Android app with exact Internet/optional experimental declarations.' }

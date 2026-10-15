@@ -5,6 +5,14 @@ import java.util.concurrent.TimeUnit;
 
 public final class ExperimentSessionAndroidShellTest {
     public static void main(String[] args) throws Exception {
+        terminalAdmissionSuppressesQueuedArmEffectsAndReplaysIdentity();
+        terminalObservationFailureCannotStrandOriginalCommand();
+        sameSinkResumeReplaysExactAdmissionBeforeFinal();
+        if(args.length>0&&"--terminal-observation-only".equals(args[0])) {
+            definitiveClockRejectionRecoversWithFreshAttempt(false);
+            definitiveClockRejectionRecoversWithFreshAttempt(true);
+            System.out.println("ExperimentSessionAndroidShell terminal observation PASS");return;
+        }
         localTerminalCurrentOwnerAndReplacement();
         localTerminalPausedCompletionReplaysOnSameSink();
         localTerminalBusyObservationRetainsPendingExit();
@@ -45,6 +53,54 @@ public final class ExperimentSessionAndroidShellTest {
         System.out.println("ExperimentSessionAndroidShellTest PASS");
     }
 
+    private static void terminalAdmissionSuppressesQueuedArmEffectsAndReplaysIdentity()throws Exception {
+        java.util.concurrent.LinkedBlockingQueue<Runnable> queued=new java.util.concurrent.LinkedBlockingQueue<Runnable>();
+        FakeBridge bridge=new FakeBridge(false);FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),
+            new ExperimentSessionAndroidShell.UiDispatcher(){public void post(Runnable task){queued.add(task);}public boolean isUiThread(){return false;}});
+        final int[] effects={0},observations={0};Sink old=new Sink(),replacement=new Sink();
+        ExperimentSessionAndroidShell.UiSink arm=new ExperimentSessionAndroidShell.UiSink(){
+            public boolean observesSubmittedCommand(){return true;}
+            public boolean acceptsExperimentSessionCallbacks(long epoch){return epoch==3;}
+            public void onExperimentSessionReadback(ExperimentSessionAndroidShell.SessionReadback value){effects[0]++;}
+            public void onExperimentSessionReadbackDuringTerminal(ExperimentSessionAndroidShell.SessionReadback value){observations[0]++;}
+            public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult value){}
+        };
+        try {
+            shell.beginExplicitLaunchEpoch(3);shell.attach(old);
+            java.lang.reflect.Method delivery=ExperimentSessionAndroidShell.class.getDeclaredMethod("dispatchReadback",java.lang.ref.WeakReference.class,long.class,ExperimentSessionAndroidShell.SessionReadback.class);
+            delivery.setAccessible(true);
+            delivery.invoke(shell,new java.lang.ref.WeakReference<ExperimentSessionAndroidShell.UiSink>(arm),3L,codec.parse("status",null,false));
+            require(shell.beginTerminal(17,19,old));reject(shell.beginTerminal(17,19,old));
+            long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(3);
+            while(bridge.cleanups==0&&System.nanoTime()<end)Thread.sleep(5);
+            require(bridge.cleanups==1);
+            // The real original Activity may be recreated before any queued UI delivery.
+            shell.detach(old);shell.attach(replacement);
+            while((replacement.result==null||!replacement.result.shouldFinish)&&System.nanoTime()<end){Runnable task=queued.poll(50,TimeUnit.MILLISECONDS);if(task!=null)task.run();}
+            if(effects[0]!=0)throw new AssertionError("queued Arm callback escaped terminal observation lane");
+            equal(1,observations[0]);equal(0,old.admissions.size());
+            require(replacement.result!=null&&replacement.result.shouldFinish&&replacement.result.saved);
+            require(!replacement.admissions.isEmpty());
+            ExperimentSessionAndroidShell.TerminalAdmission admitted=replacement.admissions.get(0);
+            equal(3L,admitted.launchEpoch);equal(17L,admitted.guardGeneration);equal(19L,admitted.homeEpisode);
+            equal(1L,admitted.runtimeEpoch);equal(replacement.result.sessionGeneration,admitted.sessionGeneration);
+            equal(replacement.result.operationId,admitted.operationId);require(shell.isCurrentTerminalAdmission(replacement,admitted));
+            reject(shell.isCurrentTerminalAdmission(old,admitted));equal(1,bridge.submissions);equal(1,bridge.audioStops);
+            boolean advanced=false;
+            while(!(advanced=shell.beginExplicitLaunchEpoch(4))&&System.nanoTime()<end)Thread.sleep(5);
+            require(advanced);reject(shell.isCurrentTerminalAdmission(replacement,admitted));
+        }finally{shell.closeForTest();}
+    }
+
+    private static void terminalObservationFailureCannotStrandOriginalCommand()throws Exception {
+        FakeBridge bridge=new FakeBridge(false);
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,new FakeCodec(),new FakeClock(),new DirectDispatcher());
+        Sink sink=new Sink(){@Override public void onExperimentSessionTerminalAdmission(ExperimentSessionAndroidShell.TerminalAdmission value){throw new IllegalStateException("observation failure");}};
+        try{shell.beginExplicitLaunchEpoch(1);require(shell.beginTerminal(2,3,sink));awaitLocalFinish(sink);equal(1,bridge.submissions);equal(1,bridge.audioStops);equal(1,bridge.cleanups);}
+        finally{shell.closeForTest();}
+    }
+
     private static ExperimentSessionAndroidShell.LocalTerminalScope localScope(){
         return new ExperimentSessionAndroidShell.LocalTerminalScope(1,11,1,0,"","","",String.join("",java.util.Collections.nCopies(64,"a")),"none");
     }
@@ -73,11 +129,49 @@ public final class ExperimentSessionAndroidShellTest {
         try{
             shell.beginExplicitLaunchEpoch(1);shell.attach(stale);shell.attach(sink);sink.acceptTerminal=false;
             require(shell.beginLocalTerminal(localScope(),sink));
-            require(sink.pausedTerminalAttempt.await(2,TimeUnit.SECONDS));
-            require(shell.replayCurrentTerminal(sink,1));equal(0,sink.terminalCallbacks);reject(shell.replayCurrentTerminal(stale,1));
+            long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);boolean cached=false;
+            while(!(cached=shell.replayCurrentTerminal(sink,1))&&System.nanoTime()<end)Thread.sleep(5);
+            require(cached);equal(0,sink.terminalCallbacks);reject(shell.replayCurrentTerminal(stale,1));
+            while(!shell.canBeginExplicitLaunchEpoch(2)&&System.nanoTime()<end)Thread.sleep(5);
+            require(shell.canBeginExplicitLaunchEpoch(2)); // Original worker's paused final delivery completed.
             sink.acceptTerminal=true;require(shell.replayCurrentTerminal(sink,1));awaitLocalFinish(sink);
             equal(1,sink.terminalCallbacks);equal(1,bridge.submissions);equal(1,bridge.cleanups);equal(1,codec.encodings);
             reject(shell.isCurrentUiAttachment(sink,1));require(shell.isCurrentTerminalUiAttachment(sink,1));
+        }finally{shell.closeForTest();}
+    }
+
+    private static void sameSinkResumeReplaysExactAdmissionBeforeFinal()throws Exception {
+        FakeBridge bridge=new FakeBridge(false);FakeCodec codec=new FakeCodec();
+        ExperimentSessionAndroidShell shell=ExperimentSessionAndroidShell.createForTest(bridge,codec,new FakeClock(),new DirectDispatcher());
+        final java.util.List<String> delivered=new java.util.concurrent.CopyOnWriteArrayList<String>();
+        Sink sink=new Sink(){
+            @Override public void onExperimentSessionTerminalAdmission(ExperimentSessionAndroidShell.TerminalAdmission value){
+                super.onExperimentSessionTerminalAdmission(value);delivered.add("admission");
+            }
+            @Override public void onExperimentSessionTerminal(ExperimentSessionAndroidShell.TerminalResult value){
+                if(value.shouldFinish){
+                    if(admissions.isEmpty()||delivered.isEmpty()||!"admission".equals(delivered.get(delivered.size()-1)))
+                        throw new AssertionError("same-sink final arrived before exact admission replay");
+                    ExperimentSessionAndroidShell.TerminalAdmission admitted=admissions.get(admissions.size()-1);
+                    equal(value.operationId,admitted.operationId);equal(value.runtimeEpoch,admitted.runtimeEpoch);
+                    equal(value.sessionGeneration,admitted.sessionGeneration);equal(1L,admitted.launchEpoch);
+                    require(value.saved&&value.shutdownAckRevision>0);delivered.add("final");
+                }
+                super.onExperimentSessionTerminal(value);
+            }
+        },old=new Sink();
+        try {
+            shell.beginExplicitLaunchEpoch(1);shell.attach(old);shell.attach(sink);sink.acceptTerminal=false;
+            require(shell.beginLocalTerminal(localScope(),sink));
+            long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);boolean cached=false;
+            while(!(cached=shell.replayCurrentTerminal(sink,1))&&System.nanoTime()<end)Thread.sleep(5);
+            require(cached);require(sink.admissions.isEmpty());equal(0,sink.terminalCallbacks);
+            while(!shell.canBeginExplicitLaunchEpoch(2)&&System.nanoTime()<end)Thread.sleep(5);
+            require(shell.canBeginExplicitLaunchEpoch(2));
+            reject(shell.replayCurrentTerminal(old,1));reject(shell.replayCurrentTerminal(sink,2));
+            sink.acceptTerminal=true;require(shell.replayCurrentTerminal(sink,1));awaitLocalFinish(sink);
+            equal(2,delivered.size());equal("admission",delivered.get(0));equal("final",delivered.get(1));
+            equal(1,sink.terminalCallbacks);equal(1,bridge.submissions);equal(1,bridge.audioStops);equal(1,bridge.cleanups);equal(1,codec.encodings);
         }finally{shell.closeForTest();}
     }
     private static void localTerminalBusyObservationRetainsPendingExit()throws Exception{
@@ -109,7 +203,7 @@ public final class ExperimentSessionAndroidShellTest {
 
     private static void localTerminalQueuedReplayCannotReplaceNewCompletion()throws Exception{
         final java.util.concurrent.LinkedBlockingQueue<Runnable> queued=new java.util.concurrent.LinkedBlockingQueue<Runnable>();
-        final CountDownLatch posted=new CountDownLatch(5);
+        final CountDownLatch posted=new CountDownLatch(6); // Includes the immutable terminal-admission observation.
         ExperimentSessionAndroidShell.UiDispatcher dispatcher=new ExperimentSessionAndroidShell.UiDispatcher(){
             public void post(Runnable task){queued.add(task);posted.countDown();}public boolean isUiThread(){return false;}
         };
@@ -126,7 +220,9 @@ public final class ExperimentSessionAndroidShellTest {
             Runnable task;while((task=queued.poll())!=null)task.run();
             // Only the newest receipt is delivered; stale queued pending receipts are suppressed.
             awaitLocalFinish(sink);equal(1,sink.terminalCallbacks);equal(1,bridge.submissions);equal(1,bridge.cleanups);
-            require(shell.replayCurrentTerminal(sink,1));Runnable replay=queued.poll(1,TimeUnit.SECONDS);require(replay!=null);replay.run();require(sink.result.shouldFinish);equal(2,sink.terminalCallbacks);
+            require(shell.replayCurrentTerminal(sink,1));
+            Runnable admissionReplay=queued.poll(1,TimeUnit.SECONDS);require(admissionReplay!=null);admissionReplay.run();equal(1,sink.terminalCallbacks);
+            Runnable replay=queued.poll(1,TimeUnit.SECONDS);require(replay!=null);replay.run();require(sink.result.shouldFinish);equal(2,sink.terminalCallbacks);
             // Cache still owns the completed result; repeated observation never dispatches native work.
             equal(1,codec.encodings);
         }finally{shell.closeForTest();}
@@ -624,6 +720,9 @@ public final class ExperimentSessionAndroidShellTest {
             equal(2, bridge.submissions);
             equal(2, codec.encodings);
             equal(2, bridge.bytesByOperation.size());
+            equal(2,sink.admissions.size());
+            equal(sink.admissions.get(0).operationId,sink.admissions.get(1).rejectedPredecessor);
+            equal(sink.result.operationId,sink.admissions.get(1).operationId);
             require(bridge.lastDispatchAt > bridge.firstDispatchAt);
             equal(1, bridge.acceptedStops);
             equal(1, bridge.audioStops);
@@ -1146,7 +1245,11 @@ public final class ExperimentSessionAndroidShellTest {
         @Override public boolean isUiThread() { return false; }
     }
 
-    private static final class Sink implements ExperimentSessionAndroidShell.UiSink {
+    private static class Sink implements ExperimentSessionAndroidShell.UiSink {
+        final java.util.List<ExperimentSessionAndroidShell.TerminalAdmission> admissions=new java.util.concurrent.CopyOnWriteArrayList<ExperimentSessionAndroidShell.TerminalAdmission>();
+        @Override public void onExperimentSessionTerminalAdmission(ExperimentSessionAndroidShell.TerminalAdmission value){
+            if(admissions.isEmpty()||!admissions.get(admissions.size()-1).operationId.equals(value.operationId))admissions.add(value);
+        }
         final CountDownLatch readback = new CountDownLatch(1);
         final CountDownLatch terminal = new CountDownLatch(1);
         volatile ExperimentSessionAndroidShell.TerminalResult result;

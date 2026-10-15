@@ -3,7 +3,16 @@
 The inert `debug.meta_xr_operator` feature adds Internet permission and the
 non-required `com.oculus.experimental.enabled` manifest feature. Select it in
 the app spec, declare those exact manifest additions, and resolve the ordinary
-app feature lock. Packaging additionally requires all five builder arguments:
+app feature lock.
+
+The layer does not select a rendering policy. Its packaging owner accepts the
+existing `renderer.native_scene` route or the explicit
+`ui.native_mesh_panel.original_product` closure with the original renderer,
+background, full panel and simultaneous input. The latter retains
+`solid-black-private-particles`; an ordinary 2D original renderer alone does
+not admit this mesh input/API route.
+
+Packaging additionally requires all five builder arguments:
 
 ```powershell
 pwsh -NoProfile -File tools/Build-NativeRendererAndroid.ps1 `
