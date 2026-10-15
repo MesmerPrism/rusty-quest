@@ -937,6 +937,95 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         new ExperimenterPanelShortcutPolicy();
     private MeshPanelAttachment meshPanelAttachment;
     private boolean activityPanelResumed;
+    private AutoCloseable productPanelOperatorRegistration;
+
+    private boolean productPanelOperatorAvailable(){
+        return !experimentShellDestroyed&&!isFinishing()&&!isDestroyed()
+            &&(activityPanelResumed||meshPanelAttachment!=null&&meshPanelAttachment.active()
+                &&meshPanelAttachment.immersiveResumed);
+    }
+    private void requireProductPanelOperator(){
+        if(Looper.myLooper()!=Looper.getMainLooper()||!productPanelOperatorAvailable())
+            throw new IllegalStateException("production-panel-owner-unavailable");
+    }
+    private JSONObject observeProductPanelOperator()throws Exception {
+        requireProductPanelOperator();
+        JSONObject result=new JSONObject().put("route",panelRoute).put("topic",breathCompositionPanelTopic)
+            .put("page",experimenterNavigation.page().name().toLowerCase(Locale.ROOT))
+            .put("scroll_y",panelScrollView==null?0:panelScrollView.getScrollY())
+            .put("choices",new JSONObject()
+                .put("experimenter",new JSONArray(new String[]{"prepare","controls","condition","session","polar"}))
+                .put("developer",new JSONArray(new String[]{"home","particles","breath","polar","lsl","status"})));
+        JSONObject particles=readPrivateParticleDynamicsStatusJson();
+        result.put("particles",particles==null?new JSONObject().put("status","unavailable"):particles);
+        boolean bleSelected=ExperimentSessionBleServer.featurePackaged(this);
+        JSONObject ble=new JSONObject().put("selected",bleSelected);
+        if(bleSelected){ExperimentSessionBleServer server=remoteServer();
+            ble.put("enabled",server.enabled()).put("open_control",server.openControl()).put("active",server.active());}
+        result.put("ble",ble);
+        ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
+        result.put("network",gateway==null?new JSONObject().put("selected",ExperimentSessionCommandGateway.featurePackaged(this)).put("state","uninitialized"):gateway.productPanelReadback());
+        return result;
+    }
+    private JSONObject invokeProductPanelOperator(String action,JSONObject parameters)throws Exception {
+        requireProductPanelOperator();
+        if("navigate".equals(action)){
+            String surface=parameters.getString("surface"),page=parameters.getString("page");
+            if("experimenter".equals(surface)){
+                EXPERIMENT_SESSION_PANEL.returnFromDeveloper();synchronizePanelRouteFromCoordinator();
+                if("polar".equals(page))replaceBreathCompositionPanelContent("polar");
+                else selectExperimenterPage(ExperimentSessionPanelViewPolicy.Page.valueOf(page.toUpperCase(Locale.ROOT)));
+            }else if("developer".equals(surface)){
+                EXPERIMENT_SESSION_PANEL.openDeveloper(EXPERIMENT_SESSION_PANEL.allocateRouteEvent());
+                synchronizePanelRouteFromCoordinator();replaceBreathCompositionPanelContent(page);
+            }else throw new IllegalArgumentException("unsupported-panel-surface");
+            return observeProductPanelOperator().put("status","observed");
+        }
+        if("scroll".equals(action)){
+            if(panelScrollView==null)throw new IllegalStateException("panel-scroll-unavailable");
+            panelScrollView.scrollBy(0,parameters.getInt("delta_y"));rememberPanelScroll();
+            return new JSONObject().put("status","observed").put("scroll_y",panelScrollView.getScrollY());
+        }
+        if("particle-patch".equals(action))return submitPrivateParticleCandidate(
+            privateParticlePatchEnvelope(new JSONObject(parameters.getJSONObject("patch").toString())),false);
+        if("ble-enabled".equals(action)||"ble-open-control".equals(action)){
+            if(!ExperimentSessionBleServer.featurePackaged(this))throw new IllegalStateException("ble-feature-not-selected");
+            ExperimentSessionBleServer server=remoteServer();boolean enabled=parameters.getBoolean("enabled");
+            if("ble-enabled".equals(action))server.setEnabled(enabled,this);else server.setOpenControl(enabled,this);
+            replaceBreathCompositionPanelContent("home");
+            return new JSONObject().put("status","observed").put("enabled",server.enabled()).put("open_control",server.openControl()).put("active",server.active());
+        }
+        if(!ExperimentSessionCommandGateway.featurePackaged(this))throw new IllegalStateException("network-feature-not-selected");
+        ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.process(this,REMOTE_DELEGATE);
+        if("network-enroll".equals(action)){
+            if(!parameters.getBoolean("consent"))throw new SecurityException("network-consent-required");
+            JSONObject credentials=gateway.enrollFromHeadset(parameters.getBoolean("trusted_lan"));
+            replaceBreathCompositionPanelContent("home");
+            return new JSONObject().put("status","enrolled").put("credentials",credentials).put("network",gateway.productPanelReadback());
+        }
+        if("network-direct-start".equals(action)){
+            if(!ExperimentSessionDirectNetwork.featurePackaged(this))throw new IllegalStateException("direct-network-feature-not-selected");
+            if(checkSelfPermission(ExperimentSessionDirectNetwork.requiredPermission())!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+                ExperimentSessionDirectNetwork.requestPermissions(this,9402);
+                return new JSONObject().put("status","permission-requested");
+            }
+            gateway.startDirectFromHeadset(parameters.getString("route"));
+            return new JSONObject().put("status","requested").put("network",gateway.productPanelReadback());
+        }
+        if("network-join-details".equals(action))return new JSONObject().put("status","observed").put("join",gateway.directJoinDetails()).put("addresses",gateway.localAddresses());
+        if("network-relay-start".equals(action)){
+            gateway.startRelayFromHeadset(parameters.getString("session_id"),parameters.getString("token"),parameters.getLong("expiry"));
+            return new JSONObject().put("status","requested").put("network",gateway.productPanelReadback());
+        }
+        if("network-stop".equals(action)){
+            gateway.stopRoutesFromHeadset();return new JSONObject().put("status","stop-requested").put("network",gateway.productPanelReadback());
+        }
+        if("network-revoke".equals(action)){
+            gateway.revokeFromHeadset();replaceBreathCompositionPanelContent("home");
+            return new JSONObject().put("status","observed").put("network",gateway.productPanelReadback());
+        }
+        throw new IllegalArgumentException("unsupported-product-panel-action");
+    }
 
     /**
      * Move the retained production Activity's content into the native mesh carrier.
@@ -1118,6 +1207,11 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (!terminalIntent) {
             ExperimentSessionBleServer.process(this, REMOTE_DELEGATE).startFromPanel(this);
         }
+        productPanelOperatorRegistration=ProductPanelOperator.register(new ProductPanelOperator.Owner(){
+            public boolean available(){return productPanelOperatorAvailable();}
+            public JSONObject observe()throws Exception{return observeProductPanelOperator();}
+            public JSONObject invoke(String action,JSONObject parameters)throws Exception{return invokeProductPanelOperator(action,parameters);}
+        });
     }
 
     @Override
@@ -1359,6 +1453,9 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
     @Override
     protected void onDestroy() {
         experimentShellDestroyed = true;
+        try{if(productPanelOperatorRegistration!=null)productPanelOperatorRegistration.close();}
+        catch(Exception unavailable){Log.w(TAG,"channel=product-panel-operator event=registration-retirement-failed");}
+        productPanelOperatorRegistration=null;
         if(meshPanelAttachment!=null)meshPanelAttachment.close();
         closeHubStatusLifetime();
         cancelRemotePolarRender();
@@ -4284,10 +4381,16 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         Set<String> patchFields
     ) {
         try {
-            if (!nativeBridgeLoaded) {
-                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
-            }
             JSONObject candidate = buildPrivateParticleDynamicsPatchJson(patchFields);
+            submitPrivateParticleCandidate(candidate,userVisible);
+        } catch (Exception error) {
+            if (userVisible) updateStatus("Particle dynamics failed: " + error.getMessage());
+            else setStatusText("Particle dynamics update failed: " + error.getMessage());
+        }
+    }
+
+    private JSONObject submitPrivateParticleCandidate(JSONObject candidate,boolean userVisible)throws Exception {
+            if (!nativeBridgeLoaded) throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
             String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
             JSONObject response = new JSONObject(responseText);
             String responseStatus = response.optString("status", "unknown");
@@ -4307,13 +4410,7 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
                 setStatusText(message);
             }
             awaitPrivateParticleEffectiveRevision(revision);
-        } catch (Exception error) {
-            if (userVisible) {
-                updateStatus("Particle dynamics failed: " + error.getMessage());
-            } else {
-                setStatusText("Particle dynamics update failed: " + error.getMessage());
-            }
-        }
+            return response;
     }
 
     private void awaitPrivateParticleEffectiveRevision(long revision) {
@@ -4459,6 +4556,10 @@ public class BreathCompositionPanelModule extends Activity implements PanelModul
         if (tracer.length() > 0) {
             privateParticles.put("tracer", tracer);
         }
+        return privateParticlePatchEnvelope(privateParticles);
+    }
+
+    private JSONObject privateParticlePatchEnvelope(JSONObject privateParticles)throws Exception {
         JSONObject source = new JSONObject()
             .put("surface", "same_apk_panel")
             .put("transport", "jni_live_queue");

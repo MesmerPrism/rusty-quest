@@ -30,6 +30,17 @@ turns visibility into a fabricated immersive-focus or wearer-confirmation receip
 Native menu recall uses the same visibility owner; effective visibility resumes
 the original panel's presentation refresh loops.
 
+The actual Activity also registers its `ProductPanelOperator.Owner` on creation
+and retires that registration on destruction. Its typed adapter shares the
+existing navigation, scrolling, particle submission/effective readback, BLE
+settings and network owner APIs. A retained Activity is eligible while its
+current immersive host is resumed; a stored Activity reference alone is
+insufficient. General status excludes controller keys, relay tokens and temporary
+network passwords. Enrollment and join details return sensitive values only as
+the explicitly requested operation result. The particle patch envelope and
+submission path are shared with the original widgets, and a queued reply remains
+distinct from the renderer's matching effective revision.
+
 Host compilation and pure readback/handoff fixtures do not establish Android
 Activity transfer, system-prompt appearance, Bluetooth/network effects, input
 reach, or headset acceptance. Those require the complete selected product and

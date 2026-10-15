@@ -53,6 +53,14 @@ public final class ExperimentSessionCommandGateway {
         if(!preferences.contains("device"))preferences.edit().putString("device",ExperimentSessionBleProtocol.newHex(16)).commit();
     }
     public boolean enabled(){return featurePackaged(context)&&preferences.contains("key")&&preferences.contains("controller");}
+    /** Operator readback excludes controller keys, tokens and temporary-network passwords. */
+    JSONObject productPanelReadback()throws Exception {
+        requireMain();return new JSONObject().put("selected",featurePackaged(context)).put("enabled",enabled())
+            .put("trusted_lan",trustedLanAllowed()).put("state",routeState)
+            .put("relay_origin",relayOrigin()).put("direct_selected",ExperimentSessionDirectNetwork.featurePackaged(context))
+            .put("direct",direct==null?new JSONObject().put("state","inactive"):direct.snapshot())
+            .put("relay",relay==null?new JSONObject().put("state","inactive"):relay.snapshot());
+    }
     boolean trustedLanAllowed(){return ExperimentSessionGatewayProtocol.lanAllowed(featurePackaged(context),enabled(),identity>0&&epoch>0,preferences.getBoolean("trusted-lan",false));}
     boolean allowedOrigin(String origin) {
         if(origin==null||!origin.matches("https://[A-Za-z0-9.-]+(:[0-9]{1,5})?"))return false;
