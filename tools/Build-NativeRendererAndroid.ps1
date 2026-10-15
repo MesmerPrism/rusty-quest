@@ -14,6 +14,11 @@ param(
     [int]$RecordedHandFrameLimit = 12,
     [switch]$RequireRecordedHandCapture,
     [switch]$AllowUnlockedDevelopmentBuild,
+    [switch]$EnableMetaXrOperatorDebugLayer,
+    [string]$MetaXrOperatorLibrary = '',
+    [string]$MetaXrOperatorLibrarySha256 = '',
+    [string]$MetaXrOperatorManifest = '',
+    [string]$MetaXrOperatorManifestSha256 = '',
     [switch]$ReplaceExistingOutput
 )
 
@@ -477,6 +482,11 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
 
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererPanelCompositionSelection.psm1') -Force
 $panelCompositionSelection = Get-NativeRendererPanelCompositionSelection -FeatureLock $appBuildLockObject -BuildEnvByName $appBuildEnvByName
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererMetaXrOperator.psm1') -Force
+$metaXrOperator = Get-NativeRendererMetaXrOperatorSelection -FeatureLock $appBuildLockObject `
+    -AndroidManifestPath $manifestInputPath -Enable:$EnableMetaXrOperatorDebugLayer `
+    -LibraryPath $MetaXrOperatorLibrary -LibrarySha256 $MetaXrOperatorLibrarySha256 `
+    -LayerManifestPath $MetaXrOperatorManifest -LayerManifestSha256 $MetaXrOperatorManifestSha256
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererHandGeometrySelection.psm1') -Force
 $handGeometrySelection = Get-NativeRendererHandGeometrySelection -FeatureLock $appBuildLockObject `
     -BuildEnvByName $appBuildEnvByName -PreparedHandRigSource $PreparedHandRigSource `
@@ -503,6 +513,10 @@ if ([string]::IsNullOrWhiteSpace($requestedOutDir)) {
     $OutDir = $requestedOutDir
 }
 $resolvedOutParent = Split-Path -Parent $OutDir
+if ($metaXrOperator.enabled -and [string]::IsNullOrWhiteSpace($requestedOutDir)) {
+    $OutDir = Join-Path $OutDir ('operator-' + $metaXrOperator.fingerprint.Substring(0,16))
+    $resolvedOutParent = Split-Path -Parent $OutDir
+}
 New-Item -ItemType Directory -Force -Path $targetRoot, $resolvedOutParent | Out-Null
 $resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd("\")
 $resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd("\")
@@ -2063,6 +2077,7 @@ if (-not [string]::IsNullOrWhiteSpace($OpenXrLoader) -and (Test-Path $OpenXrLoad
     $openXrLoaderPackaged = $true
 }
 
+Copy-NativeRendererMetaXrOperatorLayer -Selection $metaXrOperator -OutputRoot $OutDir -NativeStageRoot $nativeStageRoot
 Invoke-Checked "aapt2 link" $aapt2 @(
     "link",
     "-o", $apkUnsigned,
@@ -2093,6 +2108,7 @@ Invoke-Checked "apksigner" $apksigner @(
 )
 
 $sha256 = Get-FileSha256 -Path $apkSigned
+Assert-NativeRendererMetaXrOperatorArchive -Selection $metaXrOperator -ApkPath $apkSigned
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.native_renderer_android.build_manifest.v1"
     app_id = if ($null -eq $appBuildLockObject) { "unlocked-development" } else { [string]$appBuildLockObject.app_id }
@@ -2100,6 +2116,7 @@ $manifest = [ordered]@{
     activity = $activityName
     entrypoint = "android.app.NativeActivity"
     authority = "rusty.quest.native_renderer"
+    meta_xr_operator_debug_layer = $metaXrOperator
     panel_composition = $panelCompositionSelection
     target_runtime = "quest-native-openxr-vulkan"
     plan_asset = "native-hwb-blur-sdf-public.plan.json"
