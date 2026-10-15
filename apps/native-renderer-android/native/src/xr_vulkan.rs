@@ -822,7 +822,7 @@ unsafe fn run_projection_loop_inner(
         available_extensions.ext_hand_tracking,
         enabled_extensions.ext_hand_tracking,
     );
-    let reference_space =
+    let (reference_space, reference_space_type) =
         create_projection_reference_space(&session, runtime_options.environment_depth_settings)?;
     let mut hand_mesh_capture_recorder = if replay.is_some() { Some(LiveHandMeshCaptureRecorder::new(
         app,
@@ -1542,6 +1542,7 @@ unsafe fn run_projection_loop_inner(
         &mut frame_wait,
         &mut frame_stream,
         &reference_space,
+        reference_space_type,
         render_pass,
         color_format,
         scene_depth,
@@ -2238,6 +2239,7 @@ unsafe fn run_projection_frames(
     frame_wait: &mut xr::FrameWaiter,
     frame_stream: &mut xr::FrameStream<xr::Vulkan>,
     reference_space: &xr::Space,
+    reference_space_type: xr::ReferenceSpaceType,
     render_pass: vk::RenderPass,
     color_format: vk::Format,
     scene_depth: Option<SceneDepthConfig>,
@@ -4480,6 +4482,19 @@ unsafe fn run_projection_frames(
             if mesh_ui_controls.is_some_and(|neutral| neutral.animation) {
                 ui_particle_phase_frame = ui_particle_phase_frame.saturating_add(1);
             }
+            // This frozen pose belongs to the frame whose queue submission,
+            // swapchain release and xrEndFrame all succeeded above.
+            crate::native_mesh_ui::renderer_observed_geometry(
+                controls,
+                frame_count,
+                if reference_space_type == xr::ReferenceSpaceType::LOCAL {
+                    "LOCAL"
+                } else if reference_space_type == xr::ReferenceSpaceType::STAGE {
+                    "STAGE"
+                } else {
+                    "UNKNOWN"
+                },
+            );
             if crate::native_mesh_ui::renderer_observed_visibility(controls) {
                 crate::marker("native-mesh-ui", format!("event=panel-visibility-effective generation={} requestRevision={} visible={} submittedFrame={} visibleConfirmation=false",
                     controls.generation, controls.visibility_revision, controls.panel_visible, frame_count));
@@ -5069,7 +5084,7 @@ fn reject_live_stimulus_candidate(
 fn create_projection_reference_space(
     session: &xr::Session<xr::Vulkan>,
     environment_depth_settings: NativeEnvironmentDepthSettings,
-) -> Result<xr::Space, String> {
+) -> Result<(xr::Space, xr::ReferenceSpaceType), String> {
     let prefer_stage = environment_depth_settings.reference_space_marker_value() == "openxr-stage";
     let first = if prefer_stage {
         xr::ReferenceSpaceType::STAGE
@@ -5082,9 +5097,10 @@ fn create_projection_reference_space(
         xr::ReferenceSpaceType::STAGE
     };
     match session.create_reference_space(first, xr::Posef::IDENTITY) {
-        Ok(space) => Ok(space),
+        Ok(space) => Ok((space, first)),
         Err(first_error) => session
             .create_reference_space(second, xr::Posef::IDENTITY)
+            .map(|space| (space, second))
             .map_err(|second_error| {
                 format!(
                     "create OpenXR reference space: first={first:?} failed with {first_error}; fallback={second:?} failed with {second_error}"
