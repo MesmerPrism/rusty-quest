@@ -18,6 +18,7 @@ public final class LslPanelCommandReceiver extends BroadcastReceiver {
     public static final String ACTION_COMMAND =
         "io.github.mesmerprism.rustyquest.native_renderer.action.LSL_PANEL_COMMAND";
     public static final String EXTRA_COMMAND_BASE64 = "command_b64";
+    public static final String EXTRA_PERSISTENCE_SCOPE = "persistence_scope";
     private static final int MAX_COMMAND_BYTES = 16384;
 
     @Override
@@ -30,6 +31,12 @@ public final class LslPanelCommandReceiver extends BroadcastReceiver {
             return;
         }
         try {
+            String scope = intent.hasExtra(EXTRA_PERSISTENCE_SCOPE)
+                ? intent.getStringExtra(EXTRA_PERSISTENCE_SCOPE) : "persistent";
+            if (!"persistent".equals(scope) && !"runtime-only".equals(scope)) {
+                reject("unsupported-persistence-scope");
+                return;
+            }
             String encoded = intent.getStringExtra(EXTRA_COMMAND_BASE64);
             if (encoded == null || encoded.isEmpty() || encoded.length() > MAX_COMMAND_BYTES * 2) {
                 reject("missing-or-oversized-command");
@@ -48,9 +55,11 @@ public final class LslPanelCommandReceiver extends BroadcastReceiver {
             boolean accepted = "accepted".equals(response.optString("response_status", ""));
             if (accepted) {
                 JSONObject acceptedConfig = response.optJSONObject("config");
-                boolean persisted = acceptedConfig != null
-                    && LslPanelConfigStore.save(context.getApplicationContext(), acceptedConfig);
-                if ("reset".equals(operation)) {
+                boolean persisted = false;
+                if ("persistent".equals(scope) && acceptedConfig != null) {
+                    persisted = LslPanelConfigStore.save(context.getApplicationContext(), acceptedConfig);
+                }
+                if ("persistent".equals(scope) && "reset".equals(operation)) {
                     persisted = LslPanelConfigStore.reset(context.getApplicationContext());
                 }
                 boolean effectiveEnabled = acceptedConfig != null
@@ -58,6 +67,7 @@ public final class LslPanelCommandReceiver extends BroadcastReceiver {
                 LslMulticastLockManager.setFromCli(context, effectiveEnabled);
                 response.put("persisted", persisted);
             }
+            response.put("persistence_scope", scope);
             boolean statusReadback = "status".equals(response.optString("response_status", ""));
             respond(response.toString(), accepted || statusReadback);
         } catch (UnsatisfiedLinkError error) {

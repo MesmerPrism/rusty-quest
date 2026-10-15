@@ -5,7 +5,8 @@ import android.content.Context;
 import android.content.Intent;
 
 /**
- * Exact shell-authorized operator bridge; it never launches an Activity.
+ * Exact shell-authorized operator bridge. The explicit location-settings
+ * command uses the same system-prompt handler as the Polar page.
  *
  * <p>The generated manifest protects this exported receiver with
  * {@code android.permission.DUMP}. That is the Android-supported boundary for

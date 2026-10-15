@@ -659,6 +659,17 @@ final class PolarSensorPanel {
     OperatorCommandStatus handleCommand(String rawCommand) {
         String command = rawCommand == null ? "" : rawCommand.trim().toLowerCase(Locale.US);
         long operationGeneration = ++operatorCommandGeneration;
+        if ("open_location_settings".equals(command)) {
+            if (activity == null) {
+                return finishOperatorCommand(operationGeneration, command, "rejected", "panel-not-attached", "unavailable");
+            }
+            marker("status=cli-command command=open_location_settings");
+            openLocationSettings();
+            // Same UI handler and system-prompt lifecycle. A dispatch does not
+            // prove that Android displayed or the operator changed settings.
+            return finishOperatorCommand(operationGeneration, command, "accepted", "none",
+                locationSettingsPromptPending ? "pending" : "unavailable");
+        }
         if ("scan".equals(command)) {
             setStatus("CLI command: scan.");
             marker("status=cli-command command=scan");

@@ -53,3 +53,19 @@ Host qualification: `python tools/checks/test_remote_setup.py` and
 `pwsh -NoProfile -File tools/checks/Test-NativeRendererExperimentPanel.ps1`.
 These cover production owner decisions, bounded wire controls and Android API
 compilation; they do not establish device sleep/wake or sensor radio behavior.
+
+## Open the existing system settings action
+
+With the Polar page attached, the existing protected operator also accepts
+`Invoke-NativeRendererPolarOperator.ps1 -Command open_location_settings`.
+Supply the same explicit `-Serial` and `-PackageName` used by its other
+commands. This calls the original page's Open location settings handler,
+including its system-prompt lifecycle and general-settings fallback.
+
+A detached page rejects before launch. An accepted request reports `pending`
+or `unavailable`; it does not confirm the displayed system Activity or a
+changed setting. For this action the host reports
+`foreground_activity_changed: null` and `system_settings_requested: true`.
+Observe actual foreground/platform state separately. The action does not
+enable location services, grant a permission, connect a sensor or replay a
+previous setup request.

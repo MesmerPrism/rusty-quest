@@ -12,7 +12,7 @@ param(
     [ValidateSet(
         'scan', 'connect', 'start_acc', 'start_ecg', 'start_all', 'stop_pmd',
         'stop_all', 'start_capture', 'stop_capture', 'presentation_low_latency',
-        'presentation_timestamp_faithful', 'disconnect', 'reset', 'status'
+        'presentation_timestamp_faithful', 'disconnect', 'reset', 'status', 'open_location_settings'
     )]
     [string]$Command,
 
@@ -118,7 +118,8 @@ if ($requiresPmdData) {
     token = $token
     command = $Command
     dispatch_transport = 'serial-scoped-fixed-adb-broadcast'
-    foreground_activity_changed = $false
+    foreground_activity_changed = if ($Command -ceq 'open_location_settings') { $null } else { $false }
+    system_settings_requested = $Command -ceq 'open_location_settings'
     screenshot_required = $false
     effective_status = if ($requiresPmdData) { 'confirmed-fresh-pmd-data' } else { [string]$receipt.effect_status }
     effective_polar_status = $effectiveStatus
