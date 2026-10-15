@@ -55,6 +55,18 @@ A permission request is reported as requested, not as a completed connection.
 Enrollment credentials and join details are private results. The CLI protects
 all output files with a current-user-only ACL and prints metadata only.
 
+`panel_geometry` is a read-only projection for input tests. It distinguishes
+current Android widget layout from renderer-submitted plane geometry. The
+widget projection includes root/modal/keyboard layers, clipped pixel bounds,
+safe hit points, roles and whitelisted static labels or editor hints. It
+excludes editor contents, credential displays and clipboard data. The native
+tuple requires matching generation, pose revision, submitted frame and the
+actual `LOCAL` or `STAGE` reference space. A pending pose exposes no target
+coordinates. Interactivity also requires current applied panel visibility.
+`visible_confirmation: false` explicitly leaves headset appearance unproven.
+Use these coordinates with the selected XR input test provider; this surface
+does not expose arbitrary widget callbacks or writes.
+
 `dispatched` records that the owner callback returned. Its nested result and
 fresh `observation` determine the actual effect; queued particle changes still
 require their original renderer-effective revision. `pending`, `unknown` and
