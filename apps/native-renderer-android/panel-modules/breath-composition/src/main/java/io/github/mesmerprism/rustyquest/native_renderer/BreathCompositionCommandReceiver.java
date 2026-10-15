@@ -41,6 +41,12 @@ public final class BreathCompositionCommandReceiver extends BroadcastReceiver {
                 return;
             }
             JSONObject command = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            if (ProductPanelOperator.COMMAND_SCHEMA.equals(command.optString("schema", ""))) {
+                String receipt = ProductPanelOperator.dispatch(new String(bytes, StandardCharsets.UTF_8));
+                JSONObject result = new JSONObject(receipt);
+                respond(receipt, !"rejected".equals(result.optString("status", "")));
+                return;
+            }
             String operation = command.optString("operation", "");
             if ("cancel".equals(operation) && !command.has("generation")) {
                 JSONObject status = new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus());
