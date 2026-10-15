@@ -321,6 +321,17 @@ the meaning of that selection.
 
 ## Camera result metadata
 
+Original-owner bootstrap keeps one return-to-immersive obligation even when
+Android reports both the original panel Activity and NativeActivity resumed.
+Resumed lifecycle alone does not establish immersive focus. Real owner readiness
+uses the original full handoff once, including during reentrant attachment. A
+current-producer, exact-owner, thread-scoped one-shot bypass makes that handoff's
+automatic mesh-hide shortcut fall through without clearing earlier explicit
+visibility intent. Later requests use the ordinary owner/generation route. A
+dispatched or unknown handoff is not replayed because another resume arrives.
+The production state fixture covers always-resumed startup and reentrant attach;
+host passes do not establish Android focus, mesh pixels or headset acceptance.
+
 Optional Camera2 capture metadata is read only when its tag is present in that
 result's `ACameraMetadata_getAllTags` inventory. The list is borrowed within the
 capture callback; snapshots retain only parsed values. Missing optional fields

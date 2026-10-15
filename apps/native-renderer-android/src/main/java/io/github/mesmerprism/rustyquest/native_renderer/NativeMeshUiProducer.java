@@ -120,7 +120,18 @@ static final class VisibilityReadback {
     private boolean awaitingProductOwner;
     private OwnerAttachmentState ownerAttachment = new OwnerAttachmentState();
     private android.app.Application.ActivityLifecycleCallbacks ownerLifecycle;
-    private final ThreadLocal<Activity> bootstrapReturningOwner=new ThreadLocal<Activity>();
+    private final ThreadLocal<BootstrapReturnScope> bootstrapReturn=new ThreadLocal<BootstrapReturnScope>();
+
+    /** One original-facade visibility shortcut, not a blanket visibility suppression. */
+    static final class BootstrapReturnScope {
+        private final Object owner;
+        private boolean bypassed;
+        BootstrapReturnScope(Object owner){this.owner=owner;}
+        boolean bypass(Object candidate,boolean visible){
+            if(visible||candidate!=owner||bypassed)return false;
+            bypassed=true;return true;
+        }
+    }
 
     /** Current-generation presentation rendezvous only; owns no session or command replay. */
     static final class OwnerAttachmentState {
@@ -133,8 +144,15 @@ static final class VisibilityReadback {
             owner=candidate;return true;
         }
         synchronized boolean returnToImmersive() {
-            if(retired||owner==null||resumed||returnIssued)return false;
+            if(retired||owner==null||!bootstrapIssued&&resumed||returnIssued)return false;
             returnIssued=true;return true;
+        }
+        /** Android multi-resume is not immersive focus. A bootstrap still owes
+         * its one original handoff. Never hold this state monitor over callbacks. */
+        void ownerReady(Object candidate,Runnable originalHandoff,Runnable attach){
+            if(!ready(candidate))return;
+            if(returnToImmersive())originalHandoff.run();
+            if(resumed())attach.run();
         }
         synchronized void resumed(boolean value) { if(!retired)resumed=value; }
         synchronized boolean resumed() { return !retired&&resumed; }
@@ -714,24 +732,27 @@ static final class VisibilityReadback {
     /** Called by the real selected Activity after its original builders/lifecycle are ready. */
     public static void productOwnerReady(Activity actual) {
         NativeMeshUiProducer producer=current;
-        if(producer==null||producer.root==null||producer.productModule==null||producer.panelAttachment!=null
-                ||!producer.productModule.isInstance(actual)||actual.isFinishing()||actual.isDestroyed()
-                ||!producer.ownerAttachment.ready(actual))return;
-        if(producer.ownerAttachment.resumed()){producer.attachProductOwner();return;}
-        if(producer.ownerAttachment.returnToImmersive())try{
-            producer.bootstrapReturningOwner.set(actual);
-            producer.productModule.getMethod("resumeNativeMeshImmersive",Activity.class).invoke(null,actual);
-        }catch(Exception failure){Log.e(TAG,"event=product-owner-return-unavailable generation="+producer.generation,failure);}
-        finally{producer.bootstrapReturningOwner.remove();}
+        if(producer==null||producer.root==null||producer.productModule==null
+                ||!producer.productModule.isInstance(actual)||actual.isFinishing()||actual.isDestroyed())return;
+        producer.ownerAttachment.ownerReady(actual,new Runnable(){public void run(){
+            try{
+                producer.bootstrapReturn.set(new BootstrapReturnScope(actual));
+                producer.productModule.getMethod("resumeNativeMeshImmersive",Activity.class).invoke(null,actual);
+            }catch(Exception failure){Log.e(TAG,"event=product-owner-return-unavailable generation="+producer.generation,failure);}
+            finally{producer.bootstrapReturn.remove();}
+        }},new Runnable(){public void run(){producer.attachProductOwner();}});
     }
 
     /** True means this actual product owner was handled, including a rejected request. */
     public static boolean requestPanelVisibility(Activity productOwner, boolean visible) {
+        NativeMeshUiProducer selected=current;
+        BootstrapReturnScope bootstrap=selected==null?null:selected.bootstrapReturn.get();
+        if(bootstrap!=null&&bootstrap.bypass(productOwner,visible))
+            return false; // Force the existing full facade handoff even if already attached.
         NativeMeshUiProducer producer=productProducer(productOwner);
         if(producer==null||!((ProductPanelAttachment)producer.panelAttachment).presentationActive()){
             NativeMeshUiProducer pending=current;
-            if(pending!=null&&pending.productModule!=null&&pending.root!=null
-                    &&(visible||pending.bootstrapReturningOwner.get()!=productOwner))pending.ownerAttachment.visibility(productOwner,visible);
+            if(pending!=null&&pending.productModule!=null&&pending.root!=null)pending.ownerAttachment.visibility(productOwner,visible);
             return false; // The original Activity route must still resume the actual immersive owner.
         }
         final ProductPanelAttachment binding=(ProductPanelAttachment)producer.panelAttachment;
