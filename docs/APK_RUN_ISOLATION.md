@@ -53,7 +53,7 @@ to replace an existing content address unless `-ReplaceExistingOutput` is
 passed. Normal iteration should reuse the existing output or create a new
 address; replacement is a repair/debug action.
 
-The Camera builder also supports Candidate-only external artifacts through an
+The Camera builder also supports DevFast and Candidate external artifacts through an
 explicit `-ArtifactOutputParent` and absolute `-OutDir` strict child. The parent
 must already exist with ordinary ancestors and must not overlap any source
 composition repository, build cache or explicitly shared Gradle tool root.

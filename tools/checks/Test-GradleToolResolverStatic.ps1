@@ -114,26 +114,30 @@ function Test-ExternalArtifactOutput {
     function Assert-Rejected {param([scriptblock]$Action,[string]$Label) $failed=$false;try{& $Action|Out-Null}catch{$failed=$true};if(-not $failed){throw "External artifact fixture accepted $Label"}}
     try{
         foreach($part in @('attempt','source','cache','shared')){[void][IO.Directory]::CreateDirectory((Join-Path $temp $part))}
-        $parent=Join-Path $temp 'attempt';$output=Join-Path $parent 'public-build';$excluded=@('source','cache','shared'|ForEach-Object{Join-Path $temp $_})
-        [void](New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate)
-        if(Test-Path -LiteralPath $output){throw 'External artifact validation created output early.'}
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode DevFast} 'DevFast mode'
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate -Replace} 'replacement'
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $parent -ExcludedRoots $excluded -Mode Candidate} 'parent equality'
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $temp 'escape') -ExcludedRoots $excluded -Mode Candidate} 'outside output'
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $parent 'CON.txt') -ExcludedRoots $excluded -Mode Candidate} 'reserved output name'
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $parent 'build:stream') -ExcludedRoots $excluded -Mode Candidate} 'output alternate stream'
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output 'relative-build' -ExcludedRoots $excluded -Mode Candidate} 'relative output'
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent ([IO.Path]::GetPathRoot($parent)) -Output $output -ExcludedRoots $excluded -Mode Candidate} 'filesystem root parent'
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $temp -Output $output -ExcludedRoots $excluded -Mode Candidate} 'ancestor overlap'
-        foreach($path in $excluded){Assert-Rejected {New-ExternalArtifactDirectory -Parent $path -Output (Join-Path $path 'build') -ExcludedRoots $excluded -Mode Candidate} 'source/cache/tool overlap'}
-        $link=Join-Path $parent 'linked';New-Item -ItemType Junction -Path $link -Target (Join-Path $temp 'cache')|Out-Null
-        try{Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $link 'build') -ExcludedRoots $excluded -Mode Candidate} 'linked ancestor'}finally{Remove-Item -LiteralPath $link -Force}
-        [void](New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate -Create)
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate -Create} 'existing output'
-        Remove-Item -LiteralPath $output
-        [IO.File]::WriteAllText($output,'collision')
-        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate -Create} 'file collision'
+        $parent=Join-Path $temp 'attempt';$excluded=@('source','cache','shared'|ForEach-Object{Join-Path $temp $_})
+        foreach($mode in @('DevFast','Candidate')){
+            $output=Join-Path $parent ("public-build-$mode")
+            [void](New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode $mode)
+            if(Test-Path -LiteralPath $output){throw 'External artifact validation created output early.'}
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode $mode -Replace -Create} "$mode replacement"
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $parent -ExcludedRoots $excluded -Mode $mode} "$mode parent equality"
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $temp 'escape') -ExcludedRoots $excluded -Mode $mode} "$mode outside output"
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $parent 'CON.txt') -ExcludedRoots $excluded -Mode $mode} "$mode reserved output name"
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $parent 'build:stream') -ExcludedRoots $excluded -Mode $mode} "$mode output alternate stream"
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output 'relative-build' -ExcludedRoots $excluded -Mode $mode} "$mode relative output"
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent ([IO.Path]::GetPathRoot($parent)) -Output $output -ExcludedRoots $excluded -Mode $mode} "$mode filesystem root parent"
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $temp -Output $output -ExcludedRoots $excluded -Mode $mode} "$mode ancestor overlap"
+            foreach($path in $excluded){Assert-Rejected {New-ExternalArtifactDirectory -Parent $path -Output (Join-Path $path 'build') -ExcludedRoots $excluded -Mode $mode} "$mode source/cache/tool overlap"}
+            $link=Join-Path $parent 'linked';New-Item -ItemType Junction -Path $link -Target (Join-Path $temp 'cache')|Out-Null
+            try{Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $link 'build') -ExcludedRoots $excluded -Mode $mode} "$mode linked ancestor"}finally{Remove-Item -LiteralPath $link -Force}
+            [void](New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode $mode -Create)
+            if(-not(Test-Path -LiteralPath $output -PathType Container)){throw "External artifact create-new failed in $mode mode."}
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode $mode -Create} "$mode existing output"
+            Remove-Item -LiteralPath $output
+            [IO.File]::WriteAllText($output,'collision')
+            Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode $mode -Create} "$mode file collision"
+        }
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $parent 'unsupported') -ExcludedRoots $excluded -Mode Unsupported} 'unsupported mode'
     }finally{if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Recurse -Force}}
 }
 Test-ExternalArtifactOutput

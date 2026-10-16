@@ -171,7 +171,7 @@ function Set-TextFileIfChanged {
 
 function New-ExternalArtifactDirectory {
     param([Parameter(Mandatory)][string]$Parent,[Parameter(Mandatory)][string]$Output,[Parameter(Mandatory)][string[]]$ExcludedRoots,[Parameter(Mandatory)][string]$Mode,[switch]$Replace,[switch]$Create)
-    if($Mode -cne 'Candidate' -or $Replace){throw 'ArtifactOutputParent requires Candidate mode and forbids ReplaceExistingOutput.'}
+    if($Mode -cnotin @('DevFast','Candidate') -or $Replace){throw 'ArtifactOutputParent requires DevFast or Candidate mode and forbids ReplaceExistingOutput.'}
     if(-not [IO.Path]::IsPathFullyQualified($Parent) -or -not [IO.Path]::IsPathFullyQualified($Output) -or $Parent -notmatch '^[A-Za-z]:[\\/]' -or $Output -notmatch '^[A-Za-z]:[\\/]'){throw 'External artifact parent and OutDir must be explicit absolute local drive paths.'}
     $parentFull=[IO.Path]::GetFullPath($Parent).TrimEnd([char[]]@('\','/'))
     $outputFull=[IO.Path]::GetFullPath($Output).TrimEnd([char[]]@('\','/'))

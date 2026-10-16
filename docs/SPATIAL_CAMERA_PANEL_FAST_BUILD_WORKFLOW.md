@@ -60,7 +60,7 @@ ordinary distribution root is verified against exact resolver/config bytes,
 archive/tree pins and immutable marker; it is separate from `gu`, `gp`, task
 outputs and `BuildCacheRoot`. See [the tool contract](GRADLE_TOOL_RESOLUTION.md).
 
-Candidate callers that keep source paths stable may select
+DevFast and Candidate callers that keep source paths stable may select
 `-ArtifactOutputParent <existing-absolute-attempt-directory>` with an explicit
 `-OutDir <fresh-child-directory>`. Both paths use explicit local-drive paths;
 the parent and all output ancestors must be
