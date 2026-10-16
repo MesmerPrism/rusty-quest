@@ -9,7 +9,10 @@ mod broker_peer_routes;
 
 #[path = "broker_concurrent_renewal.rs"]
 mod broker_concurrent_renewal;
-pub use broker_concurrent_renewal::QuestConcurrentAuthorityRenewalReceipt;
+pub use broker_concurrent_renewal::{
+    QuestConcurrentAuthorityRenewalReceipt, QuestConcurrentOwnerHistoryEpochs,
+    QuestCurrentConcurrentOngoingValidation,
+};
 #[path = "broker_revoker_cleanup.rs"]
 mod broker_revoker_cleanup;
 pub use broker_revoker_cleanup::QuestConcurrentPeerRevokerCleanupReceipt;
@@ -1162,7 +1165,10 @@ impl QuestBrokerAuthorityRuntime {
             authority_wall_unix_ms,
             authority_monotonic_elapsed_ns,
         )?;
-        let ongoing_policy = config.embedded_duplex.as_ref().and_then(|duplex| duplex.ongoing_media_policy.clone());
+        let ongoing_policy = config
+            .embedded_duplex
+            .as_ref()
+            .and_then(|duplex| duplex.ongoing_media_policy.clone());
         let packaged_product_lock = config.packaged_authority.product_lock_json.into_bytes();
         let adapter = ManifoldBrokerAdapter::new(
             config.adapter_config,
@@ -1170,7 +1176,7 @@ impl QuestBrokerAuthorityRuntime {
             &control_lease_authority,
         )
         .map_err(QuestBrokerRuntimeError::Adapter)?;
-        let runtime = ManifoldBrokerRuntime::new(
+        let mut runtime = ManifoldBrokerRuntime::new(
             provider_epoch_id.clone(),
             adapter,
             control_lease_authority,
@@ -1178,8 +1184,14 @@ impl QuestBrokerAuthorityRuntime {
         )
         .map_err(QuestBrokerRuntimeError::RuntimeState)?;
         if let Some(policy) = ongoing_policy {
-            peer_runtime_host.as_ref().ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
-                .write().map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+            if policy == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2() {
+                runtime.enable_ongoing_history().map_err(QuestBrokerRuntimeError::RuntimeState)?;
+            }
+            peer_runtime_host
+                .as_ref()
+                .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+                .write()
+                .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
                 .enable_ongoing_media_continuation(&runtime, policy)
                 .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         }
@@ -1388,12 +1400,18 @@ impl QuestBrokerAuthorityRuntime {
             })
             .cloned()
             .ok_or(QuestBrokerRuntimeError::MediaProductNotSelected)?;
-        let acceptance_request_id =
-            derived_request_id("request.quest.media.accept", &mutation.command.request_id)?;
-        let runtime_request_id = derived_request_id(
-            "request.quest.media.runtime.accept",
-            &mutation.command.request_id,
-        )?;
+        let acceptance_request_id = peer
+            .current_media_history_request_id(&derived_request_id(
+                "request.quest.media.accept",
+                &mutation.command.request_id,
+            )?)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        let runtime_request_id = peer
+            .current_media_history_request_id(&derived_request_id(
+                "request.quest.media.runtime.accept",
+                &mutation.command.request_id,
+            )?)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         let acceptance = ManifoldMediaSessionAcceptanceRequest {
             schema_id: schema(MANIFOLD_MEDIA_SESSION_ACCEPTANCE_REQUEST_SCHEMA),
             request_id: acceptance_request_id,
@@ -1521,15 +1539,19 @@ impl QuestBrokerAuthorityRuntime {
             .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
         let termination = ManifoldMediaSessionTerminationRequest {
             schema_id: schema(MANIFOLD_MEDIA_SESSION_TERMINATION_REQUEST_SCHEMA),
-            request_id: derived_request_id(
-                "request.quest.media.stop",
-                &mutation.command.request_id,
-            )?,
+            request_id: peer
+                .current_media_history_request_id(&derived_request_id(
+                    "request.quest.media.stop",
+                    &mutation.command.request_id,
+                )?)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
             expected_authority_revision: peer.snapshot().media_sessions.authority_revision,
-            runtime_command_request_id: derived_request_id(
-                "request.quest.media.runtime.stop",
-                &mutation.command.request_id,
-            )?,
+            runtime_command_request_id: peer
+                .current_media_history_request_id(&derived_request_id(
+                    "request.quest.media.runtime.stop",
+                    &mutation.command.request_id,
+                )?)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
             decision_id: current.decision_id,
             session_id: current.session_id,
             expected_provider_epoch_id: self.provider_epoch_id.clone(),
@@ -2380,6 +2402,7 @@ fn build_media_peer_runtime_host(
     media_commands.sort_by(|left, right| left.command_id.cmp(&right.command_id));
     let peer_runtime_host_id = media_runtime_host_id.clone();
     let media_command_runtime = ManifoldRuntimeHostSnapshot {
+        history_checkpoint: None,
         schema_id: schema(HOST_SNAPSHOT_SCHEMA),
         host_id: media_runtime_host_id,
         authority_revision: Revision::INITIAL,
@@ -3659,6 +3682,7 @@ mod tests {
             admission: QuestBrokerAdmissionConfig {
                 schema_id: QUEST_ADMISSION_CONFIG_SCHEMA.to_owned(),
                 snapshot: ManifoldAdmissionSnapshot {
+                    history_checkpoint: None,
                     root_renewal_policies: Vec::new(),
                     schema_id: schema(ADMISSION_SNAPSHOT_SCHEMA),
                     authority_id: id("authority.admission.quest.runtime"),

@@ -6,7 +6,7 @@
         now: u64, expiry: u64, nonce: u64,
     ) -> ManifoldCommonLanReciprocalEd25519ReviewRequest {
         let draft = crate::embedded_duplex::QuestCommonLanContextDraft {
-            correlation_id: id(request_id),
+            correlation_id: authority.current_signed_history_request_id(&id(request_id)).unwrap(),
             initiator: ManifoldCommonLanReciprocalEd25519PeerBinding {
                 peer_id: id("peer.quest-a"),
                 key_id: id("key.peer.quest-a.1"),
@@ -55,7 +55,7 @@
         };
         ManifoldCommonLanReciprocalEd25519ReviewRequest {
             schema_id: schema(COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA),
-            request_id: id(request_id),
+            request_id: authority.current_signed_history_request_id(&id(request_id)).unwrap(),
             context,
             initiator_signature: signature("peer.quest-a", "key.peer.quest-a.1", alpha),
             responder_signature: signature("peer.quest-b", "key.peer.quest-b.1", beta),

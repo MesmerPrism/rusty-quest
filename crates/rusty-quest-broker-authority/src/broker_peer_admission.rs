@@ -198,6 +198,23 @@ impl QuestBrokerRuntimeProvider {
             DottedId::new(format!("request.quest.concurrent.{part}.{entropy_hex}"))
                 .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeTransitionRejected)
         };
+        let (issue_id, use_id, command_request_id) = {
+            let broker = runtime
+                .runtime
+                .read()
+                .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
+            (
+                broker
+                    .current_admission_history_request_id(&request("issue")?)
+                    .map_err(QuestBrokerRuntimeError::RuntimeState)?,
+                broker
+                    .current_admission_history_request_id(&request("use")?)
+                    .map_err(QuestBrokerRuntimeError::RuntimeState)?,
+                broker
+                    .current_host_history_request_id(&request("command")?)
+                    .map_err(QuestBrokerRuntimeError::RuntimeState)?,
+            )
+        };
         let revision = runtime
             .evidence()?
             .runtime
@@ -206,7 +223,7 @@ impl QuestBrokerRuntimeProvider {
         let issue = runtime.execute_admission(QuestBrokerAdmissionOperation::IssueToken {
             schema_id: QUEST_ADMISSION_OPERATION_SCHEMA.to_owned(),
             caller: caller.clone(),
-            request_id: request("issue")?,
+            request_id: issue_id,
             expected_authority_revision: revision,
             requested_capabilities: vec![capability.clone()],
             requested_token_ttl_ms: expiry - now_ms,
@@ -224,7 +241,6 @@ impl QuestBrokerRuntimeProvider {
             .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeTransitionRejected)?
             .token_id
             .clone();
-        let use_id = request("use")?;
         let authorized_use =
             runtime.execute_admission(QuestBrokerAdmissionOperation::AuthorizeUse {
                 schema_id: QUEST_ADMISSION_OPERATION_SCHEMA.to_owned(),
@@ -262,7 +278,7 @@ impl QuestBrokerRuntimeProvider {
                     .authority_revision,
                 command: ManifoldRuntimeCommandRequest {
                     schema_id: schema(HOST_COMMAND_REQUEST_SCHEMA),
-                    request_id: request("command")?,
+                    request_id: command_request_id,
                     expected_authority_revision: current.runtime.host_snapshot.authority_revision,
                     requester_id: client_id.clone(),
                     command_id,

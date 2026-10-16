@@ -192,9 +192,11 @@ impl QuestBrokerRuntimeProvider {
                 authority.current = application.applied_snapshot.clone().ok_or_else(rejected)?;
                 authority.retirement_pending = Some(ManifoldRuntimeControlLeaseAdoptionRequest {
                     schema_id: schema(HOST_CONTROL_LEASE_ADOPTION_REQUEST_SCHEMA),
-                    adoption_id: id(format!(
-                        "adoption.quest.concurrent.revoker-expiry.{entropy_hex}"
-                    ))?,
+                    adoption_id: peer
+                        .current_media_history_request_id(&id(format!(
+                            "adoption.quest.concurrent.revoker-expiry.{entropy_hex}"
+                        ))?)
+                        .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
                     expected_host_authority_revision: peer
                         .snapshot()
                         .media_command_runtime
@@ -255,7 +257,11 @@ impl QuestBrokerRuntimeProvider {
                 expected_peer_event_sequence: peer.snapshot().event_sequence,
                 runtime_adoption: ManifoldRuntimeControlLeaseAdoptionRequest {
                     schema_id: schema(HOST_CONTROL_LEASE_ADOPTION_REQUEST_SCHEMA),
-                    adoption_id: id(format!("adoption.quest.concurrent.revoker.{entropy_hex}"))?,
+                    adoption_id: peer
+                        .current_media_history_request_id(&id(format!(
+                            "adoption.quest.concurrent.revoker.{entropy_hex}"
+                        ))?)
+                        .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
                     expected_host_authority_revision: peer
                         .snapshot()
                         .media_command_runtime
@@ -375,9 +381,14 @@ impl QuestBrokerRuntimeProvider {
                 media.admission_grant_id
             )
         })?;
-        let command_id = id(format!(
-            "request.quest.concurrent.route-command.{entropy_hex}"
-        ))?;
+        let request_id = peer
+            .current_media_history_request_id(&request_id)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        let command_id = peer
+            .current_media_history_request_id(&id(format!(
+                "request.quest.concurrent.route-command.{entropy_hex}"
+            ))?)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         let expires_at_ms = now_ms
             .checked_add(180_000)
             .ok_or_else(rejected)?
@@ -447,7 +458,11 @@ impl QuestBrokerRuntimeProvider {
             {
                 Ok(receipt)
             }
-            _ => Err(rejected()),
+            _ => {
+                #[cfg(test)]
+                eprintln!("route issue rejected: {receipt:?}");
+                Err(rejected())
+            }
         }
     }
     /// Terminalize the sole current route under its actual original holder, or
@@ -507,18 +522,22 @@ impl QuestBrokerRuntimeProvider {
             return Err(rejected());
         };
         let lease = (*lease).clone();
-        let command_id = id(format!(
-            "request.quest.concurrent.route-terminate-command.{entropy_hex}"
-        ))?;
+        let command_id = peer
+            .current_media_history_request_id(&id(format!(
+                "request.quest.concurrent.route-terminate-command.{entropy_hex}"
+            ))?)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         // The current route owner appends termination identities without sorting
         // its sorted replay guard. Use increasing actual authority revisions in
         // a prefix after issuance identities, preserving that owner invariant.
         let request = ManifoldPairMediaRouteTerminationRequestV2 {
             schema_id: schema(PAIR_MEDIA_ROUTE_TERMINATION_REQUEST_V2_SCHEMA),
-            request_id: id(format!(
-                "request.quest.concurrent.route.z.{:020}.{entropy_hex}",
-                state.pair_media_routes.authority_revision.get()
-            ))?,
+            request_id: peer
+                .current_media_history_request_id(&id(format!(
+                    "request.quest.concurrent.route.z.{:020}.{entropy_hex}",
+                    state.pair_media_routes.authority_revision.get()
+                ))?)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
             expected_authority_revision: state.pair_media_routes.authority_revision,
             runtime_command_request_id: command_id.clone(),
             grant_id: route.grant_id().clone(),
@@ -644,12 +663,16 @@ impl QuestBrokerRuntimeProvider {
                 .collect();
             let lease = leases.first().ok_or_else(rejected)?;
             let lease = (*lease).clone();
-            let request_id = id(format!(
-                "request.quest.concurrent.route-cleanup.{entropy_hex}.{index}"
-            ))?;
-            let command_id = id(format!(
-                "request.quest.concurrent.route-cleanup-command.{entropy_hex}.{index}"
-            ))?;
+            let request_id = peer
+                .current_media_history_request_id(&id(format!(
+                    "request.quest.concurrent.route-cleanup.{entropy_hex}.{index}"
+                ))?)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+            let command_id = peer
+                .current_media_history_request_id(&id(format!(
+                    "request.quest.concurrent.route-cleanup-command.{entropy_hex}.{index}"
+                ))?)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
             let request = ManifoldPairMediaRouteCleanupCompletionRequestV2 {
                 schema_id: schema(PAIR_MEDIA_ROUTE_CLEANUP_REQUEST_V2_SCHEMA),
                 request_id,
@@ -711,12 +734,15 @@ impl QuestBrokerRuntimeProvider {
                 return Err(rejected());
             }
         } else {
+            let release_id = peer
+                .current_runtime_history_request_id(&id(format!(
+                    "request.quest.concurrent.released-inner.{entropy_hex}"
+                ))?)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
             peer.release_media_runtime_lease_with_live_broker_runtime(
                 &broker,
                 &stop.target_runtime_lease_id,
-                id(format!(
-                    "request.quest.concurrent.released-inner.{entropy_hex}"
-                ))?,
+                release_id,
                 now_ms,
             )
             .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;

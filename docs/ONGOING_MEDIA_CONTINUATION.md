@@ -72,3 +72,82 @@ continuation completions, stale/skipped/noncanonical/abandoned cycles and mode
 relabel refusal. Test clocks accelerate owner time; these are not live-device
 receipts. Cargo/source graph selection must pin the actual Manifold and all
 ancillary owners rather than resolve an ambient workspace junction.
+
+## Prospective complete-owner composition
+
+Explicit Manifold policy v2 selects the actual Broker and Peer ongoing owners
+prospectively. Complete coupled receipts use
+`rusty.quest.concurrent.authority_renewal_receipt.v3` and additionally expose
+`current_lifetime_renewal_count` and `runtime_history_checkpoint`.
+`cumulative_renewal_count` remains monotonic across actual normal Stop/new Start
+lifetimes. Checkpoint/suffix counts remain separately typed; the finite receipt
+and fixed native ABI retain their existing meanings.
+
+The provider retains each consumed phase, including its exact grant capability
+use, before generic owner histories compact. An uncertain retry cannot issue a
+replacement use or repeat a successful phase. Each internally constructed
+request uses its actual owner's independent epoch. Public snapshot clones do
+not supply accepted mutable signed authority; v2 snapshot restore is an exact
+in-place current-owner operation.
+
+Signed cleanup continuation certificate v2 carries a separate
+`current_lifetime_renewal_count`. Its session revision span must equal that
+count, while `cumulative_renewals` covers the full provider lifetime. The
+receiver requires the exact selected policy version, authenticated original
+Start/ticket/route/provider, enrolled signer and current requester. The
+certificate does not grant cleanup authority or attest a physical effect.
+
+This successor remains under source qualification. Native observation/host
+consumer integration and physical continuity require separate qualification;
+the existing v1 first-candidate limitations must not be treated as resolved by
+a config flag or this documentation.
+
+The v3 receipt also contains `owner_history_epochs` with schema
+`rusty.quest.concurrent.owner_history_epochs.v1`: admission, generic control
+lease, outer Broker Host, inner media command, reciprocal and parent Peer
+request epochs are independently observed after publication. They select
+subsequent fresh native factory requests; they are not media lifetime counts
+or a reinterpretation of the signed input's prior epoch. Pending requests retain
+their original exact identity and do not requalify themselves on retry.
+
+Native `concurrent_peer_lifecycle.v3` with
+`ongoing_media_projection.v2` preserves the existing Start/activation/route,
+configuration and app/native incarnation bindings. It reports the exact owner
+policy, global and current-lifetime counts, parent checkpoint and independent
+owner epochs from complete receipt v3. The fixed command ABI and optional
+read-only remote receiver observation remain unchanged. The existing v1 policy
+continues to report its separately qualified v1 projection.
+
+Focused v2 qualification completes 103 actual coupled-owner renewals across
+three renewed media lifetimes, including normal Stop/cleanup/new Start at
+36/70, retained retry after generic checkpoint publication, final normal
+Stop/new Start/revoker, and expired uncertain Stop with fresh exact revoker
+retry. The receiving authority accepts the third Start's signed cleanup
+ancestry with cumulative count103/current lifetime33 and refuses altered count
+or v1 relabeling. Deterministic owner effects model Android only; this is not a
+physical until-Stop, GPU/display or process-death recovery qualification.
+
+`QuestBrokerRuntimeProvider::current_concurrent_ongoing_validation(now_ms)`
+is the read-only current-owner validation entrypoint. It accepts no caller
+receipt or authority target. It reads the provider's private latest completed
+receipt, actual Peer/Broker owners, current scoped grant/routes/expiry and the
+actual product's retained Start/resource identity. It refuses a pending phase,
+expired authority, stale lifetime or mismatched epoch/count. The app supplies
+its native clock. Finite paths do not select this observer.
+
+Status v3 exposes `current_owner_validation` with schema
+`rusty.quest.concurrent.current_ongoing_owner_validation.v1`. A successful
+`validated` result joins provider epoch, current Start action, media decision,
+derivative binding, complete owner receipt SHA, global/current-lifetime counts,
+independent owner epochs, native validation time and earliest valid deadline.
+`resource_identity_sha256` identifies retained accepted resources; it is not a
+fresh physical observation. No Java, socket, frame, GPU or capture read is
+performed. Existing native/process/ARM/frame/Java evidence remains separate.
+Unavailable (including no renewal in a new Start lifetime) stays unavailable
+and introduces no new Start prerequisite. Client-absent remote receiver
+closure continues to use its separate read-only receiver observation.
+
+The owner receipt digest hashes the complete `serde_json::Value` projection:
+object keys are sorted lexicographically, arrays retain their order, and compact
+UTF-8 JSON has no insignificant whitespace. It therefore joins the native
+status value independently of the Rust struct's field declaration order.

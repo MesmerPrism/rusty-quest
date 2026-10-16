@@ -654,6 +654,49 @@ impl MediaStreamSessionProductRuntime {
         })
     }
 
+    /// Read-only validation of an already adopted current renewal. The digest
+    /// identifies the retained accepted resource graph; this performs no Java,
+    /// socket or frame liveness read and cannot adopt a supplied receipt.
+    pub fn validate_current_concurrent_authority_identity(
+        &self,
+        host: &ManifoldPeerRuntimeHost,
+        broker: &ManifoldBrokerRuntime,
+        receipt: &rusty_manifold_peer_runtime_host::ManifoldConcurrentMediaAuthorityRenewalReceipt,
+        now_ms: u64,
+    ) -> Result<String, MediaStreamProductRuntimeError> {
+        host.validate_owned_state_with_live_broker(broker)
+            .map_err(|_| MediaStreamProductRuntimeError::AcceptedSessionNotCurrent)?;
+        if !receipt.applied
+            || receipt.provider_epoch_id.as_str() != self.authority_epoch_id
+            || host.snapshot().concurrent_media_renewals.last() != Some(receipt)
+            || self.current_acceptance.session.as_ref() != Some(&receipt.renewed_media)
+            || self.pending_action.is_some()
+            || self.cleanup_only_after_restore
+            || self.abort_in_progress
+            || self.active_start_action.is_none()
+            || !matches!(
+                self.runtime.state().phase,
+                MediaStreamRuntimePhase::SourcesStarted | MediaStreamRuntimePhase::Streaming
+            )
+            || self.active_start_action.as_ref().is_some_and(|action| {
+                action.owner_actions.len() != self.active_start_receipts.len()
+            })
+        {
+            return Err(MediaStreamProductRuntimeError::AcceptedSessionMismatch);
+        }
+        let current = host
+            .validate_media_session_with_live_broker_runtime(
+                broker,
+                &receipt.renewed_media.decision_id,
+                now_ms,
+            )
+            .map_err(|_| MediaStreamProductRuntimeError::AcceptedSessionNotCurrent)?;
+        if !current.current || current.session.as_ref() != Some(&receipt.renewed_media) {
+            return Err(MediaStreamProductRuntimeError::AcceptedSessionNotCurrent);
+        }
+        self.concurrent_physical_graph_sha256()
+    }
+
     fn concurrent_physical_graph_sha256(&self) -> Result<String, MediaStreamProductRuntimeError> {
         let mut snapshot = serde_json::to_value(self.recovery_snapshot()?)
             .map_err(MediaStreamProductRuntimeError::Encode)?;

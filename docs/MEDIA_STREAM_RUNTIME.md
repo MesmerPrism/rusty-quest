@@ -312,3 +312,13 @@ persistence. The registered broker Cargo test additionally executes genuine
 0/32 renewal histories, captures enrollment before renewal, and checks expired
 cleanup plus damaged witness/current-enrollment/requester negatives. Full
 Android/JNI compilation remains required before packaging this source.
+
+### Current accepted renewal identity observation
+
+`MediaStreamSessionProductRuntime::validate_current_concurrent_authority_identity`
+reads the already adopted current renewal against actual Peer/Broker owners.
+It requires the exact current accepted media, current retained Start, completed SourcesStarted or Streaming
+lifecycle, and no pending/abort/restored-cleanup phase. It returns the retained
+resource identity digest without journaling, adoption, callbacks or effects.
+This digest does not refresh Java/socket/frame liveness. Platform consumers must
+continue to obtain those observations through their existing owners.

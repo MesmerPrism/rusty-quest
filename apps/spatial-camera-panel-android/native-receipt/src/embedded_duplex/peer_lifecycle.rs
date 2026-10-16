@@ -2,7 +2,9 @@
 //! all authority identity, revisions, time and randomness remain native-owned.
 use super::*;
 use rusty_quest_broker_authority::QuestConcurrentPeerCommand;
-use rusty_quest_broker_authority::{sample_concurrent_clock, ConcurrentClockRejection, ConcurrentClockSample};
+use rusty_quest_broker_authority::{
+    sample_concurrent_clock, ConcurrentClockRejection, ConcurrentClockSample,
+};
 use std::fs::File;
 use std::io::Read;
 
@@ -24,6 +26,8 @@ pub(super) struct State {
     renewal_count: u64,
     first_renewal_request_id: Option<String>,
     ongoing_mode: bool,
+    ongoing_policy: Option<Value>,
+    current_lifetime_renewal_count: u64,
     renewed_session_proofs: Vec<Value>,
     renewal_pending: bool,
     last_failure: Option<String>,
@@ -136,12 +140,30 @@ fn current_broker_readback(evidence: &Value) -> Result<Value, String> {
 
 fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
     let current = projection(host).ok();
-    let broker = json_value(
-        &Checkout::take(host.provider.clone())?
+    let observed_at_ms=host.clock.now_ms()?;
+    let (broker, selected_policy, native_owner_validation) = {
+        let mut provider = Checkout::take(host.provider.clone())?;
+        let broker = json_value(
+            &provider
+                .get()
+                .evidence_json()
+                .map_err(|_| "concurrent lifecycle evidence unavailable")?,
+        )?;
+        let policy = provider
             .get()
-            .evidence_json()
-            .map_err(|_| "concurrent lifecycle evidence unavailable")?,
-    )?;
+            .ongoing_media_continuation_policy()
+            .map_err(|_| "continuation policy unavailable")?
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(safe_decode)?;
+        let validation=if policy.as_ref().and_then(|p|p.get("$schema")).and_then(Value::as_str)==Some("rusty.manifold.peer.ongoing_media_policy.v2") {
+            Some(match provider.get().current_concurrent_ongoing_validation(observed_at_ms) {
+                Ok(value)=>serde_json::to_value(value).map_err(safe_decode)?,
+                Err(_)=>json!({"$schema":"rusty.quest.concurrent.current_ongoing_owner_validation.v1","status":"unavailable","validated_at_ms":observed_at_ms,"reason":"current_owner_validation_unavailable"}),
+            })
+        } else { None };
+        (broker, policy, validation)
+    };
     let physically_stopped =
         media_stop_effect(state).is_some_and(|v| !v.is_null()) && state.route_cleanup.is_some();
     let active = !state.renewal_pending
@@ -156,7 +178,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
     let mut value = json!({"$schema":"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1",
         "action":action,"config_sha256":host.config_sha256,
         "native_executor_generation":host.capability.generation,"app_process_generation":host.capability.binding.generation,
-        "observed_at_ms":host.clock.now_ms()?,
+        "observed_at_ms":observed_at_ms,
         "status":if physically_stopped{"terminal"}else if active{"active"}else{"pending"},
         "authority_projection":current,"broker_evidence":current_broker_readback(&broker)?,
         "start_mutation":state.start_mutation,"stop_mutation":state.stop_mutation,
@@ -176,9 +198,19 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "peer_physical_cleanup":if physically_stopped{"terminal"}else{"pending"},
         "native_host_physical_cleanup":"pending","whole_app_physical_cleanup":"pending",
         "last_failure":state.last_failure,"last_failure_action":state.last_failure_action});
-    if state.ongoing_mode {
+    if selected_policy.is_some() {
         value["$schema"] = json!("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v2");
-        value["ongoing_media_policy"] = json!({"$schema":"rusty.manifold.peer.ongoing_media_policy.v1"});
+        value["ongoing_media_policy"] = json!(selected_policy);
+        let history_v2 = selected_policy
+            .as_ref()
+            .and_then(|p| p.get("$schema"))
+            .and_then(Value::as_str)
+            == Some("rusty.manifold.peer.ongoing_media_policy.v2");
+        if history_v2 {
+            value["$schema"] = json!("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3");
+            value["current_lifetime_renewal_count"] = json!(state.current_lifetime_renewal_count);
+            value["current_owner_validation"]=json!(native_owner_validation);
+        }
         value["renewal_total_completed"] = json!(state.renewal_count);
         value["renewal_first_request_id"] = json!(state.first_renewal_request_id);
         if let Some(latest) = state.renewals.last() {
@@ -195,6 +227,25 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
                 "partial_implementation":true,
                 "generic_history_checkpointing_complete":false
             });
+            if history_v2 {
+                if latest.get("$schema").and_then(Value::as_str)
+                    != Some("rusty.quest.concurrent.authority_renewal_receipt.v3")
+                {
+                    return Err("native ongoing receipt policy version differs".into());
+                }
+                value["continuation"]["$schema"] =
+                    json!("rusty.quest.embedded_duplex.ongoing_media_projection.v2");
+                value["continuation"]["current_lifetime_renewal_count"] =
+                    json!(state.current_lifetime_renewal_count);
+                value["continuation"]["runtime_history_checkpoint"] =
+                    json!(latest.get("runtime_history_checkpoint"));
+                value["continuation"]["owner_history_epochs"] =
+                    json!(latest.get("owner_history_epochs"));
+                value["continuation"]["continuation_checkpoint"] =
+                    json!(latest.get("continuation_checkpoint"));
+                value["continuation"]["generic_history_checkpointing_complete"] = json!(true);
+                value["continuation"]["partial_implementation"] = json!(false);
+            }
         }
     }
     Ok(value)
@@ -213,7 +264,11 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
         Checkout::take(host.activation_sender.clone())?
             .get()
             .pending = None;
-        let continuation = (state.ongoing_mode, state.renewal_count, state.first_renewal_request_id.clone());
+        let continuation = (
+            state.ongoing_mode,
+            state.renewal_count,
+            state.first_renewal_request_id.clone(),
+        );
         *state = State::default();
         if continuation.0 {
             state.ongoing_mode = true;
@@ -221,8 +276,14 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
             state.first_renewal_request_id = continuation.2;
         }
     }
-    state.ongoing_mode = Checkout::take(host.provider.clone())?.get()
-        .ongoing_media_continuation_enabled().map_err(|_| "continuation policy unavailable")?;
+    state.ongoing_policy = Checkout::take(host.provider.clone())?
+        .get()
+        .ongoing_media_continuation_policy()
+        .map_err(|_| "continuation policy unavailable")?
+        .map(serde_json::to_value)
+        .transpose()
+        .map_err(safe_decode)?;
+    state.ongoing_mode = state.ongoing_policy.is_some();
     if state.renewal_pending {
         return Err("retained authority renewal requires its retry or physical Stop".into());
     }
@@ -320,7 +381,10 @@ pub(super) fn require_renewable_peer(host: &Host) -> Result<(), String> {
     host.capability.require_live()?;
     let enabled = {
         let mut provider = Checkout::take(host.provider.clone())?;
-        provider.get().ongoing_media_continuation_enabled().map_err(|_| "continuation policy unavailable")?
+        provider
+            .get()
+            .ongoing_media_continuation_enabled()
+            .map_err(|_| "continuation policy unavailable")?
     };
     let mut checked = Checkout::take(host.peer_lifecycle.clone())?;
     checked.get().ongoing_mode = enabled;
@@ -387,10 +451,41 @@ fn renew_state_after_signed_pair(
     let value = serde_json::to_value(result).map_err(safe_decode)?;
     host.capability.require_live()?;
     projection(host)?;
-    let count = state.renewal_count.checked_add(1).ok_or("native renewal count exhausted")?;
+    let count = state
+        .renewal_count
+        .checked_add(1)
+        .ok_or("native renewal count exhausted")?;
     if state.ongoing_mode {
-        if value.get("cumulative_renewal_count").and_then(Value::as_u64) != Some(count) {
+        if value
+            .get("cumulative_renewal_count")
+            .and_then(Value::as_u64)
+            != Some(count)
+        {
             return Err("native continuation owner count differs".into());
+        }
+        if state
+            .ongoing_policy
+            .as_ref()
+            .and_then(|p| p.get("$schema"))
+            .and_then(Value::as_str)
+            == Some("rusty.manifold.peer.ongoing_media_policy.v2")
+        {
+            let lifetime = value
+                .get("current_lifetime_renewal_count")
+                .and_then(Value::as_u64)
+                .ok_or("native current lifetime count absent")?;
+            if value.get("$schema").and_then(Value::as_str)
+                != Some("rusty.quest.concurrent.authority_renewal_receipt.v3")
+                || lifetime
+                    != state
+                        .current_lifetime_renewal_count
+                        .checked_add(1)
+                        .ok_or("native lifetime count exhausted")?
+                || value.get("runtime_history_checkpoint").is_none()
+            {
+                return Err("native v2 ongoing owner fields differ".into());
+            }
+            state.current_lifetime_renewal_count = lifetime;
         }
         if value.get("continuation_checkpoint").is_some() {
             state.renewed_session_proofs.clear();
@@ -398,7 +493,10 @@ fn renew_state_after_signed_pair(
         }
     }
     if state.first_renewal_request_id.is_none() {
-        state.first_renewal_request_id = value.get("request_id").and_then(Value::as_str).map(str::to_owned);
+        state.first_renewal_request_id = value
+            .get("request_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
     }
     state.renewal_count = count;
     state.renewed_session_proofs.push(pair_proof.clone());
@@ -873,23 +971,40 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
 /// Continue only host retirement for the already selected whole-close. This
 /// never re-enters Stop, route termination, owner dispatch or projection stop.
 fn require_retained_whole_close_binding(
-    expected: &str, actual: &str, executor: i64, app: i64,
-    actual_executor: u64, actual_app: u64,
+    expected: &str,
+    actual: &str,
+    executor: i64,
+    app: i64,
+    actual_executor: u64,
+    actual_app: u64,
 ) -> Result<(), String> {
-    if executor <= 0 || app <= 0 || actual != expected
-        || actual_executor != executor as u64 || actual_app != app as u64 {
+    if executor <= 0
+        || app <= 0
+        || actual != expected
+        || actual_executor != executor as u64
+        || actual_app != app as u64
+    {
         return Err("retained whole-close incarnation differs".into());
     }
     Ok(())
 }
 
 fn complete_retained_whole_close(
-    env: &mut JNIEnv<'_>, expected: &str, executor: i64, app: i64,
+    env: &mut JNIEnv<'_>,
+    expected: &str,
+    executor: i64,
+    app: i64,
 ) -> Result<Option<String>, String> {
     let host = host()?;
     host.capability.require_live()?;
-    require_retained_whole_close_binding(expected, &host.config_sha256, executor, app,
-        host.capability.generation, host.capability.binding.generation)?;
+    require_retained_whole_close_binding(
+        expected,
+        &host.config_sha256,
+        executor,
+        app,
+        host.capability.generation,
+        host.capability.binding.generation,
+    )?;
     let mut checked = Checkout::take(host.peer_lifecycle.clone())?;
     let state = checked.get();
     if !state.whole_close_requested || state.client.is_none() {
@@ -897,16 +1012,22 @@ fn complete_retained_whole_close(
     }
     let value = receipt(&host, state, "whole_app_close")?;
     if value.get("peer_physical_cleanup").and_then(Value::as_str) != Some("terminal")
-        || state.last_failure.is_some() {
+        || state.last_failure.is_some()
+    {
         return Err("retained Peer cleanup is not terminal".into());
     }
-    if !actual_java_cleanup(env)? { return Ok(None); }
+    if !actual_java_cleanup(env)? {
+        return Ok(None);
+    }
     close_host(value, host, checked).map(Some)
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_completeRetainedWholeClose(
-    mut env: JNIEnv<'_>, _: JClass<'_>, expected: JString<'_>, executor: jni::sys::jlong,
+    mut env: JNIEnv<'_>,
+    _: JClass<'_>,
+    expected: JString<'_>,
+    executor: jni::sys::jlong,
     app: jni::sys::jlong,
 ) -> jstring {
     let result = read_string(&mut env, &expected, 64)

@@ -156,13 +156,17 @@ impl QuestBrokerRuntimeProvider {
             }
             let request = ManifoldMediaSessionTerminationRequest {
                 schema_id: schema(MANIFOLD_MEDIA_SESSION_TERMINATION_REQUEST_SCHEMA),
-                request_id: id(format!(
-                    "request.quest.concurrent.media-revoke.{entropy_hex}"
-                ))?,
+                request_id: peer
+                    .current_media_history_request_id(&id(format!(
+                        "request.quest.concurrent.media-revoke.{entropy_hex}"
+                    ))?)
+                    .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
                 expected_authority_revision: peer.snapshot().media_sessions.authority_revision,
-                runtime_command_request_id: id(format!(
-                    "request.quest.concurrent.media-revoke-command.{entropy_hex}"
-                ))?,
+                runtime_command_request_id: peer
+                    .current_media_history_request_id(&id(format!(
+                        "request.quest.concurrent.media-revoke-command.{entropy_hex}"
+                    ))?)
+                    .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
                 decision_id: accepted.decision_id.clone(),
                 session_id: accepted.session_id.clone(),
                 expected_provider_epoch_id: owner.provider_epoch_id.clone(),

@@ -14,6 +14,62 @@ use rusty_manifold_peer_runtime_host::{
     ManifoldConcurrentMediaAuthorityRenewalReceipt, ManifoldConcurrentPairSessionRenewalReceipt,
 };
 
+/// Current request namespaces after complete owner publication. These epochs
+/// belong to independent owners and are not renewal or media-lifetime counts.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct QuestConcurrentOwnerHistoryEpochs {
+    /// Closed observation schema.
+    #[serde(rename = "$schema")]
+    pub schema_id: String,
+    /// Actual admission owner namespace.
+    pub admission_request_epoch: u64,
+    /// Actual generic control-lease owner namespace.
+    pub control_lease_request_epoch: u64,
+    /// Actual outer Broker Runtime Host command namespace.
+    pub broker_host_request_epoch: u64,
+    /// Actual inner media command namespace.
+    pub media_command_request_epoch: u64,
+    /// Actual signed reciprocal request/correlation namespace.
+    pub reciprocal_request_epoch: u64,
+    /// Actual enclosing Peer request namespace.
+    pub peer_request_epoch: u64,
+}
+
+/// Read-only current owner evidence. It authenticates accepted authority and
+/// resource identity, never a fresh physical Java/socket/frame observation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct QuestCurrentConcurrentOngoingValidation {
+    /// Closed current-read schema.
+    #[serde(rename = "$schema")]
+    pub schema_id: String,
+    /// Fixed successful validation state; failures return no validation receipt.
+    pub status: String,
+    /// Actual native caller observation time, without extending any deadline.
+    pub validated_at_ms: u64,
+    /// Earliest current scoped expiry checked by this read.
+    pub valid_until_ms: u64,
+    /// Original actual provider epoch.
+    pub provider_epoch_id: DottedId,
+    /// Exact latest completed coupled owner request.
+    pub owner_request_id: DottedId,
+    /// Digest of the complete actual private retained coupled receipt.
+    pub owner_receipt_sha256: String,
+    /// Exact current accepted media lifetime.
+    pub media_decision_id: DottedId,
+    /// Exact current derivative ancestry.
+    pub derivative_binding_id: DottedId,
+    /// Actual retained current Start action; app ARM/generation stays separate.
+    pub current_start_action_id: String,
+    /// Identity of retained accepted resources, not a new physical observation.
+    pub resource_identity_sha256: String,
+    /// Monotonic count across media lifetimes.
+    pub cumulative_renewal_count: u64,
+    /// Accepted count in the exact current Start lifetime.
+    pub current_lifetime_renewal_count: u64,
+    /// Independent current namespaces, never inferred from the counts.
+    pub owner_history_epochs: QuestConcurrentOwnerHistoryEpochs,
+}
+
 /// Complete owner join, issued only after the same resources adopt every renewed authority.
 #[derive(Clone, Debug, Serialize)]
 pub struct QuestConcurrentAuthorityRenewalReceipt {
@@ -22,8 +78,9 @@ pub struct QuestConcurrentAuthorityRenewalReceipt {
     pub ongoing_media_policy: Option<rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy>,
     /// Actual owner continuation checkpoint, absent on the finite path.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub continuation_checkpoint: Option<rusty_manifold_peer_runtime_host::ManifoldConcurrentMediaCheckpoint>,
-    /// Monotonic same-media renewal count in the selected continuation mode.
+    pub continuation_checkpoint:
+        Option<rusty_manifold_peer_runtime_host::ManifoldConcurrentMediaCheckpoint>,
+    /// Monotonic accepted renewal count; explicit v3 spans media lifetimes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cumulative_renewal_count: Option<u64>,
     /// Latest checkpoint sequence, zero before the first checkpoint.
@@ -35,6 +92,17 @@ pub struct QuestConcurrentAuthorityRenewalReceipt {
     /// Accepted renewals after the latest checkpoint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suffix_renewal_count: Option<u64>,
+    /// V3 count for the current exact Start/derivative lifetime, independently of
+    /// the monotonic cumulative count across every accepted lifetime.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_lifetime_renewal_count: Option<u64>,
+    /// V3 actual parent checkpoint committing generic bounded owner histories.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_history_checkpoint:
+        Option<rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHistoryCheckpoint>,
+    /// V3 exact current owner namespaces for subsequent fresh requests.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_history_epochs: Option<QuestConcurrentOwnerHistoryEpochs>,
     /// Fixed complete-composition schema.
     #[serde(rename = "$schema")]
     pub schema_id: String,
@@ -72,11 +140,15 @@ pub(super) struct QuestConcurrentRenewalState {
     completed: Vec<QuestConcurrentAuthorityRenewalReceipt>,
     #[cfg(test)]
     pub(super) pause_after_product_adoption: bool,
+    #[cfg(test)]
+    pub(super) pause_after_history_commit: bool,
 }
 
 #[cfg(test)]
 impl QuestConcurrentRenewalState {
-    pub(super) fn has_pending(&self) -> bool { self.pending.is_some() }
+    pub(super) fn has_pending(&self) -> bool {
+        self.pending.is_some()
+    }
 }
 
 struct Pending {
@@ -94,10 +166,21 @@ struct Pending {
     grant_issue: Option<ManifoldAdmissionReceipt>,
     grant_request: Option<ManifoldAdmissionGrantRenewalRequest>,
     grant: Option<ManifoldAdmissionGrantRenewalReceipt>,
+    grant_capability_use: Option<ManifoldBrokerCapabilityUseReceipt>,
     lease_issue: Option<ManifoldAdmissionReceipt>,
     lifecycle_request: Option<ManifoldBrokerControlLeaseLifecycleRequest>,
     lease_authorization: Option<ManifoldBrokerControlLeaseLifecycleAuthorizationReceipt>,
     lifecycle: Option<ManifoldBrokerControlLeaseLifecycleReceipt>,
+}
+
+// Canonicalizes through serde_json::Value's sorted object maps, matching the
+// native status projection rather than the Rust struct's declaration order.
+fn canonical_receipt_sha256(value: &impl Serialize) -> Result<String, QuestBrokerRuntimeError> {
+    let value = serde_json::to_value(value).map_err(QuestBrokerRuntimeError::Encode)?;
+    Ok(format!(
+        "sha256:{}",
+        sha256_hex(&serde_json::to_vec(&value).map_err(QuestBrokerRuntimeError::Encode)?)
+    ))
 }
 
 fn rejected() -> QuestBrokerRuntimeError {
@@ -126,11 +209,13 @@ fn token_issue(
     pending: &Pending,
     part: &str,
     entropy: &[u8; 32],
-) -> ManifoldAdmissionReceipt {
-    broker.issue_token(
+) -> Result<ManifoldAdmissionReceipt, QuestBrokerRuntimeError> {
+    Ok(broker.issue_token(
         &ManifoldAdmissionRequest {
             schema_id: schema(ADMISSION_REQUEST_SCHEMA),
-            request_id: request(part, &pending.request_id).expect("retained validated ID"),
+            request_id: broker
+                .current_admission_history_request_id(&request(part, &pending.request_id)?)
+                .map_err(QuestBrokerRuntimeError::RuntimeState)?,
             expected_authority_revision: broker.admission_snapshot().authority_revision,
             identity: pending.identity.clone(),
             requested_capabilities: vec![
@@ -142,7 +227,7 @@ fn token_issue(
         },
         *entropy,
         pending.now_ms,
-    )
+    ))
 }
 fn authorization(
     broker: &ManifoldBrokerRuntime,
@@ -155,7 +240,9 @@ fn authorization(
     }
     Ok(ManifoldAdmissionUseRequest {
         schema_id: schema(ADMISSION_USE_REQUEST_SCHEMA),
-        request_id: request(part, &pending.request_id)?,
+        request_id: broker
+            .current_admission_history_request_id(&request(part, &pending.request_id)?)
+            .map_err(QuestBrokerRuntimeError::RuntimeState)?,
         expected_authority_revision: broker.admission_snapshot().authority_revision,
         token_id: issue.token.as_ref().ok_or_else(rejected)?.token_id.clone(),
         identity: pending.identity.clone(),
@@ -166,12 +253,208 @@ fn authorization(
 }
 
 impl QuestBrokerRuntimeProvider {
+    /// Validates only this provider's actual private latest completed renewal.
+    /// The embedding supplies its native clock, never a caller-provided receipt
+    /// or authority snapshot. This read neither journals nor performs effects.
+    pub fn current_concurrent_ongoing_validation(
+        &self,
+        now_ms: u64,
+    ) -> Result<QuestCurrentConcurrentOngoingValidation, QuestBrokerRuntimeError> {
+        let owner = self
+            .runtime
+            .as_ref()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        if owner.concurrent_renewal.pending.is_some() {
+            return Err(rejected());
+        }
+        let receipt = owner
+            .concurrent_renewal
+            .completed
+            .last()
+            .ok_or_else(rejected)?;
+        let peer = owner
+            .peer_runtime_host
+            .as_ref()
+            .ok_or_else(rejected)?
+            .read()
+            .map_err(|_| rejected())?;
+        let broker = owner.runtime.read().map_err(|_| rejected())?;
+        peer.validate_owned_state_with_live_broker(&broker)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        let snapshot = peer.snapshot();
+        if receipt.schema_id != "rusty.quest.concurrent.authority_renewal_receipt.v3"
+            || snapshot
+                .ongoing_media_policy
+                .as_ref()
+                .map(|p| p.schema_id.as_str())
+                != Some("rusty.manifold.peer.ongoing_media_policy.v2")
+            || receipt.provider_epoch_id != owner.provider_epoch_id
+            || now_ms < receipt.observed_at_ms
+            || receipt.cumulative_renewal_count
+                != Some(
+                    peer.cumulative_concurrent_media_renewals()
+                        .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
+                )
+            || receipt.current_lifetime_renewal_count
+                != Some(
+                    peer.current_lifetime_concurrent_media_renewals()
+                        .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
+                )
+            || receipt.media_authority.paired_session_receipt != receipt.accepted_pair
+            || receipt.media_authority.broker_lifecycle_receipt != receipt.outer_lifecycle
+            || receipt.product_adoption.owner_request_id != receipt.media_authority.request_id
+        {
+            return Err(rejected());
+        }
+        let media = owner
+            .media_sessions
+            .get(&receipt.media_authority.renewed_media.runtime_client_id)
+            .ok_or_else(rejected)?;
+        let resource_identity_sha256 = media
+            .validate_current_concurrent_authority_identity(
+                &peer,
+                &broker,
+                &receipt.media_authority,
+                now_ms,
+            )
+            .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+        if resource_identity_sha256 != receipt.product_adoption.physical_graph_sha256
+            || receipt.product_adoption.prior_physical_graph_sha256 != resource_identity_sha256
+        {
+            return Err(rejected());
+        }
+        let mut valid_until_ms = receipt
+            .media_authority
+            .expires_at_ms
+            .min(receipt.accepted_pair.expires_at_ms);
+        for route in &receipt.media_authority.renewed_routes {
+            let current = peer
+                .validate_pair_media_route_v2_with_live_broker_runtime(
+                    &broker,
+                    &route.grant_id,
+                    now_ms,
+                )
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+            if !current.current {
+                return Err(rejected());
+            }
+            valid_until_ms = valid_until_ms.min(route.expires_at_ms);
+        }
+        let grant = broker
+            .admission_snapshot()
+            .grants
+            .iter()
+            .find(|g| {
+                g.grant_id == receipt.media_authority.renewed_media.admission_grant_id
+                    && !g.revoked
+                    && g.identity.client_id
+                        == receipt.media_authority.renewed_media.runtime_client_id
+            })
+            .ok_or_else(rejected)?;
+        valid_until_ms = valid_until_ms.min(grant.expires_at_ms);
+        if valid_until_ms <= now_ms {
+            return Err(rejected());
+        }
+        let evidence = broker.evidence();
+        let epochs = QuestConcurrentOwnerHistoryEpochs {
+            schema_id: "rusty.quest.concurrent.owner_history_epochs.v1".into(),
+            admission_request_epoch: evidence
+                .admission_snapshot
+                .history_checkpoint
+                .as_ref()
+                .ok_or_else(rejected)?
+                .request_epoch,
+            control_lease_request_epoch: evidence
+                .control_lease_authority
+                .history_checkpoint
+                .as_ref()
+                .ok_or_else(rejected)?
+                .request_epoch,
+            broker_host_request_epoch: evidence
+                .host_snapshot
+                .history_checkpoint
+                .as_ref()
+                .ok_or_else(rejected)?
+                .request_epoch,
+            media_command_request_epoch: snapshot
+                .media_command_runtime
+                .history_checkpoint
+                .as_ref()
+                .ok_or_else(rejected)?
+                .request_epoch,
+            reciprocal_request_epoch: snapshot
+                .reciprocal_ed25519
+                .history_checkpoint
+                .as_ref()
+                .ok_or_else(rejected)?
+                .request_epoch,
+            peer_request_epoch: snapshot
+                .runtime_history_checkpoint
+                .as_ref()
+                .ok_or_else(rejected)?
+                .request_epoch,
+        };
+        if receipt.owner_history_epochs.as_ref() != Some(&epochs) {
+            return Err(rejected());
+        }
+        let recovery = media
+            .recovery_snapshot()
+            .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+        Ok(QuestCurrentConcurrentOngoingValidation {
+            schema_id: "rusty.quest.concurrent.current_ongoing_owner_validation.v1".into(),
+            status: "validated".into(),
+            validated_at_ms: now_ms,
+            valid_until_ms,
+            provider_epoch_id: owner.provider_epoch_id.clone(),
+            owner_request_id: receipt.request_id.clone(),
+            owner_receipt_sha256: canonical_receipt_sha256(receipt)?,
+            media_decision_id: receipt.media_authority.renewed_media.decision_id.clone(),
+            derivative_binding_id: receipt
+                .media_authority
+                .renewed_inner_lease
+                .derivative_binding
+                .as_ref()
+                .ok_or_else(rejected)?
+                .binding_id
+                .clone(),
+            current_start_action_id: recovery
+                .active_start_action
+                .as_ref()
+                .ok_or_else(rejected)?
+                .action_id
+                .clone(),
+            resource_identity_sha256,
+            cumulative_renewal_count: receipt.cumulative_renewal_count.ok_or_else(rejected)?,
+            current_lifetime_renewal_count: receipt
+                .current_lifetime_renewal_count
+                .ok_or_else(rejected)?,
+            owner_history_epochs: epochs,
+        })
+    }
+
     /// Reads the policy accepted by this provider's actual peer owner.
     pub fn ongoing_media_continuation_enabled(&self) -> Result<bool, QuestBrokerRuntimeError> {
-        let owner = self.runtime.as_ref().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
-        let shared = owner.peer_runtime_host.as_ref().ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
-        let peer = shared.read().map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
-        Ok(peer.snapshot().ongoing_media_policy.is_some())
+        Ok(self.ongoing_media_continuation_policy()?.is_some())
+    }
+    /// Observes the exact policy held by the actual Peer owner; no adapter flag.
+    pub fn ongoing_media_continuation_policy(
+        &self,
+    ) -> Result<
+        Option<rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy>,
+        QuestBrokerRuntimeError,
+    > {
+        let owner = self
+            .runtime
+            .as_ref()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        let shared = owner
+            .peer_runtime_host
+            .as_ref()
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let peer = shared
+            .read()
+            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        Ok(peer.snapshot().ongoing_media_policy.clone())
     }
     // Test seam only. Production selects policy in the authenticated config
     // before constructing the provider; it cannot rebind a finite live provider.
@@ -180,11 +463,24 @@ impl QuestBrokerRuntimeProvider {
         &mut self,
         policy: rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy,
     ) -> Result<(), QuestBrokerRuntimeError> {
-        let owner = self.runtime.as_mut().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
-        if owner.concurrent_renewal.pending.is_some() { return Err(rejected()); }
-        let shared = owner.peer_runtime_host.as_ref().ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
-        let mut peer = shared.write().map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
-        let broker = owner.runtime.read().map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
+        let owner = self
+            .runtime
+            .as_mut()
+            .ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        if owner.concurrent_renewal.pending.is_some() {
+            return Err(rejected());
+        }
+        let shared = owner
+            .peer_runtime_host
+            .as_ref()
+            .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let mut peer = shared
+            .write()
+            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let broker = owner
+            .runtime
+            .read()
+            .map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
         peer.enable_ongoing_media_continuation(&broker, policy)
             .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)
     }
@@ -303,7 +599,9 @@ impl QuestBrokerRuntimeProvider {
                     "renewal requires one current outer media lease",
                 ));
             };
-            let root_horizon_ms = broker.admission_snapshot().root_renewal_horizon_ms(&grant.grant_id);
+            let root_horizon_ms = broker
+                .admission_snapshot()
+                .root_renewal_horizon_ms(&grant.grant_id);
             let expiry = now_ms
                 .checked_add(5_000)
                 .ok_or_else(rejected)?
@@ -338,6 +636,7 @@ impl QuestBrokerRuntimeProvider {
                 grant_issue: None,
                 grant_request: None,
                 grant: None,
+                grant_capability_use: None,
                 lease_issue: None,
                 lifecycle_request: None,
                 lease_authorization: None,
@@ -361,12 +660,14 @@ impl QuestBrokerRuntimeProvider {
                 pending,
                 "grant-issue",
                 &entropy_for(&pending.entropy, b"grant"),
-            ));
+            )?);
         }
         if pending.grant_request.is_none() {
             pending.grant_request = Some(ManifoldAdmissionGrantRenewalRequest {
                 schema_id: schema("rusty.manifold.admission.grant_renewal_request.v1"),
-                request_id: request("grant", &pending.request_id)?,
+                request_id: broker
+                    .current_admission_history_request_id(&request("grant", &pending.request_id)?)
+                    .map_err(QuestBrokerRuntimeError::RuntimeState)?,
                 authorization: authorization(
                     &broker,
                     pending,
@@ -375,7 +676,10 @@ impl QuestBrokerRuntimeProvider {
                 )?,
                 grant_id: pending.grant_id.clone(),
                 prior_expires_at_ms: pending.prior_grant_expiry,
-                expires_at_ms: pending.now_ms.checked_add(pending.root_horizon_ms).ok_or_else(rejected)?,
+                expires_at_ms: pending
+                    .now_ms
+                    .checked_add(pending.root_horizon_ms)
+                    .ok_or_else(rejected)?,
                 accepted_evidence_id: pending.proof.request_id.clone(),
                 accepted_evidence_sha256: format!(
                     "sha256:{}",
@@ -406,40 +710,46 @@ impl QuestBrokerRuntimeProvider {
                 "actual grant renewal application was rejected",
             ));
         }
-        let grant_use_id = &pending
-            .grant_request
-            .as_ref()
-            .ok_or_else(rejected)?
-            .authorization
-            .request_id;
-        let grant_uses: Vec<_> = broker
-            .evidence()
-            .committed_capability_use_receipts
-            .into_iter()
-            .filter(|receipt| {
-                receipt.applied
-                    && receipt.provider_epoch_id == owner.provider_epoch_id
-                    && receipt.bounded_use.as_ref().is_some_and(|use_| {
-                        &use_.admission_use_request_id == grant_use_id
-                            && use_.identity == pending.identity
-                            && use_.admission_grant_id == pending.grant_id
-                            && use_.capability_id.as_str()
-                                == "capability.manifold.control_lease.renew"
-                    })
-            })
-            .collect();
-        let [grant_capability_use] = grant_uses.as_slice() else {
-            return Err(phase_rejected(
-                "actual grant renewal lacks its exact Broker bounded use consumption",
-            ));
-        };
+        // Preserve the exact already consumed phase before its owner history may
+        // compact. A retry cannot search for or consume a replacement grant use.
+        if pending.grant_capability_use.is_none() {
+            let grant_use_id = &pending
+                .grant_request
+                .as_ref()
+                .ok_or_else(rejected)?
+                .authorization
+                .request_id;
+            let grant_uses: Vec<_> = broker
+                .evidence()
+                .committed_capability_use_receipts
+                .into_iter()
+                .filter(|receipt| {
+                    receipt.applied
+                        && receipt.provider_epoch_id == owner.provider_epoch_id
+                        && receipt.bounded_use.as_ref().is_some_and(|use_| {
+                            &use_.admission_use_request_id == grant_use_id
+                                && use_.identity == pending.identity
+                                && use_.admission_grant_id == pending.grant_id
+                                && use_.capability_id.as_str()
+                                    == "capability.manifold.control_lease.renew"
+                        })
+                })
+                .collect();
+            let [actual_grant_capability_use] = grant_uses.as_slice() else {
+                return Err(phase_rejected(
+                    "actual grant renewal lacks its exact Broker bounded use consumption",
+                ));
+            };
+            pending.grant_capability_use = Some(actual_grant_capability_use.clone());
+        }
+        let grant_capability_use = pending.grant_capability_use.as_ref().ok_or_else(rejected)?;
         if pending.lease_issue.is_none() {
             pending.lease_issue = Some(token_issue(
                 &mut broker,
                 pending,
                 "lease-issue",
                 &entropy_for(&pending.entropy, b"lease"),
-            ));
+            )?);
         }
         if pending.lifecycle_request.is_none() {
             let use_ = authorization(
@@ -455,7 +765,9 @@ impl QuestBrokerRuntimeProvider {
                 token_id: use_.token_id.clone(),
                 expected_admission_authority_revision: use_.expected_authority_revision,
                 operation: ManifoldBrokerControlLeaseLifecycleOperation::Renewal {
-                    request_id: request("lease", &pending.request_id)?,
+                    request_id: broker
+                        .current_control_history_request_id(&request("lease", &pending.request_id)?)
+                        .map_err(QuestBrokerRuntimeError::RuntimeState)?,
                     lease_id: pending.lease_id.clone(),
                     expected_authority_revision: broker
                         .control_lease_authority_snapshot()
@@ -531,21 +843,119 @@ impl QuestBrokerRuntimeProvider {
         #[cfg(test)]
         if owner.concurrent_renewal.pause_after_product_adoption {
             owner.concurrent_renewal.pause_after_product_adoption = false;
-            return Err(phase_rejected("test pause after actual product adoption; exact pending retained"));
+            return Err(phase_rejected(
+                "test pause after actual product adoption; exact pending retained",
+            ));
         }
-        let continuation_checkpoint = peer.checkpoint_concurrent_media_history(&broker, &media_authority, now_ms)
+        let generic_history = peer.snapshot().runtime_history_checkpoint.is_some();
+        let continuation_checkpoint = if generic_history {
+            peer.checkpoint_coupled_ongoing_histories(&mut broker, &media_authority, now_ms)
+        } else {
+            peer.checkpoint_concurrent_media_history(&broker, &media_authority, now_ms)
+        }
+        .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        #[cfg(test)]
+        if owner.concurrent_renewal.pause_after_history_commit {
+            owner.concurrent_renewal.pause_after_history_commit = false;
+            return Err(phase_rejected(
+                "test pause after actual generic history publication; exact pending retained",
+            ));
+        }
+        let cumulative_renewal_count = peer
+            .snapshot()
+            .ongoing_media_policy
+            .as_ref()
+            .map(|_| peer.cumulative_concurrent_media_renewals())
+            .transpose()
             .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
-        let cumulative_renewal_count = peer.snapshot().ongoing_media_policy.as_ref()
-            .map(|_| peer.cumulative_concurrent_media_renewals()).transpose()
-            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        let owner_history_epochs = if generic_history {
+            let evidence = broker.evidence();
+            Some(QuestConcurrentOwnerHistoryEpochs {
+                schema_id: "rusty.quest.concurrent.owner_history_epochs.v1".into(),
+                admission_request_epoch: evidence
+                    .admission_snapshot
+                    .history_checkpoint
+                    .as_ref()
+                    .ok_or_else(rejected)?
+                    .request_epoch,
+                control_lease_request_epoch: evidence
+                    .control_lease_authority
+                    .history_checkpoint
+                    .as_ref()
+                    .ok_or_else(rejected)?
+                    .request_epoch,
+                broker_host_request_epoch: evidence
+                    .host_snapshot
+                    .history_checkpoint
+                    .as_ref()
+                    .ok_or_else(rejected)?
+                    .request_epoch,
+                media_command_request_epoch: peer
+                    .snapshot()
+                    .media_command_runtime
+                    .history_checkpoint
+                    .as_ref()
+                    .ok_or_else(rejected)?
+                    .request_epoch,
+                reciprocal_request_epoch: peer
+                    .snapshot()
+                    .reciprocal_ed25519
+                    .history_checkpoint
+                    .as_ref()
+                    .ok_or_else(rejected)?
+                    .request_epoch,
+                peer_request_epoch: peer
+                    .snapshot()
+                    .runtime_history_checkpoint
+                    .as_ref()
+                    .ok_or_else(rejected)?
+                    .request_epoch,
+            })
+        } else {
+            None
+        };
         let receipt = QuestConcurrentAuthorityRenewalReceipt {
+            owner_history_epochs,
+            current_lifetime_renewal_count: generic_history
+                .then(|| peer.current_lifetime_concurrent_media_renewals())
+                .transpose()
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?,
+            runtime_history_checkpoint: peer
+                .snapshot()
+                .runtime_history_checkpoint
+                .as_deref()
+                .cloned(),
             ongoing_media_policy: peer.snapshot().ongoing_media_policy.clone(),
             continuation_checkpoint,
             cumulative_renewal_count,
-            checkpoint_sequence: cumulative_renewal_count.map(|_| peer.snapshot().concurrent_media_checkpoint.as_ref().map_or(0, |c| c.checkpoint_sequence)),
-            checkpointed_renewal_count: cumulative_renewal_count.map(|_| peer.snapshot().concurrent_media_checkpoint.as_ref().map_or(0, |c| c.cumulative_renewals)),
-            suffix_renewal_count: cumulative_renewal_count.map(|count| count - peer.snapshot().concurrent_media_checkpoint.as_ref().map_or(0, |c| c.cumulative_renewals)),
-            schema_id: if cumulative_renewal_count.is_some() { "rusty.quest.concurrent.authority_renewal_receipt.v2" } else { "rusty.quest.concurrent.authority_renewal_receipt.v1" }.to_owned(),
+            checkpoint_sequence: cumulative_renewal_count.map(|_| {
+                peer.snapshot()
+                    .concurrent_media_checkpoint
+                    .as_ref()
+                    .map_or(0, |c| c.checkpoint_sequence)
+            }),
+            checkpointed_renewal_count: cumulative_renewal_count.map(|_| {
+                peer.snapshot()
+                    .concurrent_media_checkpoint
+                    .as_ref()
+                    .map_or(0, |c| c.cumulative_renewals)
+            }),
+            suffix_renewal_count: cumulative_renewal_count.map(|count| {
+                count
+                    - peer
+                        .snapshot()
+                        .concurrent_media_checkpoint
+                        .as_ref()
+                        .map_or(0, |c| c.cumulative_renewals)
+            }),
+            schema_id: if generic_history {
+                "rusty.quest.concurrent.authority_renewal_receipt.v3"
+            } else if cumulative_renewal_count.is_some() {
+                "rusty.quest.concurrent.authority_renewal_receipt.v2"
+            } else {
+                "rusty.quest.concurrent.authority_renewal_receipt.v1"
+            }
+            .to_owned(),
             request_id: pending.request_id.clone(),
             provider_epoch_id: owner.provider_epoch_id.clone(),
             observed_at_ms: pending.now_ms,
@@ -578,5 +988,31 @@ impl QuestBrokerRuntimeProvider {
         owner.concurrent_renewal.completed.push(receipt.clone());
         owner.concurrent_renewal.pending = None;
         Ok(receipt)
+    }
+}
+
+#[cfg(test)]
+mod current_observation_tests {
+    use super::*;
+    #[test]
+    fn current_receipt_hash_matches_native_value_projection_without_reordering_arrays() {
+        #[derive(Serialize)]
+        struct Typed {
+            z: Vec<u64>,
+            a: u64,
+        }
+        let typed = Typed {
+            z: vec![2, 1],
+            a: 3,
+        };
+        let projected = serde_json::json!({"a":3,"z":[2,1]});
+        assert_eq!(
+            canonical_receipt_sha256(&typed).unwrap(),
+            canonical_receipt_sha256(&projected).unwrap()
+        );
+        assert_ne!(
+            canonical_receipt_sha256(&typed).unwrap(),
+            canonical_receipt_sha256(&serde_json::json!({"a":3,"z":[1,2]})).unwrap()
+        );
     }
 }
