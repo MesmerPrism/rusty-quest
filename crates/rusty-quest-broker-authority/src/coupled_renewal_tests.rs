@@ -180,6 +180,25 @@ fn run_coupled_owner_graph_with_root_horizon(
     restart_after_prefix: bool, distinct_revokers: bool,
     expire_signer_before_cleanup: bool, root_horizon_ms: u64,
 ) {
+    run_coupled_owner_graph_with_continuation(retained_abort, cross_authority_probe, renewed_probe,
+        restart_after_prefix, distinct_revokers, expire_signer_before_cleanup, root_horizon_ms, false);
+}
+
+#[test]
+fn ongoing_actual_67_coupled_cycles_checkpoint_without_media_restart() {
+    run_coupled_owner_graph_with_continuation(false, false, 0, false, false, false, 300_000, true);
+}
+
+#[test]
+fn ongoing_actual_67_renewals_preserve_signed_original_cleanup_ancestry() {
+    run_coupled_owner_graph_with_continuation(false, true, 67, false, false, false, 300_000, true);
+}
+
+fn run_coupled_owner_graph_with_continuation(
+    retained_abort: bool, cross_authority_probe: bool, renewed_probe: usize,
+    restart_after_prefix: bool, distinct_revokers: bool,
+    expire_signer_before_cleanup: bool, root_horizon_ms: u64, ongoing: bool,
+) {
     struct FailStopOnce {
         inner: DeterministicAndroidMediaOwnerExecutor,
         failed: bool,
@@ -242,6 +261,7 @@ fn run_coupled_owner_graph_with_root_horizon(
     );
     runtime_config = runtime_config
         .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+            ongoing_media_policy: ongoing.then(rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1),
             schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.to_owned(),
             runtime_host_id: id("host.quest-a.media-runtime"),
             trusted_operator_ids: vec![id("operator.quest.peer-enrollment")],
@@ -627,7 +647,7 @@ fn run_coupled_owner_graph_with_root_horizon(
                         &beta,
                         now,
                         (now + 20_000).min(current.expires_at_ms),
-                        10 + round as u8 * 2,
+                        10 + round as u64 * 2,
                     );
                     let proof = authority.apply_common_lan_reciprocal(&first, now).unwrap();
                     assert!(
@@ -645,7 +665,7 @@ fn run_coupled_owner_graph_with_root_horizon(
                         &beta,
                         now + 1,
                         now + 235_000,
-                        11 + round as u8 * 2,
+                        11 + round as u64 * 2,
                     );
                     let signed = authority
                         .apply_common_lan_reciprocal(&fresh, now + 1)
@@ -1113,7 +1133,10 @@ fn run_coupled_owner_graph_with_root_horizon(
                         original.0.signed_topology_sha256
                     );
                 }
-                assert_eq!(ancestry.len(), renewed_probe.min(64));
+                if ongoing {
+                    assert!(ancestry.len() <= 17);
+                    assert!(ancestry[0].continuation_checkpoint.is_some());
+                } else { assert_eq!(ancestry.len(), renewed_probe.min(64)); }
                 let encoded = serde_json::to_vec(&ancestry).unwrap();
                 assert!(encoded.len() <= 65_536);
                 println!(
@@ -1750,6 +1773,12 @@ fn run_coupled_owner_graph_with_root_horizon(
         );
         return;
     }
+    if ongoing {
+        for provider in [&mut provider_a, &mut provider_b] {
+            provider.enable_ongoing_media_continuation(
+                rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1()).unwrap();
+        }
+    }
     let active_a = provider_a.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
         .recovery_snapshot()
         .unwrap();
@@ -1759,7 +1788,8 @@ fn run_coupled_owner_graph_with_root_horizon(
     let mut current_a = topology_a.clone();
     let mut current_b = topology_b.clone();
     let mut receipts = [Vec::new(), Vec::new()];
-    for cycle in 1..=22 {
+    let mut stale_restore_seals = [None, None];
+    for cycle in 1..=if ongoing { 67 } else { 22 } {
         let now = 64000u64 + ((cycle - 1) / 2) as u64 * 120000 + ((cycle - 1) % 2) as u64;
         for (index, authority, current) in [
             (0, &authority_a, &mut current_a),
@@ -1772,7 +1802,7 @@ fn run_coupled_owner_graph_with_root_horizon(
                 &beta,
                 now,
                 (now + 20000).min(current.expires_at_ms),
-                1 + (cycle * 10 + index * 4) as u8,
+                1 + (cycle * 10 + index * 4) as u64,
             );
             let proof = authority.apply_common_lan_reciprocal(&first, now).unwrap();
             assert!(proof.accepted);
@@ -1795,7 +1825,7 @@ fn run_coupled_owner_graph_with_root_horizon(
                 &beta,
                 now + 1,
                 now + 235000,
-                3 + (cycle * 10 + index * 4) as u8,
+                3 + (cycle * 10 + index * 4) as u64,
             );
             let signed = authority
                 .apply_common_lan_reciprocal(&fresh, now + 1)
@@ -1847,6 +1877,14 @@ fn run_coupled_owner_graph_with_root_horizon(
             clock.sequence += 1;
             clock.wall_unix_ms = (now + 1) as i64;
             clock.monotonic_elapsed_ns = 1_000_000_000 + (now + 1 - 1000) * 1_000_000;
+            let mut partial_revisions = None;
+            if ongoing && cycle == 16 {
+                provider.runtime.as_mut().unwrap().concurrent_renewal.pause_after_product_adoption = true;
+                assert!(provider.renew_concurrent_peer_authority(&clock, &renewal, now + 1, &format!("{:02x}", cycle).repeat(32)).is_err());
+                assert!(provider.runtime.as_ref().unwrap().concurrent_renewal.has_pending());
+                let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
+                partial_revisions = Some((broker.admission_snapshot().authority_revision, broker.host_snapshot().authority_revision, broker.control_lease_authority_snapshot().authority_revision));
+            }
             let actual = provider
                 .renew_concurrent_peer_authority(
                     &clock,
@@ -1855,6 +1893,10 @@ fn run_coupled_owner_graph_with_root_horizon(
                     &format!("{:02x}", cycle).repeat(32),
                 )
                 .expect("actual full coupled owners");
+            if let Some(revisions) = partial_revisions {
+                let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
+                assert_eq!(revisions, (broker.admission_snapshot().authority_revision, broker.host_snapshot().authority_revision, broker.control_lease_authority_snapshot().authority_revision), "exact pending retry must not repeat accepted owner uses");
+            }
             receipts[index].push(serde_json::to_value(&actual).unwrap());
             assert!(actual.media_authority.applied);
             assert!(actual.outer_lifecycle.applied);
@@ -1871,6 +1913,16 @@ fn run_coupled_owner_graph_with_root_horizon(
                 serde_json::to_value(&actual).unwrap(),
                 serde_json::to_value(&retry).unwrap()
             );
+            if ongoing && cycle % 16 == 0 {
+                let previous: rusty_manifold_peer_runtime_host::ManifoldConcurrentPairSessionRenewalReceipt =
+                    serde_json::from_value(receipts[index][cycle as usize - 2]["accepted_pair"].clone()).unwrap();
+                let before = authority.snapshot_json().unwrap();
+                assert!(provider.renew_concurrent_peer_authority(&clock, &previous, now + 1, &"fa".repeat(32)).is_err(), "evicted exact signed proof cannot reopen a completed use");
+                let mut relabelled = previous;
+                relabelled.request_id = id(&format!("request.relabelled.c{cycle}.h{index}"));
+                assert!(provider.renew_concurrent_peer_authority(&clock, &relabelled, now + 1, &"fb".repeat(32)).is_err(), "relabelled outer identity is not a retained accepted proof");
+                assert_eq!(authority.snapshot_json().unwrap(), before);
+            }
             let recovery = provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
                 .recovery_snapshot()
                 .unwrap();
@@ -1887,8 +1939,43 @@ fn run_coupled_owner_graph_with_root_horizon(
             let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
                 serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
             let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
-            let restored=rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(snapshot.clone(),&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker);
-            assert!(restored.is_ok(), "actual restore failed: {:?}", restored);
+            if ongoing {
+                let shared = provider.runtime.as_ref().unwrap().peer_runtime_host.as_ref().unwrap();
+                let peer = shared.read().unwrap();
+                assert_eq!(peer.cumulative_concurrent_media_renewals().unwrap(), cycle as u64);
+                assert!(snapshot.concurrent_media_renewals.len() <= 18);
+                assert!(snapshot.concurrent_session_renewals.len() <= 18);
+                assert!(snapshot.concurrent_credential_refreshes.len() <= 16);
+                if cycle == 16 {
+                    // A frozen previously accepted owner is a negative restore
+                    // fixture only; it is never installed or used for effects.
+                    let frozen: &'static rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost = Box::leak(Box::new(peer.clone()));
+                    stale_restore_seals[index] = Some((peer.snapshot_json().unwrap(), frozen.seal_ongoing_media_snapshot(&broker).unwrap()));
+                }
+                if cycle == 17 {
+                    let (old_bytes, old_seal) = stale_restore_seals[index].take().unwrap();
+                    assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&old_bytes, &old_seal, &broker).is_err(), "a real old seal cannot roll back after live Broker authority advances");
+                }
+                let seal = peer.seal_ongoing_media_snapshot(&broker).unwrap();
+                let bytes = serde_json::to_string(&snapshot).unwrap();
+                let restored = rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&bytes, &seal, &broker).unwrap();
+                assert_eq!(restored.snapshot(), &snapshot);
+                if let Some(checkpoint) = &snapshot.concurrent_media_checkpoint {
+                    let mut wrong = snapshot.clone();
+                    wrong.concurrent_media_checkpoint.as_mut().unwrap().cumulative_renewals = u64::MAX;
+                    assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&serde_json::to_string(&wrong).unwrap(), &seal, &broker).is_err());
+                    assert_eq!(checkpoint.checkpoint_sequence * 16, checkpoint.cumulative_renewals);
+                }
+                assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(snapshot.clone(),&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker).is_err());
+                let mut altered = snapshot.clone();
+                altered.media_sessions.sessions[0].expires_at_ms += 1;
+                assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&serde_json::to_string(&altered).unwrap(), &seal, &broker).is_err());
+                assert_eq!(actual.cumulative_renewal_count, Some(cycle as u64));
+                if cycle % 16 == 0 { assert!(actual.continuation_checkpoint.is_some()); }
+            } else {
+                let restored=rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(snapshot.clone(),&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker);
+                assert!(restored.is_ok(), "actual restore failed: {:?}", restored);
+            }
             for field in 0..3 {
                 let mut wrong = snapshot.clone();
                 match field {
@@ -1932,7 +2019,7 @@ fn run_coupled_owner_graph_with_root_horizon(
         }
     }
     for provider in [&mut provider_a] {
-        let base = 1_265_000;
+        let base = if ongoing { 4_025_000 } else { 1_265_000 };
         assert!(
             provider
                 .apply_concurrent_peer_command(
@@ -2056,7 +2143,7 @@ fn run_coupled_owner_graph_with_root_horizon(
 
     // Host B retains the original physical graph through expiry; no restart or authority reset.
     let provider = &mut provider_b;
-    let late = 1_600_000;
+    let late = if ongoing { 4_400_000 } else { 1_600_000 };
     assert!(
         provider
             .apply_concurrent_peer_command(

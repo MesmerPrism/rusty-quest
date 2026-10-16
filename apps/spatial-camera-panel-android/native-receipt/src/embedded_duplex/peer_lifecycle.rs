@@ -21,6 +21,9 @@ pub(super) struct State {
     revoker_adoption: Option<Value>,
     route_cleanup: Option<Value>,
     renewals: Vec<Value>,
+    renewal_count: u64,
+    first_renewal_request_id: Option<String>,
+    ongoing_mode: bool,
     renewed_session_proofs: Vec<Value>,
     renewal_pending: bool,
     last_failure: Option<String>,
@@ -118,8 +121,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         && current.is_some();
     let (owner_diagnostic, owner_diagnostic_status) =
         owner_failure::diagnostic(host.callbacks.owner_failure_diagnostic());
-    Ok(
-        json!({"$schema":"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1",
+    let mut value = json!({"$schema":"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1",
         "action":action,"config_sha256":host.config_sha256,
         "native_executor_generation":host.capability.generation,"app_process_generation":host.capability.binding.generation,
         "observed_at_ms":host.clock.now_ms()?,
@@ -141,8 +143,29 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "renewal_pending":state.renewal_pending,
         "peer_physical_cleanup":if physically_stopped{"terminal"}else{"pending"},
         "native_host_physical_cleanup":"pending","whole_app_physical_cleanup":"pending",
-        "last_failure":state.last_failure,"last_failure_action":state.last_failure_action}),
-    )
+        "last_failure":state.last_failure,"last_failure_action":state.last_failure_action});
+    if state.ongoing_mode {
+        value["$schema"] = json!("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v2");
+        value["ongoing_media_policy"] = json!({"$schema":"rusty.manifold.peer.ongoing_media_policy.v1"});
+        value["renewal_total_completed"] = json!(state.renewal_count);
+        value["renewal_first_request_id"] = json!(state.first_renewal_request_id);
+        if let Some(latest) = state.renewals.last() {
+            value["continuation"] = json!({
+                "$schema":"rusty.quest.embedded_duplex.ongoing_media_projection.v1",
+                "policy":latest.get("ongoing_media_policy"),
+                "cumulative_renewal_count":latest.get("cumulative_renewal_count"),
+                "checkpoint_sequence":latest.get("checkpoint_sequence"),
+                "checkpointed_renewal_count":latest.get("checkpointed_renewal_count"),
+                "suffix_renewal_count":latest.get("suffix_renewal_count"),
+                "provider_epoch_id":latest.get("provider_epoch_id"),
+                "owner_request_id":latest.get("request_id"),
+                "physical_graph_sha256":latest.pointer("/product_adoption/physical_graph_sha256"),
+                "partial_implementation":true,
+                "generic_history_checkpointing_complete":false
+            });
+        }
+    }
+    Ok(value)
 }
 
 fn start(host: &Host, state: &mut State) -> Result<(), String> {
@@ -158,8 +181,16 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
         Checkout::take(host.activation_sender.clone())?
             .get()
             .pending = None;
+        let continuation = (state.ongoing_mode, state.renewal_count, state.first_renewal_request_id.clone());
         *state = State::default();
+        if continuation.0 {
+            state.ongoing_mode = true;
+            state.renewal_count = continuation.1;
+            state.first_renewal_request_id = continuation.2;
+        }
     }
+    state.ongoing_mode = Checkout::take(host.provider.clone())?.get()
+        .ongoing_media_continuation_enabled().map_err(|_| "continuation policy unavailable")?;
     if state.renewal_pending {
         return Err("retained authority renewal requires its retry or physical Stop".into());
     }
@@ -247,7 +278,7 @@ fn require_renewable_media(state: &State) -> Result<(), String> {
     {
         return Err("authority renewal requires the same active media transaction".into());
     }
-    if state.renewals.len() >= 32 {
+    if !state.ongoing_mode && state.renewals.len() >= 32 {
         return Err("bounded renewal receipt capacity reached".into());
     }
     Ok(())
@@ -255,7 +286,12 @@ fn require_renewable_media(state: &State) -> Result<(), String> {
 
 pub(super) fn require_renewable_peer(host: &Host) -> Result<(), String> {
     host.capability.require_live()?;
+    let enabled = {
+        let mut provider = Checkout::take(host.provider.clone())?;
+        provider.get().ongoing_media_continuation_enabled().map_err(|_| "continuation policy unavailable")?
+    };
     let mut checked = Checkout::take(host.peer_lifecycle.clone())?;
+    checked.get().ongoing_mode = enabled;
     require_renewable_media(checked.get())?;
     projection(host)?;
     Ok(())
@@ -319,6 +355,20 @@ fn renew_state_after_signed_pair(
     let value = serde_json::to_value(result).map_err(safe_decode)?;
     host.capability.require_live()?;
     projection(host)?;
+    let count = state.renewal_count.checked_add(1).ok_or("native renewal count exhausted")?;
+    if state.ongoing_mode {
+        if value.get("cumulative_renewal_count").and_then(Value::as_u64) != Some(count) {
+            return Err("native continuation owner count differs".into());
+        }
+        if value.get("continuation_checkpoint").is_some() {
+            state.renewed_session_proofs.clear();
+            state.renewals.clear();
+        }
+    }
+    if state.first_renewal_request_id.is_none() {
+        state.first_renewal_request_id = value.get("request_id").and_then(Value::as_str).map(str::to_owned);
+    }
+    state.renewal_count = count;
     state.renewed_session_proofs.push(pair_proof.clone());
     state.renewals.push(value.clone());
     Ok(value)

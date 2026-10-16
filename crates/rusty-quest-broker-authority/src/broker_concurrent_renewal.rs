@@ -17,6 +17,24 @@ use rusty_manifold_peer_runtime_host::{
 /// Complete owner join, issued only after the same resources adopt every renewed authority.
 #[derive(Clone, Debug, Serialize)]
 pub struct QuestConcurrentAuthorityRenewalReceipt {
+    /// Explicit owner storage policy; absent on the unchanged finite contract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ongoing_media_policy: Option<rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy>,
+    /// Actual owner continuation checkpoint, absent on the finite path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub continuation_checkpoint: Option<rusty_manifold_peer_runtime_host::ManifoldConcurrentMediaCheckpoint>,
+    /// Monotonic same-media renewal count in the selected continuation mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cumulative_renewal_count: Option<u64>,
+    /// Latest checkpoint sequence, zero before the first checkpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint_sequence: Option<u64>,
+    /// Renewals covered by the checkpoint rather than its bounded suffix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpointed_renewal_count: Option<u64>,
+    /// Accepted renewals after the latest checkpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suffix_renewal_count: Option<u64>,
     /// Fixed complete-composition schema.
     #[serde(rename = "$schema")]
     pub schema_id: String,
@@ -52,6 +70,13 @@ pub struct QuestConcurrentAuthorityRenewalReceipt {
 pub(super) struct QuestConcurrentRenewalState {
     pending: Option<Pending>,
     completed: Vec<QuestConcurrentAuthorityRenewalReceipt>,
+    #[cfg(test)]
+    pub(super) pause_after_product_adoption: bool,
+}
+
+#[cfg(test)]
+impl QuestConcurrentRenewalState {
+    pub(super) fn has_pending(&self) -> bool { self.pending.is_some() }
 }
 
 struct Pending {
@@ -141,6 +166,28 @@ fn authorization(
 }
 
 impl QuestBrokerRuntimeProvider {
+    /// Reads the policy accepted by this provider's actual peer owner.
+    pub fn ongoing_media_continuation_enabled(&self) -> Result<bool, QuestBrokerRuntimeError> {
+        let owner = self.runtime.as_ref().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        let shared = owner.peer_runtime_host.as_ref().ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let peer = shared.read().map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        Ok(peer.snapshot().ongoing_media_policy.is_some())
+    }
+    // Test seam only. Production selects policy in the authenticated config
+    // before constructing the provider; it cannot rebind a finite live provider.
+    #[cfg(test)]
+    pub(crate) fn enable_ongoing_media_continuation(
+        &mut self,
+        policy: rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy,
+    ) -> Result<(), QuestBrokerRuntimeError> {
+        let owner = self.runtime.as_mut().ok_or(QuestBrokerRuntimeError::NotInitialized)?;
+        if owner.concurrent_renewal.pending.is_some() { return Err(rejected()); }
+        let shared = owner.peer_runtime_host.as_ref().ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let mut peer = shared.write().map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?;
+        let broker = owner.runtime.read().map_err(|_| QuestBrokerRuntimeError::RuntimeLockPoisoned)?;
+        peer.enable_ongoing_media_continuation(&broker, policy)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)
+    }
     /// Apply an already accepted signed local pair renewal to the live product authorities.
     /// Caller identity, lease, scopes and clocks come from the retained process authority.
     /// Errors retain the exact original request and all actual phase receipts for retry.
@@ -481,8 +528,24 @@ impl QuestBrokerRuntimeProvider {
                 "actual product adoption did not preserve the physical graph",
             ));
         }
+        #[cfg(test)]
+        if owner.concurrent_renewal.pause_after_product_adoption {
+            owner.concurrent_renewal.pause_after_product_adoption = false;
+            return Err(phase_rejected("test pause after actual product adoption; exact pending retained"));
+        }
+        let continuation_checkpoint = peer.checkpoint_concurrent_media_history(&broker, &media_authority, now_ms)
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        let cumulative_renewal_count = peer.snapshot().ongoing_media_policy.as_ref()
+            .map(|_| peer.cumulative_concurrent_media_renewals()).transpose()
+            .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         let receipt = QuestConcurrentAuthorityRenewalReceipt {
-            schema_id: "rusty.quest.concurrent.authority_renewal_receipt.v1".to_owned(),
+            ongoing_media_policy: peer.snapshot().ongoing_media_policy.clone(),
+            continuation_checkpoint,
+            cumulative_renewal_count,
+            checkpoint_sequence: cumulative_renewal_count.map(|_| peer.snapshot().concurrent_media_checkpoint.as_ref().map_or(0, |c| c.checkpoint_sequence)),
+            checkpointed_renewal_count: cumulative_renewal_count.map(|_| peer.snapshot().concurrent_media_checkpoint.as_ref().map_or(0, |c| c.cumulative_renewals)),
+            suffix_renewal_count: cumulative_renewal_count.map(|count| count - peer.snapshot().concurrent_media_checkpoint.as_ref().map_or(0, |c| c.cumulative_renewals)),
+            schema_id: if cumulative_renewal_count.is_some() { "rusty.quest.concurrent.authority_renewal_receipt.v2" } else { "rusty.quest.concurrent.authority_renewal_receipt.v1" }.to_owned(),
             request_id: pending.request_id.clone(),
             provider_epoch_id: owner.provider_epoch_id.clone(),
             observed_at_ms: pending.now_ms,
@@ -508,6 +571,9 @@ impl QuestBrokerRuntimeProvider {
             >= 1_048_576
         {
             return Err(rejected());
+        }
+        if receipt.continuation_checkpoint.is_some() {
+            owner.concurrent_renewal.completed.clear();
         }
         owner.concurrent_renewal.completed.push(receipt.clone());
         owner.concurrent_renewal.pending = None;

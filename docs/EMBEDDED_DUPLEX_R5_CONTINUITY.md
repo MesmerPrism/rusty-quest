@@ -1,5 +1,10 @@
 # Embedded duplex finite authority and native fencing
 
+The prospective opt-in owner checkpoint and versioned native observations are
+specified in [Ongoing media continuation](ONGOING_MEDIA_CONTINUATION.md).
+Finite defaults and the fixed native ABI remain unchanged; the first source
+candidate does not yet remove generic lifetime history capacities.
+
 ## Renewal OS-clock sampling observation
 
 The native renewal caller reads the actual OS wall clock inside a monotonic

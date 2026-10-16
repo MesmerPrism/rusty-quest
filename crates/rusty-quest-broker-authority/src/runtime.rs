@@ -1162,6 +1162,7 @@ impl QuestBrokerAuthorityRuntime {
             authority_wall_unix_ms,
             authority_monotonic_elapsed_ns,
         )?;
+        let ongoing_policy = config.embedded_duplex.as_ref().and_then(|duplex| duplex.ongoing_media_policy.clone());
         let packaged_product_lock = config.packaged_authority.product_lock_json.into_bytes();
         let adapter = ManifoldBrokerAdapter::new(
             config.adapter_config,
@@ -1176,6 +1177,12 @@ impl QuestBrokerAuthorityRuntime {
             config.admission.snapshot,
         )
         .map_err(QuestBrokerRuntimeError::RuntimeState)?;
+        if let Some(policy) = ongoing_policy {
+            peer_runtime_host.as_ref().ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+                .write().map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?
+                .enable_ongoing_media_continuation(&runtime, policy)
+                .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
+        }
         Ok(Self {
             bridge_kind: config.bridge_kind,
             provider_epoch_id,
@@ -3949,6 +3956,7 @@ mod tests {
         );
         runtime_config = runtime_config
             .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+                ongoing_media_policy: None,
                 schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.to_owned(),
                 runtime_host_id: id("host.quest-a.media-runtime"),
                 trusted_operator_ids: vec![id("operator.quest.peer-enrollment")],

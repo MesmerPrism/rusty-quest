@@ -3,7 +3,7 @@
         request_id: &str,
         alpha: &SigningKey,
         beta: &SigningKey,
-        now: u64, expiry: u64, nonce: u8,
+        now: u64, expiry: u64, nonce: u64,
     ) -> ManifoldCommonLanReciprocalEd25519ReviewRequest {
         let draft = crate::embedded_duplex::QuestCommonLanContextDraft {
             correlation_id: id(request_id),
@@ -16,7 +16,7 @@
                     sha256_hex(&alpha.verifying_key().to_bytes())
                 ),
                 role: ManifoldCommonLanPairRole::Initiator,
-                device_nonce_hex: format!("d1{nonce:02x}").repeat(16),
+                device_nonce_hex: format!("d1{nonce:062x}"),
             },
             responder: ManifoldCommonLanReciprocalEd25519PeerBinding {
                 peer_id: id("peer.quest-b"),
@@ -27,7 +27,7 @@
                     sha256_hex(&beta.verifying_key().to_bytes())
                 ),
                 role: ManifoldCommonLanPairRole::Responder,
-                device_nonce_hex: format!("d2{:02x}",nonce+1).repeat(16),
+                device_nonce_hex: format!("d2{:062x}",nonce+1),
             },
             transport: common_lan_transport('5'),
             coordinator_epoch: 1,
@@ -72,6 +72,7 @@ fn concurrent_actual_current_keys_and_same_session_renew_without_restart() {
         );
         runtime_config = runtime_config
             .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+                ongoing_media_policy: None,
                 schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.to_owned(),
                 runtime_host_id: id("host.quest-a.media-runtime"),
                 trusted_operator_ids: vec![id("operator.quest.peer-enrollment")],
@@ -245,7 +246,7 @@ fn concurrent_actual_current_keys_and_same_session_renew_without_restart() {
         for cycle in 1..=22 {
             let now=2000u64+((cycle-1)/2) as u64*120000+((cycle-1)%2) as u64;
             for (index,authority,current) in [(0,&authority_a,&mut current_a),(1,&authority_b,&mut current_b)] {
-                let first=renewal_reciprocal_request(authority,&format!("request.renew.c{cycle}.h{index}.credentials"),&alpha,&beta,now,(now+20000).min(current.expires_at_ms),1+(cycle*10+index*4) as u8);
+                let first=renewal_reciprocal_request(authority,&format!("request.renew.c{cycle}.h{index}.credentials"),&alpha,&beta,now,(now+20000).min(current.expires_at_ms),1+(cycle*10+index*4) as u64);
                 let proof=authority.apply_common_lan_reciprocal(&first,now).unwrap(); assert!(proof.accepted);
                 let refresh=authority.refresh_concurrent_pair_credentials(&proof,now).unwrap();
                 assert!(refresh.applied); assert_eq!(refresh.expires_at_ms,now+300000);
@@ -255,7 +256,7 @@ fn concurrent_actual_current_keys_and_same_session_renew_without_restart() {
                 // observed 821 ms while both topology proposals use their
                 // common signed deadline.
                 let signed_expiry=now+235000+if index==0 {821} else {0};
-                let fresh=renewal_reciprocal_request(authority,&format!("request.renew.c{cycle}.h{index}.session"),&alpha,&beta,now+1,signed_expiry,3+(cycle*10+index*4) as u8);
+                let fresh=renewal_reciprocal_request(authority,&format!("request.renew.c{cycle}.h{index}.session"),&alpha,&beta,now+1,signed_expiry,3+(cycle*10+index*4) as u64);
                 let signed=authority.apply_common_lan_reciprocal(&fresh,now+1).unwrap(); assert!(signed.accepted,"actual rejection cycle{cycle} h{index}: {:?}",signed.rejection_reason);
                 assert_eq!(signed.expires_at_ms,signed_expiry);
                 let snapshot:rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot=serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
