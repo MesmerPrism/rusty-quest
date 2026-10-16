@@ -574,9 +574,33 @@ final class EmbeddedDuplexProcessHost {
                     }
                 }
                 if (peerAction == EmbeddedDuplexPeerAction.START) startIntent.dispatch(starting);
+                EmbeddedDuplexResources observedReceiverResources = peerAction == EmbeddedDuplexPeerAction.STATUS ? resources : null;
+                JSONObject receiverBefore = receiverPhysicalObservation(observedReceiverResources);
                 String nativeReceipt = noMediaFallback ? noMediaWholeProof(receiptConfig)
                         : retainedWholeNativeReceipt != null && peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
                             ? retainedWholeNativeReceipt : EmbeddedDuplexNative.peerLifecycle(peerAction.word);
+                if (peerAction == EmbeddedDuplexPeerAction.STATUS && observedReceiverResources != null) {
+                    JSONObject firstStatus = new JSONObject(nativeReceipt);
+                    JSONObject candidate = firstStatus.optJSONObject("remote_receiver_observation");
+                    if (candidate != null && candidate.has("signed_history")) {
+                        try {
+                            JSONObject receiverMiddle = receiverPhysicalObservation(observedReceiverResources);
+                            String secondStatus = EmbeddedDuplexNative.peerLifecycle(EmbeddedDuplexPeerAction.STATUS.word);
+                            JSONObject receiverAfter = receiverPhysicalObservation(observedReceiverResources);
+                            nativeReceipt = composeRemoteReceiverObservation(firstStatus, new JSONObject(secondStatus),
+                                    receiverBefore, receiverMiddle, receiverAfter, observedReceiverResources == resources,
+                                    nativeExecutorGeneration, processFence.generation(), receiptConfig).toString();
+                        } catch (Exception unavailable) {
+                            firstStatus.put("remote_receiver_observation", pendingReceiverObservation());
+                            nativeReceipt = firstStatus.toString();
+                        }
+                    }
+                    JSONObject boundedStatus = new JSONObject(nativeReceipt);
+                    if (boundedStatus.toString().length() > 256 * 1024) {
+                        boundedStatus.remove("remote_receiver_observation");
+                        nativeReceipt = boundedStatus.toString();
+                    }
+                }
                 if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE) {
                     OwnStereoCaptureRuntime own = OwnStereoCaptureRuntime.currentForApplication();
                     JSONObject physical = new JSONObject(nativeReceipt);
@@ -1163,6 +1187,64 @@ final class EmbeddedDuplexProcessHost {
                 .put("peer_physical_cleanup", "never_attempted_native_proved")
                 .put("native_host_physical_cleanup", "terminal")
                 .put("whole_app_physical_cleanup", "pending").toString();
+    }
+
+    /** STATUS-only composition; native signed history is not physical cleanup. */
+    private static JSONObject receiverPhysicalObservation(EmbeddedDuplexResources retained) {
+        if (retained == null) return null;
+        try { return retained.receiverPhysicalSnapshot(); }
+        catch (Exception unavailable) { return null; }
+    }
+    private static JSONObject pendingReceiverObservation() throws Exception {
+        return new JSONObject().put("$schema", "rusty.quest.embedded_duplex.remote_receiver_observation.v1")
+                .put("scope", "peer_receiver_only").put("status", "pending").put("physical_cleanup", "pending")
+                .put("pending_reason", "current_receiver_join_unavailable");
+    }
+    static JSONObject composeRemoteReceiverObservation(JSONObject first, JSONObject current,
+            JSONObject before, JSONObject middle, JSONObject after, boolean sameResources,
+            long executorGeneration, long appGeneration, String config) throws Exception {
+        JSONObject pending = pendingReceiverObservation();
+        try {
+            JSONObject a = first.getJSONObject("remote_receiver_observation");
+            JSONObject b = current.getJSONObject("remote_receiver_observation");
+            if (!sameResources || before == null || middle == null || after == null
+                    || !before.toString().equals(middle.toString()) || !middle.toString().equals(after.toString())
+                    || !a.toString().equals(b.toString())
+                    || !"rusty.quest.embedded_duplex.remote_receiver_observation.v1".equals(b.getString("$schema"))
+                    || !"peer_receiver_only".equals(b.getString("scope"))
+                    || b.getLong("native_executor_generation") != executorGeneration
+                    || b.getLong("app_process_generation") != appGeneration || !config.equals(b.getString("config_sha256"))
+                    || before.getLong("generation") != executorGeneration || before.getLong("incarnation") <= 0L
+                    || !before.getBoolean("terminal") || !before.getBoolean("surface_released")
+                    || !before.getBoolean("projection_retired") || !"stopped".equals(before.getString("state"))) {
+                current.put("remote_receiver_observation", pending); return current;
+            }
+            JSONObject history = b.getJSONObject("signed_history");
+            JSONObject signed = history.getJSONObject("history");
+            if (!"rusty.quest.embedded_duplex.remote_receiver_observation_history.v1".equals(history.getString("$schema"))
+                    || history.getLong("executor_generation") != executorGeneration || history.getBoolean("physical_cleanup_claimed")
+                    || !"rusty.quest.embedded_duplex.remote_receiver_terminal_history.v1".equals(signed.getString("$schema"))
+                    || signed.getLong("executor_generation") != executorGeneration || signed.getBoolean("physical_cleanup_claimed")
+                    || !history.getString("replay_sha256").matches("[0-9a-f]{64}")
+                    || !history.getString("activation_sha256").matches("[0-9a-f]{64}")) {
+                current.put("remote_receiver_observation", pending); return current;
+            }
+            org.json.JSONArray targets = history.getJSONArray("latest_stop_targets");
+            org.json.JSONArray joined = new org.json.JSONArray();
+            for (int i = 0; i < targets.length(); i++) {
+                JSONObject target = targets.getJSONObject(i);
+                if (target.getLong("executor_generation") == executorGeneration
+                        && target.getString("provider_handle_id").equals(before.getString("provider_handle_id"))
+                        && target.getLong("provider_state_revision") == before.getLong("provider_state_revision")
+                        && "stopped".equals(target.getString("observed_state"))) joined.put(target.getString("receipt_id"));
+            }
+            if (joined.length() != 1) { current.put("remote_receiver_observation", pending); return current; }
+            b.put("receiver_before", before).put("receiver_after", after).put("joined_stop_receipt_ids", joined)
+                    .put("status", "terminal").put("physical_cleanup", "terminal").put("pending_reason", JSONObject.NULL);
+        } catch (org.json.JSONException unavailable) {
+            current.put("remote_receiver_observation", pending);
+        }
+        return current;
     }
 
     private void finishWholeAppProof(JSONObject proof, String expectedSha, boolean noMedia) throws Exception {

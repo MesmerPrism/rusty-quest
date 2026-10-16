@@ -32,6 +32,38 @@ pub(super) struct State {
     whole_close_requested: bool,
 }
 
+// Optional read-only status projection. It grants no Stop/cleanup authority and
+// cannot promote the existing local Peer or whole-app terminal fields.
+fn remote_receiver_observation(host: &Host, state: &State) -> Result<Value, String> {
+    if state.client.is_some() { return Err("local media scope present".into()); }
+    let broker = json_value(&Checkout::take(host.provider.clone())?.get().evidence_json()
+        .map_err(|_| "remote receiver broker observation unavailable")?)?;
+    let attempted = state.start_mutation.is_some() || state.stop_mutation.is_some()
+        || state.stop_completion.is_some() || state.activation.is_some()
+        || !broker.get("media_pending_action").is_some_and(Value::is_null)
+        || !broker.get("media_runtime_state").is_some_and(|value| value.is_null()
+            || value.get("phase").and_then(Value::as_str) == Some("planned")
+            && value.get("applied_request_ids").and_then(Value::as_array).is_some_and(Vec::is_empty));
+    if !host.owner_effect_attempted.load(Ordering::SeqCst) {
+        return Err("remote receiver history absent".into());
+    }
+    let cleanup = Checkout::take(host.cleanup_server.clone())?.get().replay_snapshot();
+    if !cleanup.pending_request_sha256.is_empty() || !cleanup.terminal.is_empty() {
+        return Err("remote receiver retained cleanup present".into());
+    }
+    let history = super::super::remote_owner_close::receiver_observation_history(
+        &Checkout::take(host.server.clone())?.get().replay_snapshot(),
+        &Checkout::take(host.activation_server.clone())?.get().replay_snapshot(),
+        &host.local_public_key, host.callbacks.key_id(), host.capability.generation,
+        host.restored_owner_replay, attempted)?;
+    Ok(json!({"$schema":"rusty.quest.embedded_duplex.remote_receiver_observation.v1",
+        "scope":"peer_receiver_only","status":"pending","physical_cleanup":"pending",
+        "pending_reason":"java_physical_observation_required","config_sha256":host.config_sha256,
+        "native_executor_generation":host.capability.generation,
+        "app_process_generation":host.capability.binding.generation,
+        "local_peer_id":host.local_peer_id,"remote_peer_id":host.remote_peer_id,"signed_history":history}))
+}
+
 fn entropy() -> Result<String, String> {
     let mut bytes = [0u8; 32];
     File::open("/dev/urandom")
@@ -815,7 +847,19 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
             state.last_failure_action = Some(action);
         }
     }
-    let value = receipt(&host, state, action)?;
+    let mut value = receipt(&host, state, action)?;
+    if word == 5 {
+        value["remote_receiver_observation"] = remote_receiver_observation(&host, state)
+            .unwrap_or_else(|_| json!({"$schema":"rusty.quest.embedded_duplex.remote_receiver_observation.v1",
+                "scope":"peer_receiver_only","status":"pending","physical_cleanup":"pending",
+                "pending_reason":"current_signed_receiver_history_unavailable"}));
+        // The optional projection must not make an otherwise supported fixed
+        // lifecycle receipt exceed its existing 256 KiB serializer boundary.
+        if value.to_string().len() > 256 * 1024 {
+            value.as_object_mut().ok_or("Peer lifecycle object absent")?
+                .remove("remote_receiver_observation");
+        }
+    }
     host.capability.require_live()?;
     if word == 6
         && value.get("peer_physical_cleanup").and_then(Value::as_str) == Some("terminal")

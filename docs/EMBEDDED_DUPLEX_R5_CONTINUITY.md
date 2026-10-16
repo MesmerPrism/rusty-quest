@@ -1,5 +1,36 @@
 # Embedded duplex finite authority and native fencing
 
+## Optional current receiver cleanup observation
+
+Existing `peer_status` can include
+`rusty.quest.embedded_duplex.remote_receiver_observation.v1` for a current,
+unrestored remote-only receiver. This optional observation grants no authority
+and does not change top-level Peer, native-host or whole-app cleanup meanings.
+Local Start/pending cleanup continues to require its existing typed owners.
+
+Native reuses authenticated current receiver history: exact raw readback and
+signature, current key/generation, no pending dispatch/activation or retained
+cleanup, and latest Stop after Start for every receiver group. A separate
+history projection retains exact Stop receipt, handle and state revision; it
+still claims no physical cleanup. Java takes coherent receiver snapshots around
+two read-only native STATUS projections and requires stable history/resource
+identity plus an exact matching terminal Stop. Actual decoder terminal, released
+reader surface and retired Peer projection must all hold. Changes, unavailable
+proof, pending work or a rearm remain nested Pending. Ordinary STATUS keeps its
+existing result when this optional observation is unavailable.
+
+Reads dispatch no owner action, consume no registry verification, release no
+resource, and stop neither Own capture nor the app. No native lock is held
+across Java callbacks. This is a bounded current observation, not permanent
+quiescence or authority for a later Start; the operator's Stop fence remains
+separate. The closed debug operator and fixed native action words are unchanged.
+
+`tools/checks/test_remote_receiver_observation_host.py` compiles production
+signed-history code and actual Java STATUS call-site/snapshot/composition
+bodies against explicitly modeled platform facts. It checks stable exact joins,
+pending/rearm/identity/resource faults and zero read effects. These host checks
+are neither Android physical cleanup nor artifact/device qualification.
+
 The prospective opt-in owner checkpoint and versioned native observations are
 specified in [Ongoing media continuation](ONGOING_MEDIA_CONTINUATION.md).
 Finite defaults and the fixed native ABI remain unchanged; the first source

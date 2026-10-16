@@ -92,6 +92,45 @@ pub(crate) fn verified_receivers(
         "physical_cleanup_claimed":false}))
 }
 
+/// Read-only projection of the same verified history, including the exact
+/// current Stop targets needed by a separate Java physical-resource snapshot.
+/// This never consumes registry receipts or asserts physical cleanup.
+pub(crate) fn receiver_observation_history(
+    replay: &OwnerDispatchReplaySnapshot,
+    activation: &ProductActivationReplaySnapshot,
+    public_key: &[u8; 32],
+    key_id: &str,
+    executor_generation: u64,
+    restored: bool,
+    local_media_attempted: bool,
+) -> Result<Value, String> {
+    let history = verified_receivers(replay, activation, public_key, key_id,
+        executor_generation, restored, local_media_attempted)?;
+    let ids = history["receiver_stop_receipt_ids"].as_array()
+        .ok_or("verified receiver Stop targets absent")?;
+    let mut targets = Vec::new();
+    for response in replay.terminal.values() {
+        let r = &response.effect.as_ref().ok_or("verified receiver effect absent")?.readback;
+        if ids.iter().any(|id| id.as_str() == Some(r.receipt_id.as_str())) {
+            targets.push(json!({"receipt_id":r.receipt_id,
+                "executor_generation":r.executor_generation,
+                "provider_handle_id":r.provider_handle_id,
+                "provider_state_revision":r.provider_state_revision,
+                "observed_state":r.observed_state,"resource_id":r.resource_id,
+                "authority_epoch_id":r.authority_epoch_id,
+                "client_id":r.client_id,"lease_id":r.lease_id}));
+        }
+    }
+    if targets.len() != ids.len() || targets.is_empty() {
+        return Err("verified receiver Stop target count differs".into());
+    }
+    Ok(json!({"$schema":"rusty.quest.embedded_duplex.remote_receiver_observation_history.v1",
+        "executor_generation":executor_generation,"history":history,"latest_stop_targets":targets,
+        "replay_sha256":packaged_json_sha256(&serde_json::to_string(replay).map_err(|_| "receiver replay serialization")?),
+        "activation_sha256":packaged_json_sha256(&serde_json::to_string(activation).map_err(|_| "receiver activation serialization")?),
+        "physical_cleanup_claimed":false}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +175,39 @@ mod tests {
         let result=check(&fixture(),false,false).unwrap();
         assert_eq!(result["physical_cleanup_claimed"],false);
         assert_eq!(result["receiver_stop_receipt_ids"],json!(["receipt.stop.2"]));
+    }
+    #[test] fn observation_retains_exact_stop_target_and_does_not_mutate_history() {
+        let p=fixture();let a=ProductActivationReplaySnapshot::default();
+        let before=serde_json::to_string(&p).unwrap();
+        let observed=receiver_observation_history(&p,&a,
+            SigningKey::from_bytes(&[7;32]).verifying_key().as_bytes(),"ed25519.fixture",3,false,false).unwrap();
+        assert_eq!(observed["physical_cleanup_claimed"],false);
+        assert_eq!(observed["latest_stop_targets"][0]["receipt_id"],"receipt.stop.2");
+        assert_eq!(observed["latest_stop_targets"][0]["provider_handle_id"],"receiver:g3");
+        assert_eq!(observed["latest_stop_targets"][0]["provider_state_revision"],2);
+        assert_eq!(before,serde_json::to_string(&p).unwrap());
+        assert_eq!(observed,receiver_observation_history(&p,&a,
+            SigningKey::from_bytes(&[7;32]).verifying_key().as_bytes(),"ed25519.fixture",3,false,false).unwrap());
+        if let Some(path) = std::env::var_os("RUSTY_QUEST_RECEIVER_OBSERVATION_FIXTURE") {
+            use std::io::Write;
+            let mut file=std::fs::OpenOptions::new().write(true).create_new(true).open(path).unwrap();
+            file.write_all(observed.to_string().as_bytes()).unwrap();
+            file.sync_all().unwrap();
+        }
+    }
+    #[test] fn observation_rejects_pending_rearm_and_joins_the_newest_valid_stop() {
+        let key=SigningKey::from_bytes(&[7;32]).verifying_key().to_bytes();
+        let a=ProductActivationReplaySnapshot::default();
+        let observe=|p:&OwnerDispatchReplaySnapshot| receiver_observation_history(p,&a,&key,"ed25519.fixture",3,false,false);
+        let mut p=fixture();let first=observe(&p).unwrap();
+        let start=response(true,3);p.terminal.insert(start.dispatch_id.clone(),start);
+        assert!(observe(&p).is_err());
+        let stop=response(false,4);p.terminal.insert(stop.dispatch_id.clone(),stop);
+        let next=observe(&p).unwrap();
+        assert_ne!(first["replay_sha256"],next["replay_sha256"]);
+        assert_eq!(next["latest_stop_targets"][0]["provider_state_revision"],4);
+        p.pending_request_sha256.insert("pending".into(),"sha256:pending".into());
+        assert!(observe(&p).is_err());
     }
     #[test] fn restored_or_local_media_cannot_use_remote_only_branch() {
         assert!(check(&fixture(),true,false).is_err());assert!(check(&fixture(),false,true).is_err());

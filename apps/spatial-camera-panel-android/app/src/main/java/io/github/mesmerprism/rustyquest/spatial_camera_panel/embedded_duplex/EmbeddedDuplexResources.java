@@ -151,6 +151,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
         return retained.diagnosticDropoutSnapshot();
     }
     JSONObject receiverStageSnapshot() throws Exception { return incoming.diagnosticStages(); }
+    JSONObject receiverPhysicalSnapshot() throws Exception { return incoming.physicalSnapshot(); }
     boolean ownAppCaptureEnabled() { return ownCapture != null; }
     void armOwnCaptureTrace(String processEpoch, long appGeneration, long armGeneration) {
         io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner retained =

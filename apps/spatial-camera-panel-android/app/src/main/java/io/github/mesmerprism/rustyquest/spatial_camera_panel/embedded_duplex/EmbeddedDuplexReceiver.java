@@ -334,6 +334,17 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                 current.detail(), current.providerHandleId());
     }
 
+    /** Pure coherent observation; never releases or verifies an owner effect. */
+    synchronized org.json.JSONObject physicalSnapshot() throws Exception {
+        MediaRuntimeSnapshot current = snapshot();
+        return new org.json.JSONObject()
+                .put("generation", current.generation()).put("incarnation", incarnation)
+                .put("provider_handle_id", current.providerHandleId())
+                .put("provider_state_revision", current.revision()).put("state", current.state())
+                .put("terminal", current.terminal()).put("surface_released", surfaceReleased)
+                .put("projection_retired", projectionRetired);
+    }
+
     /** Closes only the receiver that has never entered an owner Sink effect. */
     synchronized void closeUnstartedAndVerify() {
         if (("cleaned".equals(preparationState) || "stopped".equals(preparationState))
