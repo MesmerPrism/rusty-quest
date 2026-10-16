@@ -57,9 +57,33 @@ function Test-FreshWrapperVerifier {
     try {
         New-Item -ItemType Directory -Path $temp -Force|Out-Null
         $harness=Join-Path $temp 'verify-wrapper.ps1'
-        [IO.File]::WriteAllText($harness,"param([string]`$RepoRoot)`n`$ErrorActionPreference='Stop'`n$text`n`$value=Get-VerifiedPinnedGradleBat -RepoRoot `$RepoRoot`nif(-not (Test-Path -LiteralPath `$value -PathType Leaf)){throw 'wrapper did not return gradle.bat'}`n`$value")
-        $valid=@(& pwsh -NoProfile -ExecutionPolicy Bypass -File $harness -RepoRoot $root)
+        $sharedArgument=if($text.Contains('$SharedGradleToolRoot')){' -SharedGradleToolRoot $SharedRoot'}else{''}
+        [IO.File]::WriteAllText($harness,"param([string]`$RepoRoot,[string]`$SharedRoot)`n`$ErrorActionPreference='Stop'`n$text`n`$value=Get-VerifiedPinnedGradleBat -RepoRoot `$RepoRoot$sharedArgument`nif(-not (Test-Path -LiteralPath `$value -PathType Leaf)){throw 'wrapper did not return gradle.bat'}`n`$value")
+        # Wrapper protocol fixtures are inert. Real archive/tree verification is exercised by resolver -SelfTest.
+        $protocolRoot=Join-Path $temp 'protocol'
+        foreach($relative in @('tools','config','local-artifacts/tools/gradle-9.4.1/bin')){[void][IO.Directory]::CreateDirectory((Join-Path $protocolRoot $relative))}
+        Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $protocolRoot 'config/gradle-9.4.1-tool.json')
+        [IO.File]::WriteAllText((Join-Path $protocolRoot 'local-artifacts/tools/gradle-9.4.1/bin/gradle.bat'),'@echo inert-wrapper-fixture')
+        $protocolResolver=@'
+param([string]$RepoRoot,[string]$Mode,[int]$TimeoutSeconds,[string]$SharedGradleToolRoot)
+$fixtureHome=if($SharedGradleToolRoot){Join-Path $SharedGradleToolRoot 'tools/gradle-9.4.1'}else{Join-Path $RepoRoot 'local-artifacts/tools/gradle-9.4.1'}
+$r=[ordered]@{schema='rusty.quest.gradle_cache_receipt.v2';mode='VerifyCache';tool_id='gradle';version='9.4.1';archive_sha256='2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb';tree_sha256='5c94e8204be25e0c18c94780cf4cf768fefa92e73f8c7b1617c483f33ca088db';gradle_home=$fixtureHome;gradle_bat=(Join-Path $fixtureHome 'bin/gradle.bat')}
+if($SharedGradleToolRoot){$r.shared_tool_root=$SharedGradleToolRoot;$r.tool_distribution=@{schema='rusty.quest.gradle_tool_distribution.v1';storage_kind='explicit-shared';tool_id=$r.tool_id;version=$r.version;archive_sha256=$r.archive_sha256;tree_sha256=$r.tree_sha256;resolver_sha256=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant();config_sha256=(Get-FileHash -LiteralPath (Join-Path $RepoRoot 'config/gradle-9.4.1-tool.json')).Hash.ToLowerInvariant();marker_sha256=(Get-FileHash -LiteralPath (Join-Path $SharedGradleToolRoot 'tool-identity.json')).Hash.ToLowerInvariant();paths_recorded=$false}}
+$r|ConvertTo-Json -Depth 5
+'@
+        [IO.File]::WriteAllText((Join-Path $protocolRoot 'tools/Resolve-GradleTool.ps1'),$protocolResolver)
+        $valid=@(& pwsh -NoProfile -ExecutionPolicy Bypass -File $harness -RepoRoot $protocolRoot)
         if($LASTEXITCODE -ne 0 -or $valid.Count -ne 1 -or -not (Test-Path -LiteralPath $valid[0] -PathType Leaf)){throw "$Label fresh-pwsh verifier did not accept the valid cache."}
+        if($sharedArgument){
+            $sharedRoot=Join-Path $temp 'shared';[void][IO.Directory]::CreateDirectory((Join-Path $sharedRoot 'tools/gradle-9.4.1/bin'))
+            [IO.File]::WriteAllText((Join-Path $sharedRoot 'tools/gradle-9.4.1/bin/gradle.bat'),'@echo inert-shared-wrapper-fixture')
+            [IO.File]::WriteAllText((Join-Path $sharedRoot 'tool-identity.json'),'inert-wrapper-marker')
+            $valid=@(& pwsh -NoProfile -File $harness -RepoRoot $protocolRoot -SharedRoot $sharedRoot)
+            if($LASTEXITCODE -ne 0 -or $valid.Count -ne 1 -or $valid[0] -cne (Join-Path $sharedRoot 'tools/gradle-9.4.1/bin/gradle.bat')){throw "$Label did not consume its explicitly selected shared tool root."}
+            [IO.File]::WriteAllText((Join-Path $protocolRoot 'tools/Resolve-GradleTool.ps1'),$protocolResolver.Replace("storage_kind='explicit-shared'","storage_kind='ambient'"))
+            $null=& pwsh -NoProfile -File $harness -RepoRoot $protocolRoot -SharedRoot $sharedRoot 2>$null
+            if($LASTEXITCODE -eq 0){throw "$Label accepted a changed shared identity receipt."}
+        }
         $badRoot=Join-Path $temp 'bad';New-Item -ItemType Directory -Path (Join-Path $badRoot 'tools') -Force|Out-Null;[IO.File]::WriteAllText((Join-Path $badRoot 'tools\Resolve-GradleTool.ps1'),'throw ''intentional verifier failure''')
         $null=& pwsh -NoProfile -ExecutionPolicy Bypass -File $harness -RepoRoot $badRoot 2>$null
         if($LASTEXITCODE -eq 0){throw "$Label fresh-pwsh verifier accepted a throwing resolver."}
@@ -82,6 +106,65 @@ function Test-FreshWrapperVerifier {
 }
 Test-FreshWrapperVerifier $buildPath 'Build wrapper'
 Test-FreshWrapperVerifier $testPath 'Test wrapper'
+
+function Test-ExternalArtifactOutput {
+    $definition=Get-FunctionText $buildPath 'New-ExternalArtifactDirectory'
+    . ([scriptblock]::Create($definition))
+    $temp=Join-Path ([IO.Path]::GetTempPath()) ('rusty-quest-artifact-output-'+[Guid]::NewGuid().ToString('N'))
+    function Assert-Rejected {param([scriptblock]$Action,[string]$Label) $failed=$false;try{& $Action|Out-Null}catch{$failed=$true};if(-not $failed){throw "External artifact fixture accepted $Label"}}
+    try{
+        foreach($part in @('attempt','source','cache','shared')){[void][IO.Directory]::CreateDirectory((Join-Path $temp $part))}
+        $parent=Join-Path $temp 'attempt';$output=Join-Path $parent 'public-build';$excluded=@('source','cache','shared'|ForEach-Object{Join-Path $temp $_})
+        [void](New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate)
+        if(Test-Path -LiteralPath $output){throw 'External artifact validation created output early.'}
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode DevFast} 'DevFast mode'
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate -Replace} 'replacement'
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $parent -ExcludedRoots $excluded -Mode Candidate} 'parent equality'
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $temp 'escape') -ExcludedRoots $excluded -Mode Candidate} 'outside output'
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $parent 'CON.txt') -ExcludedRoots $excluded -Mode Candidate} 'reserved output name'
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $parent 'build:stream') -ExcludedRoots $excluded -Mode Candidate} 'output alternate stream'
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output 'relative-build' -ExcludedRoots $excluded -Mode Candidate} 'relative output'
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent ([IO.Path]::GetPathRoot($parent)) -Output $output -ExcludedRoots $excluded -Mode Candidate} 'filesystem root parent'
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $temp -Output $output -ExcludedRoots $excluded -Mode Candidate} 'ancestor overlap'
+        foreach($path in $excluded){Assert-Rejected {New-ExternalArtifactDirectory -Parent $path -Output (Join-Path $path 'build') -ExcludedRoots $excluded -Mode Candidate} 'source/cache/tool overlap'}
+        $link=Join-Path $parent 'linked';New-Item -ItemType Junction -Path $link -Target (Join-Path $temp 'cache')|Out-Null
+        try{Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output (Join-Path $link 'build') -ExcludedRoots $excluded -Mode Candidate} 'linked ancestor'}finally{Remove-Item -LiteralPath $link -Force}
+        [void](New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate -Create)
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate -Create} 'existing output'
+        Remove-Item -LiteralPath $output
+        [IO.File]::WriteAllText($output,'collision')
+        Assert-Rejected {New-ExternalArtifactDirectory -Parent $parent -Output $output -ExcludedRoots $excluded -Mode Candidate -Create} 'file collision'
+    }finally{if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Recurse -Force}}
+}
+Test-ExternalArtifactOutput
+
+function Test-HostCargoTargetInheritance {
+    # The private caller scopes host Cargo to its external h lane. Exercise the
+    # actual digest entrypoint with an inert command rather than compiling it.
+    $nativeBuild=Join-Path $root 'tools/Build-NativeRendererAndroid.ps1'
+    . ([scriptblock]::Create((Get-FunctionText $nativeBuild 'Get-RuntimeConfigDigest')))
+    $priorTarget=$env:CARGO_TARGET_DIR
+    $priorPath=$env:PATH
+    $fixtureRoot=Join-Path ([IO.Path]::GetTempPath()) ('rusty-quest-inert-host-'+[Guid]::NewGuid().ToString('N'))
+    [void][IO.Directory]::CreateDirectory($fixtureRoot)
+    $hostTarget=Join-Path $fixtureRoot 'h';$observation=Join-Path $fixtureRoot 'observed.txt'
+    $commandBody="@echo off`r`n> `"$observation`" echo %CARGO_TARGET_DIR%`r`n>> `"$observation`" echo %*`r`necho $('a'*64)`r`n"
+    [IO.File]::WriteAllText((Join-Path $fixtureRoot 'cargo.cmd'),$commandBody)
+    try{
+        $env:CARGO_TARGET_DIR=$hostTarget
+        $env:PATH=$fixtureRoot+[IO.Path]::PathSeparator+$priorPath
+        $digest=Get-RuntimeConfigDigest -RepoRoot $root -RuntimeConfigPath 'inert-runtime-config.json'
+        $observed=@(Get-Content -LiteralPath $observation)
+        if($digest -cne ('a'*64) -or $observed.Count -ne 2 -or $observed[0] -cne $hostTarget -or
+            $observed[1] -cne 'run --quiet -p rusty-quest-broker-authority --bin runtime_config_digest -- inert-runtime-config.json' -or
+            (Test-Path -LiteralPath $hostTarget)){throw 'Host runtime digest did not retain the caller-scoped external Cargo target/argv.'}
+    }finally{
+        $env:PATH=$priorPath
+        if($null -eq $priorTarget){Remove-Item Env:\CARGO_TARGET_DIR -ErrorAction SilentlyContinue}else{$env:CARGO_TARGET_DIR=$priorTarget}
+        Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+    }
+}
+Test-HostCargoTargetInheritance
 
 $docs = Get-Content -LiteralPath $docsPath -Raw
 foreach ($needle in @('Resolve-GradleTool.ps1', 'VerifyCache', 'local-artifacts/downloads', 'local-artifacts/tools/gradle-9.4.1', 'does not alter `PATH`', '-SelfTest', 'trusted-local-process')) {
