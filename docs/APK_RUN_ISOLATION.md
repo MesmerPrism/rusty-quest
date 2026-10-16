@@ -53,6 +53,16 @@ to replace an existing content address unless `-ReplaceExistingOutput` is
 passed. Normal iteration should reuse the existing output or create a new
 address; replacement is a repair/debug action.
 
+The Camera builder also supports Candidate-only external artifacts through an
+explicit `-ArtifactOutputParent` and absolute `-OutDir` strict child. The parent
+must already exist with ordinary ancestors and must not overlap any source
+composition repository, build cache or explicitly shared Gradle tool root.
+OutDir is create-new and replacement is forbidden. This keeps fresh attempt
+artifacts outside a reusable source tree while retaining the full build lock,
+source/signer inspection and run capsule. The emitted lock/manifest record the
+external-output policy without the parent machine path. See the
+[Camera workflow](SPATIAL_CAMERA_PANEL_FAST_BUILD_WORKFLOW.md) for tool reuse.
+
 ## Run Capsule
 
 Native receipt metadata distinguishes the generated JNI input from the final

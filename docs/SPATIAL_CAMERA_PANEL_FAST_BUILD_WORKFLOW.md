@@ -47,6 +47,30 @@ explicit signer and expected certificate fingerprint, disables the Gradle
 daemon/configuration cache for a detailed task-timing pass, and retains the
 same complete content-addressed output/evidence contract.
 
+Keep the task's stable compiler cache root across candidate revisions and choose
+a fresh final output namespace separately. A new checkout needs a verified
+pinned Gradle distribution. Prepare its default repository-local cache through
+`pwsh -NoProfile -File tools/Resolve-GradleTool.ps1 -RepoRoot . -Mode Resolve`,
+then use `-Mode VerifyCache` for read-only verification. The resolver retains
+archive/tree hashes and executable checks; do not replace them with an ambient
+Gradle installation or repeatedly download an unchanged verified tool.
+For staged attempts, pass the same explicit `-SharedGradleToolRoot
+<absolute-tool-root>` to preparation and the builder. Its dedicated external
+ordinary distribution root is verified against exact resolver/config bytes,
+archive/tree pins and immutable marker; it is separate from `gu`, `gp`, task
+outputs and `BuildCacheRoot`. See [the tool contract](GRADLE_TOOL_RESOLUTION.md).
+
+Candidate callers that keep source paths stable may select
+`-ArtifactOutputParent <existing-absolute-attempt-directory>` with an explicit
+`-OutDir <fresh-child-directory>`. Both paths use explicit local-drive paths;
+the parent and all output ancestors must be
+ordinary directories outside every source-composition repository, build cache
+and shared tool root. The output is create-new; `-ReplaceExistingOutput` is
+forbidden in this mode. Final APK, build lock, manifest and capsule are written
+there, with an added path-free `artifact_output` policy record. Source,
+signer and final artifact inspection guards still apply. The default remains
+the existing content-addressed output under repository `target/`.
+
 The build does not provision signing secrets. Supply the keystore with the
 parameter or local environment binding and supply alias/store/key passwords in
 the local `RUSTY_QUEST_SPATIAL_SIGNING_*` environment variables. Receipts
