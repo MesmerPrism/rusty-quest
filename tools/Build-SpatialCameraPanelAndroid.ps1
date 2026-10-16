@@ -7,6 +7,7 @@ param(
     [string]$NdkVersion = "27.2.12479018",
     [string]$BuildToolsVersion = "36.0.0",
     [ValidateSet("9.4.1")][string]$GradleVersion = "9.4.1",
+    [string]$SharedGradleToolRoot = "",
     [ValidateSet("DevFast", "Candidate")]
     [string]$BuildMode = "DevFast",
     [switch]$UseSourceCompositionVersionName,
@@ -71,6 +72,7 @@ param(
     [ValidatePattern('^(?:[0-9a-fA-F]{64})?$')]
     [string]$ExpectedSignerSha256 = "",
     [string]$OutDir = "",
+    [string]$ArtifactOutputParent = "",
     [switch]$AllowSharedDevelopmentPackage,
     [switch]$PublicationBuild,
     [switch]$ReplaceExistingOutput
@@ -79,17 +81,18 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Get-VerifiedPinnedGradleBat {
-    param([Parameter(Mandatory=$true)][string]$RepoRoot)
+    param([Parameter(Mandatory=$true)][string]$RepoRoot,[string]$SharedGradleToolRoot = "",[ref]$ToolDistribution)
     $resolver = Join-Path $RepoRoot "tools\Resolve-GradleTool.ps1"
     if (-not (Test-Path -LiteralPath $resolver -PathType Leaf)) { throw "Pinned Gradle resolver is missing: $resolver" }
     try {
-        $output = @(& $resolver -RepoRoot $RepoRoot -Mode VerifyCache -TimeoutSeconds 55)
+        $output = @(& $resolver -RepoRoot $RepoRoot -Mode VerifyCache -TimeoutSeconds 55 -SharedGradleToolRoot $SharedGradleToolRoot)
     } catch {
         throw "Pinned Gradle cache verification failed: $($_.Exception.Message)"
     }
     if ($output.Count -eq 0) { throw "Pinned Gradle cache verification returned no receipt." }
     try { $receipt = (($output -join "`n") | ConvertFrom-Json -ErrorAction Stop) } catch { throw "Pinned Gradle cache verification returned an invalid receipt: $($_.Exception.Message)" }
-    $expectedHome = [IO.Path]::GetFullPath((Join-Path $RepoRoot "local-artifacts\tools\gradle-9.4.1")).TrimEnd('\')
+    $shared = -not [string]::IsNullOrWhiteSpace($SharedGradleToolRoot)
+    $expectedHome = if ($shared) { [IO.Path]::GetFullPath((Join-Path $SharedGradleToolRoot "tools\gradle-9.4.1")).TrimEnd('\') } else { [IO.Path]::GetFullPath((Join-Path $RepoRoot "local-artifacts\tools\gradle-9.4.1")).TrimEnd('\') }
     $actualHome = [IO.Path]::GetFullPath([string]$receipt.gradle_home).TrimEnd('\')
     $actualBat = [IO.Path]::GetFullPath([string]$receipt.gradle_bat)
     if ($receipt.schema -cne "rusty.quest.gradle_cache_receipt.v2" -or $receipt.mode -cne "VerifyCache" -or
@@ -100,7 +103,19 @@ function Get-VerifiedPinnedGradleBat {
         -not $actualBat.StartsWith($expectedHome + "\bin\", [StringComparison]::OrdinalIgnoreCase) -or
         $actualBat -cnotlike "*\bin\gradle.bat" -or
         -not (Test-Path -LiteralPath $actualBat -PathType Leaf)) {
-        throw "Pinned Gradle cache receipt is invalid or escapes the repository-local tool root."
+        throw "Pinned Gradle cache receipt is invalid or escapes the explicitly selected tool root."
+    }
+    if ($shared) {
+        $distribution = $receipt.tool_distribution
+        if ($receipt.shared_tool_root -cne [IO.Path]::GetFullPath($SharedGradleToolRoot).TrimEnd('\') -or
+            $distribution.schema -cne 'rusty.quest.gradle_tool_distribution.v1' -or $distribution.storage_kind -cne 'explicit-shared' -or
+            $distribution.tool_id -cne $receipt.tool_id -or $distribution.version -cne $receipt.version -or
+            $distribution.archive_sha256 -cne $receipt.archive_sha256 -or $distribution.tree_sha256 -cne $receipt.tree_sha256 -or
+            $distribution.resolver_sha256 -cne (Get-FileHash -LiteralPath $resolver -Algorithm SHA256).Hash.ToLowerInvariant() -or
+            $distribution.config_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $RepoRoot 'config\gradle-9.4.1-tool.json') -Algorithm SHA256).Hash.ToLowerInvariant() -or
+            $distribution.marker_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $SharedGradleToolRoot 'tool-identity.json') -Algorithm SHA256).Hash.ToLowerInvariant() -or
+            $distribution.paths_recorded -ne $false) { throw 'Pinned shared Gradle distribution receipt identity is invalid.' }
+        if ($null -ne $ToolDistribution) { $ToolDistribution.Value = $distribution }
     }
     return $actualBat
 }
@@ -151,6 +166,35 @@ function Set-TextFileIfChanged {
     }
     [System.IO.File]::WriteAllBytes([System.IO.Path]::GetFullPath($Path), $bytes)
     return $true
+}
+
+function New-ExternalArtifactDirectory {
+    param([Parameter(Mandatory)][string]$Parent,[Parameter(Mandatory)][string]$Output,[Parameter(Mandatory)][string[]]$ExcludedRoots,[Parameter(Mandatory)][string]$Mode,[switch]$Replace,[switch]$Create)
+    if($Mode -cne 'Candidate' -or $Replace){throw 'ArtifactOutputParent requires Candidate mode and forbids ReplaceExistingOutput.'}
+    if(-not [IO.Path]::IsPathFullyQualified($Parent) -or -not [IO.Path]::IsPathFullyQualified($Output) -or $Parent -notmatch '^[A-Za-z]:[\\/]' -or $Output -notmatch '^[A-Za-z]:[\\/]'){throw 'External artifact parent and OutDir must be explicit absolute local drive paths.'}
+    $parentFull=[IO.Path]::GetFullPath($Parent).TrimEnd([char[]]@('\','/'))
+    $outputFull=[IO.Path]::GetFullPath($Output).TrimEnd([char[]]@('\','/'))
+    $volume=[IO.Path]::GetPathRoot($parentFull)
+    if($parentFull -ceq $volume.TrimEnd([char[]]@('\','/'))){throw 'ArtifactOutputParent must not be a filesystem root.'}
+    if(-not $outputFull.StartsWith($parentFull+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'OutDir must be a strict child of ArtifactOutputParent.'}
+    foreach($excluded in @($ExcludedRoots|Where-Object{-not [string]::IsNullOrWhiteSpace($_)})){
+        $excludedFull=[IO.Path]::GetFullPath($excluded).TrimEnd([char[]]@('\','/'))
+        if($parentFull.Equals($excludedFull,[StringComparison]::OrdinalIgnoreCase) -or $parentFull.StartsWith($excludedFull+'\',[StringComparison]::OrdinalIgnoreCase) -or $excludedFull.StartsWith($parentFull+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'ArtifactOutputParent must not overlap source, build cache, or shared tool roots.'}
+    }
+    # Every existing ancestor is ordinary; no directory is created until final admission.
+    $current=[IO.Path]::GetPathRoot($outputFull)
+    $segments=$outputFull.Substring($current.Length).Split([IO.Path]::DirectorySeparatorChar,[StringSplitOptions]::RemoveEmptyEntries)
+    foreach($segment in $segments){
+        $base=($segment -split '\.')[0]
+        if($segment.IndexOfAny([IO.Path]::GetInvalidFileNameChars()) -ge 0 -or $segment.EndsWith('.') -or $segment.EndsWith(' ') -or $base -match '^(?i:con|prn|aux|nul|com[1-9]|lpt[1-9])$'){throw 'External artifact output contains an unsafe Windows path segment.'}
+    }
+    foreach($segment in $segments[0..($segments.Count-2)]){
+        $current=Join-Path $current $segment
+        if(-not(Test-Path -LiteralPath $current -PathType Container) -or ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'External artifact output ancestors must be existing ordinary directories.'}
+    }
+    if(Test-Path -LiteralPath $outputFull){throw 'External artifact OutDir must be create-new and absent.'}
+    if($Create){New-Item -ItemType Directory -Path $outputFull -ErrorAction Stop|Out-Null}
+    $outputFull
 }
 
 function Copy-FileIfChanged {
@@ -997,6 +1041,15 @@ if ([string]::IsNullOrWhiteSpace($BuildCacheRoot)) {
     $BuildCacheRoot = Join-Path $workspaceDrive "b\mv"
 }
 $BuildCacheRoot = [System.IO.Path]::GetFullPath($BuildCacheRoot).TrimEnd([char[]]@('\', '/'))
+if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
+    [void](New-ExternalArtifactDirectory -Parent $ArtifactOutputParent -Output $OutDir -ExcludedRoots @($provisionalRepoRoot,$NativeRepoRoot,$BuildCacheRoot,$SharedGradleToolRoot) -Mode $BuildMode -Replace:$ReplaceExistingOutput)
+}
+if (-not [string]::IsNullOrWhiteSpace($SharedGradleToolRoot)) {
+    $sharedToolPath = [IO.Path]::GetFullPath($SharedGradleToolRoot).TrimEnd([char[]]@('\', '/'))
+    if ($sharedToolPath.Equals($BuildCacheRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $sharedToolPath.StartsWith($BuildCacheRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
+        $BuildCacheRoot.StartsWith($sharedToolPath + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'SharedGradleToolRoot and BuildCacheRoot must not overlap.' }
+}
 if ($BuildCacheRoot.Length -gt 64) {
     throw "BuildCacheRoot must remain deliberately short (64 characters or fewer): $BuildCacheRoot"
 }
@@ -1101,7 +1154,8 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Join-Path $PSScriptRoot ".."
 }
 $repoRoot = Resolve-Path $RepoRoot
-$gradleBat = Get-VerifiedPinnedGradleBat -RepoRoot ([string]$repoRoot)
+$gradleToolDistribution = $null
+$gradleBat = Get-VerifiedPinnedGradleBat -RepoRoot ([string]$repoRoot) -SharedGradleToolRoot $SharedGradleToolRoot -ToolDistribution ([ref]$gradleToolDistribution)
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
 $buildStartedUtc = [DateTimeOffset]::UtcNow
@@ -1535,6 +1589,10 @@ $buildInputDescriptor["cache_identities"] = [ordered]@{
     android_shell = $shellFingerprint
     package = $packageFingerprint
 }
+if ($null -ne $gradleToolDistribution) { $buildInputDescriptor['gradle_tool_distribution'] = $gradleToolDistribution }
+if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
+    $buildInputDescriptor['artifact_output'] = [ordered]@{schema='rusty.quest.artifact_output.v1';policy='explicit-external-parent-create-new';parent_path_recorded=$false;source_and_cache_disjoint=$true}
+}
 $buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $buildInputDescriptor["fingerprint"] = $buildInputFingerprint
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
@@ -1542,17 +1600,22 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path $targetRoot "spatial-camera-panel-android\builds\$packageLeaf\$($buildInputFingerprint.Substring(0, 24))"
 }
 
-New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
-$resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd([char[]]@('\'))
-$resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd([char[]]@('\'))
-if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "OutDir must be under the repo target directory: $resolvedOutFull"
+if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
+    $excludedArtifactRoots = @($sourceComposition.repositories | ForEach-Object { [string]$_.repository }) + @($BuildCacheRoot,$SharedGradleToolRoot,$NativeRepoRoot)
+    $OutDir = New-ExternalArtifactDirectory -Parent $ArtifactOutputParent -Output $OutDir -ExcludedRoots $excludedArtifactRoots -Mode $BuildMode -Replace:$ReplaceExistingOutput -Create
+} else {
+    New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
+    $resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd([char[]]@('\'))
+    $resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd([char[]]@('\'))
+    if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "OutDir must be under the repo target directory: $resolvedOutFull"
+    }
+    if (Test-Path -LiteralPath $OutDir) {
+        if (-not $ReplaceExistingOutput) { throw "Content-addressed Spatial APK output already exists: $OutDir. Reuse its run capsule or pass -ReplaceExistingOutput explicitly." }
+        Remove-Item -LiteralPath (Resolve-Path -LiteralPath $OutDir).Path -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 }
-if (Test-Path -LiteralPath $OutDir) {
-    if (-not $ReplaceExistingOutput) { throw "Content-addressed Spatial APK output already exists: $OutDir. Reuse its run capsule or pass -ReplaceExistingOutput explicitly." }
-    Remove-Item -LiteralPath (Resolve-Path -LiteralPath $OutDir).Path -Recurse -Force
-}
-New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $buildInputLockPath = Join-Path $OutDir "build-input-lock.json"
 [void](Set-TextFileIfChanged -Path $buildInputLockPath -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20))
 $embeddedMediaSourceManifestPath = Join-Path $OutDir "embedded-media-aar-source-inputs.json"
@@ -3235,6 +3298,8 @@ $manifest = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$manifest['developer_source_version']=$observedSourceVersion}
 $manifestPath = Join-Path $OutDir "build-manifest.json"
+if ($null -ne $gradleToolDistribution) { $manifest['gradle_tool_distribution'] = $gradleToolDistribution }
+if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) { $manifest['artifact_output'] = $buildInputDescriptor['artifact_output'] }
 [void](Set-TextFileIfChanged -Path $manifestPath -Value ($manifest | ConvertTo-Json -Depth 12))
 
 $runCapsule = [ordered]@{

@@ -2,11 +2,13 @@
 param(
     [string]$RepoRoot = (Join-Path $PSScriptRoot ".."),
     [ValidateSet('Resolve', 'VerifyCache')][string]$Mode = 'Resolve',
+    [string]$SharedGradleToolRoot = '',
     [switch]$SelfTest,
     [ValidateRange(1, 55)][int]$TimeoutSeconds = 55,
     [Parameter(DontShow)][switch]$InternalSelfTestWorker,
     [Parameter(DontShow)][string]$InternalSelfTestRoot,
-    [Parameter(DontShow)][string]$InternalSelfTestFixture
+    [Parameter(DontShow)][string]$InternalSelfTestFixture,
+    [Parameter(DontShow)][string]$InternalSelfTestSharedRoot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +66,46 @@ function New-SafeDirectory {
     foreach($segment in ($Relative -split '[\\/]')){if([string]::IsNullOrWhiteSpace($segment)-or $segment -in @('.','..')){throw "$Label has an invalid segment."};$current=Join-Path $current $segment;if(Test-Path -LiteralPath $current){Assert-NotReparse $current $Label;if(-not(Test-Path -LiteralPath $current -PathType Container)){throw "$Label is not a directory: $current"}}elseif($Create){New-Item -ItemType Directory -Path $current -ErrorAction Stop|Out-Null;Assert-NotReparse $current $Label}else{throw "$Label is absent: $current"}}
     Get-FullPath $current
 }
+function Get-SafeSharedRoot {
+    param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)][string]$Repo)
+    if(-not [IO.Path]::IsPathFullyQualified($Path) -or $Path -notmatch '^[A-Za-z]:[\\/]'){throw 'SharedGradleToolRoot must be an explicit absolute local drive path.'}
+    $full=Get-FullPath $Path;$repoPath=Get-FullPath $Repo
+    if($full -ceq ([IO.Path]::GetPathRoot($full)).TrimEnd([char[]]@('\','/'))){throw 'Shared Gradle tool root must not be a filesystem root.'}
+    foreach($pair in @(@($full,$repoPath),@($repoPath,$full))){if($pair[0].Equals($pair[1],[StringComparison]::OrdinalIgnoreCase)-or $pair[0].StartsWith($pair[1]+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Shared Gradle tool root and repository must not overlap.'}}
+    $current=[IO.Path]::GetPathRoot($full)
+    foreach($segment in $full.Substring($current.Length).Split([IO.Path]::DirectorySeparatorChar,[StringSplitOptions]::RemoveEmptyEntries)){
+        $current=Join-Path $current $segment
+        if(-not(Test-Path -LiteralPath $current -PathType Container)){throw "Shared Gradle tool root must already be an ordinary directory: $current"}
+        Assert-NotReparse $current 'shared Gradle tool root ancestor'
+    }
+    $full
+}
+function Get-SharedIdentity {
+    param([Parameter(Mandatory)][string]$Repo,[Parameter(Mandatory)]$Identity)
+    [void](New-SafeDirectory $Repo 'config' 'Pinned Gradle config directory')
+    $config=Join-Path $Repo 'config\gradle-9.4.1-tool.json'
+    Assert-NotReparse $config 'Pinned Gradle identity';Assert-NoHardLink $config
+    Assert-NotReparse $PSCommandPath 'Gradle resolver';Assert-NoHardLink $PSCommandPath
+    [ordered]@{schema='rusty.quest.shared_gradle_tool_identity.v1';tool_id='gradle';version=$Identity.version;archive_sha256=$Identity.sha256;tree_sha256=$Identity.tree_sha256;config_sha256=(Get-Sha256 $config);resolver_sha256=(Get-Sha256 $PSCommandPath)}
+}
+function Assert-SharedPayload {
+    param([Parameter(Mandatory)][string]$Root,[Parameter(Mandatory)]$Identity)
+    foreach($item in @(Get-ChildItem -LiteralPath $Root -Force)){
+        Assert-NotReparse $item.FullName 'shared Gradle payload'
+        if(($item.Name -ceq 'tool-identity.json' -and -not $item.PSIsContainer)){Assert-NoHardLink $item.FullName;continue}
+        if($item.Name -cin @('downloads','tools') -and $item.PSIsContainer){continue}
+        throw "Unknown shared Gradle tool payload: $($item.Name)"
+    }
+    foreach($directory in @('downloads','tools')){
+        $parent=Join-Path $Root $directory;if(-not(Test-Path -LiteralPath $parent -PathType Container)){continue}
+        $allowed=if($directory -ceq 'downloads'){@($script:ArchiveName,"$script:ArchiveName.tree.$($Identity.tree_sha256).json","$script:ArchiveName.download.$($Identity.sha256).json")}else{@('gradle-9.4.1')}
+        foreach($item in @(Get-ChildItem -LiteralPath $parent -Force)){
+            Assert-NotReparse $item.FullName 'shared Gradle payload'
+            if($allowed -cnotcontains $item.Name -or ($directory -ceq 'downloads' -and $item.PSIsContainer) -or ($directory -ceq 'tools' -and -not $item.PSIsContainer)){throw "Unknown shared Gradle tool payload: $directory/$($item.Name)"}
+            if(-not $item.PSIsContainer){Assert-NoHardLink $item.FullName}
+        }
+    }
+}
 function Read-Identity {
     param([Parameter(Mandatory)][string]$Repo)
     $path=Join-Path $Repo 'config\gradle-9.4.1-tool.json';if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Pinned Gradle identity is missing: $path"};Assert-NotReparse $path 'Pinned Gradle identity';Assert-NoHardLink $path
@@ -120,10 +162,31 @@ function Invoke-Download {
         throw 'Gradle redirect limit exceeded.'}finally{$deadline.Dispose();$c.Dispose();$h.Dispose()}
 }
 function Invoke-Resolver {
-    param([Parameter(Mandatory)][string]$Repo,[ValidateSet('Resolve','VerifyCache')][string]$RequestedMode,[int]$Timeout,[object]$TestIdentity=$null,[string]$Fixture='',[switch]$ProviderFailure)
-    $root=Get-FullPath $Repo;if(-not(Test-Path -LiteralPath $root -PathType Container)){throw "RepoRoot is missing: $root"};Assert-NotReparse $root 'RepoRoot';$identity=if($null -eq $TestIdentity){Read-Identity $root}else{$TestIdentity};if($identity.tool_id -cne 'gradle' -or $identity.version -cne $script:ExpectedVersion -or [string]$identity.sha256 -notmatch '^[a-f0-9]{64}$' -or [string]$identity.tree_sha256 -notmatch '^[a-f0-9]{64}$' -or -not $identity.max_path_chars -or -not $identity.max_path_depth){throw 'Resolver identity fixture is malformed.'};$downloads=New-SafeDirectory $root 'local-artifacts\downloads' 'downloads root' -Create:($RequestedMode -eq 'Resolve');$tools=New-SafeDirectory $root 'local-artifacts\tools' 'tools root' -Create:($RequestedMode -eq 'Resolve');$archive=Join-Path $downloads $script:ArchiveName;$gradleHome=Join-Path $tools 'gradle-9.4.1';[void](Assert-Under $downloads $archive 'archive');[void](Assert-Under $tools $gradleHome 'install');$mutex=[Threading.Mutex]::new($false,(Get-ResolverMutexName $root));$held=$false
+    param([Parameter(Mandatory)][string]$Repo,[ValidateSet('Resolve','VerifyCache')][string]$RequestedMode,[int]$Timeout,[object]$TestIdentity=$null,[string]$Fixture='',[switch]$ProviderFailure,[string]$SharedRoot='')
+    $root=Get-FullPath $Repo;if(-not(Test-Path -LiteralPath $root -PathType Container)){throw "RepoRoot is missing: $root"};Assert-NotReparse $root 'RepoRoot';$identity=if($null -eq $TestIdentity){Read-Identity $root}else{$TestIdentity};if($identity.tool_id -cne 'gradle' -or $identity.version -cne $script:ExpectedVersion -or [string]$identity.sha256 -notmatch '^[a-f0-9]{64}$' -or [string]$identity.tree_sha256 -notmatch '^[a-f0-9]{64}$' -or -not $identity.max_path_chars -or -not $identity.max_path_depth){throw 'Resolver identity fixture is malformed.'}
+    $shared=-not [string]::IsNullOrWhiteSpace($SharedRoot)
+    $storageRoot=if($shared){Get-SafeSharedRoot $SharedRoot $root}else{$root}
+    $sharedIdentity=if($shared){Get-SharedIdentity $root $identity}else{$null}
+    $mutex=[Threading.Mutex]::new($false,(Get-ResolverMutexName $storageRoot));$held=$false
     try{
         $held=$mutex.WaitOne([TimeSpan]::FromSeconds($Timeout));if(-not $held){throw 'Timed out waiting for Gradle resolver lock.'}
+        if($shared){
+            [void](Get-SafeSharedRoot $storageRoot $root);Assert-SharedPayload $storageRoot $identity
+            $identityPath=Join-Path $storageRoot 'tool-identity.json'
+            if(-not(Test-Path -LiteralPath $identityPath -PathType Leaf)){
+                if($RequestedMode -eq 'VerifyCache'){throw 'Shared Gradle tool identity is absent.'}
+                if(@(Get-ChildItem -LiteralPath $storageRoot -Force).Count){throw 'An unmarked shared Gradle tool root must be empty.'}
+            }
+            if($RequestedMode -eq 'VerifyCache'){
+                $recorded=Get-Content -LiteralPath $identityPath -Raw|ConvertFrom-Json|ConvertTo-Json -Depth 10 -Compress
+                if($recorded -cne ($sharedIdentity|ConvertTo-Json -Depth 10 -Compress)){throw 'Shared Gradle tool resolver/config/pin identity drifted.'}
+            }else{Write-AtomicJson $identityPath $sharedIdentity $storageRoot}
+        }
+        $downloadRelative=if($shared){'downloads'}else{'local-artifacts\downloads'}
+        $toolsRelative=if($shared){'tools'}else{'local-artifacts\tools'}
+        $downloads=New-SafeDirectory $storageRoot $downloadRelative 'downloads root' -Create:($RequestedMode -eq 'Resolve')
+        $tools=New-SafeDirectory $storageRoot $toolsRelative 'tools root' -Create:($RequestedMode -eq 'Resolve')
+        $archive=Join-Path $downloads $script:ArchiveName;$gradleHome=Join-Path $tools 'gradle-9.4.1';[void](Assert-Under $downloads $archive 'archive');[void](Assert-Under $tools $gradleHome 'install')
         if(-not(Test-Path -LiteralPath $archive -PathType Leaf)){if($RequestedMode -eq 'VerifyCache'){throw 'Pinned Gradle archive cache is absent.'};$valid=$false}else{Assert-NotReparse $archive 'archive';Assert-NoHardLink $archive;$valid=((Get-Item -LiteralPath $archive).Length -le [int64]$identity.max_archive_bytes -and (Get-Sha256 $archive) -ceq [string]$identity.sha256)}
         if(-not $valid){
             if($RequestedMode -eq 'VerifyCache'){throw 'Pinned Gradle archive cache is corrupt.'}
@@ -167,7 +230,15 @@ function Invoke-Resolver {
                 throw
             } finally {if(Test-Path -LiteralPath $stage){Assert-SafeTree $stage 'Gradle staging';Remove-Item -LiteralPath $stage -Recurse -Force}}
         }
-        if(-not(Test-InstalledTree $gradleHome $tree)){throw 'Promoted Gradle tree failed verification.'};[pscustomobject]@{schema='rusty.quest.gradle_cache_receipt.v2';mode=$RequestedMode;tool_id='gradle';version=$identity.version;archive_sha256=$identity.sha256;tree_sha256=$tree.tree_sha256;gradle_home=$gradleHome;gradle_bat=(Join-Path $gradleHome 'bin\gradle.bat')}
+        if(-not(Test-InstalledTree $gradleHome $tree)){throw 'Promoted Gradle tree failed verification.'}
+        $receipt=[ordered]@{schema='rusty.quest.gradle_cache_receipt.v2';mode=$RequestedMode;tool_id='gradle';version=$identity.version;archive_sha256=$identity.sha256;tree_sha256=$tree.tree_sha256;gradle_home=$gradleHome;gradle_bat=(Join-Path $gradleHome 'bin\gradle.bat')}
+        if($shared){
+            [void](Get-SafeSharedRoot $storageRoot $root);Assert-SharedPayload $storageRoot $identity
+            if((Get-SharedIdentity $root $identity|ConvertTo-Json -Depth 10 -Compress) -cne ($sharedIdentity|ConvertTo-Json -Depth 10 -Compress)){throw 'Shared Gradle tool resolver/config changed during verification.'}
+            $receipt.shared_tool_root=$storageRoot
+            $receipt.tool_distribution=[ordered]@{schema='rusty.quest.gradle_tool_distribution.v1';storage_kind='explicit-shared';tool_id='gradle';version=$identity.version;archive_sha256=$identity.sha256;tree_sha256=$tree.tree_sha256;config_sha256=$sharedIdentity.config_sha256;resolver_sha256=$sharedIdentity.resolver_sha256;marker_sha256=(Get-Sha256 $identityPath);paths_recorded=$false}
+        }
+        [pscustomobject]$receipt
     }finally{if($held){$mutex.ReleaseMutex()};$mutex.Dispose()}
 }
 function Invoke-SelfTest {
@@ -207,6 +278,7 @@ public sealed class GradleStalledBody : Stream {
         $id=[pscustomobject]@{schema='rusty.quest.tool_identity.v1';tool_id='gradle';version='9.4.1';sha256=$h;tree_sha256='';archive_file_name=$script:ArchiveName;expected_top_level_directory='gradle-9.4.1';required_relative_paths=@('bin/gradle.bat','lib/gradle-launcher-9.4.1.jar');distribution_url='https://services.gradle.org/distributions/gradle-9.4.1-bin.zip';official_checksum_url='https://services.gradle.org/distributions/gradle-9.4.1-bin.zip.sha256';allowed_redirect_hosts=@('services.gradle.org');max_archive_bytes=1048576;max_extract_bytes=1048576;max_entries=20;max_path_chars=512;max_path_depth=20}
         $id.tree_sha256=(Get-ArchiveTree $fixture $id).tree_sha256
         [IO.File]::WriteAllText((Join-Path $root 'config\gradle-9.4.1-tool.json'),($id|ConvertTo-Json -Depth 5))
+        Invoke-SharedSelfTest $root $id $fixture
         if((Get-ResolverMutexName $root) -cne (Get-ResolverMutexName $root.ToUpperInvariant())){throw 'Self-test failed: mutex identity differs across case aliases'}
         Invoke-Resolver $root Resolve 20 $id $fixture|Out-Null;Invoke-Resolver $root VerifyCache 20 $id|Out-Null
         $workers=@(1,2|ForEach-Object{Start-Job -ScriptBlock {param($scriptPath,$testRoot,$testFixture)& $scriptPath -InternalSelfTestWorker -InternalSelfTestRoot $testRoot -InternalSelfTestFixture $testFixture} -ArgumentList $PSCommandPath,$root,$fixture})
@@ -250,13 +322,64 @@ public sealed class GradleStalledBody : Stream {
     } finally { if(Test-Path -LiteralPath $root){Remove-Item -LiteralPath $root -Recurse -Force} }
 }
 
+function Invoke-SharedSelfTest {
+    param([string]$Repo,[object]$Identity,[string]$Fixture)
+    $sharedRoot=$Repo+'-shared';$alias=$Repo+'-alias'
+    function Assert-SharedReject { param([scriptblock]$Action,[string]$Label) $failed=$false;try{& $Action|Out-Null}catch{$failed=$true};if(-not $failed){throw "Shared Gradle self-test accepted $Label"} }
+    try {
+        New-Item -ItemType Directory -Path $sharedRoot|Out-Null
+        Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot} 'unmarked root'
+        if(@(Get-ChildItem -LiteralPath $sharedRoot -Force).Count){throw 'Shared VerifyCache wrote to an empty root.'}
+        $receipt=Invoke-Resolver $Repo Resolve 20 $Identity $Fixture -SharedRoot $sharedRoot
+        $before=@(Get-ChildItem -LiteralPath $sharedRoot -Recurse -File|ForEach-Object{"$($_.FullName)|$(Get-Sha256 $_.FullName)|$($_.LastWriteTimeUtc.Ticks)"}) -join "`n"
+        $verified=Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot
+        $after=@(Get-ChildItem -LiteralPath $sharedRoot -Recurse -File|ForEach-Object{"$($_.FullName)|$(Get-Sha256 $_.FullName)|$($_.LastWriteTimeUtc.Ticks)"}) -join "`n"
+        if($before -cne $after -or $verified.gradle_home -cne (Join-Path $sharedRoot 'tools\gradle-9.4.1') -or $verified.tool_distribution.resolver_sha256 -cne (Get-Sha256 $PSCommandPath)){throw 'Shared verify receipt or no-write invariant failed.'}
+        # Two writers must provision one empty ordinary root rather than each choosing a repository lock.
+        foreach($item in @(Get-ChildItem -LiteralPath $sharedRoot -Force)){Remove-Item -LiteralPath $item.FullName -Recurse -Force}
+        $workers=@(1,2|ForEach-Object{Start-Job -ScriptBlock {param($scriptPath,$testRoot,$fixture,$shared)& $scriptPath -InternalSelfTestWorker -InternalSelfTestRoot $testRoot -InternalSelfTestFixture $fixture -InternalSelfTestSharedRoot $shared} -ArgumentList $PSCommandPath,$Repo,$Fixture,$sharedRoot})
+        try{if(@(Wait-Job -Job $workers -Timeout 20).Count -ne 2){throw 'Shared concurrent workers timed out.'};foreach($worker in $workers){Receive-Job -Job $worker -ErrorAction Stop|Out-Null;if($worker.State -ne 'Completed'){throw 'Shared concurrent worker failed.'}}}finally{$workers|Remove-Job -Force -ErrorAction SilentlyContinue}
+        $config=Join-Path $Repo 'config\gradle-9.4.1-tool.json';$configBytes=[IO.File]::ReadAllBytes($config)
+        try{[IO.File]::AppendAllText($config,"`n");Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot} 'changed config bytes'}finally{[IO.File]::WriteAllBytes($config,$configBytes)}
+        $marker=Join-Path $sharedRoot 'tool-identity.json';$markerBytes=[IO.File]::ReadAllBytes($marker)
+        try{$bad=Get-Content -LiteralPath $marker -Raw|ConvertFrom-Json;$bad.resolver_sha256='0'*64;[IO.File]::WriteAllText($marker,($bad|ConvertTo-Json -Compress));Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot} 'changed resolver marker'}finally{[IO.File]::WriteAllBytes($marker,$markerBytes)}
+        $changedResolver=Join-Path $Repo 'changed-resolver.ps1'
+        try{[IO.File]::WriteAllText($changedResolver,([IO.File]::ReadAllText($PSCommandPath)+"`n# changed resolver bytes`n"));Assert-SharedReject {& $changedResolver -InternalSelfTestWorker -InternalSelfTestRoot $Repo -InternalSelfTestFixture $Fixture -InternalSelfTestSharedRoot $sharedRoot} 'changed resolver bytes'}finally{Remove-Item -LiteralPath $changedResolver -Force}
+        try{Remove-Item -LiteralPath $marker -Force;Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot} 'missing identity marker'}finally{[IO.File]::WriteAllBytes($marker,$markerBytes)}
+        $extra=Join-Path $sharedRoot 'gu';New-Item -ItemType Directory -Path $extra|Out-Null
+        Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot} 'unknown Gradle user home payload';Remove-Item -LiteralPath $extra
+        $extra=Join-Path $sharedRoot 'downloads\unknown.zip';[IO.File]::WriteAllText($extra,'extra')
+        Assert-SharedReject {Invoke-Resolver $Repo Resolve 20 $Identity $Fixture -SharedRoot $sharedRoot} 'unknown download payload';Remove-Item -LiteralPath $extra
+        $bat=Join-Path $sharedRoot 'tools\gradle-9.4.1\bin\gradle.bat';[IO.File]::WriteAllText($bat,'changed')
+        Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot} 'changed installed tree'
+        Invoke-Resolver $Repo Resolve 20 $Identity $Fixture -SharedRoot $sharedRoot|Out-Null
+        $hardlink=Join-Path $Repo 'linked-gradle.bat'
+        try{New-Item -ItemType HardLink -Path $hardlink -Target $bat|Out-Null;Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot} 'hardlinked installation file'}finally{if(Test-Path -LiteralPath $hardlink){Remove-Item -LiteralPath $hardlink -Force}}
+        $archive=Join-Path $sharedRoot "downloads\$script:ArchiveName";[IO.File]::WriteAllText($archive,'changed')
+        Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $sharedRoot} 'changed archive'
+        Invoke-Resolver $Repo Resolve 20 $Identity $Fixture -SharedRoot $sharedRoot|Out-Null
+        New-Item -ItemType Junction -Path $alias -Target $sharedRoot|Out-Null
+        Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $alias} 'shared root junction'
+        Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot (Join-Path $alias 'tools')} 'shared root linked ancestor'
+        Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot $Repo} 'repository root overlap'
+        Assert-SharedReject {Invoke-Resolver $Repo VerifyCache 20 $Identity -SharedRoot 'relative-tool-root'} 'relative root'
+        $collision=$Repo+'-collision';New-Item -ItemType Directory -Path $collision|Out-Null
+        try{[IO.File]::WriteAllText((Join-Path $collision 'tools'),'collision');Assert-SharedReject {Invoke-Resolver $Repo Resolve 20 $Identity $Fixture -SharedRoot $collision} 'file-directory path collision'}finally{Remove-Item -LiteralPath $collision -Recurse -Force}
+        Write-Host 'Shared Gradle self-test passed: explicit external identity, read-only verification, concurrent writers, resolver/config/archive/tree drift, unknown payload, collision and linked-root rejection.'
+    } finally {
+        if(Test-Path -LiteralPath $alias){Remove-Item -LiteralPath $alias -Force}
+        if(Test-Path -LiteralPath $sharedRoot){Remove-Item -LiteralPath $sharedRoot -Recurse -Force}
+    }
+}
+
 function Invoke-InternalSelfTestWorker {
     if([string]::IsNullOrWhiteSpace($InternalSelfTestRoot) -or [string]::IsNullOrWhiteSpace($InternalSelfTestFixture)){throw 'Internal self-test worker requires its generated fixture.'}
     $root=Get-FullPath $InternalSelfTestRoot;$temp=Get-FullPath ([IO.Path]::GetTempPath())
     if(-not $root.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase) -or -not ([IO.Path]::GetFileName($root) -like 'rusty-quest-gradle-*') -or -not (Get-FullPath $InternalSelfTestFixture).StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Internal self-test worker refuses a non-temporary cache root.'}
-    $id=Get-Content -LiteralPath (Join-Path $root 'config\gradle-9.4.1-tool.json') -Raw|ConvertFrom-Json;Invoke-Resolver $root Resolve 20 $id $InternalSelfTestFixture|Out-Null
+    if($InternalSelfTestSharedRoot -and (Get-FullPath $InternalSelfTestSharedRoot) -cne ($root+'-shared')){throw 'Internal self-test worker refuses a non-fixture shared root.'}
+    $id=Get-Content -LiteralPath (Join-Path $root 'config\gradle-9.4.1-tool.json') -Raw|ConvertFrom-Json;Invoke-Resolver $root Resolve 20 $id $InternalSelfTestFixture -SharedRoot $InternalSelfTestSharedRoot|Out-Null
 }
 if($InternalSelfTestWorker){Invoke-InternalSelfTestWorker;exit 0}
 if($SelfTest){Invoke-SelfTest;exit 0}
-$receipt=Invoke-Resolver $RepoRoot $Mode $TimeoutSeconds
+$receipt=Invoke-Resolver $RepoRoot $Mode $TimeoutSeconds -SharedRoot $SharedGradleToolRoot
 $receipt|ConvertTo-Json -Depth 8
