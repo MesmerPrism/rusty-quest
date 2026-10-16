@@ -44,10 +44,14 @@ public final class PackedStereoMediaOwnerSet implements AutoCloseable {
                 String expected="stopped";
                 if("cleanup".equals(kind) && "arm_cleanup".equals(actionKind)
                         && "cleaned".equals(state.get())) {
-                    for(MediaOwnerProvider prior:owners.values()) {
-                        MediaRuntimeSnapshot observed=prior.snapshot();
-                        if(observed.generation()!=generation || !observed.terminal() || !("stopped".equals(observed.state())
-                                || "cleaned".equals(observed.state())))
+                    for(Map.Entry<String,MediaOwnerProvider> prior:owners.entrySet()) {
+                        MediaRuntimeSnapshot observed=prior.getValue().snapshot();
+                        // The injected Sink owns the opposite direction. A peer may
+                        // already have rearmed it before this outgoing graph starts.
+                        // Keep its incarnation join without claiming its cleanup.
+                        if(observed.generation()!=generation || (!"sink".equals(prior.getKey())
+                                && (!observed.terminal() || !("stopped".equals(observed.state())
+                                || "cleaned".equals(observed.state())))))
                             throw new IllegalStateException("prior graph cleanup unresolved");
                     }
                     pipeline.requireStopped();

@@ -9,7 +9,9 @@ public final class MediaOwnerLifecycleAdversarialMain {
         pendingStopCannotRecreate();
         staleGenerationCannotRecreate();
         duplicateArmCannotRecreate();
-        incomingBarrierBlocksRecreate();
+        independentIncomingArmPreservedAcrossOutgoingRecreate();
+        foreignIncomingGenerationBlocksRecreate();
+        unresolvedOutgoingOwnerBlocksRecreate();
         actualPipelineRecreatesDistinctRuntime();
         actualCaptureSubscriptionRejectsStaleOrLiveIncarnation();
         neverEnteredOwnerStillCleansIndependentResources();
@@ -86,18 +88,42 @@ public final class MediaOwnerLifecycleAdversarialMain {
         expectFailure(()->execute(cleanup,action(54,"cleanup","arm_cleanup"),current));
         require(pipeline.recreations==0,"double arm allocated graph");
     }
-    private static void incomingBarrierBlocksRecreate() {
+    private static void independentIncomingArmPreservedAcrossOutgoingRecreate() {
         FakePipeline pipeline=new FakePipeline();
         MediaOwnerProvider incoming=new MediaOwnerProvider(){
             public MediaProviderReadback execute(MediaOwnerAction a,CancellationHandle c){throw new UnsupportedOperationException();}
             public MediaProviderReadback compensate(MediaOwnerAction a,CancellationHandle c){throw new UnsupportedOperationException();}
-            public MediaRuntimeSnapshot snapshot(){return new MediaRuntimeSnapshot(55,1,"stopped",false,"","incoming");}
+            public MediaRuntimeSnapshot snapshot(){return new MediaRuntimeSnapshot(55,1,"receiver_armed",false,"","incoming");}
+        };
+        PackedStereoMediaOwnerSet owners=new PackedStereoMediaOwnerSet(55,pipeline,incoming);
+        MediaOwnerProvider cleanup=owners.provider("cleanup");CancellationHandle current=new CancellationHandle(55);
+        compensate(cleanup,action(55,"cleanup","stop"),current);
+        execute(cleanup,action(55,"cleanup","arm_cleanup"),current);
+        require(pipeline.recreations==1,"independent incoming arm blocked outgoing recreation");
+        require("receiver_armed".equals(incoming.snapshot().state()) && !incoming.snapshot().terminal(),
+                "outgoing restart altered incoming ownership");
+    }
+    private static void foreignIncomingGenerationBlocksRecreate() {
+        FakePipeline pipeline=new FakePipeline();
+        MediaOwnerProvider incoming=new MediaOwnerProvider(){
+            public MediaProviderReadback execute(MediaOwnerAction a,CancellationHandle c){throw new UnsupportedOperationException();}
+            public MediaProviderReadback compensate(MediaOwnerAction a,CancellationHandle c){throw new UnsupportedOperationException();}
+            public MediaRuntimeSnapshot snapshot(){return new MediaRuntimeSnapshot(54,1,"receiver_armed",false,"","incoming");}
         };
         PackedStereoMediaOwnerSet owners=new PackedStereoMediaOwnerSet(55,pipeline,incoming);
         MediaOwnerProvider cleanup=owners.provider("cleanup");CancellationHandle current=new CancellationHandle(55);
         compensate(cleanup,action(55,"cleanup","stop"),current);
         expectFailure(()->execute(cleanup,action(55,"cleanup","arm_cleanup"),current));
-        require(pipeline.recreations==0,"unresolved incoming barrier ignored");
+        require(pipeline.recreations==0,"foreign incoming incarnation allowed recreation");
+    }
+    private static void unresolvedOutgoingOwnerBlocksRecreate() {
+        FakePipeline pipeline=new FakePipeline();
+        PackedStereoMediaOwnerSet owners=new PackedStereoMediaOwnerSet(56,pipeline);
+        MediaOwnerProvider cleanup=owners.provider("cleanup");CancellationHandle current=new CancellationHandle(56);
+        compensate(cleanup,action(56,"cleanup","stop"),current);
+        execute(owners.provider("source"),action(56,"source","start"),current);
+        expectFailure(()->execute(cleanup,action(56,"cleanup","arm_cleanup"),current));
+        require(pipeline.recreations==0,"unresolved outgoing owner allowed recreation");
     }
     private static void actualPipelineRecreatesDistinctRuntime() {
         try {

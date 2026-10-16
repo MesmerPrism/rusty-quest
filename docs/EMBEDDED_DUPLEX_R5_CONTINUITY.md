@@ -245,6 +245,15 @@ device, signed-pair or physical-cleanup qualification.
 
 ### Peer source retirement after decoder shutdown
 
+Fresh outgoing cleanup arming after a verified Stop requires every previous
+outgoing owner and the outgoing pipeline to be terminal. The injected incoming
+Sink belongs to the independent opposite direction and may already be rearmed
+by the peer. Its executor generation must still match, but outgoing recreation
+does not require or claim incoming cleanup and does not stop or mutate it.
+The owner lifecycle host controls retain unresolved outgoing, stale generation,
+pending physical cleanup and duplicate-arm rejection alongside this ordering.
+Host controls do not establish installed bilateral restart or physical cleanup.
+
 Concurrent Peer teardown stops the decoder and releases its native reader before
 removing the registry source. Native code retains the exact stopped route,
 decoder and reader identity. Registry retirement consumes that positive stop
