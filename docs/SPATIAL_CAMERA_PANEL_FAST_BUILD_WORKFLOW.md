@@ -1,5 +1,12 @@
 # Spatial Camera Panel fast Android build workflow
 
+`-NativeRepoRoot` may select a stable physical source layout with the same
+selected Quest bytes. The builder also resolves its actual Cargo path suppliers
+and requires the shell composition's exact identities and raw supplier bytes.
+An identical Quest checkout beside stale dependency checkouts is rejected.
+Cargo still runs and owns file-level invalidation; prior cache fingerprints
+alone never authorize skipping compilation.
+
 `tools/Build-SpatialCameraPanelAndroid.ps1` has two independent identity
 contracts:
 
@@ -120,3 +127,12 @@ inspection when its required dynamic Rust standard-library payload is absent.
 shell/resources/dex/APK, and inspection durations. Candidate mode additionally
 records classified Gradle task counts, aggregate task durations, and cache
 outcomes.
+
+The generic AGPL source/forest primitives live in
+`tools/lib/ContentStableCargoStage.psm1`. Consumers import this file from their
+explicitly authenticated Quest source root; they keep graph membership and
+product activation in their own owners. `Write-StageBytesIfDifferent` preserves
+unchanged file mtimes. The source-forest lock must cover preparation through
+compiler completion and source reconciliation. The focused real host Cargo
+fixture is `tools/checks/Test-ContentStableCargoStage.ps1 -OutputRoot <new-path>`.
+This supplies no native binary import trust root or device acceptance.

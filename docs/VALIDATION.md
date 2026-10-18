@@ -1626,3 +1626,11 @@ The source-only premerge build contract has a focused actual Git/Cargo check:
 `pwsh -NoProfile -File tools/checks/Test-SourceCompositionPremerge.ps1`.
 It uses local repositories without remotes and no Android compilation or device
 access; the same check is included in `tools/check_all.ps1`.
+
+For the generic stable Cargo source forest and byte-preserving materialization,
+run `pwsh -NoProfile -File tools/checks/Test-ContentStableCargoStage.ps1 -OutputRoot <new-proof-directory>`.
+The existing `Test-SourceCompositionPremerge.ps1` family also invokes this gate,
+so its registered `check_all.ps1` invocation includes these regressions.
+This focused gate invokes real host Cargo in isolated fixture sources, covers
+Java-only freshness, native/dependency/feature/compiler-flag invalidation and
+exclusive-lock cleanup, and retains its outputs. It proves no Android/device effect.
