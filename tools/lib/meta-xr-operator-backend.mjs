@@ -210,6 +210,13 @@ export async function runOperatorInput({capsule,owner,evidenceDirectory,timeoutM
     }
     if(last<=first) fail('Finite successful observations did not advance');
     result.receipts.readiness={first_xr_time:first,last_xr_time:last,clock_domain:'xr'};
+    const initialHands=await proxy.tool('openxr_get_hand_state',{session_handle,hand:'both'});
+    if(initialHands.conformance_automation_mode!=='physical' || !['left','right'].every(side=>initialHands.hands?.[side]?.synthetic_hand_override===false))
+      fail('An existing synthetic input owner must be preserved');
+    for(const side of ['left','right']) {
+      const pose=await proxy.tool('openxr_get_controller_pose',{session_handle,hand:side,pose_type:'aim',base_space:'local'});
+      if(pose.simulated!==false) fail('Existing controller simulation must be preserved');
+    }
     result.dispatch_state='outcome_unknown'; // Includes placement/open before select.
     if(c.plan.kind==='controller_select') {
       await mutation('openxr_set_controller_input',{session_handle,hand,component:'Trigger',value:0,auto_release:false});
@@ -256,6 +263,13 @@ export async function runOperatorInput({capsule,owner,evidenceDirectory,timeoutM
         if(clean && receipt.status==='released' && receipt.buttons_down===false && receipt.overrides_active===false) result.release_state='confirmed';
         else result.release_state='outcome_unknown';
       } catch(error){result.release_state='outcome_unknown';result.errors.push(`release readback: ${error}`);}
+      if(result.original_effect_state==='unknown') {
+        try {
+          const receipt=await observe('original_effect');
+          if(!['confirmed','pending','rejected'].includes(receipt.status))fail('Invalid original effect reconciliation');
+          result.original_effect_state=receipt.status;result.receipts.original_effect=receipt;
+        } catch(error){result.errors.push(`original effect reconciliation: ${error}`);}
+      }
       try {
         const receipt=await observe('terminal');result.receipts.terminal=receipt;
         if(!['confirmed','pending','unknown'].includes(receipt.status) || receipt.scope!=='input_operation') fail('Invalid finite input terminal state');

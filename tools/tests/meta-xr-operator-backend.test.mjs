@@ -56,7 +56,7 @@ test('independent hand consumer: generation delivered, no controller injection',
   assert.equal(a.result.completed,true);assert.equal(a.result.dispatch_state,'delivered');
   assert(!a.calls.some(x=>x.name==='openxr_set_controller_input'));
 });
-for(const scenario of ['stalled','unfocused','new-session','offline','schema','lost-frame']) test(`readiness rejects ${scenario} without input`,async()=>{
+for(const scenario of ['stalled','unfocused','new-session','offline','schema','lost-frame','occupied-hand','occupied-controller']) test(`readiness rejects ${scenario} without input`,async()=>{
   const a=await attempt(scenario);assert.equal(a.result.completed,false);assert.equal(a.result.dispatch_state,'not_sent');
   assert(!a.calls.some(x=>x.name.startsWith('openxr_set_') || x.name==='openxr_hand_gesture'));
   if(scenario==='lost-frame') assert.equal(a.calls.filter(x=>x.name==='openxr_get_frame_info').length,1);
@@ -64,6 +64,7 @@ for(const scenario of ['stalled','unfocused','new-session','offline','schema','l
 test('lost press is never replayed; explicit original release and terminal remain',async()=>{
   const a=await attempt('lost-press');assert.equal(a.result.dispatch_state,'outcome_unknown');assert.equal(a.result.completed,false);
   assert.equal(a.result.release_state,'confirmed');assert.equal(a.result.terminal_state,'confirmed');
+  assert.equal(a.result.original_effect_state,'confirmed'); // Reconciled separately; dispatch remains unknown.
   assert.equal(a.calls.filter(x=>x.name==='openxr_set_controller_input' && x.arguments.value===1).length,1);
 });
 test('reporting disk failure after press preserves ACK and cannot block original compensation',async()=>{
@@ -109,7 +110,7 @@ test('open/ack alone cannot clear unknown effective override release',async()=>{
   const a=await attempt('normal',{kind:'hand_pinch',stuck:true});assert.equal(a.result.release_state,'outcome_unknown');assert.equal(a.result.completed,false);
 });
 test('fresh identity mismatch after uncertain press never retargets release to new process',async()=>{
-  const a=await attempt('lost-press',{change:(r,phases)=>{if(phases.length>7)r.identity.session_id='4';}});
+  const a=await attempt('lost-press',{change:r=>{if(r.phase==='release_guard')r.identity.session_id='4';}});
   assert.equal(a.result.completed,false);assert.equal(a.result.release_state,'outcome_unknown');
   assert(!a.calls.some(x=>x.arguments.session_handle===4));
 });

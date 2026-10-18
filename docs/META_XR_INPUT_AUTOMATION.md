@@ -66,6 +66,10 @@ actual app owner. Three successful focused session observations must show
 non-regressing XR time and strict first-to-last advancement. Repeated latest
 frames can occur inside that finite budget. Timeout, offline tool, schema drift,
 session change or unfocused state stops input without a blind read retry.
+Before taking input ownership, both hands must report no synthetic override,
+conformance mode must be physical and both controller poses must be
+non-simulated. Existing automation input is preserved; this operation cannot
+release another owner's baseline overrides.
 
 The owner observer has one bounded `observe(context)` method and an exact
 `route`. Each returned receipt joins `identity`, host `correlation_id`,
@@ -103,8 +107,10 @@ and `evidence_persisted=false` stay separate from known effect/release state.
 A fresh attempt directory prevents accidental reuse. Uncertain placement or
 press is never replayed. The `finally` path attempts original-target explicit
 up/open and full device release, and retains unknown release separately even if
-terminal evidence succeeds. RPC, owner observation and proxy close waits are
-finite. A timeout retains its original RPC ID; late responses are preserved for
+terminal evidence succeeds. Unknown dispatch still attempts independent original-effect readback
+after cleanup; a confirmed original effect does not promote or replay that
+uncertain dispatch. RPC, owner observation and proxy close waits are finite.
+A timeout retains its original RPC ID; late responses are preserved for
 read-only reconciliation and never cause input replay. Proxy retirement closes
 stdin and awaits actual stdout/stderr/child close for a bounded wait. A slow
 healthy child is not killed after an arbitrary second. If it remains alive,
