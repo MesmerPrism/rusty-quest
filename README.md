@@ -1,5 +1,9 @@
 # Rusty Quest
 
+The host-only [SDK graphics preparation provider](docs/SDK_GRAPHICS_PREPARATION.md)
+compiles explicit compatible sources, validates the selected material/variant ABI,
+and joins actual APK primary/alias/baseline bytes without device operations.
+
 The optional Java observer in `apps/navigator-visibility-android` exposes the
 firmware CRCS Navigator visibility signal with explicit subscription and cleanup.
 It includes a neutral host conformance consumer and activates no app feature.
