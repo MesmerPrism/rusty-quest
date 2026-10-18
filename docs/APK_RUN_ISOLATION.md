@@ -65,6 +65,16 @@ external-output policy without the parent machine path. See the
 
 ## Run Capsule
 
+Opt-in callers may use `tools/lib/ContentStableCargoStage.psm1` to materialize
+an exact clean source forest while preserving unchanged raw file timestamps.
+The caller retains the exclusive `native-source.lock` through packaging and
+final source authentication; Cargo still runs on every attempt. The shell
+builder authenticates relocated path suppliers with
+`Assert-QuestNativeDependencyComposition`. The focused
+`tools/checks/Test-SourceCompositionPremerge.ps1` family covers this dependency
+binding and the real Cargo stage fixture, including Java-only freshness and
+native, dependency, feature and flag invalidation.
+
 Native receipt metadata distinguishes the generated JNI input from the final
 APK ZIP entry. Gradle may strip symbols while packaging, so these bytes and
 digests may differ. `native_receipt_artifacts.input` binds the generated input

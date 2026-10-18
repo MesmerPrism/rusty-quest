@@ -206,4 +206,35 @@ function Get-QuestBuildSourceComposition {
     }
 }
 
-Export-ModuleMember -Function Get-QuestBuildSourceComposition, Get-QuestBuildSourceCompositionIdentityCanonicalText
+function Assert-QuestNativeDependencyComposition {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]$ShellComposition,
+        [Parameter(Mandatory=$true)][string]$NativeRepoRoot
+    )
+    # Moving the primary manifest also relocates its sibling path dependencies.
+    $native = Get-QuestBuildSourceComposition -RepoRoot $NativeRepoRoot -PackageName $ShellComposition.packages
+    if ($native.fingerprint -cne $ShellComposition.fingerprint) {
+        throw 'Native/shell dependency composition differs.'
+    }
+    foreach ($supplier in @($native.repositories | Where-Object role -CEQ 'path-dependency')) {
+        $shell = @($ShellComposition.repositories | Where-Object repository_id -CEQ $supplier.repository_id)
+        if ($shell.Count -ne 1) { throw 'Native supplier has no unique shell source binding.' }
+        # Clean Git identity can still hide different raw bytes through checkout filters.
+        $paths = (Invoke-SourceCompositionGit -Root $supplier.repository -Arguments @('ls-files', '-z')) -join "`n"
+        foreach ($relative in $paths.Split([char]0, [StringSplitOptions]::RemoveEmptyEntries)) {
+            $actual = Join-Path $supplier.repository $relative
+            $expected = Join-Path $shell[0].repository $relative
+            if (-not (Test-Path -LiteralPath $actual -PathType Leaf) -or
+                -not (Test-Path -LiteralPath $expected -PathType Leaf) -or
+                ((Get-Item -LiteralPath $actual).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                ((Get-Item -LiteralPath $expected).Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                (Get-FileHash -LiteralPath $actual -Algorithm SHA256).Hash -cne
+                    (Get-FileHash -LiteralPath $expected -Algorithm SHA256).Hash) {
+                throw 'Native/shell supplier raw source bytes differ.'
+            }
+        }
+    }
+}
+
+Export-ModuleMember -Function Get-QuestBuildSourceComposition, Get-QuestBuildSourceCompositionIdentityCanonicalText, Assert-QuestNativeDependencyComposition
