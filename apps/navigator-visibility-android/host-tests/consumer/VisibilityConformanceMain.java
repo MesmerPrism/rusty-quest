@@ -194,8 +194,20 @@ public final class VisibilityConformanceMain {
                 "successor generation rejects old queued consumer work");
         armed.set(false); successor.close();
     }
+    private static void closeDuringThrowingOriginal() {
+        Fake backend = new Fake(); Journal journal = new Journal();
+        NavigatorVisibilityObserver observer = observer(backend, journal);
+        backend.onRegister = observer::close;
+        backend.registrationThrows = true;
+        observer.start();
+        check(observer.status().phase == Phase.CLOSED && backend.unregistrations == 1,
+                "throwing original with pending close retires same handle");
+        check(observer.status().fault.equals("registration-outcome-unknown"),
+                "original uncertainty survives successful cleanup");
+    }
     public static void main(String[] args) throws InterruptedException {
         samplesAndBaseline(); uncertaintyAndFailure(); closeDuringOriginal(); androidBinding(); consumerEscapeFence();
+        closeDuringThrowingOriginal();
         System.out.println("Navigator visibility host conformance: " + checks + " assertions passed (simulated platform).");
     }
 }

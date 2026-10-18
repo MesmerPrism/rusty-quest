@@ -112,8 +112,14 @@ public final class NavigatorVisibilityObserver implements AutoCloseable {
         try {
             registered = backend.register();
         } catch (RuntimeException | LinkageError failure) {
-            synchronized (lock) { registrationInFlight = false; }
-            fail("registration-outcome-unknown");
+            synchronized (lock) {
+                // Publish the original uncertainty before allowing concurrent cleanup.
+                registrationInFlight = false;
+                phase = Phase.HELD;
+                fault = "registration-outcome-unknown";
+                pending.clear();
+            }
+            notifyFault();
             finishRequestedClose();
             return status();
         }
@@ -189,7 +195,7 @@ public final class NavigatorVisibilityObserver implements AutoCloseable {
 
     private void fail(String category) {
         synchronized (lock) {
-            if (phase == Phase.CLOSED || phase == Phase.UNREGISTERING) return;
+            if (closeRequested || phase == Phase.CLOSED || phase == Phase.UNREGISTERING) return;
             phase = Phase.HELD;
             fault = category;
             pending.clear();
