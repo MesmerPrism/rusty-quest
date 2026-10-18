@@ -3,7 +3,7 @@ import {createInterface} from 'node:readline';
 import {readFileSync} from 'node:fs';
 const scenario=process.argv[2];
 const reviewed=process.argv[3]?JSON.parse(readFileSync(process.argv[3],'utf8')).result.tools:null;
-let clock=100, generation=0, pinch=false,released=true;
+let clock=100, generation=0, pinch=false,released=true,sessionReads=0,poseSet=false;
 const names=['openxr_get_instance_info','openxr_get_session_info','openxr_get_frame_info','openxr_set_controller_input',
   'openxr_set_controller_pose','openxr_hand_gesture','openxr_get_hand_state','openxr_release_input_devices','openxr_get_controller_pose'];
 const wrap = value => ({isError:false,content:[{type:'text',text:JSON.stringify(value)}]});
@@ -19,9 +19,16 @@ lines.on('line',line=>{
     if(scenario==='lost-frame' && name==='openxr_get_frame_info') return;
     if(scenario==='lost-press' && ((name==='openxr_set_controller_input' && a.value===1) || (name==='openxr_hand_gesture' && a.gesture==='pinch'))) return;
     if(name==='openxr_get_instance_info') result=wrap({application:{name:'Neutral native owner'}});
-    if(name==='openxr_get_session_info') result=wrap({session:{handle:scenario==='new-session'?'4':'3'},state:{name:scenario==='unfocused'?'XR_SESSION_STATE_VISIBLE':'XR_SESSION_STATE_FOCUSED'}});
+    if(name==='openxr_get_session_info') {
+      sessionReads++;
+      const changed=scenario==='new-session' || (scenario==='session-after-ready' && sessionReads>3);
+      const unfocused=scenario==='unfocused' || (scenario==='focus-after-ready' && sessionReads>3) ||
+        (scenario==='focus-after-pose' && poseSet) || (scenario==='focus-after-hand-open' && generation>0);
+      result=wrap({session:{handle:changed?'4':'3'},state:{name:unfocused?'XR_SESSION_STATE_VISIBLE':'XR_SESSION_STATE_FOCUSED'}});
+    }
     if(name==='openxr_get_frame_info') result=wrap({session:{handle:'3'},frame_state:{should_render:true,predicted_display_time:{XrTime:scenario==='stalled'?100:++clock}}});
     if(name==='openxr_set_controller_input' || name==='openxr_set_controller_pose'){released=false;result=wrap({success:true,auto_release:a.auto_release});}
+    if(name==='openxr_set_controller_pose')poseSet=true;
     if(name==='openxr_get_controller_pose') result=wrap({simulated:scenario==='occupied-controller'||!released,is_active:true,flags:{position_valid:true,orientation_valid:true}});
     if(name==='openxr_hand_gesture'){released=false;pinch=a.gesture==='pinch';result=wrap({success:true,auto_release:a.auto_release,edge_produced:true,generation:++generation});}
     if(name==='openxr_get_hand_state') {

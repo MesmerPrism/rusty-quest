@@ -66,6 +66,12 @@ actual app owner. Three successful focused session observations must show
 non-regressing XR time and strict first-to-last advancement. Repeated latest
 frames can occur inside that finite budget. Timeout, offline tool, schema drift,
 session change or unfocused state stops input without a blind read retry.
+After each owner guard and immediately before each new input mutation, the
+backend reads the live proxy session again and requires that same focused
+session. A newly timestamped dump containing an old native focus marker does
+not prove current focus. Such diagnostics can corroborate the owner identity
+and frame history but cannot replace this live layer check. Original guarded
+compensation still runs after focus loss.
 Before taking input ownership, both hands must report no synthetic override,
 conformance mode must be physical and both controller poses must be
 non-simulated. Existing automation input is preserved; this operation cannot

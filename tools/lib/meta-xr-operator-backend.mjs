@@ -181,6 +181,12 @@ export async function runOperatorInput({capsule,owner,evidenceDirectory,timeoutM
   }
   async function mutation(name,parameters) {
     await guard();
+    // An owner may corroborate focus from cached diagnostics. Read the live
+    // original layer session after that observation and before each new input.
+    // Compensation below deliberately does not require renewed focus.
+    const session=await proxy.tool('openxr_get_session_info',{});
+    if(session.session?.handle!==c.identity.session_id || session.state?.name!=='XR_SESSION_STATE_FOCUSED')
+      fail('Original session lost focus or changed before new input');
     const value=await proxy.tool(name,parameters,false,()=>{
       attempted=true;result.release_state='pending';result.dispatch_state='outcome_unknown';
     });

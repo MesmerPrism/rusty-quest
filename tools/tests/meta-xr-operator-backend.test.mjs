@@ -98,6 +98,19 @@ test('focus and new-input grant loss cannot block same-original-identity compens
   assert.equal(a.result.release_state,'confirmed');assert.equal(a.result.completed,true);
   assert(a.calls.some(x=>x.name==='openxr_release_input_devices'));
 });
+for(const scenario of ['focus-after-ready','session-after-ready']) test(`live ${scenario} defeats stale focused owner before first mutation`,async()=>{
+  const a=await attempt(scenario);
+  assert.equal(a.result.dispatch_state,'not_sent');assert.equal(a.result.release_state,'not_required');
+  assert(!a.calls.some(x=>x.name.startsWith('openxr_set_') || x.name==='openxr_hand_gesture' || x.name==='openxr_release_input_devices'));
+  assert(a.result.errors.some(x=>x.includes('before new input')));
+});
+for(const [scenario,kind] of [['focus-after-pose','controller_select'],['focus-after-hand-open','hand_pinch']]) test(`live ${scenario} blocks select but preserves original compensation`,async()=>{
+  const a=await attempt(scenario,{kind});
+  assert.equal(a.result.completed,false);assert.equal(a.result.release_state,'confirmed');
+  assert(!a.calls.some(x=>(x.name==='openxr_set_controller_input' && x.arguments.value===1) || (x.name==='openxr_hand_gesture' && x.arguments.gesture==='pinch')));
+  assert(a.calls.some(x=>x.name==='openxr_release_input_devices' && x.arguments.session_handle===3));
+  assert(a.result.errors.some(x=>x.includes('before new input')));
+});
 test('late original reply retains its request ID and response without select replay',async()=>{
   const a=await attempt('late-press');assert.equal(a.result.dispatch_state,'outcome_unknown');
   const press=a.result.rpc_records.find(x=>x.request.params?.name==='openxr_set_controller_input' && x.request.params.arguments.value===1);
