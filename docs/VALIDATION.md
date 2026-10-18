@@ -7,6 +7,14 @@ registration/cleanup races, verifies missing-vendor linkage, and excludes
 compile-only declarations from its AAR. It builds no APK and provides no device
 or distribution evidence. See [Navigator visibility](NAVIGATOR_VISIBILITY.md).
 
+## Meta XR input automation adapter
+
+Run `pwsh -NoProfile -File tools/Test-MetaXrInputAutomation.ps1` for the
+source-only two-consumer packaging/readiness/action/release conformance seam.
+It uses synthetic external files, exact-runtime callbacks and no APK build,
+network, proxy or headset. See [the adapter contract](META_XR_INPUT_AUTOMATION.md).
+
+
 For development graphs whose current Manifold source differs from the exact
 legacy camera/P2P compatibility supplier, keep those suppliers separate. The
 product preparation fixture accepts
