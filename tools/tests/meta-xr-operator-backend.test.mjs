@@ -33,7 +33,7 @@ async function attempt(scenario='normal',options={}) {
     options.change?.(receipt,phases);
     return receipt;
   }};
-  const invoke=()=>runOperatorInput({capsule:c,owner,evidenceDirectory:dir,timeoutMs:1000,closeWaitMs:options.closeWaitMs??3000,testOnlyJournalWrite:options.journal,
+  const invoke=()=>runOperatorInput({capsule:c,owner,evidenceDirectory:dir,timeoutMs:5000,closeWaitMs:options.closeWaitMs??3000,testOnlyJournalWrite:options.journal,
     testOnlyLaunch:()=>{launches++;return spawn(process.execPath,[join(dirname(fileURLToPath(import.meta.url)),'meta-xr-proxy-fixture.mjs'),scenario],{windowsHide:true,stdio:['pipe','pipe','pipe']});}});
   const result=await invoke();
   const records=await Promise.all((await readdir(dir)).sort().map(async name=>JSON.parse(await readFile(join(dir,name)))));
@@ -86,6 +86,18 @@ test('missing durable select intent blocks new press while original setup can st
   assert.equal(a.result.completed,false);assert.equal(a.result.release_state,'confirmed');
   assert(!a.result.rpc_records.some(x=>x.request.params?.name==='openxr_set_controller_input' && x.request.params.arguments.value===1));
 });
+test('first mutation intent failure before stdin has no possible input and no compensation effects',async()=>{
+  const a=await attempt('normal',{journal:(kind,payload)=>{
+    if(kind==='request-intent' && payload.params?.name==='openxr_set_controller_input')throw Error('First input intent unavailable');
+  }});
+  assert.equal(a.result.dispatch_state,'not_sent');assert.equal(a.result.release_state,'not_required');
+  assert(!a.result.rpc_records.some(x=>x.request.params?.name?.startsWith('openxr_set_') || x.request.params?.name==='openxr_release_input_devices'));
+});
+test('focus and new-input grant loss cannot block same-original-identity compensation',async()=>{
+  const a=await attempt('normal',{change:r=>{if(r.phase==='release_guard'){r.focused=false;r.exclusive_input_grant=false;r.status='unfocused';}}});
+  assert.equal(a.result.release_state,'confirmed');assert.equal(a.result.completed,true);
+  assert(a.calls.some(x=>x.name==='openxr_release_input_devices'));
+});
 test('late original reply retains its request ID and response without select replay',async()=>{
   const a=await attempt('late-press');assert.equal(a.result.dispatch_state,'outcome_unknown');
   const press=a.result.rpc_records.find(x=>x.request.params?.name==='openxr_set_controller_input' && x.request.params.arguments.value===1);
@@ -98,6 +110,9 @@ test('slow healthy proxy retires through actual EOF instead of fixed one-second 
 test('retirement timeout returns explicit pending custody and can later await exact owned child',async()=>{
   const a=await attempt('slow-exit',{closeWaitMs:50});assert.equal(a.result.proxy_exit.pending,true);assert.equal(a.result.completed,false);
   assert.equal((await a.result.waitForProxyRetirement(3000)).code,0);
+  assert.equal(a.result.completed,true);
+  const names=await readdir(a.dir);const final=names.find(x=>x.includes('result-after-retirement'));
+  assert.equal(JSON.parse(await readFile(join(a.dir,final))).payload.completed,true);
 });
 test('delivered hand is distinct from original SDK widget effect',async()=>{
   const a=await attempt('normal',{kind:'hand_pinch',effect:'pending'});

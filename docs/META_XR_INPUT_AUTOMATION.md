@@ -83,6 +83,10 @@ the selected current owner route. Identity is checked before every mutation,
 including cleanup. A changed process/session remains unresolved; cleanup never
 follows a replacement app. The observer receives the exact plan for fresh
 geometry checks and receives real vendor hand/controller readback for release.
+Compensation retains the original acquired input authorization. It rechecks
+exact original actor/session and selected installed app/layer facts, but does
+not demand renewed new-input focus or a fresh selection grant. Losing focus
+must not leave persistent overrides stuck on the same original target.
 
 `original_effect` reports `confirmed`, `pending`, or `rejected` from the
 original app handler's state. Controller acknowledgment remains

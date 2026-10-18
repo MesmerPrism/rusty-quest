@@ -32,6 +32,6 @@ lines.on('line',line=>{
   }
   const reply=JSON.stringify({jsonrpc:'2.0',id:request.id,result})+'\n';
   if(scenario==='late-press' && request.params?.name==='openxr_set_controller_input' && request.params.arguments.value===1)
-    setTimeout(()=>process.stdout.write(reply),1300);
+    setTimeout(()=>process.stdout.write(reply),6000);
   else process.stdout.write(reply);
 });

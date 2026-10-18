@@ -98,7 +98,7 @@ class Proxy {
     try {await this.journal.write(kind,payload);}
     catch(error){this.reportingErrors.push({kind,message:String(error)});if(required)throw error;}
   }
-  async rpc(method,params,compensation=false) {
+  async rpc(method,params,compensation=false,onDispatch) {
     if(this.closed) fail('Proxy closed');
     const id=++this.next, request={jsonrpc:'2.0',id,method,params};
     // New effects require durable intent. A disk/reporting fault must never
@@ -109,15 +109,16 @@ class Proxy {
       const timer=setTimeout(()=>{record.state='timed_out';reject(Error(`RPC ${id} timed out; retain ID; never replay`));},this.timeoutMs);
       this.pending.set(id,{resolve,reject,timer,record});
     });
+    onDispatch?.(); // Intent is durable; bytes can now reach the original backend.
     this.child.stdin.write(JSON.stringify(request)+'\n', error=>{if(error)this.rejectAll(error);});
     const reply=await response;
     await this.persist('response',reply); // ACK stays known even if reporting fails.
     if(reply.jsonrpc!=='2.0' || reply.error || !reply.result) fail('RPC failed; original outcome retained');
     return reply.result;
   }
-  async tool(name,args={},compensation=false) {
+  async tool(name,args={},compensation=false,onDispatch) {
     if(!names.includes(name)) fail('Tool outside closed input surface');
-    const result=await this.rpc('tools/call',{name,arguments:{...args,reason:'Bounded owner-selected input test; preserve original app handlers',sentiment:'neutral'}},compensation);
+    const result=await this.rpc('tools/call',{name,arguments:{...args,reason:'Bounded owner-selected input test; preserve original app handlers',sentiment:'neutral'}},compensation,onDispatch);
     if(result.isError || result.content?.length!==1 || result.content[0].type!=='text') fail('Tool rejected or ambiguous result');
     return JSON.parse(result.content[0].text);
   }
@@ -172,12 +173,17 @@ export async function runOperatorInput({capsule,owner,evidenceDirectory,timeoutM
   const args={session_handle,hand,base_space:c.plan.base_space};
   async function guard(phase='guard') {
     const receipt=await observe(phase);
-    if(receipt.status!=='ready' || receipt.installed_bytes_verified!==true || receipt.layer_loaded!==true || receipt.focused!==true || receipt.exclusive_input_grant!==true) fail('Fresh owner runtime/input grant unavailable');
+    if(receipt.installed_bytes_verified!==true || receipt.layer_loaded!==true) fail('Original app/layer guard unavailable');
+    // Compensation retains the original acquired input scope. It needs the
+    // same actor/session, not renewed focus or a fresh new-input grant.
+    if(phase!=='release_guard' && (receipt.status!=='ready' || receipt.focused!==true || receipt.exclusive_input_grant!==true)) fail('Fresh owner runtime/input grant unavailable');
     return receipt;
   }
   async function mutation(name,parameters) {
-    await guard(); attempted=true; result.release_state='pending';
-    const value=await proxy.tool(name,parameters);
+    await guard();
+    const value=await proxy.tool(name,parameters,false,()=>{
+      attempted=true;result.release_state='pending';result.dispatch_state='outcome_unknown';
+    });
     if(value.success!==true) fail('Mutation acknowledgement absent');
     return value;
   }
@@ -217,7 +223,6 @@ export async function runOperatorInput({capsule,owner,evidenceDirectory,timeoutM
       const pose=await proxy.tool('openxr_get_controller_pose',{session_handle,hand:side,pose_type:'aim',base_space:'local'});
       if(pose.simulated!==false) fail('Existing controller simulation must be preserved');
     }
-    result.dispatch_state='outcome_unknown'; // Includes placement/open before select.
     if(c.plan.kind==='controller_select') {
       await mutation('openxr_set_controller_input',{session_handle,hand,component:'Trigger',value:0,auto_release:false});
       await mutation('openxr_set_controller_pose',{...args,pose_type:'aim',position:c.plan.position,orientation:c.plan.orientation,duration_seconds:0});
@@ -287,12 +292,17 @@ export async function runOperatorInput({capsule,owner,evidenceDirectory,timeoutM
         result.proxy_exit=exit;result.rpc_records=clone(proxy.records);
         if(proxy.reportingErrors.length){result.evidence_persisted=false;result.reporting_errors.push(...proxy.reportingErrors);}
         await report('proxy-retirement',{exit,rpc_records:result.rpc_records});
+        updateCompletion();
+        await report('result-after-retirement',result);
         return exit;
       }});
     }
   }
-  result.completed=['acknowledged','delivered'].includes(result.dispatch_state) && result.original_effect_state==='confirmed' &&
-    result.release_state==='confirmed' && result.terminal_state==='confirmed' && result.proxy_exit?.code===0 && result.errors.length===0;
+  function updateCompletion() {
+    result.completed=['acknowledged','delivered'].includes(result.dispatch_state) && result.original_effect_state==='confirmed' &&
+      result.release_state==='confirmed' && result.terminal_state==='confirmed' && result.proxy_exit?.code===0 && result.errors.length===0;
+  }
+  updateCompletion();
   await report('result',result);
   return result;
 }
