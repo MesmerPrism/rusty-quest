@@ -25,6 +25,20 @@ try {
  Check 'no_remote_or_published_reference' (@(Invoke-FixtureGit $app @('remote')).Count-eq0-and@(Invoke-FixtureGit $dep @('remote')).Count-eq0)
  $clean=Observe
  Check 'clean_unpublished_candidate_accepted' ($clean.schema-ceq'rusty.quest.apk_source_composition.v1'-and$clean.repositories.Count-eq2-and@($clean.repositories|Where-Object{-not$_.tracked_worktree_clean}).Count-eq0)
+ # Resolve the actual relocated graph: the primary alone is insufficient.
+ $nativeParent=Join-Path $scratch 'native'
+ New-Item -ItemType Directory -Path $nativeParent|Out-Null
+ $nativeApp=Join-Path $nativeParent 'app';$nativeDep=Join-Path $nativeParent 'dependency'
+ Invoke-FixtureGit $scratch @('-c','core.autocrlf=false','clone','--quiet','--no-hardlinks',$app,$nativeApp)|Out-Null
+ Invoke-FixtureGit $scratch @('-c','core.autocrlf=false','clone','--quiet','--no-hardlinks',$dep,$nativeDep)|Out-Null
+ Assert-QuestNativeDependencyComposition -ShellComposition $clean -NativeRepoRoot $nativeApp
+ Check 'relocated_identical_supplier_graph_accepted' $true
+ Write-FixtureText "$nativeDep/src/lib.rs" 'pub fn value()->u32 {9}'
+ $rejected=$false;try{Assert-QuestNativeDependencyComposition -ShellComposition $clean -NativeRepoRoot $nativeApp}catch{$rejected=$true}
+ Check 'relocated_dirty_supplier_rejected' $rejected
+ Commit $nativeDep
+ $rejected=$false;try{Assert-QuestNativeDependencyComposition -ShellComposition $clean -NativeRepoRoot $nativeApp}catch{if(-not$_.Exception.Message.Contains('dependency composition differs')){throw};$rejected=$true}
+ Check 'same_primary_changed_supplier_commit_rejected' $rejected
  Write-FixtureText "$app/src/lib.rs" 'pub fn value()->u32 {premerge_dependency::value()+1}'
  Reject 'dirty_primary_publication_rejected'
  $dirty=Observe $true

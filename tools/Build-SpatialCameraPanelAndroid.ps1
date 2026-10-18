@@ -1694,6 +1694,7 @@ if($NativeRepoRoot){
            (Get-FileSha256 -Path $nativeFile)-cne(Get-FileSha256 -Path (Join-Path $repoRoot $path))){throw 'Native/shell raw source bytes differ.'}
     }
     if(((& git.exe -C $nativeRoot ls-files --others -z)-join'').Length){throw 'Native source contains generated/unexpected payload; retain it.'}
+    Assert-QuestNativeDependencyComposition -ShellComposition $sourceComposition -NativeRepoRoot $nativeRoot
     $nativeReceiptCargoManifest=Join-Path $nativeRoot 'apps/spatial-camera-panel-android/native-receipt/Cargo.toml'
 }
 $nativeReceiptJniRoot = Join-Path $appBuildDir "generated\rustJniLibs"
