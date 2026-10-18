@@ -98,6 +98,16 @@ test('focus and new-input grant loss cannot block same-original-identity compens
   assert.equal(a.result.release_state,'confirmed');assert.equal(a.result.completed,true);
   assert(a.calls.some(x=>x.name==='openxr_release_input_devices'));
 });
+test('cached owner unfocused diagnostics cannot block current focused layer input',async()=>{
+  const a=await attempt('normal',{change:r=>{r.focused=false;r.native_focus='UNFOCUSED';}});
+  assert.equal(a.result.completed,true);
+  assert.equal(a.calls.filter(x=>x.name==='openxr_set_controller_input' && x.arguments.value===1).length,1);
+});
+test('cached owner focused diagnostics cannot override current unfocused layer',async()=>{
+  const a=await attempt('unfocused',{change:r=>{r.focused=true;r.native_focus='FOCUSED';}});
+  assert.equal(a.result.dispatch_state,'not_sent');assert.equal(a.result.release_state,'not_required');
+  assert(!a.calls.some(x=>x.name.startsWith('openxr_set_') || x.name==='openxr_hand_gesture'));
+});
 for(const scenario of ['focus-after-ready','session-after-ready']) test(`live ${scenario} defeats stale focused owner before first mutation`,async()=>{
   const a=await attempt(scenario);
   assert.equal(a.result.dispatch_state,'not_sent');assert.equal(a.result.release_state,'not_required');

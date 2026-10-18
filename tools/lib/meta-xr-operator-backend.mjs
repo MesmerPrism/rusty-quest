@@ -176,7 +176,9 @@ export async function runOperatorInput({capsule,owner,evidenceDirectory,timeoutM
     if(receipt.installed_bytes_verified!==true || receipt.layer_loaded!==true) fail('Original app/layer guard unavailable');
     // Compensation retains the original acquired input scope. It needs the
     // same actor/session, not renewed focus or a fresh new-input grant.
-    if(phase!=='release_guard' && (receipt.status!=='ready' || receipt.focused!==true || receipt.exclusive_input_grant!==true)) fail('Fresh owner runtime/input grant unavailable');
+    // The app owner binds actor/action/grant. Its cached focus diagnostics do
+    // not override the live layer session observations below.
+    if(phase!=='release_guard' && (receipt.status!=='ready' || receipt.exclusive_input_grant!==true)) fail('Fresh owner runtime/input grant unavailable');
     return receipt;
   }
   async function mutation(name,parameters) {

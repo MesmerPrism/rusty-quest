@@ -84,8 +84,11 @@ The owner observer has one bounded `observe(context)` method and an exact
 evidence behind the reference; these fields are not self-issued authority.
 It is called at `before_proxy`, `guard`, `release_guard`, `original_effect`, `release`, and
 `terminal`. Guards require `status=ready`, `installed_bytes_verified=true`,
-`layer_loaded=true`, `focused=true`, and `exclusive_input_grant=true` from
-the selected current owner route. Identity is checked before every mutation,
+`layer_loaded=true`, and `exclusive_input_grant=true` from the selected current
+owner route. Cached owner focus is diagnostic; current XR focus belongs to
+the live layer session, checked during readiness and immediately before every
+new input. Starting the read-only proxy does not require an owner focus claim.
+Identity is checked before every mutation,
 including cleanup. A changed process/session remains unresolved; cleanup never
 follows a replacement app. The observer receives the exact plan for fresh
 geometry checks and receives real vendor hand/controller readback for release.
