@@ -56,6 +56,13 @@ try {
  Commit $dep
  $depCommit=Observe
  Check 'dependency_commit_drift_changes_identity' ($depCommit.fingerprint-cne$next.fingerprint)
+ # Keep the shared materializer in this existing source-composition family,
+ # which check_all already invokes with these same owner arguments.
+ $stageProof=Join-Path $scratch 'stable-cargo-stage-proof'
+ & (Join-Path $RepoRoot 'tools/checks/Test-ContentStableCargoStage.ps1') -OutputRoot $stageProof | Out-Null
+ if(-not$?){throw 'Shared Cargo source-stage regression failed.'}
+ $stageResult=Get-Content -LiteralPath (Join-Path $stageProof 'RESULT.json') -Raw|ConvertFrom-Json
+ Check 'shared_cargo_source_stage_family' ($stageResult.passed -eq $true)
  [ordered]@{passed=$true;controls=$controls.ToArray();remote_count=0;android_build_or_device_effects=$false}|ConvertTo-Json -Depth 5
 } finally {
  # Only this freshly created, fixed-prefix temporary fixture is removed.

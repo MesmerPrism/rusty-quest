@@ -15,7 +15,7 @@ function Text([string]$Path,[string]$Value){[IO.File]::WriteAllText($Path,$Value
 function Commit([string]$Root){Git $Root @('add','--all')|Out-Null;Git $Root @('-c','user.name=Local Fixture','-c','user.email=fixture@example.invalid','commit','--quiet','-m','Local source')|Out-Null}
 function Sync {
  foreach($pair in @(@($app,'app'),@($dep,'dependency'))){
-  Sync-ContentStableCargoStage $pair[0] (Join-Path $forest $pair[1]) (Git $pair[0] @('rev-parse','HEAD')) (Git $pair[0] @('rev-parse','HEAD^{tree}'))
+  Sync-ContentStableCargoStage $pair[0] (Join-Path $forest $pair[1]) (Git $pair[0] @('rev-parse','HEAD')) (Git $pair[0] @('rev-parse','HEAD^{tree}')) $lock
   Assert-CleanNativeStage (Join-Path $forest $pair[1])
  }
 }
@@ -75,6 +75,7 @@ $reopened=Open-NativeForestLock $cache;$reopened.Dispose()
 Check 'forest_lock_released_after_terminal' $true
 [ordered]@{stage_helper_sha256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot '../lib/ContentStableCargoStage.psm1')).Hash.ToLowerInvariant();test_sha256=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant();passed=$true;controls=$controls.ToArray();observations=$observations.ToArray();scope='real host Cargo with actual shared stage helper; not Android APK/device qualification';outputs_retained=$true}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $OutputRoot 'RESULT.json') -Encoding utf8
 Get-Content -LiteralPath (Join-Path $OutputRoot 'RESULT.json') -Raw
+
 
 
 
