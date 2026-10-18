@@ -5,6 +5,13 @@ For `tools/sdk_graphics`, run its three `Test-*.py` scripts. The
 immutable publication, exact revert, and actual ZIP primary/alias byte joins.
 These focused host checks and the boundary scan do not build or contact an APK.
 
+The optional Navigator visibility library has a host-only focused gate:
+`pwsh -NoProfile -File tools/Test-NavigatorVisibility.ps1 -AndroidJar <installed-sdk/android.jar>`.
+It compiles the Android binding, exercises the neutral simulated journal and
+registration/cleanup races, verifies missing-vendor linkage, and excludes
+compile-only declarations from its AAR. It builds no APK and provides no device
+or distribution evidence. See [Navigator visibility](NAVIGATOR_VISIBILITY.md).
+
 ## Meta XR input automation adapter
 
 Run `pwsh -NoProfile -File tools/Test-MetaXrInputAutomation.ps1` for the
