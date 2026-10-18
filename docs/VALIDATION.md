@@ -18,6 +18,11 @@ Run `pwsh -NoProfile -File tools/Test-MetaXrInputAutomation.ps1` for the
 source-only two-consumer packaging/readiness/action/release conformance seam.
 It uses synthetic external files, exact-runtime callbacks and no APK build,
 network, proxy or headset. See [the adapter contract](META_XR_INPUT_AUTOMATION.md).
+The finite real transport adds `pwsh -NoProfile -File
+tools/Test-MetaXrInputBackend.ps1`: source preparation plus an independent
+stdio peer tests closed inputs, durable request journals, uncertain dispatch,
+original-effect separation and effective original-target release. No vendor
+proxy, device, forward or APK build is started by this host gate.
 
 
 For development graphs whose current Manifold source differs from the exact
