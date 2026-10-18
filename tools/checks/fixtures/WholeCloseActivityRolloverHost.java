@@ -37,6 +37,24 @@ public final class WholeCloseActivityRolloverHost {
     static EmbeddedDuplexWholeCloseRollover token(JSONObject p) throws Exception {
         return EmbeddedDuplexWholeCloseRollover.verified(p,"app-process.3.actor",3,7,9,SHA,SHA);
     }
+    // Shape follows receipt() in embedded_duplex/peer_lifecycle.rs. Platform,
+    // native and broker effects remain modeled; these objects grant no authority.
+    static JSONObject ongoingProof() throws Exception {
+        return proof().put("$schema","rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3")
+            .put("ongoing_media_policy",new JSONObject().put("$schema","rusty.manifold.peer.ongoing_media_policy.v2"))
+            .put("current_lifetime_renewal_count",0)
+            .put("current_owner_validation",new JSONObject()
+                .put("$schema","rusty.quest.concurrent.current_ongoing_owner_validation.v1")
+                .put("status","unavailable").put("validated_at_ms",100)
+                .put("reason","current_owner_validation_unavailable"));
+    }
+    static JSONObject peerTerminal(JSONObject p) throws Exception {
+        return p.put("media_stop_effect_receipt",new JSONObject())
+            .put("route_cleanup",new org.json.JSONArray()).put("broker_evidence",new JSONObject());
+    }
+    static void denied(JSONObject p) throws Exception {
+        boolean rejected=false;try{token(p);}catch(Exception expected){rejected=true;}check(rejected);
+    }
     public static void main(String[] args) throws Exception {
         EmbeddedDuplexWholeCloseRollover closed=token(proof());
         check(closed.matchesRuntime(9,SHA,SHA));check(!closed.matchesRuntime(10,SHA,SHA));
@@ -53,6 +71,32 @@ public final class WholeCloseActivityRolloverHost {
         for(String key:new String[]{"app_process_generation","native_executor_generation"}) {
             boolean denied=false;try{token(proof().put(key,8));}catch(Exception expected){denied=true;}check(denied);
         }
+        // V3 admits only its actual native policy identity. Terminal cleanup does
+        // not require active renewal authority after Stop, including unavailable
+        // current-owner validation. Every existing physical barrier still holds.
+        check(token(ongoingProof()).matchesRuntime(9,SHA,SHA));
+        for(String key:new String[]{"native_host_physical_cleanup","java_own_capture_cleanup","java_renderer_cleanup",
+            "java_control_cleanup","app_process_fence_cleanup","whole_app_physical_cleanup","status","peer_physical_cleanup"}) {
+            denied(ongoingProof().put(key,"pending"));JSONObject missing=ongoingProof();missing.remove(key);denied(missing);
+        }
+        for(String schema:new String[]{"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v2",
+            "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v4","other"})denied(ongoingProof().put("$schema",schema));
+        JSONObject missing=ongoingProof();missing.remove("ongoing_media_policy");denied(missing);
+        denied(ongoingProof().put("ongoing_media_policy",JSONObject.NULL));
+        denied(ongoingProof().put("ongoing_media_policy",new JSONObject().put("$schema","rusty.manifold.peer.ongoing_media_policy.v1")));
+        denied(ongoingProof().put("ongoing_media_policy",new JSONObject().put("$schema","rusty.manifold.peer.ongoing_media_policy.v2").put("extra",true)));
+        for(JSONObject p:new JSONObject[]{peerTerminal(proof()),peerTerminal(ongoingProof())}) {
+            check(EmbeddedDuplexWholeCloseRollover.localPeerTerminalProof(p));
+            for(String key:new String[]{"media_stop_effect_receipt","route_cleanup","broker_evidence","peer_physical_cleanup"}) {
+                JSONObject changed=new JSONObject(p.toString());changed.remove(key);
+                check(!EmbeddedDuplexWholeCloseRollover.localPeerTerminalProof(changed));
+                changed=new JSONObject(p.toString()).put(key,key.equals("peer_physical_cleanup")?"pending":"terminal");
+                check(!EmbeddedDuplexWholeCloseRollover.localPeerTerminalProof(changed));
+            }
+        }
+        // Authenticated remote-owner closure retains its distinct, non-local path.
+        check(token(proof().put("$schema","rusty.quest.embedded_duplex.remote_owner_cleanup.v1")
+            .put("peer_physical_cleanup","not_locally_started")).matchesRuntime(9,SHA,SHA));
         WholeCloseActivityRolloverHost h=new WholeCloseActivityRolloverHost();
         check(!h.wholeCloseRolloverCurrent(closed)); // NEW alone has no full receipt/token.
         h.wholeCloseRollover=closed;check(h.wholeCloseRolloverCurrent(closed));

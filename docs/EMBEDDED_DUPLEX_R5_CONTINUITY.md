@@ -36,6 +36,29 @@ specified in [Ongoing media continuation](ONGOING_MEDIA_CONTINUATION.md).
 Finite defaults and the fixed native ABI remain unchanged; the first source
 candidate does not yet remove generic lifetime history capacities.
 
+## Closed bootstrap resource failure observations
+
+The existing debug `runtime_status` failure stage/code fields retain only closed
+facts. Resource installation keeps stage `resource_install` and distinguishes
+native initialized identity, owner construction, Own capture startup, Own display
+activation, pipeline creation/route, outgoing owners, bindings and registry
+installation. Own display activation additionally distinguishes unavailable
+retained capture, fresh-frame Pending, carrier not ready, superseded owner,
+interruption and the existing dispatch deadline. Codes contain no exception
+message, input, endpoint, key or arbitrary class name.
+
+The trace follows the actual failing call before cleanup; suppressed cleanup
+errors do not replace it. The failure does not claim readiness, cleanup, media
+Start or authority, and does not authorize retry. Own capture and exact partial
+Peer owners remain with the existing cleanup handlers. Runtime/provider schemas,
+operator calls, freshness checks and Java timeout bounds are unchanged.
+
+`tools/checks/Test-BootstrapResourceFailureHost.py --root . --output <new-output>`
+compiles the production trace and resource-install bodies against modeled media
+owners. It checks per-step faults, typed activation reasons, wrapper deadlines,
+cleanup failures and refusal of repeated installation. These host controls are
+not Android/JNI or physical camera qualification.
+
 ## Renewal OS-clock sampling observation
 
 The native renewal caller reads the actual OS wall clock inside a monotonic
@@ -697,3 +720,26 @@ modeled in this harness; actual enum compatibility is checked by the native
 Android compile. No cleanup prerequisite outside the commit block is simulated
 as an actual platform observation.
 The Android-target native typecheck is separate; neither proves installed behavior.
+
+## Retained source graph readiness
+
+A claimed source renderer now tracks Pending, Ready, Failed and Closed separately
+from worker liveness. Only completed renderer setup publishes Ready. The initial
+caller and same-carrier reuse both require that readiness, the current exact Own
+epoch/window, a live uncancelled worker and the original claim. A late waiter
+cannot cancel or release a successor that reused the same route generation:
+cleanup additionally joins the exact shared startup identity.
+
+The source graph readiness wait is fifteen seconds, independent of the existing
+five-second seed wait. Together with Java's at-most-ten-second freshness stage,
+it fits nominally within the existing thirty-second serialized projection stage.
+These are waiting bounds, not proof that an effect failed or physically retired.
+Cancellation still joins the original worker and verifies its existing physical
+cleanup. A delayed ready signal cannot turn a caller's failed/closed startup into
+success, even while that join is in progress. Setup failure, receiver closure and
+startup deadline remain distinct internal outcomes; existing bounded renderer
+and bootstrap observations remain observations rather than media authority.
+
+Focused host controls exercise the production readiness state and the source
+starter with modeled renderer/OS effects. Android compilation and actual camera,
+GPU, display and bilateral media behavior require their own package/device proof.

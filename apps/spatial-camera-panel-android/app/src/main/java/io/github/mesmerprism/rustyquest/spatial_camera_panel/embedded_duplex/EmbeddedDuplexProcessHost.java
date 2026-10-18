@@ -223,15 +223,18 @@ final class EmbeddedDuplexProcessHost {
                 JSONObject nativeResult = new JSONObject(initialized);
                 JSONObject ownBootstrap = nativeResult.optJSONObject("own_capture_bootstrap");
                 ownFeatureLockSha256 = ownBootstrap == null ? null : ownBootstrap.getString("app_feature_lock_sha256");
+                EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_IDENTITY);
                 if (nativeResult.getLong("executor_generation") != nativeExecutorGeneration
                         || nativeResult.getLong("app_process_generation") != processFence.generation()
                         || !nativeAppRecordSha256.equals(nativeResult.getString("app_record_sha256"))) {
                     throw new IllegalStateException("native initialized process incarnation differs");
                 }
+                EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_CONSTRUCT);
                 EmbeddedDuplexResources installed = new EmbeddedDuplexResources(applicationContext,
                         display, new JSONObject(initialized), prepared.maxPairDeltaNs);
                 resources = installed;
-                installed.install();
+                installed.install(trace);
+                EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_REGISTRY);
                 callbacks.installResources(installed);
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.CONTROL_ENDPOINT);
                 callbacks.startControl(prepared.localControlHost, prepared.localControlPort);
@@ -740,6 +743,7 @@ final class EmbeddedDuplexProcessHost {
                         inputs.startup.toString(), false, trace);
                 return runtimeStatusOnCommandLane();
             } catch (Exception failure) {
+                trace.captureFailure(failure);
                 lastBootstrapFailure = trace.failure();
                 if (phase.get() == Phase.BOOTSTRAPPING) {
                     phase.set(runtimeConfigSha256 == null && (processFence == null
@@ -1261,11 +1265,7 @@ final class EmbeddedDuplexProcessHost {
                 || !"terminal".equals(proof.optString("native_host_physical_cleanup"))) return;
         boolean remoteOwner = !noMedia && "rusty.quest.embedded_duplex.remote_owner_cleanup.v1".equals(proof.getString("$schema"));
         if (remoteOwner && !remoteOwnerClosureVerified(proof, nativeExecutorGeneration)) return;
-        if (!noMedia && !remoteOwner && (!"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(proof.getString("$schema"))
-                || !"terminal".equals(proof.optString("peer_physical_cleanup"))
-                || !(proof.opt("media_stop_effect_receipt") instanceof JSONObject)
-                || !(proof.opt("route_cleanup") instanceof org.json.JSONArray)
-                || !(proof.opt("broker_evidence") instanceof JSONObject))) return;
+        if (!noMedia && !remoteOwner && !EmbeddedDuplexWholeCloseRollover.localPeerTerminalProof(proof)) return;
         // The typed native facade only publishes Peer terminal after cleanup succeeds.
         // An empty cleanup array is a real idempotent retry; the native facade preserves retained route/effect receipts.
         if (noMedia) {

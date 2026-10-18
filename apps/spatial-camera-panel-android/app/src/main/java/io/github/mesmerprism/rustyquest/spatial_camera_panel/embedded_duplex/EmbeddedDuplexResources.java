@@ -60,27 +60,33 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     }
 
     /** Host retains this owner before any Own capture or display effect runs. */
-    void install() throws Exception {
+    void install() throws Exception { install(null); }
+    void install(EmbeddedDuplexBootstrap.Trace trace) throws Exception {
         if (installationAttempted) throw new IllegalStateException("resource installation already attempted");
         installationAttempted = true;
         try {
         if (ownCapture != null) {
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_OWN_CAPTURE);
             io.github.mesmerprism.rustyquest.media.PackedStereoCaptureOwner capture = ownCapture.startAccepted(
                     new OwnStereoCaptureRuntime.Configuration(source.width / 2, source.height,
                             source.fps, leftCamera, rightCamera, maxPairDeltaNs));
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_OWN_PROJECTION);
             display.activateOwnProjection();
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_PIPELINE);
             pipeline = PackedStereoMediaSourceRuntime.createSharedCapturePipeline(context, source.plan.getString("session_id"),
                     source.source.getString("source_kind"), source.endpoint.getString("source_host"),
                     source.endpoint.getInt("source_port"), source.width, source.height,
                     source.width / 2, source.height, source.fps, source.bitrate,
                     leftCamera, rightCamera, maxPairDeltaNs, capture, generation);
         } else {
+        EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_PIPELINE);
         pipeline = PackedStereoMediaSourceRuntime.createPipeline(context, source.plan.getString("session_id"),
                 source.source.getString("source_kind"), source.endpoint.getString("source_host"),
                 source.endpoint.getInt("source_port"), source.width, source.height,
                 source.width / 2, source.height, source.fps, source.bitrate,
                 leftCamera, rightCamera, maxPairDeltaNs);
         }
+        EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_ROUTE);
         pipeline.configureAcceptedLanRoute(source.sourceTransportHost,
                 source.sinkTransportHost, source.sinkTransportPort);
         } catch (Exception invalid) {
@@ -89,8 +95,11 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             throw invalid;
         }
         try {
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_OUTGOING);
             outgoing = new PackedStereoMediaOwnerSet(generation, pipeline, incoming);
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_BINDING_CREATE);
             MediaProductBinding.Builder builder = new MediaProductBinding.Builder(outgoingSpec.getString("runtime_spec_id"));
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_BINDINGS);
             JSONArray outgoingPlacements = nativeInitialization.getJSONArray("owner_placements");
             JSONArray incomingPlacements = nativeInitialization.getJSONArray("incoming_owner_placements");
             int localOutgoing = 0;
@@ -118,6 +127,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                     || localOutgoing != 6 || localIncoming != 1) {
                 throw new IllegalArgumentException("embedded seven-family placement shape");
             }
+            EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.RESOURCE_BINDING_BUILD);
             binding = builder.build();
         } catch (Exception invalid) {
             // Peer Start has not run. Own capture may already be Live; it remains

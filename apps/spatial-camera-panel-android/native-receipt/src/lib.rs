@@ -27,6 +27,8 @@ mod asset_model_consumer;
 #[cfg(any(target_os = "android", test))]
 mod camera_hwb_freshness;
 mod camera_hwb_marker;
+#[cfg(any(target_os = "android", test))]
+mod source_graph_startup;
 #[cfg(target_os = "android")]
 mod camera_hwb_probe;
 #[cfg(any(target_os = "android", test))]
