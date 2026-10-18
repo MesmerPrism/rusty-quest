@@ -1,5 +1,11 @@
 # Rusty Quest
 
+The optional Java observer in `apps/navigator-visibility-android` exposes the
+firmware CRCS Navigator visibility signal with explicit subscription and cleanup.
+It includes a neutral host conformance consumer and activates no app feature.
+See [Navigator visibility](docs/NAVIGATOR_VISIBILITY.md) for availability,
+generation, initial-state and lifecycle limits.
+
 Reusable Android media lives in `crates/rusty-quest-media-stream-android`.
 Its AAR and Rust library are consumed by the standalone broker and the neutral
 `apps/media-stream-conformance-android` host. Application permissions, defaults,

@@ -1,5 +1,12 @@
 # Rusty Quest Validation
 
+The optional Navigator visibility library has a host-only focused gate:
+`pwsh -NoProfile -File tools/Test-NavigatorVisibility.ps1 -AndroidJar <installed-sdk/android.jar>`.
+It compiles the Android binding, exercises the neutral simulated journal and
+registration/cleanup races, verifies missing-vendor linkage, and excludes
+compile-only declarations from its AAR. It builds no APK and provides no device
+or distribution evidence. See [Navigator visibility](NAVIGATOR_VISIBILITY.md).
+
 For development graphs whose current Manifold source differs from the exact
 legacy camera/P2P compatibility supplier, keep those suppliers separate. The
 product preparation fixture accepts
