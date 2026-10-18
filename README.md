@@ -1,5 +1,9 @@
 # Rusty Quest
 
+The host-only [SDK graphics preparation provider](docs/SDK_GRAPHICS_PREPARATION.md)
+compiles explicit compatible sources, validates the selected material/variant ABI,
+and joins actual APK primary/alias/baseline bytes without device operations.
+
 Optional [Meta XR input automation](docs/META_XR_INPUT_AUTOMATION.md) provides
 closed debug-layer packaging checks and a finite exact-runtime host rehearsal.
 It leaves application activation, original actions and optional capture separate.

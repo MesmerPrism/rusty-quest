@@ -1,5 +1,10 @@
 # Rusty Quest Validation
 
+For `tools/sdk_graphics`, run its three `Test-*.py` scripts. The
+[SDK graphics provider](SDK_GRAPHICS_PREPARATION.md) tests compiler/reflection,
+immutable publication, exact revert, and actual ZIP primary/alias byte joins.
+These focused host checks and the boundary scan do not build or contact an APK.
+
 ## Meta XR input automation adapter
 
 Run `pwsh -NoProfile -File tools/Test-MetaXrInputAutomation.ps1` for the
