@@ -1,5 +1,9 @@
 # Rusty Quest
 
+Optional [Meta XR input automation](docs/META_XR_INPUT_AUTOMATION.md) provides
+closed debug-layer packaging checks and a finite exact-runtime host rehearsal.
+It leaves application activation, original actions and optional capture separate.
+
 Reusable Android media lives in `crates/rusty-quest-media-stream-android`.
 Its AAR and Rust library are consumed by the standalone broker and the neutral
 `apps/media-stream-conformance-android` host. Application permissions, defaults,
