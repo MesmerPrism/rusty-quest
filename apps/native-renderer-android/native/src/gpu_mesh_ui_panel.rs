@@ -621,7 +621,7 @@ impl GpuMeshUiPanel {
                 },
             )?;
             if frame % 120 == 0 {
-                crate::marker("native-panel-text",format!("event=prepared frame={frame} generation=1 glyphs={} atlasBytes={} cached=true evidence=recorded-not-visible",self.text_glyphs.len(),atlas.pixels.len()));
+                crate::marker("native-panel-text",format!("event=prepared frame={frame} generation=1 glyphs={} atlasBytes={} fontPrepared=true uploadRecordings={} evidence=recorded-not-visible",self.text_glyphs.len(),atlas.pixels.len(),text.upload_recordings()));
             }
         }
         self.slots[slot] = self.latest.clone();
@@ -1062,7 +1062,7 @@ impl GpuMeshUiPanel {
                 hit,
                 self.pointer.captured() || extra.consumed,
             );
-            if valid && hit.is_some() {
+            if valid && (hit.is_some() || extra_hit.is_some() || extra.consumed) {
                 if let (Some(visual), Some(p)) = (&mut self.visual, pixels) {
                     let pose = controls.pose;
                     visual.hit = true;

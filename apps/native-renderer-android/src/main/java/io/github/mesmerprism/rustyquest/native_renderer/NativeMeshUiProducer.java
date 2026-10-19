@@ -867,7 +867,7 @@ static final class VisibilityReadback {
                     if(!unchanged){request.scroll=now;request.admissionViewCount=now.values.size();
                         Log.i(TAG,"event=raster-scroll-rebased-before-mutation generation="+generation+" request="+request.id+" scrollY="+now.firstVerticalY());}
                     request.observedScroll=now;
-                    if(request.stableFrames<2){rootRaster.invalidate();return true;}
+                    if(request.stableFrames<2){rootRaster.postInvalidateOnAnimation();return true;}
                     removeResizeObserver(request);beginResizeMutation(request);return false;
                 }
             }};

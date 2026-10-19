@@ -86,6 +86,7 @@ pub(crate) struct GpuNativePanelText {
     layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     slots: Vec<Slot>,
+    upload_recordings: u64,
 }
 #[repr(C)]
 struct PanelPush {
@@ -98,6 +99,11 @@ struct PanelPush {
     atlas_scale: [f32; 4],
 }
 impl GpuNativePanelText {
+    /// Counts recorded atlas copies, not submitted or completed GPU uploads.
+    pub(crate) fn upload_recordings(&self) -> u64 {
+        self.upload_recordings
+    }
+
     pub(crate) unsafe fn new(
         device: &ash::Device,
         memory: vk::PhysicalDeviceMemoryProperties,
@@ -111,6 +117,7 @@ impl GpuNativePanelText {
             layout: vk::PipelineLayout::null(),
             pipeline: vk::Pipeline::null(),
             slots: Vec::with_capacity(2),
+            upload_recordings: 0,
         };
         let result = (|| -> Result<(), String> {
             let bindings = [vk::DescriptorSetLayoutBinding::default()
@@ -266,6 +273,7 @@ impl GpuNativePanelText {
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &copy,
             );
+            self.upload_recordings = self.upload_recordings.saturating_add(1);
             let to_sample = [vk::ImageMemoryBarrier::default()
                 .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                 .dst_access_mask(vk::AccessFlags::SHADER_READ)
