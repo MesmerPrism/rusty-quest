@@ -6,6 +6,7 @@ layout(location=2) in vec4 color;
 layout(location=0) out vec2 uv;
 layout(location=1) flat out vec4 tint;
 layout(location=2) flat out vec2 atlasMaximum;
+layout(location=3) flat out vec4 tileBounds;
 vec3 rotateQuat(vec4 q,vec3 p){return p+2.0*cross(q.xyz,cross(q.xyz,p)+q.w*p);}
 void main(){
  const vec2 corners[6]=vec2[](vec2(0,0),vec2(0,1),vec2(1,1),vec2(0,0),vec2(1,1),vec2(1,0));
@@ -20,5 +21,6 @@ void main(){
  gl_Position=vec4(x,y,f/(f-n)*forward-f*n/(f-n),forward);
  uv=mix(uvBounds.xy,uvBounds.zw,corner)*pc.atlasScale.xy;
  atlasMaximum=pc.atlasScale.xy-vec2(0.5/1024.0);
+ tileBounds=uvBounds*pc.atlasScale.xyxy;
  tint=color;
 }

@@ -116,6 +116,15 @@ unchanged generations never upload again. Layout retains shaped advances,
 metrics and offsets. Color fonts, missing glyphs and malformed inputs fail
 explicitly; this is not complete Unicode or color-emoji support.
 
+Native glyph coverage uses the UV-derived pixel footprint rather than derivatives
+of sampled distance values, which can collapse around thin stems. Four half-pixel
+coverage samples are averaged within each glyph's half-texel atlas bounds. This
+changes only text reconstruction; atlas allocation, shaping and form sampling
+remain independent. The extra samples have a bounded cost per glyph fragment,
+but require headset quality and frame-timing qualification. Very small projected
+text still has a physical pixel limit; this is not analytic outline rendering
+or temporal antialiasing.
+
 SCALE changes only physical panel width, using absolute values from the existing
 presentation owner. A drag retains its initial plane so resizing does not feed
 back into its own coordinate mapping. The meter below DETAIL displays effective
