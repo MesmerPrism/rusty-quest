@@ -153,9 +153,16 @@ headset qualification.
 The attachment button names its next action: TO WRIST from world placement and
 TO WORLD from wrist placement, including tracking-loss recall. Original Android
 forms retain their single-mip AHB path; their fragment shader integrates a bounded
-4x4 derivative footprint only when minified, retaining one bilinear tap otherwise.
+2x2 derivative footprint up to two texels per pixel and 4x4 above that,
+retaining one bilinear tap without minification.
 This targets thin-border dropouts without changing original widget styling or
 text input. Steep minification beyond four texels per pixel remains unqualified.
 UI aim admission is independent of complete visual-rig validity: an unavailable
 finger joint may suppress the hand mesh while a separately valid wrist/aim still
 provides a pointer. Invalid wrist/aim input remains rejected.
+
+On tiled GPUs, timestamp pairs inside a render pass can measure one tile or
+approach zero. The panel draw-region timestamp is not evidence of total fragment
+work or isolated incremental UI cost. Use frame timing and an appropriately
+controlled workload for regression checks; overlapping scopes are not additive.
+See https://github.khronos.org/Vulkan-Site/features/latest/features/proposals/VK_QCOM_elapsed_timer_query.html.

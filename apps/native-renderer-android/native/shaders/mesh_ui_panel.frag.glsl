@@ -8,6 +8,13 @@ void main() {
     float footprint=max(length(dx*texels),length(dy*texels));
     if(footprint<=1.0) {
         color=textureLod(panel,uv,0.0);
+    } else if(footprint<=2.0) {
+        vec4 sum=vec4(0.0);
+        for(int y=0;y<2;++y) for(int x=0;x<2;++x) {
+            vec2 offset=(vec2(x,y)+vec2(0.5))*0.5-vec2(0.5);
+            sum+=textureLod(panel,uv+dx*offset.x+dy*offset.y,0.0);
+        }
+        color=sum*0.25;
     } else {
         // Integrate the screen-pixel parallelogram on the immutable single-mip AHB.
         // Four samples per axis target <=4 source texels/pixel; steeper minification
