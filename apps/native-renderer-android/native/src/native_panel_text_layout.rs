@@ -18,8 +18,8 @@ pub(crate) const LABELS: &[&str] = &[
     "1536x1152",
     "2048x1536",
     "SCALE",
-    "WORLD",
-    "WRIST",
+    "TO WORLD",
+    "TO WRIST",
     "FPS",
     "0",
     "1",
@@ -97,12 +97,12 @@ pub(crate) fn glyphs(atlas: &TextAtlas, key: ToolbarKey) -> Vec<GlyphInstance> {
         x += draw(17 + (digit - b'0') as usize, x, 0.732, 0.027, false);
     }
     draw(
-        if !key.anchor_valid || !key.wrist && !key.wrist_available {
-            28
-        } else if key.wrist {
-            15
-        } else {
+        if key.wrist {
             14
+        } else if !key.wrist_available {
+            28
+        } else {
+            15
         },
         0.45,
         0.765,

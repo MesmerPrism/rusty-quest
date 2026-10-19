@@ -149,3 +149,13 @@ per-eye order for parallel planes. Intersecting nonparallel transparent panes
 remain unqualified. Closing INFO never creates or retires an Android form owner.
 The auxiliary submission marker records its slot pose; pixels require separate
 headset qualification.
+
+The attachment button names its next action: TO WRIST from world placement and
+TO WORLD from wrist placement, including tracking-loss recall. Original Android
+forms retain their single-mip AHB path; their fragment shader integrates a bounded
+4x4 derivative footprint only when minified, retaining one bilinear tap otherwise.
+This targets thin-border dropouts without changing original widget styling or
+text input. Steep minification beyond four texels per pixel remains unqualified.
+UI aim admission is independent of complete visual-rig validity: an unavailable
+finger joint may suppress the hand mesh while a separately valid wrist/aim still
+provides a pointer. Invalid wrist/aim input remains rejected.

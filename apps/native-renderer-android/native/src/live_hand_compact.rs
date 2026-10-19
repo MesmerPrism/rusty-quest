@@ -277,6 +277,14 @@ impl LiveHandCompactInput {
         stats.left_active = left.is_some();
         stats.right_active = right.is_some();
         stats.active_hand_count = stats.left_active as u32 + stats.right_active as u32;
+        // UI aim depends on active wrist/aim validity, not every visual rig joint.
+        let ui_pointer = right
+            .as_ref()
+            .and_then(|joints| hand_ui_pointer(joints, right_result.aim.as_ref(), true))
+            .or_else(|| {
+                left.as_ref()
+                    .and_then(|joints| hand_ui_pointer(joints, left_result.aim.as_ref(), false))
+            });
 
         if left.is_none() && right.is_none() {
             stats.reason = "no-active-hand";
@@ -307,7 +315,13 @@ impl LiveHandCompactInput {
             stats.reason = "invalid-live-hand-frame";
             stats.frame_index = frame_index;
             stats.timestamp_ns = timestamp_ns;
-            return (LiveHandCompactFrameSet::default(), stats);
+            return (
+                LiveHandCompactFrameSet {
+                    ui_pointer,
+                    ..Default::default()
+                },
+                stats,
+            );
         }
 
         stats.frame_ready = true;
@@ -332,14 +346,7 @@ impl LiveHandCompactInput {
             LiveHandCompactFrameSet {
                 left: left_frame,
                 right: right_frame,
-                ui_pointer: right
-                    .as_ref()
-                    .and_then(|joints| hand_ui_pointer(joints, right_result.aim.as_ref(), true))
-                    .or_else(|| {
-                        left.as_ref().and_then(|joints| {
-                            hand_ui_pointer(joints, left_result.aim.as_ref(), false)
-                        })
-                    }),
+                ui_pointer,
             },
             stats,
         )
