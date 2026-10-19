@@ -65,6 +65,8 @@ Compare fixed tiers in the same app, with equal scene and eye-buffer settings,
 and keep captures outside the idle timing windows.
 
 Raster handoffs retain the original widget tree, edit values and scroll offsets.
+The root form keeps an exact logical 1024×768 viewport throughout physical
+display resizing; modal wrappers retain their own logical dimensions.
 The writer acknowledgement waits for stable scroll, completed layout, restored
 offsets and a hardware frame commit. New pointer/editor actions are deferred
 only during the mutation; pending modal and IME input remains usable. This

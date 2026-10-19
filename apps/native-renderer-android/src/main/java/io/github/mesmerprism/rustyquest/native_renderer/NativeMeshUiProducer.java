@@ -101,8 +101,9 @@ static final class VisibilityReadback {
     /** Keep the original pixel layout and resource density; raster scale changes sampling only. */
     private static final class RasterLayout extends FrameLayout {
         private float scale;
-        RasterLayout(Context context,View child,float scale){
-            super(context);this.scale=scale;addView(child,new FrameLayout.LayoutParams(-1,-1));
+        private final boolean fixedLogicalViewport;
+        RasterLayout(Context context,View child,float scale,boolean fixedLogicalViewport){
+            super(context);this.scale=scale;this.fixedLogicalViewport=fixedLogicalViewport;addView(child,new FrameLayout.LayoutParams(-1,-1));
             child.setPivotX(0);child.setPivotY(0);child.setScaleX(scale);child.setScaleY(scale);
         }
         void setRasterScale(float value){
@@ -112,14 +113,16 @@ static final class VisibilityReadback {
         private int logicalSpec(int spec){return View.MeasureSpec.makeMeasureSpec(
             Math.round(View.MeasureSpec.getSize(spec)/scale),View.MeasureSpec.getMode(spec));}
         @Override protected void onMeasure(int width,int height){
-            super.onMeasure(logicalSpec(width),logicalSpec(height));
+            super.onMeasure(fixedLogicalViewport?View.MeasureSpec.makeMeasureSpec(1024,View.MeasureSpec.EXACTLY):logicalSpec(width),
+                fixedLogicalViewport?View.MeasureSpec.makeMeasureSpec(768,View.MeasureSpec.EXACTLY):logicalSpec(height));
             setMeasuredDimension(Math.round(getMeasuredWidth()*scale),Math.round(getMeasuredHeight()*scale));
         }
         @Override protected void onLayout(boolean changed,int left,int top,int right,int bottom){
-            super.onLayout(changed,0,0,Math.round((right-left)/scale),Math.round((bottom-top)/scale));
+            super.onLayout(changed,0,0,fixedLogicalViewport?1024:Math.round((right-left)/scale),
+                fixedLogicalViewport?768:Math.round((bottom-top)/scale));
         }
     }
-    private View rasterLayout(View child){return new RasterLayout(child.getContext(),child,rasterScale);}
+    private View rasterLayout(View child){return new RasterLayout(child.getContext(),child,rasterScale,child==root);}
     private static int scaledOffset(int value,float scale){return Math.round(value*scale);}
     private static int scaledDimension(int value,float scale){return value>0?scaledOffset(value,scale):value;}
     /** Only logical scalar snapshots: values never retain their weak Window keys. */
@@ -380,6 +383,11 @@ static final class VisibilityReadback {
             .put("raster_resize_status",resizeRequest==null?1:resizeRequest.state)
             .put("raster_resize_deferrals",resizeRequest==null?0:resizeRequest.deferrals)
             .put("raster_resize_defer_reason",resizeRequest==null?"none":resizeRequest.reason)
+            .put("raster_scroll_admission_y",resizeRequest==null||resizeRequest.scroll==null?0:resizeRequest.scroll.firstVerticalY())
+            .put("raster_scroll_commit_y",resizeRequest==null?0:resizeRequest.commitScrollY)
+            .put("raster_scroll_current_y",resizeRequest==null||resizeRequest.scroll==null?0:resizeRequest.scroll.currentFirstVerticalY())
+            .put("raster_scroll_restore_count",resizeRequest==null?0:resizeRequest.restoreCount)
+            .put("raster_scroll_snapshot_view_count",resizeRequest==null?0:resizeRequest.admissionViewCount)
             .put("pointer_capture_active",down).put("capture_window_id",pointerDialog==null?0:windowIds.get(pointerDialog))
             .put("evidence","current-android-view-layout; native-geometry-qualified-separately").put("visible_confirmation",false);
     }
@@ -725,10 +733,15 @@ static final class VisibilityReadback {
             smooth=view instanceof ScrollView?((ScrollView)view).isSmoothScrollingEnabled():
                 view instanceof android.widget.HorizontalScrollView&&((android.widget.HorizontalScrollView)view).isSmoothScrollingEnabled();
         }
+        void cancelMotion(){
+            if(view instanceof ScrollView)((ScrollView)view).fling(0);
+            else if(view instanceof android.widget.HorizontalScrollView)((android.widget.HorizontalScrollView)view).fling(0);
+        }
         void freeze(){
-            if(view instanceof ScrollView){((ScrollView)view).fling(0);((ScrollView)view).setSmoothScrollingEnabled(false);}
+            cancelMotion();
+            if(view instanceof ScrollView){((ScrollView)view).setSmoothScrollingEnabled(false);}
             else if(view instanceof android.widget.HorizontalScrollView){
-                ((android.widget.HorizontalScrollView)view).fling(0);((android.widget.HorizontalScrollView)view).setSmoothScrollingEnabled(false);
+                ((android.widget.HorizontalScrollView)view).setSmoothScrollingEnabled(false);
             }
         }
         void restoreSmooth(){
@@ -753,14 +766,17 @@ static final class VisibilityReadback {
         void freeze(){for(ViewScrollState value:values)value.freeze();}
         boolean restore(){boolean changed=false;for(ViewScrollState value:values){
             if(value.view.getScrollX()!=value.x||value.view.getScrollY()!=value.y){value.view.scrollTo(value.x,value.y);changed=true;}
+            value.cancelMotion();
         }return changed;}
         void restoreSmooth(){for(ViewScrollState value:values)value.restoreSmooth();}
+        int firstVerticalY(){for(ViewScrollState value:values)if(value.view instanceof ScrollView)return value.y;return 0;}
+        int currentFirstVerticalY(){for(ViewScrollState value:values)if(value.view instanceof ScrollView)return value.view.getScrollY();return 0;}
     }
     /** One admitted writer handoff. State1 also owes completed layout and original scroll. */
     private static final class ResizeRequest {
         final long id;final int width,height;Surface target;
         volatile int state;volatile int deferrals;volatile String reason="queued";
-        boolean mutating,rollingBack;int oldWidth,oldHeight,stableFrames;float oldScale;
+        boolean mutating,rollingBack;int oldWidth,oldHeight,stableFrames,restoreCount,restoreAttempts,admissionViewCount,commitScrollY;float oldScale;
         ScrollSnapshot observedScroll,scroll;ViewTreeObserver observer;ViewTreeObserver.OnPreDrawListener listener;
         ViewTreeObserver commitObserver;Runnable frameCommit;long frameSerial;boolean framePending;
         ResizeRequest(long id,Surface target,int width,int height){this.id=id;this.target=target;this.width=width;this.height=height;}
@@ -825,6 +841,7 @@ static final class VisibilityReadback {
         request.reason=reason;request.state=releaseResizeTarget(request)?-1:-2;
     }
     private void deferResize(final ResizeRequest request,String reason){
+        request.scroll=null;request.observedScroll=null;request.stableFrames=0;
         request.reason=reason;if(request.deferrals<Integer.MAX_VALUE)request.deferrals++;
         if(!resizePolls.postDelayed(new Runnable(){public void run(){applyResize(request);}},100))abortResizeSafely(request,"queue-unavailable");
     }
@@ -835,6 +852,8 @@ static final class VisibilityReadback {
             String busy=resizeBusyReason();if(busy!=null){deferResize(request,busy);return;}
             if(!request.target.isValid()){abortResizeSafely(request,"surface-invalid");return;}
             if(android.os.Build.VERSION.SDK_INT<29||!rootRaster.isHardwareAccelerated()){abortResizeSafely(request,"frame-commit-unavailable");return;}
+            if(request.scroll==null){request.scroll=ScrollSnapshot.capture(root);request.admissionViewCount=request.scroll.values.size();
+                Log.i(TAG,"event=raster-scroll-admission generation="+generation+" request="+request.id+" scrollY="+request.scroll.firstVerticalY()+" views="+request.admissionViewCount);}
             request.reason="awaiting-scroll-stability";request.observedScroll=ScrollSnapshot.capture(root);
             request.observer=rootRaster.getViewTreeObserver();
             request.listener=new ViewTreeObserver.OnPreDrawListener(){public boolean onPreDraw(){
@@ -843,10 +862,13 @@ static final class VisibilityReadback {
                     String busy=resizeBusyReason();
                     if(busy!=null){removeResizeObserver(request);deferResize(request,busy);return true;}
                     ScrollSnapshot now=ScrollSnapshot.capture(root);
-                    request.stableFrames=now.samePositions(request.observedScroll)?request.stableFrames+1:0;
+                    boolean unchanged=now.samePositions(request.observedScroll);
+                    request.stableFrames=unchanged?request.stableFrames+1:0;
+                    if(!unchanged){request.scroll=now;request.admissionViewCount=now.values.size();
+                        Log.i(TAG,"event=raster-scroll-rebased-before-mutation generation="+generation+" request="+request.id+" scrollY="+now.firstVerticalY());}
                     request.observedScroll=now;
                     if(request.stableFrames<2){rootRaster.invalidate();return true;}
-                    removeResizeObserver(request);request.scroll=now;beginResizeMutation(request);return false;
+                    removeResizeObserver(request);beginResizeMutation(request);return false;
                 }
             }};
             request.observer.addOnPreDrawListener(request.listener);rootRaster.invalidate();
@@ -865,7 +887,7 @@ static final class VisibilityReadback {
         try{
             display.setSurface(null);display.resize(request.oldWidth,request.oldHeight,densityDpi);
             rasterScale=request.oldScale;rootRaster.setRasterScale(rasterScale);display.setSurface(surface);
-            request.rollingBack=true;awaitResizeLayout(request);
+            request.rollingBack=true;request.restoreAttempts=0;awaitResizeLayout(request);
         }catch(RuntimeException failure){
             if(request.scroll!=null)request.scroll.restoreSmooth();request.reason="mutation-uncertain";request.state=-2;
         }
@@ -877,9 +899,17 @@ static final class VisibilityReadback {
             synchronized(NativeMeshUiProducer.this){
                 if(!resizeOwnerCurrent(request))return true;
                 int width=request.rollingBack?request.oldWidth:request.width,height=request.rollingBack?request.oldHeight:request.height;
-                if(rootRaster.isLayoutRequested()||root.isLayoutRequested()||rootRaster.getWidth()!=width||rootRaster.getHeight()!=height){rootRaster.invalidate();return false;}
+                if(!resizePhysicalLayoutReady(width,height)){rootRaster.invalidate();return false;}
                 try{
-                    if(request.scroll.restore()){rootRaster.invalidate();return false;}
+                    if(request.scroll.restore()){
+                        request.restoreCount++;request.restoreAttempts++;
+                        if(request.restoreAttempts>8){
+                            if(!request.rollingBack)rollbackResize(request);
+                            else{removeResizeObserver(request);request.scroll.restoreSmooth();request.reason="scroll-restore-uncertain";request.state=-2;}
+                            return false;
+                        }
+                        rootRaster.invalidate();return false;
+                    }
                     if(!request.framePending)registerRestoredFrame(request);
                     return true;
                 }catch(RuntimeException failure){
@@ -890,7 +920,12 @@ static final class VisibilityReadback {
             }
         }};
         request.observer.addOnPreDrawListener(request.listener);rootRaster.requestLayout();rootRaster.invalidate();
-    }    private void registerRestoredFrame(final ResizeRequest request){
+    }    private boolean resizePhysicalLayoutReady(int width,int height){
+        View decor=presentation==null?null:presentation.getWindow().getDecorView();
+        return decor!=null&&!decor.isLayoutRequested()&&!rootRaster.isLayoutRequested()&&!root.isLayoutRequested()
+            &&decor.getWidth()==width&&decor.getHeight()==height&&rootRaster.getWidth()==width&&rootRaster.getHeight()==height;
+    }
+    private void registerRestoredFrame(final ResizeRequest request){
         if(android.os.Build.VERSION.SDK_INT<29||!rootRaster.isHardwareAccelerated())throw new IllegalStateException("mesh-frame-commit-unavailable");
         request.reason="awaiting-restored-frame-commit";request.framePending=true;
         final long serial=++request.frameSerial;request.commitObserver=rootRaster.getViewTreeObserver();
@@ -904,17 +939,18 @@ static final class VisibilityReadback {
             if(!resizeOwnerCurrent(request)||serial!=request.frameSerial||!request.framePending)return;
             request.framePending=false;request.commitObserver=null;request.frameCommit=null;
             int width=request.rollingBack?request.oldWidth:request.width,height=request.rollingBack?request.oldHeight:request.height;
-            if(rootRaster.isLayoutRequested()||root.isLayoutRequested()||rootRaster.getWidth()!=width||rootRaster.getHeight()!=height
-                    ||!ScrollSnapshot.capture(root).samePositions(request.scroll)){
+            if(!resizePhysicalLayoutReady(width,height)||!ScrollSnapshot.capture(root).samePositions(request.scroll)){
                 request.reason="layout-changed-before-frame-ack";rootRaster.invalidate();return;
             }
+            request.scroll.restore();request.commitScrollY=request.scroll.currentFirstVerticalY();
             removeResizeObserver(request);request.scroll.restoreSmooth();
             if(request.rollingBack){abortResizeSafely(request,"rolled-back-frame-restored");return;}
             Surface previous=surface;surface=request.target;request.target=null;rasterWidth=request.width;rasterHeight=request.height;
             rasterEpoch=request.id;request.reason="writer-frame-scroll-committed";request.state=1;
             try{previous.release();}catch(RuntimeException failure){uncertainSurfaces.add(previous);}
             Log.i(TAG,"event=raster-writer-committed generation="+generation+" request="+request.id+" epoch="+rasterEpoch
-                +" width="+rasterWidth+" height="+rasterHeight+" scrollRetained=true evidence=restored-frame-swapchain-commit");
+                +" width="+rasterWidth+" height="+rasterHeight+" scrollRetained=true admissionScrollY="+request.scroll.firstVerticalY()
+                +" commitScrollY="+request.commitScrollY+" restoreCount="+request.restoreCount+" evidence=restored-frame-swapchain-commit");
         }
     }    private void stopResizeObservation(){
         synchronized(this){
