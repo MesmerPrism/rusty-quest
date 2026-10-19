@@ -415,7 +415,26 @@ static final class VisibilityReadback {
         boolean valid(){return !closed&&current.getAsBoolean();}
         void commitText(String text,int position){if(valid())delegate.commitText(text,position);}
         void performEditorAction(int action){if(valid())delegate.performEditorAction(action);}
-        void key(int code){if(valid()){
+        void deletePrevious(){
+            if(!valid())return;
+            CharSequence selected=delegate.getSelectedText(0);
+            if(!valid())return;
+            if(selected!=null&&selected.length()>0){delegate.commitText("",1);return;}
+            boolean deleted=false;
+            try { deleted=delegate.deleteSurroundingTextInCodePoints(1,0); }
+            catch(AbstractMethodError unsupported){ /* Older original editor implementation. */ }
+            if(deleted||!valid())return;
+            CharSequence before=delegate.getTextBeforeCursor(2,0);
+            if(!valid()||before==null||before.length()==0)return;
+            int count=before.length(),units=1;
+            char last=before.charAt(count-1);
+            if(Character.isLowSurrogate(last)){
+                if(count<2||!Character.isHighSurrogate(before.charAt(count-2)))return;
+                units=2;
+            }else if(Character.isHighSurrogate(last))return;
+            delegate.deleteSurroundingText(units,0);
+        }
+        void key(int code){if(code==KeyEvent.KEYCODE_DEL){deletePrevious();return;}if(valid()){
             delegate.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN,code));
             delegate.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_UP,code));
         }}
