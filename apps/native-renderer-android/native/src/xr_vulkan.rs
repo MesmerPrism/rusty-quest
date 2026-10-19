@@ -1645,6 +1645,20 @@ unsafe fn run_projection_loop_inner(
         runtime_options.private_particle_world_anchor_scale_m,
         runtime_options.foveation_settings,
         projection_swapchain_settings,
+        [
+            device_properties
+                .limits
+                .max_image_dimension2_d
+                .min(device_properties.limits.max_framebuffer_width)
+                .min(device_properties.limits.max_viewport_dimensions[0])
+                .min(i32::MAX as u32),
+            device_properties
+                .limits
+                .max_image_dimension2_d
+                .min(device_properties.limits.max_framebuffer_height)
+                .min(device_properties.limits.max_viewport_dimensions[1])
+                .min(i32::MAX as u32),
+        ],
         projection_foveation_vulkan_support,
         projection_border_stretch_settings,
         private_layer_settings,
@@ -2352,6 +2366,7 @@ unsafe fn run_projection_frames(
     private_particle_world_anchor_scale_m: f32,
     foveation_settings: NativeFoveationSettings,
     projection_swapchain_settings: NativeProjectionSwapchainSettings,
+    projection_swapchain_maximum: [u32; 2],
     projection_foveation_vulkan_support: ProjectionFoveationVulkanSupport,
     projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     mut private_layer_settings: NativePrivateLayerSettings,
@@ -2760,6 +2775,7 @@ unsafe fn run_projection_frames(
             enabled_extensions,
             foveation_settings,
             projection_swapchain_settings,
+            projection_swapchain_maximum,
             projection_foveation_vulkan_support,
             swapchain,
         )?;
@@ -5540,6 +5556,7 @@ unsafe fn ensure_projection_swapchain<'a>(
     enabled_extensions: &xr::ExtensionSet,
     foveation_settings: NativeFoveationSettings,
     projection_swapchain_settings: NativeProjectionSwapchainSettings,
+    projection_swapchain_maximum: [u32; 2],
     projection_foveation_vulkan_support: ProjectionFoveationVulkanSupport,
     swapchain: &'a mut Option<ProjectionSwapchain>,
 ) -> Result<&'a mut ProjectionSwapchain, String> {
@@ -5562,9 +5579,31 @@ unsafe fn ensure_projection_swapchain<'a>(
             width: views[0].recommended_image_rect_width,
             height: views[0].recommended_image_rect_height,
         };
+        let graphics = xr_instance
+            .system_properties(system)
+            .map_err(|error| format!("get OpenXR swapchain limits: {error}"))?
+            .graphics_properties;
+        // One array extent must satisfy both eyes, the XR system and every Vulkan
+        // resource/viewport that consumes it. Resolve a common scale before rounding.
+        let maximum = [
+            views[0]
+                .max_image_rect_width
+                .min(views[1].max_image_rect_width)
+                .min(graphics.max_swapchain_image_width)
+                .min(projection_swapchain_maximum[0]),
+            views[0]
+                .max_image_rect_height
+                .min(views[1].max_image_rect_height)
+                .min(graphics.max_swapchain_image_height)
+                .min(projection_swapchain_maximum[1]),
+        ];
+        let resolved = projection_swapchain_settings.resolve_extent(
+            [recommended_extent.width, recommended_extent.height],
+            maximum,
+        )?;
         let extent = vk::Extent2D {
-            width: projection_swapchain_settings.scaled_dimension(recommended_extent.width),
-            height: projection_swapchain_settings.scaled_dimension(recommended_extent.height),
+            width: resolved.width,
+            height: resolved.height,
         };
         let fdm_requested = foveation_settings.requested()
             && enabled_extensions.fb_foveation
@@ -5610,13 +5649,17 @@ unsafe fn ensure_projection_swapchain<'a>(
         crate::marker(
             "openxr-swapchain",
             format!(
-                "status=created width={} height={} recommendedWidth={} recommendedHeight={} projectionSwapchainResolutionScale={:.3} projectionSwapchainScaleApplied={} views={} images={} colorFormat={:?} renderPath=per-eye-array-layer-clear foveationSwapchainCreateFdmRequested={} foveationSwapchainCreateMetaSubsampledRequested={} {} openxrSubmitReady=pending",
+                "status=created width={} height={} recommendedWidth={} recommendedHeight={} projectionSwapchainResolutionScale={:.3} projectionSwapchainScaleApplied={} projectionSwapchainEffectiveScale={:.6} projectionSwapchainMaxWidth={} projectionSwapchainMaxHeight={} projectionSwapchainScaleClamped={} projectionSwapchainLimits=both-eye+system+vulkan views={} images={} colorFormat={:?} renderPath=per-eye-array-layer-clear foveationSwapchainCreateFdmRequested={} foveationSwapchainCreateMetaSubsampledRequested={} {} openxrSubmitReady=pending",
                 extent.width,
                 extent.height,
                 recommended_extent.width,
                 recommended_extent.height,
                 projection_swapchain_settings.resolution_scale,
-                projection_swapchain_settings.scale_applied(),
+                extent != recommended_extent,
+                resolved.effective_scale,
+                maximum[0],
+                maximum[1],
+                resolved.limits_clamped,
                 VIEW_COUNT,
                 buffers.len(),
                 color_format,

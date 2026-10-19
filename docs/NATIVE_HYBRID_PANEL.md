@@ -55,6 +55,29 @@ Higher raster density costs image memory and sampling/producer work. Direct
 vector UI remains limited by the final eye-buffer resolution and foveation.
 Neither architecture alone establishes faster rendering or better readability.
 
+## Eye-buffer resolution
+
+The startup property
+`debug.rustyquest.native_renderer.projection.swapchain.resolution_scale` controls
+the Vulkan eye-buffer dimensions relative to the OpenXR recommendation. It
+defaults to 1.0 and accepts finite values from 0.5 to 1.4, including 1.2 and 1.4
+supersampling. Invalid or nonfinite input falls back to 1.0. Changing the setting
+requires restarting the native renderer; it is not a live toolbar control.
+
+This setting is independent of Android DETAIL, physical panel size and the
+runtime eye FOV. A shared scale is limited by both eyes' OpenXR maxima, system
+swapchain limits and Vulkan image, framebuffer and viewport limits. Actual
+dimensions propagate through both eye layers, attachments, viewport/scissor and
+submitted image rectangles. The swapchain creation marker reports requested
+scale, bounded effective scale, actual/recommended dimensions and whether limits
+clamped the request. A property readback alone does not establish adoption.
+
+At 1.2 and 1.4, eye pixel area grows by approximately 44% and 96% before rounding.
+Attachment memory, bandwidth and fragment work may increase. The native Vulkan
+path remains single-sample; this option does not enable MSAA. Compare original
+forms, native text and advancing particles in both eyes, with the same Android
+DETAIL and scene settings, and measure actual frame timing for each scale.
+
 ## Cost observations
 
 With the existing timestamp diagnostics enabled, native panel draw regions have

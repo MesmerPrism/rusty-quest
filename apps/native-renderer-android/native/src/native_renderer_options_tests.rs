@@ -324,6 +324,98 @@ mod tests {
         );
     }
 
+    fn projection_scale_settings(
+        value: &str,
+    ) -> crate::native_renderer_projection_swapchain_options::NativeProjectionSwapchainSettings
+    {
+        crate::native_renderer_projection_swapchain_options::NativeProjectionSwapchainSettings::from_property_lookup(
+            |name| {
+                assert_eq!(name, PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE);
+                Some(value.to_owned())
+            },
+        )
+    }
+
+    #[test]
+    fn projection_swapchain_upscale_presets_resolve_actual_dimensions() {
+        for (value, expected) in [
+            ("1.0", [1440, 1584]),
+            ("1.2", [1728, 1901]),
+            ("1.4", [2016, 2218]),
+        ] {
+            let settings = projection_scale_settings(value);
+            let extent = settings.resolve_extent([1440, 1584], [4096, 4096]).unwrap();
+            assert_eq!([extent.width, extent.height], expected);
+            assert_eq!(settings.scaled_dimension(1440), expected[0]);
+            assert_eq!(settings.scaled_dimension(1584), expected[1]);
+            assert_eq!(settings.scale_applied(), value != "1.0");
+            assert!(!extent.limits_clamped);
+        }
+        let legacy = projection_scale_settings("0.72");
+        assert_eq!(legacy.scaled_dimension(1680), 1210);
+        let extent = legacy.resolve_extent([1680, 1760], [4096, 4096]).unwrap();
+        assert_eq!([extent.width, extent.height], [1210, 1267]);
+        assert_eq!(projection_scale_settings("9").resolution_scale, 1.4);
+        assert_eq!(projection_scale_settings("0.1").resolution_scale, 0.5);
+    }
+
+    #[test]
+    fn projection_swapchain_nonfinite_scales_fall_back_to_unity() {
+        let default = crate::native_renderer_projection_swapchain_options::NativeProjectionSwapchainSettings::from_property_lookup(|_| None);
+        assert_eq!(default.resolution_scale, 1.0);
+        assert!(!default.scale_applied());
+        for value in ["NaN", "inf", "-inf", "invalid"] {
+            let settings = projection_scale_settings(value);
+            assert_eq!(settings.resolution_scale, 1.0);
+            assert!(!settings.scale_applied());
+            let extent = settings.resolve_extent([1440, 1584], [4096, 4096]).unwrap();
+            assert_eq!([extent.width, extent.height], [1440, 1584]);
+            assert!(!extent.limits_clamped);
+        }
+    }
+
+    #[test]
+    fn projection_swapchain_limits_cap_both_axes_with_one_scale() {
+        let settings = projection_scale_settings("1.4");
+        let extent = settings.resolve_extent([1440, 1584], [1800, 2000]).unwrap();
+        assert_eq!([extent.width, extent.height], [1800, 1980]);
+        assert_eq!(extent.effective_scale, 1.25);
+        assert!(extent.limits_clamped);
+        let height_limited = settings.resolve_extent([1440, 1584], [4096, 1900]).unwrap();
+        assert_eq!(height_limited.height, 1900);
+        assert_eq!(height_limited.width, 1727);
+        assert!(height_limited.limits_clamped);
+    }
+
+    #[test]
+    fn projection_swapchain_extent_rejects_invalid_capabilities() {
+        let settings = projection_scale_settings("1.2");
+        for (recommended, maximum) in [
+            ([0, 1584], [4096, 4096]),
+            ([1440, 0], [4096, 4096]),
+            ([1440, 1584], [0, 4096]),
+            ([1440, 1584], [4096, 0]),
+            ([1440, 1584], [1439, 4096]),
+            ([1440, 1584], [4096, 1583]),
+        ] {
+            assert!(settings.resolve_extent(recommended, maximum).is_err());
+        }
+    }
+
+    #[test]
+    fn projection_swapchain_rounding_and_u32_limits_stay_bounded() {
+        let settings = projection_scale_settings("1.4");
+        let rounded = settings.resolve_extent([3, 7], [4, 10]).unwrap();
+        assert_eq!([rounded.width, rounded.height], [4, 9]);
+        let maximum = settings
+            .resolve_extent([u32::MAX - 3, 1], [u32::MAX, u32::MAX])
+            .unwrap();
+        assert_eq!(maximum.width, u32::MAX);
+        assert_eq!(maximum.height, 1);
+        assert!(maximum.limits_clamped);
+        assert_eq!(settings.scaled_dimension(u32::MAX), u32::MAX);
+    }
+
     #[test]
     fn stimulus_volume_render_mode_suppresses_stale_projection_target_controls() {
         let options = options_from(&[
