@@ -145,6 +145,17 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(result["dispatch"]["state"], "not_sent")
         self.assertEqual(result["callback"]["state"], "not_received")
 
+    def test_android_fingerprint_signing_key_lists_preserve_exact_bytes(self):
+        fingerprint = "synthetic/product/build:14/test/user/key-one,key-two:release-keys"
+        self.request["firmware"]["fingerprint"] = fingerprint
+        result = self.run_session("readiness")
+        self.assertEqual(result["availability"]["status"], "ready")
+        command = FakeTransport.instances[-1].launch_command if hasattr(FakeTransport.instances[-1], "launch_command") else provider.Session(self.request, "readiness", FakeTransport).launch_command
+        self.assertIn(fingerprint, command())
+        self.request["firmware"]["fingerprint"] = fingerprint + ";reboot"
+        with self.assertRaises(ValueError):
+            provider.validate(self.request)
+
     def test_wrong_privilege_fails_before_stage_or_launch(self):
         FakeTransport.failed_guard = True
         result = self.run_session()
