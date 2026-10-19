@@ -112,6 +112,9 @@ class LifecycleTests(unittest.TestCase):
                         "source": {"revision": "a" * 40, "tree": "b" * 40, "source_id": "c" * 64},
                         "firmware": {"fingerprint": "synthetic/product/build:14/test/user/release-keys",
                                      "vrshell_sha256": "d" * 64, "framework_sha256": "e" * 64}}
+        store = patch.object(provider, "original_store_root", return_value=root / "originals")
+        store.start()
+        self.addCleanup(store.stop)
         FakeTransport.starts = 0
         FakeTransport.instances = []
         FakeTransport.outcome = "ORIGINAL_RESULT"
@@ -211,12 +214,36 @@ class LifecycleTests(unittest.TestCase):
         original_output = self.request["output_dir"]
         for field in ("damaged_state", "damaged_pid", "damaged_intent"):
             setattr(FakeTransport, field, True)
+            self.request["request_id"] = provider.digest(field.encode())[:32]
             self.request["output_dir"] = original_output + "-" + field
             result = self.run_session()
             self.assertFalse(result["original"]["retired"], field)
             self.assertEqual(result["cleanup"]["state"], "held", field)
             self.assertFalse(any(c[:2] == ("shell", "rm") for c in FakeTransport.instances[-1].commands), field)
             setattr(FakeTransport, field, False)
+
+    def test_identity_journal_blocks_changed_output_and_lost_evidence_replay(self):
+        result = self.run_session()
+        changed = copy.deepcopy(self.request)
+        changed["output_dir"] += "-changed"
+        with self.assertRaisesRegex(ValueError, "original-identity-already-owned"):
+            provider.Session(changed, "recenter", FakeTransport).run()
+        changed = copy.deepcopy(self.request)
+        changed["nonce"] = "3" * 32
+        with self.assertRaisesRegex(ValueError, "original-identity-already-owned"):
+            provider.Session(changed, "recenter", FakeTransport).run()
+        with self.assertRaisesRegex(ValueError, "original-mode-cannot-change"):
+            self.run_session("readiness")
+        output = Path(self.request["output_dir"])
+        # Simulate operator evidence loss without touching the durable identity.
+        for path in output.iterdir():
+            path.unlink()
+        output.rmdir()
+        held = self.run_session()
+        self.assertEqual(held["dispatch"]["state"], "unknown")
+        self.assertEqual(held["cleanup"]["state"], "held")
+        self.assertEqual(FakeTransport.starts, 1)
+        self.assertTrue(result["original"]["retired"])
 
     def test_artifact_and_original_identity_drift_fail_closed(self):
         self.request["artifact"]["sha256"] = "0" * 64
@@ -225,7 +252,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(result["dispatch"]["state"], "not_sent")
         changed = copy.deepcopy(self.request)
         changed["nonce"] = "3" * 32
-        with self.assertRaisesRegex(ValueError, "original-request-mismatch"):
+        with self.assertRaisesRegex(ValueError, "original-identity-already-owned"):
             provider.reconcile(changed)
 
     def test_closed_requests_and_shell_injection_rejected(self):

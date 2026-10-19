@@ -17,6 +17,15 @@ one deliberate operation. Reconcile only reads the saved original's local
 receipt and never contacts a device. Use a new request and output directory
 for readiness and a different new request for recentering. An existing output
 directory suppresses dispatch, including after completion or a crashed observer.
+In addition, a durable per-user original journal at
+`~/.rusty-quest/shell-recenter/originals` retains each request ID across output
+directories and Quest checkouts. It binds the nonce, complete request hash,
+output directory and mode before any helper can start. Changing the output
+directory, nonce or profile cannot replay that original. Keep this journal
+after completion; deleting evidence leaves the original held, never eligible
+for another dispatch. This is local original ownership, not cross-host or
+remote accepted-command authority. Another host requires its actual owner
+coordination and fresh deliberate operation identity.
 
 The private request has exactly these fields:
 

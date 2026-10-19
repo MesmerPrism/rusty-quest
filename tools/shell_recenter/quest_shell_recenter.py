@@ -142,7 +142,43 @@ def initial(request):
             "cleanup": {"state": "not_started"}}
 
 
+def original_store_root():
+    """Local original ownership, shared across profiles and Quest checkouts."""
+    return Path.home() / ".rusty-quest" / "shell-recenter" / "originals"
+
+
+def original_record(request):
+    path = original_store_root() / (request["request_id"] + ".json")
+    if not path.exists():
+        return None
+    record = read_json(path)
+    if (record.get("schema") != "rusty.quest.shell_recenter.original.v1" or
+            record.get("request_id") != request["request_id"] or
+            record.get("nonce") != request["nonce"] or
+            record.get("request_sha256") != digest(canonical(request)) or
+            record.get("output_dir") != request["output_dir"]):
+        raise ValueError("original-identity-already-owned-by-another-exact-request")
+    return record
+
+
+def claim_original(request, mode):
+    root = original_store_root()
+    root.mkdir(parents=True, exist_ok=True)
+    record = {"schema": "rusty.quest.shell_recenter.original.v1", "request_id": request["request_id"],
+              "nonce": request["nonce"], "request_sha256": digest(canonical(request)),
+              "output_dir": request["output_dir"], "mode": mode}
+    try:
+        publish(root / (request["request_id"] + ".json"), record, exclusive=True)
+        return True
+    except FileExistsError:
+        previous = original_record(request)
+        if previous["mode"] != mode:
+            raise ValueError("original-mode-cannot-change-use-fresh-identity")
+        return False
+
+
 def reconcile(request):
+    record = original_record(request)
     output = Path(request["output_dir"])
     for filename in ("RESULT.json", "STATUS.json"):
         path = output / filename
@@ -155,7 +191,7 @@ def reconcile(request):
                 raise ValueError("original-request-mismatch")
             return result
     result = initial(request)
-    if output.exists():
+    if output.exists() or record is not None:
         result["dispatch"]["state"] = "unknown"
         result["cleanup"]["state"] = "held"
         result["availability"]["reason"] = "original-receipt-unavailable-no-replay"
@@ -327,6 +363,10 @@ class Session:
     def run(self):
         if self.mode not in ("readiness", "recenter"):
             raise ValueError("closed-mode-required")
+        # The replay barrier is independent of the caller-selected output path.
+        # Keep it after completion and even when the evidence directory is lost.
+        if not claim_original(self.request, self.mode):
+            return reconcile(self.request)
         try:
             self.output.mkdir()  # Admission lock: never reuse an original, even a completed one.
         except FileExistsError:
