@@ -22,6 +22,7 @@ import android.view.inputmethod.InputConnectionWrapper;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.function.BooleanSupplier;
@@ -78,11 +79,13 @@ public final class NativeSystemKeyboard implements AutoCloseable {
         if(imm==null)throw new IllegalStateException("system-ime-service-unavailable");
         editor.addTextChangedListener(watcher);
         observedTree=editor.getViewTreeObserver();observedTree.addOnPreDrawListener(selectionObserver);
-        if(android.os.Build.VERSION.SDK_INT>=30)proxy.setOnApplyWindowInsetsListener((view,insets)->{
-            boolean visible=insets.isVisible(WindowInsets.Type.ime());
-            if(visible)observedImeVisible=true;
-            else if(observedImeVisible&&!retired)handler.post(()->close());
-            return insets;
+        if(android.os.Build.VERSION.SDK_INT>=30)proxy.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener(){
+            @Override public WindowInsets onApplyWindowInsets(View view,WindowInsets insets){
+                boolean visible=insets.isVisible(WindowInsets.Type.ime());
+                if(visible)observedImeVisible=true;
+                else if(observedImeVisible&&!retired)handler.post(new Runnable(){public void run(){close();}});
+                return insets;
+            }
         });
         handler.post(requestAgain);
         }catch(RuntimeException failure){
@@ -184,7 +187,11 @@ public final class NativeSystemKeyboard implements AutoCloseable {
         ConnectionLease(InputConnection original){
             this.original=original;wrapper=new InputConnectionWrapper(original,true);
             guarded=(InputConnection)Proxy.newProxyInstance(InputConnection.class.getClassLoader(),new Class<?>[]{InputConnection.class},
-                (object,method,arguments)->invoke(object,method,arguments));
+                new InvocationHandler(){
+                    @Override public Object invoke(Object object,Method method,Object[] arguments)throws Throwable{
+                        return ConnectionLease.this.invoke(object,method,arguments);
+                    }
+                });
         }
         Object invoke(Object object,Method method,Object[] arguments)throws Throwable{
             if(method.getDeclaringClass()==Object.class){
