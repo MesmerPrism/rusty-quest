@@ -20,11 +20,11 @@ import org.json.JSONObject;
 
 /** Genuine same-UID framework Application construction; no identity field writes. */
 @SuppressWarnings("deprecation") // app_process main looper and read-only AppOps identity check.
-final class ShellApplicationContext {
+public final class ShellApplicationContext {
     static final String PACKAGE = "com.android.shell";
     private ShellApplicationContext() {}
 
-    static Application create(JSONObject evidence) throws Exception {
+    public static Application create(JSONObject evidence) throws Exception {
         require(Process.myUid() == 2000 && Os.getuid() == 2000 && Os.geteuid() == 2000,
                 "actual-shell-uid-required");
         require(Build.VERSION.SDK_INT >= 31, "attribution-api-unavailable");
