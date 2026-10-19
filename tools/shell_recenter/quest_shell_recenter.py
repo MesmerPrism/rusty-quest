@@ -98,7 +98,7 @@ def validate(request):
         match(request["source"][key], r"[0-9a-f]{40}")
     match(request["source"]["source_id"], r"[0-9a-f]{64}")
     exact(request["firmware"], {"fingerprint", "vrshell_sha256", "framework_sha256"})
-    match(request["firmware"]["fingerprint"], r"[A-Za-z0-9_./:+-]{1,512}")
+    match(request["firmware"]["fingerprint"], r"[A-Za-z0-9_./:,+-]{1,512}")
     for key in ("vrshell_sha256", "framework_sha256"):
         match(request["firmware"][key], r"[0-9a-f]{64}")
     return request
