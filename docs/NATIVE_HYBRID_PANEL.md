@@ -9,7 +9,8 @@ The native toolbar draws rounded shapes and an independently authored compact
 stroke alphabet directly in the existing eye passes. FORMS changes only the
 presentation of the Android form texture; CENTER places the panel in front of
 the current valid head pose; SIZE changes physical panel dimensions through the
-existing presentation state. Original panel visibility shortcuts still hide
+existing presentation state. DETAIL cycles Auto, 1x, 1.5x and 2x form density
+without changing physical size or application settings. Original panel visibility shortcuts still hide
 both forms and toolbar. Toolbar actions do not start recording or change
 particle settings.
 
@@ -25,20 +26,41 @@ remain distinct.
 
 Original layout, input and geometry metadata remain 1,024 by 768 logical units.
 The hybrid selection initially renders the Android surface at 1,536 by 1,152
-pixels. The producer supports bounded 1x, 1.5x and 2x startup tiers. Logical
+pixels. Auto selects bounded 1x, 1.5x and 2x tiers from both eyes' projected
+footprint, holding invalid, near-plane-crossing or offscreen observations.
+Automatic changes require twelve stable frame observations, twenty-percent downshift
+hysteresis and a minimum 120-frame dwell after adoption. Logical
 wrappers scale the original content tree and modal content without
 changing the resource density or replacing application callbacks. Physical
 panel size is controlled independently by its pose, not by raster dimensions.
 
-`native_panel_resolution` also supplies a bounded recommendation policy with
-hysteresis and a minimum dwell interval. This version does not replace a live
-image reader or automatically apply those recommendations. Live resizing would
-need explicit producer/image and GPU-fence retirement; a recommendation is not
-an adopted resolution.
+The existing VirtualDisplay changes its backing Surface and dimensions while
+retaining the Activity, display identity, Presentation and original widget tree.
+Density DPI, logical layout and physical size stay independent. A handoff waits
+while an editor, keyboard, modal, selection action, pointer gesture or paused
+owner is active. Cached modal wrappers update their scale when shown again.
+
+Raster epochs are separate from the application control generation. At most one
+new reader is staged; another change waits for prior reader images to retire.
+Every retained image owns its reader through the existing Vulkan import and
+frame-fence lifetime. The old texture stays drawable until a valid new image is
+imported. An uncertain handoff retains resources and disables further changes.
+Request, writer acknowledgement, image adoption and queue submission are distinct
+observations; none alone proves visible pixels.
 
 Higher raster density costs image memory and sampling/producer work. Direct
 vector UI remains limited by the final eye-buffer resolution and foveation.
 Neither architecture alone establishes faster rendering or better readability.
+
+## Cost observations
+
+With the existing timestamp diagnostics enabled, native panel draw regions have
+separate left/right GPU query spans and a paired marker. These command-region
+spans can contain overlapping prior work and are already inside projection
+composition; they must not be added to it as incremental shader cost. Periodic
+CPU preparation markers include acquisition, import, policy and toolbar updates.
+Compare fixed tiers in the same app, with equal scene and eye-buffer settings,
+and keep captures outside the idle timing windows.
 
 ## Meta system keyboard
 

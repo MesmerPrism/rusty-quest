@@ -46,11 +46,12 @@ impl Primitive {
         p
     }
 }
-/// Bounds in panel-height units; actions stay with the caller. Ordering is FORMS/CENTER/SIZE.
-pub(crate) const BUTTONS: [[f32; 4]; 3] = [
+/// Bounds in panel-height units; actions stay with the caller. FORMS/CENTER/SIZE/DETAIL.
+pub(crate) const BUTTONS: [[f32; 4]; 4] = [
     [-0.45, 0.59, 0.135, 0.035],
     [-0.15, 0.59, 0.135, 0.035],
     [0.15, 0.59, 0.135, 0.035],
+    [0.45, 0.59, 0.135, 0.035],
 ];
 pub(crate) fn hit_button(point: [f32; 2]) -> Option<usize> {
     BUTTONS
@@ -66,11 +67,11 @@ pub(crate) struct ToolbarState<'a> {
 pub(crate) fn toolbar_geometry(state: ToolbarState<'_>) -> Vec<Primitive> {
     let mut out = Vec::with_capacity(256);
     out.push(Primitive::rounded_rect(
-        [-0.15, 0.62, 0.46, 0.085],
+        [0.0, 0.62, 0.61, 0.085],
         0.018,
         [0.022, 0.031, 0.045, 0.97],
     ));
-    for (i, label) in ["FORMS", "CENTER", "SIZE"].iter().enumerate() {
+    for (i, label) in ["FORMS", "CENTER", "SIZE", "DETAIL"].iter().enumerate() {
         let c = if state.pressed == Some(i) {
             [0.08, 0.40, 0.57, 1.0]
         } else if state.hovered == Some(i) {
@@ -272,7 +273,7 @@ mod tests {
             left - right > height * 0.2,
             "stroke cores must have real interglyph space"
         );
-        for label in ["FORMS", "CENTER", "SIZE"] {
+        for label in ["FORMS", "CENTER", "SIZE", "DETAIL"] {
             assert!(
                 text_width(label.len(), height) + height * GLYPH_STROKE_WIDTH < BUTTONS[0][2] * 2.0
             );

@@ -7,12 +7,12 @@ use crate::{
     gpu_hand_mesh_visual::HandMeshVisualEyeProjection,
     gpu_native_panel_ui::GpuNativePanelUi,
     native_alternate_input::PointerOwner,
-    native_hybrid_panel::{HybridPanelState, PanelAction},
+    native_hybrid_panel::{DetailMode, HybridPanelState, PanelAction},
     native_mesh_ui::{
         self, PointerCapture,
         android::{ImageLease, Producer},
     },
-    native_panel_resolution::RasterExtent,
+    native_panel_resolution::{AdaptiveResolution, ProjectionEye, ProjectionPanel, RasterExtent, projected_footprint},
     native_panel_ui_geometry::{self, Primitive, ToolbarState},
     native_pointer_visual::{PointerVisual, segment_pose},
 };
@@ -37,11 +37,14 @@ pub(crate) struct GpuMeshUiPanel {
     hybrid: HybridPanelState,
     hybrid_forms_slots: [bool; 2],
     hybrid_geometry: Vec<Primitive>,
-    hybrid_geometry_key: Option<(Option<usize>, Option<usize>, bool)>,
+    hybrid_geometry_key: Option<(Option<usize>, Option<usize>, bool, RasterExtent, DetailMode)>,
     raster_extent: RasterExtent,
+    adaptive: AdaptiveResolution,
+    adaptation_faulted: bool,
+    raster_epoch: u64,
     latest_head: Option<HandMeshVisualEyeProjection>,
     hybrid_suppressed_forms_pointer: bool,
-    hybrid_last_submission: Option<(bool, u64)>,
+    hybrid_last_submission: Option<(bool, u64, RasterExtent, DetailMode)>,
     producer: Option<Producer>,
     ahb: ahb::AhbVulkanDevice,
     memory: vk::PhysicalDeviceMemoryProperties,
@@ -277,7 +280,7 @@ impl GpuMeshUiPanel {
             crate::marker(
                 "native-hybrid-ui",
                 format!(
-                    "event=created nativeMeshUiHybrid=true logicalWidth={} logicalHeight={} rasterWidth={} rasterHeight={} frameOwner=native-openxr drawMode=instanced-sdf makepadDependency=false adaptiveResize=false",
+                    "event=created nativeMeshUiHybrid=true logicalWidth={} logicalHeight={} rasterWidth={} rasterHeight={} frameOwner=native-openxr drawMode=instanced-sdf makepadDependency=false adaptiveResize=true",
                     native_mesh_ui::WIDTH,
                     native_mesh_ui::HEIGHT,
                     raster_extent.width,
@@ -292,6 +295,9 @@ impl GpuMeshUiPanel {
             hybrid_geometry: Vec::new(),
             hybrid_geometry_key: None,
             raster_extent,
+            adaptive: AdaptiveResolution::new(raster_extent),
+            adaptation_faulted: false,
+            raster_epoch: 1,
             latest_head: None,
             hybrid_suppressed_forms_pointer: false,
             hybrid_last_submission: None,
@@ -319,6 +325,41 @@ impl GpuMeshUiPanel {
             adopted_frames: 0,
         })
     }
+    unsafe fn update_resolution(&mut self, app: &android_activity::AndroidApp, eyes: &[ProjectionEye; 2], frame: u64) {
+        if self.native_ui.is_none() || self.adaptation_faulted { return; }
+        let Some(producer) = self.producer.as_mut() else { return; };
+        if let Err(error) = producer.poll_resize(app) {
+            self.adaptation_faulted = true;
+            crate::marker("native-panel-resolution", format!("event=adaptation-disabled reason={error:?} previousTextureRetained=true"));
+            return;
+        }
+        // One transition at a time, including first-image adoption and old GPU retirement.
+        if producer.resize_pending() || producer.raster_extent() != self.raster_extent {
+            self.adaptive.hold(frame); return;
+        }
+        if !self.frame_controls.pose_initialized || !self.frame_controls.panel_visible
+            || !self.hybrid.forms_visible || self.pointer.captured() || self.hybrid.captured.is_some() {
+            self.adaptive.hold(frame); return;
+        }
+        let p = self.frame_controls.pose;
+        let next = match self.hybrid.detail {
+            DetailMode::Auto => match projected_footprint(ProjectionPanel {
+                center: p.center, right: p.right, up: p.up, width: p.width, height: p.height,
+            }, eyes) {
+                Some(footprint) => self.adaptive.recommend(footprint, frame),
+                None => self.adaptive.hold(frame),
+            },
+            DetailMode::Base => RasterExtent::BASE,
+            DetailMode::Medium => RasterExtent::MEDIUM,
+            DetailMode::High => RasterExtent::HIGH,
+        };
+        if next != producer.raster_extent() {
+            if let Err(error) = unsafe { producer.request_resize(app, next) } {
+                self.adaptation_faulted = true;
+                crate::marker("native-panel-resolution", format!("event=adaptation-disabled reason={error:?} previousTextureRetained=true"));
+            }
+        }
+    }
     /// MUST run after this slot fence completed, outside renderpass. Old image remains leased
     /// by latest/other slot while referenced; no AHB identity cache or stale descriptor reuse.
     pub(crate) unsafe fn prepare_frame(
@@ -326,6 +367,9 @@ impl GpuMeshUiPanel {
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         slot: usize,
+        app: &android_activity::AndroidApp,
+        eyes: &[ProjectionEye; 2],
+        frame: u64,
     ) -> Result<bool, String> {
         if slot >= 2 {
             return Err("mesh UI frame slot out of range".into());
@@ -336,20 +380,74 @@ impl GpuMeshUiPanel {
         self.frame_controls = native_mesh_ui::snapshot();
         self.poses[slot] = self.frame_controls.pose;
         self.hybrid_forms_slots[slot] = self.hybrid.forms_visible;
+        let started = std::time::Instant::now();
+        self.update_resolution(app, eyes, frame);
+        if !self.frame_controls.pose_initialized {
+            return Ok(false);
+        }
+        if let Some(lease) = self.producer.as_mut().and_then(|p| p.acquire()) {
+            let desc = lease.buffer.descriptor();
+            if desc.width != lease.raster_extent.width
+                || desc.height != lease.raster_extent.height
+                || desc.layers != 1
+                || desc.format != 1
+            {
+                return Err("mesh UI reader descriptor mismatch".into());
+            }
+            let (props, format) =
+                ahb::query_ahb_vulkan_import_properties(&self.ahb, &lease.buffer)?;
+            if format.format == vk::Format::UNDEFINED {
+                return Err("mesh UI RGBA AHB has no concrete Vulkan format".into());
+            }
+            let image = ahb::import_ahb_sampled_image(
+                device, &self.memory, &lease.buffer,
+                AhbVulkanSampledImageCreateInfo {
+                    width: desc.width, height: desc.height,
+                    format_key: AhbVulkanFormatKey { format: format.format, external_format: 0 },
+                    allocation_size: props.allocation_size,
+                    memory_type_bits: props.memory_type_bits,
+                    sampler_ycbcr_conversion: None,
+                    debug_label: "native mesh UI",
+                },
+            )?;
+            ownership_barrier(device, cmd, image.image, self.queue_family, true);
+            if self.raster_epoch != lease.raster_epoch {
+                self.raster_extent = lease.raster_extent;
+                self.raster_epoch = lease.raster_epoch;
+                self.adaptive.applied(self.raster_extent, frame);
+                crate::marker("native-panel-resolution", format!(
+                    "event=image-adopted generation={} rasterEpoch={} rasterWidth={} rasterHeight={} frame={} evidence=import-recorded visibleProof=false",
+                    self.frame_controls.generation, self.raster_epoch, desc.width, desc.height, frame));
+            }
+            let texture = Rc::new(TextureLease {
+                device: device.clone(), image: Some(image), _lease: lease,
+                graphics_owned: Cell::new(false),
+            });
+            self.pending_acquires[slot].push(texture.clone());
+            self.registry.push(texture.clone());
+            self.latest = Some(texture);
+            self.adopted_frames = self.adopted_frames.saturating_add(1);
+            if self.adopted_frames == 1 {
+                crate::marker("native-mesh-ui", "event=first-image-adopted textureSource=android-widget-surface cpuPainted=false visibleProof=false");
+            }
+        }
         if let Some(ui) = &mut self.native_ui {
             let key = (
                 self.hybrid.hovered,
                 self.hybrid.captured,
                 self.hybrid.forms_visible,
+                self.raster_extent,
+                self.hybrid.detail,
             );
             if self.hybrid_geometry_key != Some(key) {
                 let status = format!(
-                    "FORMS {}  RASTER {}X{}",
+                    "FORMS {} DETAIL {} {}X{}",
                     if self.hybrid.forms_visible {
                         "ON"
                     } else {
                         "OFF"
                     },
+                    self.hybrid.detail.label(),
                     self.raster_extent.width,
                     self.raster_extent.height
                 );
@@ -368,59 +466,6 @@ impl GpuMeshUiPanel {
                     &[]
                 },
             )?;
-        }
-        if !self.frame_controls.pose_initialized {
-            return Ok(false);
-        }
-        if let Some(lease) = self.producer.as_mut().and_then(|p| p.acquire()) {
-            let desc = lease.buffer.descriptor();
-            if desc.width != self.raster_extent.width
-                || desc.height != self.raster_extent.height
-                || desc.layers != 1
-                || desc.format != 1
-            {
-                return Err("mesh UI reader descriptor mismatch".into());
-            }
-            let (props, format) =
-                ahb::query_ahb_vulkan_import_properties(&self.ahb, &lease.buffer)?;
-            // An RGBA reader must expose a concrete format. Never silently reinterpret YCbCr.
-            if format.format == vk::Format::UNDEFINED {
-                return Err("mesh UI RGBA AHB has no concrete Vulkan format".into());
-            }
-            let image = ahb::import_ahb_sampled_image(
-                device,
-                &self.memory,
-                &lease.buffer,
-                AhbVulkanSampledImageCreateInfo {
-                    width: desc.width,
-                    height: desc.height,
-                    format_key: AhbVulkanFormatKey {
-                        format: format.format,
-                        external_format: 0,
-                    },
-                    allocation_size: props.allocation_size,
-                    memory_type_bits: props.memory_type_bits,
-                    sampler_ycbcr_conversion: None,
-                    debug_label: "native mesh UI",
-                },
-            )?;
-            ownership_barrier(device, cmd, image.image, self.queue_family, true);
-            let texture = Rc::new(TextureLease {
-                device: device.clone(),
-                image: Some(image),
-                _lease: lease,
-                graphics_owned: Cell::new(false),
-            });
-            self.pending_acquires[slot].push(texture.clone());
-            self.registry.push(texture.clone());
-            self.latest = Some(texture);
-            self.adopted_frames = self.adopted_frames.saturating_add(1);
-            if self.adopted_frames == 1 {
-                crate::marker(
-                    "native-mesh-ui",
-                    "event=first-image-adopted textureSource=android-widget-surface cpuPainted=false visibleProof=false",
-                );
-            }
         }
         self.slots[slot] = self.latest.clone();
         // Unused imports transfer back to Android in this frame's command buffer, but their
@@ -452,6 +497,10 @@ impl GpuMeshUiPanel {
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(&image)];
             device.update_descriptor_sets(&write, &[]);
+            if frame % 120 == 0 {
+                crate::marker("native-panel-cost", format!("frame={} prepareCpuMs={:.3} rasterWidth={} rasterHeight={} rasterEpoch={} importRegistry={} detailMode={} visibleProof=false",
+                    frame, started.elapsed().as_secs_f64()*1000.0, self.raster_extent.width, self.raster_extent.height, self.raster_epoch, self.registry.len(), self.hybrid.detail.label()));
+            }
             Ok(true)
         } else {
             Ok(false)
@@ -469,18 +518,20 @@ impl GpuMeshUiPanel {
             let key = (
                 self.hybrid_forms_slots[slot],
                 self.frame_controls.pose_revision,
+                self.raster_extent,
+                self.hybrid.detail,
             );
             if self.hybrid_last_submission != Some(key) {
                 crate::marker(
                     "native-hybrid-ui",
                     format!(
-                        "event=submitted generation={} poseRevision={} formsVisible={} rasterWidth={} rasterHeight={} nativePrimitives={} nativeDrawsPerEye=1 evidence=queue-submission visibleProof=false",
+                        "event=submitted generation={} poseRevision={} formsVisible={} rasterWidth={} rasterHeight={} nativePrimitives={} rasterEpoch={} detailMode={} nativeDrawsPerEye=1 evidence=queue-submission visibleProof=false",
                         self.frame_controls.generation,
                         key.1,
                         key.0,
                         self.raster_extent.width,
                         self.raster_extent.height,
-                        self.hybrid_geometry.len()
+                        self.hybrid_geometry.len(), self.raster_epoch, self.hybrid.detail.label()
                     ),
                 );
                 self.hybrid_last_submission = Some(key);
@@ -687,6 +738,10 @@ impl GpuMeshUiPanel {
                     }),
                     PanelAction::Size => {
                         native_mesh_ui::request_panel_action(controls.generation, 7)
+                    }
+                    PanelAction::CycleDetail => {
+                        self.hybrid.detail = self.hybrid.detail.next();
+                        true
                     }
                 };
                 crate::marker(

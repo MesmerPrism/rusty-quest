@@ -6,10 +6,30 @@ pub(crate) enum PanelAction {
     ToggleForms,
     Center,
     Size,
+    CycleDetail,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DetailMode {
+    #[default]
+    Auto,
+    Base,
+    Medium,
+    High,
+}
+impl DetailMode {
+    pub(crate) fn next(self) -> Self {
+        match self { Self::Auto => Self::Base, Self::Base => Self::Medium,
+            Self::Medium => Self::High, Self::High => Self::Auto }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self { Self::Auto => "AUTO", Self::Base => "1X", Self::Medium => "1.5X", Self::High => "2X" }
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct HybridPanelState {
+    pub(crate) detail: DetailMode,
     pub(crate) forms_visible: bool,
     pub(crate) hovered: Option<usize>,
     pub(crate) captured: Option<usize>,
@@ -19,6 +39,7 @@ pub(crate) struct HybridPanelState {
 impl Default for HybridPanelState {
     fn default() -> Self {
         Self {
+            detail: DetailMode::Auto,
             forms_visible: true,
             hovered: None,
             captured: None,
@@ -45,7 +66,7 @@ impl HybridPanelState {
             return (consumed, None);
         }
         if fresh_press {
-            self.captured = hit.filter(|index| *index < 3);
+            self.captured = hit.filter(|index| *index < 4);
         }
         let Some(captured) = self.captured else {
             return (false, None);
@@ -57,7 +78,8 @@ impl HybridPanelState {
         let action = (hit == Some(captured)).then_some(match captured {
             0 => PanelAction::ToggleForms,
             1 => PanelAction::Center,
-            _ => PanelAction::Size,
+            2 => PanelAction::Size,
+            _ => PanelAction::CycleDetail,
         });
         (true, action)
     }
@@ -77,6 +99,17 @@ pub(crate) fn selected() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detail_uses_matching_release_and_does_not_change_forms() {
+        let mut state = HybridPanelState::default();
+        assert_eq!(state.update(true, true, Some(3), false), (true, None));
+        assert_eq!(state.update(true, false, Some(3), false), (true, Some(PanelAction::CycleDetail)));
+        assert!(state.forms_visible);
+        state.update(true, true, Some(4), false);
+        assert_eq!(state.update(true, false, Some(4), false), (false, None));
+        assert_eq!(DetailMode::Auto.next().next().next().next(), DetailMode::Auto);
+    }
 
     #[test]
     fn activates_on_matching_release_and_does_not_steal_forms_drag() {

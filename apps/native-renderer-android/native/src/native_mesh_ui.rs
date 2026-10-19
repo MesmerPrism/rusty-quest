@@ -743,6 +743,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
 
 #[cfg(target_os = "android")]
 pub(crate) mod android {
+    use super::super::native_panel_resolution::RasterExtent;
     use super::*;
     use crate::acamera_sys as media;
     use crate::android_hardware_buffer::AndroidHardwareBufferHandle;
@@ -751,7 +752,11 @@ pub(crate) mod android {
         objects::{JClass, JClassLoader, JObject, JValue},
         JavaVM,
     };
-    use std::ptr;
+    use std::{
+        cell::Cell,
+        ptr,
+        rc::{Rc, Weak},
+    };
     #[link(name = "android")]
     extern "C" {
         fn ANativeWindow_toSurface(
@@ -759,9 +764,55 @@ pub(crate) mod android {
             window: *mut ndk_sys::ANativeWindow,
         ) -> jni::sys::jobject;
     }
+    /// A reader cannot disappear while an acquired image or the Java writer still uses it.
+    struct ReaderOwner {
+        reader: *mut media::AImageReader,
+        extent: RasterExtent,
+        epoch: u64,
+        writer_detached: Cell<bool>,
+        quarantined: Cell<bool>,
+    }
+    impl Drop for ReaderOwner {
+        fn drop(&mut self) {
+            if self.writer_detached.get() && !self.quarantined.get() {
+                unsafe {
+                    media::AImageReader_delete(self.reader);
+                }
+            }
+        }
+    }
+    unsafe fn new_reader(extent: RasterExtent, epoch: u64) -> Result<Rc<ReaderOwner>, String> {
+        if !extent.supported() {
+            return Err("unsupported mesh UI raster extent".into());
+        }
+        let mut reader = ptr::null_mut();
+        if media::AImageReader_newWithUsage(
+            extent.width as i32,
+            extent.height as i32,
+            1,
+            (1 << 8) | (1 << 9),
+            8,
+            &mut reader,
+        ) != 0
+            || reader.is_null()
+        {
+            return Err("create mesh UI RGBA reader".into());
+        }
+        Ok(Rc::new(ReaderOwner {
+            reader,
+            extent,
+            epoch,
+            writer_detached: Cell::new(false),
+            quarantined: Cell::new(false),
+        }))
+    }
     pub(crate) struct ImageLease {
         pub(crate) image: *mut media::AImage,
         pub(crate) buffer: AndroidHardwareBufferHandle,
+        pub(crate) raster_extent: RasterExtent,
+        pub(crate) raster_epoch: u64,
+        // Fields drop after ImageLease::drop calls AImage_delete.
+        _reader: Rc<ReaderOwner>,
     }
     #[link(name = "mediandk")]
     extern "C" {
@@ -789,7 +840,10 @@ pub(crate) mod android {
         }
     }
     pub(crate) struct Producer {
-        reader: *mut media::AImageReader,
+        reader: Rc<ReaderOwner>,
+        resize: Option<Rc<ReaderOwner>>,
+        retired_reader: Option<Weak<ReaderOwner>>,
+        next_raster_epoch: u64,
         pub(crate) generation: u64,
         pending: Option<acquire_fence::Pending<*mut media::AImage>>,
         acquire_quarantined: bool,
@@ -812,26 +866,10 @@ pub(crate) mod android {
             generation: u64,
             extent: super::super::native_panel_resolution::RasterExtent,
         ) -> Result<Self, String> {
-            if !extent.supported() {
-                return Err("unsupported mesh UI raster extent".into());
-            }
-            let mut reader = ptr::null_mut();
-            // RGBA8, GPU_SAMPLED_IMAGE|GPU_COLOR_OUTPUT. Retained AImages prevent producer recycling.
-            if media::AImageReader_newWithUsage(
-                extent.width as i32,
-                extent.height as i32,
-                1,
-                (1 << 8) | (1 << 9),
-                8,
-                &mut reader,
-            ) != 0
-                || reader.is_null()
-            {
-                return Err("create mesh UI RGBA reader".into());
-            }
+            let reader = new_reader(extent, 1)?;
             let mut window = ptr::null_mut();
-            if media::AImageReader_getWindow(reader, &mut window) != 0 {
-                media::AImageReader_delete(reader);
+            if media::AImageReader_getWindow(reader.reader, &mut window) != 0 {
+                reader.writer_detached.set(true);
                 return Err("mesh UI reader window".into());
             }
             activate(generation);
@@ -856,6 +894,9 @@ pub(crate) mod android {
                 // Exceptional return still joins any possibly queued Java start.
                 let owner = Self {
                     reader,
+                    resize: None,
+                    retired_reader: None,
+                    next_raster_epoch: 2,
                     generation,
                     pending: None,
                     acquire_quarantined: false,
@@ -865,10 +906,153 @@ pub(crate) mod android {
             }
             Ok(Self {
                 reader,
+                resize: None,
+                retired_reader: None,
+                next_raster_epoch: 2,
                 generation,
                 pending: None,
                 acquire_quarantined: false,
             })
+        }
+        pub(crate) fn raster_extent(&self) -> RasterExtent {
+            self.reader.extent
+        }
+        pub(crate) fn resize_pending(&self) -> bool {
+            self.resize.is_some()
+        }
+        fn quarantine_readers(&mut self) {
+            self.acquire_quarantined = true;
+            self.reader.quarantined.set(true);
+            if let Some(reader) = &self.resize {
+                reader.quarantined.set(true);
+            }
+        }
+        /// Single in-flight raster transition, independent from control/UI generation.
+        /// Java owns the Surface wrapper only when requestResize returns true.
+        pub(crate) unsafe fn request_resize(
+            &mut self,
+            app: &android_activity::AndroidApp,
+            extent: RasterExtent,
+        ) -> Result<bool, String> {
+            if self.acquire_quarantined
+                || self.resize.is_some()
+                || extent == self.reader.extent
+                || self
+                    .retired_reader
+                    .as_ref()
+                    .and_then(Weak::upgrade)
+                    .is_some()
+            {
+                return Ok(false);
+            }
+            let epoch = self.next_raster_epoch;
+            if epoch > i64::MAX as u64 {
+                return Err("mesh UI raster epoch exhausted".into());
+            }
+            self.next_raster_epoch = epoch
+                .checked_add(1)
+                .ok_or("mesh UI raster epoch exhausted")?;
+            let reader = new_reader(extent, epoch)?;
+            let mut window = ptr::null_mut();
+            if media::AImageReader_getWindow(reader.reader, &mut window) != 0 || window.is_null() {
+                reader.writer_detached.set(true);
+                return Err("mesh UI resize reader window".into());
+            }
+            self.resize = Some(reader.clone());
+            let mut admitted = false;
+            let result = with_class(app, |env, class, _| {
+                let raw = ANativeWindow_toSurface(env.get_raw(), window);
+                let surface = env.as_cast_raw::<JObject>(&raw)?;
+                admitted = env
+                    .call_static_method(
+                        class,
+                        jni_str!("requestResize"),
+                        jni_sig!("(JJLandroid/view/Surface;II)Z"),
+                        &[
+                            JValue::Long(self.generation as i64),
+                            JValue::Long(epoch as i64),
+                            JValue::Object(&surface),
+                            JValue::Int(extent.width as i32),
+                            JValue::Int(extent.height as i32),
+                        ],
+                    )?
+                    .z()?;
+                if !admitted {
+                    env.call_method(&surface, jni_str!("release"), jni_sig!("()V"), &[])?;
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                // Invocation may have reached Java; neither Surface/reader ownership is proven.
+                self.quarantine_readers();
+                return Err(error);
+            }
+            if !admitted {
+                reader.writer_detached.set(true);
+                self.resize = None;
+                return Ok(false);
+            }
+            crate::marker("native-mesh-ui", format!("event=raster-resize-request generation={} rasterEpoch={} rasterWidth={} rasterHeight={} evidence=request-only", self.generation, epoch, extent.width, extent.height));
+            Ok(true)
+        }
+        /// Returns writer commitment only; the first acquired/imported/submitted image is later.
+        pub(crate) unsafe fn poll_resize(
+            &mut self,
+            app: &android_activity::AndroidApp,
+        ) -> Result<Option<RasterExtent>, String> {
+            if self.acquire_quarantined {
+                return Ok(None);
+            }
+            let Some(candidate) = self.resize.as_ref() else {
+                return Ok(None);
+            };
+            let epoch = candidate.epoch;
+            let mut status = 0;
+            let result = with_class(app, |env, class, _| {
+                status = env
+                    .call_static_method(
+                        class,
+                        jni_str!("resizeStatus"),
+                        jni_sig!("(JJ)I"),
+                        &[
+                            JValue::Long(self.generation as i64),
+                            JValue::Long(epoch as i64),
+                        ],
+                    )?
+                    .i()?;
+                Ok(())
+            });
+            if let Err(error) = result {
+                self.quarantine_readers();
+                return Err(error);
+            }
+            match status {
+                0 => Ok(None),
+                1 => {
+                    // The old pending image was never imported; transfer its OWN acquire FD.
+                    if let Some(pending) = self.pending.take() {
+                        media::AImage_deleteAsync(pending.image, pending.fence);
+                    }
+                    let next = self.resize.take().unwrap();
+                    let old = std::mem::replace(&mut self.reader, next);
+                    old.writer_detached.set(true);
+                    self.retired_reader = Some(Rc::downgrade(&old));
+                    let extent = self.reader.extent;
+                    crate::marker("native-mesh-ui", format!("event=raster-resize-writer-ack generation={} rasterEpoch={} rasterWidth={} rasterHeight={} evidence=writer-commit visibleProof=false", self.generation, epoch, extent.width, extent.height));
+                    Ok(Some(extent))
+                }
+                -1 => {
+                    if let Some(candidate) = self.resize.take() {
+                        candidate.writer_detached.set(true);
+                    }
+                    crate::marker("native-mesh-ui", format!("event=raster-resize-rejected generation={} rasterEpoch={} oldWriterRetained=true", self.generation, epoch));
+                    Ok(None)
+                }
+                _ => {
+                    self.quarantine_readers();
+                    Err("mesh UI raster switch uncertain; both readers retained and adaptation disabled".into())
+                }
+            }
         }
         pub(crate) unsafe fn acquire(&mut self) -> Option<ImageLease> {
             if self.acquire_quarantined {
@@ -882,8 +1066,11 @@ pub(crate) mod android {
                     || {
                         let mut image = ptr::null_mut();
                         let mut fence = -1;
-                        if AImageReader_acquireNextImageAsync(self.reader, &mut image, &mut fence)
-                            != 0
+                        if AImageReader_acquireNextImageAsync(
+                            self.reader.reader,
+                            &mut image,
+                            &mut fence,
+                        ) != 0
                             || image.is_null()
                         {
                             None
@@ -912,6 +1099,7 @@ pub(crate) mod android {
                     // A bad FD is no longer ours to close/transfer: it could have been reused.
                     // Keep the reader/image alive and stop acquisition; never recycle early.
                     self.acquire_quarantined = true;
+                    self.reader.quarantined.set(true);
                     crate::marker(
                         "native-mesh-ui",
                         "event=acquire-fence-quarantined readerRetained=true".to_string(),
@@ -931,7 +1119,13 @@ pub(crate) mod android {
                 return None;
             }
             match AndroidHardwareBufferHandle::acquire(buffer) {
-                Ok(buffer) => Some(ImageLease { image, buffer }),
+                Ok(buffer) => Some(ImageLease {
+                    image,
+                    buffer,
+                    raster_extent: self.reader.extent,
+                    raster_epoch: self.reader.epoch,
+                    _reader: self.reader.clone(),
+                }),
                 Err(_) => {
                     media::AImage_delete(image);
                     None
@@ -975,7 +1169,12 @@ pub(crate) mod android {
             // If Android UI shutdown has not acknowledged, keep the reader alive rather than
             // destroying a producer resource still referenced by a live VirtualDisplay.
             if result.is_ok() && !self.acquire_quarantined {
-                media::AImageReader_delete(self.reader);
+                self.reader.writer_detached.set(true);
+                if let Some(candidate) = &self.resize {
+                    candidate.writer_detached.set(true);
+                }
+            } else {
+                self.quarantine_readers();
             }
             result
         }
@@ -983,12 +1182,10 @@ pub(crate) mod android {
     impl Producer {
         /// Quiesce Java without recycling images whose Vulkan release failed.
         pub(crate) unsafe fn quiesce(mut self, app: &android_activity::AndroidApp) {
+            // Pending raw images remain owned by the deliberately retained reader closure.
+            // No uncertain FD is closed or retransferred during this fail-safe retention path.
+            self.quarantine_readers();
             deactivate(self.generation);
-            if !self.acquire_quarantined {
-                if let Some(pending) = self.pending.take() {
-                    media::AImage_deleteAsync(pending.image, pending.fence);
-                }
-            }
             let _ = wait_for_writer_retirement(app, self.generation);
         }
     }

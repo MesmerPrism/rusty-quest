@@ -3357,7 +3357,16 @@ unsafe fn run_projection_frames(
             .map_err(|error| format!("begin Vulkan command buffer: {error}"))?;
         gpu_timestamp_tracker.reset_frame(vk_device, cmd, frame_slot, frame_count);
         if let Some(panel) = mesh_ui_panel.as_deref_mut() {
-            panel.prepare_frame(vk_device, cmd, frame_slot)?;
+            let panel_eyes = [0, 1].map(|index| {
+                let eye = hand_mesh_visual_eye_projection(&views[index]);
+                crate::native_panel_resolution::ProjectionEye {
+                    position: [eye.position[0], eye.position[1], eye.position[2]],
+                    orientation_xyzw: eye.orientation_xyzw,
+                    fov_tangents: eye.fov_tangents,
+                    viewport: [swapchain.extent.width, swapchain.extent.height],
+                }
+            });
+            panel.prepare_frame(vk_device, cmd, frame_slot, app, &panel_eyes, frame_count)?;
         }
         let mesh_ui_frame_controls = mesh_ui_panel.as_ref().map(|panel| panel.frame_controls());
         let mesh_ui_controls = crate::native_mesh_ui::neutral_frame_controls(mesh_ui_frame_controls);
@@ -6398,6 +6407,8 @@ unsafe fn record_projection_diagnostic(
         // Existing depth-based worldspace panels retain their original scene position.
         if swapchain.scene_depth_enabled {
             if let Some(panel) = mesh_ui_panel {
+                let panel_stage = if eye_index == 0 { GpuTimestampStage::NativePanelLeftEye } else { GpuTimestampStage::NativePanelRightEye };
+                gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, panel_stage);
                 panel.record_eye(
                     device,
                     cmd,
@@ -6416,6 +6427,7 @@ unsafe fn record_projection_diagnostic(
                         extent: swapchain.extent,
                     },
                 );
+                gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, panel_stage);
             }
         }
         for draw_target in
@@ -6603,6 +6615,8 @@ unsafe fn record_projection_diagnostic(
         // Its particle, half-resolution resolve, hand and graft policies stay intact.
         if !swapchain.scene_depth_enabled {
             if let Some(panel) = mesh_ui_panel {
+                let panel_stage = if eye_index == 0 { GpuTimestampStage::NativePanelLeftEye } else { GpuTimestampStage::NativePanelRightEye };
+                gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, panel_stage);
                 panel.record_eye(
                     device,
                     cmd,
@@ -6621,6 +6635,7 @@ unsafe fn record_projection_diagnostic(
                         extent: swapchain.extent,
                     },
                 );
+                gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, panel_stage);
             }
         }
         if let Some(panel) = mesh_ui_panel {

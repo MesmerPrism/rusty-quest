@@ -86,15 +86,26 @@ static final class VisibilityReadback {
     private static final class StopReceipt { volatile int state; }
     private final Activity activity;
     private final long generation;
-    private final Surface surface;
-    private final float rasterScale;
-    private final java.util.WeakHashMap<Window,Boolean> rasterWindows=new java.util.WeakHashMap<Window,Boolean>();
+    private Surface surface;
+    private float rasterScale;
+    private int rasterWidth,rasterHeight,densityDpi;
+    private long rasterEpoch=1;
+    private RasterLayout rootRaster;
+    private final android.os.Handler resizePolls=new android.os.Handler(android.os.Looper.getMainLooper());
+    private volatile ResizeRequest resizeRequest;
+    private boolean resizeStopped;
+    private final ArrayList<Surface> uncertainSurfaces=new ArrayList<Surface>();
+    private final java.util.WeakHashMap<Window,Float> rasterWindows=new java.util.WeakHashMap<Window,Float>();
     /** Keep the original pixel layout and resource density; raster scale changes sampling only. */
     private static final class RasterLayout extends FrameLayout {
-        private final float scale;
+        private float scale;
         RasterLayout(Context context,View child,float scale){
             super(context);this.scale=scale;addView(child,new FrameLayout.LayoutParams(-1,-1));
             child.setPivotX(0);child.setPivotY(0);child.setScaleX(scale);child.setScaleY(scale);
+        }
+        void setRasterScale(float value){
+            scale=value;View child=getChildAt(0);child.setPivotX(0);child.setPivotY(0);
+            child.setScaleX(value);child.setScaleY(value);requestLayout();invalidate();
         }
         private int logicalSpec(int spec){return View.MeasureSpec.makeMeasureSpec(
             Math.round(View.MeasureSpec.getSize(spec)/scale),View.MeasureSpec.getMode(spec));}
@@ -106,40 +117,50 @@ static final class VisibilityReadback {
             super.onLayout(changed,0,0,Math.round((right-left)/scale),Math.round((bottom-top)/scale));
         }
     }
-    private View rasterLayout(View child){return rasterScale==1f?child:new RasterLayout(child.getContext(),child,rasterScale);}
+    private View rasterLayout(View child){return new RasterLayout(child.getContext(),child,rasterScale);}
+    private static int scaledOffset(int value,float ratio){return Math.round(value*ratio);}
+    private static int scaledDimension(int value,float ratio){return value>0?scaledOffset(value,ratio):value;}
     private void scaleModalContent(Window window){
-        if(rasterScale==1f)return;
         ViewGroup content=window.findViewById(android.R.id.content);
         if(content==null||content.getChildCount()!=1)throw new IllegalStateException("mesh-modal-content-unavailable");
-        View child=content.getChildAt(0);if(child instanceof RasterLayout)return;
+        View child=content.getChildAt(0);
+        RasterLayout wrapped=child instanceof RasterLayout?(RasterLayout)child:null;
+        float prior=wrapped==null?1f:wrapped.scale;
+        float ratio=rasterScale/prior;
+        if(ratio==1f)return;
         ViewGroup.LayoutParams params=child.getLayoutParams();
-        // These values belong to the physical parent, outside the scaled logical subtree.
-        params.width=rasterDimension(params.width);params.height=rasterDimension(params.height);
+        // Values belong to the physical parent. Existing wrappers already have prior-scale spacing.
+        params.width=scaledDimension(params.width,ratio);params.height=scaledDimension(params.height,ratio);
         if(params instanceof ViewGroup.MarginLayoutParams){
             ViewGroup.MarginLayoutParams margins=(ViewGroup.MarginLayoutParams)params;
-            margins.leftMargin=rasterOffset(margins.leftMargin);margins.topMargin=rasterOffset(margins.topMargin);
-            margins.rightMargin=rasterOffset(margins.rightMargin);margins.bottomMargin=rasterOffset(margins.bottomMargin);
+            margins.leftMargin=scaledOffset(margins.leftMargin,ratio);margins.topMargin=scaledOffset(margins.topMargin,ratio);
+            margins.rightMargin=scaledOffset(margins.rightMargin,ratio);margins.bottomMargin=scaledOffset(margins.bottomMargin,ratio);
         }
-        content.removeView(child);content.addView(rasterLayout(child),params);
+        if(wrapped!=null){wrapped.setRasterScale(rasterScale);wrapped.setLayoutParams(params);}
+        else{content.removeView(child);content.addView(rasterLayout(child),params);}
     }
-    private int rasterOffset(int logical){return Math.round(logical*rasterScale);}
-    private int rasterDimension(int logical){return logical>0?rasterOffset(logical):logical;}
+    private int rasterOffset(int logical){return scaledOffset(logical,rasterScale);}
+    private int rasterDimension(int logical){return scaledDimension(logical,rasterScale);}
+    private float windowRasterRatio(Window window){
+        Float prior=rasterWindows.get(window);return rasterScale/(prior==null?1f:prior.floatValue());
+    }
     private void scaleWindowPlacement(Window window,WindowManager.LayoutParams attributes){
-        if(rasterScale==1f||rasterWindows.containsKey(window))return;
-        // MATCH_PARENT/WRAP_CONTENT and gravity/fractional margins keep their platform semantics.
-        attributes.width=rasterDimension(attributes.width);attributes.height=rasterDimension(attributes.height);
-        attributes.x=rasterOffset(attributes.x);attributes.y=rasterOffset(attributes.y);
+        float ratio=windowRasterRatio(window);if(ratio==1f)return;
+        // MATCH_PARENT/WRAP_CONTENT, gravity and fractional margins retain platform semantics.
+        attributes.width=scaledDimension(attributes.width,ratio);attributes.height=scaledDimension(attributes.height,ratio);
+        attributes.x=scaledOffset(attributes.x,ratio);attributes.y=scaledOffset(attributes.y,ratio);
     }
     private void scaleWindowInsets(Window window){
-        if(rasterScale==1f||rasterWindows.containsKey(window))return;
-        rasterWindows.put(window,Boolean.TRUE);
-        View decor=window.getDecorView();
-        decor.setPadding(rasterOffset(decor.getPaddingLeft()),rasterOffset(decor.getPaddingTop()),
-            rasterOffset(decor.getPaddingRight()),rasterOffset(decor.getPaddingBottom()));
-        decor.setMinimumWidth(rasterOffset(decor.getMinimumWidth()));
-        decor.setMinimumHeight(rasterOffset(decor.getMinimumHeight()));
-    }
-    private VirtualDisplay display;
+        float ratio=windowRasterRatio(window);
+        if(ratio!=1f){
+            View decor=window.getDecorView();
+            decor.setPadding(scaledOffset(decor.getPaddingLeft(),ratio),scaledOffset(decor.getPaddingTop(),ratio),
+                scaledOffset(decor.getPaddingRight(),ratio),scaledOffset(decor.getPaddingBottom(),ratio));
+            decor.setMinimumWidth(scaledOffset(decor.getMinimumWidth(),ratio));
+            decor.setMinimumHeight(scaledOffset(decor.getMinimumHeight(),ratio));
+        }
+        rasterWindows.put(window,Float.valueOf(rasterScale));
+    }    private VirtualDisplay display;
     private Presentation presentation;
     private View root;
     private AutoCloseable panelAttachment;
@@ -322,6 +343,11 @@ static final class VisibilityReadback {
         return new JSONObject().put("schema","rusty.quest.native_mesh_ui.widget_geometry.v1").put("generation",generation)
             .put("widget_revision",widgetRevision).put("surface_width_pixels",1024).put("surface_height_pixels",768)
             .put("interactive",interactive).put("native_geometry",geometry).put("windows",windows)
+            .put("raster_width_pixels",rasterWidth).put("raster_height_pixels",rasterHeight).put("raster_epoch",rasterEpoch)
+            .put("raster_resize_request_id",resizeRequest==null?0:resizeRequest.id)
+            .put("raster_resize_status",resizeRequest==null?1:resizeRequest.state)
+            .put("raster_resize_deferrals",resizeRequest==null?0:resizeRequest.deferrals)
+            .put("raster_resize_defer_reason",resizeRequest==null?"none":resizeRequest.reason)
             .put("pointer_capture_active",down).put("capture_window_id",pointerDialog==null?0:windowIds.get(pointerDialog))
             .put("evidence","current-android-view-layout; native-geometry-qualified-separately").put("visible_confirmation",false);
     }
@@ -654,9 +680,102 @@ static final class VisibilityReadback {
         this.activity = activity;
         this.surface = surface;
         this.rasterScale = width/1024f;
+        this.rasterWidth=width;this.rasterHeight=width*3/4;
         this.generation = generation;
     }
 
+    /** One admitted writer handoff. State1 is attachment acknowledgement, never pixel acceptance. */
+    private static final class ResizeRequest {
+        final long id;final int width,height;Surface target;
+        volatile int state;volatile int deferrals;volatile String reason="queued";
+        ResizeRequest(long id,Surface target,int width,int height){this.id=id;this.target=target;this.width=width;this.height=height;}
+    }
+    private static boolean rasterExtentSupported(int width,int height){
+        return width==1024&&height==768||width==1536&&height==1152||width==2048&&height==1536;
+    }
+    /** False retains caller ownership; true transfers only this Java Surface wrapper. */
+    public static boolean requestResize(long generation,long requestId,Surface target,int width,int height){
+        NativeMeshUiProducer owner=current;
+        if(owner==null||owner.generation!=generation||requestId<=0||target==null
+                ||!rasterExtentSupported(width,height)||!target.isValid())return false;
+        final ResizeRequest request;
+        synchronized(owner){
+            ResizeRequest prior=owner.resizeRequest;
+            if(current!=owner||cancelledGeneration==generation||owner.resizeStopped||prior!=null&&(prior.state==0||prior.state==-2||requestId<=prior.id))return false;
+            request=new ResizeRequest(requestId,target,width,height);owner.resizeRequest=request;
+            if(!owner.resizePolls.post(new Runnable(){public void run(){owner.applyResize(request);}})){
+                owner.resizeRequest=prior;return false;
+            }
+        }
+        return true;
+    }
+    /** 0pending/deferred,1writer committed,-1safe rejection/cancel,-2uncertain mutation. */
+    public static int resizeStatus(long generation,long requestId){
+        NativeMeshUiProducer owner=current;
+        if(owner==null||owner.generation!=generation)return -2;
+        ResizeRequest request=owner.resizeRequest;
+        return request!=null&&request.id==requestId?request.state:-2;
+    }
+    private String resizeBusyReason(){
+        if(!ownerAttachment.resumed())return "owner-not-resumed";
+        if(editor!=null||systemKeyboard!=null)return "editor-active";
+        if(keyboard!=null&&keyboard.isShowing())return "keyboard-active";
+        if(selectionMode!=null)return "selection-active";
+        for(Dialog modal:modals)if(modal.isShowing())return "modal-active";
+        if(down||pointerDialog!=null||queuedPointers.get()>0||pointerQueueInvalid)return "pointer-active";
+        if(root==null||rootRaster==null||presentation==null||!presentation.isShowing()||display==null)return "writer-unavailable";
+        if(root.isLayoutRequested()||rootRaster.isLayoutRequested())return "layout-pending";
+        return null;
+    }
+    private boolean releaseResizeTarget(ResizeRequest request){
+        Surface target=request.target;request.target=null;
+        if(target!=null)try{target.release();}catch(RuntimeException failure){uncertainSurfaces.add(target);return false;}
+        return true;
+    }
+    private void abortResizeSafely(ResizeRequest request,String reason){
+        request.reason=reason;
+        request.state=releaseResizeTarget(request)?-1:-2;
+    }
+    private void applyResize(final ResizeRequest request){
+        synchronized(this){
+            if(request!=resizeRequest||request.state!=0)return;
+            if(current!=this||cancelledGeneration==generation||resizeStopped||activity.isFinishing()||activity.isDestroyed()){
+                abortResizeSafely(request,"owner-retired");return;
+            }
+            String busy=resizeBusyReason();
+            if(busy!=null){
+                request.reason=busy;if(request.deferrals<Integer.MAX_VALUE)request.deferrals++;
+                if(!resizePolls.postDelayed(new Runnable(){public void run(){applyResize(request);}},100)){
+                    abortResizeSafely(request,"queue-unavailable");
+                }
+                return;
+            }
+            if(!request.target.isValid()){
+                abortResizeSafely(request,"surface-invalid");return;
+            }
+            Surface previous=surface;int oldWidth=rasterWidth,oldHeight=rasterHeight;float oldScale=rasterScale;
+            try{
+                display.setSurface(null);
+                display.resize(request.width,request.height,densityDpi);
+                rasterScale=request.width/1024f;rootRaster.setRasterScale(rasterScale);
+                display.setSurface(request.target);
+                surface=request.target;request.target=null;rasterWidth=request.width;rasterHeight=request.height;
+                rasterEpoch=request.id;request.reason="writer-committed";request.state=1;
+                try{previous.release();}catch(RuntimeException releaseFailure){uncertainSurfaces.add(previous);}
+                Log.i(TAG,"event=raster-writer-committed generation="+generation+" request="+request.id
+                    +" epoch="+rasterEpoch+" width="+rasterWidth+" height="+rasterHeight+" evidence=writer-attachment-only");
+            }catch(RuntimeException failure){
+                boolean restored=false;
+                try{
+                    display.setSurface(null);display.resize(oldWidth,oldHeight,densityDpi);
+                    rasterScale=oldScale;rootRaster.setRasterScale(oldScale);display.setSurface(previous);restored=true;
+                }catch(RuntimeException rollbackFailure){ /* Both wrappers remain owned until display release. */ }
+                if(restored){abortResizeSafely(request,"rolled-back");}
+                else{request.reason="mutation-uncertain";request.state=-2;}
+                Log.e(TAG,"event=raster-writer-failed generation="+generation+" request="+request.id+" state="+request.state);
+            }
+        }
+    }
     public static void start(Activity activity, Surface surface, int width, int height, long generation) {
         if (!((width==1024&&height==768)||(width==1536&&height==1152)||(width==2048&&height==1536))
                 || generation <= 0 || !surface.isValid()) {
@@ -682,6 +801,7 @@ static final class VisibilityReadback {
                 int densityDpi=NativeRendererActivityComponents.PRODUCT_NATIVE.equals(activity.getClass().getName())
                     ?activity.getResources().getDisplayMetrics().densityDpi:160;
                 if(densityDpi<=0)throw new IllegalStateException("actual-activity-density-unavailable");
+                owner.densityDpi=densityDpi;
                 owner.display = manager.createVirtualDisplay("Rusty Quest mesh UI", width, height, densityDpi, surface,
                         DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY);
                 if (owner.display == null) throw new IllegalStateException("VirtualDisplay unavailable");
@@ -692,7 +812,8 @@ static final class VisibilityReadback {
                         getWindow().setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
                         owner.build(this.getContext());
-                        setContentView(owner.rasterLayout(owner.root));
+                        owner.rootRaster=(RasterLayout)owner.rasterLayout(owner.root);
+                        setContentView(owner.rootRaster);
                     }
                 };
                 owner.presentation.show();
@@ -1092,6 +1213,12 @@ static final class VisibilityReadback {
             receipt = new StopReceipt();
             stopReceipts.put(generation, receipt);
         }
+        NativeMeshUiProducer resizeOwner=current;
+        if(resizeOwner!=null&&resizeOwner.generation==generation)synchronized(resizeOwner){
+            resizeOwner.resizeStopped=true;resizeOwner.resizePolls.removeCallbacksAndMessages(null);
+            ResizeRequest pending=resizeOwner.resizeRequest;
+            if(pending!=null&&pending.state==0)pending.reason="stop-requested";
+        }
         Log.i(TAG, "event=producer-stop-requested generation=" + generation);
         // Always enqueue behind any pending start, even if current is still null.
         activity.runOnUiThread(new Runnable() { @Override public void run() {
@@ -1113,6 +1240,10 @@ static final class VisibilityReadback {
 
     private boolean close() {
         boolean released = true;
+        synchronized(this){
+            resizeStopped=true;resizePolls.removeCallbacksAndMessages(null);
+            if(resizeRequest!=null&&resizeRequest.state==0)resizeRequest.reason="producer-stopped";
+        }
         ownerAttachment.retire();
         if(ownerLifecycle!=null){activity.getApplication().unregisterActivityLifecycleCallbacks(ownerLifecycle);ownerLifecycle=null;}
         visibilityPolls.removeCallbacksAndMessages(null);
@@ -1124,7 +1255,16 @@ static final class VisibilityReadback {
         catch (RuntimeException error) { released = false; }
         try { if (display != null) { display.release(); display = null; } }
         catch (RuntimeException error) { released = false; }
-        try { surface.release(); } catch (RuntimeException error) { released = false; }
+        if(display==null){
+            try { surface.release(); } catch (RuntimeException error) { released = false; }
+            if(resizeRequest!=null){
+                boolean candidateReleased=releaseResizeTarget(resizeRequest);
+                if(!candidateReleased)released=false;
+                if(resizeRequest.state==0)resizeRequest.state=candidateReleased?-1:-2;
+            }
+            for(Surface retained:uncertainSurfaces)try{retained.release();}catch(RuntimeException error){released=false;}
+            uncertainSurfaces.clear();
+        }else if(resizeRequest!=null&&resizeRequest.state==0){resizeRequest.reason="display-release-failed";resizeRequest.state=-2;}
         root = null;
         Log.i(TAG, "event=producer-stopped generation=" + generation + " released=" + released);
         return released;
