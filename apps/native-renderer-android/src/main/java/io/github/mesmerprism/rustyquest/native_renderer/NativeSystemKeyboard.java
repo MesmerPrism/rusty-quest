@@ -17,6 +17,8 @@ import android.view.ViewTreeObserver;
 import android.view.WindowInsets;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.ExtractedText;
+import android.view.inputmethod.ExtractedTextRequest;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputConnectionWrapper;
 import android.view.inputmethod.InputMethodManager;
@@ -41,7 +43,11 @@ public final class NativeSystemKeyboard implements AutoCloseable {
     private final Runnable selectionChanged=new Runnable(){public void run(){observeSelection();}};
     private final TextWatcher watcher=new TextWatcher(){
         public void beforeTextChanged(CharSequence text,int start,int count,int after){}
-        public void onTextChanged(CharSequence text,int start,int before,int count){notifySelectionChanged();}
+        public void onTextChanged(CharSequence text,int start,int before,int count){
+            notifySelectionChanged();
+            // Extraction must also follow same-length replacements with unchanged selection.
+            if(lease!=null)lease.scheduleExtraction();
+        }
         public void afterTextChanged(Editable text){}
     };
     private final ViewTreeObserver.OnPreDrawListener selectionObserver=new ViewTreeObserver.OnPreDrawListener(){
@@ -133,6 +139,7 @@ public final class NativeSystemKeyboard implements AutoCloseable {
     }
     private void observeSelection(){
         if(!live())return;
+        if(!editor.hasFocus()){close();return;}
         int start=editor.getSelectionStart(),end=editor.getSelectionEnd();
         Editable text=editor.getText();
         int composingStart=BaseInputConnection.getComposingSpanStart(text),composingEnd=BaseInputConnection.getComposingSpanEnd(text);
@@ -140,6 +147,7 @@ public final class NativeSystemKeyboard implements AutoCloseable {
         lastStart=start;lastEnd=end;lastComposingStart=composingStart;lastComposingEnd=composingEnd;
         try{imm.updateSelection(proxy,start,end,composingStart,composingEnd);}
         catch(RuntimeException unavailable){Log.w(TAG,"event=system-ime-selection-update-failed textLogged=false");}
+        if(lease!=null)lease.scheduleExtraction();
     }
     @Override public void close(){
         requireMain();if(retired)return;retired=true;
@@ -184,6 +192,8 @@ public final class NativeSystemKeyboard implements AutoCloseable {
         final InputConnectionWrapper wrapper;
         final InputConnection guarded;
         boolean active=true;
+        private ExtractedTextRequest extractionRequest;
+        private final Runnable extractionChanged=new Runnable(){public void run(){publishExtraction();}};
         ConnectionLease(InputConnection original){
             this.original=original;wrapper=new InputConnectionWrapper(original,true);
             guarded=(InputConnection)Proxy.newProxyInstance(InputConnection.class.getClassLoader(),new Class<?>[]{InputConnection.class},
@@ -201,10 +211,40 @@ public final class NativeSystemKeyboard implements AutoCloseable {
             }
             if("getHandler".equals(method.getName()))return handler;
             if(!active||!live())return empty(method.getReturnType());
-            try{return method.invoke(wrapper,arguments);}catch(InvocationTargetException error){throw error.getCause();}
+            try{
+                Object result=method.invoke(wrapper,arguments);
+                if("closeConnection".equals(method.getName()))handler.post(new Runnable(){public void run(){
+                    if(active&&lease==ConnectionLease.this)close();
+                }});
+                if("getExtractedText".equals(method.getName())&&arguments!=null&&arguments.length==2
+                        &&arguments[0] instanceof ExtractedTextRequest
+                        &&(((Integer)arguments[1])&InputConnection.GET_EXTRACTED_TEXT_MONITOR)!=0){
+                    ExtractedTextRequest request=(ExtractedTextRequest)arguments[0];
+                    ExtractedTextRequest copy=new ExtractedTextRequest();
+                    copy.token=request.token;copy.flags=request.flags;
+                    copy.hintMaxLines=request.hintMaxLines;copy.hintMaxChars=request.hintMaxChars;
+                    extractionRequest=copy;
+                }
+                return result;
+            }catch(InvocationTargetException error){throw error.getCause();}
+        }
+        void scheduleExtraction(){
+            if(!active||!live()||lease!=this||extractionRequest==null)return;
+            handler.removeCallbacks(extractionChanged);handler.post(extractionChanged);
+        }
+        private void publishExtraction(){
+            if(!active||!live()||lease!=this||extractionRequest==null)return;
+            ExtractedTextRequest request=extractionRequest;
+            try{
+                // Obtain only a transient original-editor snapshot. No separate editable or cache.
+                ExtractedText snapshot=original.getExtractedText(request,0);
+                if(snapshot!=null&&active&&live()&&lease==this&&extractionRequest==request)
+                    imm.updateExtractedText(proxy,request.token,snapshot);
+            }catch(RuntimeException unavailable){Log.w(TAG,"event=system-ime-extraction-update-failed textLogged=false");}
         }
         void retire(boolean finish){
             if(!active)return;active=false;
+            extractionRequest=null;handler.removeCallbacks(extractionChanged);
             try{if(finish)original.finishComposingText();}finally{wrapper.setTarget(null);}
         }
     }

@@ -49,6 +49,10 @@ A focusable proxy attached to the real Native Activity requests the Meta system
 IME and forwards input to the original form's `EditText`/`InputConnection`.
 The original editor retains text, filters, selection, composition and actions;
 there is no duplicate edit buffer or selected custom keyboard UI.
+Monitored extracted-text updates return through the served proxy so Meta's
+mirrored text stays synchronized with the original field, including edits that
+keep the same length. Editor focus changes and connection retirement invalidate
+the bridge; ordinary window-focus loss to the keyboard does not.
 
 The existing focus-aware Activity allows the system overlay to own input while
 the native XR renderer continues submitting when the runtime permits it.
