@@ -25,6 +25,16 @@ framework declarations and the public typed AppFunction API. Denial remains
 denial: no hidden-API exemptions, `setAccessible`, identity field writes,
 permission widening, package-code load flags or identity impersonation.
 
+Other explicit shell consumers can call the same typed, target-free
+`ShellApplicationContext.create(JSONObject evidence)` factory, returning an
+Android `Application` after those unchanged identity checks. The class and
+this factory are public; its verification internals remain package-private.
+The factory accepts no target, operation, package or context override and
+dispatches no AppFunction. It grants no permission and does not establish
+operation availability, callback retirement or visible effects. Each caller
+must separately check its fixed API/permission and own its original lifetime.
+The recenter operation and standalone vocabulary remain closed to recenter.
+
 `AndroidShellRecenter.inspect()` checks the build-generated source identity,
 current exact boot and fingerprint, SDK 34 or newer, actual shell identity,
 normal execute permission, and the required API/service signatures. An async
@@ -121,4 +131,7 @@ The independent Android doubles invoke the real fixed production reflection
 binding, genuine-context validation paths, permission/firmware/source/boot
 rejection, async original decoding/error and final serialization/durable-byte
 join. Doubles and consumer classes are excluded from production artifacts.
+An external-package consumer also compiles against and invokes the public
+factory, checks independent process/real/effective UID and normal AppOps denial,
+and verifies unchanged identity evidence without an AppFunction dispatch.
 These host results do not prove firmware behavior, custody or physical effects.

@@ -29,6 +29,8 @@ $consumerSources = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'apps/shell
 if ($LASTEXITCODE -ne 0) { throw 'Android binding consumer compilation failed.' }
 & $java -cp $androidClasspath io.github.mesmerprism.rustyquest.shellrecenter.AndroidBindingConformanceMain
 if ($LASTEXITCODE -ne 0) { throw 'Android production binding conformance failed.' }
+& $java -cp $androidClasspath example.shellidentity.PublicShellContextConformanceMain
+if ($LASTEXITCODE -ne 0) { throw 'Public shell context consumer conformance failed.' }
 $entries = @(& $(if ($JdkBin) { Join-Path $JdkBin $(if ($IsWindows) { 'jar.exe' } else { 'jar' }) } else { (Get-Command jar -CommandType Application | Select-Object -First 1).Source }) tf (Join-Path $build 'classes.jar'))
 if ($LASTEXITCODE -ne 0 -or @($entries | Where-Object { $_ -match '^(android/|org/)|Conformance|host-tests' }).Count -ne 0) { throw 'Production package contains fixture payloads.' }
-[ordered]@{schema='rusty.quest.shell_recenter.host_conformance.v1'; passed=$true; production_android_sources_compiled=$true; production_controller_exercised=$true; production_android_binding_exercised=$true; fixtures_excluded=$true; device_tested=$false; apk_built=$false} | ConvertTo-Json | Tee-Object -FilePath (Join-Path $OutputRoot 'result.json')
+[ordered]@{schema='rusty.quest.shell_recenter.host_conformance.v1'; passed=$true; production_android_sources_compiled=$true; production_controller_exercised=$true; production_android_binding_exercised=$true; public_shell_context_consumer_exercised=$true; fixtures_excluded=$true; device_tested=$false; apk_built=$false} | ConvertTo-Json | Tee-Object -FilePath (Join-Path $OutputRoot 'result.json')
