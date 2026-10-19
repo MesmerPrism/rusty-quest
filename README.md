@@ -1,5 +1,10 @@
 # Rusty Quest
 
+The optional [shell recenter adapter](docs/SHELL_RECENTER.md) supplies one fixed
+privileged Quest `recenterView` operation for explicit developer/operator
+consumers. It requires a genuine shell process and preserves original callback,
+pending and cleanup ownership separately from physical-effect evidence.
+
 The host-only [SDK graphics preparation provider](docs/SDK_GRAPHICS_PREPARATION.md)
 compiles explicit compatible sources, validates the selected material/variant ABI,
 and joins actual APK primary/alias/baseline bytes without device operations.

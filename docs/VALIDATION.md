@@ -1,5 +1,12 @@
 # Rusty Quest Validation
 
+The optional privileged shell recenter adapter uses the focused host gate
+`pwsh -NoProfile -File tools/Test-ShellRecenter.ps1 -AndroidJar <sdk/android.jar>`.
+It compiles and exercises the real controller and Android binding against
+independent framework doubles, checks original-lifetime and durable-final
+semantics, and excludes fixture payloads from the library. It builds no APK and
+contacts no device. See [shell recenter](SHELL_RECENTER.md).
+
 For `tools/sdk_graphics`, run its three `Test-*.py` scripts. The
 [SDK graphics provider](SDK_GRAPHICS_PREPARATION.md) tests compiler/reflection,
 immutable publication, exact revert, and actual ZIP primary/alias byte joins.

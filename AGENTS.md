@@ -22,6 +22,7 @@ read only the applicable section alongside its focused guide.
 
 | Work | Required focused route |
 | --- | --- |
+| Privileged shell recenter adapter or consumers | `docs/SHELL_RECENTER.md`; shared fixed operation, no ordinary APK privilege fallback |
 | Protected validation, workflow, policy, schema, publisher or updater authority | `docs/EXTERNAL_VALIDATION_AUTHORITY.md`; `docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md` |
 | APK builds or repeated headset runs | `docs/APK_RUN_ISOLATION.md`; project lock and hashed run capsule |
 | Spatial Camera Panel workspace or feature selection | Its inert v2 index/spec/feature lock/workspace/current unit; `docs/FEATURE_ACTIVATION.md` |
