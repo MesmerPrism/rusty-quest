@@ -1,4 +1,14 @@
 //! Independently authored vector geometry for the native toolbar. No font/texture owner.
+const GLYPH_ADVANCE: f32 = 1.0;
+const GLYPH_CORE_WIDTH: f32 = 4.0 / 6.0;
+const GLYPH_STROKE_WIDTH: f32 = 0.075;
+fn text_width(chars: usize, height: f32) -> f32 {
+    if chars == 0 {
+        0.0
+    } else {
+        ((chars - 1) as f32 * GLYPH_ADVANCE + GLYPH_CORE_WIDTH) * height
+    }
+}
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Primitive {
@@ -56,7 +66,7 @@ pub(crate) struct ToolbarState<'a> {
 pub(crate) fn toolbar_geometry(state: ToolbarState<'_>) -> Vec<Primitive> {
     let mut out = Vec::with_capacity(256);
     out.push(Primitive::rounded_rect(
-        [-0.15, 0.59, 0.46, 0.05],
+        [-0.15, 0.62, 0.46, 0.085],
         0.018,
         [0.022, 0.031, 0.045, 0.97],
     ));
@@ -69,12 +79,12 @@ pub(crate) fn toolbar_geometry(state: ToolbarState<'_>) -> Vec<Primitive> {
             [0.065, 0.09, 0.12, 1.0]
         };
         out.push(Primitive::rounded_rect(BUTTONS[i], 0.012, c));
-        let size = 0.022;
+        let size = 0.032;
         text(
             &mut out,
             label,
             [
-                BUTTONS[i][0] - label.len() as f32 * size * 0.36,
+                BUTTONS[i][0] - text_width(label.len(), size) * 0.5,
                 BUTTONS[i][1] - size * 0.5,
             ],
             size,
@@ -84,9 +94,9 @@ pub(crate) fn toolbar_geometry(state: ToolbarState<'_>) -> Vec<Primitive> {
     text(
         &mut out,
         state.status,
-        [-0.57, 0.66],
-        0.018,
-        [0.68, 0.78, 0.87, 1.0],
+        [-0.57, 0.665],
+        0.024,
+        [0.82, 0.88, 0.94, 1.0],
     );
     out
 }
@@ -209,14 +219,14 @@ pub(crate) fn text(
         for s in strokes {
             let point = |x: u8, y: u8| {
                 [
-                    origin[0] + index as f32 * height * 0.72 + x as f32 * height / 6.0,
+                    origin[0] + index as f32 * height * GLYPH_ADVANCE + x as f32 * height / 6.0,
                     origin[1] + y as f32 * height / 6.0,
                 ]
             };
             out.push(Primitive::line(
                 point(s[0], s[1]),
                 point(s[2], s[3]),
-                height * 0.075,
+                height * GLYPH_STROKE_WIDTH,
                 color,
             ));
         }
@@ -237,6 +247,36 @@ mod tests {
         assert!(primitives.iter().all(|p| p.rect[1] - p.rect[3] > 0.5));
         let circle = Primitive::circle([0.0, 0.0], 0.1, [1.0; 4]);
         assert_eq!(circle.rect[2], circle.shape[0]);
+    }
+    #[test]
+    fn adjacent_glyph_capsule_cores_leave_visible_spacing() {
+        let height = 0.032;
+        let mut single = Vec::new();
+        text(&mut single, "M", [0.0, 0.0], height, [1.0; 4]);
+        let mut pair = Vec::new();
+        text(&mut pair, "MM", [0.0, 0.0], height, [1.0; 4]);
+        // Exact rotated capsule x-extent, including rounded stroke end caps.
+        let bounds = |p: &Primitive| {
+            let extent = (p.rect[2] - p.shape[0]) * p.shape[1].cos().abs() + p.shape[0];
+            [p.rect[0] - extent, p.rect[0] + extent]
+        };
+        let right = pair[..single.len()]
+            .iter()
+            .map(|p| bounds(p)[1])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let left = pair[single.len()..]
+            .iter()
+            .map(|p| bounds(p)[0])
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            left - right > height * 0.2,
+            "stroke cores must have real interglyph space"
+        );
+        for label in ["FORMS", "CENTER", "SIZE"] {
+            assert!(
+                text_width(label.len(), height) + height * GLYPH_STROKE_WIDTH < BUTTONS[0][2] * 2.0
+            );
+        }
     }
     #[test]
     fn hit_bounds_match_every_button_and_gaps() {
