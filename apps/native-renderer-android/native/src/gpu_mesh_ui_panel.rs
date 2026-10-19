@@ -5,13 +5,16 @@ use crate::{
         self as ahb, AhbVulkanFormatKey, AhbVulkanSampledImage, AhbVulkanSampledImageCreateInfo,
     },
     gpu_hand_mesh_visual::HandMeshVisualEyeProjection,
+    gpu_native_panel_ui::GpuNativePanelUi,
     native_alternate_input::PointerOwner,
+    native_hybrid_panel::{HybridPanelState, PanelAction},
     native_mesh_ui::{
-        self,
+        self, PointerCapture,
         android::{ImageLease, Producer},
-        PointerCapture,
     },
-    native_pointer_visual::{segment_pose, PointerVisual},
+    native_panel_resolution::RasterExtent,
+    native_panel_ui_geometry::{self, Primitive, ToolbarState},
+    native_pointer_visual::{PointerVisual, segment_pose},
 };
 use ash::vk;
 use std::{cell::Cell, ffi::CString, mem, rc::Rc};
@@ -30,6 +33,15 @@ impl Drop for TextureLease {
     }
 }
 pub(crate) struct GpuMeshUiPanel {
+    native_ui: Option<GpuNativePanelUi>,
+    hybrid: HybridPanelState,
+    hybrid_forms_slots: [bool; 2],
+    hybrid_geometry: Vec<Primitive>,
+    hybrid_geometry_key: Option<(Option<usize>, Option<usize>, bool)>,
+    raster_extent: RasterExtent,
+    latest_head: Option<HandMeshVisualEyeProjection>,
+    hybrid_suppressed_forms_pointer: bool,
+    hybrid_last_submission: Option<(bool, u64)>,
     producer: Option<Producer>,
     ahb: ahb::AhbVulkanDevice,
     memory: vk::PhysicalDeviceMemoryProperties,
@@ -74,6 +86,7 @@ impl GpuMeshUiPanel {
         self.request_visibility(!native_mesh_ui::snapshot().panel_visible)
     }
     pub(crate) fn initialize_pose(&mut self, eye: HandMeshVisualEyeProjection) -> bool {
+        self.latest_head = Some(eye);
         let Some(producer) = self.producer.as_ref() else {
             return false;
         };
@@ -84,7 +97,13 @@ impl GpuMeshUiPanel {
         );
         if initialized {
             let pose = native_mesh_ui::snapshot().pose;
-            crate::marker("native-mesh-ui",format!("event=world-pose-calibrated generation={} center={:.3},{:.3},{:.3} distanceMeters=1.4 poseSource=first-valid-central-eye headLocked=false",producer.generation,pose.center[0],pose.center[1],pose.center[2]));
+            crate::marker(
+                "native-mesh-ui",
+                format!(
+                    "event=world-pose-calibrated generation={} center={:.3},{:.3},{:.3} distanceMeters=1.4 poseSource=first-valid-central-eye headLocked=false",
+                    producer.generation, pose.center[0], pose.center[1], pose.center[2]
+                ),
+            );
         }
         initialized
     }
@@ -182,7 +201,8 @@ impl GpuMeshUiPanel {
                 return Err(e.to_string());
             }
         };
-        let panel_pipeline = match pipeline(device, render_pass, layout, false, scene_depth_enabled) {
+        let panel_pipeline = match pipeline(device, render_pass, layout, false, scene_depth_enabled)
+        {
             Ok(v) => v,
             Err(e) => {
                 device.destroy_pipeline_layout(layout, None);
@@ -192,20 +212,46 @@ impl GpuMeshUiPanel {
                 return Err(e);
             }
         };
-        let pointer_pipeline = match pipeline(device, render_pass, layout, true, scene_depth_enabled) {
-            Ok(v) => v,
-            Err(e) => {
-                device.destroy_pipeline(panel_pipeline, None);
-                device.destroy_pipeline_layout(layout, None);
-                device.destroy_descriptor_pool(pool, None);
-                device.destroy_descriptor_set_layout(set_layout, None);
-                device.destroy_sampler(sampler, None);
-                return Err(e);
-            }
+        let pointer_pipeline =
+            match pipeline(device, render_pass, layout, true, scene_depth_enabled) {
+                Ok(v) => v,
+                Err(e) => {
+                    device.destroy_pipeline(panel_pipeline, None);
+                    device.destroy_pipeline_layout(layout, None);
+                    device.destroy_descriptor_pool(pool, None);
+                    device.destroy_descriptor_set_layout(set_layout, None);
+                    device.destroy_sampler(sampler, None);
+                    return Err(e);
+                }
+            };
+        let hybrid_enabled = crate::native_hybrid_panel::selected();
+        let raster_extent = if hybrid_enabled {
+            RasterExtent::MEDIUM
+        } else {
+            RasterExtent::BASE
         };
-        let producer = match Producer::start(app, generation) {
+        let native_ui = if hybrid_enabled {
+            match GpuNativePanelUi::new(device, memory, render_pass, scene_depth_enabled) {
+                Ok(ui) => Some(ui),
+                Err(error) => {
+                    device.destroy_pipeline(panel_pipeline, None);
+                    device.destroy_pipeline(pointer_pipeline, None);
+                    device.destroy_pipeline_layout(layout, None);
+                    device.destroy_descriptor_pool(pool, None);
+                    device.destroy_descriptor_set_layout(set_layout, None);
+                    device.destroy_sampler(sampler, None);
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        let producer = match Producer::start_with_extent(app, generation, raster_extent) {
             Ok(v) => v,
             Err(e) => {
+                if let Some(ui) = native_ui {
+                    ui.destroy(device);
+                }
                 device.destroy_pipeline(panel_pipeline, None);
                 device.destroy_pipeline(pointer_pipeline, None);
                 device.destroy_pipeline_layout(layout, None);
@@ -215,12 +261,40 @@ impl GpuMeshUiPanel {
                 return Err(e);
             }
         };
-        crate::marker("native-mesh-ui", format!(
-            "event=created generation={generation} source=android-virtual-display-presentation frameOwner=native-openxr renderMode={render_mode} nativeMeshUiOriginalScene={} depth={}",
-            native_mesh_ui::original_scene_selected(),
-            if scene_depth_enabled { "scene-zbuffer" } else { "color-only-overlay" },
-        ));
+        crate::marker(
+            "native-mesh-ui",
+            format!(
+                "event=created generation={generation} source=android-virtual-display-presentation frameOwner=native-openxr renderMode={render_mode} nativeMeshUiOriginalScene={} depth={}",
+                native_mesh_ui::original_scene_selected(),
+                if scene_depth_enabled {
+                    "scene-zbuffer"
+                } else {
+                    "color-only-overlay"
+                },
+            ),
+        );
+        if hybrid_enabled {
+            crate::marker(
+                "native-hybrid-ui",
+                format!(
+                    "event=created nativeMeshUiHybrid=true logicalWidth={} logicalHeight={} rasterWidth={} rasterHeight={} frameOwner=native-openxr drawMode=instanced-sdf makepadDependency=false adaptiveResize=false",
+                    native_mesh_ui::WIDTH,
+                    native_mesh_ui::HEIGHT,
+                    raster_extent.width,
+                    raster_extent.height
+                ),
+            );
+        }
         Ok(Self {
+            native_ui,
+            hybrid: HybridPanelState::default(),
+            hybrid_forms_slots: [true; 2],
+            hybrid_geometry: Vec::new(),
+            hybrid_geometry_key: None,
+            raster_extent,
+            latest_head: None,
+            hybrid_suppressed_forms_pointer: false,
+            hybrid_last_submission: None,
             producer: Some(producer),
             ahb: ahb::AhbVulkanDevice::new(instance, device),
             memory,
@@ -261,13 +335,47 @@ impl GpuMeshUiPanel {
         // Freeze one pose for both eyes; asynchronous Android controls apply next frame.
         self.frame_controls = native_mesh_ui::snapshot();
         self.poses[slot] = self.frame_controls.pose;
+        self.hybrid_forms_slots[slot] = self.hybrid.forms_visible;
+        if let Some(ui) = &mut self.native_ui {
+            let key = (
+                self.hybrid.hovered,
+                self.hybrid.captured,
+                self.hybrid.forms_visible,
+            );
+            if self.hybrid_geometry_key != Some(key) {
+                let status = format!(
+                    "FORMS {}  RASTER {}X{}",
+                    if self.hybrid.forms_visible {
+                        "ON"
+                    } else {
+                        "OFF"
+                    },
+                    self.raster_extent.width,
+                    self.raster_extent.height
+                );
+                self.hybrid_geometry = native_panel_ui_geometry::toolbar_geometry(ToolbarState {
+                    hovered: self.hybrid.hovered,
+                    pressed: self.hybrid.captured,
+                    status: &status,
+                });
+                self.hybrid_geometry_key = Some(key);
+            }
+            ui.prepare_frame(
+                slot,
+                if self.frame_controls.panel_visible && self.frame_controls.pose_initialized {
+                    &self.hybrid_geometry
+                } else {
+                    &[]
+                },
+            )?;
+        }
         if !self.frame_controls.pose_initialized {
             return Ok(false);
         }
         if let Some(lease) = self.producer.as_mut().and_then(|p| p.acquire()) {
             let desc = lease.buffer.descriptor();
-            if desc.width != native_mesh_ui::WIDTH
-                || desc.height != native_mesh_ui::HEIGHT
+            if desc.width != self.raster_extent.width
+                || desc.height != self.raster_extent.height
                 || desc.layers != 1
                 || desc.format != 1
             {
@@ -308,7 +416,10 @@ impl GpuMeshUiPanel {
             self.latest = Some(texture);
             self.adopted_frames = self.adopted_frames.saturating_add(1);
             if self.adopted_frames == 1 {
-                crate::marker("native-mesh-ui","event=first-image-adopted textureSource=android-widget-surface cpuPainted=false visibleProof=false");
+                crate::marker(
+                    "native-mesh-ui",
+                    "event=first-image-adopted textureSource=android-widget-surface cpuPainted=false visibleProof=false",
+                );
             }
         }
         self.slots[slot] = self.latest.clone();
@@ -351,6 +462,30 @@ impl GpuMeshUiPanel {
     }
     /// Call immediately after successful submission of the command buffer recorded for slot.
     pub(crate) fn mark_submitted(&mut self, slot: usize) {
+        if self.native_ui.is_some()
+            && self.frame_controls.panel_visible
+            && self.frame_controls.pose_initialized
+        {
+            let key = (
+                self.hybrid_forms_slots[slot],
+                self.frame_controls.pose_revision,
+            );
+            if self.hybrid_last_submission != Some(key) {
+                crate::marker(
+                    "native-hybrid-ui",
+                    format!(
+                        "event=submitted generation={} poseRevision={} formsVisible={} rasterWidth={} rasterHeight={} nativePrimitives={} nativeDrawsPerEye=1 evidence=queue-submission visibleProof=false",
+                        self.frame_controls.generation,
+                        key.1,
+                        key.0,
+                        self.raster_extent.width,
+                        self.raster_extent.height,
+                        self.hybrid_geometry.len()
+                    ),
+                );
+                self.hybrid_last_submission = Some(key);
+            }
+        }
         for texture in self.pending_acquires[slot].drain(..) {
             texture.graphics_owned.set(true);
         }
@@ -367,10 +502,7 @@ impl GpuMeshUiPanel {
         viewport: vk::Viewport,
         scissor: vk::Rect2D,
     ) {
-        if slot >= 2
-            || self.slots[slot].is_none()
-            || !self.frame_controls.pose_initialized
-            || !self.frame_controls.panel_visible
+        if slot >= 2 || !self.frame_controls.pose_initialized || !self.frame_controls.panel_visible
         {
             return;
         }
@@ -384,31 +516,42 @@ impl GpuMeshUiPanel {
             fov: eye.fov_tangents,
             color_mode: [1.0; 4],
         };
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
-        device.cmd_bind_descriptor_sets(
-            cmd,
-            vk::PipelineBindPoint::GRAPHICS,
-            self.layout,
-            0,
-            &[self.sets[slot]],
-            &[],
-        );
-        let bytes = std::slice::from_raw_parts(
-            (&push as *const PanelPush).cast::<u8>(),
-            mem::size_of::<PanelPush>(),
-        );
-        device.cmd_push_constants(
-            cmd,
-            self.layout,
-            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-            0,
-            bytes,
-        );
         device.cmd_set_viewport(cmd, 0, &[viewport]);
         device.cmd_set_scissor(cmd, 0, &[scissor]);
-        device.cmd_draw(cmd, 6, 1, 0, 0);
+        if self.slots[slot].is_some() && (self.native_ui.is_none() || self.hybrid_forms_slots[slot])
+        {
+            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+            device.cmd_bind_descriptor_sets(
+                cmd,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.layout,
+                0,
+                &[self.sets[slot]],
+                &[],
+            );
+            let bytes = std::slice::from_raw_parts(
+                (&push as *const PanelPush).cast::<u8>(),
+                mem::size_of::<PanelPush>(),
+            );
+            device.cmd_push_constants(
+                cmd,
+                self.layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                bytes,
+            );
+            device.cmd_set_viewport(cmd, 0, &[viewport]);
+            device.cmd_set_scissor(cmd, 0, &[scissor]);
+            device.cmd_draw(cmd, 6, 1, 0, 0);
+        }
+        if let Some(ui) = &self.native_ui {
+            ui.record_eye(device, cmd, slot, p, eye);
+        }
     }
     pub(crate) fn set_pointer_owner(&mut self, owner: PointerOwner) {
+        if self.pointer_owner != owner {
+            self.hybrid.cancel();
+        }
         self.pointer_owner = owner;
     }
     pub(crate) fn pointer_visual_marker(&self) -> &'static str {
@@ -499,9 +642,79 @@ impl GpuMeshUiPanel {
             pressed,
             origin,
             direction,
-            controls.pose_initialized.then_some(controls.pose),
+            (controls.pose_initialized && (self.native_ui.is_none() || self.hybrid.forms_visible))
+                .then_some(controls.pose),
         );
         let pixels = native_mesh_ui::ray_pixels(controls.pose, origin, direction);
+        if self.native_ui.is_some() {
+            let hit = pixels.and_then(|p| {
+                native_panel_ui_geometry::hit_button([
+                    (p[0] / native_mesh_ui::WIDTH as f32 - 0.5) * controls.pose.width
+                        / controls.pose.height,
+                    p[1] / native_mesh_ui::HEIGHT as f32 - 0.5,
+                ])
+            });
+            let (consumed, action) =
+                self.hybrid
+                    .update(valid, pressed, hit, self.pointer.captured());
+            if valid && hit.is_some() {
+                if let (Some(visual), Some(p)) = (&mut self.visual, pixels) {
+                    let pose = controls.pose;
+                    visual.hit = true;
+                    visual.end = std::array::from_fn(|i| {
+                        pose.center[i]
+                            + (p[0] / native_mesh_ui::WIDTH as f32 - 0.5)
+                                * pose.width
+                                * pose.right[i]
+                            + (0.5 - p[1] / native_mesh_ui::HEIGHT as f32)
+                                * pose.height
+                                * pose.up[i]
+                    });
+                }
+            }
+            if let Some(action) = action {
+                let accepted = match action {
+                    PanelAction::ToggleForms => {
+                        self.hybrid.forms_visible = !self.hybrid.forms_visible;
+                        true
+                    }
+                    PanelAction::Center => self.latest_head.is_some_and(|eye| {
+                        native_mesh_ui::recenter_pose(
+                            controls.generation,
+                            [eye.position[0], eye.position[1], eye.position[2]],
+                            eye.orientation_xyzw,
+                        )
+                    }),
+                    PanelAction::Size => {
+                        native_mesh_ui::request_panel_action(controls.generation, 7)
+                    }
+                };
+                crate::marker(
+                    "native-hybrid-ui",
+                    format!(
+                        "event=action action={:?} accepted={} formsVisible={} generation={} evidence=request-only",
+                        action, accepted, self.hybrid.forms_visible, controls.generation
+                    ),
+                );
+            }
+            if consumed || !self.hybrid.forms_visible {
+                if !self.hybrid_suppressed_forms_pointer {
+                    if let Some(producer) = &self.producer {
+                        producer.pointer(app, 5, [0.0, 0.0])?;
+                    }
+                    self.hybrid_suppressed_forms_pointer = true;
+                }
+                // Keep the original pointer edge state synchronized; a held toolbar press
+                // must never become a newly pressed Android control after crossing the edge.
+                if let Some((action, p)) = self.pointer.update(false, pressed, None) {
+                    if let Some(producer) = &self.producer {
+                        producer.pointer(app, action, p)?;
+                    }
+                }
+                return Ok(consumed);
+            }
+            self.hybrid_suppressed_forms_pointer = false;
+        }
         let captured_before = self.pointer.captured();
         let event = self.pointer.update(valid, pressed, pixels);
         if let Some((action, p)) = event {
@@ -564,6 +777,9 @@ impl GpuMeshUiPanel {
             }
         }
         self.registry.clear();
+        if let Some(ui) = self.native_ui.take() {
+            ui.destroy(device);
+        }
         if let Some(producer) = self.producer.take() {
             if let Err(error) = producer.stop(app) {
                 crate::marker(

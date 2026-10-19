@@ -1,8 +1,8 @@
 //! Native mesh-panel state, bounded ray-to-widget input and Android Presentation bridge.
 use std::sync::{Mutex, OnceLock};
 
-pub(crate) const WIDTH: u32 = 1024;
-pub(crate) const HEIGHT: u32 = 768;
+pub(crate) const WIDTH: u32 = super::native_panel_resolution::LOGICAL_WIDTH;
+pub(crate) const HEIGHT: u32 = super::native_panel_resolution::LOGICAL_HEIGHT;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PanelPose {
     pub(crate) center: [f32; 3],
@@ -225,7 +225,8 @@ pub(crate) fn renderer_observed_visibility(frame: ControlSnapshot) -> bool {
     )
 }
 fn submitted_visibility(state: ControlSnapshot, frame: ControlSnapshot) -> Option<bool> {
-    (frame.generation != 0 && frame.generation == state.generation
+    (frame.generation != 0
+        && frame.generation == state.generation
         && frame.pose_initialized
         && frame.visibility_revision == state.effective_visibility_revision
         && frame.panel_visible == state.effective_panel_visible)
@@ -307,6 +308,40 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
 pub(crate) fn initialize_pose(generation: u64, position: [f32; 3], orientation: [f32; 4]) -> bool {
     let mut state = controls().lock().unwrap_or_else(|p| p.into_inner());
     calibrate(&mut state, generation, position, orientation)
+}
+/// Explicit user recenter using the current valid head pose in the same reference space.
+/// Preserve logical/raster density and the user's physical panel size.
+pub(crate) fn recenter_pose(generation: u64, position: [f32; 3], orientation: [f32; 4]) -> bool {
+    recenter(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        position,
+        orientation,
+    )
+}
+fn recenter(
+    state: &mut ControlSnapshot,
+    generation: u64,
+    position: [f32; 3],
+    orientation: [f32; 4],
+) -> bool {
+    if generation == 0
+        || state.generation != generation
+        || !state.pose_initialized
+        || state.revision >= i64::MAX as u64
+    {
+        return false;
+    }
+    let Some(mut pose) = head_relative_pose(position, orientation) else {
+        return false;
+    };
+    pose.width = state.pose.width;
+    pose.height = state.pose.height;
+    state.revision += 1;
+    state.pose_revision = state.revision;
+    state.pose = pose;
+    state.pose_distance = 1.4;
+    true
 }
 fn calibrate(
     state: &mut ControlSnapshot,
@@ -416,6 +451,17 @@ pub(crate) fn deactivate(generation: u64) {
     if s.generation == generation {
         s.generation = 0;
     }
+}
+/// Native chrome may mutate presentation geometry only; product settings retain their owner.
+pub(crate) fn request_panel_action(generation: u64, action: i32) -> bool {
+    panel_action(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        action,
+    )
+}
+fn panel_action(state: &mut ControlSnapshot, generation: u64, action: i32) -> bool {
+    matches!(action, 7 | 13) && apply(state, generation, action, 1.0)
 }
 fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> bool {
     if generation == 0
@@ -647,11 +693,27 @@ pub(crate) mod android {
             app: &android_activity::AndroidApp,
             generation: u64,
         ) -> Result<Self, String> {
+            Self::start_with_extent(
+                app,
+                generation,
+                super::super::native_panel_resolution::RasterExtent::BASE,
+            )
+        }
+        /// Startup only. A caller must retire Vulkan imports/fences and stop the old writer
+        /// before replacing its reader; this API never mutates a live image generation.
+        pub(crate) unsafe fn start_with_extent(
+            app: &android_activity::AndroidApp,
+            generation: u64,
+            extent: super::super::native_panel_resolution::RasterExtent,
+        ) -> Result<Self, String> {
+            if !extent.supported() {
+                return Err("unsupported mesh UI raster extent".into());
+            }
             let mut reader = ptr::null_mut();
             // RGBA8, GPU_SAMPLED_IMAGE|GPU_COLOR_OUTPUT. Retained AImages prevent producer recycling.
             if media::AImageReader_newWithUsage(
-                WIDTH as i32,
-                HEIGHT as i32,
+                extent.width as i32,
+                extent.height as i32,
                 1,
                 (1 << 8) | (1 << 9),
                 8,
@@ -677,8 +739,8 @@ pub(crate) mod android {
                     &[
                         JValue::Object(activity),
                         JValue::Object(&surface),
-                        JValue::Int(WIDTH as i32),
-                        JValue::Int(HEIGHT as i32),
+                        JValue::Int(extent.width as i32),
+                        JValue::Int(extent.height as i32),
                         JValue::Long(generation as i64),
                     ],
                 )?;
@@ -897,6 +959,59 @@ pub(crate) mod android {
 mod tests {
     use super::*;
     #[test]
+    fn recenter_uses_current_head_preserves_size_and_rejects_stale_generation() {
+        let mut state = ControlSnapshot {
+            generation: 9,
+            pose_initialized: true,
+            ..ControlSnapshot::default()
+        };
+        state.pose.width = 1.2;
+        state.pose.height = 0.9;
+        assert!(!recenter(
+            &mut state,
+            8,
+            [2.0, 1.5, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ));
+        assert!(!recenter(
+            &mut state,
+            9,
+            [f32::NAN, 0.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ));
+        assert!(recenter(
+            &mut state,
+            9,
+            [2.0, 1.5, 0.0],
+            [0.0, 0.0, 0.0, 1.0]
+        ));
+        assert_eq!(state.pose.center, [2.0, 1.5, -1.4]);
+        assert_eq!((state.pose.width, state.pose.height), (1.2, 0.9));
+        assert_eq!(state.pose_revision, 1);
+    }
+    #[test]
+    fn native_chrome_only_admits_current_generation_presentation_actions() {
+        let mut state = ControlSnapshot {
+            generation: 7,
+            pose_initialized: true,
+            ..ControlSnapshot::default()
+        };
+        let initial = state.initial_pose;
+        assert!(!panel_action(&mut state, 6, 7));
+        for code in [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 99] {
+            assert!(!panel_action(&mut state, 7, code));
+        }
+        assert_eq!(state.revision, 0);
+        assert!(panel_action(&mut state, 7, 7));
+        assert_eq!(state.pose.width, 1.2);
+        assert_eq!(state.pose_revision, 1);
+        assert!(panel_action(&mut state, 7, 13));
+        assert_eq!(state.pose.width, initial.width);
+        assert_eq!(state.pose.center, initial.center);
+        assert_eq!(state.pose_revision, 2);
+    }
+
+    #[test]
     fn original_overlay_is_explicit_and_does_not_enable_scene_depth_or_other_modes() {
         let original = "solid-black-private-particles";
         let scene = "native-worldspace-integration";
@@ -912,8 +1027,11 @@ mod tests {
     }
     #[test]
     fn session_presentation_uses_the_submitted_tuple_not_a_visibility_setter() {
-        let mut state = ControlSnapshot { generation: 91, pose_initialized: true,
-            ..ControlSnapshot::default() };
+        let mut state = ControlSnapshot {
+            generation: 91,
+            pose_initialized: true,
+            ..ControlSnapshot::default()
+        };
         let visible = state;
         assert_eq!(submitted_visibility(state, visible), None);
         observe_visibility(&mut state, visible);
@@ -929,16 +1047,28 @@ mod tests {
     }
     #[test]
     fn retired_or_uninitialized_panel_cannot_activate_session_presentation() {
-        let mut state = ControlSnapshot { generation: 92, pose_initialized: true,
-            ..ControlSnapshot::default() };
+        let mut state = ControlSnapshot {
+            generation: 92,
+            pose_initialized: true,
+            ..ControlSnapshot::default()
+        };
         set_visibility(&mut state, 92, false).unwrap();
         let hidden = state;
         observe_visibility(&mut state, hidden);
         assert_eq!(submitted_visibility(state, hidden), Some(false));
-        assert_eq!(submitted_visibility(state, ControlSnapshot {pose_initialized:false,..hidden}), None);
-        state.generation=93;
+        assert_eq!(
+            submitted_visibility(
+                state,
+                ControlSnapshot {
+                    pose_initialized: false,
+                    ..hidden
+                }
+            ),
+            None
+        );
+        state.generation = 93;
         assert_eq!(submitted_visibility(state, hidden), None);
-        state.generation=0;
+        state.generation = 0;
         assert_eq!(submitted_visibility(state, hidden), None);
     }
     #[test]

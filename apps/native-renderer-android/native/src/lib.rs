@@ -64,6 +64,8 @@ mod gpu_mesh_replay;
 #[cfg(target_os = "android")]
 mod gpu_mesh_ui_panel;
 #[cfg(target_os = "android")]
+mod gpu_native_panel_ui;
+#[cfg(target_os = "android")]
 mod gpu_private_particles;
 #[cfg(target_os = "android")]
 mod gpu_sdf_field;
@@ -99,6 +101,9 @@ mod native_camera_reader_selection;
 mod native_controller_breath_state;
 #[cfg(any(test, target_os = "android"))]
 mod native_mesh_ui;
+mod native_hybrid_panel;
+mod native_panel_resolution;
+mod native_panel_ui_geometry;
 #[cfg(any(test, target_os = "android"))]
 mod native_pointer_visual;
 #[cfg(any(test, target_os = "android"))]

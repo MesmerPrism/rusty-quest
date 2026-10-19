@@ -87,6 +87,58 @@ static final class VisibilityReadback {
     private final Activity activity;
     private final long generation;
     private final Surface surface;
+    private final float rasterScale;
+    private final java.util.WeakHashMap<Window,Boolean> rasterWindows=new java.util.WeakHashMap<Window,Boolean>();
+    /** Keep the original pixel layout and resource density; raster scale changes sampling only. */
+    private static final class RasterLayout extends FrameLayout {
+        private final float scale;
+        RasterLayout(Context context,View child,float scale){
+            super(context);this.scale=scale;addView(child,new FrameLayout.LayoutParams(-1,-1));
+            child.setPivotX(0);child.setPivotY(0);child.setScaleX(scale);child.setScaleY(scale);
+        }
+        private int logicalSpec(int spec){return View.MeasureSpec.makeMeasureSpec(
+            Math.round(View.MeasureSpec.getSize(spec)/scale),View.MeasureSpec.getMode(spec));}
+        @Override protected void onMeasure(int width,int height){
+            super.onMeasure(logicalSpec(width),logicalSpec(height));
+            setMeasuredDimension(Math.round(getMeasuredWidth()*scale),Math.round(getMeasuredHeight()*scale));
+        }
+        @Override protected void onLayout(boolean changed,int left,int top,int right,int bottom){
+            super.onLayout(changed,0,0,Math.round((right-left)/scale),Math.round((bottom-top)/scale));
+        }
+    }
+    private View rasterLayout(View child){return rasterScale==1f?child:new RasterLayout(child.getContext(),child,rasterScale);}
+    private void scaleModalContent(Window window){
+        if(rasterScale==1f)return;
+        ViewGroup content=window.findViewById(android.R.id.content);
+        if(content==null||content.getChildCount()!=1)throw new IllegalStateException("mesh-modal-content-unavailable");
+        View child=content.getChildAt(0);if(child instanceof RasterLayout)return;
+        ViewGroup.LayoutParams params=child.getLayoutParams();
+        // These values belong to the physical parent, outside the scaled logical subtree.
+        params.width=rasterDimension(params.width);params.height=rasterDimension(params.height);
+        if(params instanceof ViewGroup.MarginLayoutParams){
+            ViewGroup.MarginLayoutParams margins=(ViewGroup.MarginLayoutParams)params;
+            margins.leftMargin=rasterOffset(margins.leftMargin);margins.topMargin=rasterOffset(margins.topMargin);
+            margins.rightMargin=rasterOffset(margins.rightMargin);margins.bottomMargin=rasterOffset(margins.bottomMargin);
+        }
+        content.removeView(child);content.addView(rasterLayout(child),params);
+    }
+    private int rasterOffset(int logical){return Math.round(logical*rasterScale);}
+    private int rasterDimension(int logical){return logical>0?rasterOffset(logical):logical;}
+    private void scaleWindowPlacement(Window window,WindowManager.LayoutParams attributes){
+        if(rasterScale==1f||rasterWindows.containsKey(window))return;
+        // MATCH_PARENT/WRAP_CONTENT and gravity/fractional margins keep their platform semantics.
+        attributes.width=rasterDimension(attributes.width);attributes.height=rasterDimension(attributes.height);
+        attributes.x=rasterOffset(attributes.x);attributes.y=rasterOffset(attributes.y);
+    }
+    private void scaleWindowInsets(Window window){
+        if(rasterScale==1f||rasterWindows.containsKey(window))return;
+        rasterWindows.put(window,Boolean.TRUE);
+        View decor=window.getDecorView();
+        decor.setPadding(rasterOffset(decor.getPaddingLeft()),rasterOffset(decor.getPaddingTop()),
+            rasterOffset(decor.getPaddingRight()),rasterOffset(decor.getPaddingBottom()));
+        decor.setMinimumWidth(rasterOffset(decor.getMinimumWidth()));
+        decor.setMinimumHeight(rasterOffset(decor.getMinimumHeight()));
+    }
     private VirtualDisplay display;
     private Presentation presentation;
     private View root;
@@ -272,9 +324,10 @@ static final class VisibilityReadback {
             .put("evidence","current-android-view-layout; native-geometry-qualified-separately").put("visible_confirmation",false);
     }
 
-    private static JSONArray bounds(View view)throws org.json.JSONException {
-        Rect local=new Rect();if(!view.isAttachedToWindow()||!view.isShown()||!view.getLocalVisibleRect(local))return null;
-        int[] location=new int[2];view.getLocationOnScreen(location);local.offset(location[0],location[1]);
+    private JSONArray bounds(View view)throws org.json.JSONException {
+        Rect local=new Rect();if(!view.isAttachedToWindow()||!view.isShown()||!view.getGlobalVisibleRect(local))return null;
+        local.set((int)Math.floor(local.left/rasterScale),(int)Math.floor(local.top/rasterScale),
+            (int)Math.ceil(local.right/rasterScale),(int)Math.ceil(local.bottom/rasterScale));
         if(!local.intersect(0,0,1024,768)||local.isEmpty())return null;
         return new JSONArray(new int[]{local.left,local.top,local.right,local.bottom});
     }
@@ -438,6 +491,7 @@ static final class VisibilityReadback {
         if(current!=this||presentation==null||root==null)throw new IllegalStateException("mesh-window-retired");
         Window window=dialog.getWindow();
         WindowManager.LayoutParams attributes=window.getAttributes();
+        scaleWindowPlacement(window,attributes);
         attributes.type=WindowManager.LayoutParams.TYPE_APPLICATION_PANEL;
         attributes.token=presentation.getWindow().getDecorView().getWindowToken();
         if(attributes.token==null)throw new IllegalStateException("mesh-window-token-unavailable");
@@ -452,6 +506,8 @@ static final class VisibilityReadback {
             windowIds.remove(dialog);
         }});
         dialog.show();
+        scaleWindowInsets(window);
+        scaleModalContent(window);
         windowIds.put(dialog,nextWindowId++);
         if(!isKeyboard)modals.add(dialog);
     }
@@ -516,7 +572,7 @@ static final class VisibilityReadback {
             else input.performEditorAction(editorInfo.imeOptions&EditorInfo.IME_MASK_ACTION);
         }},1);
         keyboardButton(actions,"Done",new Runnable(){public void run(){closeKeyboard();}},1);
-        keyboard.setContentView(keys);
+        keyboard.setContentView(rasterLayout(keys));
     }
 
     private void editorKey(int code){input.key(code);}
@@ -537,7 +593,7 @@ static final class VisibilityReadback {
     private boolean hit(Dialog dialog,float x,float y){
         if(dialog==null||!dialog.isShowing())return false;
         View decor=dialog.getWindow().getDecorView();int[] origin=new int[2];decor.getLocationOnScreen(origin);
-        return x>=origin[0]&&y>=origin[1]&&x<origin[0]+decor.getWidth()&&y<origin[1]+decor.getHeight();
+        return x*rasterScale>=origin[0]&&y*rasterScale>=origin[1]&&x*rasterScale<origin[0]+decor.getWidth()&&y*rasterScale<origin[1]+decor.getHeight();
     }
     private Dialog dialogAt(float x,float y){
         if(hit(keyboard,x,y))return keyboard;
@@ -547,17 +603,19 @@ static final class VisibilityReadback {
     private void dispatchPointer(MotionEvent event){
         if(pointerDialog==null){root.dispatchTouchEvent(event);return;}
         View decor=pointerDialog.getWindow().getDecorView();int[] origin=new int[2];decor.getLocationOnScreen(origin);
-        event.offsetLocation(-origin[0],-origin[1]);pointerDialog.dispatchTouchEvent(event);
+        event.setLocation(event.getX()*rasterScale-origin[0],event.getY()*rasterScale-origin[1]);pointerDialog.dispatchTouchEvent(event);
     }
 
-    private NativeMeshUiProducer(Activity activity, Surface surface, long generation) {
+    private NativeMeshUiProducer(Activity activity, Surface surface, long generation, int width) {
         this.activity = activity;
         this.surface = surface;
+        this.rasterScale = width/1024f;
         this.generation = generation;
     }
 
     public static void start(Activity activity, Surface surface, int width, int height, long generation) {
-        if (width != 1024 || height != 768 || generation <= 0 || !surface.isValid()) {
+        if (!((width==1024&&height==768)||(width==1536&&height==1152)||(width==2048&&height==1536))
+                || generation <= 0 || !surface.isValid()) {
             surface.release();
             return;
         }
@@ -571,7 +629,7 @@ static final class VisibilityReadback {
                 Log.e(TAG, "event=producer-failed reason=previous-producer-not-retired");
                 return;
             }
-            NativeMeshUiProducer owner = new NativeMeshUiProducer(activity, surface, generation);
+            NativeMeshUiProducer owner = new NativeMeshUiProducer(activity, surface, generation, width);
             current = owner;
             try {
                 owner.ownerAttachment.resumed(owner.activityResumed());
@@ -590,7 +648,7 @@ static final class VisibilityReadback {
                         getWindow().setFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
                                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
                         owner.build(this.getContext());
-                        setContentView(owner.root);
+                        setContentView(owner.rasterLayout(owner.root));
                     }
                 };
                 owner.presentation.show();

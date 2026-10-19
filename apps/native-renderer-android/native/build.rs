@@ -7,6 +7,9 @@ use std::{
 
 fn main() {
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID");
+    println!("cargo:rerun-if-changed=shaders/native_panel_ui.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/native_panel_ui.frag.glsl");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE");
     println!("cargo:rerun-if-changed=shaders/mesh_ui_panel.vert.glsl");
@@ -255,6 +258,18 @@ fn main() {
             "Android shader build needs glslc. Put glslc on PATH, set GLSLC, or set ANDROID_NDK_HOME."
         )
     });
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/native_panel_ui.vert.glsl"),
+        &out_dir.join("native_panel_ui.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/native_panel_ui.frag.glsl"),
+        &out_dir.join("native_panel_ui.frag.spv"),
+    );
     compile_shader(
         &glslc,
         "vertex",
