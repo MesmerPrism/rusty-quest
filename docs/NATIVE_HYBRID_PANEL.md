@@ -64,6 +64,12 @@ CPU preparation markers include acquisition, import, policy and toolbar updates.
 Compare fixed tiers in the same app, with equal scene and eye-buffer settings,
 and keep captures outside the idle timing windows.
 
+Raster handoffs retain the original widget tree, edit values and scroll offsets.
+The writer acknowledgement waits for stable scroll, completed layout, restored
+offsets and a hardware frame commit. New pointer/editor actions are deferred
+only during the mutation; pending modal and IME input remains usable. This
+submission barrier still requires headset pixel qualification.
+
 ## Meta system keyboard
 
 The hybrid APK declares optional `com.oculus.feature.VIRTUAL_KEYBOARD` and

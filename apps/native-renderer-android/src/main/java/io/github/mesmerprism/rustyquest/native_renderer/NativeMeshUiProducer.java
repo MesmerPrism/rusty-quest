@@ -17,6 +17,7 @@ import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.Window;
@@ -361,7 +362,8 @@ static final class VisibilityReadback {
         JSONObject geometry=new JSONObject(nativeReadPanelGeometry(generation));
         boolean applied=GeometryReadback.applied(geometry,generation);
         if("applied".equals(geometry.optString("status"))&&!applied)geometry=visibilityUnavailable("unavailable");
-        boolean interactive=applied&&geometry.optBoolean("frame_panel_visible",false)&&visibilityObserved&&effectiveVisible&&visibilityRequest==0;
+        boolean interactive=applied&&geometry.optBoolean("frame_panel_visible",false)&&visibilityObserved&&effectiveVisible&&visibilityRequest==0
+            &&!(resizeRequest!=null&&resizeRequest.state==0&&resizeRequest.mutating);
         JSONArray windows=new JSONArray();
         addWindow(windows,root,0,"root",modals.isEmpty()&&interactive);
         for(int i=0;i<modals.size();i++){
@@ -601,6 +603,7 @@ static final class VisibilityReadback {
     private boolean editorCurrent(){return viewCurrent(editor);}
 
     private void openKeyboard(EditText field) {
+        if(resizeInputSuppressed())return;
         if(field==editor&&(keyboard!=null||systemKeyboard!=null)&&editorCurrent())return;
         closeKeyboard();editor=field;
         if(!editorCurrent()){retireEditor();return;}
@@ -714,10 +717,52 @@ static final class VisibilityReadback {
         this.generation = generation;
     }
 
-    /** One admitted writer handoff. State1 is attachment acknowledgement, never pixel acceptance. */
+    /** Original view state, never a rebuilt widget tree or a second edit buffer. */
+    private static final class ViewScrollState {
+        final View view;final int x,y;final boolean smooth;
+        ViewScrollState(View view){
+            this.view=view;x=view.getScrollX();y=view.getScrollY();
+            smooth=view instanceof ScrollView?((ScrollView)view).isSmoothScrollingEnabled():
+                view instanceof android.widget.HorizontalScrollView&&((android.widget.HorizontalScrollView)view).isSmoothScrollingEnabled();
+        }
+        void freeze(){
+            if(view instanceof ScrollView){((ScrollView)view).fling(0);((ScrollView)view).setSmoothScrollingEnabled(false);}
+            else if(view instanceof android.widget.HorizontalScrollView){
+                ((android.widget.HorizontalScrollView)view).fling(0);((android.widget.HorizontalScrollView)view).setSmoothScrollingEnabled(false);
+            }
+        }
+        void restoreSmooth(){
+            if(view instanceof ScrollView)((ScrollView)view).setSmoothScrollingEnabled(smooth);
+            else if(view instanceof android.widget.HorizontalScrollView)((android.widget.HorizontalScrollView)view).setSmoothScrollingEnabled(smooth);
+        }
+    }
+    private static final class ScrollSnapshot {
+        final ArrayList<ViewScrollState> values=new ArrayList<ViewScrollState>();
+        static ScrollSnapshot capture(View root){ScrollSnapshot result=new ScrollSnapshot();result.add(root);return result;}
+        private void add(View view){
+            values.add(new ViewScrollState(view));
+            if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)add(group.getChildAt(i));}
+        }
+        boolean samePositions(ScrollSnapshot other){
+            if(other==null||values.size()!=other.values.size())return false;
+            for(int i=0;i<values.size();i++){ViewScrollState a=values.get(i),b=other.values.get(i);
+                if(a.view!=b.view||a.x!=b.x||a.y!=b.y)return false;
+            }
+            return true;
+        }
+        void freeze(){for(ViewScrollState value:values)value.freeze();}
+        boolean restore(){boolean changed=false;for(ViewScrollState value:values){
+            if(value.view.getScrollX()!=value.x||value.view.getScrollY()!=value.y){value.view.scrollTo(value.x,value.y);changed=true;}
+        }return changed;}
+        void restoreSmooth(){for(ViewScrollState value:values)value.restoreSmooth();}
+    }
+    /** One admitted writer handoff. State1 also owes completed layout and original scroll. */
     private static final class ResizeRequest {
         final long id;final int width,height;Surface target;
         volatile int state;volatile int deferrals;volatile String reason="queued";
+        boolean mutating,rollingBack;int oldWidth,oldHeight,stableFrames;float oldScale;
+        ScrollSnapshot observedScroll,scroll;ViewTreeObserver observer;ViewTreeObserver.OnPreDrawListener listener;
+        ViewTreeObserver commitObserver;Runnable frameCommit;long frameSerial;boolean framePending;
         ResizeRequest(long id,Surface target,int width,int height){this.id=id;this.target=target;this.width=width;this.height=height;}
     }
     private static boolean rasterExtentSupported(int width,int height){
@@ -739,7 +784,7 @@ static final class VisibilityReadback {
         }
         return true;
     }
-    /** 0pending/deferred,1writer committed,-1safe rejection/cancel,-2uncertain mutation. */
+    /** 0pending/deferred,1writer+layout committed,-1safe rejection/cancel,-2uncertain mutation. */
     public static int resizeStatus(long generation,long requestId){
         NativeMeshUiProducer owner=current;
         if(owner==null||owner.generation!=generation)return -2;
@@ -757,56 +802,130 @@ static final class VisibilityReadback {
         if(root.isLayoutRequested()||rootRaster.isLayoutRequested())return "layout-pending";
         return null;
     }
+    private boolean resizeInputSuppressed(){
+        ResizeRequest request=resizeRequest;return request!=null&&request.state==0&&request.mutating;
+    }
+    private boolean resizeOwnerCurrent(ResizeRequest request){
+        return request==resizeRequest&&request.state==0&&current==this&&cancelledGeneration!=generation
+            &&!resizeStopped&&!activity.isFinishing()&&!activity.isDestroyed();
+    }
+    private void removeResizeObserver(ResizeRequest request){
+        if(request.observer!=null&&request.listener!=null&&request.observer.isAlive())request.observer.removeOnPreDrawListener(request.listener);
+        request.observer=null;request.listener=null;
+        if(request.commitObserver!=null&&request.frameCommit!=null&&request.commitObserver.isAlive())request.commitObserver.unregisterFrameCommitCallback(request.frameCommit);
+        request.commitObserver=null;request.frameCommit=null;request.framePending=false;request.frameSerial++;
+    }
     private boolean releaseResizeTarget(ResizeRequest request){
         Surface target=request.target;request.target=null;
         if(target!=null)try{target.release();}catch(RuntimeException failure){uncertainSurfaces.add(target);return false;}
         return true;
     }
     private void abortResizeSafely(ResizeRequest request,String reason){
-        request.reason=reason;
-        request.state=releaseResizeTarget(request)?-1:-2;
+        removeResizeObserver(request);if(request.scroll!=null)request.scroll.restoreSmooth();
+        request.reason=reason;request.state=releaseResizeTarget(request)?-1:-2;
+    }
+    private void deferResize(final ResizeRequest request,String reason){
+        request.reason=reason;if(request.deferrals<Integer.MAX_VALUE)request.deferrals++;
+        if(!resizePolls.postDelayed(new Runnable(){public void run(){applyResize(request);}},100))abortResizeSafely(request,"queue-unavailable");
     }
     private void applyResize(final ResizeRequest request){
         synchronized(this){
-            if(request!=resizeRequest||request.state!=0)return;
-            if(current!=this||cancelledGeneration==generation||resizeStopped||activity.isFinishing()||activity.isDestroyed()){
-                abortResizeSafely(request,"owner-retired");return;
-            }
-            String busy=resizeBusyReason();
-            if(busy!=null){
-                request.reason=busy;if(request.deferrals<Integer.MAX_VALUE)request.deferrals++;
-                if(!resizePolls.postDelayed(new Runnable(){public void run(){applyResize(request);}},100)){
-                    abortResizeSafely(request,"queue-unavailable");
+            if(request!=resizeRequest||request.state!=0||request.mutating||request.listener!=null)return;
+            if(!resizeOwnerCurrent(request)){abortResizeSafely(request,"owner-retired");return;}
+            String busy=resizeBusyReason();if(busy!=null){deferResize(request,busy);return;}
+            if(!request.target.isValid()){abortResizeSafely(request,"surface-invalid");return;}
+            if(android.os.Build.VERSION.SDK_INT<29||!rootRaster.isHardwareAccelerated()){abortResizeSafely(request,"frame-commit-unavailable");return;}
+            request.reason="awaiting-scroll-stability";request.observedScroll=ScrollSnapshot.capture(root);
+            request.observer=rootRaster.getViewTreeObserver();
+            request.listener=new ViewTreeObserver.OnPreDrawListener(){public boolean onPreDraw(){
+                synchronized(NativeMeshUiProducer.this){
+                    if(!resizeOwnerCurrent(request))return true;
+                    String busy=resizeBusyReason();
+                    if(busy!=null){removeResizeObserver(request);deferResize(request,busy);return true;}
+                    ScrollSnapshot now=ScrollSnapshot.capture(root);
+                    request.stableFrames=now.samePositions(request.observedScroll)?request.stableFrames+1:0;
+                    request.observedScroll=now;
+                    if(request.stableFrames<2){rootRaster.invalidate();return true;}
+                    removeResizeObserver(request);request.scroll=now;beginResizeMutation(request);return false;
                 }
-                return;
-            }
-            if(!request.target.isValid()){
-                abortResizeSafely(request,"surface-invalid");return;
-            }
-            Surface previous=surface;int oldWidth=rasterWidth,oldHeight=rasterHeight;float oldScale=rasterScale;
-            try{
-                display.setSurface(null);
-                display.resize(request.width,request.height,densityDpi);
-                rasterScale=request.width/1024f;rootRaster.setRasterScale(rasterScale);
-                display.setSurface(request.target);
-                surface=request.target;request.target=null;rasterWidth=request.width;rasterHeight=request.height;
-                rasterEpoch=request.id;request.reason="writer-committed";request.state=1;
-                try{previous.release();}catch(RuntimeException releaseFailure){uncertainSurfaces.add(previous);}
-                Log.i(TAG,"event=raster-writer-committed generation="+generation+" request="+request.id
-                    +" epoch="+rasterEpoch+" width="+rasterWidth+" height="+rasterHeight+" evidence=writer-attachment-only");
-            }catch(RuntimeException failure){
-                boolean restored=false;
-                try{
-                    display.setSurface(null);display.resize(oldWidth,oldHeight,densityDpi);
-                    rasterScale=oldScale;rootRaster.setRasterScale(oldScale);display.setSurface(previous);restored=true;
-                }catch(RuntimeException rollbackFailure){ /* Both wrappers remain owned until display release. */ }
-                if(restored){abortResizeSafely(request,"rolled-back");}
-                else{request.reason="mutation-uncertain";request.state=-2;}
-                Log.e(TAG,"event=raster-writer-failed generation="+generation+" request="+request.id+" state="+request.state);
-            }
+            }};
+            request.observer.addOnPreDrawListener(request.listener);rootRaster.invalidate();
         }
     }
-    public static void start(Activity activity, Surface surface, int width, int height, long generation) {
+    private void beginResizeMutation(final ResizeRequest request){
+        request.oldWidth=rasterWidth;request.oldHeight=rasterHeight;request.oldScale=rasterScale;request.mutating=true;
+        try{
+            request.scroll.freeze();display.setSurface(null);display.resize(request.width,request.height,densityDpi);
+            rasterScale=request.width/1024f;rootRaster.setRasterScale(rasterScale);display.setSurface(request.target);
+            awaitResizeLayout(request);
+        }catch(RuntimeException failure){rollbackResize(request);}
+    }
+    private void rollbackResize(final ResizeRequest request){
+        removeResizeObserver(request);
+        try{
+            display.setSurface(null);display.resize(request.oldWidth,request.oldHeight,densityDpi);
+            rasterScale=request.oldScale;rootRaster.setRasterScale(rasterScale);display.setSurface(surface);
+            request.rollingBack=true;awaitResizeLayout(request);
+        }catch(RuntimeException failure){
+            if(request.scroll!=null)request.scroll.restoreSmooth();request.reason="mutation-uncertain";request.state=-2;
+        }
+    }
+    private void awaitResizeLayout(final ResizeRequest request){
+        request.reason=request.rollingBack?"awaiting-rollback-layout":"awaiting-layout-scroll-restore";
+        request.observer=rootRaster.getViewTreeObserver();
+        request.listener=new ViewTreeObserver.OnPreDrawListener(){public boolean onPreDraw(){
+            synchronized(NativeMeshUiProducer.this){
+                if(!resizeOwnerCurrent(request))return true;
+                int width=request.rollingBack?request.oldWidth:request.width,height=request.rollingBack?request.oldHeight:request.height;
+                if(rootRaster.isLayoutRequested()||root.isLayoutRequested()||rootRaster.getWidth()!=width||rootRaster.getHeight()!=height){rootRaster.invalidate();return false;}
+                try{
+                    if(request.scroll.restore()){rootRaster.invalidate();return false;}
+                    if(!request.framePending)registerRestoredFrame(request);
+                    return true;
+                }catch(RuntimeException failure){
+                    if(request.rollingBack){removeResizeObserver(request);request.scroll.restoreSmooth();request.reason="rollback-layout-uncertain";request.state=-2;}
+                    else rollbackResize(request);
+                    return false;
+                }
+            }
+        }};
+        request.observer.addOnPreDrawListener(request.listener);rootRaster.requestLayout();rootRaster.invalidate();
+    }    private void registerRestoredFrame(final ResizeRequest request){
+        if(android.os.Build.VERSION.SDK_INT<29||!rootRaster.isHardwareAccelerated())throw new IllegalStateException("mesh-frame-commit-unavailable");
+        request.reason="awaiting-restored-frame-commit";request.framePending=true;
+        final long serial=++request.frameSerial;request.commitObserver=rootRaster.getViewTreeObserver();
+        request.frameCommit=new Runnable(){public void run(){
+            resizePolls.post(new Runnable(){public void run(){finishRestoredFrame(request,serial);}});
+        }};
+        request.commitObserver.registerFrameCommitCallback(request.frameCommit);
+    }
+    private void finishRestoredFrame(ResizeRequest request,long serial){
+        synchronized(this){
+            if(!resizeOwnerCurrent(request)||serial!=request.frameSerial||!request.framePending)return;
+            request.framePending=false;request.commitObserver=null;request.frameCommit=null;
+            int width=request.rollingBack?request.oldWidth:request.width,height=request.rollingBack?request.oldHeight:request.height;
+            if(rootRaster.isLayoutRequested()||root.isLayoutRequested()||rootRaster.getWidth()!=width||rootRaster.getHeight()!=height
+                    ||!ScrollSnapshot.capture(root).samePositions(request.scroll)){
+                request.reason="layout-changed-before-frame-ack";rootRaster.invalidate();return;
+            }
+            removeResizeObserver(request);request.scroll.restoreSmooth();
+            if(request.rollingBack){abortResizeSafely(request,"rolled-back-frame-restored");return;}
+            Surface previous=surface;surface=request.target;request.target=null;rasterWidth=request.width;rasterHeight=request.height;
+            rasterEpoch=request.id;request.reason="writer-frame-scroll-committed";request.state=1;
+            try{previous.release();}catch(RuntimeException failure){uncertainSurfaces.add(previous);}
+            Log.i(TAG,"event=raster-writer-committed generation="+generation+" request="+request.id+" epoch="+rasterEpoch
+                +" width="+rasterWidth+" height="+rasterHeight+" scrollRetained=true evidence=restored-frame-swapchain-commit");
+        }
+    }    private void stopResizeObservation(){
+        synchronized(this){
+            resizeStopped=true;resizePolls.removeCallbacksAndMessages(null);
+            if(resizeRequest!=null){
+                removeResizeObserver(resizeRequest);
+                if(resizeRequest.scroll!=null)resizeRequest.scroll.restoreSmooth();
+                if(resizeRequest.state==0)resizeRequest.reason="producer-stopped";
+            }
+        }
+    }    public static void start(Activity activity, Surface surface, int width, int height, long generation) {
         if (!((width==1024&&height==768)||(width==1536&&height==1152)||(width==2048&&height==1536))
                 || generation <= 0 || !surface.isValid()) {
             surface.release();
@@ -1161,6 +1280,7 @@ static final class VisibilityReadback {
         owner.activity.runOnUiThread(new Runnable() { @Override public void run() {
             try {
             if (current != owner || owner.root == null) return;
+            if(owner.resizeInputSuppressed())return;
             if (owner.pointerQueueInvalid) { owner.cancelPointer(); return; }
             long now = SystemClock.uptimeMillis();
             if (action == 5) { owner.cursor.setVisibility(View.INVISIBLE); return; }
@@ -1270,10 +1390,8 @@ static final class VisibilityReadback {
 
     private boolean close() {
         boolean released = true;
-        synchronized(this){
-            resizeStopped=true;resizePolls.removeCallbacksAndMessages(null);
-            if(resizeRequest!=null&&resizeRequest.state==0)resizeRequest.reason="producer-stopped";
-        }
+        stopResizeObservation();
+
         ownerAttachment.retire();
         if(ownerLifecycle!=null){activity.getApplication().unregisterActivityLifecycleCallbacks(ownerLifecycle);ownerLifecycle=null;}
         visibilityPolls.removeCallbacksAndMessages(null);
