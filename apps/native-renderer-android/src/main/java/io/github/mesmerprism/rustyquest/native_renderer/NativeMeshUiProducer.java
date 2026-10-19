@@ -95,7 +95,8 @@ static final class VisibilityReadback {
     private volatile ResizeRequest resizeRequest;
     private boolean resizeStopped;
     private final ArrayList<Surface> uncertainSurfaces=new ArrayList<Surface>();
-    private final java.util.WeakHashMap<Window,Float> rasterWindows=new java.util.WeakHashMap<Window,Float>();
+    private final java.util.WeakHashMap<Window,WindowRasterState> rasterWindows=new java.util.WeakHashMap<Window,WindowRasterState>();
+    private final java.util.WeakHashMap<RasterLayout,RasterSpacing> rasterSpacing=new java.util.WeakHashMap<RasterLayout,RasterSpacing>();
     /** Keep the original pixel layout and resource density; raster scale changes sampling only. */
     private static final class RasterLayout extends FrameLayout {
         private float scale;
@@ -118,48 +119,77 @@ static final class VisibilityReadback {
         }
     }
     private View rasterLayout(View child){return new RasterLayout(child.getContext(),child,rasterScale);}
-    private static int scaledOffset(int value,float ratio){return Math.round(value*ratio);}
-    private static int scaledDimension(int value,float ratio){return value>0?scaledOffset(value,ratio):value;}
+    private static int scaledOffset(int value,float scale){return Math.round(value*scale);}
+    private static int scaledDimension(int value,float scale){return value>0?scaledOffset(value,scale):value;}
+    /** Only logical scalar snapshots: values never retain their weak Window keys. */
+    private static final class WindowRasterState {
+        final int width,height,x,y;
+        boolean decorCaptured;
+        int left,top,right,bottom,minWidth,minHeight;
+        WindowRasterState(WindowManager.LayoutParams attributes){
+            width=attributes.width;height=attributes.height;x=attributes.x;y=attributes.y;
+        }
+        void captureDecor(View decor){
+            if(decorCaptured)return;
+            left=decor.getPaddingLeft();top=decor.getPaddingTop();right=decor.getPaddingRight();bottom=decor.getPaddingBottom();
+            minWidth=decor.getMinimumWidth();minHeight=decor.getMinimumHeight();decorCaptured=true;
+        }
+    }
+    /** Physical-parent parameters are always recomputed from their original logical values. */
+    private static final class RasterSpacing {
+        final int width,height,left,top,right,bottom,start,end;final boolean margins,relative;
+        RasterSpacing(ViewGroup.LayoutParams params){
+            width=params.width;height=params.height;margins=params instanceof ViewGroup.MarginLayoutParams;
+            if(margins){ViewGroup.MarginLayoutParams value=(ViewGroup.MarginLayoutParams)params;
+                left=value.leftMargin;top=value.topMargin;right=value.rightMargin;bottom=value.bottomMargin;
+                relative=value.isMarginRelative();start=relative?value.getMarginStart():0;end=relative?value.getMarginEnd():0;
+            }else{left=top=right=bottom=start=end=0;relative=false;}
+        }
+        void apply(ViewGroup.LayoutParams params,float scale){
+            params.width=scaledDimension(width,scale);params.height=scaledDimension(height,scale);
+            if(margins&&params instanceof ViewGroup.MarginLayoutParams){
+                ViewGroup.MarginLayoutParams value=(ViewGroup.MarginLayoutParams)params;
+                value.leftMargin=scaledOffset(left,scale);value.topMargin=scaledOffset(top,scale);
+                value.rightMargin=scaledOffset(right,scale);value.bottomMargin=scaledOffset(bottom,scale);
+                if(relative){value.setMarginStart(scaledOffset(start,scale));value.setMarginEnd(scaledOffset(end,scale));}
+            }
+        }
+    }
     private void scaleModalContent(Window window){
         ViewGroup content=window.findViewById(android.R.id.content);
         if(content==null||content.getChildCount()!=1)throw new IllegalStateException("mesh-modal-content-unavailable");
         View child=content.getChildAt(0);
         RasterLayout wrapped=child instanceof RasterLayout?(RasterLayout)child:null;
-        float prior=wrapped==null?1f:wrapped.scale;
-        float ratio=rasterScale/prior;
-        if(ratio==1f)return;
         ViewGroup.LayoutParams params=child.getLayoutParams();
-        // Values belong to the physical parent. Existing wrappers already have prior-scale spacing.
-        params.width=scaledDimension(params.width,ratio);params.height=scaledDimension(params.height,ratio);
-        if(params instanceof ViewGroup.MarginLayoutParams){
-            ViewGroup.MarginLayoutParams margins=(ViewGroup.MarginLayoutParams)params;
-            margins.leftMargin=scaledOffset(margins.leftMargin,ratio);margins.topMargin=scaledOffset(margins.topMargin,ratio);
-            margins.rightMargin=scaledOffset(margins.rightMargin,ratio);margins.bottomMargin=scaledOffset(margins.bottomMargin,ratio);
+        if(wrapped==null){
+            RasterSpacing original=new RasterSpacing(params);
+            content.removeView(child);wrapped=(RasterLayout)rasterLayout(child);rasterSpacing.put(wrapped,original);
+            original.apply(params,rasterScale);content.addView(wrapped,params);
+        }else{
+            RasterSpacing original=rasterSpacing.get(wrapped);
+            if(original==null)throw new IllegalStateException("mesh-modal-logical-spacing-unavailable");
+            original.apply(params,rasterScale);wrapped.setRasterScale(rasterScale);wrapped.setLayoutParams(params);
         }
-        if(wrapped!=null){wrapped.setRasterScale(rasterScale);wrapped.setLayoutParams(params);}
-        else{content.removeView(child);content.addView(rasterLayout(child),params);}
     }
     private int rasterOffset(int logical){return scaledOffset(logical,rasterScale);}
     private int rasterDimension(int logical){return scaledDimension(logical,rasterScale);}
-    private float windowRasterRatio(Window window){
-        Float prior=rasterWindows.get(window);return rasterScale/(prior==null?1f:prior.floatValue());
+    private WindowRasterState logicalWindow(Window window){
+        WindowRasterState original=rasterWindows.get(window);
+        if(original==null){original=new WindowRasterState(window.getAttributes());rasterWindows.put(window,original);}
+        return original;
     }
     private void scaleWindowPlacement(Window window,WindowManager.LayoutParams attributes){
-        float ratio=windowRasterRatio(window);if(ratio==1f)return;
+        WindowRasterState original=logicalWindow(window);
         // MATCH_PARENT/WRAP_CONTENT, gravity and fractional margins retain platform semantics.
-        attributes.width=scaledDimension(attributes.width,ratio);attributes.height=scaledDimension(attributes.height,ratio);
-        attributes.x=scaledOffset(attributes.x,ratio);attributes.y=scaledOffset(attributes.y,ratio);
+        attributes.width=scaledDimension(original.width,rasterScale);attributes.height=scaledDimension(original.height,rasterScale);
+        attributes.x=scaledOffset(original.x,rasterScale);attributes.y=scaledOffset(original.y,rasterScale);
     }
     private void scaleWindowInsets(Window window){
-        float ratio=windowRasterRatio(window);
-        if(ratio!=1f){
-            View decor=window.getDecorView();
-            decor.setPadding(scaledOffset(decor.getPaddingLeft(),ratio),scaledOffset(decor.getPaddingTop(),ratio),
-                scaledOffset(decor.getPaddingRight(),ratio),scaledOffset(decor.getPaddingBottom(),ratio));
-            decor.setMinimumWidth(scaledOffset(decor.getMinimumWidth(),ratio));
-            decor.setMinimumHeight(scaledOffset(decor.getMinimumHeight(),ratio));
-        }
-        rasterWindows.put(window,Float.valueOf(rasterScale));
+        WindowRasterState original=logicalWindow(window);View decor=window.getDecorView();original.captureDecor(decor);
+        decor.setPadding(scaledOffset(original.left,rasterScale),scaledOffset(original.top,rasterScale),
+            scaledOffset(original.right,rasterScale),scaledOffset(original.bottom,rasterScale));
+        decor.setMinimumWidth(scaledOffset(original.minWidth,rasterScale));
+        decor.setMinimumHeight(scaledOffset(original.minHeight,rasterScale));
     }    private VirtualDisplay display;
     private Presentation presentation;
     private View root;

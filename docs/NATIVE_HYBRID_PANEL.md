@@ -38,7 +38,9 @@ The existing VirtualDisplay changes its backing Surface and dimensions while
 retaining the Activity, display identity, Presentation and original widget tree.
 Density DPI, logical layout and physical size stay independent. A handoff waits
 while an editor, keyboard, modal, selection action, pointer gesture or paused
-owner is active. Cached modal wrappers update their scale when shown again.
+owner is active. Cached modal wrappers update their scale when shown again,
+deriving dimensions and spacing from original logical values to avoid rounding
+drift across repeated tier changes.
 
 Raster epochs are separate from the application control generation. At most one
 new reader is staged; another change waits for prior reader images to retire.
