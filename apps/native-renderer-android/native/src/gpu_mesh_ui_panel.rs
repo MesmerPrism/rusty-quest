@@ -782,6 +782,7 @@ impl GpuMeshUiPanel {
         self.hybrid.update(true, false, None, false);
         self.extra_capture.update(true, false, None, false);
         self.extra_drag_pose = None;
+        Ok(())
     }
     pub(crate) fn pointer_visual_marker(&self) -> &'static str {
         match self.visual {
@@ -815,7 +816,6 @@ impl GpuMeshUiPanel {
             self.hybrid.cancel();
             self.extra_capture.cancel();
             self.extra_drag_pose = None;
-            Ok(())
         }
         native_mesh_ui::set_attachment_pose(
             controls.generation,
