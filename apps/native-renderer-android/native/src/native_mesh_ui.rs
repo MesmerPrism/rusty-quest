@@ -99,14 +99,7 @@ mod acquire_fence {
 
 pub(crate) const WIDTH: u32 = super::native_panel_resolution::LOGICAL_WIDTH;
 pub(crate) const HEIGHT: u32 = super::native_panel_resolution::LOGICAL_HEIGHT;
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct PanelPose {
-    pub(crate) center: [f32; 3],
-    pub(crate) right: [f32; 3],
-    pub(crate) up: [f32; 3],
-    pub(crate) width: f32,
-    pub(crate) height: f32,
-}
+pub(crate) use crate::native_panel_model::PanelPose;
 #[derive(Clone, Copy, Debug)]
 struct SubmittedGeometry {
     pose: PanelPose,
@@ -114,6 +107,8 @@ struct SubmittedGeometry {
     frame: u64,
     reference_space: &'static str,
     visible: bool,
+    attachment: &'static str,
+    tracking_valid: bool,
 }
 impl Default for PanelPose {
     fn default() -> Self {
@@ -149,6 +144,8 @@ pub(crate) struct ControlSnapshot {
     pub(crate) initial_pose: PanelPose,
     pub(crate) pose_distance: f32,
     pub(crate) panel_visible: bool,
+    pub(crate) attachment: &'static str,
+    pub(crate) tracking_valid: bool,
     pub(crate) visibility_revision: u64,
     pub(crate) effective_panel_visible: bool,
     pub(crate) effective_visibility_revision: u64,
@@ -177,6 +174,8 @@ impl Default for ControlSnapshot {
             initial_pose: PanelPose::default(),
             pose_distance: 1.4,
             panel_visible: true,
+            attachment: "WORLD",
+            tracking_valid: true,
             visibility_revision: 0,
             effective_panel_visible: false,
             effective_visibility_revision: 0,
@@ -214,6 +213,8 @@ fn observe_geometry(
         frame: submitted_frame,
         reference_space,
         visible: frame.panel_visible,
+        attachment: frame.attachment,
+        tracking_valid: frame.tracking_valid,
     });
     true
 }
@@ -257,6 +258,8 @@ fn geometry_readback(state: ControlSnapshot, generation: u64) -> serde_json::Val
         value["submitted_frame"] = serde_json::json!(seen.frame);
         value["reference_space"] = serde_json::json!(seen.reference_space);
         value["frame_panel_visible"] = serde_json::json!(seen.visible);
+        value["attachment"] = serde_json::json!(seen.attachment);
+        value["tracking_valid"] = serde_json::json!(seen.tracking_valid);
         value["center"] = serde_json::json!(seen.pose.center);
         value["right"] = serde_json::json!(seen.pose.right);
         value["up"] = serde_json::json!(seen.pose.up);
@@ -437,6 +440,8 @@ fn recenter(
     state.pose_revision = state.revision;
     state.pose = pose;
     state.pose_distance = 1.4;
+    state.attachment = "WORLD";
+    state.tracking_valid = true;
     true
 }
 fn calibrate(
@@ -556,6 +561,74 @@ pub(crate) fn request_panel_action(generation: u64, action: i32) -> bool {
         action,
     )
 }
+/// Absolute presentation width from a native slider; original product settings are untouched.
+pub(crate) fn set_panel_width(generation: u64, width: f32) -> bool {
+    panel_width(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        width,
+    )
+}
+fn panel_width(s: &mut ControlSnapshot, generation: u64, width: f32) -> bool {
+    if generation == 0
+        || generation != s.generation
+        || !s.pose_initialized
+        || !width.is_finite()
+        || !(0.48..=1.44).contains(&width)
+        || s.revision >= i64::MAX as u64
+    {
+        return false;
+    }
+    if (s.pose.width - width).abs() < 0.00001 {
+        return true;
+    }
+    s.pose.width = width;
+    s.pose.height = width * 0.75;
+    s.revision += 1;
+    s.pose_revision = s.revision;
+    true
+}
+/// A current tracked attachment or explicit world recall owns this presentation-only pose.
+pub(crate) fn set_attachment_pose(
+    generation: u64,
+    pose: PanelPose,
+    attachment: &'static str,
+    tracking_valid: bool,
+) -> bool {
+    attachment_pose(
+        &mut controls().lock().unwrap_or_else(|p| p.into_inner()),
+        generation,
+        pose,
+        attachment,
+        tracking_valid,
+    )
+}
+fn attachment_pose(
+    s: &mut ControlSnapshot,
+    generation: u64,
+    pose: PanelPose,
+    attachment: &'static str,
+    tracking_valid: bool,
+) -> bool {
+    if generation == 0
+        || generation != s.generation
+        || !s.pose_initialized
+        || !pose.valid()
+        || !matches!(attachment, "WORLD" | "WRIST")
+        || s.revision >= i64::MAX as u64
+    {
+        return false;
+    }
+    if s.pose == pose && s.attachment == attachment && s.tracking_valid == tracking_valid {
+        return true;
+    }
+    s.pose = pose;
+    s.attachment = attachment;
+    s.tracking_valid = tracking_valid;
+    s.revision += 1;
+    s.pose_revision = s.revision;
+    true
+}
 fn panel_action(state: &mut ControlSnapshot, generation: u64, action: i32) -> bool {
     matches!(action, 7 | 13) && apply(state, generation, action, 1.0)
 }
@@ -606,6 +679,8 @@ fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> boo
             }
             s.pose = s.initial_pose;
             s.pose_distance = 1.4;
+            s.attachment = "WORLD";
+            s.tracking_valid = true;
         }
         _ => return false,
     }
@@ -659,57 +734,73 @@ pub(crate) fn ray_pixels(
     if !(0.0..=5.0).contains(&t) {
         return None;
     }
-    let offset = std::array::from_fn(|i| origin[i] + direction[i] * t - pose.center[i]);
-    Some([
-        (dot(offset, pose.right) / pose.width + 0.5) * WIDTH as f32,
-        (0.5 - dot(offset, pose.up) / pose.height) * HEIGHT as f32,
-    ])
+    crate::native_panel_model::PanelModel {
+        id: 1,
+        pose,
+        logical: crate::native_panel_model::LogicalBounds {
+            min: [0.0, 0.0],
+            max: [WIDTH as f32, HEIGHT as f32],
+        },
+        visible: true,
+        enabled: true,
+    }
+    .map_ray(crate::native_panel_model::Ray { origin, direction })
+    .map(|h| h.logical)
 }
 #[derive(Default)]
 pub(crate) struct PointerCapture {
-    pressed: bool,
-    captured: bool,
+    capture: crate::native_panel_interaction::CaptureState,
     last: [f32; 2],
 }
 impl PointerCapture {
+    /// Only a current fresh edge backed by the source arbiter's valid-open proof may rearm.
+    /// Cancel the previous owner first; this method never emits an Android event.
+    pub(crate) fn admit_fresh_press(&mut self) {
+        if !self.captured() {
+            self.capture.update(true, false, None, false);
+        }
+    }
+
     pub(crate) fn captured(&self) -> bool {
-        self.captured
+        self.capture.captured().is_some()
     }
     /// Codes: 0 down,1 move,2 up,3 cancel. One authoritative pointer owner only.
+    /// Every invalid sample disarms capture until a valid open sample, including owner changes.
     pub(crate) fn update(
         &mut self,
         valid: bool,
         pressed: bool,
         pixels: Option<[f32; 2]>,
     ) -> Option<(i32, [f32; 2])> {
-        if !valid {
-            let had = self.captured;
-            self.captured = false;
-            self.pressed = pressed;
-            return had.then_some((3, self.last));
-        }
-        let edge = pressed && !self.pressed;
-        self.pressed = pressed;
-        if self.captured {
-            if let Some(p) = pixels {
-                self.last = [p[0].clamp(0.0, 1023.0), p[1].clamp(0.0, 767.0)];
-            }
-            if !pressed {
-                self.captured = false;
-                return Some((2, self.last));
-            }
-            return Some((1, self.last));
-        }
-        if edge {
-            if let Some(p) = pixels {
-                if (0.0..WIDTH as f32).contains(&p[0]) && (0.0..HEIGHT as f32).contains(&p[1]) {
-                    self.captured = true;
-                    self.last = p;
-                    return Some((0, p));
-                }
+        let finite = pixels.filter(|p| p.iter().all(|v| v.is_finite()));
+        let hit = finite
+            .filter(|p| (0.0..WIDTH as f32).contains(&p[0]) && (0.0..HEIGHT as f32).contains(&p[1]))
+            .map(|_| crate::native_panel_interaction::ControlId {
+                panel: 1,
+                control: 0,
+            });
+        let was_captured = self.captured();
+        let outcome = self.capture.update(valid, pressed, hit, false);
+        if valid && (was_captured || outcome.pressed.is_some()) {
+            if let Some(p) = finite {
+                self.last = [
+                    p[0].clamp(0.0, WIDTH as f32 - 1.0),
+                    p[1].clamp(0.0, HEIGHT as f32 - 1.0),
+                ];
             }
         }
-        None
+        let action = if outcome.cancelled.is_some() {
+            3
+        } else if outcome.pressed.is_some() {
+            0
+        } else if outcome.released.is_some() {
+            2
+        } else if outcome.dragging.is_some() {
+            1
+        } else {
+            return None;
+        };
+        Some((action, self.last))
     }
 }
 
@@ -1322,6 +1413,38 @@ mod tests {
         assert_eq!(state.pose_revision, 1);
     }
     #[test]
+    fn recenter_and_original_reset_atomically_release_wrist_attachment() {
+        let mut s = ControlSnapshot {
+            generation: 9,
+            pose_initialized: true,
+            attachment: "WRIST",
+            tracking_valid: false,
+            ..Default::default()
+        };
+        let old = s.pose;
+        assert!(!recenter(&mut s, 8, [0.0; 3], [0.0, 0.0, 0.0, 1.0]));
+        assert_eq!(s.pose, old);
+        assert_eq!(s.attachment, "WRIST");
+        assert!(!s.tracking_valid);
+        assert_eq!(s.revision, 0);
+        assert!(recenter(&mut s, 9, [1.0; 3], [0.0, 0.0, 0.0, 1.0]));
+        assert_eq!(s.attachment, "WORLD");
+        assert!(s.tracking_valid);
+        assert_eq!(s.revision, 1);
+        assert_eq!(s.pose_revision, 1);
+        s.attachment = "WRIST";
+        s.tracking_valid = false;
+        assert!(!panel_action(&mut s, 8, 13));
+        assert_eq!(s.attachment, "WRIST");
+        assert!(!s.tracking_valid);
+        assert!(panel_action(&mut s, 9, 13));
+        assert_eq!(s.pose, s.initial_pose);
+        assert_eq!(s.attachment, "WORLD");
+        assert!(s.tracking_valid);
+        assert_eq!(s.revision, 2);
+        assert_eq!(s.pose_revision, 2);
+    }
+    #[test]
     fn native_chrome_only_admits_current_generation_presentation_actions() {
         let mut state = ControlSnapshot {
             generation: 7,
@@ -1592,6 +1715,78 @@ mod tests {
         assert_eq!(capture.update(true, false, pixels), None);
         assert_eq!(capture.update(true, true, pixels), Some((0, [40.0, 20.0])));
         assert_eq!(capture.update(true, false, pixels), Some((2, [40.0, 20.0])));
+    }
+    #[test]
+    fn owner_or_focus_cancellation_requires_valid_open_before_held_reentry() {
+        let mut c = PointerCapture::default();
+        let p = Some([40.0, 20.0]);
+        assert_eq!(c.update(true, true, p), Some((0, [40.0, 20.0])));
+        assert_eq!(c.update(false, false, None), Some((3, [40.0, 20.0])));
+        assert_eq!(c.update(true, true, p), None);
+        assert_eq!(c.update(false, false, None), None);
+        assert_eq!(c.update(true, true, p), None);
+        assert_eq!(c.update(true, false, p), None);
+        assert_eq!(c.update(true, true, p), Some((0, [40.0, 20.0])));
+        assert_eq!(
+            c.update(true, true, Some([2000.0, -10.0])),
+            Some((1, [1023.0, 0.0]))
+        );
+        assert_eq!(c.update(true, false, None), Some((2, [1023.0, 0.0])));
+        assert!(!c.captured());
+    }
+    #[test]
+    fn presentation_setters_validate_and_revision_only_actual_changes() {
+        let mut s = ControlSnapshot {
+            generation: 7,
+            ..Default::default()
+        };
+        assert!(!panel_width(&mut s, 7, 0.96));
+        assert!(calibrate(&mut s, 7, [0.0; 3], [0.0, 0.0, 0.0, 1.0]));
+        let revision = s.revision;
+        for (g, w) in [
+            (0, 0.96),
+            (8, 0.96),
+            (7, f32::NAN),
+            (7, f32::INFINITY),
+            (7, 0.479),
+            (7, 1.441),
+        ] {
+            assert!(!panel_width(&mut s, g, w));
+            assert_eq!(s.revision, revision);
+        }
+        for w in [0.48, 1.44] {
+            assert!(panel_width(&mut s, 7, w));
+            assert_eq!(s.pose.width, w);
+            assert_eq!(s.pose.height, w * 0.75);
+            assert_eq!(s.pose_revision, s.revision);
+            let r = s.revision;
+            assert!(panel_width(&mut s, 7, w));
+            assert_eq!(s.revision, r);
+        }
+        let pose = s.pose;
+        let r = s.revision;
+        for (g, mode) in [(0, "WORLD"), (8, "WORLD"), (7, "INVALID")] {
+            assert!(!attachment_pose(&mut s, g, pose, mode, true));
+            assert_eq!(s.revision, r);
+        }
+        let mut bad = pose;
+        bad.center[0] = f32::NAN;
+        assert!(!attachment_pose(&mut s, 7, bad, "WRIST", true));
+        assert_eq!(s.revision, r);
+        assert!(attachment_pose(&mut s, 7, pose, "WRIST", true));
+        let r = s.revision;
+        assert!(attachment_pose(&mut s, 7, pose, "WRIST", true));
+        assert_eq!(s.revision, r);
+        assert!(attachment_pose(&mut s, 7, pose, "WRIST", false));
+        assert_eq!(s.revision, r + 1);
+        assert_eq!(s.pose, pose);
+        assert!(!s.tracking_valid);
+        assert_eq!(s.pose_revision, s.revision);
+        assert!(attachment_pose(&mut s, 7, pose, "WORLD", true));
+        assert!(s.tracking_valid);
+        s.revision = i64::MAX as u64;
+        assert!(!panel_width(&mut s, 7, 0.96));
+        assert!(!attachment_pose(&mut s, 7, pose, "WORLD", true));
     }
     #[test]
     fn effect_override_is_explicit_and_has_closed_seven_slot_cycle() {

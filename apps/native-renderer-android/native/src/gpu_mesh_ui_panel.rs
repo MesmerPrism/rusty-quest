@@ -5,16 +5,26 @@ use crate::{
         self as ahb, AhbVulkanFormatKey, AhbVulkanSampledImage, AhbVulkanSampledImageCreateInfo,
     },
     gpu_hand_mesh_visual::HandMeshVisualEyeProjection,
+    gpu_native_panel_text::GpuNativePanelText,
     gpu_native_panel_ui::GpuNativePanelUi,
     native_alternate_input::PointerOwner,
     native_hybrid_panel::{DetailMode, HybridPanelState, PanelAction},
     native_mesh_ui::{
-        self, PointerCapture,
+        self,
         android::{ImageLease, Producer},
+        PointerCapture,
     },
-    native_panel_resolution::{AdaptiveResolution, ProjectionEye, ProjectionPanel, RasterExtent, projected_footprint},
+    native_panel_interaction::{CaptureState, ControlId},
+    native_panel_model::{
+        AttachmentMode, AttachmentState, LogicalBounds, PanelModel, Ray, TrackedPose,
+    },
+    native_panel_resolution::{
+        projected_footprint, AdaptiveResolution, ProjectionEye, ProjectionPanel, RasterExtent,
+    },
+    native_panel_text::{GlyphInstance, TextAtlas},
+    native_panel_toolbar::{self, ToolbarKey},
     native_panel_ui_geometry::{self, Primitive, ToolbarState},
-    native_pointer_visual::{PointerVisual, segment_pose},
+    native_pointer_visual::{segment_pose, PointerVisual},
 };
 use ash::vk;
 use std::{cell::Cell, ffi::CString, mem, rc::Rc};
@@ -37,7 +47,18 @@ pub(crate) struct GpuMeshUiPanel {
     hybrid: HybridPanelState,
     hybrid_forms_slots: [bool; 2],
     hybrid_geometry: Vec<Primitive>,
-    hybrid_geometry_key: Option<(Option<usize>, Option<usize>, bool, RasterExtent, DetailMode)>,
+    hybrid_geometry_key: Option<ToolbarKey>,
+    native_text: Option<GpuNativePanelText>,
+    text_atlas: Option<TextAtlas>,
+    text_glyphs: Vec<GlyphInstance>,
+    extra_capture: CaptureState,
+    extra_drag_pose: Option<native_mesh_ui::PanelPose>,
+    attachment: Option<AttachmentState>,
+    wrist: Option<TrackedPose>,
+    world_return: native_mesh_ui::PanelPose,
+    fps_started: std::time::Instant,
+    fps_frames: u16,
+    fps: u16,
     raster_extent: RasterExtent,
     adaptive: AdaptiveResolution,
     adaptation_faulted: bool,
@@ -107,6 +128,12 @@ impl GpuMeshUiPanel {
                     producer.generation, pose.center[0], pose.center[1], pose.center[2]
                 ),
             );
+        }
+        if self.native_ui.is_some()
+            && self.attachment.is_none()
+            && native_mesh_ui::snapshot().pose_initialized
+        {
+            self.attachment = AttachmentState::new(native_mesh_ui::snapshot().pose);
         }
         initialized
     }
@@ -288,8 +315,50 @@ impl GpuMeshUiPanel {
                 ),
             );
         }
+        let text_atlas = if hybrid_enabled {
+            match crate::native_panel_text::prepare(app, crate::native_panel_text_layout::LABELS) {
+                Ok(atlas) => {
+                    crate::marker("native-panel-text",format!("event=atlas-prepared width={} height={} runs={} bytes={} evidence=platform-preparation visibleProof=false",atlas.width,atlas.height,atlas.runs.len(),atlas.pixels.len()));
+                    Some(atlas)
+                }
+                Err(error) => {
+                    crate::marker(
+                        "native-panel-text",
+                        format!("event=unavailable reason={error:?} fallback=stroke"),
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let native_text = if text_atlas.is_some() {
+            match GpuNativePanelText::new(device, memory, render_pass, scene_depth_enabled) {
+                Ok(text) => Some(text),
+                Err(error) => {
+                    crate::marker(
+                        "native-panel-text",
+                        format!("event=pipeline-unavailable reason={error:?} fallback=stroke"),
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(Self {
             native_ui,
+            native_text,
+            text_atlas,
+            text_glyphs: Vec::new(),
+            extra_capture: CaptureState::default(),
+            extra_drag_pose: None,
+            attachment: None,
+            wrist: None,
+            world_return: native_mesh_ui::PanelPose::default(),
+            fps_started: std::time::Instant::now(),
+            fps_frames: 0,
+            fps: 0,
             hybrid: HybridPanelState::default(),
             hybrid_forms_slots: [true; 2],
             hybrid_geometry: Vec::new(),
@@ -325,27 +394,54 @@ impl GpuMeshUiPanel {
             adopted_frames: 0,
         })
     }
-    unsafe fn update_resolution(&mut self, app: &android_activity::AndroidApp, eyes: &[ProjectionEye; 2], frame: u64) {
-        if self.native_ui.is_none() || self.adaptation_faulted { return; }
-        let Some(producer) = self.producer.as_mut() else { return; };
+    unsafe fn update_resolution(
+        &mut self,
+        app: &android_activity::AndroidApp,
+        eyes: &[ProjectionEye; 2],
+        frame: u64,
+    ) {
+        if self.native_ui.is_none() || self.adaptation_faulted {
+            return;
+        }
+        let Some(producer) = self.producer.as_mut() else {
+            return;
+        };
         if let Err(error) = producer.poll_resize(app) {
             self.adaptation_faulted = true;
-            crate::marker("native-panel-resolution", format!("event=adaptation-disabled reason={error:?} previousTextureRetained=true"));
+            crate::marker(
+                "native-panel-resolution",
+                format!("event=adaptation-disabled reason={error:?} previousTextureRetained=true"),
+            );
             return;
         }
         // One transition at a time, including first-image adoption and old GPU retirement.
         if producer.resize_pending() || producer.raster_extent() != self.raster_extent {
-            self.adaptive.hold(frame); return;
+            self.adaptive.hold(frame);
+            return;
         }
-        if !self.frame_controls.pose_initialized || !self.frame_controls.panel_visible
-            || !self.hybrid.forms_visible || self.pointer.captured() || self.hybrid.captured.is_some() {
-            self.adaptive.hold(frame); return;
+        if !self.frame_controls.pose_initialized
+            || !self.frame_controls.panel_visible
+            || !self.hybrid.forms_visible
+            || self.pointer.captured()
+            || self.hybrid.captured.is_some()
+            || self.extra_capture.captured().is_some()
+            || !self.frame_controls.tracking_valid
+        {
+            self.adaptive.hold(frame);
+            return;
         }
         let p = self.frame_controls.pose;
         let next = match self.hybrid.detail {
-            DetailMode::Auto => match projected_footprint(ProjectionPanel {
-                center: p.center, right: p.right, up: p.up, width: p.width, height: p.height,
-            }, eyes) {
+            DetailMode::Auto => match projected_footprint(
+                ProjectionPanel {
+                    center: p.center,
+                    right: p.right,
+                    up: p.up,
+                    width: p.width,
+                    height: p.height,
+                },
+                eyes,
+            ) {
                 Some(footprint) => self.adaptive.recommend(footprint, frame),
                 None => self.adaptive.hold(frame),
             },
@@ -356,7 +452,12 @@ impl GpuMeshUiPanel {
         if next != producer.raster_extent() {
             if let Err(error) = unsafe { producer.request_resize(app, next) } {
                 self.adaptation_faulted = true;
-                crate::marker("native-panel-resolution", format!("event=adaptation-disabled reason={error:?} previousTextureRetained=true"));
+                crate::marker(
+                    "native-panel-resolution",
+                    format!(
+                        "event=adaptation-disabled reason={error:?} previousTextureRetained=true"
+                    ),
+                );
             }
         }
     }
@@ -381,6 +482,14 @@ impl GpuMeshUiPanel {
         self.poses[slot] = self.frame_controls.pose;
         self.hybrid_forms_slots[slot] = self.hybrid.forms_visible;
         let started = std::time::Instant::now();
+        self.fps_frames = self.fps_frames.saturating_add(1);
+        if self.fps_started.elapsed().as_secs_f32() >= 1.0 {
+            self.fps = (self.fps_frames as f32 / self.fps_started.elapsed().as_secs_f32())
+                .round()
+                .clamp(0.0, 999.0) as u16;
+            self.fps_started = std::time::Instant::now();
+            self.fps_frames = 0;
+        }
         self.update_resolution(app, eyes, frame);
         if !self.frame_controls.pose_initialized {
             return Ok(false);
@@ -400,10 +509,16 @@ impl GpuMeshUiPanel {
                 return Err("mesh UI RGBA AHB has no concrete Vulkan format".into());
             }
             let image = ahb::import_ahb_sampled_image(
-                device, &self.memory, &lease.buffer,
+                device,
+                &self.memory,
+                &lease.buffer,
                 AhbVulkanSampledImageCreateInfo {
-                    width: desc.width, height: desc.height,
-                    format_key: AhbVulkanFormatKey { format: format.format, external_format: 0 },
+                    width: desc.width,
+                    height: desc.height,
+                    format_key: AhbVulkanFormatKey {
+                        format: format.format,
+                        external_format: 0,
+                    },
                     allocation_size: props.allocation_size,
                     memory_type_bits: props.memory_type_bits,
                     sampler_ycbcr_conversion: None,
@@ -420,7 +535,9 @@ impl GpuMeshUiPanel {
                     self.frame_controls.generation, self.raster_epoch, desc.width, desc.height, frame));
             }
             let texture = Rc::new(TextureLease {
-                device: device.clone(), image: Some(image), _lease: lease,
+                device: device.clone(),
+                image: Some(image),
+                _lease: lease,
                 graphics_owned: Cell::new(false),
             });
             self.pending_acquires[slot].push(texture.clone());
@@ -432,13 +549,21 @@ impl GpuMeshUiPanel {
             }
         }
         if let Some(ui) = &mut self.native_ui {
-            let key = (
-                self.hybrid.hovered,
-                self.hybrid.captured,
-                self.hybrid.forms_visible,
-                self.raster_extent,
-                self.hybrid.detail,
-            );
+            let key = ToolbarKey {
+                hovered: self.hybrid.hovered,
+                pressed: self.hybrid.captured,
+                forms: self.hybrid.forms_visible,
+                width: self.raster_extent.width,
+                height: self.raster_extent.height,
+                detail: self.hybrid.detail,
+                physical_width: self.frame_controls.pose.width,
+                wrist: matches!(self.frame_controls.attachment, "WRIST"),
+                anchor_valid: self.frame_controls.tracking_valid,
+                wrist_available: self.wrist.is_some(),
+                extra_hover: self.extra_capture.hovered().map(|id| id.control),
+                extra_pressed: self.extra_capture.captured().map(|id| id.control),
+                fps: self.fps,
+            };
             if self.hybrid_geometry_key != Some(key) {
                 let status = format!(
                     "FORMS {} DETAIL {} {}X{}",
@@ -451,11 +576,26 @@ impl GpuMeshUiPanel {
                     self.raster_extent.width,
                     self.raster_extent.height
                 );
-                self.hybrid_geometry = native_panel_ui_geometry::toolbar_geometry(ToolbarState {
+                let state = ToolbarState {
                     hovered: self.hybrid.hovered,
                     pressed: self.hybrid.captured,
                     status: &status,
-                });
+                };
+                self.hybrid_geometry = if self.native_text.is_some() {
+                    native_panel_ui_geometry::toolbar_shapes(state)
+                } else {
+                    native_panel_ui_geometry::toolbar_geometry(state)
+                };
+                if self.native_text.is_some() {
+                    native_panel_toolbar::append_shapes(&mut self.hybrid_geometry, key);
+                }
+                if let Some(atlas) = self
+                    .text_atlas
+                    .as_ref()
+                    .filter(|_| self.native_text.is_some())
+                {
+                    self.text_glyphs = crate::native_panel_text_layout::glyphs(atlas, key);
+                }
                 self.hybrid_geometry_key = Some(key);
             }
             ui.prepare_frame(
@@ -466,6 +606,23 @@ impl GpuMeshUiPanel {
                     &[]
                 },
             )?;
+        }
+        if let (Some(text), Some(atlas)) = (&mut self.native_text, &self.text_atlas) {
+            text.prepare_frame(
+                device,
+                cmd,
+                slot,
+                1,
+                atlas,
+                if self.frame_controls.panel_visible && self.frame_controls.pose_initialized {
+                    &self.text_glyphs
+                } else {
+                    &[]
+                },
+            )?;
+            if frame % 120 == 0 {
+                crate::marker("native-panel-text",format!("event=prepared frame={frame} generation=1 glyphs={} atlasBytes={} cached=true evidence=recorded-not-visible",self.text_glyphs.len(),atlas.pixels.len()));
+            }
         }
         self.slots[slot] = self.latest.clone();
         // Unused imports transfer back to Android in this frame's command buffer, but their
@@ -598,12 +755,33 @@ impl GpuMeshUiPanel {
         if let Some(ui) = &self.native_ui {
             ui.record_eye(device, cmd, slot, p, eye);
         }
+        if let Some(text) = &self.native_text {
+            text.record_eye(device, cmd, slot, p, eye);
+        }
     }
     pub(crate) fn set_pointer_owner(&mut self, owner: PointerOwner) {
         if self.pointer_owner != owner {
             self.hybrid.cancel();
+            self.extra_capture.cancel();
+            self.extra_drag_pose = None;
         }
         self.pointer_owner = owner;
+    }
+    /// Only the source arbiter may transfer its observed-open/fresh-press proof.
+    pub(crate) fn admit_fresh_press(
+        &mut self,
+        app: &android_activity::AndroidApp,
+    ) -> Result<(), String> {
+        if self.pointer.captured()
+            || self.hybrid.captured.is_some()
+            || self.extra_capture.captured().is_some()
+        {
+            self.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
+        }
+        self.pointer.admit_fresh_press();
+        self.hybrid.update(true, false, None, false);
+        self.extra_capture.update(true, false, None, false);
+        self.extra_drag_pose = None;
     }
     pub(crate) fn pointer_visual_marker(&self) -> &'static str {
         match self.visual {
@@ -611,6 +789,91 @@ impl GpuMeshUiPanel {
             Some(_) => "ray",
             None => "none",
         }
+    }
+    pub(crate) fn wrist_tracking_requested(&self) -> bool {
+        self.native_ui.is_some()
+    }
+    pub(crate) fn update_wrist_anchor(&mut self, wrist: Option<TrackedPose>) {
+        self.wrist = wrist;
+        let controls = native_mesh_ui::snapshot();
+        let Some(attachment) = self.attachment.as_mut() else {
+            return;
+        };
+        if matches!(attachment.mode(), AttachmentMode::World) || controls.attachment == "WORLD" {
+            attachment.recall_world(controls.pose);
+            return;
+        }
+        if let AttachmentMode::Wrist { mut local_pose } = attachment.mode() {
+            if (local_pose.width - controls.pose.width).abs() > 0.00001 {
+                local_pose.width = controls.pose.width;
+                local_pose.height = controls.pose.height;
+                attachment.attach_wrist(local_pose);
+            }
+        }
+        let sample = attachment.observe_wrist(wrist);
+        if controls.tracking_valid && !sample.input_valid {
+            self.hybrid.cancel();
+            self.extra_capture.cancel();
+            self.extra_drag_pose = None;
+            Ok(())
+        }
+        native_mesh_ui::set_attachment_pose(
+            controls.generation,
+            sample.pose,
+            "WRIST",
+            sample.input_valid,
+        );
+    }
+    fn toggle_attachment(&mut self) -> bool {
+        let controls = native_mesh_ui::snapshot();
+        let Some(attachment) = self.attachment.as_mut() else {
+            return false;
+        };
+        if matches!(attachment.mode(), AttachmentMode::Wrist { .. }) {
+            let pose = self.world_return;
+            if !native_mesh_ui::set_attachment_pose(controls.generation, pose, "WORLD", true) {
+                return false;
+            }
+            return attachment.recall_world(pose);
+        }
+        let Some(wrist) = self.wrist else {
+            return false;
+        };
+        let old = *attachment;
+        let Some(local) = native_panel_toolbar::wrist_local_pose(controls.pose, wrist) else {
+            return false;
+        };
+        if !attachment.attach_wrist(local) {
+            return false;
+        }
+        let sample = attachment.observe_wrist(Some(wrist));
+        if !sample.input_valid {
+            *attachment = old;
+            return false;
+        }
+        if native_mesh_ui::set_attachment_pose(controls.generation, sample.pose, "WRIST", true) {
+            self.world_return = controls.pose;
+            true
+        } else {
+            *attachment = old;
+            false
+        }
+    }
+    fn recall_world_at_head(&mut self, generation: u64) -> bool {
+        if !self.latest_head.is_some_and(|eye| {
+            native_mesh_ui::recenter_pose(
+                generation,
+                [eye.position[0], eye.position[1], eye.position[2]],
+                eye.orientation_xyzw,
+            )
+        }) {
+            return false;
+        }
+        let pose = native_mesh_ui::snapshot().pose;
+        if let Some(attachment) = self.attachment.as_mut() {
+            attachment.recall_world(pose);
+        }
+        true
     }
     /// Solid app-owned geometry, independent of UI image adoption and descriptors.
     /// Draw in the same pass. Scene mode tests depth; original UI is a color overlay.
@@ -698,6 +961,94 @@ impl GpuMeshUiPanel {
         );
         let pixels = native_mesh_ui::ray_pixels(controls.pose, origin, direction);
         if self.native_ui.is_some() {
+            let point = pixels.map(|p| {
+                [
+                    (p[0] / native_mesh_ui::WIDTH as f32 - 0.5) * controls.pose.width
+                        / controls.pose.height,
+                    p[1] / native_mesh_ui::HEIGHT as f32 - 0.5,
+                ]
+            });
+            // Separate form and native-row surfaces share logical coordinates and a single ray owner.
+            let form = PanelModel {
+                id: 1,
+                pose: controls.pose,
+                logical: LogicalBounds {
+                    min: [0.0, 0.0],
+                    max: [1024.0, 768.0],
+                },
+                visible: controls.panel_visible,
+                enabled: true,
+            };
+            let row = form.region(
+                2,
+                LogicalBounds {
+                    min: [0.0, 768.0],
+                    max: [1024.0, 1024.0],
+                },
+            );
+            let selected = row.and_then(|row| {
+                crate::native_panel_model::closest_hit(&[form, row], Ray { origin, direction })
+            });
+            let extra_hit = point
+                .and_then(native_panel_toolbar::extra_hit)
+                .filter(|_| self.native_text.is_some() && selected.is_some_and(|h| h.panel == 2))
+                .filter(|id| {
+                    *id != native_panel_toolbar::ATTACH_CONTROL
+                        || self.wrist.is_some()
+                        || controls.attachment == "WRIST"
+                });
+            let extra = self.extra_capture.update(
+                valid
+                    && (controls.tracking_valid
+                        || extra_hit == Some(native_panel_toolbar::ATTACH_CONTROL)),
+                pressed,
+                extra_hit.map(|control| ControlId { panel: 2, control }),
+                self.pointer.captured() || self.hybrid.captured.is_some(),
+            );
+            if extra
+                .pressed
+                .is_some_and(|id| id.control == native_panel_toolbar::SCALE_CONTROL)
+            {
+                self.extra_drag_pose = Some(controls.pose);
+            }
+            if extra
+                .dragging
+                .is_some_and(|id| id.control == native_panel_toolbar::SCALE_CONTROL)
+            {
+                let drag_point = self.extra_drag_pose.and_then(|pose| {
+                    native_mesh_ui::ray_pixels(pose, origin, direction).map(|p| {
+                        [
+                            (p[0] / 1024.0 - 0.5) * pose.width / pose.height,
+                            p[1] / 768.0 - 0.5,
+                        ]
+                    })
+                });
+                if let Some(width) = drag_point
+                    .and_then(|p| native_panel_toolbar::slider(controls.pose.width).proposal(p))
+                {
+                    if native_mesh_ui::set_panel_width(controls.generation, width)
+                        && extra.pressed.is_some()
+                    {
+                        crate::marker("native-hybrid-ui",format!("event=scale-drag generation={} widthMeters={width:.3} presentationOnly=true",controls.generation));
+                    }
+                }
+            }
+            if extra.released.is_some() || extra.cancelled.is_some() {
+                self.extra_drag_pose = None;
+            }
+            if extra
+                .activated
+                .is_some_and(|id| id.control == native_panel_toolbar::ATTACH_CONTROL)
+            {
+                let accepted = self.toggle_attachment();
+                crate::marker(
+                    "native-hybrid-ui",
+                    format!(
+                        "event=attachment-action accepted={accepted} mode={} evidence=request-only",
+                        native_mesh_ui::snapshot().attachment
+                    ),
+                );
+            }
             let hit = pixels.and_then(|p| {
                 native_panel_ui_geometry::hit_button([
                     (p[0] / native_mesh_ui::WIDTH as f32 - 0.5) * controls.pose.width
@@ -705,9 +1056,12 @@ impl GpuMeshUiPanel {
                     p[1] / native_mesh_ui::HEIGHT as f32 - 0.5,
                 ])
             });
-            let (consumed, action) =
-                self.hybrid
-                    .update(valid, pressed, hit, self.pointer.captured());
+            let (consumed, action) = self.hybrid.update(
+                valid && (controls.tracking_valid || hit == Some(1)),
+                pressed,
+                hit,
+                self.pointer.captured() || extra.consumed,
+            );
             if valid && hit.is_some() {
                 if let (Some(visual), Some(p)) = (&mut self.visual, pixels) {
                     let pose = controls.pose;
@@ -729,13 +1083,7 @@ impl GpuMeshUiPanel {
                         self.hybrid.forms_visible = !self.hybrid.forms_visible;
                         true
                     }
-                    PanelAction::Center => self.latest_head.is_some_and(|eye| {
-                        native_mesh_ui::recenter_pose(
-                            controls.generation,
-                            [eye.position[0], eye.position[1], eye.position[2]],
-                            eye.orientation_xyzw,
-                        )
-                    }),
+                    PanelAction::Center => self.recall_world_at_head(controls.generation),
                     PanelAction::Size => {
                         native_mesh_ui::request_panel_action(controls.generation, 7)
                     }
@@ -752,7 +1100,8 @@ impl GpuMeshUiPanel {
                     ),
                 );
             }
-            if consumed || !self.hybrid.forms_visible {
+            if consumed || extra.consumed || !self.hybrid.forms_visible || !controls.tracking_valid
+            {
                 if !self.hybrid_suppressed_forms_pointer {
                     if let Some(producer) = &self.producer {
                         producer.pointer(app, 5, [0.0, 0.0])?;
@@ -766,7 +1115,7 @@ impl GpuMeshUiPanel {
                         producer.pointer(app, action, p)?;
                     }
                 }
-                return Ok(consumed);
+                return Ok(consumed || extra.consumed || !controls.tracking_valid);
             }
             self.hybrid_suppressed_forms_pointer = false;
         }
@@ -834,6 +1183,9 @@ impl GpuMeshUiPanel {
         self.registry.clear();
         if let Some(ui) = self.native_ui.take() {
             ui.destroy(device);
+        }
+        if let Some(text) = self.native_text.take() {
+            text.destroy(device);
         }
         if let Some(producer) = self.producer.take() {
             if let Err(error) = producer.stop(app) {

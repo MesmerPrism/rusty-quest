@@ -163,10 +163,15 @@ pub(crate) struct AlternatePointer {
     hand_down: bool,
     controller_armed: bool,
     controller_down: bool,
+    fresh_press_admitted: bool,
 }
 impl AlternatePointer {
     pub(crate) fn reset(&mut self) {
         *self = Self::default();
+    }
+    /// This frame selected a fresh edge backed by this exact source's valid-open proof.
+    pub(crate) fn fresh_press_admitted(&self) -> bool {
+        self.fresh_press_admitted
     }
     pub(crate) fn interaction_pressed(&self) -> bool {
         self.pressed
@@ -178,6 +183,7 @@ impl AlternatePointer {
         controller: bool,
         hand: Option<HandPointerSample>,
     ) -> (PointerOwner, bool, bool) {
+        self.fresh_press_admitted = false;
         let owner = if controller {
             PointerOwner::Controllers
         } else {
@@ -227,6 +233,7 @@ impl AlternatePointer {
         controller_pressed: bool,
         hand: Option<HandPointerSample>,
     ) -> (PointerOwner, bool, bool) {
+        self.fresh_press_admitted = false;
         let previous_controller_down = self.controller_down;
         if !controller {
             self.controller_armed = false;
@@ -239,14 +246,18 @@ impl AlternatePointer {
         }
         let controller_edge = self.controller_down && !previous_controller_down;
 
-        let hand_owner = hand.map(|sample| if sample.right {
-            PointerOwner::RightHand
-        } else {
-            PointerOwner::LeftHand
-        }).unwrap_or_default();
+        let hand_owner = hand
+            .map(|sample| {
+                if sample.right {
+                    PointerOwner::RightHand
+                } else {
+                    PointerOwner::LeftHand
+                }
+            })
+            .unwrap_or_default();
         let runtime_aim = hand.is_some_and(|sample| sample.runtime_pinch.is_some());
-        let source_changed = hand_owner != self.interaction_hand
-            || runtime_aim != self.interaction_runtime_aim;
+        let source_changed =
+            hand_owner != self.interaction_hand || runtime_aim != self.interaction_runtime_aim;
         let previous_hand_down = self.hand_down;
         if source_changed {
             self.hand_armed = false;
@@ -273,8 +284,9 @@ impl AlternatePointer {
         let previous_owner = self.owner;
         let owner_available = match previous_owner {
             PointerOwner::Controllers => controller,
-            PointerOwner::RightHand | PointerOwner::LeftHand =>
-                previous_owner == hand_owner && !source_changed,
+            PointerOwner::RightHand | PointerOwner::LeftHand => {
+                previous_owner == hand_owner && !source_changed
+            }
             PointerOwner::None => false,
         };
         let owner_down = match previous_owner {
@@ -284,19 +296,30 @@ impl AlternatePointer {
         };
         if self.pressed {
             // Deliver this owner's release, or cancel on loss, before any other down.
-            self.owner = if owner_available { previous_owner } else { PointerOwner::None };
+            self.owner = if owner_available {
+                previous_owner
+            } else {
+                PointerOwner::None
+            };
             self.pressed = owner_available && owner_down;
         } else if controller_edge {
+            self.fresh_press_admitted = true;
             self.owner = PointerOwner::Controllers;
             self.pressed = true;
         } else if hand_edge {
+            self.fresh_press_admitted = true;
             self.owner = hand_owner;
             self.pressed = true;
         } else {
-            self.owner = if owner_available { previous_owner }
-                else if hand.is_some() { hand_owner }
-                else if controller { PointerOwner::Controllers }
-                else { PointerOwner::None };
+            self.owner = if owner_available {
+                previous_owner
+            } else if hand.is_some() {
+                hand_owner
+            } else if controller {
+                PointerOwner::Controllers
+            } else {
+                PointerOwner::None
+            };
             self.pressed = false;
         }
         (self.owner, self.pressed, self.owner != previous_owner)
@@ -578,39 +601,86 @@ mod tests {
         actions: Vec<i32>,
     }
     impl InteractionFixture {
-        fn frame(&mut self, controller_tracked: bool, trigger: bool, hand: Option<HandPointerSample>)
-            -> (PointerOwner, bool, bool)
-        {
-            let result = self.pointer.update_interaction(controller_tracked, trigger, hand);
+        fn frame(
+            &mut self,
+            controller_tracked: bool,
+            trigger: bool,
+            hand: Option<HandPointerSample>,
+        ) -> (PointerOwner, bool, bool) {
+            let result = self
+                .pointer
+                .update_interaction(controller_tracked, trigger, hand);
             if result.2 {
                 if let Some((action, _)) = self.capture.update(false, false, None) {
                     self.actions.push(action);
                 }
             }
+            if self.pointer.fresh_press_admitted() {
+                self.capture.admit_fresh_press();
+            }
             let ray = match result.0 {
-                PointerOwner::Controllers if controller_tracked => controller_pointer(
-                    Some(controller([0.0; 3])), None)
-                    .map(|ray| (ray.origin, ray.direction)),
+                PointerOwner::Controllers if controller_tracked => {
+                    controller_pointer(Some(controller([0.0; 3])), None)
+                        .map(|ray| (ray.origin, ray.direction))
+                }
                 PointerOwner::RightHand | PointerOwner::LeftHand => hand
                     .filter(|sample| sample.right == (result.0 == PointerOwner::RightHand))
                     .map(|sample| (sample.origin, sample.direction)),
                 _ => None,
             };
-            let pixels = ray.and_then(|(origin, direction)| crate::native_mesh_ui::ray_pixels(
-                crate::native_mesh_ui::PanelPose::default(), origin, direction));
+            let pixels = ray.and_then(|(origin, direction)| {
+                crate::native_mesh_ui::ray_pixels(
+                    crate::native_mesh_ui::PanelPose::default(),
+                    origin,
+                    direction,
+                )
+            });
             if let Some((action, _)) = self.capture.update(ray.is_some(), result.1, pixels) {
-                if action != 1 { self.actions.push(action); }
+                if action != 1 {
+                    self.actions.push(action);
+                }
             }
             result
         }
     }
     #[test]
+    fn admission_is_current_source_fresh_edge_only_not_held_or_competing() {
+        let mut p = AlternatePointer::default();
+        p.update_interaction(true, true, Some(hand(0.01)));
+        assert!(!p.fresh_press_admitted());
+        p.update_interaction(true, false, Some(hand(0.05)));
+        assert!(!p.fresh_press_admitted());
+        p.update_interaction(true, true, Some(hand(0.05)));
+        assert!(p.fresh_press_admitted());
+        p.update_interaction(true, true, Some(hand(0.01)));
+        assert!(!p.fresh_press_admitted());
+        p.update_interaction(true, false, Some(hand(0.01)));
+        assert!(!p.fresh_press_admitted());
+        p.update_interaction(false, false, Some(hand(0.01)));
+        assert!(!p.fresh_press_admitted());
+        p.update_interaction(false, false, Some(hand(0.05)));
+        assert!(!p.fresh_press_admitted());
+        p.update_interaction(false, false, Some(hand(0.01)));
+        assert!(p.fresh_press_admitted());
+        p.update_interaction(false, false, None);
+        assert!(!p.fresh_press_admitted());
+        p.update_interaction(false, false, Some(hand(0.01)));
+        assert!(!p.fresh_press_admitted());
+        p.reset();
+        assert!(!p.fresh_press_admitted());
+    }
+    #[test]
     fn original_first_hand_click_works_with_continuously_tracked_idle_controller() {
         let mut f = InteractionFixture::default();
         assert_eq!(f.frame(true, false, None).0, PointerOwner::Controllers);
-        assert_eq!(f.frame(true, false, Some(hand(0.05))).0, PointerOwner::Controllers);
-        assert_eq!(f.frame(true, false, Some(hand(0.02))),
-            (PointerOwner::RightHand, true, true));
+        assert_eq!(
+            f.frame(true, false, Some(hand(0.05))).0,
+            PointerOwner::Controllers
+        );
+        assert_eq!(
+            f.frame(true, false, Some(hand(0.02))),
+            (PointerOwner::RightHand, true, true)
+        );
         assert!(f.capture.captured());
         f.frame(true, false, Some(hand(0.03))); // hysteresis retains one capture
         f.frame(true, false, Some(hand(0.05)));
@@ -618,15 +688,23 @@ mod tests {
         // The old neutral route deliberately retains tracked-controller priority.
         let mut neutral = AlternatePointer::default();
         neutral.update(true, Some(hand(0.05)));
-        assert_eq!(neutral.update(true, Some(hand(0.02))),
-            (PointerOwner::Controllers, false, false));
+        assert_eq!(
+            neutral.update(true, Some(hand(0.02))),
+            (PointerOwner::Controllers, false, false)
+        );
     }
     #[test]
     fn original_controller_drag_consumes_competing_pinch_until_fresh_open_press() {
         let mut f = InteractionFixture::default();
         f.frame(true, false, Some(hand(0.05)));
-        assert_eq!(f.frame(true, true, Some(hand(0.05))).0, PointerOwner::Controllers);
-        assert_eq!(f.frame(true, true, Some(hand(0.02))).0, PointerOwner::Controllers);
+        assert_eq!(
+            f.frame(true, true, Some(hand(0.05))).0,
+            PointerOwner::Controllers
+        );
+        assert_eq!(
+            f.frame(true, true, Some(hand(0.02))).0,
+            PointerOwner::Controllers
+        );
         f.frame(true, false, Some(hand(0.02)));
         assert!(!f.frame(true, false, Some(hand(0.02))).1);
         assert_eq!(f.actions, [0, 2]);
@@ -640,11 +718,17 @@ mod tests {
         let mut f = InteractionFixture::default();
         f.frame(true, false, Some(hand(0.05)));
         f.frame(true, false, Some(hand(0.02)));
-        assert_eq!(f.frame(true, true, Some(hand(0.05))).0, PointerOwner::RightHand);
+        assert_eq!(
+            f.frame(true, true, Some(hand(0.05))).0,
+            PointerOwner::RightHand
+        );
         assert!(!f.frame(true, true, Some(hand(0.05))).1);
         assert_eq!(f.actions, [0, 2]);
         f.frame(true, false, Some(hand(0.05)));
-        assert_eq!(f.frame(true, true, Some(hand(0.05))).0, PointerOwner::Controllers);
+        assert_eq!(
+            f.frame(true, true, Some(hand(0.05))).0,
+            PointerOwner::Controllers
+        );
         f.frame(true, false, Some(hand(0.05)));
         assert_eq!(f.actions, [0, 2, 0, 2]);
     }
@@ -653,7 +737,10 @@ mod tests {
         let mut f = InteractionFixture::default();
         f.frame(true, false, Some(hand(0.05)));
         f.frame(true, true, Some(hand(0.05)));
-        assert_eq!(f.frame(false, true, Some(hand(0.02))), (PointerOwner::None, false, true));
+        assert_eq!(
+            f.frame(false, true, Some(hand(0.02))),
+            (PointerOwner::None, false, true)
+        );
         assert_eq!(f.actions, [0, 3]);
         assert!(!f.frame(false, false, Some(hand(0.02))).1);
         assert!(!f.frame(true, true, Some(hand(0.02))).1);
@@ -664,11 +751,16 @@ mod tests {
     #[test]
     fn original_first_held_controller_and_hand_require_release_before_click() {
         let mut f = InteractionFixture::default();
-        for _ in 0..3 { assert!(!f.frame(true, true, Some(hand(0.01))).1); }
+        for _ in 0..3 {
+            assert!(!f.frame(true, true, Some(hand(0.01))).1);
+        }
         assert!(f.actions.is_empty());
         f.frame(true, false, Some(hand(0.05)));
         // Deterministic tie break: one controller down, never both pointers.
-        assert_eq!(f.frame(true, true, Some(hand(0.01))).0, PointerOwner::Controllers);
+        assert_eq!(
+            f.frame(true, true, Some(hand(0.01))).0,
+            PointerOwner::Controllers
+        );
         f.frame(true, false, Some(hand(0.01)));
         assert!(!f.frame(true, false, Some(hand(0.01))).1);
         assert_eq!(f.actions, [0, 2]);
@@ -678,13 +770,17 @@ mod tests {
         let mut f = InteractionFixture::default();
         f.frame(true, false, Some(hand(0.05)));
         f.frame(true, false, Some(hand(0.02)));
-        let left = |distance| HandPointerSample { right: false, ..hand(distance) };
+        let left = |distance| HandPointerSample {
+            right: false,
+            ..hand(distance)
+        };
         assert_eq!(f.frame(true, false, Some(left(0.02))).0, PointerOwner::None);
         assert!(!f.frame(true, false, Some(left(0.02))).1);
         f.frame(true, false, Some(left(0.05)));
         f.frame(true, false, Some(left(0.02)));
-        let aim = |pinch| runtime_aim_pointer([0.; 3], [0., 0., 0., 1.], false,
-            true, false, pinch).unwrap();
+        let aim = |pinch| {
+            runtime_aim_pointer([0.; 3], [0., 0., 0., 1.], false, true, false, pinch).unwrap()
+        };
         assert_eq!(f.frame(true, false, Some(aim(true))).0, PointerOwner::None);
         assert!(!f.frame(true, false, Some(aim(true))).1);
         f.frame(true, false, Some(aim(false)));
@@ -693,11 +789,14 @@ mod tests {
     }
     #[test]
     fn original_invalid_aim_system_gesture_and_reset_cannot_reenter_held() {
-        let sample = |valid, system, pinch| runtime_aim_pointer(
-            [0.; 3], [0., 0., 0., 1.], true, valid, system, pinch);
-        for lost in [sample(false, false, true), sample(true, true, true),
-            runtime_aim_pointer([f32::NAN; 3], [0., 0., 0., 1.], true, true, false, true)]
-        {
+        let sample = |valid, system, pinch| {
+            runtime_aim_pointer([0.; 3], [0., 0., 0., 1.], true, valid, system, pinch)
+        };
+        for lost in [
+            sample(false, false, true),
+            sample(true, true, true),
+            runtime_aim_pointer([f32::NAN; 3], [0., 0., 0., 1.], true, true, false, true),
+        ] {
             let mut f = InteractionFixture::default();
             f.frame(true, false, sample(true, false, false));
             f.frame(true, false, sample(true, false, true));

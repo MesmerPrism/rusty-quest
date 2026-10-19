@@ -1,6 +1,8 @@
 //! Native toolbar interaction, separate from Android forms and application settings.
 //! Coordinates are in panel-height units, centered on the panel, positive Y down.
 
+use crate::native_panel_interaction::{CaptureState, ControlId};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PanelAction {
     ToggleForms,
@@ -19,11 +21,20 @@ pub(crate) enum DetailMode {
 }
 impl DetailMode {
     pub(crate) fn next(self) -> Self {
-        match self { Self::Auto => Self::Base, Self::Base => Self::Medium,
-            Self::Medium => Self::High, Self::High => Self::Auto }
+        match self {
+            Self::Auto => Self::Base,
+            Self::Base => Self::Medium,
+            Self::Medium => Self::High,
+            Self::High => Self::Auto,
+        }
     }
     pub(crate) fn label(self) -> &'static str {
-        match self { Self::Auto => "AUTO", Self::Base => "1X", Self::Medium => "1.5X", Self::High => "2X" }
+        match self {
+            Self::Auto => "AUTO",
+            Self::Base => "1X",
+            Self::Medium => "1.5X",
+            Self::High => "2X",
+        }
     }
 }
 
@@ -33,7 +44,7 @@ pub(crate) struct HybridPanelState {
     pub(crate) forms_visible: bool,
     pub(crate) hovered: Option<usize>,
     pub(crate) captured: Option<usize>,
-    was_pressed: bool,
+    capture: CaptureState,
 }
 
 impl Default for HybridPanelState {
@@ -43,7 +54,7 @@ impl Default for HybridPanelState {
             forms_visible: true,
             hovered: None,
             captured: None,
-            was_pressed: false,
+            capture: CaptureState::default(),
         }
     }
 }
@@ -58,37 +69,29 @@ impl HybridPanelState {
         hit: Option<usize>,
         forms_captured: bool,
     ) -> (bool, Option<PanelAction>) {
-        let fresh_press = pressed && !self.was_pressed;
-        self.was_pressed = pressed;
+        let identity = hit.filter(|index| *index < 4).map(|index| ControlId {
+            panel: 1,
+            control: index as u32,
+        });
+        let outcome = self
+            .capture
+            .update(valid, pressed, identity, forms_captured);
         self.hovered = if valid && !forms_captured { hit } else { None };
-        if !valid || forms_captured {
-            let consumed = self.captured.take().is_some();
-            return (consumed, None);
-        }
-        if fresh_press {
-            self.captured = hit.filter(|index| *index < 4);
-        }
-        let Some(captured) = self.captured else {
-            return (false, None);
-        };
-        if pressed {
-            return (true, None);
-        }
-        self.captured = None;
-        let action = (hit == Some(captured)).then_some(match captured {
+        self.captured = self.capture.captured().map(|id| id.control as usize);
+        let action = outcome.activated.map(|id| match id.control {
             0 => PanelAction::ToggleForms,
             1 => PanelAction::Center,
             2 => PanelAction::Size,
             _ => PanelAction::CycleDetail,
         });
-        (true, action)
+        (outcome.consumed, action)
     }
 
     pub(crate) fn cancel(&mut self) {
         self.hovered = None;
         self.captured = None;
         // Require an open input after ownership changes before accepting another press.
-        self.was_pressed = true;
+        self.capture.cancel();
     }
 }
 
@@ -104,11 +107,17 @@ mod tests {
     fn detail_uses_matching_release_and_does_not_change_forms() {
         let mut state = HybridPanelState::default();
         assert_eq!(state.update(true, true, Some(3), false), (true, None));
-        assert_eq!(state.update(true, false, Some(3), false), (true, Some(PanelAction::CycleDetail)));
+        assert_eq!(
+            state.update(true, false, Some(3), false),
+            (true, Some(PanelAction::CycleDetail))
+        );
         assert!(state.forms_visible);
         state.update(true, true, Some(4), false);
         assert_eq!(state.update(true, false, Some(4), false), (false, None));
-        assert_eq!(DetailMode::Auto.next().next().next().next(), DetailMode::Auto);
+        assert_eq!(
+            DetailMode::Auto.next().next().next().next(),
+            DetailMode::Auto
+        );
     }
 
     #[test]

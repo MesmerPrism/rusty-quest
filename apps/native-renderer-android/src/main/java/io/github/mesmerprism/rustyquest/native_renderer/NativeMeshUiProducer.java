@@ -365,7 +365,7 @@ static final class VisibilityReadback {
         JSONObject geometry=new JSONObject(nativeReadPanelGeometry(generation));
         boolean applied=GeometryReadback.applied(geometry,generation);
         if("applied".equals(geometry.optString("status"))&&!applied)geometry=visibilityUnavailable("unavailable");
-        boolean interactive=applied&&geometry.optBoolean("frame_panel_visible",false)&&visibilityObserved&&effectiveVisible&&visibilityRequest==0
+        boolean interactive=applied&&geometry.optBoolean("frame_panel_visible",false)&&geometry.optBoolean("tracking_valid",true)&&visibilityObserved&&effectiveVisible&&visibilityRequest==0
             &&!(resizeRequest!=null&&resizeRequest.state==0&&resizeRequest.mutating);
         JSONArray windows=new JSONArray();
         addWindow(windows,root,0,"root",modals.isEmpty()&&interactive);

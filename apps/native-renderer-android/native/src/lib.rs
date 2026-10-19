@@ -50,8 +50,6 @@ mod environment_depth_surface_support;
 mod experiment_session;
 mod experiment_session_runtime;
 #[cfg(target_os = "android")]
-mod native_standalone_terminal_jni;
-#[cfg(target_os = "android")]
 mod gpu_environment_depth_particle_stats;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particles;
@@ -63,6 +61,8 @@ mod gpu_hand_mesh_visual;
 mod gpu_mesh_replay;
 #[cfg(target_os = "android")]
 mod gpu_mesh_ui_panel;
+#[cfg(target_os = "android")]
+mod gpu_native_panel_text;
 #[cfg(target_os = "android")]
 mod gpu_native_panel_ui;
 #[cfg(target_os = "android")]
@@ -99,15 +99,19 @@ mod native_camera_profiles;
 #[cfg(target_os = "android")]
 mod native_camera_reader_selection;
 mod native_controller_breath_state;
+mod native_geometry_selection;
+mod native_hybrid_panel;
 #[cfg(any(test, target_os = "android"))]
 mod native_mesh_ui;
-mod native_hybrid_panel;
+mod native_panel_interaction;
+mod native_panel_model;
 mod native_panel_resolution;
+mod native_panel_text;
+mod native_panel_text_layout;
+mod native_panel_toolbar;
 mod native_panel_ui_geometry;
 #[cfg(any(test, target_os = "android"))]
 mod native_pointer_visual;
-#[cfg(any(test, target_os = "android"))]
-mod native_scene_composition;
 mod native_renderer_camera_options;
 mod native_renderer_diagnostics_contract;
 mod native_renderer_display_composite_options;
@@ -136,7 +140,11 @@ mod native_renderer_timing;
 mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
 #[cfg(any(test, target_os = "android"))]
+mod native_scene_composition;
+#[cfg(any(test, target_os = "android"))]
 mod native_scene_depth;
+#[cfg(target_os = "android")]
+mod native_standalone_terminal_jni;
 mod openxr_controller_breath_adapter;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
@@ -159,15 +167,14 @@ mod private_particle_push_abi;
 mod private_particle_world_basis;
 mod projection_rect;
 mod projection_target_state;
-mod native_geometry_selection;
 mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod remote_camera_projection_native_stream;
 mod same_apk_panel_action;
 mod session_recording_clock;
 mod session_recording_contract;
-mod session_recording_recovery;
 mod session_recording_inventory;
+mod session_recording_recovery;
 mod session_recording_writer;
 mod simultaneous_hands_controllers;
 #[cfg(target_os = "android")]
@@ -329,7 +336,10 @@ fn runtime_permissions_for_route(
     {
         permissions.push("com.oculus.permission.HAND_TRACKING");
     }
-    if runtime_options.environment_depth_settings.runtime_provider_requested() {
+    if runtime_options
+        .environment_depth_settings
+        .runtime_provider_requested()
+    {
         permissions.push("horizonos.permission.USE_SCENE");
     }
     permissions.sort_unstable();
@@ -433,15 +443,20 @@ struct ExperimentSessionImmersiveOwner<'a> {
 #[cfg(target_os = "android")]
 static NEXT_IMMERSIVE_OWNER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-
 #[cfg(target_os = "android")]
 impl Drop for ExperimentSessionImmersiveOwner<'_> {
     fn drop(&mut self) {
-        if self.identity == 0 { return; }
+        if self.identity == 0 {
+            return;
+        }
         android_events::status_owner_ended(self.identity, self.epoch);
         if self.identity > 0 {
-            let _ = native_renderer_panel_bridge::notify_app_status_owner(self.app,
-                self.identity, self.epoch, false);
+            let _ = native_renderer_panel_bridge::notify_app_status_owner(
+                self.app,
+                self.identity,
+                self.epoch,
+                false,
+            );
         }
         // Provider retirement precedes shutdown, including failed shutdown ACK.
 
@@ -476,8 +491,10 @@ fn android_main(app: android_activity::AndroidApp) {
     );
     match initialization {
         Err(error) => {
-            marker("experiment-session-runtime",
-                format!("status=error reason={}", sanitize(&error)));
+            marker(
+                "experiment-session-runtime",
+                format!("status=error reason={}", sanitize(&error)),
+            );
             keep_activity_alive_after_error(&app);
             return;
         }
@@ -500,11 +517,21 @@ fn android_main(app: android_activity::AndroidApp) {
             return;
         }
     };
-    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner { app: &app, identity, epoch, runtime };
+    let _experiment_session_immersive_owner = ExperimentSessionImmersiveOwner {
+        app: &app,
+        identity,
+        epoch,
+        runtime,
+    };
     android_events::status_owner_started(identity, epoch);
     if identity > 0 {
-        if let Err(reason) = native_renderer_panel_bridge::notify_app_status_owner(&app, identity, epoch, true) {
-            marker("hub-status", format!("app_owner_start_failed reason={reason}"));
+        if let Err(reason) =
+            native_renderer_panel_bridge::notify_app_status_owner(&app, identity, epoch, true)
+        {
+            marker(
+                "hub-status",
+                format!("app_owner_start_failed reason={reason}"),
+            );
         }
     }
     let particle_adapter_input =
@@ -783,8 +810,10 @@ fn android_main(app: android_activity::AndroidApp) {
 
     match xr_vulkan::run_projection_loop(
         &app,
-        _experiment_session_immersive_owner.runtime.as_deref().map(|runtime|
-            (runtime, _experiment_session_immersive_owner.identity)),
+        _experiment_session_immersive_owner
+            .runtime
+            .as_deref()
+            .map(|runtime| (runtime, _experiment_session_immersive_owner.identity)),
         camera_runtime.as_ref(),
         runtime_options,
         simultaneous_hands_controllers_decision,

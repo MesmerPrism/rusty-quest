@@ -65,6 +65,12 @@ pub(crate) struct ToolbarState<'a> {
     pub(crate) status: &'a str,
 }
 pub(crate) fn toolbar_geometry(state: ToolbarState<'_>) -> Vec<Primitive> {
+    toolbar_geometry_with_text(state, true)
+}
+pub(crate) fn toolbar_shapes(state: ToolbarState<'_>) -> Vec<Primitive> {
+    toolbar_geometry_with_text(state, false)
+}
+fn toolbar_geometry_with_text(state: ToolbarState<'_>, include_text: bool) -> Vec<Primitive> {
     let mut out = Vec::with_capacity(256);
     out.push(Primitive::rounded_rect(
         [0.0, 0.62, 0.61, 0.085],
@@ -81,24 +87,28 @@ pub(crate) fn toolbar_geometry(state: ToolbarState<'_>) -> Vec<Primitive> {
         };
         out.push(Primitive::rounded_rect(BUTTONS[i], 0.012, c));
         let size = 0.032;
+        if include_text {
+            text(
+                &mut out,
+                label,
+                [
+                    BUTTONS[i][0] - text_width(label.len(), size) * 0.5,
+                    BUTTONS[i][1] - size * 0.5,
+                ],
+                size,
+                [0.93, 0.96, 1.0, 1.0],
+            );
+        }
+    }
+    if include_text {
         text(
             &mut out,
-            label,
-            [
-                BUTTONS[i][0] - text_width(label.len(), size) * 0.5,
-                BUTTONS[i][1] - size * 0.5,
-            ],
-            size,
-            [0.93, 0.96, 1.0, 1.0],
+            state.status,
+            [-0.57, 0.665],
+            0.024,
+            [0.82, 0.88, 0.94, 1.0],
         );
     }
-    text(
-        &mut out,
-        state.status,
-        [-0.57, 0.665],
-        0.024,
-        [0.82, 0.88, 0.94, 1.0],
-    );
     out
 }
 /// Small single-line stroke alphabet, authored here on a 4x6 grid. Unknown glyphs draw '?'.

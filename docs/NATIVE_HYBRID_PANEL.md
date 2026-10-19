@@ -5,8 +5,9 @@ mesh panel. It retains the original application Activity, forms, text editing,
 settings handlers and private particle renderer. It adds no Makepad,
 Spatial SDK, second OpenXR session or Vulkan device.
 
-The native toolbar draws rounded shapes and an independently authored compact
-stroke alphabet directly in the existing eye passes. FORMS changes only the
+The native toolbar draws analytic rounded shapes and platform-shaped SDF text
+directly in the existing eye passes. A compact stroke alphabet remains a bounded
+fallback when platform text is unavailable. FORMS changes only the
 presentation of the Android form texture; CENTER places the panel in front of
 the current valid head pose; SIZE changes physical panel dimensions through the
 existing presentation state. DETAIL cycles Auto, 1x, 1.5x and 2x form density
@@ -103,3 +104,40 @@ pointer behavior, original visibility shortcuts and advancing particle frames.
 Compare performance with the original panel on the same target and workload.
 Creation, action admission and queue-submission markers are separate from GPU
 completion, XR presentation and visible-pixel proof.
+
+## Native text, presentation widgets and attachments
+
+The selected hybrid toolbar shapes its static label inventory once through
+Android TextShaper and per-glyph platform fallback fonts. Padded glyph coverage
+is converted to a bounded monochrome signed-distance atlas at runtime. No font
+files are bundled or redistributed. The native Vulkan text pipeline uses two
+fixed fence-owned R8 atlas/upload/instance slots and one text batch per eye;
+unchanged generations never upload again. Layout retains shaped advances,
+metrics and offsets. Color fonts, missing glyphs and malformed inputs fail
+explicitly; this is not complete Unicode or color-emoji support.
+
+SCALE changes only physical panel width, using absolute values from the existing
+presentation owner. A drag retains its initial plane so resizing does not feed
+back into its own coordinate mapping. The meter below DETAIL displays effective
+raster budget and the FPS readout counts actual renderer preparation frames.
+These are observations, not requested settings or incremental GPU-cost claims.
+
+The WORLD/WRIST control attaches the panel to a currently tracked left wrist;
+NO HAND marks unavailable tracking. The same predicted time and reference space
+as the OpenXR input path supply valid and tracked position and orientation.
+Loss holds the last pose and cancels input; explicit WORLD or CENTER can recall
+the panel using a valid pointer. CENTER and the original reset atomically return
+to world placement. Android forms and native rows use shared panel geometry and
+capture primitives; logical coordinates remain independent of raster density.
+Multi-panel hit selection is bounded, but this feature does not create multiple
+independent Android form owners or replace the application's scene engine.
+
+Tracking loss, focus loss, hidden owners and competing capture cancel gestures.
+Recovery requires a valid release; an input arbiter may transfer only its own
+observed-open/fresh-press proof when switching between hands and controllers.
+A held gesture cannot become a new form press through pointer-owner changes.
+
+Qualification must include platform shaping and mask comparison, both-eye text
+pixels, native dragging and attachment changes, original forms/Meta input,
+repeated tier changes and resource retirement. Host checks alone do not establish
+headset readability, physical-input parity, endurance or performance.

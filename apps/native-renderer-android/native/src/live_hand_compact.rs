@@ -365,6 +365,32 @@ impl LiveHandCompactInput {
             })
     }
 
+    /// Current left wrist in the exact session reference space/time; no inferred pose.
+    pub(crate) fn locate_panel_wrist(
+        &self,
+        reference_space: &xr::Space,
+        time: xr::Time,
+        sequence: u64,
+    ) -> Option<crate::native_panel_model::TrackedPose> {
+        let result = locate_hand_result(reference_space, self.left_tracker.as_ref(), time);
+        let wrist = &result.locations.as_ref()?[xr::HandJoint::WRIST];
+        let required = xr::SpaceLocationFlags::POSITION_VALID
+            | xr::SpaceLocationFlags::ORIENTATION_VALID
+            | xr::SpaceLocationFlags::POSITION_TRACKED
+            | xr::SpaceLocationFlags::ORIENTATION_TRACKED;
+        if !wrist.location_flags.contains(required) {
+            return None;
+        }
+        let p = wrist.pose.position;
+        let q = wrist.pose.orientation;
+        Some(crate::native_panel_model::TrackedPose {
+            position: [p.x, p.y, p.z],
+            orientation_xyzw: [q.x, q.y, q.z, q.w],
+            valid: true,
+            sequence,
+        })
+    }
+
     fn tracker_ready(&self) -> bool {
         self.left_tracker.is_some() || self.right_tracker.is_some()
     }

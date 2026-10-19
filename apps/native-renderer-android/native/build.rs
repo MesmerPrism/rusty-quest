@@ -9,6 +9,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID");
     println!("cargo:rerun-if-changed=shaders/native_panel_ui.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/native_panel_text.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/native_panel_text.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/native_panel_ui.frag.glsl");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE");
@@ -230,10 +232,15 @@ fn main() {
     // A runtime property or panel visibility control cannot re-enable these resources.
     match env::var("RUSTY_QUEST_NATIVE_RENDERER_HAND_GEOMETRY_ENABLED").as_deref() {
         Ok("false") => {
-            for input in ["RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE",
-                          "RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR",
-                          "RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT"] {
-                assert!(env::var_os(input).is_none(), "particles-only build forbids hand input {input}");
+            for input in [
+                "RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE",
+                "RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR",
+                "RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT",
+            ] {
+                assert!(
+                    env::var_os(input).is_none(),
+                    "particles-only build forbids hand input {input}"
+                );
             }
             println!("cargo:rustc-cfg=native_hand_geometry_disabled");
             // Do not copy, generate, read, or substitute a rig source for this selection.
@@ -258,6 +265,18 @@ fn main() {
             "Android shader build needs glslc. Put glslc on PATH, set GLSLC, or set ANDROID_NDK_HOME."
         )
     });
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/native_panel_text.vert.glsl"),
+        &out_dir.join("native_panel_text.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/native_panel_text.frag.glsl"),
+        &out_dir.join("native_panel_text.frag.spv"),
+    );
     compile_shader(
         &glslc,
         "vertex",
@@ -740,8 +759,14 @@ const PRIVATE_LAYER_GUIDE_OUTPUTS: [(&str, &str); 6] = [
 fn write_recorded_hand_replay_source(out_dir: &Path) {
     let output = out_dir.join("recorded_hand_replay_source.json");
     if let Ok(prepared) = env::var("RUSTY_QUEST_NATIVE_PREPARED_HAND_RIG_SOURCE") {
-        assert!(!prepared.trim().is_empty(), "selected prepared hand input is empty");
-        assert!(env::var("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR").is_err(), "ambiguous hand inputs");
+        assert!(
+            !prepared.trim().is_empty(),
+            "selected prepared hand input is empty"
+        );
+        assert!(
+            env::var("RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR").is_err(),
+            "ambiguous hand inputs"
+        );
         println!("cargo:rerun-if-changed={prepared}");
         fs::copy(&prepared, &output).expect("selected prepared hand source is unavailable");
         return;
