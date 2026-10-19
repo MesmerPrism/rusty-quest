@@ -104,6 +104,7 @@ mod native_hybrid_panel;
 #[cfg(any(test, target_os = "android"))]
 mod native_mesh_ui;
 mod native_panel_interaction;
+mod native_panel_info;
 mod native_panel_model;
 mod native_panel_resolution;
 mod native_panel_text;

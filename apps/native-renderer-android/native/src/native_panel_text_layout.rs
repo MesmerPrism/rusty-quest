@@ -33,6 +33,8 @@ pub(crate) const LABELS: &[&str] = &[
     "9",
     "%",
     "NO HAND",
+    "INFO",
+    "STATUS",
 ];
 pub(crate) fn glyphs(atlas: &TextAtlas, key: ToolbarKey) -> Vec<GlyphInstance> {
     let mut out = Vec::with_capacity(160);
@@ -80,6 +82,7 @@ pub(crate) fn glyphs(atlas: &TextAtlas, key: ToolbarKey) -> Vec<GlyphInstance> {
     ] {
         x += draw(index, x, 0.68, 0.031, false) + 0.014;
     }
+    draw(29, 0.20, 0.765, 0.038, true);
     draw(13, -0.55, 0.732, 0.027, false);
     let percent = (key.physical_width / 0.96 * 100.0)
         .round()

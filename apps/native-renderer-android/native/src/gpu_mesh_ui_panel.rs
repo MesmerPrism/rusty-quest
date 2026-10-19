@@ -14,6 +14,7 @@ use crate::{
         android::{ImageLease, Producer},
         PointerCapture,
     },
+    native_panel_info::InfoPanel,
     native_panel_interaction::{CaptureState, ControlId},
     native_panel_model::{
         AttachmentMode, AttachmentState, LogicalBounds, PanelModel, Ray, TrackedPose,
@@ -47,7 +48,14 @@ pub(crate) struct GpuMeshUiPanel {
     hybrid: HybridPanelState,
     hybrid_forms_slots: [bool; 2],
     hybrid_geometry: Vec<Primitive>,
-    hybrid_geometry_key: Option<ToolbarKey>,
+    hybrid_geometry_key: Option<(ToolbarKey, bool)>,
+    info: InfoPanel,
+    info_last_submitted: Option<Option<native_mesh_ui::PanelPose>>,
+    info_capture: CaptureState,
+    info_poses: [Option<native_mesh_ui::PanelPose>; 2],
+    native_ranges: [[u32; 4]; 2],
+    main_shape_count: u32,
+    main_text_count: u32,
     native_text: Option<GpuNativePanelText>,
     text_atlas: Option<TextAtlas>,
     text_glyphs: Vec<GlyphInstance>,
@@ -352,6 +360,13 @@ impl GpuMeshUiPanel {
             text_atlas,
             text_glyphs: Vec::new(),
             extra_capture: CaptureState::default(),
+            info: InfoPanel::default(),
+            info_last_submitted: None,
+            info_capture: CaptureState::default(),
+            info_poses: [None; 2],
+            native_ranges: [[0; 4]; 2],
+            main_shape_count: 0,
+            main_text_count: 0,
             extra_drag_pose: None,
             attachment: None,
             wrist: None,
@@ -425,6 +440,7 @@ impl GpuMeshUiPanel {
             || self.pointer.captured()
             || self.hybrid.captured.is_some()
             || self.extra_capture.captured().is_some()
+            || self.info_capture.captured().is_some()
             || !self.frame_controls.tracking_valid
         {
             self.adaptive.hold(frame);
@@ -564,7 +580,7 @@ impl GpuMeshUiPanel {
                 extra_pressed: self.extra_capture.captured().map(|id| id.control),
                 fps: self.fps,
             };
-            if self.hybrid_geometry_key != Some(key) {
+            if self.hybrid_geometry_key != Some((key, self.info.visible)) {
                 let status = format!(
                     "FORMS {} DETAIL {} {}X{}",
                     if self.hybrid.forms_visible {
@@ -596,8 +612,31 @@ impl GpuMeshUiPanel {
                 {
                     self.text_glyphs = crate::native_panel_text_layout::glyphs(atlas, key);
                 }
-                self.hybrid_geometry_key = Some(key);
+                let ranges = crate::native_panel_info::append_batches(
+                    self.info,
+                    self.text_atlas
+                        .as_ref()
+                        .filter(|_| self.native_text.is_some()),
+                    &key,
+                    &mut self.hybrid_geometry,
+                    &mut self.text_glyphs,
+                );
+                self.main_shape_count = ranges[0];
+                self.main_text_count = ranges[2];
+                self.hybrid_geometry_key = Some((key, self.info.visible));
             }
+            let visible = self.frame_controls.panel_visible && self.frame_controls.pose_initialized;
+            self.info_poses[slot] = (visible && self.info.visible).then_some(self.info.pose);
+            self.native_ranges[slot] = if visible {
+                [
+                    self.main_shape_count,
+                    self.hybrid_geometry.len() as u32 - self.main_shape_count,
+                    self.main_text_count,
+                    self.text_glyphs.len() as u32 - self.main_text_count,
+                ]
+            } else {
+                [0; 4]
+            };
             ui.prepare_frame(
                 slot,
                 if self.frame_controls.panel_visible && self.frame_controls.pose_initialized {
@@ -682,7 +721,7 @@ impl GpuMeshUiPanel {
                 crate::marker(
                     "native-hybrid-ui",
                     format!(
-                        "event=submitted generation={} poseRevision={} formsVisible={} rasterWidth={} rasterHeight={} nativePrimitives={} rasterEpoch={} detailMode={} nativeDrawsPerEye=1 evidence=queue-submission visibleProof=false",
+                        "event=submitted generation={} poseRevision={} formsVisible={} rasterWidth={} rasterHeight={} nativePrimitives={} rasterEpoch={} detailMode={} nativeMainVectorRangesPerEye=1 evidence=queue-submission visibleProof=false",
                         self.frame_controls.generation,
                         key.1,
                         key.0,
@@ -693,6 +732,15 @@ impl GpuMeshUiPanel {
                 );
                 self.hybrid_last_submission = Some(key);
             }
+        }
+        if self.native_ui.is_some() && self.info_last_submitted != Some(self.info_poses[slot]) {
+            if let Some(p) = self.info_poses[slot] {
+                crate::marker("native-hybrid-ui",format!("event=auxiliary-submitted panelId=3 visible=true generation={} slot={} center={:?} right={:?} up={:?} widthMeters={} heightMeters={} evidence=queue-submission visibleProof=false",
+                    self.frame_controls.generation,slot,p.center,p.right,p.up,p.width,p.height));
+            } else {
+                crate::marker("native-hybrid-ui",format!("event=auxiliary-submitted panelId=3 visible=false generation={} slot={} evidence=queue-submission visibleProof=false",self.frame_controls.generation,slot));
+            }
+            self.info_last_submitted = Some(self.info_poses[slot]);
         }
         for texture in self.pending_acquires[slot].drain(..) {
             texture.graphics_owned.set(true);
@@ -714,55 +762,90 @@ impl GpuMeshUiPanel {
         {
             return;
         }
-        let p = self.poses[slot];
-        let push = PanelPush {
-            center_width: [p.center[0], p.center[1], p.center[2], p.width],
-            right_height: [p.right[0], p.right[1], p.right[2], p.height],
-            up_near: [p.up[0], p.up[1], p.up[2], 0.05],
-            eye_far: [eye.position[0], eye.position[1], eye.position[2], 20.0],
-            eye_orientation: eye.orientation_xyzw,
-            fov: eye.fov_tangents,
-            color_mode: [1.0; 4],
-        };
         device.cmd_set_viewport(cmd, 0, &[viewport]);
         device.cmd_set_scissor(cmd, 0, &[scissor]);
-        if self.slots[slot].is_some() && (self.native_ui.is_none() || self.hybrid_forms_slots[slot])
-        {
-            device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
-            device.cmd_bind_descriptor_sets(
-                cmd,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.layout,
-                0,
-                &[self.sets[slot]],
-                &[],
-            );
-            let bytes = std::slice::from_raw_parts(
-                (&push as *const PanelPush).cast::<u8>(),
-                mem::size_of::<PanelPush>(),
-            );
-            device.cmd_push_constants(
-                cmd,
-                self.layout,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                0,
-                bytes,
-            );
+        let draw_main = || {
+            let p = self.poses[slot];
+            let push = PanelPush {
+                center_width: [p.center[0], p.center[1], p.center[2], p.width],
+                right_height: [p.right[0], p.right[1], p.right[2], p.height],
+                up_near: [p.up[0], p.up[1], p.up[2], 0.05],
+                eye_far: [eye.position[0], eye.position[1], eye.position[2], 20.0],
+                eye_orientation: eye.orientation_xyzw,
+                fov: eye.fov_tangents,
+                color_mode: [1.0; 4],
+            };
             device.cmd_set_viewport(cmd, 0, &[viewport]);
             device.cmd_set_scissor(cmd, 0, &[scissor]);
-            device.cmd_draw(cmd, 6, 1, 0, 0);
-        }
-        if let Some(ui) = &self.native_ui {
-            ui.record_eye(device, cmd, slot, p, eye);
-        }
-        if let Some(text) = &self.native_text {
-            text.record_eye(device, cmd, slot, p, eye);
+            if self.slots[slot].is_some()
+                && (self.native_ui.is_none() || self.hybrid_forms_slots[slot])
+            {
+                device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+                device.cmd_bind_descriptor_sets(
+                    cmd,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.layout,
+                    0,
+                    &[self.sets[slot]],
+                    &[],
+                );
+                let bytes = std::slice::from_raw_parts(
+                    (&push as *const PanelPush).cast::<u8>(),
+                    mem::size_of::<PanelPush>(),
+                );
+                device.cmd_push_constants(
+                    cmd,
+                    self.layout,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    bytes,
+                );
+                device.cmd_set_viewport(cmd, 0, &[viewport]);
+                device.cmd_set_scissor(cmd, 0, &[scissor]);
+                device.cmd_draw(cmd, 6, 1, 0, 0);
+            }
+            if let Some(ui) = &self.native_ui {
+                let r = self.native_ranges[slot];
+                ui.record_eye_range(device, cmd, slot, p, eye, 0, r[0]);
+            }
+            if let Some(text) = &self.native_text {
+                let r = self.native_ranges[slot];
+                text.record_eye_range(device, cmd, slot, p, eye, 0, r[2]);
+            }
+        };
+        let draw_info = || {
+            let Some(pose) = self.info_poses[slot] else {
+                return;
+            };
+            let r = self.native_ranges[slot];
+            if let Some(ui) = &self.native_ui {
+                ui.record_eye_range(device, cmd, slot, pose, eye, r[0], r[1]);
+            }
+            if let Some(text) = &self.native_text {
+                text.record_eye_range(device, cmd, slot, pose, eye, r[2], r[3]);
+            }
+        };
+        let info_last = self.info_poses[slot].is_some_and(|pose| {
+            crate::native_panel_info::info_draws_last(
+                self.poses[slot],
+                pose,
+                [eye.position[0], eye.position[1], eye.position[2]],
+            )
+        });
+        if info_last {
+            draw_main();
+            draw_info();
+        } else {
+            draw_info();
+            draw_main();
         }
     }
+
     pub(crate) fn set_pointer_owner(&mut self, owner: PointerOwner) {
         if self.pointer_owner != owner {
             self.hybrid.cancel();
             self.extra_capture.cancel();
+            self.info_capture.cancel();
             self.extra_drag_pose = None;
         }
         self.pointer_owner = owner;
@@ -775,12 +858,14 @@ impl GpuMeshUiPanel {
         if self.pointer.captured()
             || self.hybrid.captured.is_some()
             || self.extra_capture.captured().is_some()
+            || self.info_capture.captured().is_some()
         {
             self.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
         }
         self.pointer.admit_fresh_press();
         self.hybrid.update(true, false, None, false);
         self.extra_capture.update(true, false, None, false);
+        self.info_capture.update(true, false, None, false);
         self.extra_drag_pose = None;
         Ok(())
     }
@@ -986,9 +1071,47 @@ impl GpuMeshUiPanel {
                     max: [1024.0, 1024.0],
                 },
             );
-            let selected = row.and_then(|row| {
-                crate::native_panel_model::closest_hit(&[form, row], Ray { origin, direction })
+            let mut form_hit_model = form;
+            form_hit_model.visible &= self.hybrid.forms_visible;
+            let main_hit = pixels.and_then(|_| {
+                row.and_then(|row| {
+                    crate::native_panel_model::closest_hit(
+                        &[form_hit_model, row],
+                        Ray { origin, direction },
+                    )
+                })
             });
+            let info_hit = self.info.hit_ray(Ray { origin, direction });
+            let selected = crate::native_panel_info::nearest(main_hit, info_hit);
+            let other_capture = self.pointer.captured()
+                || self.hybrid.captured.is_some()
+                || self.extra_capture.captured().is_some();
+            let info_front =
+                selected.is_some_and(|h| h.panel == crate::native_panel_info::PANEL_ID);
+            let close_hit = selected
+                .filter(|h| h.panel == crate::native_panel_info::PANEL_ID)
+                .and_then(|h| self.info.hit_control(h.logical));
+            let info_event = self.info_capture.update(
+                valid && self.info.visible,
+                pressed,
+                close_hit,
+                other_capture,
+            );
+            let info_consumed = info_event.consumed || (valid && info_front && !other_capture);
+            if info_event.activated.is_some() {
+                self.info.set_visible(false);
+                self.info_capture.cancel();
+            }
+            if valid && info_front {
+                if let (Some(v), Some(hit)) = (&mut self.visual, selected) {
+                    v.hit = true;
+                    v.end = std::array::from_fn(|i| {
+                        origin[i]
+                            + direction[i] * hit.distance_m
+                                / direction.iter().map(|v| v * v).sum::<f32>().sqrt()
+                    });
+                }
+            }
             let extra_hit = point
                 .and_then(native_panel_toolbar::extra_hit)
                 .filter(|_| self.native_text.is_some() && selected.is_some_and(|h| h.panel == 2))
@@ -1003,7 +1126,7 @@ impl GpuMeshUiPanel {
                         || extra_hit == Some(native_panel_toolbar::ATTACH_CONTROL)),
                 pressed,
                 extra_hit.map(|control| ControlId { panel: 2, control }),
-                self.pointer.captured() || self.hybrid.captured.is_some(),
+                self.pointer.captured() || self.hybrid.captured.is_some() || info_consumed,
             );
             if extra
                 .pressed
@@ -1038,6 +1161,17 @@ impl GpuMeshUiPanel {
             }
             if extra
                 .activated
+                .is_some_and(|id| id.control == native_panel_toolbar::INFO_CONTROL)
+            {
+                if self.info.visible {
+                    self.info.set_visible(false);
+                    self.info_capture.cancel();
+                } else {
+                    self.info.open_beside(controls.pose);
+                }
+            }
+            if extra
+                .activated
                 .is_some_and(|id| id.control == native_panel_toolbar::ATTACH_CONTROL)
             {
                 let accepted = self.toggle_attachment();
@@ -1049,18 +1183,20 @@ impl GpuMeshUiPanel {
                     ),
                 );
             }
-            let hit = pixels.and_then(|p| {
-                native_panel_ui_geometry::hit_button([
-                    (p[0] / native_mesh_ui::WIDTH as f32 - 0.5) * controls.pose.width
-                        / controls.pose.height,
-                    p[1] / native_mesh_ui::HEIGHT as f32 - 0.5,
-                ])
-            });
+            let hit = pixels
+                .filter(|_| selected.is_some_and(|h| h.panel == 2))
+                .and_then(|p| {
+                    native_panel_ui_geometry::hit_button([
+                        (p[0] / native_mesh_ui::WIDTH as f32 - 0.5) * controls.pose.width
+                            / controls.pose.height,
+                        p[1] / native_mesh_ui::HEIGHT as f32 - 0.5,
+                    ])
+                });
             let (consumed, action) = self.hybrid.update(
                 valid && (controls.tracking_valid || hit == Some(1)),
                 pressed,
                 hit,
-                self.pointer.captured() || extra.consumed,
+                self.pointer.captured() || extra.consumed || info_consumed,
             );
             if valid && (hit.is_some() || extra_hit.is_some() || extra.consumed) {
                 if let (Some(visual), Some(p)) = (&mut self.visual, pixels) {
@@ -1100,7 +1236,11 @@ impl GpuMeshUiPanel {
                     ),
                 );
             }
-            if consumed || extra.consumed || !self.hybrid.forms_visible || !controls.tracking_valid
+            if consumed
+                || extra.consumed
+                || info_consumed
+                || !self.hybrid.forms_visible
+                || !controls.tracking_valid
             {
                 if !self.hybrid_suppressed_forms_pointer {
                     if let Some(producer) = &self.producer {
@@ -1115,7 +1255,7 @@ impl GpuMeshUiPanel {
                         producer.pointer(app, action, p)?;
                     }
                 }
-                return Ok(consumed || extra.consumed || !controls.tracking_valid);
+                return Ok(consumed || extra.consumed || info_consumed || !controls.tracking_valid);
             }
             self.hybrid_suppressed_forms_pointer = false;
         }

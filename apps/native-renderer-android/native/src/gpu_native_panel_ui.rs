@@ -111,10 +111,27 @@ impl GpuNativePanelUi {
         pose: PanelPose,
         eye: HandMeshVisualEyeProjection,
     ) {
+        let Some(prepared) = self.slots.get(slot) else {
+            return;
+        };
+        self.record_eye_range(device, cmd, slot, pose, eye, 0, prepared.count);
+    }
+    /// Draw only a prepared instance subset at this pose. Invalid/empty ranges record nothing.
+    /// Range validation uses checked addition; the instance buffer remains bound at byte offset zero.
+    pub(crate) unsafe fn record_eye_range(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        slot: usize,
+        pose: PanelPose,
+        eye: HandMeshVisualEyeProjection,
+        first: u32,
+        count: u32,
+    ) {
         let Some(s) = self.slots.get(slot) else {
             return;
         };
-        if s.count == 0 {
+        if count == 0 || first.checked_add(count).is_none_or(|end| end > s.count) {
             return;
         }
         let p = PanelPush {
@@ -137,7 +154,7 @@ impl GpuNativePanelUi {
                 mem::size_of::<PanelPush>(),
             ),
         );
-        device.cmd_draw(cmd, 6, s.count, 0, 0);
+        device.cmd_draw(cmd, 6, count, 0, first);
     }
     /// Caller MUST retire all referenced command buffers/fences before destruction.
     pub(crate) unsafe fn destroy(mut self, device: &ash::Device) {

@@ -111,7 +111,7 @@ The selected hybrid toolbar shapes its static label inventory once through
 Android TextShaper and per-glyph platform fallback fonts. Padded glyph coverage
 is converted to a bounded monochrome signed-distance atlas at runtime. No font
 files are bundled or redistributed. The native Vulkan text pipeline uses two
-fixed fence-owned R8 atlas/upload/instance slots and one text batch per eye;
+fixed fence-owned R8 atlas/upload/instance slots and bounded text ranges per pane in each eye;
 unchanged generations never upload again. Layout retains shaped advances,
 metrics and offsets. Color fonts, missing glyphs and malformed inputs fail
 explicitly; this is not complete Unicode or color-emoji support.
@@ -141,3 +141,11 @@ Qualification must include platform shaping and mask comparison, both-eye text
 pixels, native dragging and attachment changes, original forms/Meta input,
 repeated tier changes and resource retirement. Host checks alone do not establish
 headset readability, physical-input parity, endurance or performance.
+INFO opens an optional native STATUS pane at an independent world pose. It shares
+the immutable atlas and fence-owned instance buffers with the main toolbar; each
+pane draws only its own vector and text ranges. The full nearest panel body
+consumes input before controls are selected. Complete pane groups render in
+per-eye order for parallel planes. Intersecting nonparallel transparent panes
+remain unqualified. Closing INFO never creates or retires an Android form owner.
+The auxiliary submission marker records its slot pose; pixels require separate
+headset qualification.

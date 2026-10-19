@@ -5,6 +5,8 @@ use crate::{
 };
 pub(crate) const SCALE_CONTROL: u32 = 10;
 pub(crate) const ATTACH_CONTROL: u32 = 11;
+pub(crate) const INFO_CONTROL: u32 = 12;
+pub(crate) const INFO_BUTTON: [f32; 4] = [0.20, 0.765, 0.09, 0.035];
 pub(crate) const SCALE_TRACK: [f32; 4] = [-0.22, 0.775, 0.30, 0.009];
 pub(crate) const ATTACH_BUTTON: [f32; 4] = [0.45, 0.765, 0.135, 0.035];
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -66,7 +68,9 @@ pub(crate) fn wrist_local_pose(
 }
 pub(crate) fn extra_hit(p: [f32; 2]) -> Option<u32> {
     let inside = |r: [f32; 4]| (p[0] - r[0]).abs() <= r[2] && (p[1] - r[1]).abs() <= r[3];
-    if inside(ATTACH_BUTTON) {
+    if inside(INFO_BUTTON) {
+        Some(INFO_CONTROL)
+    } else if inside(ATTACH_BUTTON) {
         Some(ATTACH_CONTROL)
     } else if inside([
         SCALE_TRACK[0],
@@ -96,6 +100,11 @@ pub(crate) fn append_shapes(out: &mut Vec<Primitive>, key: ToolbarKey) {
         [0.0, 0.765, 0.61, 0.055],
         0.018,
         [0.022, 0.031, 0.045, 0.97],
+    ));
+    out.push(Primitive::rounded_rect(
+        INFO_BUTTON,
+        0.012,
+        [0.065, 0.09, 0.12, 1.0],
     ));
     let value = normalized_width(key.physical_width);
     out.push(Primitive::rounded_rect(
