@@ -326,6 +326,9 @@ static final class VisibilityReadback {
 
     private JSONArray bounds(View view)throws org.json.JSONException {
         Rect local=new Rect();if(!view.isAttachedToWindow()||!view.isShown()||!view.getGlobalVisibleRect(local))return null;
+        // Global-visible bounds are root-relative; modal/keyboard roots have their own screen origin.
+        int[] windowOrigin=new int[2];view.getRootView().getLocationOnScreen(windowOrigin);
+        local.offset(windowOrigin[0],windowOrigin[1]);
         local.set((int)Math.floor(local.left/rasterScale),(int)Math.floor(local.top/rasterScale),
             (int)Math.ceil(local.right/rasterScale),(int)Math.ceil(local.bottom/rasterScale));
         if(!local.intersect(0,0,1024,768)||local.isEmpty())return null;

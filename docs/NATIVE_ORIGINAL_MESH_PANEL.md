@@ -32,3 +32,31 @@ selection admission without a compiler. Its default also compiles the actual
 pure owner modules for ordinary, old composable and original scene selections.
 `tools/checks/Test-OriginalPanelHostManifest.ps1` checks the actual manifest owner
 for both mesh selections, ordinary 2D and neutral routes.
+
+## Asynchronous image fence ownership
+
+Mesh-panel acquisition uses bounded `AImageReader_acquireNextImageAsync` calls,
+keeping each acquired image paired with its own duplicated acquire fence. Dropped
+queue entries transfer that exact fence to `AImage_deleteAsync`. The retained
+entry is sampled only after a nonblocking fence probe reports readiness; its
+acquire fence is then closed once. GPU imports and image leases still retire
+through the owning frame fences and the explicit graphics-to-FOREIGN release.
+
+This avoids the `acquireLatestImageAsync` loop in the examined
+[Android 14 source](https://android.googlesource.com/platform/frameworks/av/+/refs/tags/android-14.0.0_r1/media/ndk/NdkImageReader.cpp)
+and [Android 15 security source](https://android.googlesource.com/platform/frameworks/av/+/refs/tags/android-security-15.0.0_r8/media/ndk/NdkImageReader.cpp),
+which overwrites the output acquire-fence FD while obtaining the next image,
+then passes that FD when releasing the previous image. Under queued production,
+the returned image can therefore arrive with an already consumed FD. The native
+adapter drains at most eight acquisitions per frame instead of invoking that
+loop. This source observation explains the invalid-fence/double-close failure
+shape; it does not identify the headset vendor library's exact source revision.
+
+Unexpected invalid/error fence events disable further acquisition and retain the
+reader/image without closing or retransferring an untrusted FD. Writer shutdown
+still runs. This rare quarantine deliberately preserves resources rather than
+recycling a buffer with unproven synchronization. It is reported by an explicit
+`acquire-fence-quarantined` marker and is not a recovery or frame-success claim.
+Host tests exercise distinct image/FD pairs, exact-once retirement, unsignaled
+retention, the drain bound and invalid-event quarantine. Device keyboard/dialog
+stress remains required to verify the affected runtime.

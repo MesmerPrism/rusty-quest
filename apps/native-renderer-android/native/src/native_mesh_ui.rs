@@ -1,6 +1,102 @@
 //! Native mesh-panel state, bounded ray-to-widget input and Android Presentation bridge.
 use std::sync::{Mutex, OnceLock};
 
+/// A next-image acquisition owns its own duplicated fence. Never mix pairs while draining.
+#[cfg(any(test, target_os = "android"))]
+mod acquire_fence {
+    pub(super) struct Pending<I> {
+        pub image: I,
+        pub fence: i32,
+    }
+    /// Bounded nonblocking queue drain; transfer each discarded pair's own fence exactly once.
+    pub(super) fn latest<I>(
+        limit: usize,
+        mut acquire: impl FnMut() -> Option<Pending<I>>,
+        mut release: impl FnMut(Pending<I>),
+    ) -> Option<Pending<I>> {
+        let mut latest = None;
+        for _ in 0..limit {
+            let Some(next) = acquire() else {
+                break;
+            };
+            if let Some(old) = latest.replace(next) {
+                release(old);
+            }
+        }
+        latest
+    }
+    #[derive(PartialEq, Debug)]
+    pub(super) enum Probe {
+        Pending,
+        Ready,
+        Quarantine,
+    }
+    pub(super) fn probe(fence: i32, result: i32, events: i16) -> Probe {
+        if fence < 0 {
+            Probe::Ready
+        } else if result <= 0 {
+            Probe::Pending
+        } else if events & (8 | 16 | 32) != 0 {
+            Probe::Quarantine
+        } else if events & 1 != 0 {
+            Probe::Ready
+        } else {
+            Probe::Pending
+        }
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::collections::BTreeSet;
+        #[test]
+        fn drain_releases_own_fds_once_and_preserves_latest() {
+            let mut queue = (1..=3).map(|i| Pending {
+                image: i,
+                fence: 210 + i,
+            });
+            let mut released = Vec::new();
+            let latest = latest(8, || queue.next(), |p| released.push((p.image, p.fence))).unwrap();
+            assert_eq!(released, vec![(1, 211), (2, 212)]);
+            assert_eq!((latest.image, latest.fence), (3, 213));
+            let mut closed = BTreeSet::new();
+            for (_, fd) in released {
+                assert!(closed.insert(fd));
+            }
+            assert_eq!(probe(latest.fence, 0, 0), Probe::Pending);
+            assert!(!closed.contains(&latest.fence));
+            assert_eq!(probe(latest.fence, 1, 1), Probe::Ready);
+            assert!(closed.insert(latest.fence));
+            assert_eq!(closed.len(), 3);
+        }
+        #[test]
+        fn drain_is_bounded_even_when_producer_continues() {
+            let mut reads = 0;
+            let mut releases = 0;
+            let p = latest(
+                8,
+                || {
+                    reads += 1;
+                    Some(Pending {
+                        image: reads,
+                        fence: reads + 100,
+                    })
+                },
+                |_| releases += 1,
+            )
+            .unwrap();
+            assert_eq!((reads, releases, p.image, p.fence), (8, 7, 8, 108));
+        }
+        #[test]
+        fn invalid_or_error_fence_never_becomes_ready_or_releaseable() {
+            for events in [8, 16, 32, 33] {
+                assert_eq!(probe(213, 1, events), Probe::Quarantine);
+            }
+            assert_eq!(probe(213, -1, 0), Probe::Pending);
+            assert_eq!(probe(-1, 0, 0), Probe::Ready);
+        }
+    }
+}
+
 pub(crate) const WIDTH: u32 = super::native_panel_resolution::LOGICAL_WIDTH;
 pub(crate) const HEIGHT: u32 = super::native_panel_resolution::LOGICAL_HEIGHT;
 #[derive(Clone, Copy, Debug)]
@@ -651,8 +747,9 @@ pub(crate) mod android {
     use crate::acamera_sys as media;
     use crate::android_hardware_buffer::AndroidHardwareBufferHandle;
     use jni::{
-        JavaVM, jni_sig, jni_str,
+        jni_sig, jni_str,
         objects::{JClass, JClassLoader, JObject, JValue},
+        JavaVM,
     };
     use std::ptr;
     #[link(name = "android")]
@@ -665,6 +762,14 @@ pub(crate) mod android {
     pub(crate) struct ImageLease {
         pub(crate) image: *mut media::AImage,
         pub(crate) buffer: AndroidHardwareBufferHandle,
+    }
+    #[link(name = "mediandk")]
+    extern "C" {
+        fn AImageReader_acquireNextImageAsync(
+            reader: *mut media::AImageReader,
+            image: *mut *mut media::AImage,
+            acquire_fence_fd: *mut i32,
+        ) -> i32;
     }
     #[repr(C)]
     struct PollFd {
@@ -686,7 +791,8 @@ pub(crate) mod android {
     pub(crate) struct Producer {
         reader: *mut media::AImageReader,
         pub(crate) generation: u64,
-        pending: Option<(*mut media::AImage, i32)>,
+        pending: Option<acquire_fence::Pending<*mut media::AImage>>,
+        acquire_quarantined: bool,
     }
     impl Producer {
         pub(crate) unsafe fn start(
@@ -752,6 +858,7 @@ pub(crate) mod android {
                     reader,
                     generation,
                     pending: None,
+                    acquire_quarantined: false,
                 };
                 let _ = owner.stop(app);
                 return Err(error);
@@ -760,40 +867,64 @@ pub(crate) mod android {
                 reader,
                 generation,
                 pending: None,
+                acquire_quarantined: false,
             })
         }
         pub(crate) unsafe fn acquire(&mut self) -> Option<ImageLease> {
+            if self.acquire_quarantined {
+                return None;
+            }
             if self.pending.is_none() {
-                let mut image = ptr::null_mut();
-                let mut fence = -1;
-                if media::AImageReader_acquireLatestImageAsync(self.reader, &mut image, &mut fence)
-                    != 0
-                    || image.is_null()
-                {
-                    return None;
-                }
-                self.pending = Some((image, fence));
+                // Avoid acquireLatestImageAsync: Android 14/15 implementations overwrite the
+                // previous output FD before dropping that image, returning a consumed next FD.
+                self.pending = acquire_fence::latest(
+                    8,
+                    || {
+                        let mut image = ptr::null_mut();
+                        let mut fence = -1;
+                        if AImageReader_acquireNextImageAsync(self.reader, &mut image, &mut fence)
+                            != 0
+                            || image.is_null()
+                        {
+                            None
+                        } else {
+                            Some(acquire_fence::Pending { image, fence })
+                        }
+                    },
+                    |old| media::AImage_deleteAsync(old.image, old.fence),
+                );
             }
-            let (image, fence) = self.pending?;
-            if fence >= 0 {
-                let mut fd = PollFd {
-                    fd: fence,
-                    events: 1,
-                    revents: 0,
-                };
-                // Zero-time fence probe keeps the XR frame thread nonblocking. The previous
-                // sampled cohort remains live until this one bounded pending image is ready.
-                if poll(&mut fd, 1, 0) <= 0 {
+            let pending = self.pending.as_ref()?;
+            let mut fd = PollFd {
+                fd: pending.fence,
+                events: 1,
+                revents: 0,
+            };
+            // Probe without blocking XR. Keep image and acquire fence paired until ready.
+            let result = if pending.fence >= 0 {
+                poll(&mut fd, 1, 0)
+            } else {
+                0
+            };
+            match acquire_fence::probe(pending.fence, result, fd.revents) {
+                acquire_fence::Probe::Pending => return None,
+                acquire_fence::Probe::Quarantine => {
+                    // A bad FD is no longer ours to close/transfer: it could have been reused.
+                    // Keep the reader/image alive and stop acquisition; never recycle early.
+                    self.acquire_quarantined = true;
+                    crate::marker(
+                        "native-mesh-ui",
+                        "event=acquire-fence-quarantined readerRetained=true".to_string(),
+                    );
                     return None;
                 }
-                if fd.revents & 1 == 0 {
-                    self.pending = None;
-                    media::AImage_deleteAsync(image, fence);
-                    return None;
-                }
-                close(fence);
+                acquire_fence::Probe::Ready => {}
             }
-            self.pending = None;
+            let pending = self.pending.take()?;
+            if pending.fence >= 0 {
+                close(pending.fence);
+            }
+            let image = pending.image;
             let mut buffer = ptr::null_mut();
             if media::AImage_getHardwareBuffer(image, &mut buffer) != 0 {
                 media::AImage_delete(image);
@@ -834,14 +965,16 @@ pub(crate) mod android {
             mut self,
             app: &android_activity::AndroidApp,
         ) -> Result<(), String> {
-            if let Some((image, fence)) = self.pending.take() {
-                media::AImage_deleteAsync(image, fence);
+            if !self.acquire_quarantined {
+                if let Some(pending) = self.pending.take() {
+                    media::AImage_deleteAsync(pending.image, pending.fence);
+                }
             }
             deactivate(self.generation);
             let result = wait_for_writer_retirement(app, self.generation);
             // If Android UI shutdown has not acknowledged, keep the reader alive rather than
             // destroying a producer resource still referenced by a live VirtualDisplay.
-            if result.is_ok() {
+            if result.is_ok() && !self.acquire_quarantined {
                 media::AImageReader_delete(self.reader);
             }
             result
@@ -851,8 +984,10 @@ pub(crate) mod android {
         /// Quiesce Java without recycling images whose Vulkan release failed.
         pub(crate) unsafe fn quiesce(mut self, app: &android_activity::AndroidApp) {
             deactivate(self.generation);
-            if let Some((image, fence)) = self.pending.take() {
-                media::AImage_deleteAsync(image, fence);
+            if !self.acquire_quarantined {
+                if let Some(pending) = self.pending.take() {
+                    media::AImage_deleteAsync(pending.image, pending.fence);
+                }
             }
             let _ = wait_for_writer_retirement(app, self.generation);
         }
