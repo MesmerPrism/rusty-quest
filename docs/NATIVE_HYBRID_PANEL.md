@@ -2,7 +2,7 @@
 
 `ui.native_mesh_panel.hybrid` is an explicit addition to the original-product
 mesh panel. It retains the original application Activity, forms, text editing,
-keyboard, settings handlers and private particle renderer. It adds no Makepad,
+settings handlers and private particle renderer. It adds no Makepad,
 Spatial SDK, second OpenXR session or Vulkan device.
 
 The native toolbar draws rounded shapes and an independently authored compact
@@ -26,7 +26,7 @@ remain distinct.
 Original layout, input and geometry metadata remain 1,024 by 768 logical units.
 The hybrid selection initially renders the Android surface at 1,536 by 1,152
 pixels. The producer supports bounded 1x, 1.5x and 2x startup tiers. Logical
-wrappers scale the original content tree, modal content and keyboard without
+wrappers scale the original content tree and modal content without
 changing the resource density or replacing application callbacks. Physical
 panel size is controlled independently by its pose, not by raster dimensions.
 
@@ -39,6 +39,22 @@ an adopted resolution.
 Higher raster density costs image memory and sampling/producer work. Direct
 vector UI remains limited by the final eye-buffer resolution and foveation.
 Neither architecture alone establishes faster rendering or better readability.
+
+## Meta system keyboard
+
+The hybrid APK declares optional `com.oculus.feature.VIRTUAL_KEYBOARD` and
+`oculus.software.overlay_keyboard` features. The selected manifest is the
+capability declaration; no additional runtime property enables this route.
+A focusable proxy attached to the real Native Activity requests the Meta system
+IME and forwards input to the original form's `EditText`/`InputConnection`.
+The original editor retains text, filters, selection, composition and actions;
+there is no duplicate edit buffer or selected custom keyboard UI.
+
+The existing focus-aware Activity allows the system overlay to own input while
+the native XR renderer continues submitting when the runtime permits it.
+Keyboard dismissal and editor retirement must invalidate the old connection.
+A show request or manifest capability is not proof that the system keyboard is
+visible or that input reached the original editor; qualify both on the headset.
 
 ## Validation
 

@@ -1923,7 +1923,7 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
 if ($standaloneExperimentOwner) {
-    $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java',
+    $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java','NativeSystemKeyboard.java',
         'NativeRendererExperimentLaunchAuthority.java','NativeRendererExperimentLauncherPolicy.java','NativeRendererActivityComponents.java',
         'NativeRendererWriterAcknowledgedExitPolicy.java','PanelImmersiveHandoff.java',
         'PanelImmersiveHandoffLifecyclePolicy.java','PanelImmersiveHandoffProofPolicy.java',

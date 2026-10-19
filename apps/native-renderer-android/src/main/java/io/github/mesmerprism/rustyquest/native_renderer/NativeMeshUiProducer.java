@@ -160,6 +160,8 @@ static final class VisibilityReadback {
     private final ArrayList<Dialog> modals = new ArrayList<Dialog>();
     private Dialog pointerDialog;
     private Dialog keyboard;
+    private NativeSystemKeyboard systemKeyboard;
+    private long editorEpoch;
     private EditText editor;
     private TextInputSession input;
     private EditorInfo editorInfo;
@@ -543,9 +545,26 @@ static final class VisibilityReadback {
     private boolean editorCurrent(){return viewCurrent(editor);}
 
     private void openKeyboard(EditText field) {
-        if(field==editor&&keyboard!=null&&editorCurrent())return;
+        if(field==editor&&(keyboard!=null||systemKeyboard!=null)&&editorCurrent())return;
         closeKeyboard();editor=field;
         if(!editorCurrent()){retireEditor();return;}
+        if(NativeSystemKeyboard.selected(activity)){
+            final EditText requested=field;
+            final long requestedEpoch=++editorEpoch;
+            final NativeSystemKeyboard opened;
+            try{opened=NativeSystemKeyboard.open(activity,field,
+                new java.util.function.BooleanSupplier(){public boolean getAsBoolean(){
+                    return editorEpoch==requestedEpoch&&editor==requested&&editorCurrent();
+                }},new Runnable(){public void run(){
+                    if(editorEpoch==requestedEpoch){systemKeyboard=null;retireEditor();}
+                }});}catch(RuntimeException unavailable){
+                Log.w("RQNativeSystemIme","event=system-ime-open-failed textLogged=false visibleProof=false");
+                retireEditor();return;
+            }
+            if(editorEpoch!=requestedEpoch||!editorCurrent())opened.close();
+            else systemKeyboard=opened;
+            return;
+        }
         editor.requestFocus();editorInfo=new EditorInfo();InputConnection connection=editor.onCreateInputConnection(editorInfo);
         if(connection==null){retireEditor();return;}
         final EditText requested=editor;
@@ -600,10 +619,13 @@ static final class VisibilityReadback {
     private void editorKey(int code){input.key(code);}
 
     private void retireEditor(){
+        ++editorEpoch;
         TextInputSession prior=input;input=null;editorInfo=null;editor=null;capitals=false;symbols=false;
         if(prior!=null)prior.close();
     }
     private void closeKeyboard(){
+        NativeSystemKeyboard system=systemKeyboard;systemKeyboard=null;
+        if(system!=null)system.close();
         Dialog prior=keyboard;keyboard=null;retireEditor();
         if(prior!=null){if(pointerDialog==prior)cancelPointer();prior.dismiss();}
     }
@@ -766,7 +788,9 @@ static final class VisibilityReadback {
             public void onActivityResumed(Activity value){if(value==activity&&current==NativeMeshUiProducer.this){
                 ownerAttachment.resumed(true);attachProductOwner();
             }}
-            public void onActivityPaused(Activity value){if(value==activity)ownerAttachment.resumed(false);}
+            public void onActivityPaused(Activity value){if(value==activity){
+                closeTransientInput();ownerAttachment.resumed(false);
+            }}
             public void onActivityDestroyed(Activity value){
                 if(value==activity)ownerAttachment.retire();
                 if(panelAttachment instanceof ProductPanelAttachment&&((ProductPanelAttachment)panelAttachment).owner()==value){
