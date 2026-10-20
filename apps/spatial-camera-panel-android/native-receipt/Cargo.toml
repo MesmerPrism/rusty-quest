@@ -25,6 +25,9 @@ rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-auth
 rusty-quest-media-stream-android = { path = "../../../crates/rusty-quest-media-stream-android" }
 rusty-quest-media-stream = { path = "../../../crates/rusty-quest-media-stream" }
 rusty-manifold-peer = { path = "../../../../rusty-manifold/crates/rusty-manifold-peer" }
+rusty-manifold-model = { path = "../../../../rusty-manifold/crates/rusty-manifold-model" }
+rusty-manifold-peer-runtime-host = { path = "../../../../rusty-manifold/crates/rusty-manifold-peer-runtime-host" }
+sha2 = "0.10"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 zeroize = "=1.9.0"

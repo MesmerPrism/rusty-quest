@@ -7,7 +7,11 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.CancellationException;
+import java.net.SocketTimeoutException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -17,6 +21,7 @@ import org.json.JSONObject;
 /** Pure Java 8 host checks used by the repository build without an Android runtime. */
 public final class MediaProtocolConformanceMain {
     public static void main(String[] args) {
+        warningRetainsActualFuture();
         exactPtsAndRelease();
         pairExpiry();
         generationCancellation();
@@ -28,6 +33,24 @@ public final class MediaProtocolConformanceMain {
         ownerDispatchCloseAbortsRead();
         System.out.println("rusty.quest.android.media.host-conformance.v1:pass");
     }
+    private static void warningRetainsActualFuture() {
+        ExecutorService owner = Executors.newSingleThreadExecutor();
+        CountDownLatch release = new CountDownLatch(1);
+        Future<String> original = owner.submit(() -> { release.await(); return "actual result"; });
+        long priorEstimate = estimateMilliseconds;
+        java.util.function.Consumer<String> priorWarning = warning;
+        AtomicInteger publications = new AtomicInteger();
+        try {
+            estimateMilliseconds = 0;
+            warning = message -> { publications.incrementAndGet(); release.countDown();
+                throw new IllegalStateException("deliberate warning sink failure after release"); };
+            require("actual result".equals(awaitResult(original)) && publications.get() == 1 && !original.isCancelled(),
+                    "warning must retain and observe the same actual Future");
+        } catch (Exception actualFailure) { throw new AssertionError(actualFailure); }
+        finally { release.countDown(); drain(original); owner.shutdown(); joinExecutor(owner);
+            warning = priorWarning; estimateMilliseconds = priorEstimate; }
+    }
+
     private static void exactPtsAndRelease() {
         AtomicInteger releases = new AtomicInteger();
         ExactPresentationTracker tracker = new ExactPresentationTracker(2);
@@ -108,12 +131,13 @@ public final class MediaProtocolConformanceMain {
                 "stale provider revision verified");
         provider.revision = 1;
         ExecutorService contenders = Executors.newFixedThreadPool(2);
-        provider.barrier = new CyclicBarrier(2);
+        provider.barrier = new CountDownLatch(2);
+        Future<String> first = null, second = null;
         try {
-            Future<String> first = contenders.submit(() -> registry.verifyAndReadEvidence(request, readback));
-            Future<String> second = contenders.submit(() -> registry.verifyAndReadEvidence(request, readback));
-            String a = first.get(5, TimeUnit.SECONDS);
-            String b = second.get(5, TimeUnit.SECONDS);
+            first = contenders.submit(() -> registry.verifyAndReadEvidence(request, readback));
+            second = contenders.submit(() -> registry.verifyAndReadEvidence(request, readback));
+            String a = awaitResult(first);
+            String b = awaitResult(second);
             require((a == null) != (b == null), "receipt consumption did not have exactly one winner");
             JSONObject evidence = new JSONObject(a == null ? b : a);
             require("rusty.quest.android.media.verified_owner_effect.v1".equals(evidence.getString("$schema")),
@@ -127,8 +151,15 @@ public final class MediaProtocolConformanceMain {
         } catch (Exception failure) {
             throw new AssertionError("concurrent evidence verification failed", failure);
         } finally {
-            provider.barrier = null;
-            contenders.shutdownNow();
+            // Release only the fixture rendezvous on failure, then drain every
+            // actually issued original before retiring its real executor.
+            CountDownLatch held = provider.barrier;
+            while (held != null && held.getCount() != 0) held.countDown();
+            try { drain(first); } finally {
+                try { drain(second); } finally {
+                    provider.barrier = null; contenders.shutdown(); joinExecutor(contenders);
+                }
+            }
         }
         String compensation = registry.execute(request, true);
         require(registry.verifyAndReadEvidence(request, compensation) == null,
@@ -253,7 +284,7 @@ public final class MediaProtocolConformanceMain {
             output.writeInt(16);
             output.writeByte(1);
             output.flush();
-            awaitTrackedSocket(endpoint);
+            awaitTrackedSocket(endpoint, pending);
             endpoint.close();
             require(endpoint.terminal(), "close did not terminate listener, workers, deadlines, and sockets");
             require(calls.get() == 0, "partial request reached handler during close");
@@ -275,7 +306,12 @@ public final class MediaProtocolConformanceMain {
             if (content != null) output.write(content);
             output.flush();
             socket.shutdownOutput();
-            require(socket.getInputStream().read() == -1, "malformed request received a response");
+            boolean warned = false;
+            for (;;) try {
+                require(socket.getInputStream().read() == -1, "malformed request received a response"); break;
+            } catch (SocketTimeoutException estimate) {
+                if (!warned) { warned = true; warn("same malformed-frame socket awaits actual EOF"); }
+            }
         }
     }
     private static int countThreads(String prefix) {
@@ -285,14 +321,47 @@ public final class MediaProtocolConformanceMain {
         }
         return count;
     }
-    private static void awaitTrackedSocket(OwnerDispatchTcpEndpoint endpoint) throws Exception {
+    private static long estimateMilliseconds = 2000;
+    private static java.util.function.Consumer<String> warning = message -> System.err.println("WARNING: " + message);
+    private static void warn(String message) {
+        try { warning.accept(message); } catch (Throwable publication) { }
+    }
+    private static <T> T awaitResult(Future<T> original) throws Exception {
+        try { return original.get(estimateMilliseconds, TimeUnit.MILLISECONDS); }
+        catch (TimeoutException estimate) { warn("same original evidence Future remains Pending"); return original.get(); }
+    }
+    private static void drain(Future<?> original) {
+        if (original == null) return;
+        boolean interrupted = false;
+        try { for (;;) try { original.get(); break; }
+            catch (InterruptedException actual) { interrupted = true; }
+            catch (ExecutionException | CancellationException actualFailure) { break; }
+        } finally { if (interrupted) Thread.currentThread().interrupt(); }
+    }
+    private static void joinExecutor(ExecutorService original) {
+        boolean interrupted = false, warned = false;
+        try { for (;;) try {
+            if (original.awaitTermination(2, TimeUnit.SECONDS)) break;
+            if (!warned) { warned = true; warn("same evidence executor awaits actual termination"); }
+        } catch (InterruptedException actual) { interrupted = true; }
+        } finally { if (interrupted) Thread.currentThread().interrupt(); }
+    }
+    private static void awaitTrackedSocket(OwnerDispatchTcpEndpoint endpoint, Socket original) throws Exception {
         java.lang.reflect.Field field = OwnerDispatchTcpEndpoint.class.getDeclaredField("sockets");
         field.setAccessible(true);
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (((java.util.Set<?>) field.get(endpoint)).isEmpty()
-                && System.nanoTime() < deadline) Thread.sleep(10);
-        require(!((java.util.Set<?>) field.get(endpoint)).isEmpty(),
-                "pending connection was not accepted for close test");
+        long began = System.nanoTime(); boolean warned = false;
+        int oldTimeout = original.getSoTimeout(); original.setSoTimeout(10);
+        try { while (((java.util.Set<?>) field.get(endpoint)).isEmpty()) {
+            require(endpoint.ready(), "actual endpoint failed before tracking its connection");
+            // A server-closed original is real failure evidence, not a timer.
+            try {
+                int value = original.getInputStream().read();
+                throw new AssertionError(value == -1 ? "original socket ended before close observation" : "unexpected response before tracking");
+            } catch (SocketTimeoutException observeAgain) { }
+            if (!warned && System.nanoTime() - began >= TimeUnit.MILLISECONDS.toNanos(estimateMilliseconds)) {
+                warned = true; warn("same socket awaits actual accepted-owner observation");
+            }
+        }} finally { original.setSoTimeout(oldTimeout); }
     }
     private static void expectIoFailure(IoCall call) {
         try { call.run(); throw new AssertionError("expected I/O failure"); }
@@ -303,7 +372,7 @@ public final class MediaProtocolConformanceMain {
         volatile long revision = 1;
         volatile String state = "started";
         volatile boolean terminal;
-        volatile CyclicBarrier barrier;
+        volatile CountDownLatch barrier;
         @Override public MediaProviderReadback execute(MediaOwnerAction action, CancellationHandle cancellation) {
             return new MediaProviderReadback(action, "handle.evidence", revision, state, "receipt.evidence");
         }
@@ -313,9 +382,9 @@ public final class MediaProtocolConformanceMain {
             return new MediaProviderReadback(action, "handle.evidence", revision, state, "receipt.compensation");
         }
         @Override public MediaRuntimeSnapshot snapshot() {
-            CyclicBarrier current = barrier;
+            CountDownLatch current = barrier;
             if (current != null) {
-                try { current.await(3, TimeUnit.SECONDS); }
+                try { current.countDown(); if (!current.await(3, TimeUnit.SECONDS)) { warn("same actual snapshot rendezvous remains Pending"); current.await(); } }
                 catch (Exception failure) { throw new IllegalStateException("snapshot rendezvous failed", failure); }
             }
             return new MediaRuntimeSnapshot(9, revision, state, terminal, "bounded provider detail", "handle.evidence");

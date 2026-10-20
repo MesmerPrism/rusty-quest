@@ -31,3 +31,6 @@ pub(crate) mod start_transaction;
 mod native_fence_jni;
 #[cfg(unix)]
 mod process_fence;
+
+#[cfg(target_os = "android")]
+pub(crate) use runtime_host::{prepared_renderer_identity, PreparedRendererIdentity};

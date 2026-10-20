@@ -3,6 +3,7 @@ package io.github.mesmerprism.rustyquest.media;
 /** Host-only checks that drive the production owner transition implementation. */
 public final class MediaOwnerLifecycleAdversarialMain {
     public static void main(String[] args) {
+        detachedSocketBeforeActualPumpJoin();
         partialStartCompensatesAndStopIsIdempotent();
         asynchronousFailureInvalidatesReadback();
         terminalStopRecreatesBeforeFreshArm();
@@ -149,12 +150,83 @@ public final class MediaOwnerLifecycleAdversarialMain {
         }catch(RuntimeException failure){throw failure;}catch(Exception failure){throw new IllegalStateException(failure);}
     }
 
+    private static void detachedSocketBeforeActualPumpJoin() {
+        for(boolean failFirst:new boolean[]{false,true})try {
+            Class<?> runtime=Class.forName(PackedStereoMediaSourceRuntime.class.getName()+"$Runtime");
+            Class<?> profile=Class.forName(PackedStereoMediaSourceRuntime.class.getName()+"$PortProfile");
+            java.lang.reflect.Constructor<?> pc=profile.getDeclaredConstructor(int.class,int.class,int.class,int.class,int.class);pc.setAccessible(true);
+            Object profileValue=pc.newInstance(30401,1920,1080,60,4000000);
+            PackedStereoStreamMetadata.Layout layout=new PackedStereoStreamMetadata.Layout(1920,1080,960,1080,1000000);
+            java.lang.reflect.Constructor<?> rc=runtime.getDeclaredConstructors()[0];rc.setAccessible(true);
+            Object owner=rc.newInstance("socket-close-host-fixture","session.host","source.host",null,"127.0.0.1",profileValue,layout,"left","right",false);
+            Class<?> detached=Class.forName(PackedStereoMediaSourceRuntime.class.getName()+"$DetachedConnection");
+            java.lang.reflect.Constructor<?> dc=detached.getDeclaredConstructor(BoundedPacketPump.class,java.io.OutputStream.class,java.net.Socket.class);dc.setAccessible(true);
+            java.lang.reflect.Method close=runtime.getDeclaredMethod("closeDetached",detached);close.setAccessible(true);
+            java.lang.reflect.Method retry=runtime.getDeclaredMethod("retryUnresolvedConnection");retry.setAccessible(true);
+            java.lang.reflect.Field pending=runtime.getDeclaredField("unresolvedConnection");pending.setAccessible(true);
+            try(java.net.ServerSocket listener=new java.net.ServerSocket(0,1,java.net.InetAddress.getLoopbackAddress());
+                    CloseObservedSocket socket=new CloseObservedSocket(failFirst)) {
+                socket.connect(new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress(),listener.getLocalPort()));
+                try(java.net.Socket peer=listener.accept()) {
+                    require(peer.isConnected() && !peer.isClosed(),"actual loopback peer was not connected");
+                    SocketHeldOutput output=new SocketHeldOutput(socket);BoundedPacketPump pump=new BoundedPacketPump(output,1,4,4,"real-detached-socket-writer");
+                    Object held=dc.newInstance(pump,output,socket);
+                    java.util.concurrent.atomic.AtomicReference<Throwable> error=new java.util.concurrent.atomic.AtomicReference<>();
+                    Thread closer=new Thread(()->{try{close.invoke(owner,held);}catch(Throwable failed){error.set(failed);}});
+                    require(pump.offer(new byte[]{1}),"socket writer packet rejected");output.entered.await();
+                    boolean blockedBeforeSocketClose=false;
+                    try {
+                        closer.start();
+                        while(socket.closed.getCount()!=0 && closer.isAlive()) {
+                            java.lang.management.ThreadInfo observed=java.lang.management.ManagementFactory.getThreadMXBean().getThreadInfo(closer.getId());
+                            Thread writer=output.writer;
+                            if(observed!=null && observed.getThreadState()==Thread.State.BLOCKED && writer!=null && observed.getLockOwnerId()==writer.getId()) {blockedBeforeSocketClose=true;break;}
+                            Thread.yield();
+                        }
+                        if(failFirst){
+                            closer.join();require(error.get()==null && !socket.isClosed() && !pump.isTerminated() && pending.get(owner)==held && output.closeCalls==0,"failed actual socket cancellation lost original custody");
+                            retry.invoke(owner);
+                        }
+                    } finally {
+                        socket.releaseForFixtureCleanup();closer.join();pump.close();
+                    }
+                    require(!blockedBeforeSocketClose && error.get()==null && socket.isClosed() && pump.isTerminated() && !output.closedBeforeSocket,
+                            "actual detached socket must close before buffered writer/monitor join");
+                    require(pending.get(owner)==null,"successful exact retry did not retire retained connection");
+                }
+            }
+        } catch(Exception actualFailure){throw new IllegalStateException(actualFailure);}
+    }
+    private static final class CloseObservedSocket extends java.net.Socket {
+        final java.util.concurrent.CountDownLatch closed=new java.util.concurrent.CountDownLatch(1);volatile boolean refuse;
+        CloseObservedSocket(boolean first){refuse=first;}
+        void releaseForFixtureCleanup()throws java.io.IOException {refuse=false;close();}
+        @Override public synchronized void close()throws java.io.IOException {
+            if(refuse){refuse=false;throw new java.io.IOException("actual controlled socket close refusal");}
+            super.close();closed.countDown();
+        }
+    }
+    private static final class SocketHeldOutput extends java.io.OutputStream {
+        final CloseObservedSocket socket;final java.io.OutputStream wire;
+        final java.util.concurrent.CountDownLatch entered=new java.util.concurrent.CountDownLatch(1);
+        volatile Thread writer;volatile boolean closedBeforeSocket;int closeCalls;
+        SocketHeldOutput(CloseObservedSocket value)throws java.io.IOException{socket=value;wire=socket.getOutputStream();}
+        @Override public synchronized void write(int value)throws java.io.IOException {
+            writer=Thread.currentThread();entered.countDown();
+            try{socket.closed.await();}catch(InterruptedException actual){Thread.currentThread().interrupt();throw new java.io.IOException(actual);}
+            wire.write(value);
+        }
+        @Override public synchronized void close()throws java.io.IOException {closeCalls++;if(!socket.isClosed())closedBeforeSocket=true;wire.close();}
+    }
+
     private static void actualCaptureSubscriptionRejectsStaleOrLiveIncarnation() {
         try {
-            java.lang.reflect.Field unsafeField=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
-            sun.misc.Unsafe unsafe=(sun.misc.Unsafe)unsafeField.get(null);
+            Class<?> allocationClass=Class.forName("sun.misc.Unsafe");
+            java.lang.reflect.Field unsafeField=allocationClass.getDeclaredField("theUnsafe");unsafeField.setAccessible(true);
+            Object allocator=unsafeField.get(null);
+            java.lang.reflect.Method allocate=allocationClass.getMethod("allocateInstance",Class.class);
             // No Camera/GL effects: create only the actual production subscription state boundary.
-            PackedStereoCaptureOwner capture=(PackedStereoCaptureOwner)unsafe.allocateInstance(PackedStereoCaptureOwner.class);
+            PackedStereoCaptureOwner capture=(PackedStereoCaptureOwner)allocate.invoke(allocator,PackedStereoCaptureOwner.class);
             java.lang.reflect.Field lock=PackedStereoCaptureOwner.class.getDeclaredField("subscriptionLock");lock.setAccessible(true);lock.set(capture,new Object());
             java.lang.reflect.Field generation=PackedStereoCaptureOwner.class.getDeclaredField("encoderGeneration");generation.setAccessible(true);generation.setLong(capture,7L);
             expectFailure(()->capture.reserveEncoderGenerationAfterRetirement(6L));

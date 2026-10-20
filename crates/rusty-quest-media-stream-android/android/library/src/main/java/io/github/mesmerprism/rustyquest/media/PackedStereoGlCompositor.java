@@ -272,9 +272,12 @@ final class PackedStereoGlCompositor implements Closeable {
     }
 
     void awaitStarted() throws Exception {
-        if (!ready.await(START_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-            close();
-            throw new IllegalStateException("packed GL compositor startup timed out");
+        long began=System.nanoTime(); boolean warned=false;
+        while(!ready.await(50,TimeUnit.MILLISECONDS)) {
+            if(stopRequested || !thread.isAlive()) throw new IllegalStateException("packed GL startup stopped");
+            if(!warned && System.nanoTime()-began>=TimeUnit.MILLISECONDS.toNanos(START_TIMEOUT_MS)) {
+                warned=true; PackedStereoWait.warn("same packed GL startup remains Pending");
+            }
         }
         if (startupFailure != null) {
             close();
@@ -385,12 +388,14 @@ final class PackedStereoGlCompositor implements Closeable {
     public void close() {
         requestStop();
         if (poolExecutor == null) thread.interrupt();
-        try {
-            thread.join(2_000L);
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-        }
-        pairer.clear();
+        if(Thread.currentThread()==thread)throw new IllegalStateException("packed GL cannot join its own owner thread");
+        boolean interrupted=false;
+        try{
+            try{thread.join(2_000L);}catch(InterruptedException actual){interrupted=true;}
+            if(thread.isAlive())PackedStereoWait.warn("same packed GL close remains Pending");
+            while(thread.isAlive())try{thread.join();}catch(InterruptedException actual){interrupted=true;}
+            pairer.clear();
+        }finally{if(interrupted)Thread.currentThread().interrupt();}
     }
 
     void requestStop() {

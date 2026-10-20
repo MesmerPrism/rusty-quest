@@ -21,8 +21,9 @@ use rusty_manifold_peer::{
     ManifoldCommonLanReciprocalEd25519Context, COMMON_LAN_RECIPROCAL_ED25519_SIGNATURE_SCHEMA,
 };
 use rusty_quest_broker_authority::{
-    QuestBrokerAuthorityBridgeKind, QuestBrokerProductActivationMaterial, QuestBrokerRuntimeConfig,
-    QuestBrokerRuntimeProvider, QuestEmbeddedDuplexAuthority, QuestEmbeddedDuplexProjectionSource,
+    QuestBrokerAuthorityBridgeKind, QuestBrokerConstructionCustody,
+    QuestBrokerProductActivationMaterial, QuestBrokerRuntimeConfig, QuestBrokerRuntimeProvider,
+    QuestEmbeddedDuplexAuthority, QuestEmbeddedDuplexProjectionSource,
     QuestOwnerDispatchAuthorityVerifier,
 };
 use rusty_quest_media_stream_android::{
@@ -42,10 +43,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+#[path = "partial_construction.rs"]
+mod partial_construction;
+
+#[path = "operation_failure.rs"]
+mod operation_failure;
+
 #[path = "pair_ceremony.rs"]
 mod pair_ceremony;
 #[path = "peer_lifecycle.rs"]
 mod peer_lifecycle;
+#[path = "peer_roots.rs"]
+mod peer_roots;
+#[path = "prepared_start.rs"]
+mod prepared_start;
+pub(crate) use prepared_start::PreparedRendererIdentity;
+pub(crate) fn prepared_renderer_identity(id: &str) -> Result<PreparedRendererIdentity, String> {
+    prepared_start::renderer_identity(id)
+}
 #[path = "retained_cleanup_host.rs"]
 mod retained_cleanup_host;
 
@@ -146,6 +161,8 @@ struct Host {
     local_public_key: [u8; 32],
     pair_state: Arc<Mutex<pair_ceremony::PairState>>,
     config_sha256: String,
+    // Actual successful constructor output; absent for released finite mode.
+    runtime_configuration_binding: Option<Value>,
     installed_signing_certificate_sha256: String,
     peer_lifecycle: Arc<Mutex<Option<peer_lifecycle::State>>>,
     owner_effect_attempted: Arc<AtomicBool>,
@@ -170,8 +187,22 @@ struct ProcessState {
     closing: bool,
     host_leases: usize,
     lease_integrity_failed: bool,
+    root_reestablishment: Option<peer_roots::RootFlight>,
+    last_root_reestablishment: Option<Value>,
+    root_terminal_custody: Option<Value>,
+    prepared_peer_start: Option<Arc<prepared_start::Arena>>,
+    prepared_archive_cursor: Option<Value>,
+    terminal_fresh_owner_body: Option<String>,
+    terminal_fresh_owner_ack: Option<Value>,
+    fresh_setup_request: Option<String>,
+    fresh_setup_stop_request: Option<String>,
+    fresh_setup_stop_sequence: u64,
+    retired_fresh_owner_fenced: bool,
     host: Option<Host>,
+    partial_construction: Option<Arc<partial_construction::Construction>>,
+    last_partial_retirement: Option<Value>,
     last_closed_sha256: Option<String>,
+    last_closed_runtime_configuration_binding: Option<Value>,
     last_peer_close_receipt: Option<String>,
 }
 
@@ -348,6 +379,31 @@ pub(super) fn initialization_failure_read() -> Result<Option<serde_json::Value>,
     initialization_failure_read_with_capability(&capability)
 }
 
+pub(super) struct ValidatedFreshPairSetupSigning {
+    signer_key_id: String,
+    signing_bytes: Vec<u8>,
+}
+impl ValidatedFreshPairSetupSigning {
+    pub(super) fn key_id(&self) -> &str {
+        &self.signer_key_id
+    }
+    pub(super) fn bytes(&self) -> &[u8] {
+        &self.signing_bytes
+    }
+}
+
+pub(super) struct ValidatedFreshPhasePrepareSigning {
+    signer_key_id: String,
+    signing_bytes: Vec<u8>,
+}
+impl ValidatedFreshPhasePrepareSigning {
+    pub(super) fn key_id(&self) -> &str {
+        &self.signer_key_id
+    }
+    pub(super) fn bytes(&self) -> &[u8] {
+        &self.signing_bytes
+    }
+}
 struct HostLease(Host);
 
 impl Deref for HostLease {
@@ -388,7 +444,11 @@ fn prepared_route() -> &'static Mutex<Option<(String, PackagedDuplexRoute)>> {
 fn stage_packaged_route(config_sha256: String, route: PackagedDuplexRoute) -> Result<(), String> {
     let capability = native_fence_jni::active()?;
     let state = process().lock().map_err(|_| "process state poisoned")?;
-    if state.initializing || state.closing || state.host.is_some() {
+    if state.initializing
+        || state.closing
+        || state.host.is_some()
+        || state.partial_construction.is_some()
+    {
         return Err("packaged route cannot replace a process authority".into());
     }
     let mut slot = prepared_route()
@@ -471,9 +531,26 @@ fn monotonic_ns() -> Result<u64, String> {
 }
 
 fn host() -> Result<HostLease, String> {
+    host_for_setup(false)
+}
+
+fn host_for_setup(setup_or_observation: bool) -> Result<HostLease, String> {
     let mut state = process().lock().map_err(|_| "process state poisoned")?;
     if state.closing {
         return Err("embedded runtime closing".into());
+    }
+    if state.root_reestablishment.is_some() {
+        return Err("root original is executing".into());
+    }
+    if state
+        .prepared_peer_start
+        .as_ref()
+        .is_some_and(|a| !a.permits_general_operation())
+    {
+        return Err("actual PreparedStart owner requires same-original completion or explicit abort/custody".into());
+    }
+    if state.fresh_setup_request.is_some() && !setup_or_observation {
+        return Err("fresh setup original remains pending".into());
     }
     let host = state
         .host
@@ -507,6 +584,14 @@ fn close_no_media_runtime_with_capability(
     capability: &NativeCapability,
 ) -> Result<String, String> {
     capability.require_live()?;
+    if process()
+        .lock()
+        .map_err(|_| "construction gate poisoned")?
+        .partial_construction
+        .is_some()
+    {
+        return Err("partial constructor requires exact retained whole retirement".into());
+    }
     if expected_sha.len() != 64
         || !expected_sha
             .bytes()
@@ -518,6 +603,14 @@ fn close_no_media_runtime_with_capability(
         let mut state = process().lock().map_err(|_| "process state poisoned")?;
         if state.initializing {
             return Err("runtime initialization busy".into());
+        }
+        if state.fresh_setup_request.is_some() {
+            return Err("pending fresh setup requires retained explicit retirement".into());
+        }
+        if state.prepared_peer_start.is_some() {
+            return Err(
+                "prepared SDK owner requires actual terminal archive before no-media close".into(),
+            );
         }
         if let Some(host) = &state.host {
             if host.config_sha256 != expected_sha {
@@ -603,6 +696,16 @@ fn close_no_media_runtime_with_capability(
             return Err("media runtime evidence absent".into());
         }
     }
+    if let Some(actual) = &host {
+        retain_terminal_fresh_owner(
+            actual,
+            "configured_no_media_close",
+            json!({
+            "$schema":"rusty.quest.embedded_duplex.native_no_media_closing.v1","config_sha256":expected_sha,
+            "physical_cleanup_claimed":false}),
+            None,
+        )?;
+    }
     drop(host);
     let removed = {
         let mut state = process().lock().map_err(|_| "process state poisoned")?;
@@ -616,6 +719,10 @@ fn close_no_media_runtime_with_capability(
             return Err("packaged route identity differs".into());
         }
         let removed = state.host.take();
+        state.terminal_fresh_owner_body = None;
+        state.last_closed_runtime_configuration_binding = removed
+            .as_ref()
+            .and_then(|h| h.runtime_configuration_binding.clone());
         route.take();
         state.last_closed_sha256 = Some(expected_sha.to_owned());
         state.initialization_failure = None;
@@ -650,6 +757,7 @@ fn process_idle_for_enrollment() -> bool {
     if state.initializing
         || state.closing
         || state.host.is_some()
+        || state.partial_construction.is_some()
         || state.host_leases != 0
         || state.lease_integrity_failed
     {
@@ -675,6 +783,13 @@ fn initialize(
         &capability,
         &attempted_sha,
         || {
+            // Register before every fallible constructor step. Selection is
+            // compiled product source, never a caller-selected cleanup waiver.
+            if option_env!("RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY")
+                == Some("source-bound-v2")
+            {
+                partial_construction::begin(capability.clone(), &attempted_sha)?;
+            }
             build_host(
                 env,
                 config_json,
@@ -685,7 +800,12 @@ fn initialize(
             )
         },
         |state, (host, result)| {
+            if let Some(held) = &state.partial_construction {
+                held.require_host(&host)?;
+            }
             state.host = Some(host);
+            state.partial_construction = None; // real Host now owns the SAME objects
+            state.last_partial_retirement = None;
             state.last_closed_sha256 = None;
             state.last_peer_close_receipt = None;
             Ok(result)
@@ -716,7 +836,11 @@ fn initialize_with_capability<T, R>(
     capability.require_live()?;
     {
         let mut state = process().lock().map_err(|_| "process state poisoned")?;
-        if state.initializing || state.closing || state.host.is_some() {
+        if state.initializing
+            || state.closing
+            || state.host.is_some()
+            || state.partial_construction.is_some()
+        {
             return Err("embedded runtime already owned".into());
         }
         exact_staged_route(expected_sha)?;
@@ -840,6 +964,17 @@ fn authenticate_own_capture_lock(
     Ok(admitted)
 }
 
+fn require_fresh_owner_not_retired() -> Result<(), String> {
+    if process()
+        .lock()
+        .map_err(|_| "fresh owner process gate poisoned")?
+        .retired_fresh_owner_fenced
+    {
+        return Err("retired fresh owner requires supported actual-owner reconciliation".into());
+    }
+    Ok(())
+}
+
 fn build_host(
     env: &mut JNIEnv<'_>,
     config_json: String,
@@ -849,8 +984,36 @@ fn build_host(
     callback: JObject<'_>,
 ) -> Result<(Host, String), String> {
     let capability = native_fence_jni::active()?;
+    let partial = partial_construction::current()?;
+    // A durable UNKNOWN setup closure is evidence, never a writable owner restore.
+    // Refuse before creating a pristine authority that could forget its floor/replay.
+    let loaded = env
+        .call_method(
+            &callback,
+            "loadFreshSetupClosure",
+            "()Ljava/lang/String;",
+            &[],
+        )
+        .map_err(|_| "fresh closure bootstrap observation unavailable")?
+        .l()
+        .map_err(|_| "fresh closure bootstrap type")?;
+    if loaded.is_null() {
+        return Err("fresh closure bootstrap observation absent".into());
+    }
+    let loaded: String = env
+        .get_string(&JString::from(loaded))
+        .map_err(|_| "fresh closure bootstrap encoding")?
+        .into();
+    if loaded.len() > 16 * 1024 * 1024 {
+        return Err("fresh closure bootstrap bounds".into());
+    }
+    let loaded: Value = serde_json::from_str(&loaded).map_err(safe_decode)?;
+    if !loaded.as_object().is_some_and(|o| o.is_empty()) {
+        return Err("retired fresh setup requires supported actual-owner reconciliation".into());
+    }
     let config: QuestBrokerRuntimeConfig =
         serde_json::from_str(&config_json).map_err(safe_decode)?;
+    fresh_setup_build_guard::require(&config)?;
     let own_capture_lock = authenticate_own_capture_lock(&config)?;
     let installed_signing_certificate_sha256 = {
         let grants: Vec<_> = config
@@ -954,29 +1117,74 @@ fn build_host(
         .quest
         .spec
         .clone();
-    let clock = AuthorityClock::new()?;
-    let mut provider = QuestBrokerRuntimeProvider::default();
-    let status = provider
-        .initialize(
-            &config_json,
-            &expected_sha,
-            &entropy,
-            i64::try_from(clock.now_ms()?).map_err(|_| "authority clock overflow")?,
-            monotonic_ns()?,
-        )
-        .map_err(|error| provider_initialization_reason(&error))?;
-    let authority = provider
-        .embedded_duplex_authority()
-        .map_err(|_| "embedded authority unavailable")?;
+    require_fresh_owner_not_retired()?;
+    let selected_local = config
+        .embedded_duplex
+        .as_ref()
+        .and_then(|d| d.fresh_setup_local_peer_id.as_ref());
+    if selected_local.is_some_and(|id| id.as_str() != bootstrap.local_peer_id) {
+        return Err("fresh setup selected local peer differs from actual bootstrap".into());
+    }
     let callbacks = JavaOwnerCallbacks::capture(
         env,
         callback,
-        bootstrap.local_key_id,
+        bootstrap.local_key_id.clone(),
         bootstrap.remote_peer_id.clone(),
         capability.clone(),
     )?;
     let remote_public_key = decode_key(&bootstrap.remote_public_key_hex)?;
     let local_public_key = callbacks.local_public_key()?;
+    verify_fresh_enrollment_selection(
+        &config,
+        &bootstrap,
+        &route,
+        &callbacks,
+        &local_public_key,
+        &remote_public_key,
+    )?;
+    let clock = AuthorityClock::new()?;
+    if let Some(held) = &partial {
+        held.bind_callbacks(callbacks.clone())?;
+    }
+    let provider_slot = partial
+        .as_ref()
+        .map(|h| h.provider.clone())
+        .unwrap_or_else(|| Arc::new(Mutex::new(Some(QuestBrokerRuntimeProvider::default()))));
+    let (status, authority) = {
+        let mut provider = provider_slot
+            .lock()
+            .map_err(|_| "constructor provider slot poisoned")?;
+        let provider = provider
+            .as_mut()
+            .ok_or("constructor provider checked out")?;
+        let status = if let Some(held) = &partial {
+            held.enter_provider()?;
+            provider.initialize_retaining_construction(
+                &config_json,
+                &expected_sha,
+                &entropy,
+                i64::try_from(clock.now_ms()?).map_err(|_| "authority clock overflow")?,
+                monotonic_ns()?,
+                &mut held
+                    .broker
+                    .lock()
+                    .map_err(|_| "construction Broker custody poisoned")?,
+            )
+        } else {
+            provider.initialize(
+                &config_json,
+                &expected_sha,
+                &entropy,
+                i64::try_from(clock.now_ms()?).map_err(|_| "authority clock overflow")?,
+                monotonic_ns()?,
+            )
+        }
+        .map_err(|error| provider_initialization_reason(&error))?;
+        let authority = provider
+            .embedded_duplex_authority()
+            .map_err(|_| "embedded authority unavailable")?;
+        (status, authority)
+    };
     let owner_dispatch_failure = Arc::new(Mutex::new(None));
     let cleanup = retained_cleanup_host::Cleanup::new(
         authority.clone(),
@@ -989,6 +1197,12 @@ fn build_host(
         capability.generation,
         owner_dispatch_failure.clone(),
     )?;
+    if let Some(held) = &partial {
+        *held
+            .cleanup
+            .lock()
+            .map_err(|_| "construction cleanup custody poisoned")? = Some(cleanup.clone());
+    }
     let cleanup_replay = serde_json::from_str(&callbacks.load_retained_cleanup_replay()?)
         .map_err(|_| "retained cleanup replay decode")?;
     let cleanup_server = retained_cleanup_host::Server::restore(
@@ -1001,6 +1215,14 @@ fn build_host(
         cleanup_replay,
         callbacks.clone(),
     )?;
+    let cleanup_server_slot = Arc::new(Mutex::new(Some(cleanup_server)));
+    if let Some(held) = &partial {
+        *held
+            .cleanup_server
+            .lock()
+            .map_err(|_| "construction cleanup server custody poisoned")? =
+            Some(cleanup_server_slot.clone());
+    }
     let remote = RemoteOwnerDispatchExecutor::new(
         callbacks.clone(),
         callbacks.clone(),
@@ -1032,7 +1254,11 @@ fn build_host(
         placements.clone(),
         route_grant_binding.clone(),
     );
-    provider
+    provider_slot
+        .lock()
+        .map_err(|_| "constructor provider slot poisoned")?
+        .as_mut()
+        .ok_or("constructor provider checked out")?
         .install_media_owner_executor(Box::new(executor))
         .map_err(|_| "owner executor rejected")?;
     let verifier =
@@ -1049,6 +1275,13 @@ fn build_host(
         bootstrap.replay,
         Box::new(callbacks.clone()),
     )?;
+    let server_slot = Arc::new(Mutex::new(Some(server)));
+    if let Some(held) = &partial {
+        *held
+            .server
+            .lock()
+            .map_err(|_| "construction dispatch custody poisoned")? = Some(server_slot.clone());
+    }
     let activation_server = ProductActivationServer::restore(
         bootstrap.local_peer_id.clone(),
         verifier,
@@ -1058,11 +1291,25 @@ fn build_host(
         bootstrap.activation_replay,
         Box::new(callbacks.clone()),
     )?;
+    let activation_slot = Arc::new(Mutex::new(Some(activation_server)));
+    if let Some(held) = &partial {
+        *held
+            .activation
+            .lock()
+            .map_err(|_| "construction activation custody poisoned")? =
+            Some(activation_slot.clone());
+    }
+    if let Some(held) = &partial {
+        held.enter_own_preparation()?;
+    }
     let own_capture_enabled = if own_capture_lock.is_some() {
         crate::own_stereo_capture_runtime::prepare_capture_bootstrap()?
     } else {
         false
     };
+    if let Some(held) = &partial {
+        held.complete_own_preparation(own_capture_enabled)?;
+    }
     let mut result = json!({"$schema":"rusty.quest.embedded_duplex.runtime_initialized.v1",
         "runtime": status, "owner_placements": placements,
         "incoming_owner_placements": incoming_placements,
@@ -1075,14 +1322,24 @@ fn build_host(
         result["own_capture_bootstrap"] = json!({"scope":"app_owned_capture_bootstrap","app_feature_lock_sha256":own_capture_lock,
               "runtime_input":"quest.stereo.concurrent-inputs","renderer_effective":false});
     }
+    // Capture only at the successful constructor boundary, after compiled
+    // policy, actual keystore/remote bootstrap, actor, route and real owner joins.
+    let runtime_configuration_binding = constructor_configuration_binding(
+        &config,
+        &capability,
+        &expected_sha,
+        &bootstrap.local_peer_id,
+    )?;
     let result = result.to_string();
+    // provider_slot is shared with construction custody; no owner is moved out
+    // of that retention arena while final capability/publication can still fail.
     Ok((
         Host {
             capability,
-            provider: Arc::new(Mutex::new(Some(provider))),
-            server: Arc::new(Mutex::new(Some(server))),
-            activation_server: Arc::new(Mutex::new(Some(activation_server))),
-            cleanup_server: Arc::new(Mutex::new(Some(cleanup_server))),
+            provider: provider_slot.clone(),
+            server: server_slot,
+            activation_server: activation_slot,
+            cleanup_server: cleanup_server_slot,
             cleanup,
             activation_sender: Arc::new(Mutex::new(Some(ActivationSender::default()))),
             authority,
@@ -1098,6 +1355,7 @@ fn build_host(
             local_public_key,
             pair_state: Arc::new(Mutex::new(pair_ceremony::PairState::default())),
             config_sha256: expected_sha,
+            runtime_configuration_binding,
             installed_signing_certificate_sha256,
             peer_lifecycle: Arc::new(Mutex::new(Some(peer_lifecycle::State::default()))),
             owner_effect_attempted: Arc::new(AtomicBool::new(false)),
@@ -1293,7 +1551,16 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         let bytes = env
             .convert_byte_array(&frame)
             .map_err(|_| "owner frame bytes")?;
-        let host = host()?;
+        if bytes.starts_with(prepared_start::MAGIC) {
+            return prepared_start::handle_frame(&bytes);
+        }
+        let fresh = pair_ceremony::is_fresh_frame(&bytes);
+        let host = host_for_setup(fresh)?;
+        if fresh {
+            let result = pair_ceremony::fresh_frame(&host, &bytes);
+            host.capability.require_live()?;
+            return result;
+        }
         if bytes.starts_with(pair_ceremony::FRAME_MAGIC) {
             let result = pair_ceremony::handle_frame(&host, &bytes);
             host.capability.require_live()?;
@@ -1527,11 +1794,14 @@ fn complete_start(host: &Host, input: &str) -> Result<String, String> {
     )
 }
 
+#[path = "ongoing_signing_admission.rs"]
+mod ongoing_signing_admission;
 fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String> {
     let context: ManifoldCommonLanReciprocalEd25519Context =
         serde_json::from_str(input).map_err(safe_decode)?;
     let snapshot = host.authority.snapshot_json()?;
     let live = signing_authority_from_live_snapshot(&snapshot, &host.packaged_route, now)?;
+    let admission = ongoing_signing_admission::select(host, &context, &snapshot, now)?;
     let validated = validate_common_lan_context_for_signing(
         &host.packaged_route,
         &live.enrolled,
@@ -1542,14 +1812,16 @@ fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String>
             trust_policy_revision: live.trust_policy_revision,
             network_scope_id: &host.packaged_route.network_scope_id,
             now_ms: now,
-            max_context_age_ms: 30_000,
+            max_context_age_ms: admission.context_age_limit(&context)?,
             max_future_skew_ms: 0,
             max_context_ttl_ms: 240_000,
         },
     )?;
     // Snapshot and route are owned local values. No host, provider, peer, or
     // process lock remains held when Java enters the private-key callback.
+    admission.revalidate(&context)?;
     let signature = host.callbacks.sign_validated_common_lan(&validated)?;
+    admission.revalidate(&context)?;
     let signature_hex = signature
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -1565,7 +1837,23 @@ fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String>
 }
 
 fn command(operation: &str, input: &str) -> Result<String, String> {
-    let host = host()?;
+    let host = if matches!(
+        operation,
+        "prepared_peer_start_status" | "abort_prepared_peer_start" | "prepare_peer_start"
+    ) {
+        prepared_start::operation_host()?
+    } else if operation == "peer_root_status" {
+        peer_roots::observation_host()?
+    } else {
+        host_for_setup(matches!(
+            operation,
+            "fresh_pair_setup"
+                | "fresh_pair_continue"
+                | "pair_status"
+                | "peer_snapshot"
+                | "peer_root_status"
+        ))?
+    };
     if matches!(
         operation,
         "media_command"
@@ -1636,9 +1924,48 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
             .map_err(safe_decode)
         }
         "peer_snapshot" => host.authority.snapshot_json(),
+        "fresh_pair_continue" => {
+            pair_ceremony::require_empty_input(input)?;
+            pair_ceremony::fresh_continue(&host)
+        }
+        "fresh_pair_setup" => {
+            pair_ceremony::require_empty_input(input)?;
+            pair_ceremony::fresh_setup(&host)
+        }
         "pair_ceremony" => {
             pair_ceremony::require_empty_input(input)?;
             pair_ceremony::run(&host)
+        }
+        "runtime_configuration_binding" => {
+            if input != "{}" {
+                return Err("constructor binding accepts empty input only".into());
+            }
+            let binding = host
+                .runtime_configuration_binding
+                .as_ref()
+                .ok_or("constructor binding requires actual selected fresh owner")?;
+            require_constructor_binding(binding, &host.capability, &host.config_sha256)?;
+            Ok(binding.to_string())
+        }
+        "reestablish_peer_roots" => {
+            pair_ceremony::require_empty_input(input)?;
+            peer_roots::run(&host)
+        }
+        "peer_root_status" => {
+            pair_ceremony::require_empty_input(input)?;
+            peer_roots::status(&host)
+        }
+        "prepare_peer_start" => {
+            pair_ceremony::require_empty_input(input)?;
+            prepared_start::run(&host)
+        }
+        "prepared_peer_start_status" => {
+            pair_ceremony::require_empty_input(input)?;
+            prepared_start::status(&host)
+        }
+        "abort_prepared_peer_start" => {
+            pair_ceremony::require_empty_input(input)?;
+            prepared_start::abort(&host)
         }
         "pair_status" => {
             pair_ceremony::require_empty_input(input)?;
@@ -1719,12 +2046,21 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     operation: JString<'_>,
     input: JString<'_>,
 ) -> jstring {
+    let mut selected_operation = None;
     let result = (|| {
         let operation = read_string(&mut env, &operation, 64)?;
+        selected_operation = Some(operation.clone());
         let input = read_string(&mut env, &input, 2 * 1024 * 1024)?;
-        command(&operation, &input).map_err(|_| "embedded runtime operation rejected".into())
+        command(&operation, &input)
     })();
-    return_string(&mut env, result)
+    match result {
+        Ok(value) => return_string(&mut env, Ok(value)),
+        Err(error) => {
+            let payload = operation_failure::jni_payload(selected_operation.as_deref(), &error);
+            let _ = env.throw_new(operation_failure::EXCEPTION_CLASS, payload);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1737,6 +2073,7 @@ mod no_media_close_tests {
     use std::os::unix::fs::PermissionsExt;
 
     static TEST_GATE: Mutex<()> = Mutex::new(());
+    include!("partial_construction_tests.rs");
     const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const OTHER_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
@@ -2146,4 +2483,845 @@ fn install_retained_cleanup_requester(
         lease: requester_lease_id.to_owned(),
     });
     Ok(())
+}
+
+// Native-only retirement. Java ARM, Own capture and display barriers are separate
+// typed owner facts and must already have been discharged by the app coordinator.
+// Out-of-command cancellation of one exact retained native original. No HostLease
+// is acquired, and this is never a media Stop, cleanup or transaction outcome.
+fn request_fresh_setup_stop(id: &str) -> Result<String, String> {
+    let capability = native_fence_jni::active()?;
+    capability.require_live()?;
+    let mut p = process()
+        .lock()
+        .map_err(|_| "fresh Stop process gate poisoned")?;
+    let h = p.host.as_ref().ok_or("fresh Stop actual owner absent")?;
+    if h.capability.generation != capability.generation
+        || p.fresh_setup_request.as_deref() != Some(id)
+    {
+        return Err("fresh Stop target differs from actual retained original".into());
+    }
+    let config = h.config_sha256.clone();
+    p.fresh_setup_stop_sequence = p
+        .fresh_setup_stop_sequence
+        .checked_add(1)
+        .ok_or("fresh Stop sequence exhausted")?;
+    p.fresh_setup_stop_request = Some(id.into());
+    Ok(json!({"$schema":"rusty.quest.embedded_duplex.fresh_setup_stop_requested.v1",
+        "native_request_id":id,"config_sha256":config,"app_process_generation":capability.binding.generation,
+        "app_record_sha256":capability.binding.record_sha256,"native_executor_generation":capability.generation,
+        "desired_stop_latched":true,"original_joined":false,"physical_cleanup_claimed":false,
+        "transaction_outcome":"unknown"}).to_string())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_requestFreshSetupStop(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    request: JString<'_>,
+) -> jstring {
+    let result = read_string(&mut env, &request, 128).and_then(|id| request_fresh_setup_stop(&id));
+    return_string(&mut env, result)
+}
+
+fn no_media_retirement_status() -> Result<String, String> {
+    let fence = native_fence_jni::ownership_status()?;
+    let p = process()
+        .lock()
+        .map_err(|_| "no-media status process poisoned")?;
+    let route = prepared_route()
+        .lock()
+        .map_err(|_| "no-media status staged route poisoned")?;
+    let binding = if p.initializing || p.host_leases != 0 || p.lease_integrity_failed {
+        "busy"
+    } else if let Some(h) = &p.host {
+        if fence.get("state").and_then(Value::as_str) != Some("admitted")
+            || fence
+                .get("native_executor_generation")
+                .and_then(Value::as_u64)
+                != Some(h.capability.generation)
+            || fence.get("app_process_generation").and_then(Value::as_u64)
+                != Some(h.capability.binding.generation)
+            || fence.get("app_record_sha256").and_then(Value::as_str)
+                != Some(h.capability.binding.record_sha256.as_str())
+        {
+            "native_ownership_uncertain"
+        } else if let Some(flight) = &p.root_reestablishment {
+            if flight.is_committed_for(h)
+                && !h.owner_effect_attempted.load(Ordering::SeqCst)
+                && !h.restored_owner_replay
+            {
+                "pending_peer_root_reestablishment"
+            } else {
+                "busy"
+            }
+        } else if p.fresh_setup_request.is_some() {
+            "pending_fresh_setup"
+        } else if p
+            .prepared_peer_start
+            .as_ref()
+            .is_some_and(|a| a.no_local_start())
+            && peer_lifecycle::fresh_setup_eligibility(h).is_ok()
+        {
+            "pending_prepared_peer_start"
+        } else if h.owner_effect_attempted.load(Ordering::SeqCst) || h.restored_owner_replay {
+            "media_owned_or_uncertain"
+        } else {
+            "configured_no_media_candidate"
+        }
+    } else if p.partial_construction.is_some() {
+        "partial_construction_candidate"
+    } else if route.is_some() {
+        "staged_no_media_candidate"
+    } else if p.last_closed_sha256.is_some() {
+        "configured_closed"
+    } else if p.initialization_attempt != 0 || p.initialization_failure.is_some() {
+        "initialization_uncertain"
+    } else {
+        match fence.get("state").and_then(Value::as_str) {
+            Some("never_claimed") => "never_claimed",
+            Some("admitted") => "uninitialized_capability",
+            Some("retired" | "absence_retired") => "retired",
+            _ => "native_ownership_uncertain",
+        }
+    };
+    let mut value = json!({"$schema":"rusty.quest.embedded_duplex.no_media_retirement_status.v1",
+        "classification":binding,"native_fence":fence,"native_host_leases":p.host_leases,
+        "native_initializing":p.initializing,"native_closing":p.closing,
+        "fresh_setup_request_id":p.fresh_setup_request,"physical_cleanup_claimed":false});
+    if let Some(h) = &p.host {
+        value["config_sha256"] = json!(h.config_sha256);
+        value["native_executor_generation"] = json!(h.capability.generation);
+        value["app_process_generation"] = json!(h.capability.binding.generation);
+        value["app_record_sha256"] = json!(h.capability.binding.record_sha256);
+    } else if let Some((sha, _)) = route.as_ref() {
+        value["config_sha256"] = json!(sha);
+    } else if let Some(sha) = &p.last_closed_sha256 {
+        value["config_sha256"] = json!(sha);
+    }
+    Ok(value.to_string())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_noMediaRetirementStatus(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jstring {
+    return_string(&mut env, no_media_retirement_status())
+}
+
+pub(super) fn retire_never_claimed_process_gate() -> Result<(), String> {
+    let mut p = process()
+        .lock()
+        .map_err(|_| "never-claimed process gate poisoned")?;
+    if p.initialization_attempt != 0
+        || p.initialization_failure.is_some()
+        || p.initializing
+        || p.host.is_some()
+        || p.host_leases != 0
+        || p.lease_integrity_failed
+        || p.root_reestablishment.is_some()
+        || p.fresh_setup_request.is_some()
+        || p.last_closed_sha256.is_some()
+    {
+        return Err("never-claimed native process provenance unavailable".into());
+    }
+    let route = prepared_route()
+        .lock()
+        .map_err(|_| "never-claimed route slot poisoned")?;
+    if route.is_some() {
+        return Err("never-claimed process has staged native route".into());
+    }
+    p.closing = true;
+    Ok(())
+}
+
+fn retire_uninitialized_no_media() -> Result<String, String> {
+    let capability = native_fence_jni::active()?;
+    capability.require_live()?;
+    {
+        let mut p = process()
+            .lock()
+            .map_err(|_| "no-media process gate poisoned")?;
+        if p.initialization_attempt != 0
+            || p.initialization_failure.is_some()
+            || p.initializing
+            || p.host.is_some()
+            || p.host_leases != 0
+            || p.lease_integrity_failed
+            || p.fresh_setup_request.is_some()
+            || p.last_closed_sha256.is_some()
+        {
+            return Err("uninitialized no-media provenance absent or busy".into());
+        }
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "no-media staged route poisoned")?;
+        if route.is_some() {
+            return Err("uninitialized no-media has a staged route".into());
+        }
+        p.closing = true;
+    }
+    let proof = json!({"$schema":"rusty.quest.embedded_duplex.no_media_retirement.v1",
+        "native_runtime_binding":"not_initialized","disposition":"uninitialized_fence_closed",
+        "app_process_generation":capability.binding.generation,
+        "app_record_sha256":capability.binding.record_sha256,
+        "native_executor_generation":capability.generation});
+    capability.retire()?;
+    // closing remains latched after authority retirement. No journal/state is erased.
+    Ok(proof.to_string())
+}
+
+fn finish_no_media_retirement(expected: &str) -> Result<String, String> {
+    let capability = native_fence_jni::active()?;
+    if option_env!("RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY")
+        == Some("source-bound-v2")
+    {
+        partial_construction::begin_if_never_invoked(capability.clone(), expected)?;
+    }
+    if partial_construction::current()?.is_some() {
+        return partial_construction::retire(expected, &capability);
+    }
+    let closed: Value = serde_json::from_str(&close_no_media_runtime_with_capability(
+        expected,
+        &capability,
+    )?)
+    .map_err(safe_decode)?;
+    {
+        let mut p = process()
+            .lock()
+            .map_err(|_| "no-media process gate poisoned")?;
+        if p.initializing
+            || p.host.is_some()
+            || p.host_leases != 0
+            || p.lease_integrity_failed
+            || p.fresh_setup_request.is_some()
+            || p.last_closed_sha256.as_deref() != Some(expected)
+        {
+            return Err("configured no-media closure not current".into());
+        }
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "no-media staged route poisoned")?;
+        if route.is_some() {
+            return Err("configured no-media staged route remains".into());
+        }
+        p.closing = true;
+    }
+    let binding = {
+        let p = process()
+            .lock()
+            .map_err(|_| "no-media constructor witness gate poisoned")?;
+        p.last_closed_runtime_configuration_binding.clone()
+    };
+    let mut proof = json!({"$schema":"rusty.quest.embedded_duplex.no_media_retirement.v1",
+        "native_runtime_binding":"configured","disposition":"runtime_config_closed",
+        "app_process_generation":capability.binding.generation,"app_record_sha256":capability.binding.record_sha256,
+        "native_executor_generation":capability.generation,"config_sha256":expected,"native_close":closed});
+    if let Some(binding) = binding {
+        require_constructor_binding(&binding, &capability, expected)?;
+        proof["$schema"] = json!("rusty.quest.embedded_duplex.no_media_retirement.v2");
+        proof["configuration_binding"] = binding;
+    }
+    capability.retire()?;
+    Ok(proof.to_string())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_retireUninitializedNoMedia(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jstring {
+    return_string(&mut env, retire_uninitialized_no_media())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_finishNoMediaRetirement(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    expected: JString<'_>,
+) -> jstring {
+    let result =
+        read_string(&mut env, &expected, 64).and_then(|sha| finish_no_media_retirement(&sha));
+    return_string(&mut env, result)
+}
+
+// This is physical/source-scope retirement, never transaction success or proof
+// that the remote pure setup did not commit. Exact unknown originals stay durable.
+fn retire_pending_fresh_no_media(expected: &str) -> Result<String, String> {
+    let capability = native_fence_jni::active()?;
+    capability.require_live()?;
+    let host = {
+        let mut p = process()
+            .lock()
+            .map_err(|_| "fresh retirement process gate poisoned")?;
+        if p.initializing
+            || p.host_leases != 0
+            || p.lease_integrity_failed
+            || p.root_reestablishment.is_some()
+            || p.fresh_setup_request.is_none()
+            || p.prepared_peer_start.is_some()
+        {
+            return Err("fresh retirement owner/flight unresolved".into());
+        }
+        let h = p
+            .host
+            .as_ref()
+            .ok_or("fresh retirement actual owner absent")?
+            .clone();
+        if h.config_sha256 != expected || h.capability.generation != capability.generation {
+            return Err("fresh retirement actual identity differs".into());
+        }
+        p.closing = true;
+        h
+    };
+    let pair = pair_ceremony::pending_fresh_closure(&host)?;
+    let native = peer_lifecycle::fresh_setup_eligibility(&host)?;
+    let binding = pair
+        .pointer("/fresh/reservation/original_binding")
+        .ok_or("fresh retained original binding absent")?
+        .clone();
+    let physical = host
+        .callbacks
+        .fresh_setup_physical_retirement(&binding.to_string())?;
+    const PHYSICAL_FIELDS: [&str; 14] = [
+        "$schema",
+        "eligible",
+        "own_capture_state",
+        "peer_resources_terminal",
+        "renderer_terminal",
+        "control_terminal",
+        "unresolved_original_count",
+        "original_binding",
+        "app_process_generation",
+        "app_record_sha256",
+        "native_executor_generation",
+        "config_sha256",
+        "original_worker_terminal",
+        "transaction_outcome",
+    ];
+    if !physical.as_object().is_some_and(|o| {
+        o.len() == PHYSICAL_FIELDS.len() && PHYSICAL_FIELDS.iter().all(|k| o.contains_key(*k))
+    }) || physical.get("$schema").and_then(Value::as_str)
+        != Some("rusty.quest.embedded_duplex.fresh_setup_physical_retirement.v1")
+        || physical.get("eligible").and_then(Value::as_bool) != Some(true)
+        || physical
+            .get("app_process_generation")
+            .and_then(Value::as_u64)
+            != Some(capability.binding.generation)
+        || physical
+            .get("native_executor_generation")
+            .and_then(Value::as_u64)
+            != Some(capability.generation)
+        || physical.get("app_record_sha256").and_then(Value::as_str)
+            != Some(capability.binding.record_sha256.as_str())
+        || physical.get("config_sha256").and_then(Value::as_str) != Some(expected)
+        || physical.get("transaction_outcome").and_then(Value::as_str) != Some("unknown")
+        || physical
+            .get("original_worker_terminal")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || physical.get("original_binding") != Some(&binding)
+        || physical
+            .get("peer_resources_terminal")
+            .and_then(Value::as_bool)
+            != Some(true)
+        || physical.get("renderer_terminal").and_then(Value::as_bool) != Some(true)
+        || physical.get("control_terminal").and_then(Value::as_bool) != Some(true)
+        || physical
+            .get("unresolved_original_count")
+            .and_then(Value::as_u64)
+            != Some(0)
+        || !matches!(
+            physical.get("own_capture_state").and_then(Value::as_str),
+            Some("retired" | "not_created")
+        )
+    {
+        return Err("fresh retirement actual physical/original proof absent".into());
+    }
+    let authority: Value =
+        serde_json::from_str(&host.authority.snapshot_json()?).map_err(safe_decode)?;
+    let closure = json!({"$schema":"rusty.quest.embedded_duplex.fresh_setup_retirement_closure.v1",
+        "app_process_generation":capability.binding.generation,"app_record_sha256":capability.binding.record_sha256,
+        "native_executor_generation":capability.generation,"config_sha256":expected,
+        "original_binding":binding,"original_state":"UNKNOWN","transaction_outcome":"unknown",
+        "pair_state":pair,"authority_snapshot":authority,"native_eligibility":native,"physical_retirement":physical,
+        "future_writable_restore":"fenced_pending_supported_owner_reconciliation"});
+    let body = closure.to_string();
+    let digest = format!(
+        "sha256:{}",
+        rusty_quest_broker_authority::packaged_json_sha256(&body)
+    );
+    let ack = host.callbacks.persist_fresh_setup_closure(&body)?;
+    const ACK_FIELDS: [&str; 8] = [
+        "$schema",
+        "body_sha256",
+        "app_process_generation",
+        "app_record_sha256",
+        "native_executor_generation",
+        "config_sha256",
+        "storage_identity",
+        "original_binding",
+    ];
+    if !ack.as_object().is_some_and(|o| {
+        o.len() == ACK_FIELDS.len() && ACK_FIELDS.iter().all(|k| o.contains_key(*k))
+    }) || ack.get("$schema").and_then(Value::as_str)
+        != Some("rusty.quest.embedded_duplex.fresh_setup_closure_retained.v1")
+        || ack.get("body_sha256").and_then(Value::as_str) != Some(digest.as_str())
+        || ack.get("app_process_generation").and_then(Value::as_u64)
+            != Some(capability.binding.generation)
+        || ack.get("app_record_sha256").and_then(Value::as_str)
+            != Some(capability.binding.record_sha256.as_str())
+        || ack
+            .get("native_executor_generation")
+            .and_then(Value::as_u64)
+            != Some(capability.generation)
+        || ack.get("config_sha256").and_then(Value::as_str) != Some(expected)
+        || ack.get("original_binding") != Some(&binding)
+        || !ack
+            .get("storage_identity")
+            .and_then(Value::as_str)
+            .is_some_and(|id| !id.is_empty())
+    {
+        return Err("fresh retirement durable exact original handoff absent".into());
+    }
+    capability.require_live()?;
+    let removed = {
+        let mut p = process()
+            .lock()
+            .map_err(|_| "fresh retirement process gate poisoned")?;
+        if !p.closing
+            || p.initializing
+            || p.host_leases != 0
+            || p.lease_integrity_failed
+            || p.root_reestablishment.is_some()
+            || !p
+                .host
+                .as_ref()
+                .is_some_and(|h| Arc::ptr_eq(&h.pair_state, &host.pair_state))
+        {
+            return Err("fresh retirement source ownership changed".into());
+        }
+        let mut route = prepared_route()
+            .lock()
+            .map_err(|_| "fresh retirement staged route poisoned")?;
+        if route.as_ref().map(|(sha, _)| sha.as_str()) != Some(expected) {
+            return Err("fresh retirement staged identity changed".into());
+        }
+        let removed = p.host.take();
+        route.take();
+        p.last_closed_sha256 = Some(expected.into());
+        removed
+    };
+    let constructor_binding = host
+        .runtime_configuration_binding
+        .clone()
+        .ok_or("fresh retirement actual constructor witness absent")?;
+    require_constructor_binding(&constructor_binding, &capability, expected)?;
+    drop(removed);
+    drop(host);
+    capability.retire()?;
+    Ok(json!({"$schema":"rusty.quest.embedded_duplex.no_media_retirement.v2",
+        "configuration_binding":constructor_binding,
+        "config_sha256":expected,"app_process_generation":capability.binding.generation,
+        "app_record_sha256":capability.binding.record_sha256,"native_executor_generation":capability.generation,
+        "native_runtime_binding":"configured","disposition":"pending_fresh_local_closed","transaction_outcome":"unknown",
+        "durable_closure":ack,"future_writable_restore":"fenced_pending_supported_owner_reconciliation"}).to_string())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_retirePendingFreshNoMedia(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    expected: JString<'_>,
+) -> jstring {
+    let result =
+        read_string(&mut env, &expected, 64).and_then(|sha| retire_pending_fresh_no_media(&sha));
+    return_string(&mut env, result)
+}
+
+// A terminal source exit is not a supported bytes-to-writable-owner restore.
+// Preserve the actual gate's final source bytes before releasing its last Host.
+fn retain_terminal_fresh_owner(
+    host: &Host,
+    scope: &str,
+    close_proof: Value,
+    lifetime: Option<Value>,
+) -> Result<Option<Value>, String> {
+    if host.authority.selected_fresh_pair_setup_policy()?.is_none() {
+        return Ok(None);
+    }
+    if !matches!(
+        scope,
+        "normal_peer_whole_close" | "configured_no_media_close"
+    ) {
+        return Err("fresh owner retirement scope".into());
+    }
+    host.capability.require_live()?;
+    {
+        let p = process()
+            .lock()
+            .map_err(|_| "fresh terminal process gate poisoned")?;
+        if !p.closing
+            || p.initializing
+            || p.host_leases > 1
+            || p.lease_integrity_failed
+            || !p
+                .host
+                .as_ref()
+                .is_some_and(|h| Arc::ptr_eq(&h.pair_state, &host.pair_state))
+        {
+            return Err("fresh terminal actual owner not quiescent".into());
+        }
+    }
+    let pair = serde_json::to_value(
+        &*host
+            .pair_state
+            .lock()
+            .map_err(|_| "fresh terminal PairState poisoned")?,
+    )
+    .map_err(safe_decode)?;
+    let lifetime = match lifetime {
+        Some(value) => value,
+        None => {
+            let slot = host
+                .peer_lifecycle
+                .lock()
+                .map_err(|_| "fresh terminal lifetime poisoned")?;
+            serde_json::to_value(slot.as_ref().ok_or("fresh terminal lifetime checked out")?)
+                .map_err(safe_decode)?
+        }
+    };
+    let authority: Value =
+        serde_json::from_str(&host.authority.snapshot_json()?).map_err(safe_decode)?;
+    let prepared = if scope == "normal_peer_whole_close" {
+        prepared_start::whole_close_custody(host, &close_proof)?
+    } else {
+        None
+    };
+    let mut body = json!({"$schema":"rusty.quest.embedded_duplex.fresh_owner_retirement_closure.v1",
+        "app_process_generation":host.capability.binding.generation,"app_record_sha256":host.capability.binding.record_sha256,
+        "native_executor_generation":host.capability.generation,"config_sha256":host.config_sha256,
+        "retirement_scope":scope,"close_proof":close_proof,"native_pair_state":pair,"native_lifetime_state":lifetime,
+        "authority_snapshot":authority,"future_writable_restore":"fenced_pending_supported_owner_reconciliation"});
+    if let Some(prepared) = &prepared {
+        body["$schema"] = json!("rusty.quest.embedded_duplex.fresh_owner_retirement_closure.v2");
+        body["prepared_start"] = prepared.clone();
+    }
+    let raw = {
+        let mut p = process()
+            .lock()
+            .map_err(|_| "fresh immutable closing body poisoned")?;
+        if let Some(raw) = &p.terminal_fresh_owner_body {
+            let old: Value = serde_json::from_str(raw).map_err(safe_decode)?;
+            // Original physical observation stays immutable. Current repeated
+            // physical joins are checked by the fixed caller; exact retained
+            // authority/lifetime/preparation bytes must still match.
+            for key in [
+                "$schema",
+                "app_process_generation",
+                "app_record_sha256",
+                "native_executor_generation",
+                "config_sha256",
+                "retirement_scope",
+                "native_pair_state",
+                "native_lifetime_state",
+                "authority_snapshot",
+                "prepared_start",
+            ] {
+                if old.get(key) != body.get(key) {
+                    return Err(
+                        "retained whole-close actual source changed; no rewritten custody body"
+                            .into(),
+                    );
+                }
+            }
+            raw.clone()
+        } else {
+            let raw = body.to_string();
+            p.terminal_fresh_owner_body = Some(raw.clone());
+            raw
+        }
+    };
+    let digest = format!(
+        "sha256:{}",
+        rusty_quest_broker_authority::packaged_json_sha256(&raw)
+    );
+    let ack = host.callbacks.persist_fresh_owner_retirement(&raw)?;
+    const FIELDS: [&str; 7] = [
+        "$schema",
+        "body_sha256",
+        "app_process_generation",
+        "app_record_sha256",
+        "native_executor_generation",
+        "config_sha256",
+        "storage_identity",
+    ];
+    if !ack
+        .as_object()
+        .is_some_and(|o| o.len() == FIELDS.len() && FIELDS.iter().all(|k| o.contains_key(*k)))
+        || ack.get("$schema").and_then(Value::as_str)
+            != Some(if prepared.is_some() {
+                "rusty.quest.embedded_duplex.fresh_owner_retirement_closure_retained.v2"
+            } else {
+                "rusty.quest.embedded_duplex.fresh_owner_retirement_closure_retained.v1"
+            })
+        || ack.get("body_sha256").and_then(Value::as_str) != Some(digest.as_str())
+        || ack.get("app_process_generation") != body.get("app_process_generation")
+        || ack.get("app_record_sha256") != body.get("app_record_sha256")
+        || ack.get("native_executor_generation") != body.get("native_executor_generation")
+        || ack.get("config_sha256") != body.get("config_sha256")
+        || !ack
+            .get("storage_identity")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty())
+    {
+        return Err("fresh terminal owner durable ACK differs".into());
+    }
+    host.capability.require_live()?;
+    let mut p = process()
+        .lock()
+        .map_err(|_| "fresh terminal process gate poisoned")?;
+    if !p.closing
+        || p.initializing
+        || p.host_leases > 1
+        || p.lease_integrity_failed
+        || !p
+            .host
+            .as_ref()
+            .is_some_and(|h| Arc::ptr_eq(&h.pair_state, &host.pair_state))
+    {
+        return Err("fresh terminal source changed during custody handoff".into());
+    }
+    if let Some(prepared) = prepared {
+        let id = prepared["status"]["preparation_id"]
+            .as_str()
+            .ok_or("prepared whole custody identity absent")?;
+        if p.prepared_peer_start
+            .as_ref()
+            .is_none_or(|a| a.request.preparation_id != id)
+        {
+            return Err("prepared whole actual owner changed during custody".into());
+        }
+        // Keep the same metadata owner through final Host removal; an ACK
+        // followed by a failed final gate must remain resumable without
+        // fabricating a fresh SDK readback or losing its exact archive body.
+    }
+    p.terminal_fresh_owner_ack = Some(ack.clone());
+    p.retired_fresh_owner_fenced = true;
+    Ok(Some(ack))
+}
+
+/// Only the existing fixed retained-whole-close continuation can borrow an
+/// already closing owner. It never repeats Stop, route effects or authority.
+fn host_for_retained_whole_cleanup() -> Result<HostLease, String> {
+    let mut p = process()
+        .lock()
+        .map_err(|_| "retained whole cleanup gate poisoned")?;
+    if p.root_terminal_custody.is_some() {
+        drop(p);
+        return host_for_root_terminal_cleanup();
+    }
+    if !p.closing {
+        drop(p);
+        return host();
+    }
+    let raw = p
+        .terminal_fresh_owner_body
+        .as_ref()
+        .ok_or("retained actual whole custody body absent")?;
+    let body: Value = serde_json::from_str(raw).map_err(safe_decode)?;
+    if p.initializing
+        || p.host_leases != 0
+        || p.lease_integrity_failed
+        || p.root_reestablishment.is_some()
+        || p.fresh_setup_request.is_some()
+        || body["retirement_scope"] != "normal_peer_whole_close"
+    {
+        return Err("retained whole cleanup owner not joined".into());
+    }
+    let h = p.host.clone().ok_or("retained whole actual Host absent")?;
+    if body["config_sha256"] != h.config_sha256
+        || body["native_executor_generation"] != h.capability.generation
+        || body["app_process_generation"] != h.capability.binding.generation
+        || body["app_record_sha256"] != h.capability.binding.record_sha256
+    {
+        return Err("retained whole same owner changed".into());
+    }
+    p.host_leases = 1;
+    drop(p);
+    let h = HostLease(h);
+    h.capability.require_live()?;
+    Ok(h)
+}
+
+fn verify_fresh_enrollment_selection(
+    config: &QuestBrokerRuntimeConfig,
+    bootstrap: &Bootstrap,
+    route: &PackagedDuplexRoute,
+    callbacks: &JavaOwnerCallbacks,
+    local_public: &[u8; 32],
+    remote_public: &[u8; 32],
+) -> Result<(), String> {
+    let Some(duplex) = config.embedded_duplex.as_ref() else {
+        return Ok(());
+    };
+    if duplex.fresh_setup_local_peer_id.is_none() {
+        if duplex.fresh_setup_enrollment_selection.is_some() {
+            return Err("finite owner has fresh enrollment selection".into());
+        }
+        return Ok(());
+    }
+    let selection = duplex
+        .fresh_setup_enrollment_selection
+        .as_ref()
+        .ok_or("fresh immutable enrollment selection absent")?;
+    let value = serde_json::to_value(selection).map_err(safe_decode)?;
+    if value["$schema"] != "rusty.manifold.peer.fresh_setup_enrollment_selection.v1"
+        || !duplex.trusted_operator_ids.contains(&selection.operator_id)
+        || selection.keys.len() != 2
+    {
+        return Err("fresh enrollment selection operator/schema differs".into());
+    }
+    let mut peers = route
+        .peers
+        .iter()
+        .map(|p| p.peer_id.as_str())
+        .collect::<Vec<_>>();
+    peers.sort();
+    for (index, key) in selection.keys.iter().enumerate() {
+        let peer = peers[index];
+        let (key_id, public) = if peer == bootstrap.local_peer_id {
+            (callbacks.key_id(), local_public)
+        } else if peer == bootstrap.remote_peer_id {
+            (bootstrap.remote_key_id.as_str(), remote_public)
+        } else {
+            return Err("fresh selection foreign packaged peer".into());
+        };
+        use sha2::{Digest, Sha256};
+        let digest = hex(&Sha256::digest(public));
+        let expected = json!({"$schema":"rusty.manifold.peer.fresh_setup_enrollment_key.v1",
+            "peer_id":peer,"credential_id":format!("credential.duplex.{peer}.1"),"trust_domain":"trust.morphospace.peer",
+            "key_id":key_id,"key_generation":1,"algorithm":"ed25519","public_key_hex":hex(public),
+            "public_key_sha256":format!("sha256:{digest}"),"key_fingerprint":format!("fingerprint.{digest}")});
+        if key_id != format!("ed25519.{digest}")
+            || serde_json::to_value(key).map_err(safe_decode)? != expected
+            || !duplex
+                .trusted_key_fingerprints
+                .contains(&key.key_fingerprint)
+        {
+            return Err(
+                "fresh enrollment selection differs from actual keystore/bootstrap/packaged key"
+                    .into(),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[path = "fresh_setup_build_guard.rs"]
+mod fresh_setup_build_guard;
+
+#[path = "estimated_warning.rs"]
+mod estimated_warning;
+
+fn constructor_configuration_binding(
+    config: &QuestBrokerRuntimeConfig,
+    capability: &NativeCapability,
+    config_sha: &str,
+    local_peer: &str,
+) -> Result<Option<Value>, String> {
+    capability.require_live()?;
+    let Some(duplex) = config.embedded_duplex.as_ref() else {
+        return Ok(None);
+    };
+    let Some(projection) = duplex.fresh_setup_build_policy_projection()? else {
+        return Ok(None);
+    };
+    if duplex
+        .fresh_setup_local_peer_id
+        .as_ref()
+        .map(|p| p.as_str())
+        != Some(local_peer)
+    {
+        return Err("constructor local peer differs".into());
+    }
+    let value = json!({"$schema":"rusty.quest.embedded_duplex.runtime_configuration_binding.v1",
+        "config_sha256":config_sha,"app_process_generation":capability.binding.generation,
+        "app_record_sha256":capability.binding.record_sha256,"native_executor_generation":capability.generation,
+        "local_peer_id":local_peer,"fresh_setup_build_policy":projection});
+    require_constructor_binding(&value, capability, config_sha)?;
+    Ok(Some(value))
+}
+fn require_constructor_binding(
+    binding: &Value,
+    capability: &NativeCapability,
+    config_sha: &str,
+) -> Result<(), String> {
+    const KEYS: [&str; 7] = [
+        "$schema",
+        "config_sha256",
+        "app_process_generation",
+        "app_record_sha256",
+        "native_executor_generation",
+        "local_peer_id",
+        "fresh_setup_build_policy",
+    ];
+    if !binding
+        .as_object()
+        .is_some_and(|o| o.len() == KEYS.len() && KEYS.iter().all(|k| o.contains_key(*k)))
+        || binding["$schema"] != "rusty.quest.embedded_duplex.runtime_configuration_binding.v1"
+        || binding["config_sha256"] != config_sha
+        || binding["app_process_generation"].as_u64() != Some(capability.binding.generation)
+        || binding["app_record_sha256"] != capability.binding.record_sha256
+        || binding["native_executor_generation"].as_u64() != Some(capability.generation)
+        || !binding["local_peer_id"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    {
+        return Err("actual retained constructor binding differs".into());
+    }
+    const POLICY: [&str; 5] = [
+        "$schema",
+        "selection",
+        "policy",
+        "policy_sha256",
+        "enrollment_selection_sha256",
+    ];
+    let policy = &binding["fresh_setup_build_policy"];
+    if !policy
+        .as_object()
+        .is_some_and(|o| o.len() == POLICY.len() && POLICY.iter().all(|k| o.contains_key(*k)))
+        || policy["$schema"] != "rusty.quest.embedded_duplex.fresh_setup_build_policy.v1"
+        || policy["selection"] != "source-bound-v2"
+    {
+        return Err("actual constructor selected policy projection differs".into());
+    }
+    capability.require_live()
+}
+
+fn host_for_root_terminal_cleanup() -> Result<HostLease, String> {
+    let mut p = process()
+        .lock()
+        .map_err(|_| "terminal root cleanup process poisoned")?;
+    if p.root_terminal_custody.is_none() {
+        drop(p);
+        return host();
+    }
+    if !p.closing
+        || !p.retired_fresh_owner_fenced
+        || p.initializing
+        || p.root_reestablishment.is_some()
+        || p.host_leases != 0
+        || p.lease_integrity_failed
+        || p.fresh_setup_request.is_some()
+    {
+        return Err("terminal root cleanup owner busy".into());
+    }
+    let h = p.host.clone().ok_or("terminal root cleanup Host absent")?;
+    p.host_leases = 1;
+    drop(p);
+    let h = HostLease(h);
+    h.capability.require_live()?;
+    Ok(h)
 }

@@ -1864,9 +1864,9 @@ pub(crate) unsafe fn create_image_views(
     format: vk::Format,
     images: &[vk::Image],
 ) -> Result<Vec<vk::ImageView>, String> {
-    images
-        .iter()
-        .map(|image| {
+    let mut owned = Vec::with_capacity(images.len());
+    for image in images {
+        let created = (|| {
             device
                 .create_image_view(
                     &vk::ImageViewCreateInfo::default()
@@ -1883,8 +1883,18 @@ pub(crate) unsafe fn create_image_views(
                     None,
                 )
                 .map_err(|error| format!("create-image-view-{error:?}"))
-        })
-        .collect()
+        })();
+        match created {
+            Ok(handle) => owned.push(handle),
+            Err(error) => {
+                for handle in owned.into_iter().rev() {
+                    device.destroy_image_view(handle, None);
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(owned)
 }
 
 pub(crate) unsafe fn create_render_pass(
@@ -1927,9 +1937,9 @@ pub(crate) unsafe fn create_framebuffers(
     extent: vk::Extent2D,
     image_views: &[vk::ImageView],
 ) -> Result<Vec<vk::Framebuffer>, String> {
-    image_views
-        .iter()
-        .map(|view| {
+    let mut owned = Vec::with_capacity(image_views.len());
+    for view in image_views {
+        let created = (|| {
             device
                 .create_framebuffer(
                     &vk::FramebufferCreateInfo::default()
@@ -1941,8 +1951,18 @@ pub(crate) unsafe fn create_framebuffers(
                     None,
                 )
                 .map_err(|error| format!("create-framebuffer-{error:?}"))
-        })
-        .collect()
+        })();
+        match created {
+            Ok(handle) => owned.push(handle),
+            Err(error) => {
+                for handle in owned.into_iter().rev() {
+                    device.destroy_framebuffer(handle, None);
+                }
+                return Err(error);
+            }
+        }
+    }
+    Ok(owned)
 }
 
 #[cfg(test)]

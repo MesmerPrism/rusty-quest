@@ -310,7 +310,7 @@ public final class PackedStereoCaptureOwner {
                         }
                     }, leftFrameTrace, rightFrameTrace);
             compositor.awaitStarted();
-            poolExecutor.awaitCameraOwnership();
+            poolExecutor.awaitCameraOwnership(() -> stopRequested);
             if (stopRequested) throw new IllegalStateException("capture stopped during startup");
             cameraThread = new HandlerThread("rusty-app-stereo-capture-camera2");
             cameraThread.start();
@@ -548,6 +548,16 @@ public final class PackedStereoCaptureOwner {
         requestStop();
     }
 
+    private void awaitOwnedCallback(java.util.concurrent.CountDownLatch callback, String label) throws Exception {
+        long began=System.nanoTime(); boolean warned=false;
+        while(!callback.await(50,TimeUnit.MILLISECONDS)) {
+            if(stopRequested) throw new IllegalStateException("capture stop requested");
+            if(!warned && System.nanoTime()-began>=TimeUnit.SECONDS.toNanos(5)) {
+                warned=true; PackedStereoWait.warn(label+" callback remains Pending");
+            }
+        }
+    }
+
     private final class Endpoint {
         final String id, eye;
         final CountDownLatch opened = new CountDownLatch(1), configured = new CountDownLatch(1);
@@ -595,9 +605,7 @@ public final class PackedStereoCaptureOwner {
                     public void onClosed(CameraDevice value) { deviceClosed = true; }
                 }, handler);
             } catch (Exception failure) { openSettled = true; throw failure; }
-            if (!opened.await(5, TimeUnit.SECONDS)) {
-                requestClose(); throw new IllegalStateException("camera open Pending");
-            }
+            awaitOwnedCallback(opened, "camera open");
             if (error != null || closeRequested || stopRequested)
                 throw new IllegalStateException("camera unavailable", error);
             sessionRequested = true;
@@ -625,9 +633,7 @@ public final class PackedStereoCaptureOwner {
                     }
                 }));
             } catch (Exception failure) { sessionSettled = true; throw failure; }
-            if (!configured.await(5, TimeUnit.SECONDS)) {
-                requestClose(); throw new IllegalStateException("camera session Pending");
-            }
+            awaitOwnedCallback(configured, "camera session");
             if (error != null || closeRequested || stopRequested)
                 throw new IllegalStateException("camera session unavailable", error);
             CaptureRequest.Builder request = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);

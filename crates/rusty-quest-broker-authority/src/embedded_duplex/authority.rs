@@ -146,6 +146,13 @@ pub struct QuestRetainedCleanupTarget {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestEmbeddedDuplexAuthorityConfig {
+    /// Exact installed local enrolled identity selects the fixed product fresh-setup policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fresh_setup_local_peer_id: Option<DottedId>,
+    /// Immutable exact two packaged enrollment keys; selected before owner construction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fresh_setup_enrollment_selection:
+        Option<rusty_manifold_peer::ManifoldFreshPairSetupEnrollmentSelection>,
     /// Explicit prospective continuation storage policy; omission is finite.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ongoing_media_policy: Option<rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy>,
@@ -168,6 +175,9 @@ impl QuestEmbeddedDuplexAuthorityConfig {
     /// Validates exact canonical sets and required trust roots.
     pub(crate) fn validate(&self) -> bool {
         self.schema_id == QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA
+            && self.fresh_setup_local_peer_id.is_some()==self.fresh_setup_enrollment_selection.is_some()
+            && self.fresh_setup_local_peer_id.as_ref().map_or(true, |id|
+                self.fresh_setup_enrollment_selection.as_ref().is_some_and(|selection|selection.keys.iter().any(|key|&key.peer_id==id)) && self.ongoing_media_policy.as_ref()==Some(&rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2()))
             && self.ongoing_media_policy.as_ref().map_or(true, |policy|
                 *policy == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1()
                     || *policy == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2())
@@ -230,6 +240,226 @@ pub struct QuestRetainedOriginalEnrollment {
 }
 
 impl QuestEmbeddedDuplexAuthority {
+    /// Read only actual registered root identities. An absent/expired root never
+    /// becomes a grant, and observation performs no sweep or renewal.
+    pub fn checkpoint_dormant_peer_roots(
+        &self,
+        now: u64,
+    ) -> Result<Option<rusty_manifold_broker_adapter::ManifoldBrokerHistoryCheckpoint>, String>
+    {
+        let mut broker = self
+            .broker
+            .write()
+            .map_err(|_| "root checkpoint Broker poisoned")?;
+        let mut peer = write_peer(&self.peer)?;
+        peer.checkpoint_dormant_root_history(&mut broker, now)
+            .map_err(host_error)
+    }
+    pub fn current_root_lineage_observation(
+        &self,
+        seed: &rusty_manifold_peer_runtime_host::ManifoldPeerSourceBoundRootReestablishmentReceipt,
+        session: &DottedId,
+        now: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldPeerCurrentRootLineageObservation, String>
+    {
+        let broker = self
+            .broker
+            .read()
+            .map_err(|_| "root lineage Broker poisoned")?;
+        read_peer(&self.peer)?
+            .current_root_lineage_observation(&broker, seed, session, now)
+            .map_err(host_error)
+    }
+    pub fn root_terminal_custody_source(
+        &self,
+        seed: &rusty_manifold_peer_runtime_host::ManifoldPeerSourceBoundRootReestablishmentReceipt,
+    ) -> Result<serde_json::Value, String> {
+        let broker = self
+            .broker
+            .read()
+            .map_err(|_| "terminal root Broker poisoned")?;
+        let peer = read_peer(&self.peer)?;
+        peer.validate_committed_root_seed_for_custody(&broker, seed)
+            .map_err(host_error)?;
+        let (grant, lease) = broker
+            .source_bound_root_target()
+            .ok_or("terminal root registration absent")?;
+        Ok(
+            serde_json::json!({"authority_snapshot":peer.snapshot(),"broker_evidence":broker.evidence(),
+            "current_roots":{"grant":broker.admission_snapshot().grants.iter().find(|g|&g.grant_id==grant),
+                "control_lease":broker.control_lease_authority_snapshot().active_leases.iter().find(|l|&l.lease_id==lease),
+                "runtime_lease":broker.host_snapshot().leases.iter().find(|l|&l.lease_id==lease)}}),
+        )
+    }
+    pub fn peer_root_projection(&self) -> Result<serde_json::Value, String> {
+        let b = self
+            .broker
+            .read()
+            .map_err(|_| "root Broker read poisoned")?;
+        let (grant, lease) = b
+            .source_bound_root_target()
+            .ok_or("selected root registration absent")?;
+        Ok(
+            serde_json::json!({"grant":b.admission_snapshot().grants.iter().find(|g|&g.grant_id==grant),
+            "control_lease":b.control_lease_authority_snapshot().active_leases.iter().find(|l|&l.lease_id==lease),
+            "runtime_lease":b.host_snapshot().leases.iter().find(|l|&l.lease_id==lease)}),
+        )
+    }
+    /// Actual source-bound owner transaction; caller witnesses grant no M rights.
+    pub fn reestablish_peer_roots(
+        &self,
+        witness: rusty_manifold_peer_runtime_host::ManifoldSourceBoundRootNativeWitness,
+        fresh: &rusty_manifold_peer_runtime_host::ManifoldFreshPairSetupReceipt,
+        session: &DottedId,
+        clock: rusty_manifold_model::ManifoldClockSnapshot,
+        now: u64,
+        desired_stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<
+        rusty_manifold_peer_runtime_host::ManifoldPeerSourceBoundRootReestablishmentReceipt,
+        String,
+    > {
+        let mut broker = self
+            .broker
+            .write()
+            .map_err(|_| "root Broker write poisoned")?;
+        let mut peer = write_peer(&self.peer)?;
+        peer.reestablish_source_bound_roots(
+            &mut broker,
+            witness,
+            fresh,
+            session,
+            clock,
+            now,
+            desired_stop,
+        )
+        .map_err(host_error)
+    }
+
+    pub fn selected_fresh_setup_enrollment_selection(
+        &self,
+    ) -> Result<Option<rusty_manifold_peer::ManifoldFreshPairSetupEnrollmentSelection>, String>
+    {
+        let actual = read_peer(&self.peer)?;
+        if actual.selected_fresh_pair_setup_policy().is_none() {
+            return Ok(None);
+        }
+        Ok(actual
+            .snapshot()
+            .trust_policy
+            .fresh_setup_enrollment_selection
+            .clone())
+    }
+    pub fn current_fresh_prime_enrollment_receipt(
+        &self,
+        id: &DottedId,
+    ) -> Result<Option<rusty_manifold_peer::ManifoldFreshPrimeEnrollmentEntry>, String> {
+        read_peer(&self.peer)?
+            .current_fresh_prime_enrollment_receipt(id)
+            .map_err(host_error)
+    }
+    pub fn fresh_phase_prepare_view(
+        &self,
+        missing: &[DottedId],
+        operation: &str,
+        eligibility: &str,
+        now: u64,
+    ) -> Result<rusty_manifold_peer::ManifoldFreshPhasePrepareView, String> {
+        read_peer(&self.peer)?
+            .fresh_phase_prepare_view(missing, operation, eligibility, now)
+            .map_err(host_error)
+    }
+    pub fn apply_fresh_phase_prepare(
+        &self,
+        request: &rusty_manifold_peer::ManifoldFreshPhasePrepareRequest,
+        now: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldFreshPhasePrepareReceipt, String> {
+        write_peer(&self.peer)?
+            .apply_fresh_phase_prepare(request, now)
+            .map_err(host_error)
+    }
+    pub fn current_fresh_phase_prepare_receipt(
+        &self,
+        id: &DottedId,
+    ) -> Result<Option<rusty_manifold_peer_runtime_host::ManifoldFreshPhasePrepareReceipt>, String>
+    {
+        read_peer(&self.peer)?
+            .current_fresh_phase_prepare_receipt(id)
+            .map_err(host_error)
+    }
+    /// Retain the actual nonclone owner write guard throughout plan -> sealed
+    /// app custody -> commit. The fixed persistence callback must not call back
+    /// into this Manifold owner; it performs only app-owned storage/attestation.
+    pub fn archive_fresh_history(
+        &self,
+        operation: rusty_manifold_peer::ManifoldFreshArchiveOperationBinding,
+        persist: impl FnOnce(
+            &[u8],
+        )
+            -> Result<rusty_manifold_peer::ManifoldFreshHistoryCustodyAck, String>,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldFreshHistoryArchiveCursor, String> {
+        let mut owner = write_peer(&self.peer)?;
+        let plan = owner
+            .plan_fresh_history_archive(operation)
+            .map_err(host_error)?;
+        let ack = persist(plan.canonical_body())?;
+        plan.commit(ack).map_err(host_error)
+    }
+    pub fn fresh_history_receipt_location(
+        &self,
+        id: &DottedId,
+        kind: rusty_manifold_peer::ManifoldFreshArchiveOperationKind,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldFreshReceiptLocation, String> {
+        read_peer(&self.peer)?
+            .fresh_history_receipt_location(id, kind)
+            .map_err(host_error)
+    }
+
+    /// Immutable product selection; a returned clone is data, never a detached owner.
+    pub fn selected_fresh_pair_setup_policy(
+        &self,
+    ) -> Result<Option<rusty_manifold_peer::ManifoldFreshPairSetupPolicy>, String> {
+        let peer = read_peer(&self.peer)?;
+        let selected = peer.selected_fresh_pair_setup_policy().cloned();
+        if selected.is_none() && peer.snapshot().trust_policy.fresh_setup_policy.is_some() {
+            return Err("selected fresh setup requires the actual ongoing owner".into());
+        }
+        Ok(selected)
+    }
+    /// Exact owner preimage for the private native borrowed setup phase.
+    pub fn fresh_pair_setup_view(
+        &self,
+        local: &DottedId,
+        peers: &[DottedId],
+        operation: &str,
+        eligibility: &str,
+        now: u64,
+    ) -> Result<rusty_manifold_peer::ManifoldFreshPairSetupPeerView, String> {
+        read_peer(&self.peer)?
+            .fresh_pair_setup_view(local, peers, operation, eligibility, now)
+            .map_err(host_error)
+    }
+    /// The shared actual owner validates both signatures and commits its own retained fence.
+    pub fn apply_fresh_pair_setup(
+        &self,
+        request: &rusty_manifold_peer::ManifoldFreshPairSetupRequest,
+        now: u64,
+    ) -> Result<rusty_manifold_peer_runtime_host::ManifoldFreshPairSetupReceipt, String> {
+        write_peer(&self.peer)?
+            .apply_fresh_pair_setup(request, now)
+            .map_err(host_error)
+    }
+    /// Exact retained transaction read from the same actual ongoing owner.
+    /// None means no fresh transaction with this ID, never no prime effects.
+    pub fn current_fresh_pair_setup_receipt(
+        &self,
+        request_id: &DottedId,
+    ) -> Result<Option<rusty_manifold_peer_runtime_host::ManifoldFreshPairSetupReceipt>, String>
+    {
+        read_peer(&self.peer)?
+            .current_fresh_pair_setup_receipt(request_id)
+            .map_err(host_error)
+    }
+
     /// Qualifies a fresh signed context/request in the actual selected owner.
     pub fn current_signed_history_request_id(&self, suffix: &DottedId) -> Result<DottedId, String> {
         read_peer(&self.peer)?
@@ -1802,4 +2032,181 @@ mod tests {
             Start,
         ));
     }
+}
+
+/// Pure projection of an actual typed owner result. The caller owns the actual
+/// Original/actor/ARM/prior-root data; this formatter creates no authority.
+pub fn project_peer_root_reestablishment(
+    original: &str,
+    actor: &serde_json::Value,
+    arm: &serde_json::Value,
+    prior: &serde_json::Value,
+    receipt: &rusty_manifold_peer_runtime_host::ManifoldPeerSourceBoundRootReestablishmentReceipt,
+) -> Result<serde_json::Value, String> {
+    use serde_json::{json, Value};
+    use sha2::{Digest, Sha256};
+    let exact = |v: &Value, k: &[&str]| {
+        v.as_object()
+            .is_some_and(|o| o.len() == k.len() && k.iter().all(|k| o.contains_key(*k)))
+    };
+    let digest = |domain: &str, value: &Value| -> Result<String, String> {
+        let bytes = rusty_manifold_peer::fresh_history_canonical(value)
+            .map_err(|_| "root formatter canonical data")?;
+        let mut h = Sha256::new();
+        h.update(domain.as_bytes());
+        h.update([0]);
+        h.update(bytes);
+        Ok(format!("sha256:{:x}", h.finalize()))
+    };
+    if original.len() != 32
+        || !original
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        || !exact(
+            actor,
+            &[
+                "app_process_generation",
+                "app_record_sha256",
+                "native_executor_generation",
+                "config_sha256",
+            ],
+        )
+        || !exact(
+            arm,
+            &[
+                "binding",
+                "challenge",
+                "arm_generation",
+                "native_process",
+                "process_epoch",
+                "runtime_config_sha256",
+            ],
+        )
+        || !exact(prior, &["grant", "control_lease", "runtime_lease"])
+        || receipt.authority.request_id.as_str() != format!("request.root.{original}")
+        || receipt.authority.native_actor_sha256
+            != digest("rusty.quest.embedded_duplex.root_native_actor.v1", actor)?
+        || receipt.authority.arm_binding_sha256
+            != digest("rusty.quest.embedded_duplex.root_arm.v1", arm)?
+        || receipt.authority.runtime_configuration_sha256
+            != format!(
+                "sha256:{}",
+                actor["config_sha256"]
+                    .as_str()
+                    .ok_or("root formatter config identity")?
+            )
+        || serde_json::to_value(&receipt.broker.request.grant.prior_grant)
+            .map_err(|_| "root formatter grant")?
+            != prior["grant"]
+        || serde_json::to_value(&receipt.broker.request.lease.prior_lease)
+            .map_err(|_| "root formatter lease")?
+            != prior["control_lease"]
+    {
+        return Err("root formatter original/actor/ARM/actual prior owner differs".into());
+    }
+    let mut resulting = prior.clone();
+    if let Some(a) = &receipt.broker.admission {
+        resulting["grant"] = serde_json::to_value(&a.binding.resulting_grant)
+            .map_err(|_| "root formatter resulting grant")?;
+    }
+    if receipt.broker.control_lease_transition.is_some() {
+        let request = &receipt.broker.request.lease;
+        let mut lease = request.prior_lease.clone();
+        lease.expires_at_ms = request.expires_at_ms;
+        resulting["control_lease"] =
+            serde_json::to_value(lease).map_err(|_| "root formatter resulting lease")?;
+        resulting["runtime_lease"]["expires_at_ms"] = json!(request.expires_at_ms);
+    }
+    let mut result = actor.clone();
+    let o = result.as_object_mut().ok_or("root formatter actor")?;
+    o.extend(serde_json::from_value::<serde_json::Map<String,Value>>(json!({"$schema":"rusty.quest.embedded_duplex.peer_root_reestablishment.v2",
+        "request_id":receipt.authority.request_id,"original_id":original,"arm_binding":arm,"source_bound_authority":receipt.authority,
+        "current_pair":receipt.current_pair,"prior_roots":prior,"resulting_roots":resulting,"admission_receipt":receipt.broker.admission,
+        "control_lease_transition":receipt.broker.control_lease_transition,"runtime_adoption":receipt.broker.runtime_adoption,
+        "applied_at_ms":receipt.broker.observed_at_ms,"applied":true,"owner_receipt":receipt})).map_err(|_|"root formatter fields")?);
+    result["root_binding_sha256"] = json!(digest(
+        "rusty.quest.embedded_duplex.peer_root_binding.v1",
+        &result
+    )?);
+    Ok(result)
+}
+
+/// Pure shared status formatter. Inputs are observations from the actual
+/// Native owner; this routine neither dispatches nor supplies authority.
+pub fn project_peer_root_status(
+    actor: &serde_json::Value,
+    roots: &serde_json::Value,
+    previous: Option<&serde_json::Value>,
+    current_pair: Option<&rusty_manifold_peer::ManifoldPeerSessionCurrentReceiptV2>,
+    pending: bool,
+    now: u64,
+) -> Result<serde_json::Value, String> {
+    use serde_json::{json, Value};
+    use sha2::{Digest, Sha256};
+    let actor_keys = [
+        "app_process_generation",
+        "app_record_sha256",
+        "native_executor_generation",
+        "config_sha256",
+    ];
+    if !actor
+        .as_object()
+        .is_some_and(|o| o.len() == 4 && actor_keys.iter().all(|k| o.contains_key(*k)))
+        || !roots.as_object().is_some_and(|o| {
+            o.len() == 3
+                && ["grant", "control_lease", "runtime_lease"]
+                    .iter()
+                    .all(|k| o.contains_key(*k))
+        })
+    {
+        return Err("root status exact actual observation fields".into());
+    }
+    let g = &roots["grant"];
+    let c = &roots["control_lease"];
+    let r = &roots["runtime_lease"];
+    let state = if pending {
+        "pending"
+    } else if g.is_null() || c.is_null() || r.is_null() {
+        "absent"
+    } else if g["revoked"] != false || c["state"] != "active" {
+        "revoked"
+    } else if [g, c, r]
+        .iter()
+        .any(|v| v["expires_at_ms"].as_u64().is_none_or(|e| e <= now))
+    {
+        "expired"
+    } else {
+        "current"
+    };
+    let arm_hash = if let Some(old) = previous {
+        if actor_keys.iter().any(|k| old.get(*k) != actor.get(*k)) {
+            return Err("root status prior actor differs".into());
+        }
+        let receipt = serde_json::from_value(old["owner_receipt"].clone())
+            .map_err(|_| "root status typed prior receipt")?;
+        let expected = project_peer_root_reestablishment(
+            old["original_id"].as_str().ok_or("root status Original")?,
+            actor,
+            &old["arm_binding"],
+            &old["prior_roots"],
+            &receipt,
+        )?;
+        if &expected != old {
+            return Err("root status prior result bytes differ".into());
+        }
+        let bytes = rusty_manifold_peer::fresh_history_canonical(&old["arm_binding"])
+            .map_err(|_| "root status ARM canonical")?;
+        let mut h = Sha256::new();
+        h.update(b"rusty.quest.embedded_duplex.root_arm.v1\0");
+        h.update(bytes);
+        Some(format!("sha256:{:x}", h.finalize()))
+    } else {
+        None
+    };
+    let mut value = actor.clone();
+    value.as_object_mut().ok_or("root status actor")?.extend(
+        serde_json::from_value::<serde_json::Map<String,Value>>(json!({"$schema":"rusty.quest.embedded_duplex.peer_root_status.v1",
+            "arm_binding_sha256":arm_hash,"state":state,"observed_at_ms":now,"grant":g,"control_lease":c,"runtime_lease":r,
+            "reestablishment":previous,"root_binding_sha256":previous.map(|p|p["root_binding_sha256"].clone()),"current_pair":current_pair})).map_err(|_|"root status field encoding")?);
+    Ok(value)
 }

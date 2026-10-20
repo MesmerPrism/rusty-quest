@@ -15,6 +15,7 @@ public final class ReceiverStageTraceMain {
         return trace.snapshot(now).getJSONArray("stages").getJSONObject(index);
     }
     public static void main(String[] args) throws Exception {
+        warningRetainsActualLatchAndThread();
         ReceiverStageTrace trace = new ReceiverStageTrace(7);
         trace.begin(1, 1);
         JSONObject first = stage(trace, 600_000_001L, ReceiverStageTrace.PACKET);
@@ -79,26 +80,89 @@ public final class ReceiverStageTraceMain {
             try {
                 sample.set(concurrent.sample(() -> {
                     sampledClock.countDown();
-                    try { if (!finishClock.await(2, TimeUnit.SECONDS)) throw new AssertionError("clock gate"); }
+                    try { awaitLatch(finishClock); }
                     catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
                     return 100L;
                 }));
             } catch (Throwable failure) { error.set(failure); }
         });
         sampling.start();
-        check(sampledClock.await(2, TimeUnit.SECONDS), "sample holds monitor before reading clock");
-        Thread progressing = new Thread(() -> concurrent.progress(0, 1, 200L, 1, 1));
-        progressing.start();
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (progressing.getState() != Thread.State.BLOCKED && progressing.isAlive() && System.nanoTime() < deadline)
-            Thread.yield();
-        boolean progressBlocked = progressing.getState() == Thread.State.BLOCKED;
-        finishClock.countDown(); sampling.join(2000); progressing.join(2000);
+        Thread progressing = null;
+        boolean progressBlocked = false;
+        try {
+            long began = System.nanoTime(); boolean warned = false;
+            while (!sampledClock.await(10, TimeUnit.MILLISECONDS)) {
+                check(sampling.isAlive() && error.get() == null, "actual sampler failed before holding monitor");
+                if (!warned && System.nanoTime() - began >= TimeUnit.MILLISECONDS.toNanos(estimateMilliseconds)) {
+                    warned = true; warn("same sampler awaits monitor/clock entry");
+                }
+            }
+            progressing = new Thread(() -> {
+                try { concurrent.progress(0, 1, 200L, 1, 1); }
+                catch (Throwable failure) { error.compareAndSet(null, failure); }
+            });
+            progressing.start();
+            began = System.nanoTime(); warned = false;
+            while (progressing.getState() != Thread.State.BLOCKED && progressing.isAlive() && error.get() == null) {
+                if (!warned && System.nanoTime() - began >= TimeUnit.MILLISECONDS.toNanos(estimateMilliseconds)) {
+                    warned = true; warn("same progress thread awaits actual BLOCKED observation");
+                }
+                Thread.yield();
+            }
+            progressBlocked = progressing.getState() == Thread.State.BLOCKED;
+        } finally {
+            finishClock.countDown();
+            try { joinThread(sampling); } finally { if (progressing != null) joinThread(progressing); }
+        }
         check(!sampling.isAlive() && !progressing.isAlive() && error.get() == null, "both actual threads complete");
         check(progressBlocked && sample.get().getBoolean("clock_valid")
                 && sample.get().getJSONArray("stages").getJSONObject(0).getLong("progress") == 0
                 && concurrent.snapshot(200).getJSONArray("stages").getJSONObject(0).getLong("progress") == 1,
                 "concurrent progress cannot advance trace clock between sampling and snapshot");
         System.out.println("receiver-stage-trace PASS: silence/backpressure/joins/clocks/generations/censor/reset/bounded samples");
+    }
+    private static long estimateMilliseconds = 2000;
+    private static java.util.function.Consumer<String> warning = message -> System.err.println("WARNING: " + message);
+    private static void warningRetainsActualLatchAndThread() throws Exception {
+        long priorEstimate = estimateMilliseconds;
+        java.util.function.Consumer<String> priorWarning = warning;
+        CountDownLatch gate = new CountDownLatch(1), entered = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread original = new Thread(() -> { entered.countDown(); try { gate.await(); }
+            catch (Throwable actualFailure) { failure.set(actualFailure); } });
+        java.util.concurrent.atomic.AtomicInteger publications = new java.util.concurrent.atomic.AtomicInteger();
+        original.start();
+        try {
+            entered.await(); estimateMilliseconds = 0;
+            warning = message -> { publications.incrementAndGet(); gate.countDown();
+                throw new IllegalStateException("deliberate warning sink failure after release"); };
+            joinThread(original);
+            check(!original.isAlive() && failure.get() == null && publications.get() == 1,
+                    "warning must join same actual thread despite publication failure");
+            CountDownLatch second = new CountDownLatch(1);
+            warning = message -> { publications.incrementAndGet(); second.countDown();
+                throw new IllegalStateException("deliberate clock warning failure after release"); };
+            awaitLatch(second);
+            check(second.getCount() == 0 && publications.get() == 2, "same actual latch release required");
+        } finally {
+            gate.countDown(); try { joinThread(original); }
+            finally { warning = priorWarning; estimateMilliseconds = priorEstimate; }
+        }
+    }
+    private static void warn(String message) {
+        try { warning.accept(message); } catch (Throwable publication) { }
+    }
+    private static void awaitLatch(CountDownLatch original) throws InterruptedException {
+        if (!original.await(estimateMilliseconds, TimeUnit.MILLISECONDS)) { warn("same actual clock gate remains Pending"); original.await(); }
+    }
+    private static void joinThread(Thread original) throws InterruptedException {
+        boolean interrupted = false;
+        try { for (;;) try {
+            if (estimateMilliseconds > 0) original.join(estimateMilliseconds);
+            if (original.isAlive()) { warn("same actual trace thread remains Pending"); original.join(); }
+            break;
+        } catch (InterruptedException actual) { interrupted = true; }
+        } finally { if (interrupted) Thread.currentThread().interrupt(); }
+        if (interrupted) throw new InterruptedException("actual trace join was interrupted after joining original");
     }
 }

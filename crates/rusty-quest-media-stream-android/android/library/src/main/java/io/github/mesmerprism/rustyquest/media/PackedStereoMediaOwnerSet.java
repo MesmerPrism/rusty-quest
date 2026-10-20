@@ -11,6 +11,21 @@ public final class PackedStereoMediaOwnerSet implements AutoCloseable {
     private final long generation;
     private final PackedStereoPipeline pipeline;
     private final AtomicBoolean cleanupArmed = new AtomicBoolean();
+    private boolean sdkPreparedRollover;
+    /** Source-owned SDK preparation after actual prior graph retirement, before new media tickets. */
+    public synchronized void prepareNextSdkIncarnation() {
+        Owner cleanup=(Owner)owners.get("cleanup");
+        if("cleaned".equals(cleanup.state.get())) {
+            for(Map.Entry<String,MediaOwnerProvider> row:owners.entrySet()) {
+                if("sink".equals(row.getKey()))continue;
+                MediaRuntimeSnapshot old=row.getValue().snapshot();
+                if(old.generation()!=generation||!old.terminal()||!("stopped".equals(old.state())||"cleaned".equals(old.state())))
+                    throw new IllegalStateException("prior actual SDK graph not terminal");
+            }
+            if(cleanupArmed.get()||sdkPreparedRollover)throw new IllegalStateException("prior cleanup/preparation unresolved");
+            pipeline.requireStopped();pipeline.recreateAfterVerifiedCleanup();sdkPreparedRollover=true;
+        }
+    }
     private final Map<String, MediaOwnerProvider> owners = new LinkedHashMap<>();
 
     public PackedStereoMediaOwnerSet(long generation, PackedStereoPipeline pipeline) {
@@ -44,7 +59,7 @@ public final class PackedStereoMediaOwnerSet implements AutoCloseable {
                 String expected="stopped";
                 if("cleanup".equals(kind) && "arm_cleanup".equals(actionKind)
                         && "cleaned".equals(state.get())) {
-                    for(Map.Entry<String,MediaOwnerProvider> prior:owners.entrySet()) {
+                    if(!sdkPreparedRollover)for(Map.Entry<String,MediaOwnerProvider> prior:owners.entrySet()) {
                         MediaRuntimeSnapshot observed=prior.getValue().snapshot();
                         // The injected Sink owns the opposite direction. A peer may
                         // already have rearmed it before this outgoing graph starts.
@@ -54,9 +69,10 @@ public final class PackedStereoMediaOwnerSet implements AutoCloseable {
                                 || "cleaned".equals(observed.state())))))
                             throw new IllegalStateException("prior graph cleanup unresolved");
                     }
-                    pipeline.requireStopped();
+                    if(!sdkPreparedRollover)pipeline.requireStopped();
                     if(cleanupArmed.get())throw new IllegalStateException("prior cleanup remains armed");
-                    pipeline.recreateAfterVerifiedCleanup();
+                    if(!sdkPreparedRollover)pipeline.recreateAfterVerifiedCleanup();
+                    sdkPreparedRollover=false;
                     expected="cleaned";
                 }
                 if(!state.compareAndSet(expected,"starting"))throw new IllegalStateException("provider busy");

@@ -5,11 +5,16 @@ use rusty_quest_broker_authority::QuestConcurrentPeerCommand;
 use rusty_quest_broker_authority::{
     sample_concurrent_clock, ConcurrentClockRejection, ConcurrentClockSample,
 };
+use serde::Serialize;
 use std::fs::File;
 use std::io::Read;
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub(super) struct State {
+    retired_lifetimes: RetiredLifetimes,
+    terminal_stop_original_id: Option<String>,
+    terminal_stop_projection: Option<Value>,
+    last_failure_cause: Option<Value>,
     pub(super) client: Option<String>,
     activation_id: Option<String>,
     start_mutation: Option<Value>,
@@ -39,33 +44,200 @@ pub(super) struct State {
 // Optional read-only status projection. It grants no Stop/cleanup authority and
 // cannot promote the existing local Peer or whole-app terminal fields.
 fn remote_receiver_observation(host: &Host, state: &State) -> Result<Value, String> {
-    if state.client.is_some() { return Err("local media scope present".into()); }
-    let broker = json_value(&Checkout::take(host.provider.clone())?.get().evidence_json()
-        .map_err(|_| "remote receiver broker observation unavailable")?)?;
-    let attempted = state.start_mutation.is_some() || state.stop_mutation.is_some()
-        || state.stop_completion.is_some() || state.activation.is_some()
-        || !broker.get("media_pending_action").is_some_and(Value::is_null)
-        || !broker.get("media_runtime_state").is_some_and(|value| value.is_null()
-            || value.get("phase").and_then(Value::as_str) == Some("planned")
-            && value.get("applied_request_ids").and_then(Value::as_array).is_some_and(Vec::is_empty));
+    if state.client.is_some() {
+        return Err("local media scope present".into());
+    }
+    let broker = json_value(
+        &Checkout::take(host.provider.clone())?
+            .get()
+            .evidence_json()
+            .map_err(|_| "remote receiver broker observation unavailable")?,
+    )?;
+    let attempted = state.start_mutation.is_some()
+        || state.stop_mutation.is_some()
+        || state.stop_completion.is_some()
+        || state.activation.is_some()
+        || !broker
+            .get("media_pending_action")
+            .is_some_and(Value::is_null)
+        || !broker.get("media_runtime_state").is_some_and(|value| {
+            value.is_null()
+                || value.get("phase").and_then(Value::as_str) == Some("planned")
+                    && value
+                        .get("applied_request_ids")
+                        .and_then(Value::as_array)
+                        .is_some_and(Vec::is_empty)
+        });
     if !host.owner_effect_attempted.load(Ordering::SeqCst) {
         return Err("remote receiver history absent".into());
     }
-    let cleanup = Checkout::take(host.cleanup_server.clone())?.get().replay_snapshot();
+    let cleanup = Checkout::take(host.cleanup_server.clone())?
+        .get()
+        .replay_snapshot();
     if !cleanup.pending_request_sha256.is_empty() || !cleanup.terminal.is_empty() {
         return Err("remote receiver retained cleanup present".into());
     }
     let history = super::super::remote_owner_close::receiver_observation_history(
         &Checkout::take(host.server.clone())?.get().replay_snapshot(),
-        &Checkout::take(host.activation_server.clone())?.get().replay_snapshot(),
-        &host.local_public_key, host.callbacks.key_id(), host.capability.generation,
-        host.restored_owner_replay, attempted)?;
-    Ok(json!({"$schema":"rusty.quest.embedded_duplex.remote_receiver_observation.v1",
+        &Checkout::take(host.activation_server.clone())?
+            .get()
+            .replay_snapshot(),
+        &host.local_public_key,
+        host.callbacks.key_id(),
+        host.capability.generation,
+        host.restored_owner_replay,
+        attempted,
+    )?;
+    Ok(
+        json!({"$schema":"rusty.quest.embedded_duplex.remote_receiver_observation.v1",
         "scope":"peer_receiver_only","status":"pending","physical_cleanup":"pending",
         "pending_reason":"java_physical_observation_required","config_sha256":host.config_sha256,
         "native_executor_generation":host.capability.generation,
         "app_process_generation":host.capability.binding.generation,
-        "local_peer_id":host.local_peer_id,"remote_peer_id":host.remote_peer_id,"signed_history":history}))
+        "local_peer_id":host.local_peer_id,"remote_peer_id":host.remote_peer_id,"signed_history":history}),
+    )
+}
+
+/// Actual native prerequisites for the private fresh setup phase. Historical
+/// diagnostics never substitute for current absence/terminal proofs.
+pub(super) fn fresh_setup_eligibility(host: &Host) -> Result<Value, String> {
+    host.capability.require_live()?;
+    let local = {
+        let slot = host
+            .peer_lifecycle
+            .try_lock()
+            .map_err(|_| "fresh local lifecycle busy")?;
+        let state = slot.as_ref().ok_or("fresh local lifecycle checked out")?;
+        if state.renewal_pending || state.whole_close_requested {
+            return Err("fresh setup has pending renewal or whole close".into());
+        }
+        let never = state.client.is_none()
+            && state.start_mutation.is_none()
+            && state.activation.is_none()
+            && state.stop_mutation.is_none()
+            && state.stop_completion.is_none()
+            && state.route_receipt.is_none()
+            && state.route_termination.is_none()
+            && state.route_cleanup.is_none()
+            && !host.owner_effect_attempted.load(Ordering::SeqCst);
+        let stopped = state.client.is_some()
+            && state.stop_mutation.is_some()
+            && media_stop_effect(state).is_some_and(|v| !v.is_null())
+            && state.route_termination.is_some()
+            && state.route_cleanup.is_some()
+            && state.termination_action == Some("stop");
+        if !never && !stopped {
+            return Err(
+                "fresh setup requires actual NeverStarted or earned normal FullyStopped".into(),
+            );
+        }
+        json!({"state":if never{"never_started"}else{"fully_stopped"},
+            "client_id":state.client,"start_mutation":state.start_mutation,"activation":state.activation,
+            "stop_mutation":state.stop_mutation,"stop_completion":state.stop_completion,
+            "stop_effect":state.stop_effect,"route_termination":state.route_termination,"route_cleanup":state.route_cleanup,
+            "renewal_count":state.renewal_count,"renewal_total":state.renewals.len(),
+            "current_lifetime_renewal_count":state.current_lifetime_renewal_count})
+    };
+    let activation = host
+        .activation_sender
+        .try_lock()
+        .map_err(|_| "fresh activation sender busy")?;
+    if let Some(pending) = activation
+        .as_ref()
+        .ok_or("fresh activation sender checked out")?
+        .pending
+        .as_ref()
+    {
+        // complete_start intentionally retains historical acknowledgement
+        // material. It is not an unresolved flight after a genuine normal Stop.
+        // Do not clear it: start() transfers the prior lifetime and then clears.
+        let completed = pending
+            .response
+            .as_ref()
+            .is_some_and(|r| r.status == OwnerDispatchStatus::Completed);
+        if local["state"] != "fully_stopped"
+            || !completed
+            || local["client_id"] != pending.client_id
+            || local.pointer("/activation/activation")
+                != Some(&serde_json::to_value(&pending.response).map_err(safe_decode)?)
+        {
+            return Err("fresh activation request pending or terminal history differs".into());
+        }
+    }
+    drop(activation);
+    let replay = {
+        let slot = host
+            .server
+            .try_lock()
+            .map_err(|_| "fresh dispatch slot busy")?;
+        slot.as_ref()
+            .ok_or("fresh dispatch slot checked out")?
+            .replay_snapshot()
+    };
+    let activation = {
+        let slot = host
+            .activation_server
+            .try_lock()
+            .map_err(|_| "fresh activation slot busy")?;
+        slot.as_ref()
+            .ok_or("fresh activation slot checked out")?
+            .replay_snapshot()
+    };
+    let cleanup = {
+        let slot = host
+            .cleanup_server
+            .try_lock()
+            .map_err(|_| "fresh cleanup slot busy")?;
+        slot.as_ref()
+            .ok_or("fresh cleanup slot checked out")?
+            .replay_snapshot()
+    };
+    if !replay.pending_request_sha256.is_empty()
+        || !activation.pending_request_sha256.is_empty()
+        || !cleanup.pending_request_sha256.is_empty()
+    {
+        return Err("fresh setup retained inbound original pending".into());
+    }
+    // Same signed receiver history validator, under a distinct scope that makes
+    // no claim about absence of a local media transaction or physical cleanup.
+    let receivers = super::super::remote_owner_close::fresh_setup_receiver_history(
+        &replay,
+        &activation,
+        &host.local_public_key,
+        host.callbacks.key_id(),
+        host.capability.generation,
+        host.restored_owner_replay,
+    )?;
+    host.cleanup.fresh_setup_quiescence(&cleanup)?;
+    let broker = {
+        let slot = host
+            .provider
+            .try_lock()
+            .map_err(|_| "fresh provider busy")?;
+        json_value(
+            &slot
+                .as_ref()
+                .ok_or("fresh provider checked out")?
+                .evidence_json()
+                .map_err(|_| "fresh broker evidence unavailable")?,
+        )?
+    };
+    if !broker
+        .get("media_pending_action")
+        .is_some_and(Value::is_null)
+    {
+        return Err("fresh broker effect pending".into());
+    }
+    // Manifold independently proves no live session/current route/pending cleanup
+    // in fresh_pair_setup_view/apply, against its exact retained shared owner.
+    Ok(
+        json!({"$schema":"rusty.quest.embedded_duplex.fresh_setup_native_eligibility.v1",
+        "local":local,"receivers":receivers,"cleanup_replay":cleanup,
+        "native_executor_generation":host.capability.generation,
+        "app_process_generation":host.capability.binding.generation,
+        "app_record_sha256":host.capability.binding.record_sha256,
+        "config_sha256":host.config_sha256,"broker_evidence":broker}),
+    )
 }
 
 fn entropy() -> Result<String, String> {
@@ -114,15 +286,14 @@ fn media_stop_effect(state: &State) -> Option<&Value> {
     state.stop_completion.as_ref()?.get("stop_effect_receipt")
 }
 
-fn current_broker_readback(evidence: &Value) -> Result<Value, String> {
+fn current_broker_readback(evidence: &Value, lineage: Option<Value>) -> Result<Value, String> {
     let field = |path: &str| {
         evidence
             .pointer(path)
             .cloned()
             .ok_or_else(|| "actual current Broker readback field absent".to_owned())
     };
-    Ok(
-        json!({"$schema":"rusty.quest.concurrent.broker_current_readback.v1",
+    let mut result = json!({"$schema":"rusty.quest.concurrent.broker_current_readback.v1",
         "provider_epoch_id":field("/runtime/provider_epoch_id")?,
         "decision_owner_id":field("/decision_owner_id")?,
         "local_acceptance_rules":field("/local_acceptance_rules")?,
@@ -134,13 +305,17 @@ fn current_broker_readback(evidence: &Value) -> Result<Value, String> {
         "admission_authority_revision":field("/runtime/admission_snapshot/authority_revision")?,
         "current_admission_grants":field("/runtime/admission_snapshot/grants")?,
         "media_runtime_state":field("/media_runtime_state")?,
-        "media_pending_action":field("/media_pending_action")?}),
-    )
+        "media_pending_action":field("/media_pending_action")?});
+    if let Some(lineage) = lineage {
+        result["$schema"] = json!("rusty.quest.concurrent.broker_current_readback.v2");
+        result["root_lineage_observation"] = lineage;
+    }
+    Ok(result)
 }
 
 fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
     let current = projection(host).ok();
-    let observed_at_ms=host.clock.now_ms()?;
+    let observed_at_ms = host.clock.now_ms()?;
     let (broker, selected_policy, native_owner_validation) = {
         let mut provider = Checkout::take(host.provider.clone())?;
         let broker = json_value(
@@ -156,13 +331,43 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
             .map(serde_json::to_value)
             .transpose()
             .map_err(safe_decode)?;
-        let validation=if policy.as_ref().and_then(|p|p.get("$schema")).and_then(Value::as_str)==Some("rusty.manifold.peer.ongoing_media_policy.v2") {
-            Some(match provider.get().current_concurrent_ongoing_validation(observed_at_ms) {
-                Ok(value)=>serde_json::to_value(value).map_err(safe_decode)?,
-                Err(_)=>json!({"$schema":"rusty.quest.concurrent.current_ongoing_owner_validation.v1","status":"unavailable","validated_at_ms":observed_at_ms,"reason":"current_owner_validation_unavailable"}),
-            })
-        } else { None };
+        let validation = if policy
+            .as_ref()
+            .and_then(|p| p.get("$schema"))
+            .and_then(Value::as_str)
+            == Some("rusty.manifold.peer.ongoing_media_policy.v2")
+        {
+            Some(
+                match provider
+                    .get()
+                    .current_concurrent_ongoing_validation(observed_at_ms)
+                {
+                    Ok(value) => serde_json::to_value(value).map_err(safe_decode)?,
+                    Err(_) => {
+                        json!({"$schema":"rusty.quest.concurrent.current_ongoing_owner_validation.v1","status":"unavailable","validated_at_ms":observed_at_ms,"reason":"current_owner_validation_unavailable"})
+                    }
+                },
+            )
+        } else {
+            None
+        };
         (broker, policy, validation)
+    };
+    let root_seed_present = {
+        let p = process()
+            .lock()
+            .map_err(|_| "root lineage availability gate")?;
+        p.last_root_reestablishment.is_some()
+    };
+    let root_lineage = if root_seed_present {
+        Some(
+            peer_roots::current_lineage(host, observed_at_ms)
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Null),
+        )
+    } else {
+        None
     };
     let physically_stopped =
         media_stop_effect(state).is_some_and(|v| !v.is_null()) && state.route_cleanup.is_some();
@@ -180,7 +385,8 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "native_executor_generation":host.capability.generation,"app_process_generation":host.capability.binding.generation,
         "observed_at_ms":observed_at_ms,
         "status":if physically_stopped{"terminal"}else if active{"active"}else{"pending"},
-        "authority_projection":current,"broker_evidence":current_broker_readback(&broker)?,
+        "authority_projection":current,"broker_evidence":current_broker_readback(&broker,
+            root_lineage)?,
         "start_mutation":state.start_mutation,"stop_mutation":state.stop_mutation,
         "route_receipt":state.route_receipt,"route_termination":state.route_termination,"route_cleanup":state.route_cleanup,
         "termination_action":state.termination_action,"revoker_adoption":state.revoker_adoption,
@@ -209,7 +415,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         if history_v2 {
             value["$schema"] = json!("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3");
             value["current_lifetime_renewal_count"] = json!(state.current_lifetime_renewal_count);
-            value["current_owner_validation"]=json!(native_owner_validation);
+            value["current_owner_validation"] = json!(native_owner_validation);
         }
         value["renewal_total_completed"] = json!(state.renewal_count);
         value["renewal_first_request_id"] = json!(state.first_renewal_request_id);
@@ -248,6 +454,14 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
             }
         }
     }
+    if host.authority.selected_fresh_pair_setup_policy()?.is_some() {
+        if value.get("$schema").and_then(Value::as_str)
+            != Some("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3")
+        {
+            return Err("fresh lifecycle requires actual ongoing-v2 owner".into());
+        }
+        append_fresh_lifecycle_fields(&mut value, state)?;
+    }
     Ok(value)
 }
 
@@ -269,7 +483,13 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
             state.renewal_count,
             state.first_renewal_request_id.clone(),
         );
+        let retired = if host.authority.selected_fresh_pair_setup_policy()?.is_some() {
+            archive_completed_lifetime(host, state)?
+        } else {
+            RetiredLifetimes::default()
+        };
         *state = State::default();
+        state.retired_lifetimes = retired;
         if continuation.0 {
             state.ongoing_mode = true;
             state.renewal_count = continuation.1;
@@ -288,6 +508,10 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
         return Err("retained authority renewal requires its retry or physical Stop".into());
     }
     if state.start_mutation.is_none() {
+        // All unbounded SDK/decoder/renderer preparation precedes this final
+        // current pair/root admission. A received opposite-direction Start is
+        // allowed; only this exact local preparation can be consumed once.
+        prepared_start::require_ready(host, true)?;
         let mutation = apply_media(host, QuestConcurrentPeerCommand::Start)?;
         state.client = Some(
             mutation
@@ -542,11 +766,29 @@ pub(super) fn renew_after_signed_pair(host: &Host, pair_proof: &Value) -> Result
     result
 }
 
+fn capture_pair_renewal_result(
+    state: &mut State,
+    result: Result<String, String>,
+) -> Result<String, String> {
+    state.last_failure_cause = result
+        .as_ref()
+        .err()
+        .and_then(|error| super::operation_failure::current_cause(error))
+        .filter(|cause| cause.get("operation").and_then(Value::as_str) == Some("renew_authority"));
+    result
+}
+
 fn renew(host: &Host, state: &mut State) -> Result<(), String> {
     require_renewable_media(state)?;
     projection(host)?;
     state.renewal_pending = true;
-    let pair = json_value(&pair_ceremony::renew(host)?)?;
+    // The actual fixed peerAction path returns Pending on errors. Capture the
+    // producer's closed current-operation data before that Result is consumed;
+    // never infer it from last_failure, a status reread, or a JVM exception.
+    let pair = json_value(&capture_pair_renewal_result(
+        state,
+        pair_ceremony::renew(host),
+    )?)?;
     let proof = pair
         .get("local_session_renewal")
         .ok_or("actual signed local session renewal absent")?;
@@ -819,14 +1061,14 @@ fn actual_java_cleanup(env: &mut JNIEnv<'_>) -> Result<bool, String> {
 fn close_host(
     mut value: Value,
     host: HostLease,
-    checked: Checkout<State>,
+    mut checked: Checkout<State>,
 ) -> Result<String, String> {
     let expected = host.config_sha256.clone();
     host.capability.require_live()?;
     {
         let mut state = process().lock().map_err(|_| "process state poisoned")?;
         if state.initializing
-            || state.closing
+            || state.closing && state.terminal_fresh_owner_body.is_none()
             || state.lease_integrity_failed
             || state.host_leases != 1
         {
@@ -834,6 +1076,12 @@ fn close_host(
         }
         state.closing = true;
     }
+    retain_terminal_fresh_owner(
+        &host,
+        "normal_peer_whole_close",
+        value.clone(),
+        Some(serde_json::to_value(checked.get()).map_err(safe_decode)?),
+    )?;
     drop(checked);
     drop(host);
     let removed = {
@@ -848,6 +1096,8 @@ fn close_host(
             return Err("native host close configuration changed".into());
         }
         let removed = state.host.take();
+        state.terminal_fresh_owner_body = None;
+        state.prepared_peer_start = None;
         route.take();
         state.last_closed_sha256 = Some(expected);
         state.closing = false;
@@ -885,7 +1135,11 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
             }
         }
     }
-    let host = host()?;
+    let host = if word == 6 {
+        host_for_root_terminal_cleanup()?
+    } else {
+        host()?
+    };
     host.capability.require_live()?;
     if !crate::own_stereo_capture_runtime::capture_route_selected() {
         return Err("authenticated concurrent source feature inactive".into());
@@ -895,26 +1149,47 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
     if word == 6 && state.client.is_none() {
         // A remote receiver is not a local seven-owner media transaction.
         // Never route its effect history through close_no_media.
-        let broker = json_value(&Checkout::take(host.provider.clone())?.get().evidence_json()
-            .map_err(|_| "remote-owner local media observation unavailable")?)?;
-        let local_media_attempted = state.start_mutation.is_some() || state.stop_mutation.is_some()
-            || state.stop_completion.is_some() || state.activation.is_some()
-            || !broker.get("media_pending_action").is_some_and(Value::is_null)
-            || !broker.get("media_runtime_state").is_some_and(|value| value.is_null()
-                || value.get("phase").and_then(Value::as_str) == Some("planned")
-                && value.get("applied_request_ids").and_then(Value::as_array).is_some_and(Vec::is_empty));
+        let broker = json_value(
+            &Checkout::take(host.provider.clone())?
+                .get()
+                .evidence_json()
+                .map_err(|_| "remote-owner local media observation unavailable")?,
+        )?;
+        let local_media_attempted = state.start_mutation.is_some()
+            || state.stop_mutation.is_some()
+            || state.stop_completion.is_some()
+            || state.activation.is_some()
+            || !broker
+                .get("media_pending_action")
+                .is_some_and(Value::is_null)
+            || !broker.get("media_runtime_state").is_some_and(|value| {
+                value.is_null()
+                    || value.get("phase").and_then(Value::as_str) == Some("planned")
+                        && value
+                            .get("applied_request_ids")
+                            .and_then(Value::as_array)
+                            .is_some_and(Vec::is_empty)
+            });
         if !host.owner_effect_attempted.load(Ordering::SeqCst) {
             return Err("remote-owner effect history absent; use scoped no-media closure".into());
         }
-        let cleanup = Checkout::take(host.cleanup_server.clone())?.get().replay_snapshot();
+        let cleanup = Checkout::take(host.cleanup_server.clone())?
+            .get()
+            .replay_snapshot();
         if !cleanup.pending_request_sha256.is_empty() || !cleanup.terminal.is_empty() {
             return Err("retained cleanup history requires its typed owner recovery".into());
         }
         let proof = super::super::remote_owner_close::verified_receivers(
             &Checkout::take(host.server.clone())?.get().replay_snapshot(),
-            &Checkout::take(host.activation_server.clone())?.get().replay_snapshot(),
-            &host.local_public_key, host.callbacks.key_id(), host.capability.generation,
-            host.restored_owner_replay, local_media_attempted)?;
+            &Checkout::take(host.activation_server.clone())?
+                .get()
+                .replay_snapshot(),
+            &host.local_public_key,
+            host.callbacks.key_id(),
+            host.capability.generation,
+            host.restored_owner_replay,
+            local_media_attempted,
+        )?;
         let value = json!({"$schema":"rusty.quest.embedded_duplex.remote_owner_cleanup.v1",
             "action":"whole_app_close","config_sha256":host.config_sha256,
             "native_executor_generation":host.capability.generation,
@@ -923,10 +1198,17 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
             "remote_receiver_terminal_history":proof,"peer_physical_cleanup":"not_locally_started",
             "native_host_physical_cleanup":"pending","whole_app_physical_cleanup":"pending","status":"pending"});
         host.capability.require_live()?;
-        if actual_java_cleanup(env)? { return close_host(value, host, checked); }
+        if actual_java_cleanup(env)? {
+            return close_host(value, host, checked);
+        }
         return Ok(value.to_string());
     }
-    if word == 6 { state.whole_close_requested = true; }
+    if word == 6 {
+        state.whole_close_requested = true;
+    }
+    if word != 5 {
+        state.last_failure_cause = None;
+    }
     let operation = match word {
         1 => start(&host, state),
         2 => renew(&host, state),
@@ -946,15 +1228,27 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
         }
     }
     let mut value = receipt(&host, state, action)?;
+    if word == 3
+        && host.authority.selected_fresh_pair_setup_policy()?.is_some()
+        && value.get("status").and_then(Value::as_str) == Some("terminal")
+    {
+        // This is the exact original production return, not a later reread.
+        state.terminal_stop_original_id = Some(host.callbacks.current_operator_original_id()?);
+        state.terminal_stop_projection = Some(value.clone());
+    }
     if word == 5 {
         value["remote_receiver_observation"] = remote_receiver_observation(&host, state)
-            .unwrap_or_else(|_| json!({"$schema":"rusty.quest.embedded_duplex.remote_receiver_observation.v1",
+            .unwrap_or_else(|_| {
+                json!({"$schema":"rusty.quest.embedded_duplex.remote_receiver_observation.v1",
                 "scope":"peer_receiver_only","status":"pending","physical_cleanup":"pending",
-                "pending_reason":"current_signed_receiver_history_unavailable"}));
+                "pending_reason":"current_signed_receiver_history_unavailable"})
+            });
         // The optional projection must not make an otherwise supported fixed
         // lifecycle receipt exceed its existing 256 KiB serializer boundary.
         if value.to_string().len() > 256 * 1024 {
-            value.as_object_mut().ok_or("Peer lifecycle object absent")?
+            value
+                .as_object_mut()
+                .ok_or("Peer lifecycle object absent")?
                 .remove("remote_receiver_observation");
         }
     }
@@ -995,7 +1289,7 @@ fn complete_retained_whole_close(
     executor: i64,
     app: i64,
 ) -> Result<Option<String>, String> {
-    let host = host()?;
+    let host = host_for_retained_whole_cleanup()?;
     host.capability.require_live()?;
     require_retained_whole_close_binding(
         expected,
@@ -1077,4 +1371,266 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         let _ = env.exception_clear();
     }
     return_string(&mut env, result)
+}
+
+// Compact evidence cursor only. The actual app-owned immutable archive and
+// Original journal own prior bodies; this creates no native restore authority.
+#[derive(Default, Serialize)]
+struct RetiredLifetimes {
+    total: u64,
+    first: Option<Value>,
+    last: Option<Value>,
+    recent: Vec<Value>,
+    history_sha256: Option<String>,
+}
+
+fn archive_completed_lifetime(host: &Host, state: &State) -> Result<RetiredLifetimes, String> {
+    if state.termination_action != Some("stop")
+        || state.route_cleanup.is_none()
+        || media_stop_effect(state).is_none_or(Value::is_null)
+    {
+        return Err("native lifetime has no earned normal Stop".into());
+    }
+    let original = state
+        .terminal_stop_original_id
+        .as_deref()
+        .ok_or("actual prior Stop Original absent")?;
+    let projection = state
+        .terminal_stop_projection
+        .as_ref()
+        .ok_or("original terminal Stop projection absent")?;
+    if projection.get("status").and_then(Value::as_str) != Some("terminal") {
+        return Err("original Stop projection not terminal".into());
+    }
+    let mut native = serde_json::to_value(state).map_err(safe_decode)?;
+    native
+        .as_object_mut()
+        .ok_or("native lifetime metadata object")?
+        .remove("retired_lifetimes");
+    let body = json!({"$schema":"rusty.quest.embedded_duplex.peer_lifetime_archive.v1",
+        "app_process_generation":host.capability.binding.generation,"app_record_sha256":host.capability.binding.record_sha256,
+        "native_executor_generation":host.capability.generation,"config_sha256":host.config_sha256,
+        "prior_stop_original_id":original,"terminal_native_stop_projection":projection,"native_lifetime_state":native,
+        "prior_archive_projection":state.retired_lifetimes});
+    let raw = body.to_string();
+    let digest = format!(
+        "sha256:{}",
+        rusty_quest_broker_authority::packaged_json_sha256(&raw)
+    );
+    let ack = host.callbacks.archive_completed_peer_lifetime(&raw)?;
+    const FIELDS: [&str; 8] = [
+        "$schema",
+        "body_sha256",
+        "app_process_generation",
+        "app_record_sha256",
+        "native_executor_generation",
+        "config_sha256",
+        "prior_stop_original_id",
+        "storage_identity",
+    ];
+    if !ack
+        .as_object()
+        .is_some_and(|o| o.len() == FIELDS.len() && FIELDS.iter().all(|key| o.contains_key(*key)))
+        || ack.get("$schema").and_then(Value::as_str)
+            != Some("rusty.quest.embedded_duplex.peer_lifetime_archive_retained.v1")
+        || ack.get("body_sha256").and_then(Value::as_str) != Some(digest.as_str())
+        || ack.get("app_process_generation").and_then(Value::as_u64)
+            != Some(host.capability.binding.generation)
+        || ack.get("app_record_sha256").and_then(Value::as_str)
+            != Some(host.capability.binding.record_sha256.as_str())
+        || ack
+            .get("native_executor_generation")
+            .and_then(Value::as_u64)
+            != Some(host.capability.generation)
+        || ack.get("config_sha256").and_then(Value::as_str) != Some(host.config_sha256.as_str())
+        || ack.get("prior_stop_original_id").and_then(Value::as_str) != Some(original)
+        || !ack
+            .get("storage_identity")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty())
+    {
+        return Err("actual prior lifetime durable custody ACK differs".into());
+    }
+    host.capability.require_live()?;
+    let old = &state.retired_lifetimes;
+    let chain=format!("sha256:{}",rusty_quest_broker_authority::packaged_json_sha256(&json!({
+        "$schema":"rusty.quest.embedded_duplex.peer_lifetime_archive_chain.v1","previous":old.history_sha256,"archive":ack}).to_string()));
+    let mut recent = old.recent.clone();
+    recent.push(ack.clone());
+    if recent.len() > 2 {
+        recent.remove(0);
+    }
+    Ok(RetiredLifetimes {
+        total: old
+            .total
+            .checked_add(1)
+            .ok_or("native lifetime count exhausted")?,
+        first: old.first.clone().or_else(|| Some(ack.clone())),
+        last: Some(ack),
+        recent,
+        history_sha256: Some(chain),
+    })
+}
+
+// This formatter has no selection authority. receipt() reaches it only after
+// the actual shared-owner fresh policy and unchanged ongoing-v2 validation.
+fn append_fresh_lifecycle_fields(value: &mut Value, state: &State) -> Result<(), String> {
+    if value.get("$schema").and_then(Value::as_str)
+        != Some("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3")
+    {
+        return Err("fresh lifecycle projection requires actual v3 base".into());
+    }
+    value["$schema"] = json!("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v4");
+    value["last_failure_cause"] = json!(state.last_failure_cause);
+    value["retired_lifetimes"] = json!(state.retired_lifetimes);
+    Ok(())
+}
+
+#[cfg(test)]
+mod fresh_lifecycle_controls {
+    use super::*;
+    #[test]
+    fn real_renewal_result_consumption_retains_pending_typed_cause_without_exception() {
+        let receipt = json!({"$schema":"rusty.manifold.peer.session_current_receipt.v2","session_id":"session.fixture",
+            "current":false,"rejection_reason":"expired","decision_id":null,"peer_ids":[],
+            "topology_contract_id":null,"validated_at_ms":0,"expires_at_ms":null});
+        let error = super::super::operation_failure::session_not_current(
+            "renew_authority",
+            "session.fixture",
+            receipt.clone(),
+        )
+        .unwrap();
+        let mut state = State::default();
+        state.renewal_pending = true;
+        let result = capture_pair_renewal_result(&mut state, Err(error));
+        assert!(result.is_err());
+        state.last_failure = result.err();
+        state.last_failure_action = Some("renew_authority");
+        assert!(state.renewal_pending);
+        let mut base = json!({"$schema":"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3",
+            "status":"pending","renewal_pending":state.renewal_pending,"last_failure":state.last_failure});
+        append_fresh_lifecycle_fields(&mut base, &state).unwrap();
+        assert_eq!(base["status"], "pending");
+        assert_eq!(base["last_failure_cause"]["current_session"], receipt);
+        assert_eq!(base["last_failure_cause"]["observed_at_ms"], 0);
+        capture_pair_renewal_result(&mut state, Err("expired".into())).unwrap_err();
+        assert!(state.last_failure_cause.is_none());
+    }
+    #[test]
+    fn formatter_requires_explicit_v3_base_and_never_relabels_finite_receipts() {
+        for schema in [
+            "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1",
+            "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v2",
+            "foreign",
+        ] {
+            let mut receipt = json!({"$schema":schema});
+            let original = receipt.clone();
+            assert!(append_fresh_lifecycle_fields(&mut receipt, &State::default()).is_err());
+            assert_eq!(receipt, original);
+        }
+    }
+}
+
+// Read-only current route join. Safe while the caller holds the single Peer
+// lifecycle checkout: this queries authority only and never re-checks out State.
+pub(super) fn require_owned_renewal_route(host: &Host) -> Result<(), String> {
+    let actual = projection(host)?;
+    if actual
+        .get("route_configuration_sha256")
+        .and_then(Value::as_str)
+        != Some(host.route_configuration_sha256.as_str())
+    {
+        return Err("ongoing renewal actual route source differs".into());
+    }
+    Ok(())
+}
+
+/// Actual immutable normal-Stop outcome retained by the native lifetime owner.
+pub(super) fn prepared_terminal_lifetime(host: &Host) -> Result<Value, String> {
+    let slot = host
+        .peer_lifecycle
+        .try_lock()
+        .map_err(|_| "prepared lifetime owner busy")?;
+    let state = slot.as_ref().ok_or("prepared lifetime owner checked out")?;
+    if state.termination_action != Some("stop")
+        || state.route_cleanup.is_none()
+        || media_stop_effect(state).is_none_or(Value::is_null)
+    {
+        return Err("prepared lifetime lacks actual normal Stop".into());
+    }
+    let original = state
+        .terminal_stop_original_id
+        .as_ref()
+        .ok_or("prepared Stop actual Original absent")?;
+    let receipt = state
+        .terminal_stop_projection
+        .as_ref()
+        .ok_or("prepared Stop immutable projection absent")?;
+    if receipt["status"] != "terminal" {
+        return Err("prepared Stop not terminal".into());
+    }
+    Ok(json!({"kind":"normal_peer_stop","original_id":original,"receipt":receipt}))
+}
+
+/// Exact Native history input for the M source-bound permit. This is derived
+/// privately while root-flight excludes new local and incoming owner dispatch.
+pub(super) fn root_lifetime_witness(
+    host: &Host,
+) -> Result<
+    (
+        rusty_manifold_model::ManifoldSourceBoundPeerDisposition,
+        u64,
+        Option<String>,
+        Option<String>,
+        Value,
+    ),
+    String,
+> {
+    let facts = fresh_setup_eligibility(host)?;
+    let slot = host
+        .peer_lifecycle
+        .try_lock()
+        .map_err(|_| "root lifecycle busy")?;
+    let s = slot.as_ref().ok_or("root lifecycle checked out")?;
+    match facts.pointer("/local/state").and_then(Value::as_str) {
+        Some("never_started") => Ok((
+            rusty_manifold_model::ManifoldSourceBoundPeerDisposition::NeverStarted,
+            0,
+            None,
+            None,
+            facts,
+        )),
+        Some("fully_stopped") => {
+            let start = s
+                .start_mutation
+                .as_ref()
+                .ok_or("root genuine Start absent")?;
+            let stop = s
+                .terminal_stop_projection
+                .as_ref()
+                .ok_or("root original terminal Stop absent")?;
+            if s.terminal_stop_original_id.is_none()
+                || stop.get("status").and_then(Value::as_str) != Some("terminal")
+            {
+                return Err("root original Stop not terminal".into());
+            }
+            Ok((
+                rusty_manifold_model::ManifoldSourceBoundPeerDisposition::FullyStopped,
+                s.retired_lifetimes
+                    .total
+                    .checked_add(1)
+                    .ok_or("root lifetime ordinal overflow")?,
+                Some(super::peer_roots::digest(
+                    "rusty.quest.embedded_duplex.root_prior_start.v1",
+                    start,
+                )?),
+                Some(super::peer_roots::digest(
+                    "rusty.quest.embedded_duplex.root_terminal_stop.v1",
+                    stop,
+                )?),
+                facts,
+            ))
+        }
+        _ => Err("root lifecycle is neither NeverStarted nor FullyStopped".into()),
+    }
 }

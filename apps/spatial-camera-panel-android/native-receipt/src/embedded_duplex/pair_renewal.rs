@@ -8,9 +8,10 @@ use rusty_manifold_peer::ManifoldCommonLanReciprocalEd25519Receipt;
 const CREDENTIAL: &str = "credential";
 const SESSION: &str = "session";
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize)]
 struct Round {
     hello: Option<Value>,
+    pending_signing_context: Option<ManifoldCommonLanReciprocalEd25519Context>,
     remote_signature: Option<ManifoldCommonLanReciprocalEd25519Signature>,
     remote_prepared: Option<(
         ManifoldCommonLanReciprocalEd25519Context,
@@ -29,7 +30,7 @@ struct Round {
     remote_receipt: Option<Value>,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize)]
 pub(super) struct RenewalState {
     id: Option<String>,
     session: Option<String>,
@@ -37,6 +38,7 @@ pub(super) struct RenewalState {
     peer_decision: Option<String>,
     initiator: bool,
     deadline_ms: u64,
+    estimate_warning_published: bool,
     credential: Round,
     session_round: Round,
     // Fixed protocol: eight bounded request/reply pairs across two phases.
@@ -70,7 +72,14 @@ fn pair_current(host: &Host) -> Result<Value, String> {
         .authority
         .current_common_lan_session(&id, host.clock.now_ms()?)?;
     if !receipt.current || receipt.decision_id.is_none() || receipt.expires_at_ms.is_none() {
-        return Err("current accepted pair expired or revoked".into());
+        let encoded = super::super::operation_failure::session_not_current(
+            "renew_authority",
+            &session,
+            serde_json::to_value(&receipt).map_err(safe_decode)?,
+        )?;
+        // Retain the exact causal observation before returning through a String error.
+        state(host)?.last_failure_cause = super::super::operation_failure::current_cause(&encoded);
+        return Err(encoded);
     }
     serde_json::to_value(receipt).map_err(safe_decode)
 }
@@ -89,11 +98,18 @@ fn current_decision(current: &Value, session: &str) -> Result<String, String> {
 }
 
 fn require_cycle(host: &Host, id: &str) -> Result<(), String> {
-    let current = state(host)?;
-    if current.renewal.id.as_deref() != Some(id)
-        || current.renewal.deadline_ms <= host.clock.now_ms()?
-    {
-        return Err("renewal cycle unavailable or expired; original pair retained".into());
+    let deadline = {
+        let current = state(host)?;
+        if current.renewal.id.as_deref() != Some(id) {
+            return Err("renewal actual cycle unavailable; original pair retained".into());
+        }
+        current.renewal.deadline_ms
+    };
+    if deadline <= host.clock.now_ms()? {
+        if !super::super::ongoing_signing_admission::selected(host)? {
+            return Err("renewal cycle unavailable or expired; original pair retained".into());
+        }
+        require_owned_cycle_after_estimate(host, id)?;
     }
     Ok(())
 }
@@ -605,7 +621,7 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
         }
         if current.renewal.id.is_none() {
             current.renewal = RenewalState {
-                id: Some(current.renewal_ledger.fresh_id(&random_hex()?)),
+                id: Some(current.renewal_ledger.fresh_id(&random_hex()?)?),
                 session: Some(session.clone()),
                 original_decision: Some(decision),
                 initiator: true,
@@ -793,6 +809,18 @@ pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, Str
                 )
             };
             verify_context(host, id, phase, "a", &context, &a, &b)?;
+            {
+                let mut s = state(host)?;
+                let round = round_mut(&mut s.renewal, phase)?;
+                if round
+                    .pending_signing_context
+                    .as_ref()
+                    .is_some_and(|old| old != &context)
+                {
+                    return Err("renewal retained remote context changed".into());
+                }
+                round.pending_signing_context = Some(context.clone());
+            }
             let signature = sign(host, &context)?;
             round_mut(&mut state(host)?.renewal, phase)?.signed_context_a_expires_at_ms =
                 Some(context.expires_at_ms);
@@ -904,4 +932,100 @@ pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, Str
         )?;
     }
     encode(host, reply_kind, id, payload)
+}
+
+pub(super) fn signing_binding(
+    host: &Host,
+    c: &ManifoldCommonLanReciprocalEd25519Context,
+) -> Result<Value, String> {
+    // Drop the Native pair lock before querying the actual authority owner.
+    let (id, session, initiator, credential, session_round) = {
+        let s = state(host)?;
+        let r = &s.renewal;
+        if r.result.is_some() {
+            return Err("renewal signing cycle already completed".into());
+        }
+        (
+            r.id.clone().ok_or("renewal signing cycle absent")?,
+            r.session.clone().ok_or("renewal signing session absent")?,
+            r.initiator,
+            r.credential.clone(),
+            r.session_round.clone(),
+        )
+    };
+    let current = pair_current(host)?;
+    super::super::peer_lifecycle::require_owned_renewal_route(host)?;
+    current_decision(&current, &session)?;
+    for (phase, round) in [(CREDENTIAL, credential), (SESSION, session_round)] {
+        let (Some(a), Some(b)) = (round.nonce_a.as_ref(), round.nonce_b.as_ref()) else {
+            continue;
+        };
+        let own = c.initiator.peer_id.as_str() == host.local_peer_id;
+        let role = if own == initiator { "a" } else { "b" };
+        let (first, second) = if role == "a" { (a, b) } else { (b, a) };
+        if c.initiator.device_nonce_hex != *first || c.responder.device_nonce_hex != *second {
+            continue;
+        }
+        let suffix = format!("correlation.{id}.{phase}.{role}");
+        if own {
+            if c.correlation_id.as_str() != signed_history_id(host, suffix)? {
+                continue;
+            }
+        } else {
+            if !remote_correlation_matches(host, c.correlation_id.as_str(), suffix)? {
+                continue;
+            }
+            if round.pending_signing_context.as_ref() != Some(c)
+                && round.remote_prepared.as_ref().map(|v| &v.0) != Some(c)
+            {
+                return Err("renewal remote signing context lacks actual retained frame".into());
+            }
+        }
+        // Current receipt's observation time is audit data, not identity. These
+        // exact authority fields must remain equal across the private callback.
+        return Ok(
+            json!({"kind":"actual_renewal_phase","cycle_id":id,"phase":phase,
+            "session_id":session,"decision_id":current["decision_id"],"expires_at_ms":current["expires_at_ms"],
+            "context":c}),
+        );
+    }
+    Err("ongoing signing has no matching actual renewal phase".into())
+}
+
+fn require_owned_cycle_after_estimate(host: &Host, id: &str) -> Result<(), String> {
+    super::super::ongoing_signing_admission::owner(host)?;
+    let current = pair_current(host)?;
+    super::super::peer_lifecycle::require_owned_renewal_route(host)?;
+    let (session, done) = {
+        let s = state(host)?;
+        if s.renewal.id.as_deref() != Some(id) {
+            return Err("renewal actual cycle identity changed".into());
+        }
+        (
+            s.renewal
+                .session
+                .clone()
+                .ok_or("renewal actual session absent")?,
+            s.renewal.result.is_some(),
+        )
+    };
+    if done {
+        return Err("renewal cycle already completed".into());
+    }
+    current_decision(&current, &session)?;
+    let warn = {
+        let mut s = state(host)?;
+        if s.renewal.id.as_deref() != Some(id) {
+            return Err("renewal actual cycle changed before warning".into());
+        }
+        let warn = !s.renewal.estimate_warning_published;
+        s.renewal.estimate_warning_published = true;
+        warn
+    };
+    if warn {
+        super::super::estimated_warning::publish(
+            "ongoing-renewal-cycle-estimate-elapsed sameOriginal=true signedExpiryStrict=true",
+        );
+    }
+    Ok(())
 }

@@ -14,8 +14,10 @@ public final class EmbeddedDuplexStartIntentSlotHostTest {
     }
     private static EmbeddedDuplexStartPreflight intent(long expiry, String session, String config,
             String enrollment, long display) throws Exception {
-        JSONObject local = new JSONObject().put("current", true).put("session_id", session)
-                .put("expires_at_ms", expiry);
+        JSONObject local = new JSONObject().put("$schema","rusty.manifold.peer.session_current_receipt.v2")
+                .put("current", true).put("session_id", session).put("expires_at_ms", expiry)
+                .put("rejection_reason",JSONObject.NULL).put("decision_id",JSONObject.NULL)
+                .put("peer_ids",new org.json.JSONArray()).put("topology_contract_id",JSONObject.NULL).put("validated_at_ms",0L);
         JSONObject pair = new JSONObject().put("$schema", "rusty.quest.embedded_duplex.pair_status.v1")
                 .put("state", "peer_session_current_route_unverified").put("session_id", session)
                 .put("native_current_session", local).put("route_current", false).put("media_effect_proven", false);

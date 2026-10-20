@@ -1,6 +1,8 @@
 //! Authenticated, fail-closed contracts between the Rust media authority and
 //! one process-local Android owner registry.
 
+mod prepared_start;
+pub use prepared_start::*;
 mod owner_dispatch;
 mod remote_cleanup_proof;
 mod remote_owner_dispatch;
@@ -674,7 +676,8 @@ pub fn validate_readback(
         if readback.remote_cleanup.is_some() {
             return Err(AndroidMediaContractError::InvalidProviderEvidence);
         }
-        proof.validate_source_readback(ticket, readback)
+        proof
+            .validate_source_readback(ticket, readback)
             .map_err(|_| AndroidMediaContractError::InvalidProviderEvidence)?;
     }
     Ok(MediaStreamOwnerProviderReadback {

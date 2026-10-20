@@ -1,9 +1,90 @@
-param([string]$RepoRoot = (Join-Path $PSScriptRoot "..\.."))
+param([string]$RepoRoot = (Join-Path $PSScriptRoot "..\.."),[switch]$WaitPolicyOnly)
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $root = (Resolve-Path -LiteralPath $RepoRoot).Path
+
+function Test-GradleWaitPolicyControls {
+    param([string]$Root)
+    if(-not('GradleOwnedWaitFixture' -as [type])){Add-Type @'
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+public sealed class GradleOwnedWaitFixture : IDisposable {
+ public readonly Mutex Waiter;
+ public readonly ManualResetEvent Ready=new ManualResetEvent(false), Release=new ManualResetEvent(false);
+ readonly Thread owner;
+ public GradleOwnedWaitFixture(bool abandoned) {
+  string name="Local\\GradleOwnedWaitControl-"+Guid.NewGuid().ToString("N");
+  Waiter=new Mutex(false,name);
+  owner=new Thread(()=>{using(var held=new Mutex(false,name)){held.WaitOne();Ready.Set();Release.WaitOne();if(!abandoned)held.ReleaseMutex();}});
+  owner.IsBackground=true;owner.Start();Ready.WaitOne();
+ }
+ public void JoinOwner(){owner.Join();}
+ public void Dispose(){Release.Set();owner.Join();Waiter.Dispose();Ready.Dispose();Release.Dispose();}
+}
+'@}
+    $passed=0
+    foreach($relative in @('tools/Resolve-GradleTool.ps1','tools/Build-SpatialCameraPanelAndroid.ps1')){
+        $tokens=$null;$errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $Root $relative),[ref]$tokens,[ref]$errors)
+        if($errors){throw "Cannot parse actual wait owner: $relative"}
+        $nodes=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Wait-GradleOwnedMutex'},$true))
+        if($nodes.Count-ne1){throw 'Exact owning mutex helper absent'};. ([scriptblock]::Create($nodes[0].Extent.Text))
+        $caseMutex=[Threading.Mutex]::new($false);$caseHeld=$false;$caseError=$null;$caseAbandoned=$false
+        try{try{$caseHeld=Wait-GradleOwnedMutex $caseMutex -WaitPolicy retained -Estimate ([TimeSpan]::Zero) -Abandoned ([ref]$caseAbandoned)}catch{$caseError=$_}
+            if($null-eq$caseError-or$caseError.FullyQualifiedErrorId-notlike'ParameterArgumentValidationError*'){throw 'Lowercase policy must refuse before mutex body'};$passed++
+        }finally{if($caseHeld){$caseMutex.ReleaseMutex()};$caseMutex.Dispose()}
+        foreach($mode in @('retained','publisher-fault','bounded','abandoned')){
+            $fixture=[GradleOwnedWaitFixture]::new($mode-ceq'abandoned');$acquired=$false;$abandoned=$false;$warnings=0
+            function Write-Warning {
+                param([string]$Message,[string]$WarningAction)
+                $script:waitWarningCount++
+                try{if($WarningAction-cne'Continue'){throw 'explicit warning stream policy missing'}}
+                finally{$script:waitControl.Release.Set()|Out-Null}
+                if($script:waitPublisherFault){throw 'intentional warning publisher failure'}
+            }
+            $script:waitControl=$fixture;$script:waitWarningCount=0;$script:waitPublisherFault=$mode-ceq'publisher-fault'
+            try{
+                if($mode-ceq'abandoned'){$fixture.Release.Set()|Out-Null;$fixture.JoinOwner()}
+                $policy=if($mode-ceq'bounded'){'Bounded'}else{'Retained'}
+                $result=@(Wait-GradleOwnedMutex $fixture.Waiter -WaitPolicy $policy -Estimate ([TimeSpan]::Zero) -Abandoned ([ref]$abandoned) -Label 'causal held owner')
+                if($result.Count-ne1-or$result[0]-isnot[bool]){throw 'Mutex wait corrupted scalar result'};$acquired=$result[0]
+                if($mode-ceq'bounded'){if($acquired-or$script:waitWarningCount-ne0){throw 'Explicit bounded wait changed'}}
+                elseif(-not$acquired-or($mode-ceq'abandoned')-ne$abandoned-or($mode-cne'abandoned'-and$script:waitWarningCount-ne1)){throw 'Same actual mutex ownership/control failed'}
+                $passed++
+            }finally{if($acquired){$fixture.Waiter.ReleaseMutex()};$fixture.Dispose();$script:waitControl=$null}
+        }
+    }
+    # Exercise the actual retained Task observer without HTTP/modelled network.
+    $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $Root 'tools/Resolve-GradleTool.ps1'),[ref]$tokens,[ref]$errors)
+    $nodes=@($ast.FindAll({param($n)$n-is[Management.Automation.Language.FunctionDefinitionAst]-and$n.Name-eq'Wait-GradleDownloadTask'},$true))
+    if($nodes.Count-ne1){throw 'Exact download task owner absent'};. ([scriptblock]::Create($nodes[0].Extent.Text))
+    $caseTask=[Threading.Tasks.TaskCompletionSource[int]]::new();$caseTask.SetResult(37);$caseError=$null
+    try{[void](Wait-GradleDownloadTask $caseTask.Task -WaitPolicy retained -Estimate ([TimeSpan]::Zero))}catch{$caseError=$_}
+    if($null-eq$caseError-or$caseError.FullyQualifiedErrorId-notlike'ParameterArgumentValidationError*'){throw 'Lowercase policy must refuse before task body'};$passed++
+    foreach($mode in @('completion','publisher-fault','actual-failure')){
+        $script:waitTask=[Threading.Tasks.TaskCompletionSource[int]]::new([Threading.Tasks.TaskCreationOptions]::RunContinuationsAsynchronously)
+        $script:waitWarningCount=0;$script:waitTaskFault=$mode-ceq'actual-failure';$script:waitPublisherFault=$mode-ceq'publisher-fault'
+        function Write-Warning {
+            param([string]$Message,[string]$WarningAction)
+            $script:waitWarningCount++
+            try{if($WarningAction-cne'Continue'){throw 'task explicit warning policy missing'}}finally{
+                if($script:waitTaskFault){$script:waitTask.SetException([InvalidOperationException]::new('actual owned task failed'))}
+                else{$script:waitTask.SetResult(37)}
+            }
+            if($script:waitPublisherFault){throw 'intentional task warning sink failure'}
+        }
+        $caught=$null;try{$result=@(Wait-GradleDownloadTask $script:waitTask.Task -WaitPolicy Retained -Estimate ([TimeSpan]::Zero))}catch{$caught=$_}
+        if(-not$script:waitTask.Task.IsCompleted-or$script:waitWarningCount-ne1){throw 'Original task was replaced or not joined'}
+        if($mode-ceq'actual-failure'){if($null-eq$caught-or$caught.Exception.ToString()-notmatch'actual owned task failed'){throw 'Actual task failure was lost'}}
+        elseif($null-ne$caught-or$result.Count-ne1-or$result[0]-ne37){throw 'Actual task completion was lost'}
+        $passed++
+    }
+    [pscustomobject]@{schema='rusty.quest.gradle_retained_wait_controls.v1';passed=$passed;http_requests=0;gradle_builds=0;timer_cancellations=0}
+}
+if($WaitPolicyOnly){Test-GradleWaitPolicyControls -Root $root;return}
+
 $manifestPath = Join-Path $root 'config\gradle-9.4.1-tool.json'
 $resolverPath = Join-Path $root 'tools\Resolve-GradleTool.ps1'
 $buildPath = Join-Path $root 'tools\Build-SpatialCameraPanelAndroid.ps1'
@@ -65,7 +146,7 @@ function Test-FreshWrapperVerifier {
         Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $protocolRoot 'config/gradle-9.4.1-tool.json')
         [IO.File]::WriteAllText((Join-Path $protocolRoot 'local-artifacts/tools/gradle-9.4.1/bin/gradle.bat'),'@echo inert-wrapper-fixture')
         $protocolResolver=@'
-param([string]$RepoRoot,[string]$Mode,[int]$TimeoutSeconds,[string]$SharedGradleToolRoot)
+param([string]$RepoRoot,[string]$Mode,[int]$TimeoutSeconds,[string]$SharedGradleToolRoot,[string]$WaitPolicy)
 $fixtureHome=if($SharedGradleToolRoot){Join-Path $SharedGradleToolRoot 'tools/gradle-9.4.1'}else{Join-Path $RepoRoot 'local-artifacts/tools/gradle-9.4.1'}
 $r=[ordered]@{schema='rusty.quest.gradle_cache_receipt.v2';mode='VerifyCache';tool_id='gradle';version='9.4.1';archive_sha256='2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb';tree_sha256='5c94e8204be25e0c18c94780cf4cf768fefa92e73f8c7b1617c483f33ca088db';gradle_home=$fixtureHome;gradle_bat=(Join-Path $fixtureHome 'bin/gradle.bat')}
 if($SharedGradleToolRoot){$r.shared_tool_root=$SharedGradleToolRoot;$r.tool_distribution=@{schema='rusty.quest.gradle_tool_distribution.v1';storage_kind='explicit-shared';tool_id=$r.tool_id;version=$r.version;archive_sha256=$r.archive_sha256;tree_sha256=$r.tree_sha256;resolver_sha256=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant();config_sha256=(Get-FileHash -LiteralPath (Join-Path $RepoRoot 'config/gradle-9.4.1-tool.json')).Hash.ToLowerInvariant();marker_sha256=(Get-FileHash -LiteralPath (Join-Path $SharedGradleToolRoot 'tool-identity.json')).Hash.ToLowerInvariant();paths_recorded=$false}}

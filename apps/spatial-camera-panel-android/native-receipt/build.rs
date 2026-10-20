@@ -8,6 +8,7 @@ use std::process::Command;
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
     emit_environment_depth_owner_cfg();
+    emit_embedded_duplex_fresh_build_policy();
     write_spatial_presentation_policy(&out_dir);
     write_own_capture_hold_contract(&out_dir);
     write_recorded_hand_replay_source(&out_dir);
@@ -1284,4 +1285,49 @@ fn write_own_capture_hold_contract(out_dir: &Path) {
     fs::write(out_dir.join("own_capture_build.rs"),format!(
         "pub(crate) const OWN_CAPTURE_PROVIDER_SELECTED: bool = {selected};\npub(crate) const OWN_CAPTURE_HOLD_LIMITS: Option<(usize,u64,usize)> = {limits};\n"))
         .expect("write explicit Own capture hold contract");
+}
+
+// Environment is cleared/scoped by the owning Build helper; none is unchanged
+// finite selection. Runtime independently rejoins the actual typed config.
+fn emit_embedded_duplex_fresh_build_policy() {
+    let names = [
+        "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY",
+        "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256",
+        "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256",
+    ];
+    for name in names {
+        println!("cargo:rerun-if-env-changed={name}");
+    }
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY");
+    let selection = env::var(names[0]).unwrap_or_else(|_| "none".into());
+    let policy = env::var(names[1]).unwrap_or_default();
+    let target = env::var(names[2]).unwrap_or_default();
+    let valid = |v: &str| {
+        v.len() == 71
+            && v.starts_with("sha256:")
+            && v[7..]
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    match selection.as_str() {
+        "none" => assert!(
+            policy.is_empty() && target.is_empty(),
+            "unselected fresh build has pins"
+        ),
+        "source-bound-v2" => {
+            assert_eq!(
+                env::var("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY").as_deref(),
+                Ok("ongoing-v2"),
+                "fresh build requires ongoing policy"
+            );
+            assert!(
+                valid(&policy) && valid(&target),
+                "fresh build requires exact policy/target pins"
+            );
+        }
+        _ => panic!("unsupported fresh build selection"),
+    }
+    println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY={selection}");
+    println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256={policy}");
+    println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256={target}");
 }

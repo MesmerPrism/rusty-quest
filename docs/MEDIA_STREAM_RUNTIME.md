@@ -322,3 +322,47 @@ lifecycle, and no pending/abort/restored-cleanup phase. It returns the retained
 resource identity digest without journaling, adoption, callbacks or effects.
 This digest does not refresh Java/socket/frame liveness. Platform consumers must
 continue to obtain those observations through their existing owners.
+
+
+## Selected ongoing preparation and retained Originals
+
+The `source-bound-v2` embedded build selects an explicit preparation path before
+media authority is requested. The existing finite build keeps its existing
+execution path. A preparation is local resource custody; it grants no Peer
+media, route, display, or Manifold authority.
+
+The host issues both `prepare_peer_start` Originals before collecting either
+result. Each native preparation retains a distinct preparation ID and the
+actual wrapper Original ID. The Android owner creates and starts the same idle
+encoder and decoder used by the later Start, keeps delivery gates closed, and
+obtains encoder format/CSD from the actual output-format event. Authenticated
+RQPS1 metadata carries that format to the other retained preparation. Dimensions
+alone do not establish an encoded format. The decoder uses its authenticated
+peer metadata and a retained reader; SDK preparation does not install a selected
+Peer projection. An existing independent Own capture is preserved.
+
+Actual fresh pair/current-session establishment and any needed same-owner root
+reestablishment follow resource readiness. Final Start must consume the held
+preparation through the existing owner tickets; it does not create or restart a
+codec or replay SDK preparation. A readiness receipt cannot reconstruct a lost
+owner. Current signed-pair identity is distinct from the immutable service
+executor and ARM/configuration identity. Real key, signed receipt, route, lease,
+source and Stop guards remain strict. Estimated waits publish warnings while
+the same owned Future, worker or exchange continues; a warning does not settle
+an operation or authorize replacement.
+
+Explicit desired Stop closes only the retained original's exchanges and wakes
+the same preparation. Whole cleanup joins control handlers, retains any
+committed unknown root metadata, aborts and joins dormant SDK owners, then earns
+the separate renderer/Own/display/callback physical barriers. Pending fresh
+setup retirement additionally retains its exact authority state before the
+owner is removed. A normal media whole close stores prepared metadata with its
+terminal owner closure. Archive ACKs certify durable metadata custody only;
+they do not change old UNKNOWN outcomes or certify physical cleanup. Unknown
+transactions, absent SDK readbacks and incomplete callbacks remain refusing.
+
+Host parser/model controls, native owner tests, Android compilation, actual
+MediaCodec/WSI behavior and device streaming are separate evidence. The new
+preparation path must be qualified against the selected source and ABI before
+use. Build the actual app and shared AAR for Java/Kotlin/native changes; only
+the explicitly selected pure host policy modules support guarded hotload.

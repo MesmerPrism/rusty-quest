@@ -25,11 +25,68 @@ internal class EmbeddedDuplexDisplayCoordinator(
     private val restartLocal: (Long) -> Boolean,
     private val startOwn: (() -> Boolean)? = null,
     private val stopWholeProjection: (() -> Unit)? = null,
+    private val prepareRenderer:((String,Long)->String)?=null,
+    private val readPreparedRenderer:((String)->String)?=null,
+    private val abortPreparedRenderer:((String)->String)?=null,
 ) : EmbeddedDuplexDisplay {
+  private var dormantPeerRoute: SpatialVideoSourceRoutingCoordinator.PreparedPeerRoute? = null
+  override fun reserveDormantPeerProjection(): Long = serialized {
+    check(dormantPeerRoute == null && ownedPeerGeneration == 0L) { "dormant reader route already held" }
+    ensureLocalCaptureStopped()
+    val candidate=routing.prepareEmbeddedPeerRoute()
+    dormantPeerRoute=candidate
+    candidate.generation
+  }
+  private var preparedRendererId:String?=null
+  override fun prepareDormantPeerRenderer(id:String,generation:Long,desiredStop:java.util.function.BooleanSupplier):String = serialized {
+    val candidate=checkNotNull(dormantPeerRoute){"actual dormant route candidate absent"}
+    check(candidate.generation==generation &&preparedRendererId==null){"actual dormant renderer candidate differs"}
+    routing.requirePreparedEmbeddedPeerRoute(candidate);val before=checkNotNull(carrier())
+    preparedRendererId=id // Retain before entering the actual JNI callback.
+    var raw=checkNotNull(prepareRenderer){"actual renderer callback absent"}(id,generation)
+    var warned=false;val estimate=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+    while(true){
+      routing.requirePreparedEmbeddedPeerRoute(candidate);check(carrier()==before){"actual dormant carrier superseded"}
+      if(desiredStop.asBoolean)throw IllegalStateException("actual desired Stop during renderer preparation")
+      if(EmbeddedDuplexPreparedRenderer.dormant(raw,id,generation))break
+      if(!warned &&System.nanoTime()>=estimate){warned=true;EmbeddedDuplexEstimate.warn("same renderer preparation remains Pending")}
+      Thread.sleep(10);raw=checkNotNull(readPreparedRenderer){"actual renderer read callback absent"}(id)
+    }
+    raw
+  }
+  override fun abortDormantPeerRenderer(id:String):String = serialized {
+    check(preparedRendererId==null||preparedRendererId==id){"actual dormant renderer abort ID differs"}
+    var warned=false;val estimate=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+    var raw=checkNotNull(abortPreparedRenderer){"actual renderer abort callback absent"}(id)
+    while(!EmbeddedDuplexPreparedRenderer.terminal(raw,id)){
+      if(!warned&&System.nanoTime()>=estimate){warned=true;EmbeddedDuplexEstimate.warn("same renderer cleanup remains Pending")}
+      Thread.sleep(10);raw=checkNotNull(abortPreparedRenderer){"actual renderer abort callback absent"}(id)
+    }
+    preparedRendererId=null;raw
+  }
   private var ownedPeerGeneration = 0L
   private var retirementGeneration = 0L
   private var ownedDecoderToken = 0L
   private var ownedReaderGeneration = 0L
+  override fun activateOwnProjectionAsync(ownerAlive: java.util.function.BooleanSupplier): CompletableFuture<Void> {
+    val own = OwnStereoCaptureRuntime.currentForApplication()
+        ?: return CompletableFuture<Void>().also { it.completeExceptionally(IllegalStateException("Own capture unavailable")) }
+    val capture = own.retainedCapture()
+        ?: return CompletableFuture<Void>().also { it.completeExceptionally(IllegalStateException("Own capture unavailable")) }
+    val result = CompletableFuture<Void>()
+    own.whenFresh(capture,ownerAlive).whenComplete { _, failure ->
+      if (failure != null) { result.completeExceptionally(failure) }
+      else if (!dispatch {
+        try {
+          check(ownerAlive.asBoolean) { "Own activation superseded" }
+          check(own.retainedCapture() === capture && capture.fresh()) { "Own activation no longer fresh" }
+          check(startOwn?.invoke() == true) { "Own carrier unavailable" }
+          result.complete(null)
+        } catch (error: Throwable) { result.completeExceptionally(error) }
+      }) { result.completeExceptionally(IllegalStateException("Activity lifecycle is fenced")) }
+    }
+    return result
+  }
   private fun concurrentOwn(): Boolean = OwnPackedPoolNative.captureRouteSelected() && OwnStereoCaptureRuntime.currentForApplication() != null
   override fun resumeOwnProjection(ownerAlive: java.util.function.BooleanSupplier) = serialized {
     activateOwnProjectionCurrent(ownerAlive)
@@ -42,9 +99,14 @@ internal class EmbeddedDuplexDisplayCoordinator(
     val capture = OwnStereoCaptureRuntime.currentForApplication()?.retainedCapture()
       ?: reject(EmbeddedDuplexOwnProjectionFailure.Reason.CAPTURE_UNAVAILABLE)
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+    var warned = false
     while (!capture.fresh()) {
       if (ownerAlive?.asBoolean == false) reject(EmbeddedDuplexOwnProjectionFailure.Reason.SUPERSEDED)
-      if (System.nanoTime() >= deadline) reject(EmbeddedDuplexOwnProjectionFailure.Reason.FRESHNESS_PENDING)
+      check(OwnStereoCaptureRuntime.currentForApplication()?.phase() == OwnStereoCaptureRuntime.Phase.Live) { "Own capture stopped" }
+      capture.failure()?.let { throw IllegalStateException("Own camera/compositor failed",it) }
+      if (!warned && System.nanoTime() >= deadline) {
+        warned = true; EmbeddedDuplexEstimate.warn("Own projection freshness remains Pending")
+      }
       try { Thread.sleep(10) }
       catch (_: InterruptedException) {
         Thread.currentThread().interrupt()
@@ -94,8 +156,15 @@ internal class EmbeddedDuplexDisplayCoordinator(
           own.phase() == OwnStereoCaptureRuntime.Phase.Live) { "concurrent Own capture superseded" }
       check(capture.fresh()) { "concurrent Own capture not fresh" }
       check(carrier() == context) { "concurrent Own carrier superseded" }
-      routing.beginEmbeddedConcurrentProjectionPeerRequest(proof)
-    } else routing.beginEmbeddedProjectionPeerRequest()
+      val prepared=dormantPeerRoute
+      if(prepared == null)routing.beginEmbeddedConcurrentProjectionPeerRequest(proof)
+      else routing.beginPreparedEmbeddedPeerRequest(prepared,proof)
+    } else {
+      val prepared=dormantPeerRoute
+      if(prepared == null)routing.beginEmbeddedProjectionPeerRequest()
+      else routing.beginPreparedEmbeddedPeerRequest(prepared,null)
+    }
+    dormantPeerRoute=null
     ownedPeerGeneration = staged.generation
     retirementGeneration = 0L
     ownedDecoderToken = 0L
@@ -132,6 +201,8 @@ internal class EmbeddedDuplexDisplayCoordinator(
   }
 
   override fun retirePeerProjection() = serialized {
+    // Reader/decoder owner has already earned its actual terminal join before this metadata is released.
+    if(ownedPeerGeneration == 0L)dormantPeerRoute=null
     if (concurrentOwn()) {
       if (ownedPeerGeneration != 0L && ownedDecoderToken != 0L && ownedReaderGeneration != 0L) {
         check(OwnPackedPoolNative.nativeRetirePeerSource(ownedPeerGeneration, ownedDecoderToken, ownedReaderGeneration)) {
@@ -199,7 +270,8 @@ internal class EmbeddedDuplexDisplayCoordinator(
 
   private fun awaitSource(generation: Long, source: SpatialVideoSource) {
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-    while (System.nanoTime() < deadline) {
+    var warned = false
+    while (true) {
       check(routing.snapshot().generation == generation) { "source transition superseded" }
       val receipt = read(generation)
       if (receipt != null) {
@@ -210,9 +282,11 @@ internal class EmbeddedDuplexDisplayCoordinator(
         if (receipt.routeGeneration == generation && receipt.source == source && receipt.result == terminal &&
             receipt.hasStages(SpatialVideoSourceStage.requiredFor(source))) return
       }
+      if (!warned && System.nanoTime() >= deadline) {
+        warned = true; EmbeddedDuplexEstimate.warn("same source transition remains Pending")
+      }
       Thread.sleep(10)
     }
-    error("native source transition deadline")
   }
 
   private fun <T> serialized(action: () -> T): T {
@@ -223,6 +297,6 @@ internal class EmbeddedDuplexDisplayCoordinator(
       try { result.complete(action()) }
       catch (failure: Throwable) { result.completeExceptionally(failure) }
     }) { "Activity lifecycle is already fenced" }
-    return result.get(30, TimeUnit.SECONDS)
+    return EmbeddedDuplexEstimate.await(result,30,TimeUnit.SECONDS,"display lifecycle")
   }
 }

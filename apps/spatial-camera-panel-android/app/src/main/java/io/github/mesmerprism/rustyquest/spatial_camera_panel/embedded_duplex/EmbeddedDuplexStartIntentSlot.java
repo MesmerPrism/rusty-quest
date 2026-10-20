@@ -29,7 +29,9 @@ final class EmbeddedDuplexStartIntentSlot {
         if (observed == null || dispatched != observed)
             throw new IllegalStateException("Start intent acknowledgement differs");
         JSONObject result = new JSONObject(nativeReceipt);
-        if (!"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(result.getString("$schema"))
+        boolean fresh=EmbeddedDuplexFreshLifecycle.SCHEMA.equals(result.getString("$schema"));
+        if(fresh)EmbeddedDuplexFreshLifecycle.require(result);
+        if (!(fresh || "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(result.getString("$schema")))
                 || !"start".equals(result.getString("action"))
                 || !observed.runtimeConfigSha256.equals(result.getString("config_sha256"))
                 || result.getLong("native_executor_generation") <= 0L

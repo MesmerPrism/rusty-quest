@@ -11,8 +11,8 @@ import io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig;
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative;
 class EmbeddedDuplexEnrollment {
  boolean localFixture=false; String runtimeHostId="host",trustedOperatorId="operator",remoteKeyId="key",adapterId="adapter",mediaRevokerId="revoker",admissionAuthorityId="admission";
- long maxTokenTtlMs=120000; Installed installed=new Installed();
- static class Installed{String roleId="left";}
+ long maxTokenTtlMs=120000; String remotePublicKeyHex=""; Installed installed=new Installed();
+ static class Installed{String roleId="left",localPeerId="",remotePeerId="",localKeyId="",localPublicKeyHex="";}
  JSONObject startupJson(String grant){return new JSONObject().put("grant",grant);}
 }
 class EmbeddedDuplexPackagedInputs { enum InstalledRole { LEFT; static InstalledRole parse(String s){if(!s.equals("left"))throw new IllegalStateException();return LEFT;}} }
@@ -57,11 +57,11 @@ public class PolicyHarness {
 """
 def main():
  a=argparse.ArgumentParser();a.add_argument('--root',type=Path,required=True);a.add_argument('--output',type=Path,required=True);x=a.parse_args();root=x.root.resolve();out=x.output.resolve();out.mkdir(parents=True,exist_ok=False)
- base=root/'apps/spatial-camera-panel-android/app/src/main/java'/PACKAGE.replace('.','/')/'embedded_duplex';sources=[base/n for n in ['EmbeddedDuplexSessionInputs.java','EmbeddedDuplexMediaPolicy.java','EmbeddedDuplexSetupCredentials.java']]
+ base=root/'apps/spatial-camera-panel-android/app/src/main/java'/PACKAGE.replace('.','/')/'embedded_duplex';sources=[base/n for n in ['EmbeddedDuplexSessionInputs.java','EmbeddedDuplexMediaPolicy.java','EmbeddedDuplexSetupCredentials.java','EmbeddedDuplexFreshSetupPolicy.java','EmbeddedDuplexCanonicalJson.java']]
  stubs={
- 'org/json/JSONObject.java':'package org.json; import java.util.*; public class JSONObject {private final Map<String,Object> map=new LinkedHashMap<>(); public JSONObject put(String k,Object v){map.put(k,v);return this;} public JSONObject object(String k){return (JSONObject)map.get(k);} public String string(String k){return (String)map.get(k);} public long number(String k){return ((Number)map.get(k)).longValue();} public boolean has(String k){return map.containsKey(k);} public int size(){return map.size();}}',
- 'org/json/JSONArray.java':'package org.json;public class JSONArray {public JSONArray put(Object v){return this;}}',
- PACKAGE.replace('.','/')+'/BuildConfig.java':'package '+PACKAGE+';public class BuildConfig {public static String EMBEDDED_DUPLEX_MEDIA_POLICY="finite";public static long EMBEDDED_DUPLEX_SETUP_HORIZON_MS=300000;}',
+ 'org/json/JSONObject.java':'package org.json; import java.util.*; public class JSONObject {public static final Object NULL=new Object(); private final Map<String,Object> map=new LinkedHashMap<>(); public JSONObject(){} public JSONObject(String raw){throw new UnsupportedOperationException("MODELED JSON parser unavailable in finite-only fixture");} public Iterator<String> keys(){return map.keySet().iterator();} public Object get(String k){return map.get(k);} public String getString(String k){return (String)get(k);} public long getLong(String k){return ((Number)get(k)).longValue();} public JSONArray getJSONArray(String k){return (JSONArray)get(k);} public JSONObject put(String k,Object v){map.put(k,v);return this;} public JSONObject object(String k){return (JSONObject)map.get(k);} public String string(String k){return (String)map.get(k);} public long number(String k){return ((Number)map.get(k)).longValue();} public boolean has(String k){return map.containsKey(k);} public int size(){return map.size();}}',
+ 'org/json/JSONArray.java':'package org.json;public class JSONArray {private final java.util.ArrayList<Object> values=new java.util.ArrayList<>();public JSONArray put(Object v){values.add(v);return this;}public int length(){return values.size();}public Object get(int i){return values.get(i);}public JSONObject getJSONObject(int i){return (JSONObject)get(i);}}',
+ PACKAGE.replace('.','/')+'/BuildConfig.java':'package '+PACKAGE+';public class BuildConfig {public static String EMBEDDED_DUPLEX_FRESH_SETUP_POLICY="none",EMBEDDED_DUPLEX_FRESH_POLICY_SHA256="",EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256="",EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256="",EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64="";public static String EMBEDDED_DUPLEX_MEDIA_POLICY="finite";public static long EMBEDDED_DUPLEX_SETUP_HORIZON_MS=300000;}',
  PACKAGE.replace('.','/')+'/OwnPackedPoolNative.java':'package '+PACKAGE+';public class OwnPackedPoolNative {public static boolean selected=true;public static boolean captureRouteSelected(){return selected;}}',
  PACKAGE.replace('.','/')+'/embedded_duplex/PolicyHarness.java':JAVA}
  for name,text in stubs.items():p=out/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)

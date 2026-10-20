@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string]$RepoRoot=(Join-Path $PSScriptRoot '../..'))
+param([string]$RepoRoot=(Join-Path $PSScriptRoot '../..'), [string]$AndroidJar="")
 $ErrorActionPreference='Stop'
 $RepoRoot=(Resolve-Path -LiteralPath $RepoRoot).Path
 $package='io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex'
@@ -38,17 +38,24 @@ final class PreflightLiveHarness {
 '@
 $harnessPath=Join-Path $output 'PreflightLiveHarness.java'
 [IO.File]::WriteAllText($harnessPath,($harness+"`n"+$liveMethod+"`n}"),[Text.UTF8Encoding]::new($false))
-$sources=@('EmbeddedDuplexPairStatus.java','EmbeddedDuplexStartPreflight.java','EmbeddedDuplexStartIntentSlot.java'|ForEach-Object{Join-Path $main $_})
-& $javac '--release' '17' '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output @sources $test $harnessPath
+$sources=@('EmbeddedDuplexPairStatus.java','EmbeddedDuplexStartPreflight.java','EmbeddedDuplexStartIntentSlot.java','EmbeddedDuplexFreshLifecycle.java','EmbeddedDuplexNativeOperationFailure.java','EmbeddedDuplexCanonicalJson.java','EmbeddedDuplexFreshStatus.java','EmbeddedDuplexIncomingFreshPhases.java','EmbeddedDuplexFreshHandoffStore.java'|ForEach-Object{Join-Path $main $_})
+$aar=Join-Path $RepoRoot 'crates/rusty-quest-media-stream-android/android/library/src/main/java/io/github/mesmerprism/rustyquest/media'
+$sources+=@(Join-Path $aar 'OwnerDispatchTcpEndpoint.java'; Join-Path $aar 'PackedStereoWait.java')
+if(-not$AndroidJar){
+ if(-not$env:ANDROID_HOME){throw 'AndroidJar or ANDROID_HOME required for actual decoder source dependencies'}
+ $AndroidJar=(Get-ChildItem (Join-Path $env:ANDROID_HOME 'platforms') -Directory|Sort-Object Name -Descending|ForEach-Object{Join-Path $_.FullName 'android.jar'}|Where-Object{Test-Path -LiteralPath $_}|Select-Object -First 1)
+}
+$classpath=$jsonJar.FullName+[IO.Path]::PathSeparator+(Resolve-Path -LiteralPath $AndroidJar).Path
+& $javac '--release' '17' '-encoding' 'UTF-8' '-cp' $classpath '-d' $output @sources $test $harnessPath
 if($LASTEXITCODE-ne0){throw 'Start intent Java compilation failed'}
-& $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartIntentSlotHostTest'
+& $java '-cp' ($output+[IO.Path]::PathSeparator+$classpath) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexStartIntentSlotHostTest'
 if($LASTEXITCODE-ne0){throw 'Start intent lifecycle regressions failed'}
 $dispatch=$hostSource.IndexOf('startIntent.dispatch(starting);')
 $native=$hostSource.IndexOf('String nativeReceipt = noMediaFallback ?')
 $wrapped=$hostSource.IndexOf('String receipt = ConcurrentStereoQualification.lifecycle(')
 $ack=$hostSource.IndexOf('startIntent.acknowledge(starting, nativeReceipt);')
 if($dispatch-lt0-or$native-le$dispatch-or$wrapped-le$native-or$ack-le$wrapped){throw 'Actual host Start consume/receipt ordering differs'}
-foreach($required in @('!preflightLive(starting)','return startIntent.prepare(next);','startIntent.pending() == observed','System.currentTimeMillis() < observed.sessionExpiresAtMs','processFence.afterVerifiedWholeProductCleanup','afterVerifiedNoMediaCleanup')){
+foreach($required in @('!preflightLive(starting)','return startIntent.prepare(next);','startIntent.pending() == observed','System.currentTimeMillis() < observed.sessionExpiresAtMs','processFence.afterVerifiedWholeProductCleanup','held.callbackMarker.join();')){
  if(-not$hostSource.Contains($required)){throw "Actual host guard missing: $required"}
 }
 if(([regex]::Matches($hostSource,'startIntent.afterVerifiedCleanup\(\);')).Count-ne2){throw 'Intent cleanup integration differs'}

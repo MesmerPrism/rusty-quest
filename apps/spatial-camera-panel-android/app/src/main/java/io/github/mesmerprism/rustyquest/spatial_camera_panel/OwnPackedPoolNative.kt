@@ -64,11 +64,17 @@ class OwnPackedPoolNative(private val onEncoderLease: (EncoderLease) -> Unit) : 
         override fun close() { releaseUnsubmitted() }
     }
     override fun ownImageFresh(): Boolean = nativeOwnImageFresh()
-    override fun awaitCameraOwnership() {
+    override fun awaitCameraOwnership() = awaitCameraOwnership(java.util.function.BooleanSupplier { false })
+    override fun awaitCameraOwnership(stopRequested: java.util.function.BooleanSupplier) {
         check(android.os.Looper.myLooper() != android.os.Looper.getMainLooper())
         val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+        var warned = false
         while (!EmbeddedDuplexNative.localCameraQuiescent()) {
-            check(System.nanoTime() < deadline) { "old local camera ownership remains Pending" }
+            check(!stopRequested.asBoolean) { "capture stop requested" }
+            if (!warned && System.nanoTime() >= deadline) {
+                warned = true
+                io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEstimate.warn("old local camera ownership remains Pending")
+            }
             Thread.sleep(10)
         }
     }

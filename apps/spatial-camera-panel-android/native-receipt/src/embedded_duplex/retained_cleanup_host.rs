@@ -113,6 +113,93 @@ fn same_owner(a: &AndroidMediaExecutionTicket, b: &AndroidMediaExecutionTicket) 
         && a.resource_id == b.resource_id
 }
 impl Cleanup {
+    // Actual unpublished constructor owner only; no cleanup outcome inferred.
+    pub(super) fn construction_snapshot(&self) -> Result<Value, String> {
+        self.require_state()?;
+        let serial = self
+            .serial
+            .try_lock()
+            .map_err(|_| "construction cleanup serial busy")?;
+        if serial.is_none()
+            || self
+                .requester
+                .try_lock()
+                .map_err(|_| "construction cleanup requester busy")?
+                .is_some()
+        {
+            return Err("construction cleanup requester active".into());
+        }
+        serde_json::to_value(
+            &*self
+                .state
+                .try_lock()
+                .map_err(|_| "construction cleanup state busy")?,
+        )
+        .map_err(|_| "construction cleanup snapshot encoding".into())
+    }
+
+    /// Current actual cleanup owner; retained prepared originals must have a real
+    /// completed signed server response before fresh setup can supersede authority.
+    pub(super) fn fresh_setup_quiescence(
+        &self,
+        replay: &RetainedCleanupReplaySnapshot,
+    ) -> Result<(), String> {
+        self.require_state()?;
+        let public_key = self.callbacks.local_public_key()?;
+        let serial = self
+            .serial
+            .try_lock()
+            .map_err(|_| "fresh cleanup mutation busy")?;
+        if serial.is_none() {
+            return Err("fresh cleanup mutation checked out".into());
+        }
+        let state = self
+            .state
+            .try_lock()
+            .map_err(|_| "fresh cleanup retained state busy")?;
+        if state.originals.values().any(|o| o.effect.is_none()) {
+            return Err("fresh cleanup forward original unresolved".into());
+        }
+        for id in state.prepared.keys() {
+            if !replay.terminal.contains_key(id) {
+                return Err("fresh cleanup Prepare lacks terminal original".into());
+            }
+        }
+        replay.validate().map_err(str::to_owned)?;
+        if !replay.pending_request_sha256.is_empty() {
+            return Err("fresh cleanup original pending".into());
+        }
+        for (id, terminal) in &replay.terminal {
+            let r: RetainedCleanupDispatchResponse =
+                serde_json::from_slice(&terminal.response_bytes)
+                    .map_err(|_| "fresh cleanup response decode")?;
+            if r.schema_id != RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA
+                || &r.dispatch_id != id
+                || r.executor_peer_id != self.local
+                || r.signer_key_id != self.callbacks.key_id()
+                || r.request_sha256 != terminal.request_sha256
+                || r.status != OwnerDispatchStatus::Completed
+                || r.failure.is_some()
+                || !r.effect.as_ref().is_some_and(|e| {
+                    e.verified.terminal
+                        && e.readback.executor_generation == self.generation
+                        && e.readback.operation == MediaStreamPlatformOperation::Stop
+                        && e.readback.observed_state == "stopped"
+                })
+            {
+                return Err("fresh cleanup terminal original not completed".into());
+            }
+            VerifyingKey::from_bytes(&public_key)
+                .map_err(|_| "fresh cleanup key")?
+                .verify_strict(
+                    &retained_cleanup_response_signing_bytes(&r)?,
+                    &Signature::from_bytes(&decode_signature_base64(&r.signature_base64)?),
+                )
+                .map_err(|_| "fresh cleanup terminal signature")?;
+        }
+        Ok(())
+    }
+
     pub(super) fn new(
         authority: QuestEmbeddedDuplexAuthority,
         callbacks: JavaOwnerCallbacks,

@@ -33,10 +33,192 @@ final class EmbeddedDuplexPlatform {
         EmbeddedDuplexProcessFence.CallbackGuard guard = processCallbacks;
         if (guard != null) guard.retire();
     }
+    java.util.concurrent.CompletableFuture<Void> retireProcessCallbacksAsync(){
+        EmbeddedDuplexProcessFence.CallbackGuard guard=processCallbacks;
+        if(guard==null)throw new IllegalStateException("app callback owner absent");
+        return guard.retireAndDrain();
+    }
+    private EmbeddedDuplexProcessFence.CallbackLease enterProcessCallback(){
+        EmbeddedDuplexProcessFence.CallbackGuard guard=processCallbacks;
+        if(guard==null)throw new IllegalStateException("app callback owner absent");
+        return guard.enter();
+    }
     private void requireProcessCallback() {
         EmbeddedDuplexProcessFence.CallbackGuard guard = processCallbacks;
         if (guard == null) throw new IllegalStateException("app callback fence absent");
         guard.requireLive();
+    }
+    boolean freshPeerEffectsNeverEntered(){
+        PackagedAndroidMediaOwnerRegistry actual=registry;
+        EmbeddedDuplexResources held=resources;
+        return actual!=null && held!=null && actual.noOwnerEffectEverAttempted() && actual.ownerEffectsQuiescent() && held.incomingNeverPrepared();
+    }
+    boolean freshPeerControlQuiescent(){
+        PackagedAndroidMediaOwnerRegistry actual=registry;EmbeddedDuplexActivationGate activation=activationGate;
+        return actual!=null && actual.ownerEffectsQuiescent() && activation!=null && activation.freshSetupQuiescent();
+    }
+    boolean actualControlTerminal(){OwnerDispatchTcpEndpoint actual=endpoint;return actual==null?false:actual.terminal();}
+    public void bindFreshSetupOriginal(String setupRequestId)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();EmbeddedDuplexOriginals.bindFreshSetupOriginal(setupRequestId);
+        }
+    }
+    public String currentOperatorOriginalId()throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();String actual=EmbeddedDuplexOriginals.currentOriginalId();
+            if(actual==null)throw new IllegalStateException("actual operator original absent");return actual;
+        }
+    }
+    public String retainUnknownPeerRootFlight(String exactBody)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();return new EmbeddedDuplexUnknownPeerRootCustody(EmbeddedDuplexProcessHost.application())
+                .retain(exactBody,EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+        }
+    }
+    public String retainCompletedPeerRootOutcome(String exactPriorNativeResultBody)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();
+            // Fixed source-owned metadata writer only. No Native/M/HostLease
+            // reentry while the native Broker owner retains its checkpoint plan.
+            return new EmbeddedDuplexPeerRootOutcomeArchive(EmbeddedDuplexProcessHost.application())
+                .retain(exactPriorNativeResultBody,EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+        }
+    }
+    public String archiveCompletedPeerLifetime(String canonicalBody)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();return new EmbeddedDuplexPeerLifetimeArchive(EmbeddedDuplexProcessHost.application())
+                .retain(canonicalBody,EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+        }
+    }
+    public void bindFreshSetupContext(String setupRequestId,String contextSha256)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();EmbeddedDuplexOriginals.bindFreshSetupContext(setupRequestId,contextSha256);
+        }
+    }
+    public String archiveFreshSetupPhase(String canonicalBody)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();JSONObject body=new JSONObject(canonicalBody);JSONObject binding=body.getJSONObject("original_binding");
+            if("operator".equals(binding.getString("kind")))
+                EmbeddedDuplexOriginals.forApplication(EmbeddedDuplexProcessHost.application()).requirePhaseArchiveOperator(body);
+            else incomingPhases.requireArchive(body);
+            JSONObject ack=new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application()).retain(canonicalBody,
+                EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+            if("incoming_fresh_setup".equals(binding.getString("kind")))incomingPhases.archived(body,ack);
+            return ack.toString();
+        }
+    }
+    public void bindFreshSetupOperatorPhase(String nativeId,String phaseId)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();EmbeddedDuplexOriginals.bindOperatorPhase(nativeId,phaseId,EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+        }
+    }
+    public void bindFreshSetupPhaseContext(String nativeId,String phaseId,String transactionId,String kind,String digest)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();JSONObject actor=EmbeddedDuplexProcessHost.freshClosureIdentity(this);
+            JSONObject binding=EmbeddedDuplexOriginals.capture()==null?incomingPhases.currentBinding(nativeId,phaseId):
+                EmbeddedDuplexOriginals.forApplication(EmbeddedDuplexProcessHost.application()).requireOperatorContext(nativeId,phaseId,actor);
+            new EmbeddedDuplexFreshPhaseContexts(EmbeddedDuplexProcessHost.application()).retainContext(nativeId,phaseId,transactionId,kind,digest,binding,actor);
+        }
+    }
+    public String persistManifoldFreshHistoryArchive(String exactPlan)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();JSONObject plan=new JSONObject(exactPlan),actor=EmbeddedDuplexProcessHost.freshClosureIdentity(this);
+            JSONObject operation=new EmbeddedDuplexFreshPhaseContexts(EmbeddedDuplexProcessHost.application()).requireContext(plan.getJSONObject("operation_binding"));
+            for(String key:new String[]{"app_process_generation","app_record_sha256","native_executor_generation","config_sha256"})
+                if(!EmbeddedDuplexCanonicalJson.sameValue(operation.get(key),actor.get(key)))throw new IllegalStateException("Manifold archive old phase actor differs");
+            JSONObject nativeArchive=new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application()).requireOperationSource(operation,actor);
+            JSONObject binding=operation.getJSONObject("original_binding");
+            if("operator".equals(binding.getString("kind")))
+                EmbeddedDuplexOriginals.forApplication(EmbeddedDuplexProcessHost.application()).requirePhaseArchiveOperator(nativeArchive);
+            else incomingPhases.requireArchive(nativeArchive);
+            // No runtime/Manifold/HostLease reentry while Native retains its
+            // borrowed write plan. The only JNI leaf below is dedicated crypto.
+            return new EmbeddedDuplexManifoldFreshArchive(EmbeddedDuplexProcessHost.application()).retain(exactPlan,operation,nativeArchive,identity);
+        }
+    }
+    public String completeFreshSetupContinuationHandoff(String exactBody)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();return EmbeddedDuplexOriginals.forApplication(EmbeddedDuplexProcessHost.application())
+                .retainContinuationHandoff(exactBody,EmbeddedDuplexProcessHost.freshClosureIdentity(this)).toString();
+        }
+    }
+    public String completeIncomingFreshSetupHandoff(String exactBody)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();JSONObject body=new JSONObject(exactBody),actor=EmbeddedDuplexProcessHost.freshClosureIdentity(this);
+            EmbeddedDuplexFreshHandoffStore store=new EmbeddedDuplexFreshHandoffStore(EmbeddedDuplexProcessHost.application());
+            String retained=store.incomingBody(body.getString("native_request_id"),body.getString("phase_request_id"));
+            // A cached retry may arrive after old heavy spans were released. It
+            // must still be the real registered NEW request group and exact body.
+            incomingPhases.currentBinding(body.getString("native_request_id"),body.getString("phase_request_id"));
+            if(retained!=null){if(!retained.equals(exactBody))throw new IllegalStateException("incoming adoption retry changed bytes");return store.retainIncoming(exactBody,actor).toString();}
+            incomingPhases.incomingHandoff(body);
+            JSONObject archive=new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application()).requireRetained(body.getJSONObject("local_archive"),actor);
+            if(!body.getString("native_request_id").equals(archive.getString("native_request_id"))
+                    || !body.getString("prior_phase_id").equals(archive.getString("phase_request_id")))
+                throw new IllegalStateException("incoming adoption retained source phase differs");
+            JSONObject ack=store.retainIncoming(exactBody,actor);incomingPhases.adopted(body);return ack.toString();
+        }
+    }
+    public String freshSetupContinuationBindingJson()throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();return EmbeddedDuplexOriginals.freshSetupContinuationBinding(
+                EmbeddedDuplexProcessHost.freshClosureIdentity(this)).toString();
+        }
+    }
+    public String peerRootReestablishmentEligibilityJson()throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();return EmbeddedDuplexProcessHost.peerRootEligibility(this).toString();
+        }
+    }
+    public boolean peerRootDesiredStopRequested()throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();EmbeddedDuplexOriginals.Record actual=EmbeddedDuplexOriginals.capture();
+            return actual==null || !"reestablish_peer_roots".equals(actual.row.getString("operation")) || actual.desiredStop.get();
+        }
+    }
+    public String freshSetupPhysicalEligibilityJson()throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();return EmbeddedDuplexProcessHost.freshPhysical(this,null,false).toString();
+        }
+    }
+    public String freshSetupPhysicalRetirementJson(String originalBindingJson)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();return EmbeddedDuplexProcessHost.freshPhysical(this,new JSONObject(originalBindingJson),true).toString();
+        }
+    }
+    public String persistFreshSetupClosure(String exactJson)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();
+            return new EmbeddedDuplexFreshClosure(EmbeddedDuplexProcessHost.application()).retain(exactJson,
+                EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+        }
+    }
+    public String persistNativeConstructionRetirement(String exactJson)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();
+            JSONObject actual=EmbeddedDuplexProcessHost.constructionPhysical(this);
+            return new EmbeddedDuplexConstructionClosure(EmbeddedDuplexProcessHost.application()).retain(exactJson,actual);
+        }
+    }
+    public String persistFreshOwnerRetirement(String exactJson)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();EmbeddedDuplexFreshOwnerClosure store=new EmbeddedDuplexFreshOwnerClosure(EmbeddedDuplexProcessHost.application());
+            JSONObject body=new JSONObject(exactJson);boolean prepared="rusty.quest.embedded_duplex.fresh_owner_retirement_closure.v2".equals(body.getString("$schema"));
+            if(prepared)requirePreparedWholeClosure(body,store.retainedExact(exactJson));
+            String ack=store.retain(exactJson,EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+            if(prepared)synchronized(this){preparedStart=null;incomingPreparedRemote=null;incomingPreparedLocal=null;notifyAll();}
+            return ack;
+        }
+    }
+    public String loadFreshSetupClosure()throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();String pending=new EmbeddedDuplexFreshClosure(EmbeddedDuplexProcessHost.application()).load();
+            String terminal=new EmbeddedDuplexFreshOwnerClosure(EmbeddedDuplexProcessHost.application()).load();
+            // Both tagged stores are read/validated, even if one already fences bootstrap.
+            String construction=new EmbeddedDuplexConstructionClosure(EmbeddedDuplexProcessHost.application()).load();
+            String unknownRoot=new EmbeddedDuplexUnknownPeerRootCustody(EmbeddedDuplexProcessHost.application()).load();
+            return !pending.equals("{}")?pending:!terminal.equals("{}")?terminal:!construction.equals("{}")?construction:unknownRoot;
+        }
     }
     private static final int MAX_REPLAY_BYTES = 16 * 1024 * 1024;
     private final EmbeddedDuplexIdentity.Identity identity;
@@ -55,7 +237,234 @@ final class EmbeddedDuplexPlatform {
     private volatile PackagedAndroidMediaOwnerRegistry registry;
     private volatile OwnerDispatchTcpEndpoint endpoint;
     private volatile EmbeddedDuplexResources resources;
+    private volatile EmbeddedDuplexPreparedStart preparedStart;
+    private volatile Throwable preparedReservationFailure;
+    private volatile boolean incomingPreparedDesiredStop;
+    private String incomingPreparedRemote,incomingPreparedLocal;
+    private final java.util.Set<OwnerDispatchTcpEndpoint.RequestSpan> incomingPreparedSpans=java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private JSONObject lastPreparedArchiveAck;
+    private String lastPreparedArchiveId;
+    void requestIncomingPreparedStop(){
+        incomingPreparedDesiredStop=true;
+        EmbeddedDuplexPreparedStart held=preparedStart;
+        if(held!=null)try{held.requestStopOwned();EmbeddedDuplexNative.requestPreparedPeerStartStop(held.originalId());}catch(Exception retained){/* No outcome inferred. */}
+        synchronized(this){notifyAll();}
+    }
+    public boolean incomingPreparedStartStopRequested()throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();OwnerDispatchTcpEndpoint.RequestSpan span=OwnerDispatchTcpEndpoint.currentRequestSpan();
+            return incomingPreparedDesiredStop||span==null||endpoint==null||!endpoint.ownsRequestSpan(span)||span.stopRequested();
+        }
+    }
+    public void bindIncomingPreparedPeerStart(String remote,String local)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();if(!remote.matches("[0-9a-f]{32}")||!local.matches("[0-9a-f]{32}"))throw new IllegalStateException("actual prepared incoming IDs differ");
+            OwnerDispatchTcpEndpoint.RequestSpan span=OwnerDispatchTcpEndpoint.currentRequestSpan();
+            if(span==null||endpoint==null||!endpoint.ownsRequestSpan(span))throw new IllegalStateException("actual prepared request span absent");
+            synchronized(this) {
+                boolean warned=false;
+                while(preparedStart==null) {
+                    if(incomingPreparedDesiredStop||span.stopRequested()||preparedReservationFailure!=null)throw new IllegalStateException("actual local prepared reservation ended");
+                    wait(1000L);if(!warned){warned=true;try{android.util.Log.w("RQSpatialCameraPanel","same incoming prepared request awaits actual local holder");}catch(RuntimeException ignoredWarning){}}
+                }
+                if(!preparedStart.id().equals(local)||incomingPreparedDesiredStop||span.stopRequested())throw new IllegalStateException("actual incoming prepared owner superseded");
+                if(incomingPreparedLocal!=null&&(!local.equals(incomingPreparedLocal)||!remote.equals(incomingPreparedRemote)))throw new IllegalStateException("prepared incoming group cannot rebind");
+                incomingPreparedLocal=local;incomingPreparedRemote=remote;
+                incomingPreparedSpans.removeIf(OwnerDispatchTcpEndpoint.RequestSpan::terminal);incomingPreparedSpans.add(span);
+            }
+        }
+    }
+    boolean preparedIncomingTasksJoined(){incomingPreparedSpans.removeIf(OwnerDispatchTcpEndpoint.RequestSpan::terminal);return incomingPreparedSpans.isEmpty();}
+    public String peerStartPreparationEligibilityJson()throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();return EmbeddedDuplexProcessHost.preparedStartEligibility(this).toString();
+        }
+    }
+    public String abortPeerStartResources(String exactRequest)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();EmbeddedDuplexPreparedStart held=preparedStart;
+            if(held==null)throw new IllegalStateException("actual prepared abort owner absent");return held.abort(new JSONObject(exactRequest)).toString();
+        }
+    }
+    public String archiveCompletedPreparedPeerStart(String exactBody)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();EmbeddedDuplexPreparedStart held=preparedStart;
+            if(held==null)return new EmbeddedDuplexPreparedArchive(EmbeddedDuplexProcessHost.application())
+                .retainedExact(exactBody,EmbeddedDuplexProcessHost.freshClosureIdentity(this),lastPreparedArchiveAck).toString();
+            if(!preparedIncomingTasksJoined())throw new IllegalStateException("actual old prepared handlers remain live");
+            JSONObject ack=new EmbeddedDuplexPreparedArchive(EmbeddedDuplexProcessHost.application()).retain(exactBody,EmbeddedDuplexProcessHost.freshClosureIdentity(this),held);
+            synchronized(this) {
+                if(preparedStart!=held)throw new IllegalStateException("prepared archive owner changed");
+                lastPreparedArchiveAck=ack;lastPreparedArchiveId=held.id();
+                preparedStart=null;incomingPreparedRemote=null;incomingPreparedLocal=null;notifyAll();
+            }
+            return ack.toString();
+        }
+    }
+    void requirePreparedMetadataResult(JSONObject result)throws Exception {
+        EmbeddedDuplexPeerRoots.keys(result,"$schema","app_process_generation","app_record_sha256","native_executor_generation","config_sha256","preparation_id","archive_cursor","metadata_retired","physical_cleanup_claimed");
+        if(!"rusty.quest.embedded_duplex.prepared_peer_start_metadata_retirement.v1".equals(result.getString("$schema"))
+            ||!Boolean.TRUE.equals(result.get("metadata_retired"))||!Boolean.FALSE.equals(result.get("physical_cleanup_claimed"))
+            ||!java.util.Objects.equals(lastPreparedArchiveId,result.getString("preparation_id")))throw new IllegalStateException("prepared metadata result differs");
+        EmbeddedDuplexPeerRoots.identity(result,EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+        JSONObject cursor=result.getJSONObject("archive_cursor");EmbeddedDuplexPeerRoots.keys(cursor,"$schema","ordinal","last","history_sha256");
+        if(!"rusty.quest.embedded_duplex.prepared_start_archive_cursor.v1".equals(cursor.getString("$schema"))
+            ||cursor.getLong("ordinal")<=0||!cursor.getString("history_sha256").matches("sha256:[0-9a-f]{64}")
+            ||lastPreparedArchiveAck==null||!EmbeddedDuplexCanonicalJson.sameValue(cursor.getJSONObject("last"),lastPreparedArchiveAck))
+            throw new IllegalStateException("actual prepared archive ACK differs");
+    }
+    public String peerStartResourceTargetJson()throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();return EmbeddedDuplexProcessHost.preparedStartTarget(this).toString();
+        }
+    }
+    public String preparePeerStartResources(String exactRequest)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();JSONObject request=new JSONObject(exactRequest);
+            EmbeddedDuplexPreparedStart actual;
+            try {actual=EmbeddedDuplexProcessHost.reservePreparedStart(this,request);}
+            catch(Exception failure){preparedReservationFailure=failure;synchronized(this){notifyAll();}throw failure;}
+            synchronized(this){if(preparedStart!=null)throw new IllegalStateException("actual prepared owner already retained");preparedStart=actual;preparedReservationFailure=null;notifyAll();}
+            return actual.sender().toString();
+        }
+    }
+    public String preparePeerStartDecoder(String executionJson)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();JSONObject execution=new JSONObject(executionJson);
+            EmbeddedDuplexPeerRoots.keys(execution,"$schema","request","decoder");
+            if(!"rusty.quest.android.media.prepared_decoder_execution.v1".equals(execution.getString("$schema")))
+                throw new IllegalStateException("closed prepared decoder execution differs");
+            EmbeddedDuplexPreparedStart held=preparedStart;if(held==null)throw new IllegalStateException("actual prepared sender owner absent");
+            held.requireRequest(execution.getJSONObject("request"));return held.decoder(execution.getJSONObject("decoder")).toString();
+        }
+    }
+    public String preparedPeerStartStatusJson(String preparationId)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();EmbeddedDuplexPreparedStart held=preparedStart;
+            if(held==null)throw new IllegalStateException("actual prepared owner absent");return held.status(preparationId).toString();
+        }
+    }
+    boolean hasPreparedPeerStart(){return preparedStart!=null;}
+    boolean gatedPreparedCleanupCandidate(){EmbeddedDuplexPreparedStart held=preparedStart;return held!=null&&held.gatedCleanupCandidate();}
+    void requirePreparedWholeClosure(JSONObject body,boolean alreadyRetained)throws Exception {
+        EmbeddedDuplexProcessHost.requireCurrentWholeNativeClosure(this,body);
+        EmbeddedDuplexPreparedStart held=preparedStart;
+        if(held==null){if(!alreadyRetained)throw new IllegalStateException("actual whole-close prepared holder absent");}
+        else held.requireWholeClosure(body);
+        if(!preparedIncomingTasksJoined())throw new IllegalStateException("actual whole-close prepared handlers remain live");
+        EmbeddedDuplexOriginals.forApplication(EmbeddedDuplexProcessHost.application())
+            .requirePreparedWholeClosure(body.getJSONObject("prepared_start").getJSONObject("status"),EmbeddedDuplexProcessHost.freshClosureIdentity(this));
+    }
+    boolean preparedPeerStartReady(){EmbeddedDuplexPreparedStart held=preparedStart;return held!=null&&held.ready();}
+    JSONObject preparedPeerPhysicalStatus()throws Exception {
+        EmbeddedDuplexPreparedStart held=preparedStart;
+        if(held==null||!held.ready())return null;
+        JSONObject actual=held.status(held.id());
+        if(!java.util.Arrays.asList("decoder_ready","ready").contains(actual.getString("state"))
+            ||!actual.getBoolean("delivery_gate_closed"))return null;
+        return actual; // Exact retained source-owned registry8. No terminal/Native authority assertion.
+    }
+    void requirePreparedNativeStatus(JSONObject receipt,boolean ready)throws Exception {
+        EmbeddedDuplexPreparedStart held=preparedStart;if(held==null)throw new IllegalStateException("actual prepared registry owner absent");
+        held.requireNativeStatus(receipt,ready);
+    }
+    private void stopPreparedOriginal(EmbeddedDuplexOriginals.Record actual) {
+        EmbeddedDuplexPreparedStart held=preparedStart;if(held!=null&&held.ownedBy(actual))held.requestStop(actual);
+    }
     private volatile EmbeddedDuplexActivationGate activationGate;
+    private final java.util.concurrent.ConcurrentHashMap<OwnerDispatchTcpEndpoint.ExchangeControl,OwnedExchange> ownedExchanges=new java.util.concurrent.ConcurrentHashMap<>();
+    private static final class OwnedExchange {
+        final EmbeddedDuplexOriginals.Record original;final String frameSha,nativeRequestId;final JSONObject actor;
+        final OwnerDispatchTcpEndpoint.RequestSpan incomingSpan;
+        final java.net.InetAddress endpoint;final int port;
+        OwnedExchange(EmbeddedDuplexOriginals.Record original,OwnerDispatchTcpEndpoint.RequestSpan incomingSpan,String frameSha,String nativeRequestId,JSONObject actor,java.net.InetAddress endpoint,int port){
+            this.incomingSpan=incomingSpan;this.original=original;this.frameSha=frameSha;this.nativeRequestId=nativeRequestId;this.actor=actor;this.endpoint=endpoint;this.port=port;
+        }
+    }
+    String signalOriginalStop(EmbeddedDuplexOriginals.Record actual)throws Exception{
+        if(actual==null)throw new IllegalStateException("actual Stop owner absent");actual.desiredStop.set(true);
+        stopPreparedOriginal(actual);
+        String nativeId=EmbeddedDuplexOriginals.nativeSetupRequestId(actual);
+        try{return "prepare_peer_start".equals(actual.row.getString("operation"))
+            ?EmbeddedDuplexNative.requestPreparedPeerStartStop(actual.id()): "reestablish_peer_roots".equals(actual.row.getString("operation"))
+            ?EmbeddedDuplexNative.requestPeerRootStop(actual.id()):nativeId==null?null:EmbeddedDuplexNative.requestFreshSetupStop(nativeId);}
+        finally{
+            for(java.util.Map.Entry<OwnerDispatchTcpEndpoint.ExchangeControl,OwnedExchange> entry:ownedExchanges.entrySet())
+                if(entry.getValue().original==actual)entry.getKey().requestStop();
+        }
+    }
+    boolean originalExchangesJoined(EmbeddedDuplexOriginals.Record actual){
+        for(OwnedExchange held:ownedExchanges.values())if(held.original==actual)return false;return true;
+    }
+    void requestDesiredStop(EmbeddedDuplexOriginals.Record actual){
+        if(actual==null)return;actual.desiredStop.set(true);
+        stopPreparedOriginal(actual);
+        try {
+            String operation=actual.row.getString("operation");
+            if("reestablish_peer_roots".equals(operation))EmbeddedDuplexNative.requestPeerRootStop(actual.id());
+            if("prepare_peer_start".equals(operation))EmbeddedDuplexNative.requestPreparedPeerStartStop(actual.id());
+        }catch(Exception retained){/* Actual Original remains uncertain; no success or cleanup inferred. */}
+        String nativeId=null;
+        try{nativeId=EmbeddedDuplexOriginals.nativeSetupRequestId(actual);}
+        catch(Exception retained){/* Missing proof never becomes another target. */}
+        if(nativeId!=null)try{EmbeddedDuplexNative.requestFreshSetupStop(nativeId);}catch(Throwable retained){/* Original retains actual uncertainty. */}
+        for(java.util.Map.Entry<OwnerDispatchTcpEndpoint.ExchangeControl,OwnedExchange> entry:ownedExchanges.entrySet())
+            if(entry.getValue().original==actual)entry.getKey().requestStop();
+    }
+    private volatile String incomingFreshRequestId;
+    private volatile boolean incomingFreshDesiredStop;
+    private final EmbeddedDuplexIncomingFreshPhases incomingPhases=new EmbeddedDuplexIncomingFreshPhases();
+    public void assertIncomingFreshSetupInitialAllowed(String nativeId,String phaseId)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();EmbeddedDuplexProcessHost.requireIncomingFreshActor(this);
+            EmbeddedDuplexIncomingFreshPhases.id(nativeId);EmbeddedDuplexIncomingFreshPhases.id(phaseId);
+            OwnerDispatchTcpEndpoint.RequestSpan actual=OwnerDispatchTcpEndpoint.currentRequestSpan();
+            if(endpoint==null || !endpoint.ownsRequestSpan(actual))throw new IllegalStateException("actual verified initial request span absent");
+            if(!nativeId.equals(phaseId) || incomingFreshDesiredStop)throw new IllegalStateException("actual initial phase/Stop differs");
+            if(new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application())
+                    .archivedIncoming(nativeId,phaseId,EmbeddedDuplexProcessHost.freshClosureIdentity(this)))
+                throw new IllegalStateException("actual archived incoming initial cannot mutate history");
+            incomingPhases.assertNotArchivedOrFenced(nativeId,phaseId);
+            // Readonly preflight only: no registration/adoption/authority grant.
+        }
+    }
+    public void bindIncomingFreshSetupPhase(String nativeId,String priorPhaseId,String phaseId,String purpose)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();EmbeddedDuplexProcessHost.requireIncomingFreshActor(this);
+            if(incomingFreshDesiredStop)throw new IllegalStateException("actual incoming fresh desired Stop");
+            if("initial".equals(purpose) && new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application())
+                    .archivedIncoming(nativeId,phaseId,EmbeddedDuplexProcessHost.freshClosureIdentity(this)))
+                throw new IllegalStateException("actual archived incoming initial phase cannot replay");
+            if("initial_preparation".equals(purpose) && new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application())
+                    .archivedIncoming(nativeId,nativeId,EmbeddedDuplexProcessHost.freshClosureIdentity(this)))
+                throw new IllegalStateException("archived first preparation root cannot replay");
+            incomingPhases.bind(endpoint,nativeId,priorPhaseId,phaseId,purpose);incomingFreshRequestId=nativeId;
+        }
+    }
+    void requestIncomingFreshStop(){
+        String actual;
+        synchronized(this){incomingFreshDesiredStop=true;actual=incomingFreshRequestId;}
+        try{if(actual!=null)EmbeddedDuplexNative.requestFreshSetupStop(actual);}catch(Throwable retained){}
+        finally{for(java.util.Map.Entry<OwnerDispatchTcpEndpoint.ExchangeControl,OwnedExchange> entry:ownedExchanges.entrySet()){
+            OwnedExchange held=entry.getValue();
+            if(held.original==null && actual!=null && actual.equals(held.nativeRequestId) && held.incomingSpan!=null)entry.getKey().requestStop();
+        }}
+    }
+    synchronized boolean incomingFreshBindingCurrent(String actual){return actual!=null && actual.equals(incomingFreshRequestId);}
+    synchronized boolean completedSetupIncomingJoined(String nativeId){
+        return nativeId.equals(incomingPhases.currentNativeId()) && incomingFreshTaskJoined(nativeId);
+    }
+    synchronized boolean incomingFreshTaskJoined(String actual){
+        return incomingFreshBindingCurrent(actual) && incomingFreshTasksJoined();
+    }
+    private boolean incomingFreshTasksJoined(){return incomingPhases.allTerminal(incomingFreshRequestId);}
+    synchronized boolean incomingSetupTasksJoinedFor(String nativeRequestId)throws Exception{
+        if(endpoint==null || nativeRequestId==null)throw new IllegalStateException("continuation endpoint source absent");
+        for(OwnedExchange held:ownedExchanges.values())if(held.incomingSpan!=null && nativeRequestId.equals(held.nativeRequestId))return false;
+        return incomingPhases.admissionFor(nativeRequestId);
+    }
+    boolean incomingAdmissionQuiescent(){OwnerDispatchTcpEndpoint actual=endpoint;return actual!=null && actual.requestsQuiescent();}
+    boolean actualOutboundExchangesJoined(){return ownedExchanges.isEmpty();}
 
     EmbeddedDuplexPlatform(Context context, EmbeddedDuplexDisplay display,
             EmbeddedDuplexIdentity.Identity identity, String localPeerId, String remotePeerId,
@@ -221,11 +630,14 @@ final class EmbeddedDuplexPlatform {
         return ProviderReason.INCOMING_ARM_UNAVAILABLE;
     }
     public String ownerFailureDiagnostic() throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         return new JSONObject().put("stage", failedOwnerStage.name())
                 .put("sink_stage", failedSinkStage).put("action", failedOwnerAction)
                 .put("provider_reason", failedProviderReason.name()).put("owner", failedOwnerKind)
                 .put("cause", failedCause).put("code", failedOwnerStage == OwnerStage.NONE
                         ? "NONE" : "OWNER_EFFECT_REJECTED").toString();
+
+        }
     }
     // Separate bounded observation. Never replace the first failure or affect dispatch admission.
     private static final long MAX_ATTEMPT_SEQUENCE = 9_007_199_254_740_991L;
@@ -237,12 +649,15 @@ final class EmbeddedDuplexPlatform {
     private ProviderReason latestAttemptReason = ProviderReason.NONE;
 
     public synchronized String ownerLatestAttemptDiagnostic() throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         return new JSONObject().put("attempt_sequence", latestAttemptSequence)
                 .put("outcome", latestAttemptOutcome).put("compensate", latestAttemptCompensate)
                 .put("stage", latestAttemptStage.name()).put("action", latestAttemptAction)
                 .put("owner", latestAttemptOwner).put("cause", latestAttemptCause)
                 .put("provider_reason", latestAttemptReason.name()).toString();
+
+        }
     }
     private synchronized long beginLatestAttempt(boolean compensate) {
         if (latestAttemptSequence == MAX_ATTEMPT_SEQUENCE) {
@@ -280,6 +695,7 @@ final class EmbeddedDuplexPlatform {
                 ? failureCategory(failure) : "NONE";
     }
     public String executeAndVerify(String authorityJson, String ticketJson, boolean compensate) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         final long attempt = beginLatestAttempt(compensate);
         OwnerStage stage = OwnerStage.CALLBACK_FENCE;
         MediaOwnerAction ticket = null;
@@ -345,6 +761,8 @@ final class EmbeddedDuplexPlatform {
                     + " code=OWNER_EFFECT_REJECTED");
             throw failure;
         }
+
+        }
     }
 
     // Diagnostic only; invoked by the catch before the original exception is rethrown.
@@ -371,40 +789,81 @@ final class EmbeddedDuplexPlatform {
     // Public visibility is required by the native ProductActivationRegistry callback.
     public String activateProduct(String activationId, String authorityJson, String proofJson)
             throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         EmbeddedDuplexActivationGate gate = activationGate;
         if (gate == null || resources == null) throw new IllegalStateException("resources absent");
         return gate.activate(activationId, authorityJson, proofJson);
+
+        }
     }
 
     public byte[] signAuthorityBytes(byte[] exactNativeBytes) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         return EmbeddedDuplexIdentity.signExactAuthorityBytes(identity, exactNativeBytes);
+
+        }
     }
 
     // Native calls this only after current route, enrollment, endpoint and time
     // validation. The generic dispatch signer cannot sign this domain.
     public byte[] signValidatedCommonLanBytes(byte[] validatedNativeBytes) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         return EmbeddedDuplexIdentity.signValidatedCommonLanBytes(identity, validatedNativeBytes);
+
+        }
     }
 
     public byte[] signPairCeremonyBytes(byte[] exactNativeBytes) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         return EmbeddedDuplexIdentity.signPairCeremonyBytes(identity, exactNativeBytes);
+
+        }
     }
 
+    public byte[] signValidatedFreshPairSetupBytes(byte[] bytes)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
+            requireProcessCallback();
+            return EmbeddedDuplexIdentity.signValidatedFreshPairSetupBytes(identity,bytes);
+        }
+    }
+    public byte[] signValidatedFreshPhasePrepareBytes(byte[] bytes)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
+            requireProcessCallback();return EmbeddedDuplexIdentity.signValidatedFreshPhasePrepareBytes(identity,bytes);
+        }
+    }
+    public byte[] signPreparedPeerStartFrameBytes(byte[] bytes)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();return EmbeddedDuplexIdentity.signPreparedPeerStartFrameBytes(identity,bytes);
+        }
+    }
+    public byte[] signFreshPairSetupFrameBytes(byte[] bytes)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
+            requireProcessCallback();
+            return EmbeddedDuplexIdentity.signFreshPairSetupFrameBytes(identity,bytes);
+        }
+    }
     public byte[] localPublicKeyBytes() {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         return identity.rawPublicKey();
+
+        }
     }
 
     private final OwnerTransportAttempt transportAttempt = new OwnerTransportAttempt();
     public String ownerTransportAttemptDiagnostic() {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         return transportAttempt.snapshot();
+
+        }
     }
     public byte[] exchangeOwnerFrame(String targetPeerId, byte[] exactFrame) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         final long attempt = transportAttempt.begin();
         try {
             requireProcessCallback();
@@ -416,13 +875,35 @@ final class EmbeddedDuplexPlatform {
                     OwnerDispatchTcpEndpoint.Outcome.FAILED, OwnerDispatchTcpEndpoint.Failure.TARGET_UNAVAILABLE);
             throw failure;
         }
-        return OwnerDispatchTcpEndpoint.exchange(remoteControlAddress, remoteControlPort, exactFrame,
-                (phase, outcome, failure) -> transportAttempt.observe(attempt, phase, outcome, failure));
+        EmbeddedDuplexOriginals.Record actual=EmbeddedDuplexOriginals.capture();
+        OwnerDispatchTcpEndpoint.ExchangeObserver observer=(phase,outcome,failure)->transportAttempt.observe(attempt,phase,outcome,failure);
+        OwnerDispatchTcpEndpoint.RequestSpan incoming=null;String nativeId;
+        if(actual==null){
+            synchronized(this){
+                OwnerDispatchTcpEndpoint.RequestSpan current=OwnerDispatchTcpEndpoint.currentRequestSpan();
+                if(current!=null && endpoint!=null && endpoint.ownsRequestSpan(current) && incomingPhases.contains(current))incoming=current;
+                nativeId=incoming==null?null:incomingFreshRequestId;
+            }
+            if(incoming==null)return OwnerDispatchTcpEndpoint.exchange(remoteControlAddress,remoteControlPort,exactFrame,observer);
+        }else nativeId=EmbeddedDuplexOriginals.nativeSetupRequestId(actual);
+        OwnerDispatchTcpEndpoint.ExchangeControl control=new OwnerDispatchTcpEndpoint.ExchangeControl();
+        String frameSha=EmbeddedDuplexCanonicalJson.sha256Bytes(exactFrame);
+        OwnedExchange held=new OwnedExchange(actual,incoming,frameSha,nativeId,EmbeddedDuplexProcessHost.freshClosureIdentity(this),remoteControlAddress,remoteControlPort);
+        ownedExchanges.put(control,held);
+        if(actual!=null?actual.desiredStop.get():incomingFreshDesiredStop)control.requestStop();
+        try{return OwnerDispatchTcpEndpoint.exchangeOwned(remoteControlAddress,remoteControlPort,exactFrame,observer,control);}
+        finally{
+            if(!control.joined().isDone())throw new IllegalStateException("actual outbound exchange not joined");
+            ownedExchanges.remove(control,held);
+        }
+
+        }
     }
 
     /** Fixed native v2 callback; target identity is preserved independently of requester. */
     public String executeRetainedCleanupAndVerify(String authorityJson, String ticketJson,
             boolean compensate) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         final long attempt = beginLatestAttempt(compensate);
         OwnerStage stage = OwnerStage.CALLBACK_FENCE;
         OwnerStage diagnosticStage = stage;
@@ -488,39 +969,59 @@ final class EmbeddedDuplexPlatform {
             recordOwnerFailure(stage, ticket, failure);
             throw failure;
         }
+
+        }
     }
 
     public synchronized void persistCleanupPreparations(String snapshotJson) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         persistReplay(cleanupPreparationsFile, snapshotJson);
+
+        }
     }
     public synchronized String loadCleanupPreparations() throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         if (!cleanupPreparationsFile.getBaseFile().exists()
                 && !new File(cleanupPreparationsFile.getBaseFile().getPath() + ".bak").exists()) {
             return "{\"originals\":{},\"prepared\":{}}";
         }
         return loadReplay(cleanupPreparationsFile);
+
+        }
     }
 
     public synchronized void persistRetainedCleanupReplay(String snapshotJson) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         persistReplay(retainedCleanupReplayFile, snapshotJson);
+
+        }
     }
 
     public synchronized String loadRetainedCleanupReplay() throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         return loadReplay(retainedCleanupReplayFile);
+
+        }
     }
 
     public synchronized void persistDispatchReplay(String snapshotJson) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         persistReplay(replayFile, snapshotJson);
+
+        }
     }
 
     public synchronized void persistActivationReplay(String snapshotJson) throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         requireProcessCallback();
         persistReplay(activationReplayFile, snapshotJson);
+
+        }
     }
 
     private void persistReplay(AtomicFile file, String snapshotJson) throws Exception {
@@ -545,7 +1046,10 @@ final class EmbeddedDuplexPlatform {
     synchronized String loadDispatchReplay() throws Exception { return loadReplay(replayFile); }
 
     public synchronized String loadActivationReplay() throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease callback=enterProcessCallback()){
         return loadReplay(activationReplayFile);
+
+        }
     }
 
     private String loadReplay(AtomicFile file) throws Exception {

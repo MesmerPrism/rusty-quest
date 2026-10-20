@@ -743,3 +743,142 @@ and bootstrap observations remain observations rather than media authority.
 Focused host controls exercise the production readiness state and the source
 starter with modeled renderer/OS effects. Android compilation and actual camera,
 GPU, display and bilateral media behavior require their own package/device proof.
+## SourceBound root re-establishment
+
+The opted-in SourceBound fresh policy selects an actual ongoing Peer owner and
+registers its root issuer against the exact packaged media client grant and outer
+lease during pristine construction. The fixed `reestablish_peer_roots` command
+accepts `{}` only and executes as a new retained operator Original.
+`peer_root_status` is read-only and returns actual independent grant/control
+lease/Runtime Host lease facts. A status read supplies no media rights.
+
+Physical ARM binds the current process, configuration and renderer lineage; it
+is separate from current Broker or pair authority. A late physical ARM does not
+make an expired root current. Establish a genuine fresh pair first, re-establish
+any expired retained Active roots through their actual owners, then run the full
+current media-admission checks. The operation supports actual NeverStarted and
+genuine terminal normal Peer Stop lifetimes while independent Own preview
+remains live. Pending Start, renewal, fresh phase, unresolved owner work,
+revocation, source loss or a changed actor/config/ARM refuses.
+
+Each root component that remains current is preserved exactly. Only expired
+retained Active components change, with explicit new owner receipts; at least
+one change is required. The old expiry, prior receipts, lifetime counters and
+Original outcomes remain retained. No re-ARM, bootstrap, authority clone or
+capability expansion occurs. Explicit DesiredStop latches only the exact entered
+root Original, without a HostLease or second media writer. It is checked before
+plan and immediately before commit admission; Stop after that boundary does not
+rewrite an entered result or claim physical cleanup.
+
+A successful constructor retains its exact runtime-configuration binding. Partial
+construction is a separate retained-owner cleanup journal; an absent Host or
+missing successful-constructor receipt is never proof that no resources/floor
+were created. The distinct partial-construction owner protocol must account and
+join those obligations before cleanup certification.
+
+The inherited pair/session 235-second and credential/root 300-second windows are
+actual strict validity policies, with no functional duration rationale
+established by this change. Pre-Start recovery does not cover authority expiring
+inside an already-entered SDK/resource wait. That path needs owned resource
+preparation before final time-bound admission/activation, and cannot be claimed
+complete from warning-only waits or a successful ARM.
+
+
+## Resource preparation before final media admission
+
+The selected SourceBound ongoing product uses the explicit retained
+`prepare_peer_start` operation on both actual peers before final pair/root/media
+admission. It owns one nonclone resource reservation before any fallible SDK
+callback. The constructor-bound target records the actual product owner rows,
+runtime specifications, source dimensions, actor and ARM. It is not an SDK-ready
+receipt. Actual encoder output format/CSD, dormant decoder startup and dormant
+renderer allocation are earned separately. All outgoing packet/header delivery
+and incoming projection delivery remain gated. Independent Own preview may
+remain live; a prepared Peer owner is not falsely reported as terminal absence.
+
+RQPS1 signs the actual ready-stage metadata under a dedicated SourceBound
+domain, current immutable selected keys/source, reciprocal target and explicit
+Stop fences. Audit timestamps remain real and nonfuture; there is no estimated
+age or setup-expiry window. The metadata grants no media authority. A verified
+incoming frame waits for a genuine counterpart local reservation without
+auto-creating SDK resources or holding a Native HostLease across that wait.
+Every handler remains owned and joins on explicit Stop. An old consumed or
+terminal preparation cannot answer a new cycle's view as a fresh reservation.
+
+After both preparations finish, establish the actual current bilateral pair,
+re-establish expired retained Active Broker roots where required, and perform
+the complete current media admission. Ordinary signed expiry, revocation,
+route/source, floor and exact actor checks remain strict. Start consumes the
+same prepared local resource owner once; opposite-direction activation is a
+separate owned effect. Ready resources do not authorize a second Start or
+replay an UNKNOWN Original. The first real decoded-frame AHB import is inherent
+later frame work, not a prewarm readiness claim. The inherited validity
+durations remain explicit unresolved policy choices; this staging change does
+not establish their functional rationale or waive later currentness checks.
+
+SDK entry without a returned receipt remains UNKNOWN with the actual owner
+retained. `abort_prepared_peer_start` closes and joins that exact SDK owner; it
+does not infer absence or repeat the effect. Completed Stop and explicit abort
+metadata transfer to immutable app-owned durable custody before a new resource
+reservation replaces the old slot. The old Original outcome remains unchanged.
+Whole-close can transfer a current cleanup abort without claiming the executing
+cleanup Original has already succeeded. Normal media whole-close uses the
+versioned full owner-closure custody before dropping its last actual gate.
+Only the fixed retained whole-close continuation may resume an interrupted
+closing handoff; ordinary operations remain fenced and Stop is not reenacted.
+
+Host controls use modeled Android SDK leaves with the actual nonclone resource
+owner and wire codec. Full bilateral Native/provider/Java Start overlap and
+Android SDK behavior require their own coordinated qualification. Syntax and
+apply checks provide no runtime, device or full-media validation credit.
+
+
+## Retained operator originals and fresh-owner retirement
+
+The selected newer debug operator transport requires an `original_id` before
+each typed effect. Challenge remains a correlation field. The app records the
+exact canonical request before invoking its existing effect handler; repeated
+identity/input observes the same retained Future/result and changed input
+refuses. Fixed `operation_query`, `operation_ack`, `operation_stop` and
+`operation_join_status` calls accept only their closed typed fields under the
+existing DUMP/shell guard. They accept no arbitrary JSON, component, path,
+native operation, role, key or authority. Readonly status calls retain their
+existing v1 projections. ACK transfers data custody; it proves no cleanup.
+
+Ordinary observer/startup/frame/dispatch estimates publish warnings while the
+same actual producer/Future remains owned. Actual signed expiry, frame identity,
+Stop, supersession, structural failure and resource bounds remain strict.
+An actual native lifecycle Pending result is retained UNKNOWN even when its
+Java Future completed. Query and estimated delay never replay an effect or
+erase its partial effects. `operation_stop` targets only that existing original
+and its owned transport; it proves no physical cleanup or remote resolution.
+
+Fresh-policy selected native lifecycle v4 and pair-status v2 are deliberate
+closed projections. Existing finite/native v1/v2/v3 field meanings remain.
+Current-operation failure causes come from the actual native producer; historical
+pair status is not substituted for that cause. A new explicit
+`fresh_pair_continue` wrapper original binds a durable joined UNKNOWN
+predecessor and the same native setup request. It is a separate effect; readonly
+query/duplicate input never continues a transaction or overwrites its outcome.
+
+Whole-app close selects its no-media route from the actual readonly native
+classifier. A no-media candidate is not final proof. Retained cleanup joins the
+actual Own camera/session/GL producer, Peer resources, renderer, control tasks,
+outbound exchanges, native retirement and app fence. Callback unregister/drain
+is asynchronous and followed by the actual command-lane marker. Native runtime
+absence does not manufacture Java ARM or physical camera absence. Per-original
+join receipts require the actual Future and publication callback to finish and
+bind the exact canonical physical retirement proof. Host/source/external capture
+joins and process EOF remain separate owners.
+
+Native completed lifetime/fresh-phase metadata moves only after fsynced,
+identity-bound custody ACKs. Heavy Java originals additionally require actual
+consumer delivery/custody and operation joins; unresolved or unconsumed originals
+cannot disappear due to elapsed time/count. Native pending fresh-authority
+closure and terminal fresh-owner retirement use distinct durable tagged stores.
+Both fence later writable bootstrap until supported same-owner reconciliation;
+neither reconstructs a pristine owner or clears replay/floor history.
+
+Host/unit/socket controls model protocol and owner boundaries only. Android/JNI,
+physical camera/GL cleanup, APK deployment, network streaming and source EOF
+require their own selected artifact and owner evidence.

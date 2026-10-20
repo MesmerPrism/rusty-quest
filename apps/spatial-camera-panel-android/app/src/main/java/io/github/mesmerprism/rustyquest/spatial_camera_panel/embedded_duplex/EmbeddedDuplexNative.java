@@ -9,6 +9,10 @@ public final class EmbeddedDuplexNative {
     public static final int ACQUIRED_TIMED_OBSERVATION_WORDS = 19;
     public static final int EFFECTIVE_TIMED_OBSERVATION_WORDS = 21;
     static { System.loadLibrary("spatial_camera_panel_native_receipt"); }
+    static native String noMediaRendererRetirementStatus();
+    static native String freshSetupRendererEligibilityStatus();
+    /** Pure crypto leaf; no runtime owner/HostLease/Manifold registry access. */
+    static native byte[] ed25519SignFreshHistoryCustody(byte[] seed,byte[] signingBytes);
     private EmbeddedDuplexNative() {}
     static native String selectLocalAfterTerminal(String expectedConfigSha256);
 
@@ -56,6 +60,11 @@ public final class EmbeddedDuplexNative {
             String providerEpochEntropyHex, String bootstrap, Object platformCallbacks);
 
     static native String runtimeCommand(String operation, String input);
+    /** Exact retained root Original Stop veto; no HostLease/second media writer. */
+    static native String requestPeerRootStop(String actualOriginalId);
+    static native String requestPreparedPeerStartStop(String actualOriginalId);
+    static native String retirePreparedPeerStartMetadata(String actualConfigSha256);
+    static native String retireUnknownPeerRootMetadata(String expectedConfigSha256);
     static native String peerLifecycle(int action);
     /** Cleanup-only continuation of an already selected whole-close; null means still Pending. */
     static native String completeRetainedWholeClose(String configSha256, long executorGeneration,
@@ -63,6 +72,13 @@ public final class EmbeddedDuplexNative {
 
     static native String ownerFailureDiagnosticRead();
     static native String closeNoMediaRuntime(String expectedConfigSha256);
+    static native String retireNeverClaimedNoMedia(Object actualAppFenceSource);
+    static native String retireUninitializedNoMedia();
+    static native String finishNoMediaRetirement(String expectedConfigSha256);
+    static native String retirePendingFreshNoMedia(String expectedConfigSha256);
+    static native String noMediaRetirementStatus();
+    static native String requestFreshSetupStop(String actualNativeRequestId);
+
 
     static native boolean processIdleForEnrollment();
 

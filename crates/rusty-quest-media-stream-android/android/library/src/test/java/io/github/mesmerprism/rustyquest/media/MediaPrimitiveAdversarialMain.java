@@ -13,6 +13,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Adversarial host checks for bounded writer and exact frame ownership primitives. */
 public final class MediaPrimitiveAdversarialMain {
     public static void main(String[] args) throws Exception {
+        retainedPumpCloseControls();
+        warningRetainsActualWriter();
         blockedWriterClosesAndTerminates();
         queueAndByteLimitsRejectWithoutRetainingCallerBuffer();
         trackerReleasesRejectedAndOutOfOrderExpiryExactlyOnce();
@@ -20,45 +22,138 @@ public final class MediaPrimitiveAdversarialMain {
         System.out.println("rusty.quest.android.media.primitive-adversarial.v1:pass");
     }
 
+    private static Thread pumpWorker(BoundedPacketPump pump) throws Exception {
+        java.lang.reflect.Field field=BoundedPacketPump.class.getDeclaredField("worker");field.setAccessible(true);
+        return (Thread)field.get(pump);
+    }
+    private static void retainedPumpCloseControls() throws Exception {
+        for (int mode=0;mode<4;mode++) {
+            GatedOutputStream output=new GatedOutputStream(mode==3);
+            BoundedPacketPump original=new BoundedPacketPump(output,1,4,4,"retained-close-control");
+            Thread worker=pumpWorker(original);AtomicInteger warnings=new AtomicInteger();
+            java.util.concurrent.atomic.AtomicReference<Throwable> invalid=new java.util.concurrent.atomic.AtomicReference<>();
+            final int selected=mode;
+            try {
+                require(original.offer(new byte[]{1}),"actual packet rejected");output.entered.await();
+                original.close(0,()->{
+                    if(original.isTerminated() || output.closeCalls.get()!=1)invalid.set(new AssertionError("warning fabricated terminal/close"));
+                    warnings.incrementAndGet();output.release.countDown();
+                    if(selected==2)Thread.currentThread().interrupt();
+                    if(selected==1)throw new IllegalStateException("deliberate warning publisher failure after release");
+                });
+                boolean interrupted=Thread.interrupted();
+                require(warnings.get()==1 && invalid.get()==null && original.isTerminated() && !worker.isAlive(),"same writer not actually joined");
+                require(interrupted==(mode==2),"actual interruption was not preserved after joining");
+                require(original.failure()==(mode==3?output.closeFailure:null),"real output close failure was lost/invented");
+            } finally { output.release.countDown();original.close();worker.join();Thread.interrupted(); }
+        }
+        GatedOutputStream failed=new GatedOutputStream(false);failed.failWrite=true;
+        BoundedPacketPump original=new BoundedPacketPump(failed,1,4,4,"actual-write-failure");
+        require(original.offer(new byte[]{1}),"failure packet rejected");failed.entered.await();failed.release.countDown();pumpWorker(original).join();
+        require(original.failure()==failed.writeFailure,"actual writer failure was not retained");original.close();
+        require(original.isTerminated() && original.failure()==failed.writeFailure && failed.closeCalls.get()==1,"close changed real failure/custody");
+        java.util.concurrent.atomic.AtomicReference<BoundedPacketPump> self=new java.util.concurrent.atomic.AtomicReference<>();
+        AtomicInteger closes=new AtomicInteger();CountDownLatch returned=new CountDownLatch(1);
+        BoundedPacketPump selfOwned=new BoundedPacketPump(new OutputStream(){
+            public void write(int value){self.get().close(0,()->{throw new AssertionError("self worker must not join/warn itself");});returned.countDown();}
+            public void close(){closes.incrementAndGet();}
+        },1,4,4,"self-close-guard");self.set(selfOwned);
+        require(selfOwned.offer(new byte[]{1}),"self packet rejected");returned.await();pumpWorker(selfOwned).join();selfOwned.close();
+        require(selfOwned.isTerminated() && closes.get()==1,"self-close invented terminal or repeated output close");
+    }
+    private static final class GatedOutputStream extends OutputStream {
+        final CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);
+        final AtomicInteger closeCalls=new AtomicInteger();
+        final IOException closeFailure=new IOException("actual modeled close failure"),writeFailure=new IOException("actual modeled writer failure");
+        final boolean failClose;boolean failWrite;
+        GatedOutputStream(boolean failed){failClose=failed;}
+        public void write(int value)throws IOException {
+            entered.countDown();try{release.await();}catch(InterruptedException actual){Thread.currentThread().interrupt();throw new IOException(actual);}
+            if(failWrite)throw writeFailure;
+        }
+        public void close()throws IOException {closeCalls.incrementAndGet();if(failClose)throw closeFailure;}
+    }
+
+    private static void warningRetainsActualWriter() throws Exception {
+        BlockingOutputStream output = new BlockingOutputStream();
+        BoundedPacketPump original = new BoundedPacketPump(output, 1, 4, 4, "warning-owned-writer");
+        long priorEstimate = estimateMilliseconds;
+        java.util.function.Consumer<String> priorWarning = warning;
+        AtomicInteger publications = new AtomicInteger();
+        try {
+            estimateMilliseconds = 0;
+            warning = message -> {
+                publications.incrementAndGet();
+                require(original.offer(new byte[] {7}), "warning could not release actual writer");
+                throw new IllegalStateException("deliberate warning sink failure after release");
+            };
+            awaitWriter(output.writeEntered, original);
+            require(publications.get() == 1 && output.firstByte == 7 && !original.isTerminated(),
+                    "warning must retain the same live writer until real entry");
+        } finally { warning = priorWarning; estimateMilliseconds = priorEstimate; original.close(); }
+        require(original.isTerminated() && output.closeCalls.get() == 1, "original writer not actually joined");
+    }
+
     private static void blockedWriterClosesAndTerminates() throws Exception {
         BlockingOutputStream output = new BlockingOutputStream();
         BoundedPacketPump pump = new BoundedPacketPump(output, 2, 8, 16,
                 "blocked-writer-test");
+        try {
         require(pump.offer(new byte[] {1}), "initial packet rejected");
-        require(output.writeEntered.await(2, TimeUnit.SECONDS), "writer never blocked");
+        awaitWriter(output.writeEntered, pump);
         long startedNs = System.nanoTime();
         pump.close();
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNs);
-        require(elapsedMs < 1500L, "close waited for its full timeout");
+        if (elapsedMs >= 1500L) warn("pump close exceeded its estimate; actual termination still required");
         require(output.closeCalls.get() == 1, "output was not closed exactly once");
         require(pump.isTerminated(), "blocked writer survived close");
         require(pump.failure() == null, "orderly close reported a write failure");
         require(!pump.offer(new byte[] {2}), "closed pump accepted a packet");
+        } finally { pump.close(); }
     }
 
     private static void queueAndByteLimitsRejectWithoutRetainingCallerBuffer() throws Exception {
         BlockingOutputStream output = new BlockingOutputStream();
         BoundedPacketPump pump = new BoundedPacketPump(output, 1, 4, 4,
                 "queue-overflow-test");
+        try {
         byte[] first = new byte[] {1};
         require(pump.offer(first), "first packet rejected");
         first[0] = 9;
-        require(output.writeEntered.await(2, TimeUnit.SECONDS), "first packet was not dequeued");
+        awaitWriter(output.writeEntered, pump);
         require(pump.offer(new byte[] {2, 3, 4, 5}), "bounded queued packet rejected");
         require(!pump.offer(new byte[] {6}), "full queue accepted another packet");
         require(!pump.offer(new byte[] {1, 2, 3, 4, 5}), "oversize packet accepted");
         pump.close();
         require(output.firstByte == 1, "pump retained the caller's mutable packet");
+        } finally { pump.close(); }
 
         BlockingOutputStream byteOutput = new BlockingOutputStream();
         BoundedPacketPump bytePump = new BoundedPacketPump(byteOutput, 2, 4, 4,
                 "queued-byte-limit-test");
+        try {
         require(bytePump.offer(new byte[] {1}), "byte-limit seed packet rejected");
-        require(byteOutput.writeEntered.await(2, TimeUnit.SECONDS),
-                "byte-limit seed packet was not dequeued");
+        awaitWriter(byteOutput.writeEntered, bytePump);
         require(bytePump.offer(new byte[] {2, 3, 4, 5}), "byte-limit packet rejected");
         require(!bytePump.offer(new byte[] {6}), "queued byte limit accepted another packet");
         bytePump.close();
+        } finally { bytePump.close(); }
+    }
+
+    private static long estimateMilliseconds = 2000;
+    private static java.util.function.Consumer<String> warning = message -> System.err.println("WARNING: " + message);
+    private static void warn(String message) {
+        try { warning.accept(message); } catch (Throwable publication) { }
+    }
+    private static void awaitWriter(CountDownLatch entered, BoundedPacketPump original) throws Exception {
+        long began = System.nanoTime(); boolean warned = false;
+        while (!entered.await(10, TimeUnit.MILLISECONDS)) {
+            if (original.failure() != null || original.isTerminated())
+                throw new AssertionError("actual writer terminated before entering", original.failure());
+            if (!warned && System.nanoTime() - began >= TimeUnit.MILLISECONDS.toNanos(estimateMilliseconds)) {
+                warned = true; warn("same actual writer has not entered yet");
+            }
+        }
     }
 
     private static void trackerReleasesRejectedAndOutOfOrderExpiryExactlyOnce() {

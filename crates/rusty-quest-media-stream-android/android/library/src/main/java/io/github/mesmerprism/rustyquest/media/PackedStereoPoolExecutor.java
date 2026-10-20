@@ -7,6 +7,10 @@ public interface PackedStereoPoolExecutor {
     Pool createForCurrentContext(int packedWidth, int height) throws Exception;
     // Control worker only, before opening cameras: waits for the previous physical capture owner.
     void awaitCameraOwnership() throws Exception;
+    default void awaitCameraOwnership(java.util.function.BooleanSupplier stopRequested) throws Exception {
+        if(stopRequested.getAsBoolean()) throw new IllegalStateException("capture stop requested");
+        awaitCameraOwnership();
+    }
     // Actual native producer-ready publication observed in the local monotonic domain.
     boolean ownImageFresh();
     interface Pool {

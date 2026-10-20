@@ -101,9 +101,12 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
 
     private void awaitIdle() throws InterruptedException {
         long remaining = TimeUnit.SECONDS.toNanos(10);
+        boolean warned = false;
         while (inFlight != 0) {
-            if (remaining <= 0L) throw new IllegalStateException("display barrier pending");
-            remaining = idle.awaitNanos(remaining);
+            if (remaining <= 0L) {
+                if (!warned) { warned = true; EmbeddedDuplexEstimate.warn("same display callbacks remain Pending"); }
+                idle.await();
+            } else remaining = idle.awaitNanos(remaining);
         }
     }
 
@@ -132,6 +135,20 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
         }
     }
 
+    @Override public java.util.concurrent.CompletableFuture<Void> activateOwnProjectionAsync(java.util.function.BooleanSupplier ownerAlive) {
+        final EmbeddedDuplexDisplay current;
+        lock.lock();
+        try {
+            if (attached == null || detaching || cleanupRunning) throw new IllegalStateException("Own activation attachment unavailable");
+            current=attached;inFlight++;
+        } finally { lock.unlock(); }
+        java.util.concurrent.CompletableFuture<Void> result;
+        try { result=current.activateOwnProjectionAsync(ownerAlive); }
+        catch(Throwable failure){ result=new java.util.concurrent.CompletableFuture<>();result.completeExceptionally(failure); }
+        return result.whenComplete((ignored,failure)->{
+            lock.lock();try { inFlight--;if(inFlight==0)idle.signalAll(); }finally { lock.unlock(); }
+        });
+    }
     @Override public long ensureLocalCaptureStopped() {
         return call(EmbeddedDuplexDisplay::ensureLocalCaptureStopped);
     }
@@ -144,6 +161,7 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
     @Override public void requestWholeProjectionStop() {
         call(display -> { display.requestWholeProjectionStop(); return null; });
     }
+    @Override public long reserveDormantPeerProjection() {return call(EmbeddedDuplexDisplay::reserveDormantPeerProjection);}
     @Override public long preparePeerProjection() {
         return call(EmbeddedDuplexDisplay::preparePeerProjection);
     }

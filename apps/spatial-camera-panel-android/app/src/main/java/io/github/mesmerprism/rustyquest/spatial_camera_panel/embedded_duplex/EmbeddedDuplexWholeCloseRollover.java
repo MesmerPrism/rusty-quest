@@ -17,6 +17,9 @@ public final class EmbeddedDuplexWholeCloseRollover {
     static boolean localLifecycleProof(JSONObject proof) throws Exception {
         String schema = proof.getString("$schema");
         if ("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(schema)) return true;
+        if (EmbeddedDuplexFreshLifecycle.SCHEMA.equals(schema)) {
+            EmbeddedDuplexFreshLifecycle.require(proof); return true;
+        }
         if (!"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3".equals(schema)) return false;
         JSONObject policy = proof.optJSONObject("ongoing_media_policy");
         return policy != null && policy.length() == 1

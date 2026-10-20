@@ -261,6 +261,14 @@ fn ongoing_v2_actual_103_coupled_cycles_across_three_renewed_media_lifetimes() {
     );
 }
 
+// Keep exclusive test phases in separate default-stack frames. The closure
+// borrows the same real owners on this test thread; it changes no protocol or
+// authority lifetime and preserves every assertion in the selected phase.
+#[inline(never)]
+fn run_coupled_test_phase(phase: impl FnOnce()) {
+    phase();
+}
+
 fn run_coupled_owner_graph_with_history_mode(
     retained_abort: bool,
     cross_authority_probe: bool,
@@ -341,6 +349,7 @@ fn run_coupled_owner_graph_with_history_mode(
     );
     runtime_config = runtime_config
         .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+                fresh_setup_local_peer_id: None,fresh_setup_enrollment_selection:None,
             ongoing_media_policy: ongoing.then(|| if generic_history {
                 rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2()
             } else { rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1() }),
@@ -693,649 +702,603 @@ fn run_coupled_owner_graph_with_history_mode(
         (projection, ticket)
     };
     if cross_authority_probe {
-        // Two independently constructed production stores, signed by actual keys.
-        let mut originals = Vec::new();
-        for (provider, authority, local, remote) in [
-            (&provider_a, &authority_a, "peer.quest-a", "peer.quest-b"),
-            (&provider_b, &authority_b, "peer.quest-b", "peer.quest-a"),
-        ] {
-            originals.push(capture_original(provider, authority, local, remote, 4200));
-        }
-        let enrollment_witnesses = originals
-            .iter()
-            .enumerate()
-            .map(|(index, original)| {
-                let (receiver, key_id, signer) = if index == 0 {
-                    (&authority_b, "key.peer.quest-a.1", &alpha)
-                } else {
-                    (&authority_a, "key.peer.quest-b.1", &beta)
-                };
-                receiver
-                    .capture_retained_original_enrollment(
-                        &original.0,
-                        &original.1,
-                        key_id,
-                        &signer.verifying_key().to_bytes(),
-                        4200,
-                    )
-                    .unwrap()
-            })
-            .collect::<Vec<_>>();
-        let initial_originals = originals.clone();
-        if renewed_probe > 0 {
-            let mut current_a = topology_a.clone();
-            let mut current_b = topology_b.clone();
-            for round in 0..renewed_probe {
-                let now = 64_000 + (round / 2) as u64 * 120_000 + (round % 2) as u64;
-                for (index, authority, current) in [
-                    (0, &authority_a, &mut current_a),
-                    (1, &authority_b, &mut current_b),
-                ] {
-                    let first = renewal_reciprocal_request(
-                        authority,
-                        &format!("request.cleanup-renew.r{round}.h{index}.credentials"),
-                        &alpha,
-                        &beta,
-                        now,
-                        (now + 20_000).min(current.expires_at_ms),
-                        10 + round as u64 * 2,
-                    );
-                    let proof = authority.apply_common_lan_reciprocal(&first, now).unwrap();
-                    assert!(
-                        proof.accepted,
-                        "round{round} peer{index} proof rejected: {:?}",
-                        proof.rejection_reason
-                    );
-                    authority
-                        .refresh_concurrent_pair_credentials(&proof, now)
-                        .unwrap();
-                    let fresh = renewal_reciprocal_request(
-                        authority,
-                        &format!("request.cleanup-renew.r{round}.h{index}.session"),
-                        &alpha,
-                        &beta,
-                        now + 1,
-                        now + 235_000,
-                        11 + round as u64 * 2,
-                    );
-                    let signed = authority
-                        .apply_common_lan_reciprocal(&fresh, now + 1)
-                        .unwrap();
-                    let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
-                    serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
-                    let mut next = proposal(&format!("cleanup-renew.r{round}.h{index}"));
-                    next.expected_authority_revision = snapshot.peer_sessions.authority_revision;
-                    next.expires_at_ms = now + 235_000;
-                    let renewal = authority
-                        .apply_common_lan_session_renewal(&next, &signed, now + 1)
-                        .unwrap();
-                    let provider = if index == 0 {
-                        &mut provider_a
+        run_coupled_test_phase(|| {
+            // Two independently constructed production stores, signed by actual keys.
+            let mut originals = Vec::new();
+            for (provider, authority, local, remote) in [
+                (&provider_a, &authority_a, "peer.quest-a", "peer.quest-b"),
+                (&provider_b, &authority_b, "peer.quest-b", "peer.quest-a"),
+            ] {
+                originals.push(capture_original(provider, authority, local, remote, 4200));
+            }
+            let enrollment_witnesses = originals
+                .iter()
+                .enumerate()
+                .map(|(index, original)| {
+                    let (receiver, key_id, signer) = if index == 0 {
+                        (&authority_b, "key.peer.quest-a.1", &alpha)
                     } else {
-                        &mut provider_b
+                        (&authority_a, "key.peer.quest-b.1", &beta)
                     };
-                    let mut clock = provider
-                        .runtime
-                        .as_ref()
+                    receiver
+                        .capture_retained_original_enrollment(
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &signer.verifying_key().to_bytes(),
+                            4200,
+                        )
                         .unwrap()
-                        .runtime
-                        .read()
-                        .unwrap()
-                        .control_lease_authority_snapshot()
-                        .clock_snapshot
-                        .clone();
-                    clock.sequence += 1;
-                    clock.wall_unix_ms = (now + 1) as i64;
-                    clock.monotonic_elapsed_ns = 1_000_000_000 + (now + 1 - 1000) * 1_000_000;
-                    let actual = provider
-                        .renew_concurrent_peer_authority(
-                            &clock,
-                            &renewal,
+                })
+                .collect::<Vec<_>>();
+            let initial_originals = originals.clone();
+            if renewed_probe > 0 {
+                let mut current_a = topology_a.clone();
+                let mut current_b = topology_b.clone();
+                for round in 0..renewed_probe {
+                    let now = 64_000 + (round / 2) as u64 * 120_000 + (round % 2) as u64;
+                    for (index, authority, current) in [
+                        (0, &authority_a, &mut current_a),
+                        (1, &authority_b, &mut current_b),
+                    ] {
+                        let first = renewal_reciprocal_request(
+                            authority,
+                            &format!("request.cleanup-renew.r{round}.h{index}.credentials"),
+                            &alpha,
+                            &beta,
+                            now,
+                            (now + 20_000).min(current.expires_at_ms),
+                            10 + round as u64 * 2,
+                        );
+                        let proof = authority.apply_common_lan_reciprocal(&first, now).unwrap();
+                        assert!(
+                            proof.accepted,
+                            "round{round} peer{index} proof rejected: {:?}",
+                            proof.rejection_reason
+                        );
+                        authority
+                            .refresh_concurrent_pair_credentials(&proof, now)
+                            .unwrap();
+                        let fresh = renewal_reciprocal_request(
+                            authority,
+                            &format!("request.cleanup-renew.r{round}.h{index}.session"),
+                            &alpha,
+                            &beta,
                             now + 1,
-                            &format!("{:02x}", 70 + index + round as usize * 2).repeat(32),
-                        )
-                        .unwrap();
-                    assert!(actual.media_authority.applied && actual.outer_lifecycle.applied);
-                    assert!(actual.admission_grant.application.applied);
-                    if let Ok(directory) = std::env::var("RQ_FINITE_ROOT_RECEIPT_TEST_OUTPUT") {
-                        std::fs::write(
-                            std::path::Path::new(&directory)
-                                .join(format!("renewal-{root_horizon_ms}-{index}-{round}.json")),
-                            serde_json::to_vec(&actual).unwrap(),
-                        )
-                        .unwrap();
-                    }
-                    assert_eq!(
-                        actual.admission_grant.binding.root_renewal_horizon_ms,
-                        root_horizon_ms
-                    );
-                    for permit in [&actual.grant_token_issue, &actual.lease_token_issue] {
-                        let token = permit.token.as_ref().unwrap();
-                        assert!(token.expires_at_ms - token.issued_at_ms <= 5000);
-                    }
-                    assert!(actual.media_authority.expires_at_ms <= now + 1 + 180000);
-                    assert!(
-                        actual.media_authority.expires_at_ms <= actual.accepted_pair.expires_at_ms
-                    );
-                    assert!(
-                        actual.media_authority.renewed_inner_lease.expires_at_ms
-                            <= now + 1 + 235000
-                    );
-
-                    assert_eq!(
-                        actual.admission_grant.binding.renewed_grant.expires_at_ms,
-                        now + 1 + root_horizon_ms
-                    );
-                    assert_eq!(actual.outer_lifecycle.outcome,rusty_manifold_broker_adapter::ManifoldBrokerControlLeaseLifecycleOutcome::AcceptedAndAdopted);
-                    assert_eq!(
-                        actual.product_adoption.prior_physical_graph_sha256,
-                        actual.product_adoption.physical_graph_sha256
-                    );
-
-                    if restart_after_prefix && round == 16 {
-                        let before = authority.snapshot_json().unwrap();
-                        let actual:rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot=serde_json::from_str(&before).unwrap();
-                        authority.restore_snapshot_json(&before).unwrap();
-                        let mut missing_release = actual.clone();
-                        let old_binding = &actual.concurrent_media_renewals[0]
-                            .prior_inner_lease
-                            .derivative_binding;
-                        missing_release
-                            .broker_lease_admissions
-                            .iter_mut()
-                            .find(|a| &a.runtime_lease.derivative_binding == old_binding)
+                            now + 235_000,
+                            11 + round as u64 * 2,
+                        );
+                        let signed = authority
+                            .apply_common_lan_reciprocal(&fresh, now + 1)
+                            .unwrap();
+                        let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
+                    serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
+                        let mut next = proposal(&format!("cleanup-renew.r{round}.h{index}"));
+                        next.expected_authority_revision =
+                            snapshot.peer_sessions.authority_revision;
+                        next.expires_at_ms = now + 235_000;
+                        let renewal = authority
+                            .apply_common_lan_session_renewal(&next, &signed, now + 1)
+                            .unwrap();
+                        let provider = if index == 0 {
+                            &mut provider_a
+                        } else {
+                            &mut provider_b
+                        };
+                        let mut clock = provider
+                            .runtime
+                            .as_ref()
                             .unwrap()
-                            .released_at_ms = None;
-                        let old_decision =
-                            &actual.concurrent_media_renewals[0].prior_media.decision_id;
-                        let mut missing_end = actual.clone();
-                        missing_end
-                            .media_sessions
-                            .sessions
-                            .iter_mut()
-                            .find(|m| &m.decision_id == old_decision)
+                            .runtime
+                            .read()
                             .unwrap()
-                            .ended_at_ms = None;
-                        let mut live_old_graph = actual.clone();
-                        live_old_graph.media_sessions.sessions.iter_mut().find(|m|&m.decision_id==old_decision).unwrap().lifecycle_status=rusty_manifold_media_session::ManifoldMediaSessionLifecycleStatus::Current;
-                        let mut pending_cleanup = actual.clone();
-                        let old_route =
-                            &actual.concurrent_media_renewals[0].prior_routes[0].grant_id;
-                        for route in &mut pending_cleanup.pair_media_routes.routes {
-                            if let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(route)=route {
+                            .control_lease_authority_snapshot()
+                            .clock_snapshot
+                            .clone();
+                        clock.sequence += 1;
+                        clock.wall_unix_ms = (now + 1) as i64;
+                        clock.monotonic_elapsed_ns = 1_000_000_000 + (now + 1 - 1000) * 1_000_000;
+                        let actual = provider
+                            .renew_concurrent_peer_authority(
+                                &clock,
+                                &renewal,
+                                now + 1,
+                                &format!("{:02x}", 70 + index + round as usize * 2).repeat(32),
+                            )
+                            .unwrap();
+                        assert!(actual.media_authority.applied && actual.outer_lifecycle.applied);
+                        assert!(actual.admission_grant.application.applied);
+                        if let Ok(directory) = std::env::var("RQ_FINITE_ROOT_RECEIPT_TEST_OUTPUT") {
+                            std::fs::write(
+                                std::path::Path::new(&directory).join(format!(
+                                    "renewal-{root_horizon_ms}-{index}-{round}.json"
+                                )),
+                                serde_json::to_vec(&actual).unwrap(),
+                            )
+                            .unwrap();
+                        }
+                        assert_eq!(
+                            actual.admission_grant.binding.root_renewal_horizon_ms,
+                            root_horizon_ms
+                        );
+                        for permit in [&actual.grant_token_issue, &actual.lease_token_issue] {
+                            let token = permit.token.as_ref().unwrap();
+                            assert!(token.expires_at_ms - token.issued_at_ms <= 5000);
+                        }
+                        assert!(actual.media_authority.expires_at_ms <= now + 1 + 180000);
+                        assert!(
+                            actual.media_authority.expires_at_ms
+                                <= actual.accepted_pair.expires_at_ms
+                        );
+                        assert!(
+                            actual.media_authority.renewed_inner_lease.expires_at_ms
+                                <= now + 1 + 235000
+                        );
+
+                        assert_eq!(
+                            actual.admission_grant.binding.renewed_grant.expires_at_ms,
+                            now + 1 + root_horizon_ms
+                        );
+                        assert_eq!(actual.outer_lifecycle.outcome,rusty_manifold_broker_adapter::ManifoldBrokerControlLeaseLifecycleOutcome::AcceptedAndAdopted);
+                        assert_eq!(
+                            actual.product_adoption.prior_physical_graph_sha256,
+                            actual.product_adoption.physical_graph_sha256
+                        );
+
+                        if restart_after_prefix && round == 16 {
+                            let before = authority.snapshot_json().unwrap();
+                            let actual:rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot=serde_json::from_str(&before).unwrap();
+                            authority.restore_snapshot_json(&before).unwrap();
+                            let mut missing_release = actual.clone();
+                            let old_binding = &actual.concurrent_media_renewals[0]
+                                .prior_inner_lease
+                                .derivative_binding;
+                            missing_release
+                                .broker_lease_admissions
+                                .iter_mut()
+                                .find(|a| &a.runtime_lease.derivative_binding == old_binding)
+                                .unwrap()
+                                .released_at_ms = None;
+                            let old_decision =
+                                &actual.concurrent_media_renewals[0].prior_media.decision_id;
+                            let mut missing_end = actual.clone();
+                            missing_end
+                                .media_sessions
+                                .sessions
+                                .iter_mut()
+                                .find(|m| &m.decision_id == old_decision)
+                                .unwrap()
+                                .ended_at_ms = None;
+                            let mut live_old_graph = actual.clone();
+                            live_old_graph.media_sessions.sessions.iter_mut().find(|m|&m.decision_id==old_decision).unwrap().lifecycle_status=rusty_manifold_media_session::ManifoldMediaSessionLifecycleStatus::Current;
+                            let mut pending_cleanup = actual.clone();
+                            let old_route =
+                                &actual.concurrent_media_renewals[0].prior_routes[0].grant_id;
+                            for route in &mut pending_cleanup.pair_media_routes.routes {
+                                if let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(route)=route {
                                 if &route.grant_id==old_route { route.cleanup_status=rusty_manifold_peer::ManifoldPairMediaRouteCleanupStatus::Pending; }
                             }
-                        }
-                        let mut altered_old_lease = actual.clone();
-                        altered_old_lease.concurrent_media_renewals[0]
-                            .renewed_inner_lease
-                            .expires_at_ms -= 1;
-                        let mut lost_middle = actual.clone();
-                        lost_middle.concurrent_media_renewals.remove(1);
-                        let mut reordered = actual.clone();
-                        reordered.concurrent_media_renewals.swap(0, 16);
-                        let mut old_graph_damage = actual.clone();
-                        old_graph_damage.concurrent_media_renewals[15]
-                            .renewed_media
-                            .accepted_at_ms += 1;
-                        for damaged in [
-                            missing_release,
-                            missing_end,
-                            live_old_graph,
-                            pending_cleanup,
-                            altered_old_lease,
-                            lost_middle,
-                            reordered,
-                            old_graph_damage,
-                        ] {
-                            assert!(
-                                authority
-                                    .restore_snapshot_json(
-                                        &serde_json::to_string(&damaged).unwrap()
-                                    )
-                                    .is_err(),
-                                "Damaged released/new-admitted graph history must fail closed"
-                            );
-                            assert_eq!(authority.snapshot_json().unwrap(), before);
-                        }
-                        println!(
+                            }
+                            let mut altered_old_lease = actual.clone();
+                            altered_old_lease.concurrent_media_renewals[0]
+                                .renewed_inner_lease
+                                .expires_at_ms -= 1;
+                            let mut lost_middle = actual.clone();
+                            lost_middle.concurrent_media_renewals.remove(1);
+                            let mut reordered = actual.clone();
+                            reordered.concurrent_media_renewals.swap(0, 16);
+                            let mut old_graph_damage = actual.clone();
+                            old_graph_damage.concurrent_media_renewals[15]
+                                .renewed_media
+                                .accepted_at_ms += 1;
+                            for damaged in [
+                                missing_release,
+                                missing_end,
+                                live_old_graph,
+                                pending_cleanup,
+                                altered_old_lease,
+                                lost_middle,
+                                reordered,
+                                old_graph_damage,
+                            ] {
+                                assert!(
+                                    authority
+                                        .restore_snapshot_json(
+                                            &serde_json::to_string(&damaged).unwrap()
+                                        )
+                                        .is_err(),
+                                    "Damaged released/new-admitted graph history must fail closed"
+                                );
+                                assert_eq!(authority.snapshot_json().unwrap(), before);
+                            }
+                            println!(
                             "ACTUAL_RESTART_HISTORY_CONTROLS peer{index} count=8 rejected=true unchanged=true"
                         );
-                    }
-                    *current = renewal.topology;
-                    if restart_after_prefix && round == 15 {
-                        // Genuine supported Stop/route completion and a fresh Start,
-                        // not a substituted digest, establish a later forward anchor.
-                        let token =
-                            |ordinal: usize| format!("{:064x}", 10_000 + index * 100 + ordinal);
-                        assert!(
-                            provider
-                                .apply_concurrent_peer_command(
-                                    QuestConcurrentPeerCommand::Stop,
-                                    c.sending_uid,
-                                    &c.package_name,
-                                    &c.signing_certificate_sha256,
-                                    now + 2,
-                                    &token(1)
-                                )
-                                .unwrap()
-                                .mutation
-                                .accepted
-                        );
-                        provider
-                            .terminate_concurrent_peer_route(false, now + 3, &token(2))
-                            .unwrap();
-                        let mut effect = None;
-                        for attempt in 0..8 {
-                            match provider.complete_media_stop_for_cleanup_typed(
-                                &identity().client_id,
-                                now + 4 + attempt,
-                            ) {
-                                Ok(value) => {
-                                    effect = value.stop_effect_receipt;
-                                    break;
-                                }
-                                Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_)) => {}
-                                Err(error) => panic!("unexpected modeled Stop failure: {error:?}"),
-                            }
                         }
-                        provider
-                            .complete_concurrent_peer_route_cleanup(
-                                &effect.unwrap(),
-                                now + 13,
-                                &token(3),
-                            )
-                            .unwrap();
-                        assert!(
+                        *current = renewal.topology;
+                        if restart_after_prefix && round == 15 {
+                            // Genuine supported Stop/route completion and a fresh Start,
+                            // not a substituted digest, establish a later forward anchor.
+                            let token =
+                                |ordinal: usize| format!("{:064x}", 10_000 + index * 100 + ordinal);
+                            assert!(
+                                provider
+                                    .apply_concurrent_peer_command(
+                                        QuestConcurrentPeerCommand::Stop,
+                                        c.sending_uid,
+                                        &c.package_name,
+                                        &c.signing_certificate_sha256,
+                                        now + 2,
+                                        &token(1)
+                                    )
+                                    .unwrap()
+                                    .mutation
+                                    .accepted
+                            );
                             provider
-                                .apply_concurrent_peer_command(
-                                    QuestConcurrentPeerCommand::Start,
-                                    c.sending_uid,
-                                    &c.package_name,
-                                    &c.signing_certificate_sha256,
-                                    now + 14,
-                                    &token(4)
+                                .terminate_concurrent_peer_route(false, now + 3, &token(2))
+                                .unwrap();
+                            let mut effect = None;
+                            for attempt in 0..8 {
+                                match provider.complete_media_stop_for_cleanup_typed(
+                                    &identity().client_id,
+                                    now + 4 + attempt,
+                                ) {
+                                    Ok(value) => {
+                                        effect = value.stop_effect_receipt;
+                                        break;
+                                    }
+                                    Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_)) => {}
+                                    Err(error) => {
+                                        panic!("unexpected modeled Stop failure: {error:?}")
+                                    }
+                                }
+                            }
+                            provider
+                                .complete_concurrent_peer_route_cleanup(
+                                    &effect.unwrap(),
+                                    now + 13,
+                                    &token(3),
                                 )
+                                .unwrap();
+                            assert!(
+                                provider
+                                    .apply_concurrent_peer_command(
+                                        QuestConcurrentPeerCommand::Start,
+                                        c.sending_uid,
+                                        &c.package_name,
+                                        &c.signing_certificate_sha256,
+                                        now + 14,
+                                        &token(4)
+                                    )
+                                    .unwrap()
+                                    .mutation
+                                    .accepted
+                            );
+                            provider
+                                .issue_concurrent_peer_route(
+                                    &id("session.peer.quest-a-b"),
+                                    now + 15,
+                                    &token(5),
+                                )
+                                .unwrap();
+                            provider
+                                .runtime
+                                .as_mut()
                                 .unwrap()
-                                .mutation
-                                .accepted
-                        );
-                        provider
-                            .issue_concurrent_peer_route(
-                                &id("session.peer.quest-a-b"),
-                                now + 15,
-                                &token(5),
-                            )
-                            .unwrap();
-                        provider
-                            .runtime
-                            .as_mut()
-                            .unwrap()
-                            .complete_media_session_action(
-                                &QuestBrokerMediaCompletionRequest {
-                                    client_id: identity().client_id,
-                                },
-                                now + 16,
-                                provider.media_owner_executor.as_mut().unwrap().as_mut(),
-                                &mut provider.next_media_execution_nonce,
-                            )
-                            .unwrap();
-                        let (local, remote) = if index == 0 {
-                            ("peer.quest-a", "peer.quest-b")
-                        } else {
-                            ("peer.quest-b", "peer.quest-a")
-                        };
-                        originals[index] =
-                            capture_original(provider, authority, local, remote, now + 17);
+                                .complete_media_session_action(
+                                    &QuestBrokerMediaCompletionRequest {
+                                        client_id: identity().client_id,
+                                    },
+                                    now + 16,
+                                    provider.media_owner_executor.as_mut().unwrap().as_mut(),
+                                    &mut provider.next_media_execution_nonce,
+                                )
+                                .unwrap();
+                            let (local, remote) = if index == 0 {
+                                ("peer.quest-a", "peer.quest-b")
+                            } else {
+                                ("peer.quest-b", "peer.quest-a")
+                            };
+                            originals[index] =
+                                capture_original(provider, authority, local, remote, now + 17);
+                        }
                     }
                 }
             }
-        }
-        let late = if renewed_probe > 0 {
-            64_000
-                + ((renewed_probe - 1) / 2) as u64 * 120_000
-                + if expire_signer_before_cleanup {
-                    350_000
-                } else {
-                    266_000
-                }
-        } else if expire_signer_before_cleanup {
-            350_000
-        } else {
-            250_000
-        };
-        let mut requests = Vec::new();
-        for (index, provider) in [&mut provider_a, &mut provider_b].into_iter().enumerate() {
-            let mut clock = provider
-                .runtime
-                .as_ref()
-                .unwrap()
-                .runtime
-                .read()
-                .unwrap()
-                .control_lease_authority_snapshot()
-                .clock_snapshot
-                .clone();
-            clock.sequence += 1;
-            clock.wall_unix_ms = late as i64;
-            clock.monotonic_elapsed_ns = 1_000_000_000 + (late - 1000) * 1_000_000;
-            let adoption = provider
-                .adopt_concurrent_peer_revoker(
-                    &clock,
-                    late,
-                    &format!("{:02x}", 180 + index).repeat(32),
-                )
-                .unwrap();
-            provider
-                .prepare_concurrent_peer_revoker_cleanup(
-                    &identity().client_id,
-                    &adoption,
-                    late,
-                    &format!("{:02x}", 182 + index).repeat(32),
-                )
-                .unwrap();
-            provider
-                .terminate_concurrent_peer_route(
-                    true,
-                    late + 10,
-                    &format!("{:02x}", 184 + index).repeat(32),
-                )
-                .unwrap();
-            let stop = provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
-                .pending_action()
-                .unwrap();
-            let position = stop
-                .owner_actions
-                .iter()
-                .position(|owner| {
-                    owner.selection.owner_id == originals[index].1.owner_id
-                        && owner.selection.resource_id == originals[index].1.resource_id
-                })
-                .unwrap();
-            let stop_ticket = rusty_quest_media_stream_android::execution_ticket(
-                stop,
-                &stop.owner_actions[position],
-                (position + 1) as u32,
-                9,
-                format!("fixture.cleanup.{index}"),
-            )
-            .unwrap();
-            let grant = provider
-                .runtime
-                .as_ref()
-                .unwrap()
-                .peer_runtime_host
-                .as_ref()
-                .unwrap()
-                .read()
-                .unwrap()
-                .snapshot()
-                .pair_media_routes
-                .routes
-                .iter()
-                .find(|r| {
-                    *r.cleanup_status()
-                        == rusty_manifold_peer::ManifoldPairMediaRouteCleanupStatus::Pending
-                })
-                .unwrap()
-                .grant_id()
-                .clone();
-            requests.push((
-                grant,
-                adoption.revoker_id,
-                adoption.lease.lease_id,
-                stop_ticket,
-            ));
-        }
-        assert_ne!(requests[0].0, requests[1].0);
-        assert_ne!(requests[0].2, requests[1].2);
-        let before_a = authority_a.snapshot_json().unwrap();
-        let before_b = authority_b.snapshot_json().unwrap();
-        for (receiver, local, sender, receiver_peer, sender_peer) in [
-            (
-                &authority_a,
-                &requests[0],
-                &requests[1],
-                "peer.quest-a",
-                "peer.quest-b",
-            ),
-            (
-                &authority_b,
-                &requests[1],
-                &requests[0],
-                "peer.quest-b",
-                "peer.quest-a",
-            ),
-        ] {
-            receiver
-                .retained_cleanup_projection(
-                    &local.0,
-                    &local.1,
-                    &local.2,
-                    &id(receiver_peer),
-                    &id(sender_peer),
-                    late + 10,
-                )
-                .unwrap();
-            assert_eq!(
-                receiver
-                    .retained_cleanup_projection(
-                        &sender.0,
-                        &sender.1,
-                        &sender.2,
-                        &id(sender_peer),
-                        &id(receiver_peer),
-                        late + 10,
+            let late = if renewed_probe > 0 {
+                64_000
+                    + ((renewed_probe - 1) / 2) as u64 * 120_000
+                    + if expire_signer_before_cleanup {
+                        350_000
+                    } else {
+                        266_000
+                    }
+            } else if expire_signer_before_cleanup {
+                350_000
+            } else {
+                250_000
+            };
+            let mut requests = Vec::new();
+            for (index, provider) in [&mut provider_a, &mut provider_b].into_iter().enumerate() {
+                let mut clock = provider
+                    .runtime
+                    .as_ref()
+                    .unwrap()
+                    .runtime
+                    .read()
+                    .unwrap()
+                    .control_lease_authority_snapshot()
+                    .clock_snapshot
+                    .clone();
+                clock.sequence += 1;
+                clock.wall_unix_ms = late as i64;
+                clock.monotonic_elapsed_ns = 1_000_000_000 + (late - 1000) * 1_000_000;
+                let adoption = provider
+                    .adopt_concurrent_peer_revoker(
+                        &clock,
+                        late,
+                        &format!("{:02x}", 180 + index).repeat(32),
                     )
-                    .unwrap_err(),
-                "cleanup route is absent"
-            );
-            assert_eq!(
+                    .unwrap();
+                provider
+                    .prepare_concurrent_peer_revoker_cleanup(
+                        &identity().client_id,
+                        &adoption,
+                        late,
+                        &format!("{:02x}", 182 + index).repeat(32),
+                    )
+                    .unwrap();
+                provider
+                    .terminate_concurrent_peer_route(
+                        true,
+                        late + 10,
+                        &format!("{:02x}", 184 + index).repeat(32),
+                    )
+                    .unwrap();
+                let stop = provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
+                    .pending_action()
+                    .unwrap();
+                let position = stop
+                    .owner_actions
+                    .iter()
+                    .position(|owner| {
+                        owner.selection.owner_id == originals[index].1.owner_id
+                            && owner.selection.resource_id == originals[index].1.resource_id
+                    })
+                    .unwrap();
+                let stop_ticket = rusty_quest_media_stream_android::execution_ticket(
+                    stop,
+                    &stop.owner_actions[position],
+                    (position + 1) as u32,
+                    9,
+                    format!("fixture.cleanup.{index}"),
+                )
+                .unwrap();
+                let grant = provider
+                    .runtime
+                    .as_ref()
+                    .unwrap()
+                    .peer_runtime_host
+                    .as_ref()
+                    .unwrap()
+                    .read()
+                    .unwrap()
+                    .snapshot()
+                    .pair_media_routes
+                    .routes
+                    .iter()
+                    .find(|r| {
+                        *r.cleanup_status()
+                            == rusty_manifold_peer::ManifoldPairMediaRouteCleanupStatus::Pending
+                    })
+                    .unwrap()
+                    .grant_id()
+                    .clone();
+                requests.push((
+                    grant,
+                    adoption.revoker_id,
+                    adoption.lease.lease_id,
+                    stop_ticket,
+                ));
+            }
+            assert_ne!(requests[0].0, requests[1].0);
+            assert_ne!(requests[0].2, requests[1].2);
+            let before_a = authority_a.snapshot_json().unwrap();
+            let before_b = authority_b.snapshot_json().unwrap();
+            for (receiver, local, sender, receiver_peer, sender_peer) in [
+                (
+                    &authority_a,
+                    &requests[0],
+                    &requests[1],
+                    "peer.quest-a",
+                    "peer.quest-b",
+                ),
+                (
+                    &authority_b,
+                    &requests[1],
+                    &requests[0],
+                    "peer.quest-b",
+                    "peer.quest-a",
+                ),
+            ] {
                 receiver
                     .retained_cleanup_projection(
                         &local.0,
-                        &sender.1,
-                        &sender.2,
-                        &id(sender_peer),
+                        &local.1,
+                        &local.2,
                         &id(receiver_peer),
+                        &id(sender_peer),
                         late + 10,
                     )
-                    .unwrap_err(),
-                "cleanup requester lease is absent"
-            );
-        }
-        assert_eq!(before_a, authority_a.snapshot_json().unwrap());
-        assert_eq!(before_b, authority_b.snapshot_json().unwrap());
-        // Signature authentication of complete native Prepare is separate;
-        // these are real receiving-store/current-enrollment authority joins.
-        for (receiver, sender, request, original, local, remote, key_id, signer) in [
-            (
-                &authority_b,
-                &authority_a,
-                &requests[0],
-                &originals[0],
-                "peer.quest-a",
-                "peer.quest-b",
-                "key.peer.quest-a.1",
-                &alpha,
-            ),
-            (
-                &authority_a,
-                &authority_b,
-                &requests[1],
-                &originals[1],
-                "peer.quest-b",
-                "peer.quest-a",
-                "key.peer.quest-b.1",
-                &beta,
-            ),
-        ] {
-            let index = if local == "peer.quest-a" { 0 } else { 1 };
-            let cleanup = sender
-                .retained_cleanup_projection(
-                    &request.0,
-                    &request.1,
-                    &request.2,
-                    &id(local),
-                    &id(remote),
-                    late + 10,
-                )
-                .unwrap();
-            let key = signer.verifying_key().to_bytes();
-            if renewed_probe > 0 {
-                let source_before = sender.snapshot_json().unwrap();
-                let actual: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
-                    serde_json::from_str(&source_before).unwrap();
-                let mut unapplied = actual.clone();
-                unapplied.concurrent_session_renewals[0].applied = false;
-                let mut missing_request = actual.clone();
-                let request_id = &actual.concurrent_session_renewals[0].request_id;
-                missing_request
-                    .peer_sessions
-                    .applied_proposal_ids
-                    .retain(|id| id != request_id);
-                let mut missing_reciprocal = actual.clone();
-                let reciprocal = rusty_manifold_peer::ManifoldReciprocalEd25519ReceiptV3::CommonLan(
-                    actual.concurrent_session_renewals[0].reciprocal.clone(),
-                );
-                missing_reciprocal
-                    .reciprocal_ed25519
-                    .accepted_receipts
-                    .retain(|receipt| receipt != &reciprocal);
-                for damaged in [unapplied, missing_request, missing_reciprocal] {
-                    assert!(
-                        sender
-                            .restore_snapshot_json(&serde_json::to_string(&damaged).unwrap())
-                            .is_err(),
-                        "Unaccepted canonical source history must reject before projection"
-                    );
-                    assert_eq!(sender.snapshot_json().unwrap(), source_before);
-                }
-            }
-            let ancestry = sender.retained_cleanup_renewal_ancestry(&cleanup).unwrap();
-            if distinct_revokers {
-                assert_eq!(ancestry.len(), 32);
-                // Each sender is locally authorized; that never adds its revoker to foreign trust.
-                let receiver_before = receiver.snapshot_json().unwrap();
+                    .unwrap();
                 assert_eq!(
-                    receiver.validate_remote_retained_cleanup_projection_with_renewals(
-                        &cleanup,
-                        &original.0,
-                        &original.1,
-                        key_id,
-                        &key,
-                        late + 10,
-                        &ancestry
-                    ),
-                    Err("remote cleanup retained source differs".to_owned())
-                );
-                assert_eq!(receiver.snapshot_json().unwrap(), receiver_before);
-                continue;
-            }
-            if renewed_probe > 0 {
-                if restart_after_prefix && renewed_probe == 16 {
-                    assert_eq!(
-                        cleanup.signed_topology_sha256,
-                        original.0.signed_topology_sha256
-                    );
-                } else {
-                    assert_ne!(
-                        cleanup.signed_topology_sha256,
-                        original.0.signed_topology_sha256
-                    );
-                }
-                if ongoing {
-                    assert!(ancestry.len() <= 17);
-                    assert!(ancestry[0].continuation_checkpoint.is_some());
-                } else {
-                    assert_eq!(ancestry.len(), renewed_probe.min(64));
-                }
-                let encoded = serde_json::to_vec(&ancestry).unwrap();
-                assert!(encoded.len() <= 65_536);
-                println!(
-                    "ACTUAL_COMPACT_ANCESTRY peer{index} hops={} bytes={}",
-                    ancestry.len(),
-                    encoded.len()
-                );
-                if restart_after_prefix && renewed_probe == 16 {
-                    assert_ne!(
-                        original.1.action_id, initial_originals[index].1.action_id,
-                        "Latest anchor must come from a genuine new Start"
-                    );
-                }
-                let legacy = receiver.validate_remote_retained_cleanup_projection(
-                    &cleanup,
-                    &original.0,
-                    &original.1,
-                    key_id,
-                    &key,
-                    late + 10,
-                );
-                if restart_after_prefix && renewed_probe == 16 {
-                    assert!(
-                        legacy.is_ok(),
-                        "A latest Start with no later renewals preserves direct-digest cleanup"
-                    );
-                } else {
-                    assert!(
-                        legacy.is_err(),
-                        "Legacy no-ancestry receiver must not accept renewed topology"
-                    );
-                }
-                if restart_after_prefix && renewed_probe > 16 {
                     receiver
-                        .validate_remote_retained_cleanup_projection_with_renewals(
+                        .retained_cleanup_projection(
+                            &sender.0,
+                            &sender.1,
+                            &sender.2,
+                            &id(sender_peer),
+                            &id(receiver_peer),
+                            late + 10,
+                        )
+                        .unwrap_err(),
+                    "cleanup route is absent"
+                );
+                assert_eq!(
+                    receiver
+                        .retained_cleanup_projection(
+                            &local.0,
+                            &sender.1,
+                            &sender.2,
+                            &id(sender_peer),
+                            &id(receiver_peer),
+                            late + 10,
+                        )
+                        .unwrap_err(),
+                    "cleanup requester lease is absent"
+                );
+            }
+            assert_eq!(before_a, authority_a.snapshot_json().unwrap());
+            assert_eq!(before_b, authority_b.snapshot_json().unwrap());
+            // Signature authentication of complete native Prepare is separate;
+            // these are real receiving-store/current-enrollment authority joins.
+            for (receiver, sender, request, original, local, remote, key_id, signer) in [
+                (
+                    &authority_b,
+                    &authority_a,
+                    &requests[0],
+                    &originals[0],
+                    "peer.quest-a",
+                    "peer.quest-b",
+                    "key.peer.quest-a.1",
+                    &alpha,
+                ),
+                (
+                    &authority_a,
+                    &authority_b,
+                    &requests[1],
+                    &originals[1],
+                    "peer.quest-b",
+                    "peer.quest-a",
+                    "key.peer.quest-b.1",
+                    &beta,
+                ),
+            ] {
+                let index = if local == "peer.quest-a" { 0 } else { 1 };
+                let cleanup = sender
+                    .retained_cleanup_projection(
+                        &request.0,
+                        &request.1,
+                        &request.2,
+                        &id(local),
+                        &id(remote),
+                        late + 10,
+                    )
+                    .unwrap();
+                let key = signer.verifying_key().to_bytes();
+                if renewed_probe > 0 {
+                    let source_before = sender.snapshot_json().unwrap();
+                    let actual: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
+                        serde_json::from_str(&source_before).unwrap();
+                    let mut unapplied = actual.clone();
+                    unapplied.concurrent_session_renewals[0].applied = false;
+                    let mut missing_request = actual.clone();
+                    let request_id = &actual.concurrent_session_renewals[0].request_id;
+                    missing_request
+                        .peer_sessions
+                        .applied_proposal_ids
+                        .retain(|id| id != request_id);
+                    let mut missing_reciprocal = actual.clone();
+                    let reciprocal =
+                        rusty_manifold_peer::ManifoldReciprocalEd25519ReceiptV3::CommonLan(
+                            actual.concurrent_session_renewals[0].reciprocal.clone(),
+                        );
+                    missing_reciprocal
+                        .reciprocal_ed25519
+                        .accepted_receipts
+                        .retain(|receipt| receipt != &reciprocal);
+                    for damaged in [unapplied, missing_request, missing_reciprocal] {
+                        assert!(
+                            sender
+                                .restore_snapshot_json(&serde_json::to_string(&damaged).unwrap())
+                                .is_err(),
+                            "Unaccepted canonical source history must reject before projection"
+                        );
+                        assert_eq!(sender.snapshot_json().unwrap(), source_before);
+                    }
+                }
+                let ancestry = sender.retained_cleanup_renewal_ancestry(&cleanup).unwrap();
+                if distinct_revokers {
+                    assert_eq!(ancestry.len(), 32);
+                    // Each sender is locally authorized; that never adds its revoker to foreign trust.
+                    let receiver_before = receiver.snapshot_json().unwrap();
+                    assert_eq!(
+                        receiver.validate_remote_retained_cleanup_projection_with_renewals(
                             &cleanup,
                             &original.0,
                             &original.1,
                             key_id,
                             &key,
                             late + 10,
-                            &ancestry[16..],
-                        )
-                        .unwrap();
+                            &ancestry
+                        ),
+                        Err("remote cleanup retained source differs".to_owned())
+                    );
+                    assert_eq!(receiver.snapshot_json().unwrap(), receiver_before);
+                    continue;
                 }
-                let mut damaged = Vec::new();
-                if !restart_after_prefix || renewed_probe > 16 {
-                    damaged.push(Vec::new());
-                }
-                if !restart_after_prefix || renewed_probe > 16 {
-                    damaged.push(ancestry[if restart_after_prefix { 17 } else { 1 }..].to_vec());
-                }
-                damaged.push(ancestry[..1].to_vec());
-                let mut reordered = ancestry.clone();
-                reordered.reverse();
-                damaged.push(reordered);
-                let mut repeated = ancestry.clone();
-                repeated.push(ancestry[0].clone());
-                damaged.push(repeated);
-                let mut unrelated = ancestry.clone();
-                unrelated[0].session_id = "session.foreign".into();
-                damaged.push(unrelated);
-                let mut altered = ancestry.clone();
-                altered[0].route_configuration_sha256 = format!("sha256:{}", "f".repeat(64));
-                damaged.push(altered);
-                let mut unapplied = ancestry.clone();
-                unapplied[0].receipt_sha256 = "invalid".into();
-                damaged.push(unapplied);
-                let mut unaccepted = ancestry.clone();
-                unaccepted[0].reciprocal_expires_at_ms = unaccepted[0].expires_at_ms - 1;
-                damaged.push(unaccepted);
-                let mut at_expiry = ancestry.clone();
-                at_expiry[0].observed_at_ms = at_expiry[0].prior_expires_at_ms;
-                damaged.push(at_expiry);
-                let mut past_expiry = ancestry.clone();
-                past_expiry[0].observed_at_ms = past_expiry[0].prior_expires_at_ms + 1;
-                damaged.push(past_expiry);
-                let mut duplicate_request = ancestry.clone();
-                duplicate_request[1].request_id = duplicate_request[0].request_id.clone();
-                damaged.push(duplicate_request);
-                damaged.push(vec![ancestry[0].clone(); 65]);
-                let mut oversized = ancestry.clone();
-                oversized[0].receipt_sha256 = "f".repeat(65_536);
-                damaged.push(oversized);
-                for changed in damaged {
-                    assert!(
+                if renewed_probe > 0 {
+                    if restart_after_prefix && renewed_probe == 16 {
+                        assert_eq!(
+                            cleanup.signed_topology_sha256,
+                            original.0.signed_topology_sha256
+                        );
+                    } else {
+                        assert_ne!(
+                            cleanup.signed_topology_sha256,
+                            original.0.signed_topology_sha256
+                        );
+                    }
+                    if ongoing {
+                        assert!(ancestry.len() <= 17);
+                        assert!(ancestry[0].continuation_checkpoint.is_some());
+                    } else {
+                        assert_eq!(ancestry.len(), renewed_probe.min(64));
+                    }
+                    let encoded = serde_json::to_vec(&ancestry).unwrap();
+                    assert!(encoded.len() <= 65_536);
+                    println!(
+                        "ACTUAL_COMPACT_ANCESTRY peer{index} hops={} bytes={}",
+                        ancestry.len(),
+                        encoded.len()
+                    );
+                    if restart_after_prefix && renewed_probe == 16 {
+                        assert_ne!(
+                            original.1.action_id, initial_originals[index].1.action_id,
+                            "Latest anchor must come from a genuine new Start"
+                        );
+                    }
+                    let legacy = receiver.validate_remote_retained_cleanup_projection(
+                        &cleanup,
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &key,
+                        late + 10,
+                    );
+                    if restart_after_prefix && renewed_probe == 16 {
+                        assert!(
+                            legacy.is_ok(),
+                            "A latest Start with no later renewals preserves direct-digest cleanup"
+                        );
+                    } else {
+                        assert!(
+                            legacy.is_err(),
+                            "Legacy no-ancestry receiver must not accept renewed topology"
+                        );
+                    }
+                    if restart_after_prefix && renewed_probe > 16 {
                         receiver
                             .validate_remote_retained_cleanup_projection_with_renewals(
                                 &cleanup,
@@ -1344,87 +1307,185 @@ fn run_coupled_owner_graph_with_history_mode(
                                 key_id,
                                 &key,
                                 late + 10,
-                                &changed,
+                                &ancestry[16..],
                             )
-                            .is_err(),
-                        "Missing, reordered, repeated, unrelated or damaged ancestry admitted"
-                    );
-                }
-                if let Ok(directory) = std::env::var("RQ_RETAINED_ANCESTRY_TEST_OUTPUT") {
-                    std::fs::write(std::path::Path::new(&directory).join(format!("ancestry-{renewed_probe}-{restart_after_prefix}-{local}.json")),
+                            .unwrap();
+                    }
+                    let mut damaged = Vec::new();
+                    if !restart_after_prefix || renewed_probe > 16 {
+                        damaged.push(Vec::new());
+                    }
+                    if !restart_after_prefix || renewed_probe > 16 {
+                        damaged
+                            .push(ancestry[if restart_after_prefix { 17 } else { 1 }..].to_vec());
+                    }
+                    damaged.push(ancestry[..1].to_vec());
+                    let mut reordered = ancestry.clone();
+                    reordered.reverse();
+                    damaged.push(reordered);
+                    let mut repeated = ancestry.clone();
+                    repeated.push(ancestry[0].clone());
+                    damaged.push(repeated);
+                    let mut unrelated = ancestry.clone();
+                    unrelated[0].session_id = "session.foreign".into();
+                    damaged.push(unrelated);
+                    let mut altered = ancestry.clone();
+                    altered[0].route_configuration_sha256 = format!("sha256:{}", "f".repeat(64));
+                    damaged.push(altered);
+                    let mut unapplied = ancestry.clone();
+                    unapplied[0].receipt_sha256 = "invalid".into();
+                    damaged.push(unapplied);
+                    let mut unaccepted = ancestry.clone();
+                    unaccepted[0].reciprocal_expires_at_ms = unaccepted[0].expires_at_ms - 1;
+                    damaged.push(unaccepted);
+                    let mut at_expiry = ancestry.clone();
+                    at_expiry[0].observed_at_ms = at_expiry[0].prior_expires_at_ms;
+                    damaged.push(at_expiry);
+                    let mut past_expiry = ancestry.clone();
+                    past_expiry[0].observed_at_ms = past_expiry[0].prior_expires_at_ms + 1;
+                    damaged.push(past_expiry);
+                    let mut duplicate_request = ancestry.clone();
+                    duplicate_request[1].request_id = duplicate_request[0].request_id.clone();
+                    damaged.push(duplicate_request);
+                    damaged.push(vec![ancestry[0].clone(); 65]);
+                    let mut oversized = ancestry.clone();
+                    oversized[0].receipt_sha256 = "f".repeat(65_536);
+                    damaged.push(oversized);
+                    for changed in damaged {
+                        assert!(
+                            receiver
+                                .validate_remote_retained_cleanup_projection_with_renewals(
+                                    &cleanup,
+                                    &original.0,
+                                    &original.1,
+                                    key_id,
+                                    &key,
+                                    late + 10,
+                                    &changed,
+                                )
+                                .is_err(),
+                            "Missing, reordered, repeated, unrelated or damaged ancestry admitted"
+                        );
+                    }
+                    if let Ok(directory) = std::env::var("RQ_RETAINED_ANCESTRY_TEST_OUTPUT") {
+                        std::fs::write(std::path::Path::new(&directory).join(format!("ancestry-{renewed_probe}-{restart_after_prefix}-{local}.json")),
                         serde_json::to_vec(&serde_json::json!({"cleanup":cleanup,"ticket":original.1,"ancestry":ancestry})).unwrap()).unwrap();
+                    }
                 }
-            }
-            if expire_signer_before_cleanup {
-                let witness = &enrollment_witnesses[index];
-                let receiver_before = receiver.snapshot_json().unwrap();
-                let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
+                if expire_signer_before_cleanup {
+                    let witness = &enrollment_witnesses[index];
+                    let receiver_before = receiver.snapshot_json().unwrap();
+                    let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
                     serde_json::from_str(&receiver_before).unwrap();
-                let credential = snapshot
-                    .enrollment
-                    .credentials
-                    .iter()
-                    .find(|credential| {
-                        credential.peer_id.as_str() == original.0.authority_peer_id
-                            && credential.key_id.as_str() == key_id
-                    })
-                    .unwrap();
-                assert!(credential.expires_at_ms < late + 10);
-                if renewed_probe == 0 {
-                    // Preserve the actual retained grant and shorten only the live
-                    // credential window in an independently validated receiver store.
-                    let mut shorter = snapshot.clone();
-                    shorter
+                    let credential = snapshot
                         .enrollment
                         .credentials
-                        .iter_mut()
+                        .iter()
                         .find(|credential| {
                             credential.peer_id.as_str() == original.0.authority_peer_id
                                 && credential.key_id.as_str() == key_id
                         })
-                        .unwrap()
-                        .expires_at_ms = original.0.expires_at_ms - 1;
-                    receiver
-                        .restore_snapshot_json(&serde_json::to_string(&shorter).unwrap())
-                        .expect("Live shorter credential snapshot remains a valid authority store");
-                    struct AdmissionClock;
-                    impl rusty_quest_media_stream_android::OwnerDispatchClock for AdmissionClock {
-                        fn now_ms(&self) -> Result<u64, String> {
-                            Ok(4200)
+                        .unwrap();
+                    assert!(credential.expires_at_ms < late + 10);
+                    if renewed_probe == 0 {
+                        // Preserve the actual retained grant and shorten only the live
+                        // credential window in an independently validated receiver store.
+                        let mut shorter = snapshot.clone();
+                        shorter
+                            .enrollment
+                            .credentials
+                            .iter_mut()
+                            .find(|credential| {
+                                credential.peer_id.as_str() == original.0.authority_peer_id
+                                    && credential.key_id.as_str() == key_id
+                            })
+                            .unwrap()
+                            .expires_at_ms = original.0.expires_at_ms - 1;
+                        receiver
+                            .restore_snapshot_json(&serde_json::to_string(&shorter).unwrap())
+                            .expect(
+                                "Live shorter credential snapshot remains a valid authority store",
+                            );
+                        struct AdmissionClock;
+                        impl rusty_quest_media_stream_android::OwnerDispatchClock for AdmissionClock {
+                            fn now_ms(&self) -> Result<u64, String> {
+                                Ok(4200)
+                            }
                         }
-                    }
-                    let request = rusty_quest_media_stream_android::OwnerDispatchRequest {
-                        schema_id: rusty_quest_media_stream_android::OWNER_DISPATCH_REQUEST_SCHEMA
-                            .into(),
-                        dispatch_id: "fixture.longer-grant-live-credential".into(),
-                        sequence: 1,
-                        issued_at_ms: 4200,
-                        target_peer_id: original.0.executor_peer_id.clone(),
-                        authority: original.0.clone(),
-                        ticket: original.1.clone(),
-                        mode: rusty_quest_media_stream_android::AndroidMediaExecutionMode::Execute,
-                        signer_key_id: key_id.into(),
-                        signature_base64: String::new(),
-                    };
-                    let signing_bytes =
-                        rusty_quest_media_stream_android::request_signing_bytes(&request).unwrap();
-                    let signature = ed25519_dalek::Signer::sign(signer, &signing_bytes).to_bytes();
-                    let verifier = crate::QuestOwnerDispatchAuthorityVerifier::new(
-                        receiver.clone(),
-                        std::sync::Arc::new(AdmissionClock),
-                    );
-                    rusty_quest_media_stream_android::OwnerDispatchAuthorityVerifier::verify_current(
+                        let request = rusty_quest_media_stream_android::OwnerDispatchRequest {
+                            schema_id:
+                                rusty_quest_media_stream_android::OWNER_DISPATCH_REQUEST_SCHEMA
+                                    .into(),
+                            dispatch_id: "fixture.longer-grant-live-credential".into(),
+                            sequence: 1,
+                            issued_at_ms: 4200,
+                            target_peer_id: original.0.executor_peer_id.clone(),
+                            authority: original.0.clone(),
+                            ticket: original.1.clone(),
+                            mode:
+                                rusty_quest_media_stream_android::AndroidMediaExecutionMode::Execute,
+                            signer_key_id: key_id.into(),
+                            signature_base64: String::new(),
+                        };
+                        let signing_bytes =
+                            rusty_quest_media_stream_android::request_signing_bytes(&request)
+                                .unwrap();
+                        let signature =
+                            ed25519_dalek::Signer::sign(signer, &signing_bytes).to_bytes();
+                        let verifier = crate::QuestOwnerDispatchAuthorityVerifier::new(
+                            receiver.clone(),
+                            std::sync::Arc::new(AdmissionClock),
+                        );
+                        rusty_quest_media_stream_android::OwnerDispatchAuthorityVerifier::verify_current(
                         &verifier, &request, &signing_bytes, &signature,
                     ).expect("Formerly valid signed Start must remain admitted");
-                    let shorter_witness = receiver
-                        .capture_retained_original_enrollment(
+                        let shorter_witness = receiver
+                            .capture_retained_original_enrollment(
+                                &original.0,
+                                &original.1,
+                                key_id,
+                                &key,
+                                4200,
+                            )
+                            .expect("Live shorter credential must not add a new Start refusal");
+                        receiver
+                            .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                                &cleanup,
+                                &original.0,
+                                &original.1,
+                                key_id,
+                                &key,
+                                late + 10,
+                                &ancestry,
+                                Some(&shorter_witness),
+                            )
+                            .expect("Acceptance in both intervals suffices after expiry");
+                        receiver.restore_snapshot_json(&receiver_before).unwrap();
+                    }
+                    let encoded_witness = serde_json::to_value(witness).unwrap();
+                    if renewed_probe > 0 {
+                        assert!(
+                            credential.expires_at_ms
+                                > encoded_witness["expires_at_ms"].as_u64().unwrap()
+                        );
+                        assert_eq!(
+                            credential.valid_from_ms,
+                            encoded_witness["valid_from_ms"].as_u64().unwrap()
+                        );
+                    }
+                    assert_eq!(
+                        receiver.validate_remote_retained_cleanup_projection_with_renewals(
+                            &cleanup,
                             &original.0,
                             &original.1,
                             key_id,
                             &key,
-                            4200,
-                        )
-                        .expect("Live shorter credential must not add a new Start refusal");
+                            late + 10,
+                            &ancestry,
+                        ),
+                        Err("cleanup signer is not currently enrolled".into()),
+                        "Legacy witnessless records must not gain authority"
+                    );
                     receiver
                         .validate_remote_retained_cleanup_projection_with_original_enrollment(
                             &cleanup,
@@ -1434,76 +1495,38 @@ fn run_coupled_owner_graph_with_history_mode(
                             &key,
                             late + 10,
                             &ancestry,
-                            Some(&shorter_witness),
+                            Some(witness),
                         )
-                        .expect("Acceptance in both intervals suffices after expiry");
-                    receiver.restore_snapshot_json(&receiver_before).unwrap();
-                }
-                let encoded_witness = serde_json::to_value(witness).unwrap();
-                if renewed_probe > 0 {
-                    assert!(
-                        credential.expires_at_ms
-                            > encoded_witness["expires_at_ms"].as_u64().unwrap()
-                    );
-                    assert_eq!(
-                        credential.valid_from_ms,
-                        encoded_witness["valid_from_ms"].as_u64().unwrap()
-                    );
-                }
-                assert_eq!(
-                    receiver.validate_remote_retained_cleanup_projection_with_renewals(
-                        &cleanup,
-                        &original.0,
-                        &original.1,
-                        key_id,
-                        &key,
-                        late + 10,
-                        &ancestry,
-                    ),
-                    Err("cleanup signer is not currently enrolled".into()),
-                    "Legacy witnessless records must not gain authority"
-                );
-                receiver
-                    .validate_remote_retained_cleanup_projection_with_original_enrollment(
-                        &cleanup,
-                        &original.0,
-                        &original.1,
-                        key_id,
-                        &key,
-                        late + 10,
-                        &ancestry,
-                        Some(witness),
-                    )
-                    .unwrap();
-                for (field, value) in [
-                    ("accepted_at_ms", serde_json::json!(0)),
-                    ("accepted_at_ms", serde_json::json!(late + 11)),
-                    (
-                        "accepted_at_ms",
-                        serde_json::json!(original.0.expires_at_ms),
-                    ),
-                    ("schema", serde_json::json!("unknown")),
-                    ("key_id", serde_json::json!("key.foreign")),
-                    ("credential_id", serde_json::json!("credential.foreign")),
-                    ("key_generation", serde_json::json!(999)),
-                    (
-                        "public_key_sha256",
-                        serde_json::json!(format!("sha256:{}", "f".repeat(64))),
-                    ),
-                    (
-                        "original_sha256",
-                        serde_json::json!(format!("sha256:{}", "f".repeat(64))),
-                    ),
-                    (
-                        "ticket_sha256",
-                        serde_json::json!(format!("sha256:{}", "f".repeat(64))),
-                    ),
-                    ("valid_from_ms", serde_json::json!(4201)),
-                ] {
-                    let mut changed = encoded_witness.clone();
-                    changed[field] = value;
-                    let changed = serde_json::from_value(changed).unwrap();
-                    assert!(
+                        .unwrap();
+                    for (field, value) in [
+                        ("accepted_at_ms", serde_json::json!(0)),
+                        ("accepted_at_ms", serde_json::json!(late + 11)),
+                        (
+                            "accepted_at_ms",
+                            serde_json::json!(original.0.expires_at_ms),
+                        ),
+                        ("schema", serde_json::json!("unknown")),
+                        ("key_id", serde_json::json!("key.foreign")),
+                        ("credential_id", serde_json::json!("credential.foreign")),
+                        ("key_generation", serde_json::json!(999)),
+                        (
+                            "public_key_sha256",
+                            serde_json::json!(format!("sha256:{}", "f".repeat(64))),
+                        ),
+                        (
+                            "original_sha256",
+                            serde_json::json!(format!("sha256:{}", "f".repeat(64))),
+                        ),
+                        (
+                            "ticket_sha256",
+                            serde_json::json!(format!("sha256:{}", "f".repeat(64))),
+                        ),
+                        ("valid_from_ms", serde_json::json!(4201)),
+                    ] {
+                        let mut changed = encoded_witness.clone();
+                        changed[field] = value;
+                        let changed = serde_json::from_value(changed).unwrap();
+                        assert!(
                         receiver
                             .validate_remote_retained_cleanup_projection_with_original_enrollment(
                                 &cleanup,
@@ -1518,49 +1541,49 @@ fn run_coupled_owner_graph_with_history_mode(
                             .is_err(),
                         "Changed retained enrollment witness admitted: {field}"
                     );
-                }
-                for damage in ["revoked", "replaced_key", "after_original", "shortened"] {
-                    let mut changed = snapshot.clone();
-                    let credential = changed
-                        .enrollment
-                        .credentials
-                        .iter_mut()
-                        .find(|credential| {
-                            credential.peer_id.as_str() == original.0.authority_peer_id
-                                && credential.key_id.as_str() == key_id
-                        })
-                        .unwrap();
-                    match damage {
-                        "revoked" => {
-                            credential.status =
-                                rusty_manifold_peer::ManifoldPeerCredentialStatus::Revoked
-                        }
-                        "replaced_key" => credential.public_key_hex = "00".repeat(32),
-                        "after_original" => credential.valid_from_ms = 4201,
-                        "shortened" => credential.expires_at_ms = original.0.expires_at_ms - 1,
-                        _ => unreachable!(),
                     }
-                    if receiver
-                        .restore_snapshot_json(&serde_json::to_string(&changed).unwrap())
-                        .is_ok()
-                    {
-                        assert!(receiver.validate_remote_retained_cleanup_projection_with_original_enrollment(
+                    for damage in ["revoked", "replaced_key", "after_original", "shortened"] {
+                        let mut changed = snapshot.clone();
+                        let credential = changed
+                            .enrollment
+                            .credentials
+                            .iter_mut()
+                            .find(|credential| {
+                                credential.peer_id.as_str() == original.0.authority_peer_id
+                                    && credential.key_id.as_str() == key_id
+                            })
+                            .unwrap();
+                        match damage {
+                            "revoked" => {
+                                credential.status =
+                                    rusty_manifold_peer::ManifoldPeerCredentialStatus::Revoked
+                            }
+                            "replaced_key" => credential.public_key_hex = "00".repeat(32),
+                            "after_original" => credential.valid_from_ms = 4201,
+                            "shortened" => credential.expires_at_ms = original.0.expires_at_ms - 1,
+                            _ => unreachable!(),
+                        }
+                        if receiver
+                            .restore_snapshot_json(&serde_json::to_string(&changed).unwrap())
+                            .is_ok()
+                        {
+                            assert!(receiver.validate_remote_retained_cleanup_projection_with_original_enrollment(
                             &cleanup, &original.0, &original.1, key_id, &key, late + 10, &ancestry, Some(witness),
                         ).is_err(), "Changed current enrollment admitted: {damage}");
-                        receiver.restore_snapshot_json(&receiver_before).unwrap();
+                            receiver.restore_snapshot_json(&receiver_before).unwrap();
+                        }
+                        assert_eq!(receiver.snapshot_json().unwrap(), receiver_before);
                     }
-                    assert_eq!(receiver.snapshot_json().unwrap(), receiver_before);
-                }
-                for field in [
-                    "requester_id",
-                    "target_client_id",
-                    "peer_session_id",
-                    "provider_epoch_id",
-                ] {
-                    let mut changed = serde_json::to_value(&cleanup).unwrap();
-                    changed[field] = serde_json::json!("foreign.identity");
-                    let changed = serde_json::from_value(changed).unwrap();
-                    assert!(
+                    for field in [
+                        "requester_id",
+                        "target_client_id",
+                        "peer_session_id",
+                        "provider_epoch_id",
+                    ] {
+                        let mut changed = serde_json::to_value(&cleanup).unwrap();
+                        changed[field] = serde_json::json!("foreign.identity");
+                        let changed = serde_json::from_value(changed).unwrap();
+                        assert!(
                         receiver
                             .validate_remote_retained_cleanup_projection_with_original_enrollment(
                                 &changed,
@@ -1575,23 +1598,149 @@ fn run_coupled_owner_graph_with_history_mode(
                             .is_err(),
                         "Changed cleanup authority admitted: {field}"
                     );
+                    }
+                    let mut expired = cleanup.clone();
+                    expired.requester_expires_at_ms = late;
+                    assert!(receiver
+                        .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                            &expired,
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &key,
+                            late + 10,
+                            &ancestry,
+                            Some(witness),
+                        )
+                        .is_err());
+                    assert!(receiver
+                        .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                            &cleanup,
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &[0; 32],
+                            late + 10,
+                            &ancestry,
+                            Some(witness),
+                        )
+                        .is_err());
+                    continue;
                 }
-                let mut expired = cleanup.clone();
-                expired.requester_expires_at_ms = late;
-                assert!(receiver
-                    .validate_remote_retained_cleanup_projection_with_original_enrollment(
-                        &expired,
+                receiver
+                    .validate_remote_retained_cleanup_projection_with_renewals(
+                        &cleanup,
                         &original.0,
                         &original.1,
                         key_id,
                         &key,
                         late + 10,
                         &ancestry,
-                        Some(witness),
+                    )
+                    .unwrap();
+                receiver
+                    .validate_remote_retained_cleanup_projection_with_renewals(
+                        &cleanup,
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &key,
+                        late + 11,
+                        &ancestry,
+                    )
+                    .unwrap();
+                for changed in [
+                    {
+                        let mut v = cleanup.clone();
+                        v.target_client_id = "client.foreign".into();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.target_runtime_lease_id = "lease.foreign".into();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.provider_epoch_id = "epoch.foreign".into();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.authority_peer_id = remote.into();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.executor_peer_id = local.into();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.peer_session_id = "session.foreign".into();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.signed_topology_sha256 = format!("sha256:{}", "f".repeat(64));
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.route_grant_id = "grant.foreign".into();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.requester_id = "revoker.untrusted".into();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.requester_runtime_lease_id = v.target_runtime_lease_id.clone();
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.expires_at_ms = late;
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.requester_expires_at_ms = late;
+                        v
+                    },
+                    {
+                        let mut v = cleanup.clone();
+                        v.schema_id = "unknown".into();
+                        v
+                    },
+                ] {
+                    assert!(receiver
+                        .validate_remote_retained_cleanup_projection_with_renewals(
+                            &changed,
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &key,
+                            late + 10,
+                            &ancestry,
+                        )
+                        .is_err());
+                }
+                assert!(receiver
+                    .validate_remote_retained_cleanup_projection_with_renewals(
+                        &cleanup,
+                        &original.0,
+                        &original.1,
+                        "key.foreign",
+                        &key,
+                        late + 10,
+                        &ancestry,
                     )
                     .is_err());
                 assert!(receiver
-                    .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                    .validate_remote_retained_cleanup_projection_with_renewals(
                         &cleanup,
                         &original.0,
                         &original.1,
@@ -1599,173 +1748,1028 @@ fn run_coupled_owner_graph_with_history_mode(
                         &[0; 32],
                         late + 10,
                         &ancestry,
-                        Some(witness),
                     )
                     .is_err());
-                continue;
-            }
-            receiver
-                .validate_remote_retained_cleanup_projection_with_renewals(
-                    &cleanup,
-                    &original.0,
-                    &original.1,
-                    key_id,
-                    &key,
-                    late + 10,
-                    &ancestry,
-                )
-                .unwrap();
-            receiver
-                .validate_remote_retained_cleanup_projection_with_renewals(
-                    &cleanup,
-                    &original.0,
-                    &original.1,
-                    key_id,
-                    &key,
-                    late + 11,
-                    &ancestry,
-                )
-                .unwrap();
-            for changed in [
-                {
-                    let mut v = cleanup.clone();
-                    v.target_client_id = "client.foreign".into();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.target_runtime_lease_id = "lease.foreign".into();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.provider_epoch_id = "epoch.foreign".into();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.authority_peer_id = remote.into();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.executor_peer_id = local.into();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.peer_session_id = "session.foreign".into();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.signed_topology_sha256 = format!("sha256:{}", "f".repeat(64));
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.route_grant_id = "grant.foreign".into();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.requester_id = "revoker.untrusted".into();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.requester_runtime_lease_id = v.target_runtime_lease_id.clone();
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.expires_at_ms = late;
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.requester_expires_at_ms = late;
-                    v
-                },
-                {
-                    let mut v = cleanup.clone();
-                    v.schema_id = "unknown".into();
-                    v
-                },
-            ] {
                 assert!(receiver
                     .validate_remote_retained_cleanup_projection_with_renewals(
-                        &changed,
+                        &cleanup,
                         &original.0,
                         &original.1,
                         key_id,
                         &key,
-                        late + 10,
+                        cleanup.expires_at_ms,
                         &ancestry,
                     )
                     .is_err());
             }
-            assert!(receiver
-                .validate_remote_retained_cleanup_projection_with_renewals(
-                    &cleanup,
-                    &original.0,
-                    &original.1,
-                    "key.foreign",
-                    &key,
-                    late + 10,
-                    &ancestry,
-                )
-                .is_err());
-            assert!(receiver
-                .validate_remote_retained_cleanup_projection_with_renewals(
-                    &cleanup,
-                    &original.0,
-                    &original.1,
-                    key_id,
-                    &[0; 32],
-                    late + 10,
-                    &ancestry,
-                )
-                .is_err());
-            assert!(receiver
-                .validate_remote_retained_cleanup_projection_with_renewals(
-                    &cleanup,
-                    &original.0,
-                    &original.1,
-                    key_id,
-                    &key,
-                    cleanup.expires_at_ms,
-                    &ancestry,
-                )
-                .is_err());
-        }
-        assert_eq!(before_a, authority_a.snapshot_json().unwrap());
-        assert_eq!(before_b, authority_b.snapshot_json().unwrap());
+            assert_eq!(before_a, authority_a.snapshot_json().unwrap());
+            assert_eq!(before_b, authority_b.snapshot_json().unwrap());
+        });
         return; // No owner Stop completion or physical cleanup is modeled by this authority test.
     }
-    if retained_abort {
-        let provider = &mut provider_b;
-        let client = identity().client_id;
-        let original = provider.runtime.as_ref().unwrap().media_sessions[&client]
-            .pending_action()
-            .unwrap()
-            .clone();
-        assert_eq!(
-            provider.runtime.as_ref().unwrap().media_sessions[&client]
-                .pending_abort_completed_count(),
-            Some(1)
+    run_coupled_test_phase(|| {
+        if retained_abort {
+            let provider = &mut provider_b;
+            let client = identity().client_id;
+            let original = provider.runtime.as_ref().unwrap().media_sessions[&client]
+                .pending_action()
+                .unwrap()
+                .clone();
+            assert_eq!(
+                provider.runtime.as_ref().unwrap().media_sessions[&client]
+                    .pending_abort_completed_count(),
+                Some(1)
+            );
+            assert!(provider
+                .apply_concurrent_peer_command(
+                    QuestConcurrentPeerCommand::Stop,
+                    c.sending_uid,
+                    &c.package_name,
+                    &c.signing_certificate_sha256,
+                    4200,
+                    &"91".repeat(32)
+                )
+                .is_err());
+            let late = 400_000;
+            let mut clock = provider
+                .runtime
+                .as_ref()
+                .unwrap()
+                .runtime
+                .read()
+                .unwrap()
+                .control_lease_authority_snapshot()
+                .clock_snapshot
+                .clone();
+            clock.sequence += 1;
+            clock.wall_unix_ms = late as i64;
+            clock.monotonic_elapsed_ns = 1_000_000_000 + (late - 1000) * 1_000_000;
+            let adoption = provider
+                .adopt_concurrent_peer_revoker(&clock, late, &"92".repeat(32))
+                .unwrap();
+            assert!(
+                provider
+                    .prepare_concurrent_peer_revoker_cleanup(
+                        &client,
+                        &adoption,
+                        late,
+                        &"93".repeat(32)
+                    )
+                    .is_err(),
+                "pending Start cannot become Stop"
+            );
+            let reviewed = provider
+                .review_concurrent_peer_revoker_cleanup(&client, &adoption, late, &"94".repeat(32))
+                .unwrap();
+            assert!(reviewed.termination.applied);
+            assert!(
+                provider
+                    .terminate_concurrent_peer_route(true, late + 10, &"95".repeat(32))
+                    .unwrap()
+                    .applied
+            );
+            let mut damaged = reviewed.clone();
+            damaged.request.session_id = id("session.other");
+            assert!(provider
+                .resume_revoked_media_start_abort_for_cleanup(&client, &damaged, late + 20)
+                .is_err());
+            assert_eq!(
+                provider.runtime.as_ref().unwrap().media_sessions[&client]
+                    .pending_abort_completed_count(),
+                Some(1)
+            );
+            assert!(
+                provider
+                    .resume_revoked_media_start_abort_for_cleanup(
+                        &client,
+                        &reviewed,
+                        adoption.lease.expires_at_ms
+                    )
+                    .is_err(),
+                "expired requester cannot resume"
+            );
+            let result = provider
+                .resume_revoked_media_start_abort_for_cleanup(&client, &reviewed, late + 20)
+                .unwrap()
+                .unwrap();
+            let receipt: serde_json::Value = serde_json::from_str(&result).unwrap();
+            assert_eq!(receipt["rollback_receipts"].as_array().unwrap().len(), 4);
+            let snapshot = provider.runtime.as_ref().unwrap().media_sessions[&client]
+                .recovery_snapshot()
+                .unwrap();
+            assert_eq!(
+                snapshot.schema_id,
+                rusty_quest_media_stream::MEDIA_STREAM_PRODUCT_ABORT_RECOVERY_SCHEMA
+            );
+            assert!(snapshot.active_client_authority.is_none());
+            assert!(snapshot.active_start_action.is_none());
+            assert_eq!(
+                snapshot.lifecycle.phase,
+                rusty_quest_media_stream::MediaStreamRuntimePhase::Planned
+            );
+            let record = snapshot.completed_start_abort.as_ref().unwrap();
+            assert_eq!(record.original_action, original);
+            assert_eq!(record.rollback_receipts.len(), 4);
+            assert!(
+                provider
+                    .resume_revoked_media_start_abort_for_cleanup(&client, &reviewed, late + 21)
+                    .unwrap()
+                    .is_none(),
+                "completed rollback must not replay"
+            );
+            let prepared = provider
+                .prepare_concurrent_peer_revoker_cleanup(
+                    &client,
+                    &adoption,
+                    late + 25,
+                    &"96".repeat(32),
+                )
+                .unwrap();
+            assert_eq!(prepared.action.client_authority, original.client_authority);
+            assert_eq!(prepared.action.owner_actions.len(), 7);
+            // The modeled registry's ordinary Stop denies owners with no prior
+            // active handle. Actual retained compensation must prove absence;
+            // neither the partial Start cursor nor a missing handle is proof.
+            let mut completed = None;
+            for attempt in 0..8 {
+                match provider.complete_media_stop_for_cleanup_typed(&client, late + 30 + attempt) {
+                    Ok(value) => {
+                        completed = Some(value);
+                        break;
+                    }
+                    Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_)) => {}
+                    Err(error) => panic!("unexpected actual Stop error: {error:?}"),
+                }
+            }
+            let completed = completed.expect("all seven actual Stop/compensation readbacks");
+            let effect = completed.stop_effect_receipt.unwrap();
+            assert_eq!(effect.owner_receipt_ids.len(), 7);
+            assert_eq!(
+                provider
+                    .complete_concurrent_peer_route_cleanup(&effect, late + 35, &"97".repeat(32))
+                    .unwrap()
+                    .len(),
+                1
+            );
+            println!(
+            "ACTUAL_091_FAILED_START_CLEANUP: original target retained; independent live Revoke; verified reverse cursor then seven owner Stop readbacks"
         );
-        assert!(provider
-            .apply_concurrent_peer_command(
-                QuestConcurrentPeerCommand::Stop,
-                c.sending_uid,
-                &c.package_name,
-                &c.signing_certificate_sha256,
-                4200,
-                &"91".repeat(32)
-            )
-            .is_err());
-        let late = 400_000;
+            return;
+        }
+        if ongoing && !generic_history {
+            for provider in [&mut provider_a, &mut provider_b] {
+                provider.enable_ongoing_media_continuation(
+                rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1()).unwrap();
+            }
+        }
+        let mut ongoing_originals = Vec::new();
+        if generic_history {
+            for (provider, authority, receiver, local, remote, key_id, signer) in [
+                (
+                    &provider_a,
+                    &authority_a,
+                    &authority_b,
+                    "peer.quest-a",
+                    "peer.quest-b",
+                    "key.peer.quest-a.1",
+                    &alpha,
+                ),
+                (
+                    &provider_b,
+                    &authority_b,
+                    &authority_a,
+                    "peer.quest-b",
+                    "peer.quest-a",
+                    "key.peer.quest-b.1",
+                    &beta,
+                ),
+            ] {
+                let original = capture_original(provider, authority, local, remote, 4200);
+                let witness = receiver
+                    .capture_retained_original_enrollment(
+                        &original.0,
+                        &original.1,
+                        key_id,
+                        &signer.verifying_key().to_bytes(),
+                        4200,
+                    )
+                    .unwrap();
+                ongoing_originals.push((original, witness));
+            }
+        }
+        let mut active_a = provider_a.runtime.as_ref().unwrap().media_sessions
+            [&identity().client_id]
+            .recovery_snapshot()
+            .unwrap();
+        let mut active_b = provider_b.runtime.as_ref().unwrap().media_sessions
+            [&identity().client_id]
+            .recovery_snapshot()
+            .unwrap();
+        let mut current_a = topology_a.clone();
+        let mut current_b = topology_b.clone();
+        if generic_history {
+            for (index, provider, active) in
+                [(0, &provider_a, &active_a), (1, &provider_b, &active_b)]
+            {
+                assert!(provider
+                    .current_concurrent_ongoing_validation(4200)
+                    .is_err());
+                export_ongoing_owner_vector(
+                    &format!("host{index}-start0.json"),
+                    &serde_json::json!({
+                        "stage":"initial_start_before_first_renewal", "current_owner_validation_available":false,
+                        "active_product_recovery":active, "cumulative_renewal_count":0,
+                        "current_lifetime_renewal_count":0
+                    }),
+                );
+            }
+        }
+        let mut receipts = [Vec::new(), Vec::new()];
+        let mut stale_restore_seals = [None, None];
+        let cycle_count = if generic_history {
+            103
+        } else if ongoing {
+            67
+        } else {
+            22
+        };
+        for cycle in 1..=cycle_count {
+            let now = 64000u64 + ((cycle - 1) / 2) as u64 * 120000 + ((cycle - 1) % 2) as u64;
+            for (index, authority, current) in [
+                (0, &authority_a, &mut current_a),
+                (1, &authority_b, &mut current_b),
+            ] {
+                let first = renewal_reciprocal_request(
+                    authority,
+                    &format!("request.renew.c{cycle}.h{index}.credentials"),
+                    &alpha,
+                    &beta,
+                    now,
+                    (now + 20000).min(current.expires_at_ms),
+                    1 + (cycle * 10 + index * 4) as u64,
+                );
+                let proof = authority.apply_common_lan_reciprocal(&first, now).unwrap();
+                assert!(proof.accepted);
+                let refresh = authority
+                    .refresh_concurrent_pair_credentials(&proof, now)
+                    .unwrap();
+                assert!(refresh.applied);
+                assert_eq!(refresh.expires_at_ms, now + 300000);
+                assert_eq!(refresh.key_ids, proof.signer_key_ids);
+                assert_eq!(
+                    authority
+                        .refresh_concurrent_pair_credentials(&proof, now)
+                        .unwrap(),
+                    refresh
+                );
+                let fresh = renewal_reciprocal_request(
+                    authority,
+                    &format!("request.renew.c{cycle}.h{index}.session"),
+                    &alpha,
+                    &beta,
+                    now + 1,
+                    now + 235000,
+                    3 + (cycle * 10 + index * 4) as u64,
+                );
+                let signed = authority
+                    .apply_common_lan_reciprocal(&fresh, now + 1)
+                    .unwrap();
+                assert!(
+                    signed.accepted,
+                    "actual rejection cycle{cycle} h{index}: {:?}",
+                    signed.rejection_reason
+                );
+                let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
+                    serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
+                let mut next = proposal(&format!("renew.c{cycle}.h{index}"));
+                next.proposal_id = authority
+                    .current_runtime_history_request_id(&id(&format!(
+                        "proposal.session.renew.c{cycle}.h{index}"
+                    )))
+                    .unwrap();
+                next.expected_authority_revision = snapshot.peer_sessions.authority_revision;
+                next.expires_at_ms = now + 235000;
+                let mut changed = next.clone();
+                changed.transport.route_configuration_sha256 = format!("sha256:{}", "f".repeat(64));
+                assert!(authority
+                    .apply_common_lan_session_renewal(&changed, &signed, now + 1)
+                    .is_err());
+                let renewal = authority
+                    .apply_common_lan_session_renewal(&next, &signed, now + 1)
+                    .unwrap();
+                assert!(renewal.applied);
+                assert_eq!(renewal.decision_id, current.decision_id);
+                assert_eq!(renewal.prior_expires_at_ms, current.expires_at_ms);
+                assert!(renewal.expires_at_ms > current.expires_at_ms);
+                assert_eq!(
+                    authority
+                        .apply_common_lan_session_renewal(&next, &signed, now + 1)
+                        .unwrap(),
+                    renewal
+                );
+                let provider = if index == 0 {
+                    &mut provider_a
+                } else {
+                    &mut provider_b
+                };
+                let prior_clock = provider
+                    .runtime
+                    .as_ref()
+                    .unwrap()
+                    .runtime
+                    .read()
+                    .unwrap()
+                    .control_lease_authority_snapshot()
+                    .clock_snapshot
+                    .clone();
+                let mut clock = prior_clock.clone();
+                clock.sequence += 1;
+                clock.wall_unix_ms = (now + 1) as i64;
+                clock.monotonic_elapsed_ns = 1_000_000_000 + (now + 1 - 1000) * 1_000_000;
+                let mut partial_revisions = None;
+                if ongoing && cycle == 16 && !generic_history {
+                    provider
+                        .runtime
+                        .as_mut()
+                        .unwrap()
+                        .concurrent_renewal
+                        .pause_after_product_adoption = true;
+                    assert!(provider
+                        .renew_concurrent_peer_authority(
+                            &clock,
+                            &renewal,
+                            now + 1,
+                            &format!("{:02x}", cycle).repeat(32)
+                        )
+                        .is_err());
+                    assert!(provider
+                        .runtime
+                        .as_ref()
+                        .unwrap()
+                        .concurrent_renewal
+                        .has_pending());
+                    let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
+                    partial_revisions = Some((
+                        broker.admission_snapshot().authority_revision,
+                        broker.host_snapshot().authority_revision,
+                        broker.control_lease_authority_snapshot().authority_revision,
+                    ));
+                }
+                if generic_history && cycle == 32 {
+                    provider
+                        .runtime
+                        .as_mut()
+                        .unwrap()
+                        .concurrent_renewal
+                        .pause_after_history_commit = true;
+                    assert!(provider
+                        .renew_concurrent_peer_authority(
+                            &clock,
+                            &renewal,
+                            now + 1,
+                            &format!("{:02x}", cycle).repeat(32)
+                        )
+                        .is_err());
+                    assert!(provider
+                        .runtime
+                        .as_ref()
+                        .unwrap()
+                        .concurrent_renewal
+                        .has_pending());
+                    let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
+                    partial_revisions = Some((
+                        broker.admission_snapshot().authority_revision,
+                        broker.host_snapshot().authority_revision,
+                        broker.control_lease_authority_snapshot().authority_revision,
+                    ));
+                }
+                let actual = provider
+                    .renew_concurrent_peer_authority(
+                        &clock,
+                        &renewal,
+                        now + 1,
+                        &format!("{:02x}", cycle).repeat(32),
+                    )
+                    .expect("actual full coupled owners");
+                if let Some(revisions) = partial_revisions {
+                    let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
+                    assert_eq!(
+                        revisions,
+                        (
+                            broker.admission_snapshot().authority_revision,
+                            broker.host_snapshot().authority_revision,
+                            broker.control_lease_authority_snapshot().authority_revision
+                        ),
+                        "exact pending retry must not repeat accepted owner uses"
+                    );
+                }
+                receipts[index].push(serde_json::to_value(&actual).unwrap());
+                assert!(actual.media_authority.applied);
+                assert!(actual.outer_lifecycle.applied);
+                assert!(actual.admission_grant.application.applied);
+                let retry = provider
+                    .renew_concurrent_peer_authority(
+                        &clock,
+                        &renewal,
+                        now + 1,
+                        &format!("{:02x}", cycle).repeat(32),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    serde_json::to_value(&actual).unwrap(),
+                    serde_json::to_value(&retry).unwrap()
+                );
+                if ongoing && actual.continuation_checkpoint.is_some() {
+                    let previous: rusty_manifold_peer_runtime_host::ManifoldConcurrentPairSessionRenewalReceipt =
+                    serde_json::from_value(receipts[index][cycle as usize - 2]["accepted_pair"].clone()).unwrap();
+                    let before = authority.snapshot_json().unwrap();
+                    assert!(
+                        provider
+                            .renew_concurrent_peer_authority(
+                                &clock,
+                                &previous,
+                                now + 1,
+                                &"fa".repeat(32)
+                            )
+                            .is_err(),
+                        "evicted exact signed proof cannot reopen a completed use"
+                    );
+                    let mut relabelled = previous;
+                    relabelled.request_id = id(&format!("request.relabelled.c{cycle}.h{index}"));
+                    assert!(
+                        provider
+                            .renew_concurrent_peer_authority(
+                                &clock,
+                                &relabelled,
+                                now + 1,
+                                &"fb".repeat(32)
+                            )
+                            .is_err(),
+                        "relabelled outer identity is not a retained accepted proof"
+                    );
+                    assert_eq!(authority.snapshot_json().unwrap(), before);
+                }
+                let recovery = provider.runtime.as_ref().unwrap().media_sessions
+                    [&identity().client_id]
+                    .recovery_snapshot()
+                    .unwrap();
+                let initial = if index == 0 { &active_a } else { &active_b };
+                let mut physical = serde_json::to_value(&recovery).unwrap();
+                let mut original = serde_json::to_value(initial).unwrap();
+                physical.as_object_mut().unwrap().remove("accepted_subject");
+                original.as_object_mut().unwrap().remove("accepted_subject");
+                assert_eq!(
+                    physical, original,
+                    "physical resource graph must remain unchanged"
+                );
+                *current = renewal.topology.clone();
+                let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
+                    serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
+                let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
+                if ongoing {
+                    let shared = provider
+                        .runtime
+                        .as_ref()
+                        .unwrap()
+                        .peer_runtime_host
+                        .as_ref()
+                        .unwrap();
+                    let peer = shared.read().unwrap();
+                    assert_eq!(
+                        peer.cumulative_concurrent_media_renewals().unwrap(),
+                        cycle as u64
+                    );
+                    assert!(snapshot.concurrent_media_renewals.len() <= 18);
+                    assert!(snapshot.concurrent_session_renewals.len() <= 18);
+                    assert!(snapshot.concurrent_credential_refreshes.len() <= 16);
+                    if cycle == 16 && !generic_history {
+                        // A frozen previously accepted owner is a negative restore
+                        // fixture only; it is never installed or used for effects.
+                        let frozen: &'static rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost =
+                        Box::leak(Box::new(peer.clone()));
+                        stale_restore_seals[index] = Some((
+                            peer.snapshot_json().unwrap(),
+                            frozen.seal_ongoing_media_snapshot(&broker).unwrap(),
+                        ));
+                    }
+                    if cycle == 17 && !generic_history {
+                        let (old_bytes, old_seal) = stale_restore_seals[index].take().unwrap();
+                        assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&old_bytes, &old_seal, &broker).is_err(), "a real old seal cannot roll back after live Broker authority advances");
+                    }
+                    let seal = peer.seal_ongoing_media_snapshot(&broker).unwrap();
+                    let bytes = serde_json::to_string(&snapshot).unwrap();
+                    if generic_history {
+                        rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::verify_ongoing_media_snapshot(&bytes, &seal, &broker).unwrap();
+                        assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&bytes, &seal, &broker).is_err(), "v2 actual writer cannot be forked");
+                        let lifetime_count = if cycle <= 36 {
+                            cycle
+                        } else if cycle <= 70 {
+                            cycle - 36
+                        } else {
+                            cycle - 70
+                        };
+                        assert_eq!(
+                            peer.current_lifetime_concurrent_media_renewals().unwrap(),
+                            lifetime_count as u64
+                        );
+                        assert_eq!(
+                            actual.current_lifetime_renewal_count,
+                            Some(lifetime_count as u64)
+                        );
+                        assert!(actual.runtime_history_checkpoint.is_some());
+                        let owner_read = provider
+                            .current_concurrent_ongoing_validation(now + 1)
+                            .unwrap();
+                        if [1, 16, 32, 36, 37, 53, 70, 71, 87, 103].contains(&cycle) {
+                            export_ongoing_owner_vector(
+                                &format!("host{index}-renewal{cycle}.json"),
+                                &serde_json::json!({
+                                    "coupled_receipt":actual, "current_owner_validation":owner_read,
+                                    "active_product_recovery":recovery
+                                }),
+                            );
+                        }
+                        assert_eq!(owner_read.cumulative_renewal_count, cycle as u64);
+                        assert_eq!(
+                            owner_read.current_lifetime_renewal_count,
+                            lifetime_count as u64
+                        );
+                        assert_eq!(owner_read.owner_request_id, actual.request_id);
+                        assert_eq!(
+                            owner_read.current_start_action_id,
+                            recovery.active_start_action.as_ref().unwrap().action_id
+                        );
+                        assert_eq!(
+                            owner_read.resource_identity_sha256,
+                            actual.product_adoption.physical_graph_sha256
+                        );
+                        assert!(provider
+                            .current_concurrent_ongoing_validation(
+                                actual.media_authority.expires_at_ms
+                            )
+                            .is_err());
+                        let epochs = actual.owner_history_epochs.as_ref().unwrap();
+                        assert_eq!(
+                            epochs.peer_request_epoch,
+                            snapshot
+                                .runtime_history_checkpoint
+                                .as_ref()
+                                .unwrap()
+                                .request_epoch
+                        );
+                        assert_eq!(
+                            epochs.media_command_request_epoch,
+                            snapshot
+                                .media_command_runtime
+                                .history_checkpoint
+                                .as_ref()
+                                .unwrap()
+                                .request_epoch
+                        );
+                        assert_eq!(
+                            epochs.reciprocal_request_epoch,
+                            snapshot
+                                .reciprocal_ed25519
+                                .history_checkpoint
+                                .as_ref()
+                                .unwrap()
+                                .request_epoch
+                        );
+                        assert_eq!(
+                            epochs.admission_request_epoch,
+                            broker
+                                .admission_snapshot()
+                                .history_checkpoint
+                                .as_ref()
+                                .unwrap()
+                                .request_epoch
+                        );
+                        let evidence = broker.evidence();
+                        assert_eq!(
+                            epochs.control_lease_request_epoch,
+                            evidence
+                                .control_lease_authority
+                                .history_checkpoint
+                                .as_ref()
+                                .unwrap()
+                                .request_epoch
+                        );
+                        assert_eq!(
+                            epochs.broker_host_request_epoch,
+                            evidence
+                                .host_snapshot
+                                .history_checkpoint
+                                .as_ref()
+                                .unwrap()
+                                .request_epoch
+                        );
+                        assert!(snapshot.audit_events.len() <= 128);
+                        assert!(snapshot.reciprocal_ed25519.accepted_receipts.len() <= 40);
+                        assert!(snapshot.enrollment.applied_request_ids.len() <= 17);
+                        assert!(snapshot.peer_sessions.applied_proposal_ids.len() <= 20);
+                    } else {
+                        let restored = rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&bytes, &seal, &broker).unwrap();
+                        assert_eq!(restored.snapshot(), &snapshot);
+                    }
+                    if let Some(checkpoint) = &snapshot.concurrent_media_checkpoint {
+                        let mut wrong = snapshot.clone();
+                        wrong
+                            .concurrent_media_checkpoint
+                            .as_mut()
+                            .unwrap()
+                            .cumulative_renewals = u64::MAX;
+                        assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::verify_ongoing_media_snapshot(&serde_json::to_string(&wrong).unwrap(), &seal, &broker).is_err());
+                        if !generic_history {
+                            assert_eq!(
+                                checkpoint.checkpoint_sequence * 16,
+                                checkpoint.cumulative_renewals
+                            );
+                        }
+                    }
+                    assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(snapshot.clone(),&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker).is_err());
+                    let mut altered = snapshot.clone();
+                    altered.media_sessions.sessions[0].expires_at_ms += 1;
+                    assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::verify_ongoing_media_snapshot(&serde_json::to_string(&altered).unwrap(), &seal, &broker).is_err());
+                    assert_eq!(actual.cumulative_renewal_count, Some(cycle as u64));
+                    if generic_history {
+                        assert_eq!(
+                            actual.continuation_checkpoint.is_some(),
+                            matches!(cycle, 16 | 32 | 37 | 53 | 69 | 71 | 87 | 103)
+                        );
+                    } else if cycle % 16 == 0 {
+                        assert!(actual.continuation_checkpoint.is_some());
+                    }
+                } else {
+                    let restored=rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(snapshot.clone(),&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker);
+                    assert!(restored.is_ok(), "actual restore failed: {:?}", restored);
+                }
+                for field in 0..3 {
+                    let mut wrong = snapshot.clone();
+                    match field {
+                    0 => wrong.media_command_runtime.leases[0].expires_at_ms += 1,
+                    1 => wrong.media_sessions.sessions[0].expires_at_ms += 1,
+                    _ => {
+                        if let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(
+                            route,
+                        ) = &mut wrong.pair_media_routes.routes[0]
+                        {
+                            route.expires_at_ms += 1;
+                        }
+                    }
+                }
+                    assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(wrong,&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker).is_err(),"unadopted current deadline rejects");
+                }
+                let mut malformed = snapshot.clone();
+                malformed
+                    .concurrent_session_renewals
+                    .last_mut()
+                    .unwrap()
+                    .renewed_session
+                    .decision_id = id("decision.forged");
+                assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(malformed,&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker).is_err());
+            }
+            if generic_history && matches!(cycle, 16 | 32 | 36 | 37 | 53 | 69 | 70 | 71 | 87 | 103)
+            {
+                println!("ACTUAL_V2_COUPLED_CYCLE {cycle}");
+            }
+            if generic_history && matches!(cycle, 36 | 70) {
+                let now = 64000u64 + ((cycle - 1) / 2) as u64 * 120000 + ((cycle - 1) % 2) as u64;
+                for (index, provider) in [&mut provider_a, &mut provider_b].into_iter().enumerate()
+                {
+                    let token = |part: u64| {
+                        format!(
+                            "{:064x}",
+                            500_000 + cycle as u64 * 100 + index as u64 * 10 + part
+                        )
+                    };
+                    let prior = provider.runtime.as_ref().unwrap().media_sessions
+                        [&identity().client_id]
+                        .recovery_snapshot()
+                        .unwrap();
+                    assert!(
+                        provider
+                            .apply_concurrent_peer_command(
+                                QuestConcurrentPeerCommand::Stop,
+                                c.sending_uid,
+                                &c.package_name,
+                                &c.signing_certificate_sha256,
+                                now + 2,
+                                &token(1)
+                            )
+                            .unwrap()
+                            .mutation
+                            .accepted
+                    );
+                    assert!(
+                        provider
+                            .terminate_concurrent_peer_route(false, now + 3, &token(2))
+                            .unwrap()
+                            .applied
+                    );
+                    let mut completed = None;
+                    for attempt in 0..8 {
+                        match provider.complete_media_stop_for_cleanup_typed(
+                            &identity().client_id,
+                            now + 4 + attempt,
+                        ) {
+                            Ok(value) => {
+                                completed = Some(value);
+                                break;
+                            }
+                            Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_)) => {}
+                            Err(error) => panic!("actual retained Stop failed: {error:?}"),
+                        }
+                    }
+                    let effect = completed.unwrap().stop_effect_receipt.unwrap();
+                    assert_eq!(effect.owner_receipt_ids.len(), 7);
+                    assert_eq!(
+                        provider
+                            .complete_concurrent_peer_route_cleanup(&effect, now + 20, &token(3))
+                            .unwrap()
+                            .len(),
+                        1
+                    );
+                    assert!(
+                        provider
+                            .apply_concurrent_peer_command(
+                                QuestConcurrentPeerCommand::Start,
+                                c.sending_uid,
+                                &c.package_name,
+                                &c.signing_certificate_sha256,
+                                now + 21,
+                                &token(4)
+                            )
+                            .unwrap()
+                            .mutation
+                            .accepted
+                    );
+                    provider
+                        .issue_concurrent_peer_route(
+                            &id("session.peer.quest-a-b"),
+                            now + 22,
+                            &token(5),
+                        )
+                        .unwrap();
+                    provider
+                        .runtime
+                        .as_mut()
+                        .unwrap()
+                        .complete_media_session_action(
+                            &QuestBrokerMediaCompletionRequest {
+                                client_id: identity().client_id,
+                            },
+                            now + 23,
+                            provider.media_owner_executor.as_mut().unwrap().as_mut(),
+                            &mut provider.next_media_execution_nonce,
+                        )
+                        .unwrap();
+                    let active = provider.runtime.as_ref().unwrap().media_sessions
+                        [&identity().client_id]
+                        .recovery_snapshot()
+                        .unwrap();
+                    assert_ne!(
+                        active.active_start_action.as_ref().unwrap().action_id,
+                        prior.active_start_action.as_ref().unwrap().action_id
+                    );
+                    let peer = provider
+                        .runtime
+                        .as_ref()
+                        .unwrap()
+                        .peer_runtime_host
+                        .as_ref()
+                        .unwrap()
+                        .read()
+                        .unwrap();
+                    assert_eq!(
+                        peer.cumulative_concurrent_media_renewals().unwrap(),
+                        cycle as u64,
+                        "global accepted count never resets on actual new Start"
+                    );
+                    assert_eq!(
+                        peer.current_lifetime_concurrent_media_renewals().unwrap(),
+                        0,
+                        "new actual lifetime has no renewals yet"
+                    );
+                    assert!(
+                        provider
+                            .current_concurrent_ongoing_validation(now + 24)
+                            .is_err(),
+                        "old lifetime receipt cannot validate new current Start"
+                    );
+                    drop(peer);
+                    export_ongoing_owner_vector(
+                        &format!("host{index}-newstart-after{cycle}.json"),
+                        &serde_json::json!({
+                            "stage":"new_start_before_first_renewal", "current_owner_validation_available":false,
+                            "active_product_recovery":active, "cumulative_renewal_count":cycle,
+                            "current_lifetime_renewal_count":0
+                        }),
+                    );
+                    let (authority, receiver, local, remote, key_id, signer) = if index == 0 {
+                        (
+                            &authority_a,
+                            &authority_b,
+                            "peer.quest-a",
+                            "peer.quest-b",
+                            "key.peer.quest-a.1",
+                            &alpha,
+                        )
+                    } else {
+                        (
+                            &authority_b,
+                            &authority_a,
+                            "peer.quest-b",
+                            "peer.quest-a",
+                            "key.peer.quest-b.1",
+                            &beta,
+                        )
+                    };
+                    let original = capture_original(provider, authority, local, remote, now + 24);
+                    let witness = receiver
+                        .capture_retained_original_enrollment(
+                            &original.0,
+                            &original.1,
+                            key_id,
+                            &signer.verifying_key().to_bytes(),
+                            now + 24,
+                        )
+                        .unwrap();
+                    ongoing_originals[index] = (original, witness);
+                    if index == 0 {
+                        active_a = active;
+                    } else {
+                        active_b = active;
+                    }
+                }
+            }
+        }
+        for (index, actual) in receipts.iter().enumerate() {
+            let provider = if index == 0 { &provider_a } else { &provider_b };
+            println!(
+                "ACTUAL_FULL_BROKER_EVIDENCE_BYTES host{index} {}",
+                provider.evidence_json().unwrap().len()
+            );
+            let bytes = serde_json::to_vec(actual).unwrap();
+            println!("ACTUAL_22_RECEIPTS_BYTES host{index} {}", bytes.len());
+            if let Ok(directory) = std::env::var("RQ_RENEWAL_RECEIPT_TEST_OUTPUT") {
+                std::fs::write(
+                    std::path::Path::new(&directory).join(format!("actual-renewals-{index}.json")),
+                    &bytes,
+                )
+                .unwrap();
+            }
+        }
+        for provider in [&mut provider_a] {
+            let base = if generic_history {
+                6_185_000
+            } else if ongoing {
+                4_025_000
+            } else {
+                1_265_000
+            };
+            assert!(
+                provider
+                    .apply_concurrent_peer_command(
+                        QuestConcurrentPeerCommand::Stop,
+                        c.sending_uid,
+                        &c.package_name,
+                        &c.signing_certificate_sha256,
+                        base,
+                        &"d3".repeat(32)
+                    )
+                    .unwrap()
+                    .mutation
+                    .accepted
+            );
+            assert!(
+                provider
+                    .terminate_concurrent_peer_route(false, base + 10, &"d4".repeat(32))
+                    .unwrap()
+                    .applied
+            );
+            let effect = provider
+                .complete_media_stop_for_cleanup_typed(&identity().client_id, base + 100)
+                .unwrap()
+                .stop_effect_receipt
+                .unwrap();
+            assert_eq!(effect.owner_receipt_ids.len(), 7);
+            let clean = provider
+                .complete_concurrent_peer_route_cleanup(&effect, base + 200, &"d5".repeat(32))
+                .unwrap();
+            assert_eq!(clean.len(), 1);
+            assert_eq!(
+                clean,
+                provider
+                    .complete_concurrent_peer_route_cleanup(&effect, base + 210, &"d6".repeat(32))
+                    .unwrap()
+            );
+            assert!(
+                provider
+                    .apply_concurrent_peer_command(
+                        QuestConcurrentPeerCommand::Start,
+                        c.sending_uid,
+                        &c.package_name,
+                        &c.signing_certificate_sha256,
+                        base + 300,
+                        &"d7".repeat(32)
+                    )
+                    .unwrap()
+                    .mutation
+                    .accepted
+            );
+            provider
+                .issue_concurrent_peer_route(
+                    &id("session.peer.quest-a-b"),
+                    base + 350,
+                    &"d8".repeat(32),
+                )
+                .unwrap();
+            provider
+                .runtime
+                .as_mut()
+                .unwrap()
+                .complete_media_session_action(
+                    &QuestBrokerMediaCompletionRequest {
+                        client_id: identity().client_id,
+                    },
+                    base + 400,
+                    provider.media_owner_executor.as_mut().unwrap().as_mut(),
+                    &mut provider.next_media_execution_nonce,
+                )
+                .unwrap();
+            let mut clock = provider
+                .runtime
+                .as_ref()
+                .unwrap()
+                .runtime
+                .read()
+                .unwrap()
+                .control_lease_authority_snapshot()
+                .clock_snapshot
+                .clone();
+            clock.sequence += 1;
+            clock.wall_unix_ms = (base + 500) as i64;
+            clock.monotonic_elapsed_ns += 1_500_000_000;
+            provider
+                .adopt_concurrent_peer_revoker(&clock, base + 500, &"d9".repeat(32))
+                .unwrap();
+            assert!(
+                provider
+                    .apply_concurrent_peer_command(
+                        QuestConcurrentPeerCommand::Stop,
+                        c.sending_uid,
+                        &c.package_name,
+                        &c.signing_certificate_sha256,
+                        base + 600,
+                        &"da".repeat(32)
+                    )
+                    .unwrap()
+                    .mutation
+                    .accepted
+            );
+            assert!(
+                provider
+                    .terminate_concurrent_peer_route(true, base + 610, &"db".repeat(32))
+                    .unwrap()
+                    .applied
+            );
+            let effect = provider
+                .complete_media_stop_for_cleanup_typed(&identity().client_id, base + 700)
+                .unwrap()
+                .stop_effect_receipt
+                .unwrap();
+            assert_eq!(effect.owner_receipt_ids.len(), 7);
+            assert_eq!(
+                provider
+                    .complete_concurrent_peer_route_cleanup(&effect, base + 800, &"dc".repeat(32))
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+
+        // Host B retains the original physical graph through expiry; no restart or authority reset.
+        let provider = &mut provider_b;
+        let late = if generic_history {
+            6_600_000
+        } else if ongoing {
+            4_400_000
+        } else {
+            1_600_000
+        };
+        assert!(
+            provider
+                .apply_concurrent_peer_command(
+                    QuestConcurrentPeerCommand::Stop,
+                    c.sending_uid,
+                    &c.package_name,
+                    &c.signing_certificate_sha256,
+                    late,
+                    &"e3".repeat(32)
+                )
+                .is_err(),
+            "expired ordinary authority cannot Stop"
+        );
         let mut clock = provider
             .runtime
             .as_ref()
@@ -1780,869 +2784,38 @@ fn run_coupled_owner_graph_with_history_mode(
         clock.wall_unix_ms = late as i64;
         clock.monotonic_elapsed_ns = 1_000_000_000 + (late - 1000) * 1_000_000;
         let adoption = provider
-            .adopt_concurrent_peer_revoker(&clock, late, &"92".repeat(32))
-            .unwrap();
-        assert!(
-            provider
-                .prepare_concurrent_peer_revoker_cleanup(&client, &adoption, late, &"93".repeat(32))
-                .is_err(),
-            "pending Start cannot become Stop"
-        );
-        let reviewed = provider
-            .review_concurrent_peer_revoker_cleanup(&client, &adoption, late, &"94".repeat(32))
-            .unwrap();
-        assert!(reviewed.termination.applied);
-        assert!(
-            provider
-                .terminate_concurrent_peer_route(true, late + 10, &"95".repeat(32))
-                .unwrap()
-                .applied
-        );
-        let mut damaged = reviewed.clone();
-        damaged.request.session_id = id("session.other");
+            .adopt_concurrent_peer_revoker(&clock, late, &"e4".repeat(32))
+            .expect("real generic old revoker expiry and fresh adoption");
         assert!(provider
-            .resume_revoked_media_start_abort_for_cleanup(&client, &damaged, late + 20)
-            .is_err());
-        assert_eq!(
-            provider.runtime.as_ref().unwrap().media_sessions[&client]
-                .pending_abort_completed_count(),
-            Some(1)
-        );
-        assert!(
-            provider
-                .resume_revoked_media_start_abort_for_cleanup(
-                    &client,
-                    &reviewed,
-                    adoption.lease.expires_at_ms
-                )
-                .is_err(),
-            "expired requester cannot resume"
-        );
-        let result = provider
-            .resume_revoked_media_start_abort_for_cleanup(&client, &reviewed, late + 20)
-            .unwrap()
-            .unwrap();
-        let receipt: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(receipt["rollback_receipts"].as_array().unwrap().len(), 4);
-        let snapshot = provider.runtime.as_ref().unwrap().media_sessions[&client]
-            .recovery_snapshot()
-            .unwrap();
-        assert_eq!(
-            snapshot.schema_id,
-            rusty_quest_media_stream::MEDIA_STREAM_PRODUCT_ABORT_RECOVERY_SCHEMA
-        );
-        assert!(snapshot.active_client_authority.is_none());
-        assert!(snapshot.active_start_action.is_none());
-        assert_eq!(
-            snapshot.lifecycle.phase,
-            rusty_quest_media_stream::MediaStreamRuntimePhase::Planned
-        );
-        let record = snapshot.completed_start_abort.as_ref().unwrap();
-        assert_eq!(record.original_action, original);
-        assert_eq!(record.rollback_receipts.len(), 4);
-        assert!(
-            provider
-                .resume_revoked_media_start_abort_for_cleanup(&client, &reviewed, late + 21)
-                .unwrap()
-                .is_none(),
-            "completed rollback must not replay"
-        );
-        let prepared = provider
+            .concurrent_peer_requires_revoker_cleanup(&identity().client_id, late)
+            .unwrap());
+        let recovery = provider
             .prepare_concurrent_peer_revoker_cleanup(
-                &client,
+                &identity().client_id,
                 &adoption,
-                late + 25,
-                &"96".repeat(32),
+                late,
+                &"e8".repeat(32),
             )
-            .unwrap();
-        assert_eq!(prepared.action.client_authority, original.client_authority);
-        assert_eq!(prepared.action.owner_actions.len(), 7);
-        // The modeled registry's ordinary Stop denies owners with no prior
-        // active handle. Actual retained compensation must prove absence;
-        // neither the partial Start cursor nor a missing handle is proof.
-        let mut completed = None;
-        for attempt in 0..8 {
-            match provider.complete_media_stop_for_cleanup_typed(&client, late + 30 + attempt) {
-                Ok(value) => {
-                    completed = Some(value);
-                    break;
-                }
-                Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_)) => {}
-                Err(error) => panic!("unexpected actual Stop error: {error:?}"),
-            }
-        }
-        let completed = completed.expect("all seven actual Stop/compensation readbacks");
-        let effect = completed.stop_effect_receipt.unwrap();
-        assert_eq!(effect.owner_receipt_ids.len(), 7);
-        assert_eq!(
-            provider
-                .complete_concurrent_peer_route_cleanup(&effect, late + 35, &"97".repeat(32))
-                .unwrap()
-                .len(),
-            1
-        );
-        println!(
-            "ACTUAL_091_FAILED_START_CLEANUP: original target retained; independent live Revoke; verified reverse cursor then seven owner Stop readbacks"
-        );
-        return;
-    }
-    if ongoing && !generic_history {
-        for provider in [&mut provider_a, &mut provider_b] {
-            provider.enable_ongoing_media_continuation(
-                rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1()).unwrap();
-        }
-    }
-    let mut ongoing_originals = Vec::new();
-    if generic_history {
-        for (provider, authority, receiver, local, remote, key_id, signer) in [
-            (
-                &provider_a,
-                &authority_a,
-                &authority_b,
-                "peer.quest-a",
-                "peer.quest-b",
-                "key.peer.quest-a.1",
-                &alpha,
-            ),
-            (
-                &provider_b,
-                &authority_b,
-                &authority_a,
-                "peer.quest-b",
-                "peer.quest-a",
-                "key.peer.quest-b.1",
-                &beta,
-            ),
-        ] {
-            let original = capture_original(provider, authority, local, remote, 4200);
-            let witness = receiver
-                .capture_retained_original_enrollment(
-                    &original.0,
-                    &original.1,
-                    key_id,
-                    &signer.verifying_key().to_bytes(),
-                    4200,
-                )
-                .unwrap();
-            ongoing_originals.push((original, witness));
-        }
-    }
-    let mut active_a = provider_a.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
-        .recovery_snapshot()
-        .unwrap();
-    let mut active_b = provider_b.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
-        .recovery_snapshot()
-        .unwrap();
-    let mut current_a = topology_a.clone();
-    let mut current_b = topology_b.clone();
-    if generic_history {
-        for (index, provider, active) in [(0, &provider_a, &active_a), (1, &provider_b, &active_b)] {
-            assert!(provider.current_concurrent_ongoing_validation(4200).is_err());
-            export_ongoing_owner_vector(&format!("host{index}-start0.json"), &serde_json::json!({
-                "stage":"initial_start_before_first_renewal", "current_owner_validation_available":false,
-                "active_product_recovery":active, "cumulative_renewal_count":0,
-                "current_lifetime_renewal_count":0
-            }));
-        }
-    }
-    let mut receipts = [Vec::new(), Vec::new()];
-    let mut stale_restore_seals = [None, None];
-    let cycle_count = if generic_history {
-        103
-    } else if ongoing {
-        67
-    } else {
-        22
-    };
-    for cycle in 1..=cycle_count {
-        let now = 64000u64 + ((cycle - 1) / 2) as u64 * 120000 + ((cycle - 1) % 2) as u64;
-        for (index, authority, current) in [
-            (0, &authority_a, &mut current_a),
-            (1, &authority_b, &mut current_b),
-        ] {
-            let first = renewal_reciprocal_request(
-                authority,
-                &format!("request.renew.c{cycle}.h{index}.credentials"),
-                &alpha,
-                &beta,
-                now,
-                (now + 20000).min(current.expires_at_ms),
-                1 + (cycle * 10 + index * 4) as u64,
-            );
-            let proof = authority.apply_common_lan_reciprocal(&first, now).unwrap();
-            assert!(proof.accepted);
-            let refresh = authority
-                .refresh_concurrent_pair_credentials(&proof, now)
-                .unwrap();
-            assert!(refresh.applied);
-            assert_eq!(refresh.expires_at_ms, now + 300000);
-            assert_eq!(refresh.key_ids, proof.signer_key_ids);
-            assert_eq!(
-                authority
-                    .refresh_concurrent_pair_credentials(&proof, now)
-                    .unwrap(),
-                refresh
-            );
-            let fresh = renewal_reciprocal_request(
-                authority,
-                &format!("request.renew.c{cycle}.h{index}.session"),
-                &alpha,
-                &beta,
-                now + 1,
-                now + 235000,
-                3 + (cycle * 10 + index * 4) as u64,
-            );
-            let signed = authority
-                .apply_common_lan_reciprocal(&fresh, now + 1)
-                .unwrap();
-            assert!(
-                signed.accepted,
-                "actual rejection cycle{cycle} h{index}: {:?}",
-                signed.rejection_reason
-            );
-            let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
-                serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
-            let mut next = proposal(&format!("renew.c{cycle}.h{index}"));
-            next.proposal_id = authority
-                .current_runtime_history_request_id(&id(&format!(
-                    "proposal.session.renew.c{cycle}.h{index}"
-                )))
-                .unwrap();
-            next.expected_authority_revision = snapshot.peer_sessions.authority_revision;
-            next.expires_at_ms = now + 235000;
-            let mut changed = next.clone();
-            changed.transport.route_configuration_sha256 = format!("sha256:{}", "f".repeat(64));
-            assert!(authority
-                .apply_common_lan_session_renewal(&changed, &signed, now + 1)
-                .is_err());
-            let renewal = authority
-                .apply_common_lan_session_renewal(&next, &signed, now + 1)
-                .unwrap();
-            assert!(renewal.applied);
-            assert_eq!(renewal.decision_id, current.decision_id);
-            assert_eq!(renewal.prior_expires_at_ms, current.expires_at_ms);
-            assert!(renewal.expires_at_ms > current.expires_at_ms);
-            assert_eq!(
-                authority
-                    .apply_common_lan_session_renewal(&next, &signed, now + 1)
-                    .unwrap(),
-                renewal
-            );
-            let provider = if index == 0 {
-                &mut provider_a
-            } else {
-                &mut provider_b
-            };
-            let prior_clock = provider
-                .runtime
-                .as_ref()
-                .unwrap()
-                .runtime
-                .read()
-                .unwrap()
-                .control_lease_authority_snapshot()
-                .clock_snapshot
-                .clone();
-            let mut clock = prior_clock.clone();
-            clock.sequence += 1;
-            clock.wall_unix_ms = (now + 1) as i64;
-            clock.monotonic_elapsed_ns = 1_000_000_000 + (now + 1 - 1000) * 1_000_000;
-            let mut partial_revisions = None;
-            if ongoing && cycle == 16 && !generic_history {
-                provider
-                    .runtime
-                    .as_mut()
-                    .unwrap()
-                    .concurrent_renewal
-                    .pause_after_product_adoption = true;
-                assert!(provider
-                    .renew_concurrent_peer_authority(
-                        &clock,
-                        &renewal,
-                        now + 1,
-                        &format!("{:02x}", cycle).repeat(32)
-                    )
-                    .is_err());
-                assert!(provider
-                    .runtime
-                    .as_ref()
-                    .unwrap()
-                    .concurrent_renewal
-                    .has_pending());
-                let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
-                partial_revisions = Some((
-                    broker.admission_snapshot().authority_revision,
-                    broker.host_snapshot().authority_revision,
-                    broker.control_lease_authority_snapshot().authority_revision,
-                ));
-            }
-            if generic_history && cycle == 32 {
-                provider
-                    .runtime
-                    .as_mut()
-                    .unwrap()
-                    .concurrent_renewal
-                    .pause_after_history_commit = true;
-                assert!(provider
-                    .renew_concurrent_peer_authority(
-                        &clock,
-                        &renewal,
-                        now + 1,
-                        &format!("{:02x}", cycle).repeat(32)
-                    )
-                    .is_err());
-                assert!(provider
-                    .runtime
-                    .as_ref()
-                    .unwrap()
-                    .concurrent_renewal
-                    .has_pending());
-                let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
-                partial_revisions = Some((
-                    broker.admission_snapshot().authority_revision,
-                    broker.host_snapshot().authority_revision,
-                    broker.control_lease_authority_snapshot().authority_revision,
-                ));
-            }
-            let actual = provider
-                .renew_concurrent_peer_authority(
-                    &clock,
-                    &renewal,
-                    now + 1,
-                    &format!("{:02x}", cycle).repeat(32),
-                )
-                .expect("actual full coupled owners");
-            if let Some(revisions) = partial_revisions {
-                let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
-                assert_eq!(
-                    revisions,
-                    (
-                        broker.admission_snapshot().authority_revision,
-                        broker.host_snapshot().authority_revision,
-                        broker.control_lease_authority_snapshot().authority_revision
-                    ),
-                    "exact pending retry must not repeat accepted owner uses"
-                );
-            }
-            receipts[index].push(serde_json::to_value(&actual).unwrap());
-            assert!(actual.media_authority.applied);
-            assert!(actual.outer_lifecycle.applied);
-            assert!(actual.admission_grant.application.applied);
-            let retry = provider
-                .renew_concurrent_peer_authority(
-                    &clock,
-                    &renewal,
-                    now + 1,
-                    &format!("{:02x}", cycle).repeat(32),
-                )
-                .unwrap();
-            assert_eq!(
-                serde_json::to_value(&actual).unwrap(),
-                serde_json::to_value(&retry).unwrap()
-            );
-            if ongoing && actual.continuation_checkpoint.is_some() {
-                let previous: rusty_manifold_peer_runtime_host::ManifoldConcurrentPairSessionRenewalReceipt =
-                    serde_json::from_value(receipts[index][cycle as usize - 2]["accepted_pair"].clone()).unwrap();
-                let before = authority.snapshot_json().unwrap();
-                assert!(
-                    provider
-                        .renew_concurrent_peer_authority(
-                            &clock,
-                            &previous,
-                            now + 1,
-                            &"fa".repeat(32)
-                        )
-                        .is_err(),
-                    "evicted exact signed proof cannot reopen a completed use"
-                );
-                let mut relabelled = previous;
-                relabelled.request_id = id(&format!("request.relabelled.c{cycle}.h{index}"));
-                assert!(
-                    provider
-                        .renew_concurrent_peer_authority(
-                            &clock,
-                            &relabelled,
-                            now + 1,
-                            &"fb".repeat(32)
-                        )
-                        .is_err(),
-                    "relabelled outer identity is not a retained accepted proof"
-                );
-                assert_eq!(authority.snapshot_json().unwrap(), before);
-            }
-            let recovery = provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
-                .recovery_snapshot()
-                .unwrap();
-            let initial = if index == 0 { &active_a } else { &active_b };
-            let mut physical = serde_json::to_value(&recovery).unwrap();
-            let mut original = serde_json::to_value(initial).unwrap();
-            physical.as_object_mut().unwrap().remove("accepted_subject");
-            original.as_object_mut().unwrap().remove("accepted_subject");
-            assert_eq!(
-                physical, original,
-                "physical resource graph must remain unchanged"
-            );
-            *current = renewal.topology.clone();
-            let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
-                serde_json::from_str(&authority.snapshot_json().unwrap()).unwrap();
-            let broker = provider.runtime.as_ref().unwrap().runtime.read().unwrap();
-            if ongoing {
-                let shared = provider
-                    .runtime
-                    .as_ref()
-                    .unwrap()
-                    .peer_runtime_host
-                    .as_ref()
-                    .unwrap();
-                let peer = shared.read().unwrap();
-                assert_eq!(
-                    peer.cumulative_concurrent_media_renewals().unwrap(),
-                    cycle as u64
-                );
-                assert!(snapshot.concurrent_media_renewals.len() <= 18);
-                assert!(snapshot.concurrent_session_renewals.len() <= 18);
-                assert!(snapshot.concurrent_credential_refreshes.len() <= 16);
-                if cycle == 16 && !generic_history {
-                    // A frozen previously accepted owner is a negative restore
-                    // fixture only; it is never installed or used for effects.
-                    let frozen: &'static rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost =
-                        Box::leak(Box::new(peer.clone()));
-                    stale_restore_seals[index] = Some((
-                        peer.snapshot_json().unwrap(),
-                        frozen.seal_ongoing_media_snapshot(&broker).unwrap(),
-                    ));
-                }
-                if cycle == 17 && !generic_history {
-                    let (old_bytes, old_seal) = stale_restore_seals[index].take().unwrap();
-                    assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&old_bytes, &old_seal, &broker).is_err(), "a real old seal cannot roll back after live Broker authority advances");
-                }
-                let seal = peer.seal_ongoing_media_snapshot(&broker).unwrap();
-                let bytes = serde_json::to_string(&snapshot).unwrap();
-                if generic_history {
-                    rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::verify_ongoing_media_snapshot(&bytes, &seal, &broker).unwrap();
-                    assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&bytes, &seal, &broker).is_err(), "v2 actual writer cannot be forked");
-                    let lifetime_count = if cycle <= 36 {
-                        cycle
-                    } else if cycle <= 70 {
-                        cycle - 36
-                    } else {
-                        cycle - 70
-                    };
-                    assert_eq!(
-                        peer.current_lifetime_concurrent_media_renewals().unwrap(),
-                        lifetime_count as u64
-                    );
-                    assert_eq!(
-                        actual.current_lifetime_renewal_count,
-                        Some(lifetime_count as u64)
-                    );
-                    assert!(actual.runtime_history_checkpoint.is_some());
-                    let owner_read = provider
-                        .current_concurrent_ongoing_validation(now + 1)
-                        .unwrap();
-                    if [1, 16, 32, 36, 37, 53, 70, 71, 87, 103].contains(&cycle) {
-                        export_ongoing_owner_vector(&format!("host{index}-renewal{cycle}.json"), &serde_json::json!({
-                            "coupled_receipt":actual, "current_owner_validation":owner_read,
-                            "active_product_recovery":recovery
-                        }));
-                    }
-                    assert_eq!(owner_read.cumulative_renewal_count, cycle as u64);
-                    assert_eq!(
-                        owner_read.current_lifetime_renewal_count,
-                        lifetime_count as u64
-                    );
-                    assert_eq!(owner_read.owner_request_id, actual.request_id);
-                    assert_eq!(
-                        owner_read.current_start_action_id,
-                        recovery.active_start_action.as_ref().unwrap().action_id
-                    );
-                    assert_eq!(
-                        owner_read.resource_identity_sha256,
-                        actual.product_adoption.physical_graph_sha256
-                    );
-                    assert!(provider
-                        .current_concurrent_ongoing_validation(actual.media_authority.expires_at_ms)
-                        .is_err());
-                    let epochs = actual.owner_history_epochs.as_ref().unwrap();
-                    assert_eq!(
-                        epochs.peer_request_epoch,
-                        snapshot
-                            .runtime_history_checkpoint
-                            .as_ref()
-                            .unwrap()
-                            .request_epoch
-                    );
-                    assert_eq!(
-                        epochs.media_command_request_epoch,
-                        snapshot
-                            .media_command_runtime
-                            .history_checkpoint
-                            .as_ref()
-                            .unwrap()
-                            .request_epoch
-                    );
-                    assert_eq!(
-                        epochs.reciprocal_request_epoch,
-                        snapshot
-                            .reciprocal_ed25519
-                            .history_checkpoint
-                            .as_ref()
-                            .unwrap()
-                            .request_epoch
-                    );
-                    assert_eq!(
-                        epochs.admission_request_epoch,
-                        broker
-                            .admission_snapshot()
-                            .history_checkpoint
-                            .as_ref()
-                            .unwrap()
-                            .request_epoch
-                    );
-                    let evidence = broker.evidence();
-                    assert_eq!(
-                        epochs.control_lease_request_epoch,
-                        evidence
-                            .control_lease_authority
-                            .history_checkpoint
-                            .as_ref()
-                            .unwrap()
-                            .request_epoch
-                    );
-                    assert_eq!(
-                        epochs.broker_host_request_epoch,
-                        evidence
-                            .host_snapshot
-                            .history_checkpoint
-                            .as_ref()
-                            .unwrap()
-                            .request_epoch
-                    );
-                    assert!(snapshot.audit_events.len() <= 128);
-                    assert!(snapshot.reciprocal_ed25519.accepted_receipts.len() <= 40);
-                    assert!(snapshot.enrollment.applied_request_ids.len() <= 17);
-                    assert!(snapshot.peer_sessions.applied_proposal_ids.len() <= 20);
-                } else {
-                    let restored = rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(&bytes, &seal, &broker).unwrap();
-                    assert_eq!(restored.snapshot(), &snapshot);
-                }
-                if let Some(checkpoint) = &snapshot.concurrent_media_checkpoint {
-                    let mut wrong = snapshot.clone();
-                    wrong
-                        .concurrent_media_checkpoint
-                        .as_mut()
-                        .unwrap()
-                        .cumulative_renewals = u64::MAX;
-                    assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::verify_ongoing_media_snapshot(&serde_json::to_string(&wrong).unwrap(), &seal, &broker).is_err());
-                    if !generic_history {
-                        assert_eq!(
-                            checkpoint.checkpoint_sequence * 16,
-                            checkpoint.cumulative_renewals
-                        );
-                    }
-                }
-                assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(snapshot.clone(),&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker).is_err());
-                let mut altered = snapshot.clone();
-                altered.media_sessions.sessions[0].expires_at_ms += 1;
-                assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::verify_ongoing_media_snapshot(&serde_json::to_string(&altered).unwrap(), &seal, &broker).is_err());
-                assert_eq!(actual.cumulative_renewal_count, Some(cycle as u64));
-                if generic_history {
-                    assert_eq!(
-                        actual.continuation_checkpoint.is_some(),
-                        matches!(cycle, 16 | 32 | 37 | 53 | 69 | 71 | 87 | 103)
-                    );
-                } else if cycle % 16 == 0 {
-                    assert!(actual.continuation_checkpoint.is_some());
-                }
-            } else {
-                let restored=rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(snapshot.clone(),&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker);
-                assert!(restored.is_ok(), "actual restore failed: {:?}", restored);
-            }
-            for field in 0..3 {
-                let mut wrong = snapshot.clone();
-                match field {
-                    0 => wrong.media_command_runtime.leases[0].expires_at_ms += 1,
-                    1 => wrong.media_sessions.sessions[0].expires_at_ms += 1,
-                    _ => {
-                        if let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(
-                            route,
-                        ) = &mut wrong.pair_media_routes.routes[0]
-                        {
-                            route.expires_at_ms += 1;
-                        }
-                    }
-                }
-                assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(wrong,&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker).is_err(),"unadopted current deadline rejects");
-            }
-            let mut malformed = snapshot.clone();
-            malformed
-                .concurrent_session_renewals
-                .last_mut()
-                .unwrap()
-                .renewed_session
-                .decision_id = id("decision.forged");
-            assert!(rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(malformed,&snapshot.trust_policy,&snapshot.provider_epoch_id,&broker).is_err());
-        }
-        if generic_history && matches!(cycle, 16 | 32 | 36 | 37 | 53 | 69 | 70 | 71 | 87 | 103) {
-            println!("ACTUAL_V2_COUPLED_CYCLE {cycle}");
-        }
-        if generic_history && matches!(cycle, 36 | 70) {
-            let now = 64000u64 + ((cycle - 1) / 2) as u64 * 120000 + ((cycle - 1) % 2) as u64;
-            for (index, provider) in [&mut provider_a, &mut provider_b].into_iter().enumerate() {
-                let token = |part: u64| {
-                    format!(
-                        "{:064x}",
-                        500_000 + cycle as u64 * 100 + index as u64 * 10 + part
-                    )
-                };
-                let prior = provider.runtime.as_ref().unwrap().media_sessions
-                    [&identity().client_id]
-                    .recovery_snapshot()
-                    .unwrap();
-                assert!(
-                    provider
-                        .apply_concurrent_peer_command(
-                            QuestConcurrentPeerCommand::Stop,
-                            c.sending_uid,
-                            &c.package_name,
-                            &c.signing_certificate_sha256,
-                            now + 2,
-                            &token(1)
-                        )
-                        .unwrap()
-                        .mutation
-                        .accepted
-                );
-                assert!(
-                    provider
-                        .terminate_concurrent_peer_route(false, now + 3, &token(2))
-                        .unwrap()
-                        .applied
-                );
-                let mut completed = None;
-                for attempt in 0..8 {
-                    match provider.complete_media_stop_for_cleanup_typed(
-                        &identity().client_id,
-                        now + 4 + attempt,
-                    ) {
-                        Ok(value) => {
-                            completed = Some(value);
-                            break;
-                        }
-                        Err(QuestBrokerRuntimeError::MediaStopAttemptRetained(_)) => {}
-                        Err(error) => panic!("actual retained Stop failed: {error:?}"),
-                    }
-                }
-                let effect = completed.unwrap().stop_effect_receipt.unwrap();
-                assert_eq!(effect.owner_receipt_ids.len(), 7);
-                assert_eq!(
-                    provider
-                        .complete_concurrent_peer_route_cleanup(&effect, now + 20, &token(3))
-                        .unwrap()
-                        .len(),
-                    1
-                );
-                assert!(
-                    provider
-                        .apply_concurrent_peer_command(
-                            QuestConcurrentPeerCommand::Start,
-                            c.sending_uid,
-                            &c.package_name,
-                            &c.signing_certificate_sha256,
-                            now + 21,
-                            &token(4)
-                        )
-                        .unwrap()
-                        .mutation
-                        .accepted
-                );
-                provider
-                    .issue_concurrent_peer_route(&id("session.peer.quest-a-b"), now + 22, &token(5))
-                    .unwrap();
-                provider
-                    .runtime
-                    .as_mut()
-                    .unwrap()
-                    .complete_media_session_action(
-                        &QuestBrokerMediaCompletionRequest {
-                            client_id: identity().client_id,
-                        },
-                        now + 23,
-                        provider.media_owner_executor.as_mut().unwrap().as_mut(),
-                        &mut provider.next_media_execution_nonce,
-                    )
-                    .unwrap();
-                let active = provider.runtime.as_ref().unwrap().media_sessions
-                    [&identity().client_id]
-                    .recovery_snapshot()
-                    .unwrap();
-                assert_ne!(
-                    active.active_start_action.as_ref().unwrap().action_id,
-                    prior.active_start_action.as_ref().unwrap().action_id
-                );
-                let peer = provider
-                    .runtime
-                    .as_ref()
-                    .unwrap()
-                    .peer_runtime_host
-                    .as_ref()
-                    .unwrap()
-                    .read()
-                    .unwrap();
-                assert_eq!(
-                    peer.cumulative_concurrent_media_renewals().unwrap(),
-                    cycle as u64,
-                    "global accepted count never resets on actual new Start"
-                );
-                assert_eq!(
-                    peer.current_lifetime_concurrent_media_renewals().unwrap(),
-                    0,
-                    "new actual lifetime has no renewals yet"
-                );
-                assert!(
-                    provider
-                        .current_concurrent_ongoing_validation(now + 24)
-                        .is_err(),
-                    "old lifetime receipt cannot validate new current Start"
-                );
-                drop(peer);
-                export_ongoing_owner_vector(&format!("host{index}-newstart-after{cycle}.json"), &serde_json::json!({
-                    "stage":"new_start_before_first_renewal", "current_owner_validation_available":false,
-                    "active_product_recovery":active, "cumulative_renewal_count":cycle,
-                    "current_lifetime_renewal_count":0
-                }));
-                let (authority, receiver, local, remote, key_id, signer) = if index == 0 {
-                    (
-                        &authority_a,
-                        &authority_b,
-                        "peer.quest-a",
-                        "peer.quest-b",
-                        "key.peer.quest-a.1",
-                        &alpha,
-                    )
-                } else {
-                    (
-                        &authority_b,
-                        &authority_a,
-                        "peer.quest-b",
-                        "peer.quest-a",
-                        "key.peer.quest-b.1",
-                        &beta,
-                    )
-                };
-                let original = capture_original(provider, authority, local, remote, now + 24);
-                let witness = receiver
-                    .capture_retained_original_enrollment(
-                        &original.0,
-                        &original.1,
-                        key_id,
-                        &signer.verifying_key().to_bytes(),
-                        now + 24,
-                    )
-                    .unwrap();
-                ongoing_originals[index] = (original, witness);
-                if index == 0 {
-                    active_a = active;
-                } else {
-                    active_b = active;
-                }
-            }
-        }
-    }
-    for (index, actual) in receipts.iter().enumerate() {
-        let provider = if index == 0 { &provider_a } else { &provider_b };
-        println!(
-            "ACTUAL_FULL_BROKER_EVIDENCE_BYTES host{index} {}",
-            provider.evidence_json().unwrap().len()
-        );
-        let bytes = serde_json::to_vec(actual).unwrap();
-        println!("ACTUAL_22_RECEIPTS_BYTES host{index} {}", bytes.len());
-        if let Ok(directory) = std::env::var("RQ_RENEWAL_RECEIPT_TEST_OUTPUT") {
-            std::fs::write(
-                std::path::Path::new(&directory).join(format!("actual-renewals-{index}.json")),
-                &bytes,
-            )
-            .unwrap();
-        }
-    }
-    for provider in [&mut provider_a] {
-        let base = if generic_history {
-            6_185_000
-        } else if ongoing {
-            4_025_000
-        } else {
-            1_265_000
-        };
+            .expect("actual fixed provider trusted cleanup");
+        assert!(recovery.recovery.termination.applied);
+        assert!(recovery.action.trusted_revoker_cleanup.is_some());
         assert!(
             provider
-                .apply_concurrent_peer_command(
-                    QuestConcurrentPeerCommand::Stop,
-                    c.sending_uid,
-                    &c.package_name,
-                    &c.signing_certificate_sha256,
-                    base,
-                    &"d3".repeat(32)
-                )
-                .unwrap()
-                .mutation
-                .accepted
-        );
-        assert!(
-            provider
-                .terminate_concurrent_peer_route(false, base + 10, &"d4".repeat(32))
-                .unwrap()
+                .terminate_concurrent_peer_route(true, late + 10, &"e5".repeat(32))
+                .expect("real late route Revoke")
                 .applied
         );
-        let effect = provider
-            .complete_media_stop_for_cleanup_typed(&identity().client_id, base + 100)
-            .unwrap()
-            .stop_effect_receipt
-            .unwrap();
-        assert_eq!(effect.owner_receipt_ids.len(), 7);
-        let clean = provider
-            .complete_concurrent_peer_route_cleanup(&effect, base + 200, &"d5".repeat(32))
-            .unwrap();
-        assert_eq!(clean.len(), 1);
-        assert_eq!(
-            clean,
-            provider
-                .complete_concurrent_peer_route_cleanup(&effect, base + 210, &"d6".repeat(32))
-                .unwrap()
-        );
         assert!(
             provider
-                .apply_concurrent_peer_command(
-                    QuestConcurrentPeerCommand::Start,
-                    c.sending_uid,
-                    &c.package_name,
-                    &c.signing_certificate_sha256,
-                    base + 300,
-                    &"d7".repeat(32)
-                )
-                .unwrap()
-                .mutation
-                .accepted
+                .complete_media_stop_for_cleanup_typed(&identity().client_id, late + 100)
+                .is_err(),
+            "physical uncertainty stays Pending"
         );
-        provider
-            .issue_concurrent_peer_route(
-                &id("session.peer.quest-a-b"),
-                base + 350,
-                &"d8".repeat(32),
-            )
-            .unwrap();
-        provider
-            .runtime
-            .as_mut()
+        let retained = provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
+            .pending_action()
             .unwrap()
-            .complete_media_session_action(
-                &QuestBrokerMediaCompletionRequest {
-                    client_id: identity().client_id,
-                },
-                base + 400,
-                provider.media_owner_executor.as_mut().unwrap().as_mut(),
-                &mut provider.next_media_execution_nonce,
-            )
-            .unwrap();
+            .clone();
+        let retry_at = late + 31_000;
         let mut clock = provider
             .runtime
             .as_ref()
@@ -2653,206 +2826,109 @@ fn run_coupled_owner_graph_with_history_mode(
             .control_lease_authority_snapshot()
             .clock_snapshot
             .clone();
-        clock.sequence += 1;
-        clock.wall_unix_ms = (base + 500) as i64;
-        clock.monotonic_elapsed_ns += 1_500_000_000;
-        provider
-            .adopt_concurrent_peer_revoker(&clock, base + 500, &"d9".repeat(32))
-            .unwrap();
-        assert!(
-            provider
-                .apply_concurrent_peer_command(
-                    QuestConcurrentPeerCommand::Stop,
-                    c.sending_uid,
-                    &c.package_name,
-                    &c.signing_certificate_sha256,
-                    base + 600,
-                    &"da".repeat(32)
-                )
-                .unwrap()
-                .mutation
-                .accepted
-        );
-        assert!(
-            provider
-                .terminate_concurrent_peer_route(true, base + 610, &"db".repeat(32))
-                .unwrap()
-                .applied
-        );
-        let effect = provider
-            .complete_media_stop_for_cleanup_typed(&identity().client_id, base + 700)
+        clock.sequence = provider.concurrent_revoker_clock().unwrap().sequence + 1;
+        clock.wall_unix_ms = retry_at as i64;
+        clock.monotonic_elapsed_ns = 1_000_000_000 + (retry_at - 1000) * 1_000_000;
+        let fresh = provider
+            .adopt_concurrent_peer_revoker(&clock, retry_at, &"e7".repeat(32))
+            .expect("actual generic revoker expiry/adoption and fresh cleanup lease");
+        let grant = provider
+            .runtime
+            .as_ref()
             .unwrap()
-            .stop_effect_receipt
-            .unwrap();
-        assert_eq!(effect.owner_receipt_ids.len(), 7);
-        assert_eq!(
-            provider
-                .complete_concurrent_peer_route_cleanup(&effect, base + 800, &"dc".repeat(32))
-                .unwrap()
-                .len(),
-            1
-        );
-    }
-
-    // Host B retains the original physical graph through expiry; no restart or authority reset.
-    let provider = &mut provider_b;
-    let late = if generic_history {
-        6_600_000
-    } else if ongoing {
-        4_400_000
-    } else {
-        1_600_000
-    };
-    assert!(
-        provider
-            .apply_concurrent_peer_command(
-                QuestConcurrentPeerCommand::Stop,
-                c.sending_uid,
-                &c.package_name,
-                &c.signing_certificate_sha256,
-                late,
-                &"e3".repeat(32)
-            )
-            .is_err(),
-        "expired ordinary authority cannot Stop"
-    );
-    let mut clock = provider
-        .runtime
-        .as_ref()
-        .unwrap()
-        .runtime
-        .read()
-        .unwrap()
-        .control_lease_authority_snapshot()
-        .clock_snapshot
-        .clone();
-    clock.sequence += 1;
-    clock.wall_unix_ms = late as i64;
-    clock.monotonic_elapsed_ns = 1_000_000_000 + (late - 1000) * 1_000_000;
-    let adoption = provider
-        .adopt_concurrent_peer_revoker(&clock, late, &"e4".repeat(32))
-        .expect("real generic old revoker expiry and fresh adoption");
-    assert!(provider
-        .concurrent_peer_requires_revoker_cleanup(&identity().client_id, late)
-        .unwrap());
-    let recovery = provider
-        .prepare_concurrent_peer_revoker_cleanup(
-            &identity().client_id,
-            &adoption,
-            late,
-            &"e8".repeat(32),
-        )
-        .expect("actual fixed provider trusted cleanup");
-    assert!(recovery.recovery.termination.applied);
-    assert!(recovery.action.trusted_revoker_cleanup.is_some());
-    assert!(
-        provider
-            .terminate_concurrent_peer_route(true, late + 10, &"e5".repeat(32))
-            .expect("real late route Revoke")
-            .applied
-    );
-    assert!(
-        provider
-            .complete_media_stop_for_cleanup_typed(&identity().client_id, late + 100)
-            .is_err(),
-        "physical uncertainty stays Pending"
-    );
-    let retained = provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
-        .pending_action()
-        .unwrap()
-        .clone();
-    let retry_at = late + 31_000;
-    let mut clock = provider
-        .runtime
-        .as_ref()
-        .unwrap()
-        .runtime
-        .read()
-        .unwrap()
-        .control_lease_authority_snapshot()
-        .clock_snapshot
-        .clone();
-    clock.sequence = provider.concurrent_revoker_clock().unwrap().sequence + 1;
-    clock.wall_unix_ms = retry_at as i64;
-    clock.monotonic_elapsed_ns = 1_000_000_000 + (retry_at - 1000) * 1_000_000;
-    let fresh = provider
-        .adopt_concurrent_peer_revoker(&clock, retry_at, &"e7".repeat(32))
-        .expect("actual generic revoker expiry/adoption and fresh cleanup lease");
-    let grant = provider
-        .runtime
-        .as_ref()
-        .unwrap()
-        .peer_runtime_host
-        .as_ref()
-        .unwrap()
-        .read()
-        .unwrap()
-        .snapshot()
-        .pair_media_routes
-        .routes
-        .iter()
-        .find(|route| {
-            *route.cleanup_status()
-                == rusty_manifold_peer::ManifoldPairMediaRouteCleanupStatus::Pending
-        })
-        .unwrap()
-        .grant_id()
-        .clone();
-    let projection = authority_b
-        .retained_cleanup_projection(
-            &grant,
-            &fresh.revoker_id,
-            &fresh.lease.lease_id,
-            &id("peer.quest-b"),
-            &id("peer.quest-a"),
-            retry_at,
-        )
-        .expect("actual late two-principal cleanup projection");
-    let local = authority_b
-        .retained_local_cleanup_projection(
-            &grant,
-            &fresh.revoker_id,
-            &fresh.lease.lease_id,
-            &id("peer.quest-b"),
-            retry_at,
-        )
-        .expect("actual local two-principal cleanup projection");
-    if generic_history {
-        let ((original, ticket), witness) = &ongoing_originals[1];
-        let ancestry = authority_b
-            .retained_cleanup_renewal_ancestry(&projection)
-            .unwrap();
-        let certificate = ancestry[0].continuation_checkpoint.as_ref().unwrap();
-        assert_eq!(
-            certificate.schema_id,
-            "rusty.quest.retained_cleanup.continuation_checkpoint.v2"
-        );
-        assert_eq!(certificate.cumulative_renewals, 103);
-        assert_eq!(certificate.current_lifetime_renewal_count, Some(33));
-        export_ongoing_owner_vector("host1-third-lifetime-signed-cleanup.json", &serde_json::json!({
-            "cleanup_projection":projection, "original_prepare":original,
-            "original_start_ticket":ticket, "original_enrollment":witness,
-            "renewal_ancestry":ancestry
-        }));
-        authority_a
-            .validate_remote_retained_cleanup_projection_with_original_enrollment(
-                &projection,
-                original,
-                ticket,
-                "key.peer.quest-b.1",
-                &beta.verifying_key().to_bytes(),
+            .peer_runtime_host
+            .as_ref()
+            .unwrap()
+            .read()
+            .unwrap()
+            .snapshot()
+            .pair_media_routes
+            .routes
+            .iter()
+            .find(|route| {
+                *route.cleanup_status()
+                    == rusty_manifold_peer::ManifoldPairMediaRouteCleanupStatus::Pending
+            })
+            .unwrap()
+            .grant_id()
+            .clone();
+        let projection = authority_b
+            .retained_cleanup_projection(
+                &grant,
+                &fresh.revoker_id,
+                &fresh.lease.lease_id,
+                &id("peer.quest-b"),
+                &id("peer.quest-a"),
                 retry_at,
-                &ancestry,
-                Some(witness),
             )
-            .unwrap();
-        for wrong in [103, 0] {
-            let mut altered = ancestry.clone();
-            altered[0]
+            .expect("actual late two-principal cleanup projection");
+        let local = authority_b
+            .retained_local_cleanup_projection(
+                &grant,
+                &fresh.revoker_id,
+                &fresh.lease.lease_id,
+                &id("peer.quest-b"),
+                retry_at,
+            )
+            .expect("actual local two-principal cleanup projection");
+        if generic_history {
+            let ((original, ticket), witness) = &ongoing_originals[1];
+            let ancestry = authority_b
+                .retained_cleanup_renewal_ancestry(&projection)
+                .unwrap();
+            let certificate = ancestry[0].continuation_checkpoint.as_ref().unwrap();
+            assert_eq!(
+                certificate.schema_id,
+                "rusty.quest.retained_cleanup.continuation_checkpoint.v2"
+            );
+            assert_eq!(certificate.cumulative_renewals, 103);
+            assert_eq!(certificate.current_lifetime_renewal_count, Some(33));
+            export_ongoing_owner_vector(
+                "host1-third-lifetime-signed-cleanup.json",
+                &serde_json::json!({
+                    "cleanup_projection":projection, "original_prepare":original,
+                    "original_start_ticket":ticket, "original_enrollment":witness,
+                    "renewal_ancestry":ancestry
+                }),
+            );
+            authority_a
+                .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                    &projection,
+                    original,
+                    ticket,
+                    "key.peer.quest-b.1",
+                    &beta.verifying_key().to_bytes(),
+                    retry_at,
+                    &ancestry,
+                    Some(witness),
+                )
+                .unwrap();
+            for wrong in [103, 0] {
+                let mut altered = ancestry.clone();
+                altered[0]
+                    .continuation_checkpoint
+                    .as_mut()
+                    .unwrap()
+                    .current_lifetime_renewal_count = Some(wrong);
+                assert!(authority_a
+                    .validate_remote_retained_cleanup_projection_with_original_enrollment(
+                        &projection,
+                        original,
+                        ticket,
+                        "key.peer.quest-b.1",
+                        &beta.verifying_key().to_bytes(),
+                        retry_at,
+                        &altered,
+                        Some(witness)
+                    )
+                    .is_err());
+            }
+            let mut relabelled = ancestry.clone();
+            relabelled[0]
                 .continuation_checkpoint
                 .as_mut()
                 .unwrap()
-                .current_lifetime_renewal_count = Some(wrong);
+                .schema_id = "rusty.quest.retained_cleanup.continuation_checkpoint.v1".into();
             assert!(authority_a
                 .validate_remote_retained_cleanup_projection_with_original_enrollment(
                     &projection,
@@ -2861,75 +2937,57 @@ fn run_coupled_owner_graph_with_history_mode(
                     "key.peer.quest-b.1",
                     &beta.verifying_key().to_bytes(),
                     retry_at,
-                    &altered,
+                    &relabelled,
                     Some(witness)
                 )
                 .is_err());
+            println!("ACTUAL_V2_THIRD_LIFETIME_SIGNED_CLEANUP global103 lifetime33");
         }
-        let mut relabelled = ancestry.clone();
-        relabelled[0]
-            .continuation_checkpoint
-            .as_mut()
-            .unwrap()
-            .schema_id = "rusty.quest.retained_cleanup.continuation_checkpoint.v1".into();
-        assert!(authority_a
-            .validate_remote_retained_cleanup_projection_with_original_enrollment(
-                &projection,
-                original,
-                ticket,
-                "key.peer.quest-b.1",
-                &beta.verifying_key().to_bytes(),
-                retry_at,
-                &relabelled,
-                Some(witness)
-            )
-            .is_err());
-        println!("ACTUAL_V2_THIRD_LIFETIME_SIGNED_CLEANUP global103 lifetime33");
-    }
-    assert_eq!(local.authority_peer_id, local.executor_peer_id);
-    assert_eq!(local.target_client_id, retained.client_authority.client_id);
-    assert!(
-        authority_b
-            .retained_cleanup_projection(
-                &grant,
-                &fresh.revoker_id,
-                &fresh.lease.lease_id,
-                &id("peer.quest-b"),
-                &id("peer.quest-b"),
-                retry_at
-            )
-            .is_err(),
-        "remote scope remains distinct"
-    );
-    assert!(projection.trusted_revoker);
-    assert_eq!(
-        projection.target_client_id,
-        retained.client_authority.client_id
-    );
-    assert_eq!(
-        projection.target_runtime_lease_id,
-        retained.client_authority.lease_id
-    );
-    assert_ne!(projection.requester_id, projection.target_client_id);
-    assert!(projection.historical_topology_expires_at_ms < retry_at);
-    assert!(projection.requester_expires_at_ms > retry_at);
-    assert_eq!(
-        provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
-            .pending_action()
-            .unwrap(),
-        &retained,
-        "physical retry preserves original action and authentic Revoke proof"
-    );
-    let completed = provider
-        .complete_media_stop_for_cleanup_typed(&identity().client_id, retry_at + 100)
-        .expect("seven actual late Stop effects");
-    let effect = completed.stop_effect_receipt.unwrap();
-    assert_eq!(effect.owner_receipt_ids.len(), 7);
-    assert_eq!(
-        provider
-            .complete_concurrent_peer_route_cleanup(&effect, retry_at + 200, &"e6".repeat(32))
-            .expect("late actual route cleanup and lease release")
-            .len(),
-        1
-    );
+        assert_eq!(local.authority_peer_id, local.executor_peer_id);
+        assert_eq!(local.target_client_id, retained.client_authority.client_id);
+        assert!(
+            authority_b
+                .retained_cleanup_projection(
+                    &grant,
+                    &fresh.revoker_id,
+                    &fresh.lease.lease_id,
+                    &id("peer.quest-b"),
+                    &id("peer.quest-b"),
+                    retry_at
+                )
+                .is_err(),
+            "remote scope remains distinct"
+        );
+        assert!(projection.trusted_revoker);
+        assert_eq!(
+            projection.target_client_id,
+            retained.client_authority.client_id
+        );
+        assert_eq!(
+            projection.target_runtime_lease_id,
+            retained.client_authority.lease_id
+        );
+        assert_ne!(projection.requester_id, projection.target_client_id);
+        assert!(projection.historical_topology_expires_at_ms < retry_at);
+        assert!(projection.requester_expires_at_ms > retry_at);
+        assert_eq!(
+            provider.runtime.as_ref().unwrap().media_sessions[&identity().client_id]
+                .pending_action()
+                .unwrap(),
+            &retained,
+            "physical retry preserves original action and authentic Revoke proof"
+        );
+        let completed = provider
+            .complete_media_stop_for_cleanup_typed(&identity().client_id, retry_at + 100)
+            .expect("seven actual late Stop effects");
+        let effect = completed.stop_effect_receipt.unwrap();
+        assert_eq!(effect.owner_receipt_ids.len(), 7);
+        assert_eq!(
+            provider
+                .complete_concurrent_peer_route_cleanup(&effect, retry_at + 200, &"e6".repeat(32))
+                .expect("late actual route cleanup and lease release")
+                .len(),
+            1
+        );
+    });
 }

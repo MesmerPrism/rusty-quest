@@ -88,6 +88,11 @@ public final class BoundedPacketPump implements Closeable {
     public IOException failure() { return failure; }
     public boolean isTerminated() { return !worker.isAlive(); }
     @Override public void close() {
+        close(2000L, () -> System.err.println("WARNING: same packet pump worker remains Pending"));
+    }
+    // Package-local causal host seam; production always retains this same worker.
+    void close(long estimateMilliseconds, Runnable warning) {
+        if (estimateMilliseconds < 0 || warning == null) throw new IllegalArgumentException("close estimate/publisher");
         synchronized (lock) {
             closed = true;
             queue.clear();
@@ -96,8 +101,16 @@ public final class BoundedPacketPump implements Closeable {
         }
         closeOutput();
         if (Thread.currentThread() != worker) {
-            try { worker.join(2000L); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-            if (worker.isAlive()) recordFailure(new IOException("packet pump worker did not terminate"));
+            boolean interrupted = false;
+            try {
+                if (estimateMilliseconds > 0) try { worker.join(estimateMilliseconds); }
+                catch (InterruptedException actual) { interrupted = true; }
+                if (worker.isAlive()) {
+                    try { warning.run(); } catch (Throwable publication) { }
+                    while (worker.isAlive()) try { worker.join(); }
+                    catch (InterruptedException actual) { interrupted = true; }
+                }
+            } finally { if (interrupted) Thread.currentThread().interrupt(); }
         }
     }
 

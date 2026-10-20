@@ -6,7 +6,8 @@ SHA-256, archive-derived tree digest, archive name, expected top-level
 directory, required executable and launcher paths, redirect allow-list, and
 download/extraction bounds.
 
-One cancellation deadline (at most 55 seconds) covers the HTTP request,
+With explicit/default `-WaitPolicy Bounded`, one cancellation deadline (at most
+55 seconds) covers the HTTP request,
 redirects, and asynchronous response-body reads. A stalled body fails without
 promoting its partial archive; this is not a total cache-validation/build budget.
 
@@ -100,3 +101,30 @@ Existing `-GradleVersion 9.4.1` callers remain compatible. Other versions fail
 parameter validation before acquisition or build work; changing the pinned tool
 identity is a separate source change. Focused resolver checks do not run an APK
 build or execute the returned Gradle launcher.
+
+
+## Retained ongoing build waits
+
+`-WaitPolicy Retained` is an explicit choice on the resolver and Spatial Camera
+Panel builder. The selected source-bound private builder passes that choice;
+other/default callers retain `Bounded`. A resolver/build mutex estimate then
+publishes a warning and waits on the same mutex. Abandonment means the caller
+actually acquired that mutex; all pinned cache/path/tree checks still run.
+Warning publication failure cannot release or replace the pending owner.
+
+The same choice covers `Resolve` acquisition: the HttpClient deadline and
+response-body cancellation estimate are disabled for that original request,
+and a warning observes slow header/stream/read/write tasks without cancelling,
+retrying, or substituting them. Actual HTTP errors, HTTPS redirect/host limits,
+byte/layout bounds and pinned archive/tree identities remain strict. Explicit
+Stop/process termination remains a separate caller decision, never an elapsed
+inference. `VerifyCache` still performs no download or repair.
+
+Changing resolver bytes changes the shared identity marker. Prepare a NEW,
+empty, dedicated ordinary shared root with `Resolve -WaitPolicy Retained`, then
+use that exact root for verify/build. Do not rewrite an old marker or relabel an
+existing cache. The old root remains historical input. The focused controls in
+`tools/checks/Test-GradleToolResolverStatic.ps1 -WaitPolicyOnly` extract the actual
+two owner helper definitions, use real held/abandoned mutexes and same Task
+completion/failure, and never invoke Gradle, HTTP, or an APK build. They do not
+replace the resolver's immutable cache self-tests or actual build qualification.

@@ -131,16 +131,38 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     static final class CallbackGuard {
         private final EmbeddedDuplexProcessFence owner;
         private final long generation;
+        private final Object gate=new Object();
         private volatile boolean retired;
-        private CallbackGuard(EmbeddedDuplexProcessFence owner) {
-            this.owner = owner; this.generation = owner.generation;
+        private int entered;
+        private final java.util.concurrent.CompletableFuture<Void> drained=new java.util.concurrent.CompletableFuture<>();
+        private CallbackGuard(EmbeddedDuplexProcessFence owner){this.owner=owner;this.generation=owner.generation;}
+        void requireLive(){
+            if(retired)throw new IllegalStateException("stale app callback");
+            owner.requireLive(generation);owner.requireFresh();
         }
-        void requireLive() {
-            if (retired) throw new IllegalStateException("stale app callback");
-            owner.requireLive(generation);
-            owner.requireFresh();
+        CallbackLease enter(){
+            synchronized(gate){if(retired)throw new IllegalStateException("stale app callback");entered++;}
+            CallbackLease lease=new CallbackLease(this);
+            try { requireLive();return lease; }
+            catch(RuntimeException | Error failure){lease.close();throw failure;}
         }
-        void retire() { retired = true; }
+        java.util.concurrent.CompletableFuture<Void> retireAndDrain(){
+            boolean done;
+            synchronized(gate){retired=true;done=entered==0;}
+            if(done)drained.complete(null);
+            return drained;
+        }
+        void retire(){retireAndDrain();}
+        private void leave(){
+            boolean done;
+            synchronized(gate){if(entered<=0)throw new IllegalStateException("callback accounting underflow");entered--;done=retired&&entered==0;}
+            if(done)drained.complete(null);
+        }
+    }
+    static final class CallbackLease implements AutoCloseable {
+        private CallbackGuard guard;
+        private CallbackLease(CallbackGuard guard){this.guard=guard;}
+        @Override public void close(){CallbackGuard value=guard;if(value!=null){guard=null;value.leave();}}
     }
     CallbackGuard callbacks() {
         requireFresh();
@@ -158,6 +180,12 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     synchronized void requireFresh() {
         requireLive(generation);
         if (recoveryOnly) throw new IllegalStateException("process recovery pending; cleanup handler unavailable");
+    }
+    /** Actual app-owned closing entry, including failure before native claim; allocates no native capability. */
+    synchronized void beforeNativeAbsenceRetirement(String checkpoint,String evidence) throws Exception {
+        requireFresh();
+        if(!pending){pending=true;bind(checkpoint,evidence);persist();}
+        else requireLive(generation);
     }
     synchronized void beforeRuntimeEffects(String checkpoint, String evidence) throws Exception {
         requireFresh();

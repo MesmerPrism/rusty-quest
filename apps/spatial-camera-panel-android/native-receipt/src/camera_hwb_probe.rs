@@ -1,3 +1,7 @@
+#[path = "prepared_peer_renderer.rs"]
+mod prepared_peer_renderer;
+#[path = "prepared_renderer_gate.rs"]
+mod prepared_renderer_gate;
 use std::ffi::c_void;
 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
 use std::ffi::CString;
@@ -162,6 +166,7 @@ fn release_local_camera_start(
 
 #[derive(Default)]
 struct PeerCommonGraphSessionOwner {
+    construction_attempts: u64,
     claim: PeerSessionClaimState,
     cancellation: Option<Arc<AtomicBool>>,
     startup_readiness: Option<Arc<crate::source_graph_startup::Readiness>>,
@@ -188,11 +193,14 @@ pub(crate) fn select_peer_source_with_own_actor(
     let claim_generation = (u64::try_from(proof[3]).ok()? & i64::MAX as u64).max(1) as i64;
     if owner.claim.generation() != Some(claim_generation)
         || owner.window_address != window_address
-        || !owner.own_epoch.is_some_and(|epoch|
+        || !owner.own_epoch.is_some_and(|epoch| {
             u64::try_from(proof[3]).ok() == Some(epoch.process_generation)
-                && u64::try_from(proof[4]).ok() == Some(epoch.source_generation))
-        || !owner.startup_readiness.as_ref().is_some_and(|ready|
-            ready.state() == crate::source_graph_startup::State::Ready)
+                && u64::try_from(proof[4]).ok() == Some(epoch.source_generation)
+        })
+        || !owner
+            .startup_readiness
+            .as_ref()
+            .is_some_and(|ready| ready.state() == crate::source_graph_startup::State::Ready)
         || !owner
             .worker
             .as_ref()
@@ -214,6 +222,7 @@ pub(crate) fn select_peer_source_with_own_actor(
 }
 
 fn stop_peer_common_graph_session() {
+    prepared_peer_renderer::stop_current();
     let owned = {
         let mut owner = PEER_COMMON_GRAPH_SESSION
             .lock()
@@ -1027,6 +1036,14 @@ fn start_camera_hwb_probe(
         );
         return mask;
     }
+    let local_registration =
+        match crate::peer_projection_runtime::register_local_camera_start(local_permit) {
+            Ok(owner) => owner,
+            Err(_) => {
+                release_local_camera_start(local_permit);
+                return mask;
+            }
+        };
     let window = unsafe { ANativeWindow_fromSurface(env, surface) };
     if window.is_null() {
         release_local_camera_start(local_permit);
@@ -1073,6 +1090,7 @@ fn start_camera_hwb_probe(
     let spawn_result = thread::Builder::new()
         .name("spatial-camera-panel-hwb-probe".to_string())
         .spawn(move || {
+            let _actual_local_start=local_registration;
             let window = window_addr as *mut vk::ANativeWindow;
             let started = Instant::now();
             let result = std::panic::catch_unwind(|| unsafe {
@@ -1181,6 +1199,29 @@ pub(crate) unsafe fn start_peer_common_graph(
     frame_count: i32,
     route_generation: i64,
 ) -> i64 {
+    let bounded = if frame_count <= 0 {
+        0
+    } else {
+        (frame_count as u32).min(CAMERA_HWB_PROBE_MAX_FRAMES)
+    };
+    if let Some(result) = prepared_peer_renderer::commit(
+        window,
+        requested_width,
+        requested_height,
+        bounded,
+        route_generation,
+    ) {
+        return result;
+    }
+    if let Some(result) = prepared_peer_renderer::commit_reuse(
+        window,
+        requested_width,
+        requested_height,
+        bounded,
+        route_generation,
+    ) {
+        return result;
+    }
     if crate::own_stereo_capture_runtime::capture_route_selected() {
         let pending = crate::peer_projection_runtime::read_source(route_generation);
         if route_generation <= 0
@@ -1232,6 +1273,12 @@ pub(crate) unsafe fn start_peer_common_graph(
             ACameraNativeWindow_release(window);
             return 0;
         }
+        let Some(next) = owner.construction_attempts.checked_add(1) else {
+            owner.claim.release(route_generation);
+            ACameraNativeWindow_release(window);
+            return 0;
+        };
+        owner.construction_attempts = next;
         owner.startup_readiness = None; // This separate Peer renderer is not a retained Own source graph.
         owner.cancellation = Some(cancellation.clone());
         let worker_cancellation = cancellation.clone();
@@ -1282,10 +1329,26 @@ pub(crate) unsafe fn start_peer_common_graph(
             }
         }
     }
-    if matches!(
-        ready_rx.recv_timeout(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS * 2)),
-        Ok(Ok(()))
-    ) {
+    let startup_ready = if max_frames == 0 {
+        matches!(
+            crate::source_graph_startup::wait_owned_receiver(
+                &ready_rx,
+                Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS * 2),
+                &cancellation,
+                || {
+                    log_marker("status=peer-renderer-startup-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());
+                    Ok(())
+                }
+            ),
+            Ok(Ok(()))
+        )
+    } else {
+        matches!(
+            ready_rx.recv_timeout(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS * 2)),
+            Ok(Ok(()))
+        )
+    };
+    if startup_ready {
         return 1;
     }
     let worker = {
@@ -1385,24 +1448,78 @@ struct CameraHwbWsiParts {
     ahb_device: AhbVulkanDevice,
 }
 
+enum OwnedRendererStartupSource {
+    Own(crate::stereo_input_set::SourceEpoch),
+    Peer(i64),
+    Prepared(String),
+}
+impl OwnedRendererStartupSource {
+    fn current(&self) -> bool {
+        match self {
+            Self::Own(epoch) => crate::own_stereo_capture_runtime::capture_epoch_is_current(*epoch),
+            Self::Prepared(id) => prepared_peer_renderer::startup_current(id),
+            Self::Peer(generation) => {
+                let row = crate::peer_projection_runtime::read_source(*generation);
+                row.words[1] == *generation
+                    && row.words[2] == crate::peer_projection_runtime::SOURCE_PEER
+                    && matches!(
+                        row.words[11],
+                        crate::peer_projection_runtime::RESULT_PENDING
+                            | crate::peer_projection_runtime::RESULT_EFFECTIVE
+                    )
+            }
+        }
+    }
+}
 impl CameraHwbWsiParts {
     unsafe fn create(
         window: *mut vk::ANativeWindow,
         requested_width: u32,
         requested_height: u32,
     ) -> Result<Self, String> {
+        Self::create_with_startup(
+            window,
+            requested_width,
+            requested_height,
+            false,
+            &STOP_CAMERA_HWB_PROBE,
+            None,
+        )
+    }
+    unsafe fn create_with_startup(
+        window: *mut vk::ANativeWindow,
+        requested_width: u32,
+        requested_height: u32,
+        owned_ongoing: bool,
+        cancelled: &AtomicBool,
+        source: Option<OwnedRendererStartupSource>,
+    ) -> Result<Self, String> {
         let entry = ash::Entry::load().map_err(|error| format!("vulkan-loader-{error}"))?;
+        let mut partial = prepared_renderer_gate::ConstructionRollback::new();
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         let sdk_binding = {
             let deadline = Instant::now() + Duration::from_secs(5);
+            let mut binding_estimate_warned = false;
             loop {
+                if owned_ongoing && cancelled.load(Ordering::Acquire) {
+                    return Err("spatial-sdk-binding-owner-cancelled".into());
+                }
+                if owned_ongoing && source.as_ref().is_some_and(|s| !s.current()) {
+                    return Err("spatial-sdk-binding-actual-source-lost".into());
+                }
                 if let Some(binding) =
                     crate::spatial_sdk_depth_handoff::spatial_depth_device_binding()
                 {
                     break binding;
                 }
                 if Instant::now() >= deadline {
-                    return Err("spatial-sdk-vulkan-binding-timeout".to_string());
+                    if !owned_ongoing {
+                        return Err("spatial-sdk-vulkan-binding-timeout".to_owned());
+                    }
+                    if !binding_estimate_warned {
+                        binding_estimate_warned = true;
+                        log_marker("status=spatial-sdk-binding-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());
+                    }
                 }
                 thread::sleep(Duration::from_millis(10));
             }
@@ -1443,6 +1560,13 @@ impl CameraHwbWsiParts {
             .create_instance(&instance_info, None)
             .map_err(|error| format!("create-instance-{error:?}"))?;
 
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        {
+            let owned = instance.clone();
+            partial.own(move || unsafe {
+                owned.destroy_instance(None);
+            });
+        }
         let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
         let android_surface_loader = ash::khr::android_surface::Instance::new(&entry, &instance);
         let surface_info = vk::AndroidSurfaceCreateInfoKHR::default().window(window);
@@ -1450,16 +1574,19 @@ impl CameraHwbWsiParts {
             .create_android_surface(&surface_info, None)
             .map_err(|error| {
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                instance.destroy_instance(None);
                 format!("create-android-surface-{error:?}")
             })?;
 
+        {
+            let owner = surface_loader.clone();
+            partial.own(move || unsafe {
+                owner.destroy_surface(surface, None);
+            });
+        }
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-        let physical_devices = instance.enumerate_physical_devices().map_err(|error| {
-            surface_loader.destroy_surface(surface, None);
-            instance.destroy_instance(None);
-            format!("enumerate-physical-devices-{error:?}")
-        })?;
+        let physical_devices = instance
+            .enumerate_physical_devices()
+            .map_err(|error| format!("enumerate-physical-devices-{error:?}"))?;
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
         let physical_devices = [vk::PhysicalDevice::from_raw(
             sdk_binding.physical_device_handle,
@@ -1467,9 +1594,7 @@ impl CameraHwbWsiParts {
         let (physical_device, queue_family_index, extension_status) =
             select_camera_surface_device(&instance, &surface_loader, surface, &physical_devices)
                 .ok_or_else(|| {
-                    surface_loader.destroy_surface(surface, None);
                     #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                    instance.destroy_instance(None);
                     "no-camera-hwb-vulkan-device".to_string()
                 })?;
 
@@ -1478,7 +1603,6 @@ impl CameraHwbWsiParts {
             || queue_family_index != sdk_binding.queue_family_index
             || sdk_binding.enabled_capability_mask & 0x0f != 0x0f
         {
-            surface_loader.destroy_surface(surface, None);
             return Err(format!(
                 "spatial-sdk-vulkan-binding-incompatible-physical-{}-queue-{}-capabilities-0x{:x}",
                 physical_device.as_raw() == sdk_binding.physical_device_handle,
@@ -1491,9 +1615,8 @@ impl CameraHwbWsiParts {
             || !extension_status.sampler_ycbcr_extension_ready
             || !extension_status.sampler_ycbcr_feature_ready
         {
-            surface_loader.destroy_surface(surface, None);
             #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-            instance.destroy_instance(None);
+
             return Err(format!(
                 "vulkan-ahb-prereq-missing-externalHwb-{}-samplerYcbcrExt-{}-samplerYcbcrFeature-{}",
                 extension_status.external_hwb_extension_ready,
@@ -1551,11 +1674,14 @@ impl CameraHwbWsiParts {
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
         let device = instance
             .create_device(physical_device, &device_info, None)
-            .map_err(|error| {
-                surface_loader.destroy_surface(surface, None);
-                instance.destroy_instance(None);
-                format!("create-device-{error:?}")
-            })?;
+            .map_err(|error| format!("create-device-{error:?}"))?;
+        #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
+        {
+            let owned = device.clone();
+            partial.own(move || unsafe {
+                owned.destroy_device(None);
+            });
+        }
         #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
         let queue = device.get_device_queue(queue_family_index, 0);
         #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
@@ -1567,10 +1693,7 @@ impl CameraHwbWsiParts {
                 .get_physical_device_surface_formats(physical_device, surface)
                 .map_err(|error| {
                     #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                    device.destroy_device(None);
-                    surface_loader.destroy_surface(surface, None);
                     #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                    instance.destroy_instance(None);
                     format!("surface-formats-{error:?}")
                 })?,
         );
@@ -1578,10 +1701,7 @@ impl CameraHwbWsiParts {
             .get_physical_device_surface_capabilities(physical_device, surface)
             .map_err(|error| {
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                device.destroy_device(None);
-                surface_loader.destroy_surface(surface, None);
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                instance.destroy_instance(None);
                 format!("surface-capabilities-{error:?}")
             })?;
         let present_modes = surface_loader
@@ -1622,32 +1742,61 @@ impl CameraHwbWsiParts {
             .create_swapchain(&swapchain_info, None)
             .map_err(|error| {
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                device.destroy_device(None);
-                surface_loader.destroy_surface(surface, None);
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                instance.destroy_instance(None);
                 format!("create-swapchain-{error:?}")
             })?;
+        {
+            let owner = swapchain_loader.clone();
+            partial.own(move || unsafe {
+                owner.destroy_swapchain(swapchain, None);
+            });
+        }
         let images = swapchain_loader
             .get_swapchain_images(swapchain)
             .map_err(|error| {
-                swapchain_loader.destroy_swapchain(swapchain, None);
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                device.destroy_device(None);
-                surface_loader.destroy_surface(surface, None);
                 #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                instance.destroy_instance(None);
                 format!("swapchain-images-{error:?}")
             })?;
         let image_views = create_image_views(&device, surface_format.format, &images)?;
+        {
+            let d = device.clone();
+            let views = image_views.clone();
+            partial.own(move || unsafe {
+                for v in views.into_iter().rev() {
+                    d.destroy_image_view(v, None);
+                }
+            });
+        }
         let render_pass = create_render_pass(&device, surface_format.format)?;
+        {
+            let d = device.clone();
+            partial.own(move || unsafe {
+                d.destroy_render_pass(render_pass, None);
+            });
+        }
         let framebuffers = create_framebuffers(&device, render_pass, extent, &image_views)?;
+        {
+            let d = device.clone();
+            let frames = framebuffers.clone();
+            partial.own(move || unsafe {
+                for f in frames.into_iter().rev() {
+                    d.destroy_framebuffer(f, None);
+                }
+            });
+        }
         let command_pool_info = vk::CommandPoolCreateInfo::default()
             .queue_family_index(queue_family_index)
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
         let command_pool = device
             .create_command_pool(&command_pool_info, None)
             .map_err(|error| format!("create-command-pool-{error:?}"))?;
+        {
+            let d = device.clone();
+            partial.own(move || unsafe {
+                d.destroy_command_pool(command_pool, None);
+            });
+        }
         let command_buffers = device
             .allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
@@ -1660,15 +1809,33 @@ impl CameraHwbWsiParts {
         let image_available = device
             .create_semaphore(&semaphore_info, None)
             .map_err(|error| format!("create-image-semaphore-{error:?}"))?;
+        {
+            let d = device.clone();
+            partial.own(move || unsafe {
+                d.destroy_semaphore(image_available, None);
+            });
+        }
         let render_finished = device
             .create_semaphore(&semaphore_info, None)
             .map_err(|error| format!("create-render-semaphore-{error:?}"))?;
+        {
+            let d = device.clone();
+            partial.own(move || unsafe {
+                d.destroy_semaphore(render_finished, None);
+            });
+        }
         let frame_fence = device
             .create_fence(
                 &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
                 None,
             )
             .map_err(|error| format!("create-frame-fence-{error:?}"))?;
+        {
+            let d = device.clone();
+            partial.own(move || unsafe {
+                d.destroy_fence(frame_fence, None);
+            });
+        }
         let timestamp_valid_bits = instance
             .get_physical_device_queue_family_properties(physical_device)
             .get(queue_family_index as usize)
@@ -1688,6 +1855,7 @@ impl CameraHwbWsiParts {
         let memory_properties = instance.get_physical_device_memory_properties(physical_device);
         let ahb_device = AhbVulkanDevice::new(&instance, &device);
 
+        partial.committed();
         Ok(Self {
             _entry: entry,
             #[cfg(rq_environment_depth_spatial_sdk_api_layer)]
@@ -1822,19 +1990,24 @@ impl PeerCommonGraphResources {
     }
 
     unsafe fn teardown(mut self) -> Result<(), String> {
+        let result = self.teardown_retaining();
+        if result.is_err() {
+            std::mem::forget(self);
+        }
+        result
+    }
+    unsafe fn teardown_retaining(&mut self) -> Result<(), String> {
         let wsi = self.wsi.as_ref().expect("peer WSI remains owned");
         let idle_result = wsi
             .device
             .device_wait_idle()
             .map_err(|error| format!("peer-device-wait-idle-{error:?}"));
         if let Err(error) = idle_result {
-            std::mem::forget(self);
             return Err(error);
         }
         if let Some(graph) = self.processing_graph.as_mut() {
             if let Some(targets) = graph.public_guide_targets.as_mut() {
                 if let Err(error) = targets.retire_stereo_banks_after_fence(&wsi.device) {
-                    std::mem::forget(self);
                     return Err(error);
                 }
             }
@@ -2047,7 +2220,14 @@ unsafe fn render_camera_hwb_probe(
         mut gpu_timestamps,
         memory_properties,
         ahb_device,
-    } = CameraHwbWsiParts::create(window, requested_width, requested_height)?;
+    } = CameraHwbWsiParts::create_with_startup(
+        window,
+        requested_width,
+        requested_height,
+        max_frames == 0,
+        &STOP_CAMERA_HWB_PROBE,
+        None,
+    )?;
     log_marker(format!(
         "status=gpu-timestamp-config {} runtimeCrash=false",
         gpu_timestamps.config_marker_fields(),
@@ -3679,20 +3859,44 @@ unsafe fn render_peer_common_graph(
     if cancellation.load(Ordering::Acquire) {
         return Err("peer-session-cancelled-before-wsi".to_string());
     }
-    let mut owned = PeerCommonGraphResources::new(CameraHwbWsiParts::create(
+    let mut owned = PeerCommonGraphResources::new(CameraHwbWsiParts::create_with_startup(
         window,
         requested_width,
         requested_height,
+        max_frames == 0,
+        &cancellation,
+        Some(OwnedRendererStartupSource::Peer(route_generation)),
     )?);
+    let run = render_peer_common_graph_resources(
+        &mut owned,
+        max_frames,
+        route_generation,
+        cancellation,
+        ready_tx,
+    );
+    let cleanup = owned.teardown();
+    run.and(cleanup)
+}
+unsafe fn render_peer_common_graph_resources(
+    owned: &mut PeerCommonGraphResources,
+    max_frames: u32,
+    route_generation: i64,
+    cancellation: Arc<AtomicBool>,
+    ready_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
+) -> Result<(), String> {
     let run_result = (|| -> Result<(), String> {
         if cancellation.load(Ordering::Acquire) {
             return Err("peer-session-cancelled-after-wsi".to_string());
         }
 
         let deadline = Instant::now() + Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS);
+        let mut first_frame_estimate_warned = false;
         let first_frame = loop {
             if cancellation.load(Ordering::Acquire) {
                 return Err("peer-session-cancelled-during-first-frame".to_string());
+            }
+            if !OwnedRendererStartupSource::Peer(route_generation).current() {
+                return Err("peer-route-lost-before-first-frame".into());
             }
             if let Some(frame) = latest_projection_peer_frame().filter(|frame| {
                 frame.route_generation == route_generation as u64
@@ -3703,7 +3907,13 @@ unsafe fn render_peer_common_graph(
                 break frame;
             }
             if Instant::now() >= deadline {
-                return Err("peer-first-packed-frame-timeout".to_string());
+                if max_frames > 0 {
+                    return Err("peer-first-packed-frame-timeout".to_owned());
+                }
+                if !first_frame_estimate_warned {
+                    first_frame_estimate_warned = true;
+                    log_marker("status=peer-first-packed-frame-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());
+                }
             }
             thread::yield_now();
         };
@@ -3876,7 +4086,7 @@ unsafe fn render_peer_common_graph(
             projection_readback: Some(projection_readback),
             current_frame: Some(current_frame),
             ..
-        } = &mut owned
+        } = &mut *owned
         else {
             return Err("peer-common-graph-resource-owner-incomplete".to_string());
         };
@@ -3904,6 +4114,7 @@ unsafe fn render_peer_common_graph(
         let mut guard_band = CameraReprojectionGuardBandController::default();
         let render_started = Instant::now();
         let mut freshness = PeerFrameFreshness::new(0, 0, 0, 1_000);
+        let mut progress_estimate_warned = false;
         let mut stereo_source_imports =
             if crate::own_stereo_capture_runtime::capture_route_selected() {
                 if !source_bank_build::SOURCE_BANK_SHADER_COMPILED
@@ -3966,6 +4177,28 @@ unsafe fn render_peer_common_graph(
                     if cancellation.load(Ordering::Acquire) {
                         break None;
                     }
+                    // Rejoin the actual route/decoder/reader while awaiting a
+                    // genuinely newer pair. No old frame is re-presented or timed fresh.
+                    let observed = crate::peer_projection_runtime::read_source(route_generation);
+                    if observed.words[1] != route_generation
+                        || observed.words[2] != crate::peer_projection_runtime::SOURCE_PEER
+                        || u64::try_from(observed.words[3]).ok()
+                            != Some(current_frame.decoder_token)
+                        || u64::try_from(observed.words[4]).ok()
+                            != Some(current_frame.reader_generation)
+                        || !matches!(
+                            observed.words[11],
+                            crate::peer_projection_runtime::RESULT_PENDING
+                                | crate::peer_projection_runtime::RESULT_EFFECTIVE
+                        )
+                        || !projection_peer_binding_matches(
+                            current_frame.route_generation,
+                            current_frame.decoder_token,
+                            current_frame.reader_generation,
+                        )
+                    {
+                        return Err("peer-exact-binding-lost-while-waiting".to_owned());
+                    }
                     let candidate = latest_projection_peer_frame();
                     let identity = candidate.as_ref().and_then(|frame| {
                         frame
@@ -3974,9 +4207,19 @@ unsafe fn render_peer_common_graph(
                             .map(|pair| (pair.pair_id, frame.import_sequence))
                     });
                     match freshness.observe(identity, render_started.elapsed().as_millis() as u64) {
-                        PeerFrameFreshnessDecision::Fresh => break candidate,
+                        PeerFrameFreshnessDecision::Fresh => {
+                            progress_estimate_warned = false;
+                            break candidate;
+                        }
                         PeerFrameFreshnessDecision::Lost => {
-                            return Err("peer-input-freshness-timeout".to_string());
+                            if max_frames > 0 {
+                                return Err("peer-input-freshness-timeout".to_owned());
+                            }
+                            if !progress_estimate_warned {
+                                progress_estimate_warned = true;
+                                log_marker("status=peer-frame-progress-estimate-elapsed sameOriginal=true cancellationRequested=false oldFrameResubmitted=false".to_owned());
+                            }
+                            thread::yield_now();
                         }
                         PeerFrameFreshnessDecision::Wait => thread::yield_now(),
                     }
@@ -4231,13 +4474,21 @@ unsafe fn render_peer_common_graph(
                     return Err(format!("peer-spatial-sdk-enqueue-{enqueue}"));
                 }
                 let retirement_deadline = Instant::now() + Duration::from_secs(2);
+                let mut retirement_estimate_warned = false;
                 let mut retirement =
                     crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState::new(request_id);
                 let mut shutdown_reason = None;
                 loop {
+                    if max_frames == 0
+                        && !retirement_estimate_warned
+                        && Instant::now() >= retirement_deadline
+                    {
+                        retirement_estimate_warned = true;
+                        log_marker("status=peer-spatial-sdk-retirement-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());
+                    }
                     if shutdown_reason.is_none()
                         && (cancellation.load(Ordering::Acquire)
-                            || Instant::now() >= retirement_deadline)
+                            || max_frames > 0 && Instant::now() >= retirement_deadline)
                     {
                         shutdown_reason = Some(if cancellation.load(Ordering::Acquire) {
                             "peer-session-cancelled-during-sdk-retirement"
@@ -4409,8 +4660,7 @@ unsafe fn render_peer_common_graph(
         Ok(())
     })();
 
-    let cleanup_result = owned.teardown();
-    run_result.and(cleanup_result)
+    run_result
 }
 
 fn validate_peer_packed_frame(
@@ -4442,3 +4692,148 @@ mod source_bank_build {
 #[path = "camera_hwb_source_set.rs"]
 mod source_set;
 pub(crate) use source_set::start_source_set_common_graph;
+
+/// Read from the actual physical construction owner, never diagnostic snapshots.
+/// The owner lock excludes another construction claim while these facts join.
+pub(crate) fn no_media_renderer_retirement_status() -> Result<serde_json::Value, String> {
+    let owner = PEER_COMMON_GRAPH_SESSION
+        .lock()
+        .map_err(|_| "renderer construction owner poisoned")?;
+    let active = ACTIVE_PEER_COMMON_GRAPH_WORKERS.load(Ordering::Acquire);
+    let qualification = crate::spatial_stereo_qualification::retirement_owner_facts()?;
+    let claim = owner.claim.generation();
+    let worker = owner.worker.as_ref().map(|w| {
+        if w.is_finished() {
+            "finished_unjoined"
+        } else {
+            "running"
+        }
+    });
+    let no_actor = claim.is_none() && worker.is_none() && active == 0;
+    let state = if qualification.cleanup == 3 {
+        "cleanup_rejected"
+    } else if no_actor
+        && owner.construction_attempts == 0
+        && qualification.cleanup == 0
+        && !qualification.carrier_live
+        && !qualification.pending_frame
+    {
+        "never_created"
+    } else if no_actor
+        && owner.construction_attempts > 0
+        && qualification.cleanup == 2
+        && !qualification.carrier_live
+        && !qualification.pending_frame
+    {
+        "retired"
+    } else {
+        "pending_or_unproven"
+    };
+    Ok(
+        serde_json::json!({"$schema":"rusty.quest.embedded_duplex.renderer_retirement_status.v1",
+        "state":state,"construction_attempts":owner.construction_attempts,"active_workers":active,
+        "claimed_route_generation":claim,"worker_state":worker,"cleanup_code":qualification.cleanup,
+        "carrier_live":qualification.carrier_live,"pending_frame":qualification.pending_frame}),
+    )
+}
+
+/// Fresh setup may retain the actual independent Own source-set renderer. This
+/// does not certify whole-renderer retirement or erase any Peer frame lease.
+pub(crate) fn fresh_setup_renderer_eligibility_status() -> Result<serde_json::Value, String> {
+    let owner = PEER_COMMON_GRAPH_SESSION
+        .lock()
+        .map_err(|_| "fresh renderer owner poisoned")?;
+    let active = ACTIVE_PEER_COMMON_GRAPH_WORKERS.load(Ordering::Acquire);
+    let qualification = crate::spatial_stereo_qualification::retirement_owner_facts()?;
+    let peer = crate::own_stereo_capture_runtime::shared_sources().peer_retirement_facts()?;
+    let no_peer = peer.inactive && peer.retained == 0;
+    let no_actor = owner.claim.generation().is_none() && owner.worker.is_none() && active == 0;
+    let terminal = no_actor
+        && no_peer
+        && !qualification.carrier_live
+        && !qualification.pending_frame
+        && ((owner.construction_attempts == 0 && qualification.cleanup == 0)
+            || (owner.construction_attempts > 0 && qualification.cleanup == 2));
+    let current_own = owner
+        .own_epoch
+        .filter(|epoch| crate::own_stereo_capture_runtime::capture_epoch_is_current(*epoch));
+    let own = current_own.is_some_and(|epoch| {
+        owner.claim.generation() == Some((epoch.process_generation & i64::MAX as u64).max(1) as i64)
+            && owner.window_address != 0
+            && active == 1
+            && owner
+                .worker
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
+            && owner
+                .startup_readiness
+                .as_ref()
+                .is_some_and(|ready| ready.state() == crate::source_graph_startup::State::Ready)
+            && owner
+                .cancellation
+                .as_ref()
+                .is_some_and(|cancel| !cancel.load(Ordering::Acquire))
+            && qualification.carrier_live
+            && no_peer
+    });
+    let state = if qualification.cleanup == 3 {
+        "cleanup_rejected"
+    } else if terminal {
+        "terminal"
+    } else if own {
+        "own_live_independent"
+    } else {
+        "pending_or_unproven"
+    };
+    Ok(
+        serde_json::json!({"$schema":"rusty.quest.embedded_duplex.renderer_fresh_setup_eligibility.v1","state":state,
+        "own_process_generation":current_own.map(|e|e.process_generation),"own_source_generation":current_own.map(|e|e.source_generation),
+        "construction_attempts":owner.construction_attempts,"active_workers":active,"peer_source_inactive":peer.inactive,
+        "retained_peer_payloads":peer.retained,"cleanup_code":qualification.cleanup,"carrier_live":qualification.carrier_live}),
+    )
+}
+
+// Fixed source-owned preparation interface, not a caller-supplied media grant.
+pub(crate) fn prepared_peer_renderer_dormant_for(id: &str) -> Result<serde_json::Value, String> {
+    prepared_peer_renderer::dormant_for(id)
+}
+pub(crate) fn prepared_peer_renderer_terminal_for(id: &str) -> Result<serde_json::Value, String> {
+    prepared_peer_renderer::terminal_for(id)
+}
+pub(crate) fn begin_prepared_peer_renderer(id: &str) -> Result<(), String> {
+    prepared_peer_renderer::begin(id)
+}
+pub(crate) fn preserve_prepared_peer_source(
+    words: &[i64; crate::peer_projection_runtime::SOURCE_ABI_WORDS],
+    window: usize,
+) -> bool {
+    prepared_peer_renderer::preserve_selected(words, window)
+}
+pub(crate) fn stop_local_for_prepared_peer() {
+    STOP_CAMERA_HWB_PROBE.store(true, Ordering::Release);
+    publish_acquisition_stopped_if_quiescent();
+}
+pub(crate) unsafe fn prepare_peer_renderer(
+    id: &str,
+    call: &PrepareCall,
+    window: *mut ANativeWindow,
+    w: u32,
+    h: u32,
+    route: i64,
+    challenge: i64,
+    surface: i64,
+    switches: i64,
+) -> Result<serde_json::Value, String> {
+    prepared_peer_renderer::prepare(id, call, window, w, h, route, challenge, surface, switches)
+}
+pub(crate) fn read_prepared_peer_renderer(id: &str) -> Result<serde_json::Value, String> {
+    prepared_peer_renderer::read(id)
+}
+pub(crate) fn abort_prepared_peer_renderer(id: &str) -> Result<serde_json::Value, String> {
+    prepared_peer_renderer::abort(id)
+}
+
+pub(crate) use prepared_renderer_gate::PrepareCall;
+pub(crate) fn enter_prepared_peer_renderer(id: &str) -> Result<PrepareCall, String> {
+    prepared_peer_renderer::enter(id)
+}

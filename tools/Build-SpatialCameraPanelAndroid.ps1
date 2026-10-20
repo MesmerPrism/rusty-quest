@@ -8,6 +8,7 @@ param(
     [string]$BuildToolsVersion = "36.0.0",
     [ValidateSet("9.4.1")][string]$GradleVersion = "9.4.1",
     [string]$SharedGradleToolRoot = "",
+    [ValidateSet("Bounded", "Retained",IgnoreCase=$false)][string]$WaitPolicy = "Bounded",
     [ValidateSet("DevFast", "Candidate")]
     [string]$BuildMode = "DevFast",
     [switch]$UseSourceCompositionVersionName,
@@ -39,6 +40,9 @@ param(
     [string]$EmbeddedDuplexProductInputRoot = "",
     [ValidateRange(300000,3600000)][ValidateScript({ $_ % 60000 -eq 0 })][long]$EmbeddedDuplexSetupHorizonMs = 300000,
     [ValidateScript({ $_ -cin @("finite", "ongoing-v2") })][string]$EmbeddedDuplexMediaPolicy = "finite",
+    [ValidateScript({ $_ -cin @("none", "source-bound-v2") })][string]$EmbeddedDuplexFreshSetupPolicy = "none",
+    [string]$EmbeddedDuplexFreshEnrollmentSelectionPath = "",
+    [ValidatePattern('^(?:[0-9a-f]{64})?$')][string]$ExpectedEmbeddedDuplexFreshEnrollmentSelectionSha256 = "",
     [string]$ProductId = "",
     [string]$AppId = "",
     [string]$AppLabel = "",
@@ -82,15 +86,28 @@ param(
 
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
+if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
 $selectedEmbeddedDuplexMediaPolicy = Get-EmbeddedDuplexMediaPolicy -Selection $EmbeddedDuplexMediaPolicy
 if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpace($EmbeddedDuplexProductInputRoot)) { throw "Ongoing media requires explicit real-peer product inputs." }
 
+function Wait-GradleOwnedMutex {
+    param([Parameter(Mandatory)][Threading.Mutex]$Mutex,[ValidateSet('Bounded','Retained',IgnoreCase=$false)][string]$WaitPolicy='Bounded',
+        [Parameter(Mandatory)][TimeSpan]$Estimate,[Parameter(Mandatory)][ref]$Abandoned,[string]$Label='Gradle owner')
+    $Abandoned.Value=$false
+    try {
+        if($Mutex.WaitOne($Estimate)){return $true}
+        if($WaitPolicy -ceq 'Bounded'){return $false}
+        try{Write-Warning "$Label remains pending past its estimate; retaining the same mutex wait." -WarningAction Continue}catch{}
+        [void]$Mutex.WaitOne();return $true
+    }catch [Threading.AbandonedMutexException]{$Abandoned.Value=$true;return $true}
+}
 function Get-VerifiedPinnedGradleBat {
-    param([Parameter(Mandatory=$true)][string]$RepoRoot,[string]$SharedGradleToolRoot = "",[ref]$ToolDistribution)
+    param([Parameter(Mandatory=$true)][string]$RepoRoot,[string]$SharedGradleToolRoot = "",[ref]$ToolDistribution,[ValidateSet("Bounded","Retained",IgnoreCase=$false)][string]$WaitPolicy="Bounded")
     $resolver = Join-Path $RepoRoot "tools\Resolve-GradleTool.ps1"
     if (-not (Test-Path -LiteralPath $resolver -PathType Leaf)) { throw "Pinned Gradle resolver is missing: $resolver" }
     try {
-        $output = @(& $resolver -RepoRoot $RepoRoot -Mode VerifyCache -TimeoutSeconds 55 -SharedGradleToolRoot $SharedGradleToolRoot)
+        $output = @(& $resolver -RepoRoot $RepoRoot -Mode VerifyCache -TimeoutSeconds 55 -SharedGradleToolRoot $SharedGradleToolRoot -WaitPolicy $WaitPolicy)
     } catch {
         throw "Pinned Gradle cache verification failed: $($_.Exception.Message)"
     }
@@ -1094,12 +1111,7 @@ $buildLaneMutexHash = Get-StringSha256 -Value $BuildCacheRoot.ToLowerInvariant()
 $buildLaneMutexName = "Local\RustyQuestSpatialBuild-$($buildLaneMutexHash.Substring(0, 16))"
 $buildLaneMutex = [System.Threading.Mutex]::new($false, $buildLaneMutexName)
 $buildLaneMutexStopwatch = [Diagnostics.Stopwatch]::StartNew()
-try {
-    $buildLaneMutexOwned = $buildLaneMutex.WaitOne([TimeSpan]::FromMinutes(30))
-} catch [System.Threading.AbandonedMutexException] {
-    $buildLaneMutexOwned = $true
-    $buildLaneMutexAbandoned = $true
-}
+$buildLaneMutexOwned = Wait-GradleOwnedMutex $buildLaneMutex -WaitPolicy $WaitPolicy -Estimate ([TimeSpan]::FromMinutes(30)) -Abandoned ([ref]$buildLaneMutexAbandoned) -Label 'Spatial Camera Panel build cache lane'
 $buildLaneMutexStopwatch.Stop()
 $buildLaneMutexWaitMs = $buildLaneMutexStopwatch.ElapsedMilliseconds
 if (-not $buildLaneMutexOwned) {
@@ -1191,7 +1203,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 $repoRoot = Resolve-Path $RepoRoot
 $gradleToolDistribution = $null
-$gradleBat = Get-VerifiedPinnedGradleBat -RepoRoot ([string]$repoRoot) -SharedGradleToolRoot $SharedGradleToolRoot -ToolDistribution ([ref]$gradleToolDistribution)
+$gradleBat = Get-VerifiedPinnedGradleBat -RepoRoot ([string]$repoRoot) -SharedGradleToolRoot $SharedGradleToolRoot -ToolDistribution ([ref]$gradleToolDistribution) -WaitPolicy $WaitPolicy
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
 $buildStartedUtc = [DateTimeOffset]::UtcNow
@@ -1390,6 +1402,12 @@ $embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
     -Path $EmbeddedDuplexProductInputRoot `
     -ApplicationId $resolvedAppId `
     -SigningCertificateSha256 $normalizedExpectedSignerSha256
+$freshBuildSelection=Resolve-EmbeddedDuplexFreshSetupBuildSelection -Selection $EmbeddedDuplexFreshSetupPolicy -MediaPolicy $EmbeddedDuplexMediaPolicy `
+    -ValidatedProductInputs $embeddedDuplexProductInputs -EnrollmentSelectionPath $EmbeddedDuplexFreshEnrollmentSelectionPath `
+    -ExpectedEnrollmentSelectionSha256 $ExpectedEmbeddedDuplexFreshEnrollmentSelectionSha256
+$freshDescriptor=[ordered]@{};Set-EmbeddedDuplexFreshSetupPolicyDescriptor $freshDescriptor $freshBuildSelection
+$freshDescriptorJson=if($null-eq$freshBuildSelection){''}else{ConvertTo-FreshSetupCanonicalJson $freshDescriptor.embedded_duplex_fresh_setup_policy}
+$freshDescriptorSha256=if($freshDescriptorJson){Get-StringSha256 $freshDescriptorJson}else{''}
 Import-Module (Join-Path $repoRoot 'tools/src/SourceBankBuildInputs.psm1') -Force
 $sourceBankBuildInputs = Resolve-SourceBankBuildInputs -PrivateLayerProfilePath $resolvedPrivateLayerProfilePath `
     -ValidatedProductInputs $embeddedDuplexProductInputs -VertexShaderPath $resolvedOpaqueProjectionVertexShader `
@@ -1563,6 +1581,7 @@ $nativeIdentityDescriptor = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $nativeIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $nativeIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
 $shellIdentityInputs = [ordered]@{
@@ -1610,6 +1629,7 @@ $shellIdentityDescriptor = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $shellIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $shellIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $shellFingerprint = Get-StringSha256 -Value ($shellIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $packageIdentityDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.package_cache_identity.v1"
@@ -1632,6 +1652,7 @@ if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
     $buildInputDescriptor['artifact_output'] = [ordered]@{schema='rusty.quest.artifact_output.v1';policy='explicit-external-parent-create-new';parent_path_recorded=$false;source_and_cache_disjoint=$true}
 }
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $buildInputDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $buildInputDescriptor -ResolvedSelection $freshBuildSelection
 $buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $buildInputDescriptor["fingerprint"] = $buildInputFingerprint
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
@@ -1700,9 +1721,17 @@ New-Item -ItemType Directory -Force -Path @(
 $embeddedDuplexAssetRoot = ""
 if ($null -ne $embeddedDuplexProductInputs) {
     $embeddedDuplexAssetRoot = Join-Path $BuildCacheRoot ("i\{0}" -f $embeddedDuplexProductInputs.closure_sha256.Substring(0, 24))
+    if($null-ne$freshBuildSelection){$embeddedDuplexAssetRoot=Join-Path $BuildCacheRoot ("i\fresh-{0}" -f $freshDescriptorSha256)}
     $embeddedDuplexAssetRoot = Copy-EmbeddedDuplexProductInputs `
         -ValidatedInputs $embeddedDuplexProductInputs `
         -AssetRoot $embeddedDuplexAssetRoot
+    if($null-ne$freshBuildSelection){
+        $freshDirectory=Join-Path $embeddedDuplexAssetRoot 'rusty-quest';New-Item -ItemType Directory -Force -Path $freshDirectory|Out-Null
+        if(((Get-Item -LiteralPath $freshDirectory).Attributes-band[IO.FileAttributes]::ReparsePoint)-ne0){throw 'Fresh descriptor staging directory linked.'}
+        $freshPath=Join-Path $freshDirectory 'fresh-setup-build-policy.json'
+        if(Test-Path -LiteralPath $freshPath){if((Get-FileSha256 $freshPath)-cne$freshDescriptorSha256){throw 'Fresh descriptor staging bytes differ.'}}
+        else{[IO.File]::WriteAllText($freshPath,$freshDescriptorJson,[Text.UTF8Encoding]::new($false))}
+    }
 }
 
 $nativeReceiptRoot = Join-Path $appRoot "native-receipt"
@@ -1852,6 +1881,10 @@ $previousPrivateSurfaceParticleProfile = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVAT
 $previousPrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER
 $previousPrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR
 $previousPrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX
+$freshCargoEnvironment=@{}
+foreach($name in @('RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY','RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY','RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256','RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256')){
+    $freshCargoEnvironment[$name]=[Environment]::GetEnvironmentVariable($name,'Process')
+}
 $previousEnvironmentDepthOwnerForCargo = $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER
 try {
     $env:ANDROID_HOME = $AndroidHome
@@ -1867,6 +1900,10 @@ try {
     }
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY=$EmbeddedDuplexMediaPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY=$EmbeddedDuplexFreshSetupPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256=$(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.policy_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256=$(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_sha256})
     $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER = $EnvironmentDepthOwner
     $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION =
         $resolvedProjectionSurfaceUniformAbiVersion.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -1994,6 +2031,7 @@ try {
     } else {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE = $previousPrivateLayerProfile
     }
+    foreach($name in $freshCargoEnvironment.Keys){[Environment]::SetEnvironmentVariable($name,$freshCargoEnvironment[$name],'Process')}
     foreach ($name in $sourceBankCargoEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $sourceBankCargoEnvironment[$name], 'Process')
     }
@@ -2135,6 +2173,11 @@ try {
     $env:GRADLE_USER_HOME = $gradleUserHome
     $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS = $EmbeddedDuplexSetupHorizonMs.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY = $EmbeddedDuplexMediaPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY = $EmbeddedDuplexFreshSetupPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.policy_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_target_raw_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_base64})
     $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $resolvedProductId
     $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $appBuildDir
     $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $rootBuildDir
@@ -2540,6 +2583,13 @@ try {
     if ($nativeReceiptArtifacts.input.sha256 -cne $nativeReceiptSha256) {
         throw "Native receipt JNI input changed during Android packaging."
     }
+    $freshEntryName='assets/rusty-quest/fresh-setup-build-policy.json'
+    $freshEntries=@($apkEntryNames|Where-Object{$_-ceq$freshEntryName})
+    if($null-eq$freshBuildSelection){if($freshEntries.Count-ne0){throw 'Unselected APK unexpectedly contains fresh policy.'}}
+    else{
+        $freshPackaged=Get-ZipEntrySha256 -Zip $apkZip -EntryName $freshEntryName
+        if($freshPackaged.sha256-cne$freshDescriptorSha256-or$freshPackaged.size_bytes-ne[Text.Encoding]::UTF8.GetByteCount($freshDescriptorJson)){throw 'APK fresh descriptor bytes differ from actual build selection.'}
+    }
     $actualEmbeddedDuplexAssetNames = @($apkEntryNames | Where-Object {
         $_.StartsWith("assets/embedded-duplex/", [StringComparison]::Ordinal)
     } | Sort-Object)
@@ -2627,6 +2677,7 @@ $apkInspection = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$apkInspection['developer_source_version']=$observedSourceVersion}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $apkInspection -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $apkInspection -ResolvedSelection $freshBuildSelection
 $apkInspectionPath = Join-Path $OutDir "apk-inspection.json"
 [void](Set-TextFileIfChanged -Path $apkInspectionPath -Value ($apkInspection | ConvertTo-Json -Depth 12))
 $phaseReceipts.Add([ordered]@{
@@ -3353,6 +3404,7 @@ $manifest = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$manifest['developer_source_version']=$observedSourceVersion}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $manifest -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $manifest -ResolvedSelection $freshBuildSelection
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 if ($null -ne $gradleToolDistribution) { $manifest['gradle_tool_distribution'] = $gradleToolDistribution }
 if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) { $manifest['artifact_output'] = $buildInputDescriptor['artifact_output'] }
@@ -3397,6 +3449,7 @@ $runCapsule = [ordered]@{
     }
 }
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $runCapsule -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $runCapsule -ResolvedSelection $freshBuildSelection
 $runCapsulePath = Join-Path $OutDir "run-capsule.json"
 [void](Set-TextFileIfChanged -Path $runCapsulePath -Value ($runCapsule | ConvertTo-Json -Depth 16))
 

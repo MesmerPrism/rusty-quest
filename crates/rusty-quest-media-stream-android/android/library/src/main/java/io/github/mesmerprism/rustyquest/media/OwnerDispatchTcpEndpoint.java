@@ -25,12 +25,43 @@ import java.util.concurrent.TimeUnit;
 /** Bounded framing only. The injected native handler authenticates every action. */
 public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
     public interface Handler { byte[] handle(byte[] requestFrame) throws Exception; }
+    /** Actual accepted request task ownership, not an ID inferred from untrusted frame bytes. */
+    public static final class RequestSpan {
+        private final OwnerDispatchTcpEndpoint owner;private final Socket socket;
+        private final java.util.concurrent.CompletableFuture<Void> joined=new java.util.concurrent.CompletableFuture<>();
+        private volatile boolean handlerReturned;
+        private RequestSpan(OwnerDispatchTcpEndpoint owner,Socket socket){this.owner=owner;this.socket=socket;}
+        public boolean stopRequested(){return owner.stopping;}
+        public boolean terminal(){return handlerReturned && socket.isClosed() && joined.isDone() && !joined.isCompletedExceptionally();}
+    }
+    private static final ThreadLocal<RequestSpan> CURRENT_REQUEST=new ThreadLocal<>();
+    public static RequestSpan currentRequestSpan(){return CURRENT_REQUEST.get();}
+    public boolean ownsRequestSpan(RequestSpan actual){return actual!=null && actual.owner==this;}
+    /** Snapshot only. Actual request Futures/socket finally blocks own joins. */
+    public boolean requestsQuiescent(){return sockets.isEmpty() && workers.getActiveCount()==0 && workers.getQueue().isEmpty();}
+
     public enum Phase { NONE, TARGET_BINDING, INPUT_BOUNDS, CONNECT, WRITE_REQUEST,
         READ_RESPONSE_HEADER, READ_RESPONSE_BODY, RESPONSE_RETURNED }
     public enum Outcome { NONE, IN_PROGRESS, RETURNED, FAILED, UNAVAILABLE }
     public enum Failure { NONE, TARGET_UNAVAILABLE, INPUT_BOUNDS, CONNECT_FAILURE,
         DEADLINE, EOF, FRAME_BOUNDS, IO, CALLBACK_REJECTED }
     public interface ExchangeObserver { void observe(Phase phase, Outcome outcome, Failure failure); }
+    /** One actual outbound original. Desired Stop is thread-safe transport cancellation, never native cleanup. */
+    public static final class ExchangeControl {
+        private Socket socket;private boolean stopRequested,entered;
+        private final java.util.concurrent.CompletableFuture<Void> joined=new java.util.concurrent.CompletableFuture<>();
+        private synchronized void attach(Socket actual)throws IOException{
+            if(entered)throw new IllegalStateException("outbound exchange replay");entered=true;socket=actual;
+            if(stopRequested){actual.close();throw new java.net.SocketException("owned exchange desired Stop");}
+        }
+        public synchronized void requestStop(){
+            stopRequested=true;
+            if(socket!=null)try{socket.close();}catch(IOException retained){}
+        }
+        public synchronized boolean stopRequested(){return stopRequested;}
+        public java.util.concurrent.CompletableFuture<Void> joined(){return joined;}
+        private synchronized void finished(){socket=null;joined.complete(null);}
+    }
     private static final class ExchangeTrace {
         private final ExchangeObserver observer;
         private Phase phase = Phase.TARGET_BINDING;
@@ -109,7 +140,18 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
                 try {
                     socketDeadlines.put(socket, deadlines.schedule(() -> closeSocket(socket),
                             IO_TIMEOUT_MS, TimeUnit.MILLISECONDS));
-                    workers.execute(() -> serve(socket));
+                    RequestSpan span=new RequestSpan(this,socket);
+                    java.util.concurrent.FutureTask<Void> actual=new java.util.concurrent.FutureTask<Void>(()->{
+                        CURRENT_REQUEST.set(span);
+                        try{serve(socket);return null;}
+                        finally{CURRENT_REQUEST.remove();span.handlerReturned=true;}
+                    }){
+                        @Override protected void done(){
+                            try{get();if(!socket.isClosed())throw new IllegalStateException("request socket not joined");span.joined.complete(null);}
+                            catch(Throwable failure){span.joined.completeExceptionally(failure);}
+                        }
+                    };
+                    workers.execute(actual);
                 }
                 catch (RejectedExecutionException full) { closeSocket(socket); }
             }
@@ -126,6 +168,11 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
             socket.setTcpNoDelay(true);
             byte[] request = readFrame(socket);
             if (stopping) return;
+            // Incomplete unauthenticated input retains its finite framing policy. A fully received
+            // native-dispatched original is retained while its actual handler finishes.
+            ScheduledFuture<?> inputDeadline=socketDeadlines.remove(socket);
+            if(inputDeadline!=null)inputDeadline.cancel(false);
+            socketDeadlines.put(socket,deadlines.schedule(()->PackedStereoWait.warn("same owner handler remains Pending"),IO_TIMEOUT_MS,TimeUnit.MILLISECONDS));
             // No endpoint monitor is held across native authority or platform work.
             byte[] response = handler.handle(request);
             writeFrame(new DataOutputStream(socket.getOutputStream()), response);
@@ -171,6 +218,47 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
         }
     }
 
+    /** Existing app owner supplies this exact control before connect; estimates publish warnings only. */
+    public static byte[] exchangeOwned(InetAddress address,int port,byte[] frame,ExchangeObserver observer,ExchangeControl control)throws IOException{
+        return exchangeOwnedObserved(address,port,frame,observer,control,3000,IO_TIMEOUT_MS,PackedStereoWait::warn);
+    }
+    interface EstimatePublisher{void publish(String label);}
+    /** Owner-package qualification seam: warning timing/publication only, never protocol authority or cancellation. */
+    static byte[] exchangeOwnedObserved(InetAddress address,int port,byte[] frame,ExchangeObserver observer,ExchangeControl control,
+            long connectEstimateMs,long frameEstimateMs,EstimatePublisher publisher)throws IOException{
+        if(control==null || publisher==null || connectEstimateMs<0 || frameEstimateMs<0)throw new IllegalArgumentException("owned exchange control");
+        ExchangeTrace trace=new ExchangeTrace(observer);ScheduledThreadPoolExecutor estimates=deadlineExecutor();
+        try(Socket socket=new Socket()){
+            trace.enter(Phase.TARGET_BINDING);
+            if(address==null || port<=0 || port>65535)throw new IllegalArgumentException("owner control target");
+            trace.enter(Phase.INPUT_BOUNDS);requireFrame(frame);control.attach(socket);
+            ScheduledFuture<?> connectEstimate=estimates.schedule(()->publishEstimate(publisher,"same owner connect remains Pending"),connectEstimateMs,TimeUnit.MILLISECONDS);
+            trace.enter(Phase.CONNECT);socket.connect(new InetSocketAddress(address,port));connectEstimate.cancel(false);
+            socket.setSoTimeout(0);socket.setTcpNoDelay(true);
+            estimates.schedule(()->publishEstimate(publisher,"same outbound owner frame remains Pending"),frameEstimateMs,TimeUnit.MILLISECONDS);
+            if(control.stopRequested())throw new java.net.SocketException("owned exchange desired Stop");
+            trace.enter(Phase.WRITE_REQUEST);writeFrame(new DataOutputStream(socket.getOutputStream()),frame);
+            trace.enter(Phase.READ_RESPONSE_HEADER);byte[] header=new byte[4];readOwnedExactly(socket,header);
+            int length=ByteBuffer.wrap(header).getInt();if(length<=0 || length>MAX_FRAME_BYTES)throw new FrameBoundsException();
+            trace.enter(Phase.READ_RESPONSE_BODY);byte[] response=new byte[length];readOwnedExactly(socket,response);
+            trace.phase=Phase.RESPONSE_RETURNED;trace.publish(Outcome.RETURNED,Failure.NONE);return response;
+        }catch(IOException|RuntimeException failure){trace.failed(failure);throw failure;}
+        finally{
+            estimates.shutdownNow();
+            boolean interrupted=false;
+            for(;;)try{if(estimates.awaitTermination(Long.MAX_VALUE,TimeUnit.NANOSECONDS))break;}
+                catch(InterruptedException actual){interrupted=true;control.requestStop();}
+            control.finished();if(interrupted)Thread.currentThread().interrupt();
+        }
+    }
+    private static void publishEstimate(EstimatePublisher publisher,String label){
+        try{publisher.publish(label);}catch(Throwable diagnosticFailure){/* Publication cannot replace the same actual exchange. */}
+    }
+    private static void readOwnedExactly(Socket socket,byte[] target)throws IOException{
+        java.io.InputStream input=socket.getInputStream();int offset=0;
+        while(offset<target.length){int count=input.read(target,offset,target.length-offset);
+            if(count<0)throw new EOFException("owner frame truncated");offset+=count;}
+    }
     private static byte[] readFrame(Socket socket) throws IOException { return readFrame(socket, null); }
     private static byte[] readFrame(Socket socket, ExchangeTrace trace) throws IOException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(IO_TIMEOUT_MS);
@@ -244,8 +332,17 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
         deadlines.shutdownNow();
         try {
             acceptThread.join(SHUTDOWN_TIMEOUT_MS);
-            workers.awaitTermination(SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            deadlines.awaitTermination(SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            if(acceptThread.isAlive()) {
+                PackedStereoWait.warn("same control accept thread remains Pending"); acceptThread.join();
+            }
+            if(!workers.awaitTermination(SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                PackedStereoWait.warn("same control workers remain Pending");
+                while(!workers.awaitTermination(Long.MAX_VALUE,TimeUnit.NANOSECONDS)) { /* actual same executor */ }
+            }
+            if(!deadlines.awaitTermination(SHUTDOWN_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                PackedStereoWait.warn("same control deadlines remain Pending");
+                while(!deadlines.awaitTermination(Long.MAX_VALUE,TimeUnit.NANOSECONDS)) { /* actual same executor */ }
+            }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
         }

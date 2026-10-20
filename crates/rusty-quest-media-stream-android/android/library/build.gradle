@@ -2,6 +2,9 @@ plugins { id "java-library" }
 
 group = "io.github.mesmerprism.rustyquest"
 version = "0.1.0"
+// Standalone host execution owns its repository; the app settings supplies
+// repositories when this module is included under FAIL_ON_PROJECT_REPOS.
+if (rootProject.name == "rusty-quest-media-stream-android") { repositories { mavenCentral() } }
 if (providers.gradleProperty("mediaBuildDir").isPresent()) {
     layout.buildDirectory = file(providers.gradleProperty("mediaBuildDir").get())
 }
@@ -28,8 +31,15 @@ def androidJar = providers.provider {
     new File(platforms.last(), "android.jar")
 }
 
-dependencies { compileOnly files(androidJar) }
+dependencies {
+    compileOnly files(androidJar)
+    testCompileOnly files(androidJar)
+    testImplementation "org.json:json:20240303"
+}
 tasks.withType(JavaCompile).configureEach {
+    // Keep the Java 8 API/artifact contract explicit on the selected JDK.
+    // All other compiler diagnostics remain strict under -Werror.
+    options.release = 8
     options.encoding = "UTF-8"
     options.compilerArgs += ["-Xlint:all", "-Werror"]
 }
@@ -50,8 +60,24 @@ tasks.register("bundleReleaseAar", Zip) {
     destinationDirectory = layout.buildDirectory.dir("outputs/aar")
 }
 tasks.register("assembleRelease") { dependsOn(tasks.named("bundleReleaseAar")) }
-tasks.register("hostConformance", JavaExec) {
-    dependsOn(tasks.named("testClasses"))
-    classpath = sourceSets.test.runtimeClasspath
-    mainClass = "io.github.mesmerprism.rustyquest.media.MediaProtocolConformanceMain"
+// These are explicit main-based behavioral controls, not JUnit discovery.
+// Desktop org.json precedes Android stubs; Android classes are type models only.
+def hostSuites = [
+    hostPrimitiveAdversarial: "MediaPrimitiveAdversarialMain",
+    hostProtocolConformance: "MediaProtocolConformanceMain",
+    hostOwnedExchangeRetention: "OwnedExchangeRetentionConformanceMain",
+    hostOwnerLifecycleAdversarial: "MediaOwnerLifecycleAdversarialMain",
+    hostReceiverStageTrace: "ReceiverStageTraceMain"
+]
+hostSuites.each { taskName, className ->
+    tasks.register(taskName, JavaExec) {
+        dependsOn(tasks.named("testClasses"))
+        classpath = sourceSets.test.runtimeClasspath + files(androidJar)
+        mainClass = "io.github.mesmerprism.rustyquest.media.${className}"
+    }
+}
+tasks.register("hostConformance") {
+    group = "verification"
+    description = "Run all five explicit media host behavioral suites (Android/JNI execution excluded)."
+    dependsOn(hostSuites.keySet().collect { tasks.named(it) })
 }

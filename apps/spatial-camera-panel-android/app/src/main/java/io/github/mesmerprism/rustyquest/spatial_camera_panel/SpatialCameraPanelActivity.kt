@@ -1610,6 +1610,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         restartLocal = cameraHwbProjectionRawCarrierCoordinator::restartLocalAcquisition,
         startOwn = cameraHwbProjectionRawCarrierCoordinator::startOwnSourceSetCommonGraph,
         stopWholeProjection = { stopCameraHwbProjectionPanel("concurrent-qualification-whole-app-close"); Unit },
+        prepareRenderer = cameraHwbProjectionRawCarrierCoordinator::prepareDormantPeerRenderer,
+        readPreparedRenderer = cameraHwbProjectionRawCarrierCoordinator::readDormantPeerRenderer,
+        abortPreparedRenderer = cameraHwbProjectionRawCarrierCoordinator::abortDormantPeerRenderer,
     )
   }
   @Volatile private var embeddedDuplexAttachmentGeneration = 0L
@@ -2161,6 +2164,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
             },
             startPeerCommonGraph = ::nativeStartSpatialPeerProjectionCommonGraph,
+            preparePeerRenderer = ::nativePrepareSpatialPeerRenderer,
+            readPreparedPeerRenderer = ::nativeReadPreparedSpatialPeerRenderer,
+            abortPreparedPeerRenderer = ::nativeAbortPreparedSpatialPeerRenderer,
             startSourceSetCommonGraph = ::nativeStartSourceSetCommonGraph,
             deferOwnNativeStart = io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative::captureRouteSelected,
             updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
@@ -5215,6 +5221,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): LongArray
 
   private external fun nativeStartSourceSetCommonGraph(surface: AndroidSurface, width: Int, height: Int, frameCount: Int): Long
+
+  private external fun nativePrepareSpatialPeerRenderer(preparationId:String,surface:AndroidSurface,width:Int,height:Int,
+      routeGeneration:Long,launchChallenge:Long,layerGeneration:Long,layerSwitchCount:Long,layerStateCode:Int):String
+  private external fun nativeReadPreparedSpatialPeerRenderer(preparationId:String):String
+  private external fun nativeAbortPreparedSpatialPeerRenderer(preparationId:String):String
 
   private external fun nativeStartSpatialPeerProjectionCommonGraph(
       routeGeneration: Long,

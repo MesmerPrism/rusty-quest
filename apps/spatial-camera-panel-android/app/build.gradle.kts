@@ -21,6 +21,29 @@ val embeddedDuplexMediaPolicy = providers.environmentVariable("RUSTY_QUEST_SPATI
     raw
   }
 
+// Independent build-fixed fresh policy. Existing finite/ongoing-v2 selection
+// alone never enables this new source-bound authority route.
+val embeddedDuplexFreshSetupPolicy = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY")
+  .orElse("none").map { raw -> require(raw == "none" || raw == "source-bound-v2"); raw }
+val embeddedDuplexFreshPolicySha256 = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256").orElse("")
+val embeddedDuplexFreshTargetSha256 = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256").orElse("")
+val embeddedDuplexFreshTargetRawSha256 = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256").orElse("")
+val embeddedDuplexFreshTargetBase64 = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64").orElse("")
+val embeddedDuplexFreshInputs = providers.provider {
+  val selected = embeddedDuplexFreshSetupPolicy.get()
+  val policy = embeddedDuplexFreshPolicySha256.get()
+  val target = embeddedDuplexFreshTargetSha256.get()
+  val raw = embeddedDuplexFreshTargetRawSha256.get()
+  val encoded = embeddedDuplexFreshTargetBase64.get()
+  if (selected == "none") require(policy.isEmpty() && target.isEmpty() && raw.isEmpty() && encoded.isEmpty())
+  else {
+    require(embeddedDuplexMediaPolicy.get() == "ongoing-v2")
+    require(policy.matches(Regex("sha256:[0-9a-f]{64}")) && target.matches(Regex("sha256:[0-9a-f]{64}")))
+    require(raw.matches(Regex("[0-9a-f]{64}")) && encoded.matches(Regex("[A-Za-z0-9+/]+={0,2}")))
+  }
+  selected
+}
+
 val spatialApplicationId =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_ID")
     .orElse("io.github.mesmerprism.rustyquest.spatial_camera_panel")
@@ -282,6 +305,11 @@ android {
     applicationId = spatialApplicationId.get()
     buildConfigField("long", "EMBEDDED_DUPLEX_SETUP_HORIZON_MS", "${embeddedDuplexSetupHorizonMs.get()}L")
     buildConfigField("String", "EMBEDDED_DUPLEX_MEDIA_POLICY", "\"${embeddedDuplexMediaPolicy.get()}\"")
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_SETUP_POLICY", buildConfigString(embeddedDuplexFreshInputs.get()))
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_POLICY_SHA256", buildConfigString(embeddedDuplexFreshPolicySha256.get()))
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256", buildConfigString(embeddedDuplexFreshTargetSha256.get()))
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256", buildConfigString(embeddedDuplexFreshTargetRawSha256.get()))
+    buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64", buildConfigString(embeddedDuplexFreshTargetBase64.get()))
     minSdk = 34
     targetSdk = 34
     versionCode = 1

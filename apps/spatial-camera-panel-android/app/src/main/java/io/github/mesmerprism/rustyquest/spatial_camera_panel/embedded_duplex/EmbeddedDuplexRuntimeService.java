@@ -63,6 +63,9 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context).rendererTerminalStatus(challenge);
     }
 
+    public static EmbeddedDuplexRuntimeStatus closedNoMediaStatus(Context context) {
+        return EmbeddedDuplexProcessHost.forApplication(context).closedNoMediaStatus();
+    }
     public static CompletableFuture<EmbeddedDuplexRuntimeStatus> status(Context context) {
         return EmbeddedDuplexProcessHost.forApplication(context).runtimeStatus();
     }
@@ -79,6 +82,9 @@ public final class EmbeddedDuplexRuntimeService {
                 .closeRealPeerNoMedia(displayGeneration);
     }
 
+    public static CompletableFuture<String> completedSetupRecoveryStatus(Context context,String challenge){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).completedSetupRecoveryStatus(challenge);
+    }
     public static CompletableFuture<EmbeddedDuplexPairStatus> pairStatus(Context context) {
         return EmbeddedDuplexProcessHost.forApplication(context).pairStatus();
     }
@@ -86,6 +92,22 @@ public final class EmbeddedDuplexRuntimeService {
     /** The lower packaged peer ID initiates; the other Quest answers on its process endpoint. */
     public static CompletableFuture<EmbeddedDuplexPairStatus> pairSession(Context context) {
         return EmbeddedDuplexProcessHost.forApplication(context).pairSession();
+    }
+
+    public static CompletableFuture<String> preparePeerStart(Context context){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).preparePeerStart();
+    }
+    public static CompletableFuture<String> preparedPeerStartStatus(Context context){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).preparedPeerStartStatus();
+    }
+    public static CompletableFuture<String> peerRootStatus(Context context){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).peerRootStatus();
+    }
+    public static CompletableFuture<String> reestablishPeerRoots(Context context){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).reestablishPeerRoots();
+    }
+    public static CompletableFuture<EmbeddedDuplexPairStatus> continueFreshPair(Context context){
+        return EmbeddedDuplexProcessHost.forApplication(context).continueFreshPair();
     }
 
     /** Retains a current signed session and process lineage before any Start. */

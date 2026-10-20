@@ -20,7 +20,9 @@ public final class EmbeddedDuplexStartPreflightTest {
         return EmbeddedDuplexPairStatus.parse("{\"$schema\":\"rusty.quest.embedded_duplex.pair_status.v1\","
                 + "\"state\":\"" + (current ? "peer_session_current_route_unverified" : "in_progress") + "\","
                 + "\"session_id\":\"" + SESSION + "\","
-                + "\"native_current_session\":{\"current\":" + current + ","
+                + "\"native_current_session\":{\"$schema\":\"rusty.manifold.peer.session_current_receipt.v2\",\"current\":" + current + ","
+                + "\"rejection_reason\":" + (current ? "null" : "\"expired\"") + ",\"decision_id\":null,\"peer_ids\":[],"
+                + "\"topology_contract_id\":null,\"validated_at_ms\":0,"
                 + "\"session_id\":\"" + SESSION + "\",\"expires_at_ms\":" + expiry + "},"
                 + "\"route_current\":false,\"media_effect_proven\":false}");
     }

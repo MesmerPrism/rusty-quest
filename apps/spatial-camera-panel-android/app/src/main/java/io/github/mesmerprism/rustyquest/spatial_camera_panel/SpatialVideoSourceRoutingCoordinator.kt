@@ -295,6 +295,32 @@ internal class SpatialVideoSourceRoutingCoordinator(
 
   fun snapshot(): SpatialVideoSourceRoutingState = synchronized(stateLock) { state }
 
+  /** Private source preimage for dormant SDK allocation, not a requested display route. */
+  internal class PreparedPeerRoute internal constructor(
+      internal val before: SpatialVideoSourceRoutingState,
+      internal val nativeGeneration: Long,
+      val generation: Long,
+  )
+  fun prepareEmbeddedPeerRoute(): PreparedPeerRoute = synchronized(stateLock) {
+    check(state.requested != SpatialVideoSource.Peer && state.ownedAcquisition != SpatialVideoSource.Peer) {
+      "prepared reader requires no current Peer route"
+    }
+    PreparedPeerRoute(state,lastNativeGeneration,Math.addExact(maxOf(state.generation,lastNativeGeneration),1L))
+  }
+  fun requirePreparedEmbeddedPeerRoute(candidate: PreparedPeerRoute) = synchronized(stateLock) {
+    check(state == candidate.before && lastNativeGeneration == candidate.nativeGeneration) { "dormant renderer source preimage changed" }
+  }
+  fun beginPreparedEmbeddedPeerRequest(candidate: PreparedPeerRoute,
+      concurrent: SpatialConcurrentPeerAdmission?): SpatialVideoSourceRoutingState = synchronized(stateLock) {
+    check(state == candidate.before && lastNativeGeneration == candidate.nativeGeneration) {
+      "dormant prepared route source changed"
+    }
+    val begun = if(concurrent == null)beginEmbeddedProjectionPeerRequest()
+        else beginEmbeddedConcurrentProjectionPeerRequest(concurrent)
+    check(begun.generation == candidate.generation) { "prepared reader route generation differs" }
+    begun
+  }
+
   /** Records and fences the request without running any potentially blocking source lifecycle work. */
   fun beginProjectionSourceRequest(
       source: SpatialVideoSource,
