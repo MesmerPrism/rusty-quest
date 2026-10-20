@@ -20,7 +20,7 @@ $package='io/github/mesmerprism/rustyquest/native_renderer'
 $sourceRoot=Join-Path $repo 'apps/native-renderer-android/src/main/java'
 $testRoot=Join-Path $repo 'apps/native-renderer-android/tests/java'
 $sources=@('NativeMeshUiProducer','NativePageSnapshot','NativePanelFont' | ForEach-Object {Join-Path $sourceRoot ($package+'/'+$_+'.java')})
-$tests=@('NativePageSnapshotTest','NativePageFontTest','NativePageWindowLifetimeTest','NativeMeshPanelInputTest','NativePanelOwnerAttachmentTest')
+$tests=@('NativePageSnapshotTest','NativePageFontTest','NativePageWindowLifetimeTest','NativePageObservationTest','NativeMeshPanelInputTest','NativePanelOwnerAttachmentTest')
 $testSources=@($tests|ForEach-Object {Join-Path $testRoot ($package+'/'+$_+'.java')})
 $started=[DateTime]::UtcNow
 & $javac '--release' '8' '-encoding' 'UTF-8' '-cp' $AndroidJar '-sourcepath' $sourceRoot '-d' $classes @sources @testSources *> (Join-Path $OutputRoot 'android-typecheck.log')
@@ -34,7 +34,7 @@ foreach($test in $tests){
     if($LASTEXITCODE -ne 0){throw "Native page fixture failed: $test"}
     $lines=@(Get-Content -LiteralPath (Join-Path $OutputRoot ($test+'.log')))
     $lines
-    if($test -cin @('NativePageSnapshotTest','NativePageFontTest','NativePageWindowLifetimeTest')){
+    if($test -cin @('NativePageSnapshotTest','NativePageFontTest','NativePageWindowLifetimeTest','NativePageObservationTest')){
         $reported=@($lines | Where-Object {$_ -cmatch ('^'+[regex]::Escape($test)+' PASS assertions=([0-9]+)\b')})
         if($reported.Count -ne 1){throw "Missing unique assertion count: $test"}
         $null=$reported[0] -cmatch ' assertions=([0-9]+)\b'
@@ -46,6 +46,6 @@ $pins=@(($sources+$testSources+@($PSCommandPath,$java,$javac,$AndroidJar))|ForEa
     [ordered]@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()}
 })
 [ordered]@{passed=$true;test_mains=$tests;new_assertions=$assertionTotal;assertions_by_test=$assertionCounts;elapsed_seconds=([DateTime]::UtcNow-$started).TotalSeconds;
-    scope='Actual production packet, immutable publication, lifetime/clip helpers, page font admission and SDF CPU tests, original InputConnection callback wrapper/owner helper regressions, and Android API typecheck only. No real View layout, TextShaper, system IME, Vulkan, or device claim.';
+    scope='Actual production packet, immutable publication, lifetime/clip and observation policy helpers, page font admission and SDF CPU tests, original InputConnection callback wrapper/owner helper regressions, and Android API typecheck only. No real View layout, TextShaper, system IME, Vulkan, or device claim.';
     neutral_interop_fixture='neutral-interop.npg1';inputs=$pins}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $OutputRoot 'RESULT.json') -Encoding utf8
 Write-Output "Native page focused host fixtures and Android typecheck PASS ($($tests.Count) test mains, $assertionTotal reported new assertions)."

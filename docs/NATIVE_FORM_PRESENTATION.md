@@ -34,6 +34,16 @@ open and dismissal retire old content identities and captured native input;
 the original dialog callbacks, focus and keyboard connection remain owners.
 Unknown drawable or widget content still rejects the whole native candidate.
 
+Snapshot extraction observes pre-draw damage on the presentation and each
+tracked modal window. Damage remains pending through the 32 ms coalescing
+interval; completing an older scan cannot consume a later change. A quiet,
+complete snapshot is rechecked after 500 ms, while active presses, editing,
+selection and fallback retain a 100 ms backup. Cheap lifecycle/window checks
+still run every 100 ms. Content and raster changes invalidate publication
+immediately, and removed windows or stopped producers cannot schedule new work.
+These intervals bound scheduling on the UI queue, not end-to-end presentation
+latency. They change snapshot extraction, not Android painting or app callbacks.
+
 The retained presentation continues to use Android's ordinary damage-driven
 drawing. Selected-native paint diagnostics observe window draw callbacks and
 available Window FrameMetrics without requesting additional frames. A paired

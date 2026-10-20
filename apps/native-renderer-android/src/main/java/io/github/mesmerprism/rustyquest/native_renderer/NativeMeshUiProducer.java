@@ -93,26 +93,64 @@ static final class VisibilityReadback {
     private int rasterWidth,rasterHeight,densityDpi;
     private volatile long rasterEpoch=1;
     private volatile long pageContentEpoch=1;
+    /** UI-thread observation scheduling only; owns no View, input or rendered scene state. */
+    static final class ObservationPolicy {
+        private long dirty=1,consumed,urgent=1,lastCompleted=-1;
+        private boolean stable,stopped;
+        static final class Signal {
+            private final ObservationPolicy owner;private boolean closed;
+            Signal(ObservationPolicy owner){this.owner=owner;}
+            boolean active(){return !closed&&!owner.stopped;}
+            boolean damage(){if(!active())return false;owner.damage();return true;}
+            void close(){closed=true;}
+        }
+        Signal subscribe(){return new Signal(this);}
+        private void damage(){
+            if(stopped)return;
+            if(dirty==Long.MAX_VALUE){dirty=1;consumed=0;urgent=1;stable=false;}else dirty++;
+        }
+        void invalidate(){if(stopped)return;damage();urgent=dirty;stable=false;}
+        long begin(){return dirty;}
+        void finish(long token,long now,boolean complete){
+            if(stopped||token<=0||token>dirty)return;
+            consumed=token;lastCompleted=now;
+            if(urgent<=token)urgent=0;
+            stable=complete&&urgent==0;
+        }
+        boolean current(){return !stopped&&stable&&urgent==0&&dirty==consumed;}
+        /** -1 means stopped; otherwise the next full-walk deadline relative to now. */
+        long delay(long now,boolean quiet){
+            if(stopped)return -1;
+            if(lastCompleted<0||urgent!=0||now<lastCompleted)return 0;
+            long elapsed=now-lastCompleted,interval=stable&&quiet?500:100;
+            long wait=Math.max(0,interval-elapsed);
+            if(dirty!=consumed)wait=Math.min(wait,Math.max(0,32-elapsed));
+            return wait;
+        }
+        void stop(){stopped=true;stable=false;}
+    }
     private final NativePageSnapshot nativePage=new NativePageSnapshot();
     private final java.util.concurrent.atomic.AtomicBoolean nativePageRequested=new java.util.concurrent.atomic.AtomicBoolean();
     private volatile boolean nativePageStopped;
     private final android.os.Handler pagePolls=new android.os.Handler(android.os.Looper.getMainLooper());
-    private ViewTreeObserver pageTree;
-    private long lastPageObservation;
+    private final ObservationPolicy observationPolicy=new ObservationPolicy();
+    private boolean observingNativePage;
+    private long policyContentEpoch,policyRasterEpoch,pageFlushAt=Long.MAX_VALUE;
     private long lastPageMetrics;
     private String lastPageFailure="";
     private View observedPageContent;
-    private final ViewTreeObserver.OnPreDrawListener pageDraw=new ViewTreeObserver.OnPreDrawListener(){
-        public boolean onPreDraw(){observeNativePage(false);return true;}
-    };
+    private final Runnable pageFlush=new Runnable(){public void run(){
+        pageFlushAt=Long.MAX_VALUE;observeNativePage();
+    }};
     private final Runnable pagePoll=new Runnable(){public void run(){
-        if(current!=NativeMeshUiProducer.this||root==null)return;
-        observeNativePage(true);refreshPaintWatches();reportPaintMetrics();pagePolls.postDelayed(this,100);
+        if(current!=NativeMeshUiProducer.this||root==null||nativePageStopped)return;
+        refreshPaintWatches();observeNativePage();reportPaintMetrics();pagePolls.postDelayed(this,100);
     }};
     private final IdentityHashMap<Window,PaintWatch> paintWatches=new IdentityHashMap<Window,PaintWatch>();
     private long paintMetricsStarted,paintDrawCallbacks,paintFrameReports,paintDroppedReports;
     private long paintDrawDurationNs,paintFrameDurationNs,paintDrawDurationSamples,paintFrameDurationSamples;
     private long paintMetricFailures,paintObservations,paintSnapshotChanges,paintObserveSpanNs;
+    private long paintObservationChecks,paintCoalescedChecks,paintDamageEvents;
     private int paintWindowsUnwatched;
     private RasterLayout rootRaster;
     private final android.os.Handler resizePolls=new android.os.Handler(android.os.Looper.getMainLooper());
@@ -601,7 +639,7 @@ static final class VisibilityReadback {
         NativeMeshUiProducer producer=productProducer(productOwner);
         if(producer==null)return;
         producer.pageContentEpoch++;
-        producer.nativePage.invalidate();
+        producer.invalidateNativePage();
         producer.cancelPointer();
         if(contains(content,producer.editor))producer.closeKeyboard();
         if(producer.selectionMode!=null&&contains(content,producer.selectionMode.source))producer.selectionMode.finish();
@@ -612,8 +650,7 @@ static final class VisibilityReadback {
         final NativeMeshUiProducer producer=current;
         if(producer==null||producer.generation!=generation||cancelledGeneration==generation||producer.nativePageStopped)return null;
         if(producer.nativePageRequested.compareAndSet(false,true))producer.activity.runOnUiThread(new Runnable(){public void run(){
-            if(current!=producer||producer.root==null)return;
-            producer.pageTree=producer.root.getViewTreeObserver();producer.pageTree.addOnPreDrawListener(producer.pageDraw);
+            if(current!=producer||producer.root==null||producer.nativePageStopped)return;
             producer.pagePolls.post(producer.pagePoll);
         }});
         long content=producer.pageContentEpoch,raster=producer.rasterEpoch;
@@ -621,27 +658,65 @@ static final class VisibilityReadback {
         return current==producer&&content==producer.pageContentEpoch&&raster==producer.rasterEpoch?value:null;
     }
 
-    private void observeNativePage(boolean force){
-        long now=SystemClock.uptimeMillis();
-        if(!force&&now-lastPageObservation<32)return;
-        lastPageObservation=now;paintObservations++;
-        boolean active=current==this&&root!=null&&panelAttachment instanceof ProductPanelAttachment
+    private boolean quietNativePage(){
+        return !down&&editor==null&&systemKeyboard==null&&selectionMode==null;
+    }
+    private void requestNativePageFlush(long delay){
+        if(delay<0||!nativePageRequested.get()||nativePageStopped||current!=this||root==null)return;
+        long at=SystemClock.uptimeMillis()+delay;
+        if(pageFlushAt<=at)return; // One pending callback; new damage may only pull it earlier.
+        pagePolls.removeCallbacks(pageFlush);pageFlushAt=at;
+        if(!pagePolls.postDelayed(pageFlush,delay)){
+            pageFlushAt=Long.MAX_VALUE;
+            // No recursive reschedule if the UI queue is retiring.
+            nativePage.invalidate();observationPolicy.invalidate();
+        }
+    }
+    private void invalidateNativePage(){
+        nativePage.invalidate();observationPolicy.invalidate();
+        if(!observingNativePage)requestNativePageFlush(0);
+    }
+    private void observeNativePage(){
+        if(current!=this||root==null||nativePageStopped||!nativePageRequested.get())return;
+        if(observingNativePage)return;
+        observingNativePage=true;
+        try{observeNativePageCurrent();}finally{observingNativePage=false;}
+    }
+    private void observeNativePageCurrent(){
+        long now=SystemClock.uptimeMillis();paintObservationChecks++;
+        boolean active=panelAttachment instanceof ProductPanelAttachment
             &&((ProductPanelAttachment)panelAttachment).presentationActive()&&ownerAttachment.resumed()
             &&visibilityObserved&&effectiveVisible&&visibilityRequest==0&&!resizeInputSuppressed();
         View content=productCarrier;
         if(content!=observedPageContent){
-            observedPageContent=content;pageContentEpoch++;nativePage.invalidate();
+            observedPageContent=content;pageContentEpoch++;invalidateNativePage();
+        }
+        if(policyContentEpoch!=pageContentEpoch||policyRasterEpoch!=rasterEpoch){
+            policyContentEpoch=pageContentEpoch;policyRasterEpoch=rasterEpoch;invalidateNativePage();
         }
         if(!active||keyboard!=null){
-            nativePage.invalidate();reportPageStatus(active?"legacy-keyboard":"owner-inactive",false,now);return;
+            invalidateNativePage();reportPageStatus(active?"legacy-keyboard":"owner-inactive",false,now);return;
         }
         NativePageSnapshot.Layer[] layers=nativePageLayers(content);
-        if(layers==null){nativePage.invalidate();reportPageStatus("window-roots-unavailable",false,now);return;}
-        long started=System.nanoTime();
+        if(layers==null){invalidateNativePage();reportPageStatus("window-roots-unavailable",false,now);return;}
+        if(root.isLayoutRequested()){
+            invalidateNativePage();reportPageStatus("layout-pending",false,now);return;
+        }
+        for(NativePageSnapshot.Layer layer:layers)if(!layer.root.isAttachedToWindow()||!layer.root.isShown()||layer.root.isLayoutRequested()){
+            invalidateNativePage();reportPageStatus("window-layout-pending",false,now);return;
+        }
+        long delay=observationPolicy.delay(now,quietNativePage());
+        if(delay!=0){paintCoalescedChecks++;requestNativePageFlush(delay);return;}
+        long token=observationPolicy.begin(),started=System.nanoTime();paintObservations++;
         boolean changed=nativePage.observe(layers,root,cursor,generation,pageContentEpoch,rasterEpoch,rasterScale,true);
         paintObserveSpanNs+=Math.max(0,System.nanoTime()-started);
+        String reason=nativePage.failure();
+        observationPolicy.finish(token,SystemClock.uptimeMillis(),"none".equals(reason));
         if(changed)paintSnapshotChanges++;
-        reportPageStatus(nativePage.failure(),changed,now);
+        reportPageStatus(reason,changed,now);
+        // Replace an obsolete backup deadline only after a completed walk. Sticky damage survives.
+        pagePolls.removeCallbacks(pageFlush);pageFlushAt=Long.MAX_VALUE;
+        requestNativePageFlush(observationPolicy.delay(SystemClock.uptimeMillis(),quietNativePage()));
     }
 
     /** Actual platform window order and dim policy; no synthesized modal or callback owner. */
@@ -672,12 +747,19 @@ static final class VisibilityReadback {
     /** Passive window observations. Neither listener requests a draw or changes View state. */
     private final class PaintWatch {
         final Window window;final ViewTreeObserver tree;
+        final ObservationPolicy.Signal observation=observationPolicy.subscribe();
+        final ViewTreeObserver.OnPreDrawListener preDraw=new ViewTreeObserver.OnPreDrawListener(){public boolean onPreDraw(){
+            if(current==NativeMeshUiProducer.this&&observation.damage()){
+                paintDamageEvents++;observeNativePage();
+            }
+            return true;
+        }};
         final ViewTreeObserver.OnDrawListener draw=new ViewTreeObserver.OnDrawListener(){public void onDraw(){
-            if(!closed&&current==NativeMeshUiProducer.this)paintDrawCallbacks++;
+            if(observation.active()&&current==NativeMeshUiProducer.this)paintDrawCallbacks++;
         }};
         final Window.OnFrameMetricsAvailableListener frames=new Window.OnFrameMetricsAvailableListener(){
             public void onFrameMetricsAvailable(Window ignored,FrameMetrics metrics,int dropped){
-                if(closed||current!=NativeMeshUiProducer.this)return;
+                if(!observation.active()||current!=NativeMeshUiProducer.this)return;
                 paintFrameReports++;paintDroppedReports+=Math.max(0,dropped);
                 // Consume immediately: Android reuses the FrameMetrics object after this callback.
                 try{
@@ -687,16 +769,20 @@ static final class VisibilityReadback {
                 }catch(RuntimeException unavailable){paintMetricFailures++;}
             }
         };
-        boolean closed,drawAttached,framesAttached;
+        boolean preDrawAttached,drawAttached,framesAttached;
         PaintWatch(Window value){
             window=value;tree=value.getDecorView().getViewTreeObserver();
+            try{if(tree.isAlive()){tree.addOnPreDrawListener(preDraw);preDrawAttached=true;}}
+            catch(RuntimeException unavailable){paintMetricFailures++;}
             try{if(tree.isAlive()){tree.addOnDrawListener(draw);drawAttached=true;}}
             catch(RuntimeException unavailable){paintMetricFailures++;}
             if(android.os.Build.VERSION.SDK_INT>=24)try{window.addOnFrameMetricsAvailableListener(frames,pagePolls);framesAttached=true;}
             catch(RuntimeException unavailable){paintMetricFailures++;}
         }
         void close(){
-            closed=true;
+            observation.close();
+            try{if(preDrawAttached&&tree.isAlive())tree.removeOnPreDrawListener(preDraw);}
+            catch(RuntimeException unavailable){paintMetricFailures++;}
             try{if(drawAttached&&tree.isAlive())tree.removeOnDrawListener(draw);}
             catch(RuntimeException unavailable){paintMetricFailures++;}
             try{if(framesAttached)window.removeOnFrameMetricsAvailableListener(frames);}
@@ -716,13 +802,17 @@ static final class VisibilityReadback {
         if(presentation!=null&&presentation.isShowing())addPaintWindow(wanted,presentation.getWindow());
         for(Dialog modal:modals)if(modal.isShowing())addPaintWindow(wanted,modal.getWindow());
         if(keyboard!=null&&keyboard.isShowing())addPaintWindow(wanted,keyboard.getWindow());
+        boolean rebound=false;
         for(Window window:new ArrayList<Window>(paintWatches.keySet())){
             PaintWatch watch=paintWatches.get(window);
             if(!wanted.containsKey(window)||!watch.tree.isAlive()||watch.tree!=window.getDecorView().getViewTreeObserver()){
-                watch.close();paintWatches.remove(window);
+                watch.close();paintWatches.remove(window);rebound=true;
             }
         }
-        for(Window window:wanted.keySet())if(!paintWatches.containsKey(window))paintWatches.put(window,new PaintWatch(window));
+        for(Window window:wanted.keySet())if(!paintWatches.containsKey(window)){
+            paintWatches.put(window,new PaintWatch(window));rebound=true;
+        }
+        if(rebound)invalidateNativePage();
     }
     private void reportPaintMetrics(){
         long now=SystemClock.uptimeMillis(),elapsed=now-paintMetricsStarted;
@@ -732,26 +822,28 @@ static final class VisibilityReadback {
             +" windowDrawCallbacks="+paintDrawCallbacks+" hwuiReports="+paintFrameReports+" droppedReports="+paintDroppedReports
             +" hwuiDrawDurationSamples="+paintDrawDurationSamples+" hwuiDrawDurationNsSum="+paintDrawDurationNs
             +" hwuiFrameDurationSamples="+paintFrameDurationSamples+" hwuiFrameDurationNsSum="+paintFrameDurationNs
-            +" metricFailures="+paintMetricFailures+" snapshotObservations="+paintObservations
+            +" metricFailures="+paintMetricFailures+" snapshotChecks="+paintObservationChecks
+            +" snapshotCoalescedChecks="+paintCoalescedChecks+" snapshotDamageEvents="+paintDamageEvents
+            +" observationClean="+observationPolicy.current()+" idleBackupMs=500 activeBackupMs=100"
+            +" snapshotObservations="+paintObservations
             +" snapshotChanges="+paintSnapshotChanges+" snapshotObserveSpanNs="+paintObserveSpanNs
             +" systemImeExternal="+(systemKeyboard!=null)+" offscreenPaintSuppressed=false evidence=passive-window-callbacks-not-gpu-cost-or-presentation textLogged=false visibleProof=false");
         paintMetricsStarted=now;paintDrawCallbacks=paintFrameReports=paintDroppedReports=0;
         paintDrawDurationNs=paintFrameDurationNs=paintDrawDurationSamples=paintFrameDurationSamples=0;
         paintMetricFailures=paintObservations=paintSnapshotChanges=paintObserveSpanNs=0;
+        paintObservationChecks=paintCoalescedChecks=paintDamageEvents=0;
     }
 
     private void stopNativePage(){
-        nativePageStopped=true;
-        pagePolls.removeCallbacksAndMessages(null);
-        if(pageTree!=null&&pageTree.isAlive())pageTree.removeOnPreDrawListener(pageDraw);
-        pageTree=null;nativePage.retire();
+        nativePageStopped=true;observationPolicy.stop();pageFlushAt=Long.MAX_VALUE;
+        pagePolls.removeCallbacksAndMessages(null);nativePage.retire();
         for(PaintWatch watch:paintWatches.values())watch.close();paintWatches.clear();
     }
 
     /** Only the explicitly requested native view projection adds window transition fencing. */
     private void nativeWindowChanged(){
         if(!nativePageRequested.get()||nativePageStopped)return;
-        pageContentEpoch++;nativePage.invalidate();cancelPointer();refreshPaintWatches();
+        pageContentEpoch++;invalidateNativePage();cancelPointer();refreshPaintWatches();
     }
     private static boolean contains(View parent,View child) {
         if(parent==null||child==null)return false;
@@ -764,7 +856,7 @@ static final class VisibilityReadback {
 
     private void showModal(final Dialog dialog,boolean isKeyboard) {
         if(current!=this||presentation==null||root==null)throw new IllegalStateException("mesh-window-retired");
-        nativePage.invalidate();
+        invalidateNativePage();
         Window window=dialog.getWindow();
         WindowManager.LayoutParams attributes=window.getAttributes();
         scaleWindowPlacement(window,attributes);
@@ -890,7 +982,7 @@ static final class VisibilityReadback {
         if(prior!=null){if(pointerDialog==prior)cancelPointer();prior.dismiss();}
     }
     private void closeTransientInput(){
-        nativePage.invalidate();
+        invalidateNativePage();
         cancelPointer();if(selectionMode!=null)selectionMode.finish();closeKeyboard();
         for(Dialog modal:new ArrayList<Dialog>(modals))modal.dismiss();modals.clear();
     }
@@ -1069,7 +1161,7 @@ static final class VisibilityReadback {
         }
     }
     private void beginResizeMutation(final ResizeRequest request){
-        nativePage.invalidate();
+        invalidateNativePage();
         request.oldWidth=rasterWidth;request.oldHeight=rasterHeight;request.oldScale=rasterScale;request.mutating=true;
         try{
             request.scroll.freeze();display.setSurface(null);display.resize(request.width,request.height,densityDpi);
@@ -1142,6 +1234,7 @@ static final class VisibilityReadback {
             if(request.rollingBack){abortResizeSafely(request,"rolled-back-frame-restored");return;}
             Surface previous=surface;surface=request.target;request.target=null;rasterWidth=request.width;rasterHeight=request.height;
             rasterEpoch=request.id;request.reason="writer-frame-scroll-committed";request.state=1;
+            invalidateNativePage();
             try{previous.release();}catch(RuntimeException failure){uncertainSurfaces.add(previous);}
             Log.i(TAG,"event=raster-writer-committed generation="+generation+" request="+request.id+" epoch="+rasterEpoch
                 +" width="+rasterWidth+" height="+rasterHeight+" scrollRetained=true admissionScrollY="+request.scroll.firstVerticalY()
