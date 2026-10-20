@@ -55,6 +55,36 @@ public final class NativePageSnapshotTest {
         check(ByteBuffer.wrap(without).order(ByteOrder.LITTLE_ENDIAN).getInt(12)==0,"geometry revision reuses current atlas");
         json[0]=0;font[0]=0;with[16]=0;
         check(((byte[])read.invoke(value,1L,0L,0L))[16]=='{',"published bytes privately immutable");
+        Method layerSteps;
+        try{layerSteps=wire.getDeclaredMethod("layerSteps",long[].class,float[].class);}
+        catch(NoSuchMethodException absent){throw new AssertionError("ordered retained-window presentation absent",absent);}
+        layerSteps.setAccessible(true);
+        check(Arrays.equals((int[])layerSteps.invoke(null,new long[]{0,7,11},new float[]{0,0.4f,0.6f}),new int[]{0,-2,1,-3,2}),"root then dim/modal then dim/top-modal paint order");
+        check(Arrays.equals((int[])layerSteps.invoke(null,new long[]{0,7},new float[]{0,0}),new int[]{0,1}),"no unrequested dimming");
+        rejectLayers(layerSteps,new long[]{0,7,7},new float[]{0,0.2f,0.3f},"duplicate window identity");
+        rejectLayers(layerSteps,new long[]{0,7},new float[]{0,Float.NaN},"nonfinite window dim");
+        rejectLayers(layerSteps,new long[]{1},new float[]{0},"missing original root window");
+        rejectLayers(layerSteps,new long[]{0,1,2,3,4,5,6,7,8},new float[9],"window budget");
+        Method geometry=wire.getDeclaredMethod("windowRect",float.class,float.class,float.class,float.class,float.class,float.class,float.class,float.class);geometry.setAccessible(true);
+        float[] decor=(float[])geometry.invoke(null,300f,150f,900f,600f,1f,0f,0f,1.5f);
+        float[] child=(float[])geometry.invoke(null,300f,150f,600f,400f,1.5f,0f,0f,1.5f);
+        check(Arrays.equals(decor,new float[]{200,100,800,500}),"physical decor normalized once");
+        check(Arrays.equals(decor,child),"scaled logical modal content agrees with physical decor");
+        float[] moved=(float[])geometry.invoke(null,600f,450f,900f,600f,1f,300f,300f,1.5f);
+        check(Arrays.equals(decor,moved),"common presentation screen origin preserves window placement");
+        Method selected=wire.getDeclaredMethod("singleChoice",int.class,int.class,int.class,int.class);selected.setAccessible(true);
+        check((Boolean)selected.invoke(null,1,5,2,7),"actual scrolled list checked position projects to visible row");
+        check(!(Boolean)selected.invoke(null,1,5,1,7),"unchecked sibling stays unchecked");
+        check(!(Boolean)selected.invoke(null,0,5,2,7),"nonchoice menu never acquires selected choice");
+        Method wrapper;
+        try{wrapper=wire.getDeclaredMethod("boundsOnlyWrapper",Class.class);}
+        catch(NoSuchMethodException absent){throw new AssertionError("drawable wrapper semantic admission absent",absent);}
+        wrapper.setAccessible(true);
+        check((Boolean)wrapper.invoke(null,Class.forName("android.graphics.drawable.InsetDrawable")),"actual bounds-only inset admitted");
+        for(String name:new String[]{"ClipDrawable","RotateDrawable","ScaleDrawable"}){
+            check(!(Boolean)wrapper.invoke(null,Class.forName("android.graphics.drawable."+name)),name+" canvas/level semantics cannot be dropped");
+        }
+        check(!(Boolean)wrapper.invoke(null,UnreviewedInset.class),"custom inset override cannot inherit native admission");
         if(args.length==1){
             // Neutral interoperability fixture, never actual field text or a runtime snapshot.
             byte[] glyph=ByteBuffer.allocate(81).order(ByteOrder.LITTLE_ENDIAN)
@@ -69,5 +99,12 @@ public final class NativePageSnapshotTest {
     static void reject(Method method,byte[] json,byte[] atlas,String reason)throws Exception {
         try{method.invoke(null,json,atlas);throw new AssertionError("accepted "+reason);}
         catch(InvocationTargetException error){check(error.getCause() instanceof IllegalArgumentException,reason+" explicit rejection");}
+    }
+    static void rejectLayers(Method method,long[] ids,float[] dims,String reason)throws Exception {
+        try{method.invoke(null,ids,dims);throw new AssertionError("accepted "+reason);}
+        catch(InvocationTargetException error){check(error.getCause() instanceof IllegalArgumentException,reason+" explicit rejection");}
+    }
+    static final class UnreviewedInset extends android.graphics.drawable.InsetDrawable {
+        UnreviewedInset(){super((android.graphics.drawable.Drawable)null,0);}
     }
 }

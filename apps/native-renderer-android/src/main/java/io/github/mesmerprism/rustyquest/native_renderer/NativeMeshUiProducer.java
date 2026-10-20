@@ -13,6 +13,7 @@ import android.hardware.display.VirtualDisplay;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.util.Log;
+import android.view.FrameMetrics;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
@@ -94,6 +95,7 @@ static final class VisibilityReadback {
     private volatile long pageContentEpoch=1;
     private final NativePageSnapshot nativePage=new NativePageSnapshot();
     private final java.util.concurrent.atomic.AtomicBoolean nativePageRequested=new java.util.concurrent.atomic.AtomicBoolean();
+    private volatile boolean nativePageStopped;
     private final android.os.Handler pagePolls=new android.os.Handler(android.os.Looper.getMainLooper());
     private ViewTreeObserver pageTree;
     private long lastPageObservation;
@@ -105,8 +107,13 @@ static final class VisibilityReadback {
     };
     private final Runnable pagePoll=new Runnable(){public void run(){
         if(current!=NativeMeshUiProducer.this||root==null)return;
-        observeNativePage(true);pagePolls.postDelayed(this,100);
+        observeNativePage(true);refreshPaintWatches();reportPaintMetrics();pagePolls.postDelayed(this,100);
     }};
+    private final IdentityHashMap<Window,PaintWatch> paintWatches=new IdentityHashMap<Window,PaintWatch>();
+    private long paintMetricsStarted,paintDrawCallbacks,paintFrameReports,paintDroppedReports;
+    private long paintDrawDurationNs,paintFrameDurationNs,paintDrawDurationSamples,paintFrameDurationSamples;
+    private long paintMetricFailures,paintObservations,paintSnapshotChanges,paintObserveSpanNs;
+    private int paintWindowsUnwatched;
     private RasterLayout rootRaster;
     private final android.os.Handler resizePolls=new android.os.Handler(android.os.Looper.getMainLooper());
     private volatile ResizeRequest resizeRequest;
@@ -225,8 +232,21 @@ static final class VisibilityReadback {
     private boolean visibilityObserved;
     private boolean effectiveVisible;
     private long visibilityRequest;
-    private final IdentityHashMap<Dialog,Long> windowIds=new IdentityHashMap<Dialog,Long>();
-    private long nextWindowId=1,widgetRevision;
+    /** Presentation identity only; original dialogs and listeners retain action ownership. */
+    static final class WindowRegistry<T> {
+        private final IdentityHashMap<T,Long> values=new IdentityHashMap<T,Long>();
+        private long next=1;
+        boolean opened(T window){
+            if(window==null)throw new IllegalArgumentException("window-owner-required");
+            if(values.containsKey(window))return false;
+            if(next<=0)throw new IllegalStateException("window-identity-exhausted");
+            values.put(window,next++);return true;
+        }
+        boolean closed(T window){return values.remove(window)!=null;}
+        Long get(T window){return values.get(window);}
+    }
+    private final WindowRegistry<Dialog> windowIds=new WindowRegistry<Dialog>();
+    private long widgetRevision;
     private String widgetSignature="";
     private final ArrayList<Dialog> modals = new ArrayList<Dialog>();
     private Dialog pointerDialog;
@@ -590,7 +610,7 @@ static final class VisibilityReadback {
     /** XR reads immutable cached bytes only; the first selected read starts UI-thread observation. */
     public static byte[] readNativePage(long generation,long seenRevision,long seenAtlasEpoch){
         final NativeMeshUiProducer producer=current;
-        if(producer==null||producer.generation!=generation||cancelledGeneration==generation)return null;
+        if(producer==null||producer.generation!=generation||cancelledGeneration==generation||producer.nativePageStopped)return null;
         if(producer.nativePageRequested.compareAndSet(false,true))producer.activity.runOnUiThread(new Runnable(){public void run(){
             if(current!=producer||producer.root==null)return;
             producer.pageTree=producer.root.getViewTreeObserver();producer.pageTree.addOnPreDrawListener(producer.pageDraw);
@@ -604,18 +624,43 @@ static final class VisibilityReadback {
     private void observeNativePage(boolean force){
         long now=SystemClock.uptimeMillis();
         if(!force&&now-lastPageObservation<32)return;
-        lastPageObservation=now;
+        lastPageObservation=now;paintObservations++;
         boolean active=current==this&&root!=null&&panelAttachment instanceof ProductPanelAttachment
             &&((ProductPanelAttachment)panelAttachment).presentationActive()&&ownerAttachment.resumed()
-            &&visibilityObserved&&effectiveVisible&&visibilityRequest==0&&!resizeInputSuppressed()
-            &&modals.isEmpty()&&keyboard==null&&selectionMode==null;
+            &&visibilityObserved&&effectiveVisible&&visibilityRequest==0&&!resizeInputSuppressed();
         View content=productCarrier;
         if(content!=observedPageContent){
             observedPageContent=content;pageContentEpoch++;nativePage.invalidate();
         }
-        if(!active){nativePage.invalidate();return;}
-        boolean changed=nativePage.observe(content,root,cursor,generation,pageContentEpoch,rasterEpoch,rasterScale,true);
-        String reason=nativePage.failure();
+        if(!active||keyboard!=null){
+            nativePage.invalidate();reportPageStatus(active?"legacy-keyboard":"owner-inactive",false,now);return;
+        }
+        NativePageSnapshot.Layer[] layers=nativePageLayers(content);
+        if(layers==null){nativePage.invalidate();reportPageStatus("window-roots-unavailable",false,now);return;}
+        long started=System.nanoTime();
+        boolean changed=nativePage.observe(layers,root,cursor,generation,pageContentEpoch,rasterEpoch,rasterScale,true);
+        paintObserveSpanNs+=Math.max(0,System.nanoTime()-started);
+        if(changed)paintSnapshotChanges++;
+        reportPageStatus(nativePage.failure(),changed,now);
+    }
+
+    /** Actual platform window order and dim policy; no synthesized modal or callback owner. */
+    private NativePageSnapshot.Layer[] nativePageLayers(View content){
+        if(content==null)return null;
+        ArrayList<NativePageSnapshot.Layer> layers=new ArrayList<NativePageSnapshot.Layer>();
+        layers.add(new NativePageSnapshot.Layer(content,0,0));
+        for(Dialog modal:modals){
+            if(!modal.isShowing())continue;
+            Window window=modal.getWindow();Long id=windowIds.get(modal);
+            if(window==null||id==null||id<=0||layers.size()>=8)return null;
+            WindowManager.LayoutParams attributes=window.getAttributes();
+            float dim=(attributes.flags&WindowManager.LayoutParams.FLAG_DIM_BEHIND)!=0?attributes.dimAmount:0;
+            layers.add(new NativePageSnapshot.Layer(window.getDecorView(),id,dim));
+        }
+        return layers.toArray(new NativePageSnapshot.Layer[layers.size()]);
+    }
+
+    private void reportPageStatus(String reason,boolean changed,long now){
         if(!reason.equals(lastPageFailure)){
             lastPageFailure=reason;
             Log.i(TAG,"event=native-page-observation generation="+generation+" contentEpoch="+pageContentEpoch
@@ -624,12 +669,90 @@ static final class VisibilityReadback {
         if(changed&&now-lastPageMetrics>=2000){lastPageMetrics=now;Log.i(TAG,"event=native-page-metrics generation="+generation+nativePage.counts()+" textLogged=false visibleProof=false");}
     }
 
+    /** Passive window observations. Neither listener requests a draw or changes View state. */
+    private final class PaintWatch {
+        final Window window;final ViewTreeObserver tree;
+        final ViewTreeObserver.OnDrawListener draw=new ViewTreeObserver.OnDrawListener(){public void onDraw(){
+            if(!closed&&current==NativeMeshUiProducer.this)paintDrawCallbacks++;
+        }};
+        final Window.OnFrameMetricsAvailableListener frames=new Window.OnFrameMetricsAvailableListener(){
+            public void onFrameMetricsAvailable(Window ignored,FrameMetrics metrics,int dropped){
+                if(closed||current!=NativeMeshUiProducer.this)return;
+                paintFrameReports++;paintDroppedReports+=Math.max(0,dropped);
+                // Consume immediately: Android reuses the FrameMetrics object after this callback.
+                try{
+                    long drawNs=metrics.getMetric(FrameMetrics.DRAW_DURATION),totalNs=metrics.getMetric(FrameMetrics.TOTAL_DURATION);
+                    if(drawNs>=0){paintDrawDurationNs+=drawNs;paintDrawDurationSamples++;}
+                    if(totalNs>=0){paintFrameDurationNs+=totalNs;paintFrameDurationSamples++;}
+                }catch(RuntimeException unavailable){paintMetricFailures++;}
+            }
+        };
+        boolean closed,drawAttached,framesAttached;
+        PaintWatch(Window value){
+            window=value;tree=value.getDecorView().getViewTreeObserver();
+            try{if(tree.isAlive()){tree.addOnDrawListener(draw);drawAttached=true;}}
+            catch(RuntimeException unavailable){paintMetricFailures++;}
+            if(android.os.Build.VERSION.SDK_INT>=24)try{window.addOnFrameMetricsAvailableListener(frames,pagePolls);framesAttached=true;}
+            catch(RuntimeException unavailable){paintMetricFailures++;}
+        }
+        void close(){
+            closed=true;
+            try{if(drawAttached&&tree.isAlive())tree.removeOnDrawListener(draw);}
+            catch(RuntimeException unavailable){paintMetricFailures++;}
+            try{if(framesAttached)window.removeOnFrameMetricsAvailableListener(frames);}
+            catch(RuntimeException unavailable){paintMetricFailures++;}
+        }
+    }
+    private void addPaintWindow(IdentityHashMap<Window,Boolean> wanted,Window window){
+        if(window==null||wanted.containsKey(window))return;
+        if(wanted.size()>=9){paintWindowsUnwatched++;return;}
+        wanted.put(window,Boolean.TRUE);
+    }
+    private void refreshPaintWatches(){
+        if(!nativePageRequested.get()||nativePageStopped||current!=this||root==null)return;
+        if(paintMetricsStarted==0)paintMetricsStarted=SystemClock.uptimeMillis();
+        paintWindowsUnwatched=0;
+        IdentityHashMap<Window,Boolean> wanted=new IdentityHashMap<Window,Boolean>();
+        if(presentation!=null&&presentation.isShowing())addPaintWindow(wanted,presentation.getWindow());
+        for(Dialog modal:modals)if(modal.isShowing())addPaintWindow(wanted,modal.getWindow());
+        if(keyboard!=null&&keyboard.isShowing())addPaintWindow(wanted,keyboard.getWindow());
+        for(Window window:new ArrayList<Window>(paintWatches.keySet())){
+            PaintWatch watch=paintWatches.get(window);
+            if(!wanted.containsKey(window)||!watch.tree.isAlive()||watch.tree!=window.getDecorView().getViewTreeObserver()){
+                watch.close();paintWatches.remove(window);
+            }
+        }
+        for(Window window:wanted.keySet())if(!paintWatches.containsKey(window))paintWatches.put(window,new PaintWatch(window));
+    }
+    private void reportPaintMetrics(){
+        long now=SystemClock.uptimeMillis(),elapsed=now-paintMetricsStarted;
+        if(paintMetricsStarted==0||elapsed<2000)return;
+        Log.i(TAG,"event=native-page-paint generation="+generation+" uptimeMs="+now+" windowMs="+elapsed
+            +" watchedWindows="+paintWatches.size()+" unwatchedWindows="+paintWindowsUnwatched
+            +" windowDrawCallbacks="+paintDrawCallbacks+" hwuiReports="+paintFrameReports+" droppedReports="+paintDroppedReports
+            +" hwuiDrawDurationSamples="+paintDrawDurationSamples+" hwuiDrawDurationNsSum="+paintDrawDurationNs
+            +" hwuiFrameDurationSamples="+paintFrameDurationSamples+" hwuiFrameDurationNsSum="+paintFrameDurationNs
+            +" metricFailures="+paintMetricFailures+" snapshotObservations="+paintObservations
+            +" snapshotChanges="+paintSnapshotChanges+" snapshotObserveSpanNs="+paintObserveSpanNs
+            +" systemImeExternal="+(systemKeyboard!=null)+" offscreenPaintSuppressed=false evidence=passive-window-callbacks-not-gpu-cost-or-presentation textLogged=false visibleProof=false");
+        paintMetricsStarted=now;paintDrawCallbacks=paintFrameReports=paintDroppedReports=0;
+        paintDrawDurationNs=paintFrameDurationNs=paintDrawDurationSamples=paintFrameDurationSamples=0;
+        paintMetricFailures=paintObservations=paintSnapshotChanges=paintObserveSpanNs=0;
+    }
+
     private void stopNativePage(){
+        nativePageStopped=true;
         pagePolls.removeCallbacksAndMessages(null);
         if(pageTree!=null&&pageTree.isAlive())pageTree.removeOnPreDrawListener(pageDraw);
         pageTree=null;nativePage.retire();
+        for(PaintWatch watch:paintWatches.values())watch.close();paintWatches.clear();
     }
 
+    /** Only the explicitly requested native view projection adds window transition fencing. */
+    private void nativeWindowChanged(){
+        if(!nativePageRequested.get()||nativePageStopped)return;
+        pageContentEpoch++;nativePage.invalidate();cancelPointer();refreshPaintWatches();
+    }
     private static boolean contains(View parent,View child) {
         if(parent==null||child==null)return false;
         for(View node=child;node!=null;) {
@@ -656,13 +779,20 @@ static final class VisibilityReadback {
             if(selectionMode!=null&&contains(dialog.getWindow().getDecorView(),selectionMode.source))selectionMode.finish();
             if(dialog==keyboard){keyboard=null;retireEditor();}
             else if(contains(dialog.getWindow().getDecorView(),editor))closeKeyboard();
-            windowIds.remove(dialog);
+            if(windowIds.closed(dialog))nativeWindowChanged();
         }});
         dialog.show();
         scaleWindowInsets(window);
         scaleModalContent(window);
-        windowIds.put(dialog,nextWindowId++);
-        if(!isKeyboard)modals.add(dialog);
+        // Existing non-native routes retain their original show-call identity rotation.
+        if(!nativePageRequested.get())windowIds.closed(dialog);
+        boolean opened=windowIds.opened(dialog);
+        if(!isKeyboard){
+            boolean listed=false;
+            if(nativePageRequested.get())for(Dialog shown:modals)if(shown==dialog){listed=true;break;}
+            if(!listed)modals.add(dialog);
+        }
+        if(opened)nativeWindowChanged();
     }
 
     private boolean viewCurrent(View source){

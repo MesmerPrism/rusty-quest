@@ -27,6 +27,21 @@ controls and scientific readiness rules. Unsupported or incomplete content
 uses an explicit coherent original-texture fallback; a selected feature is
 not proof that native form pixels were drawn.
 
+The snapshot can include the original modal windows after the main form, with
+their actual window order, dim amount, transforms and logical clipping. List
+choices use the original list's checked position or checked row state. Window
+open and dismissal retire old content identities and captured native input;
+the original dialog callbacks, focus and keyboard connection remain owners.
+Unknown drawable or widget content still rejects the whole native candidate.
+
+The retained presentation continues to use Android's ordinary damage-driven
+drawing. Selected-native paint diagnostics observe window draw callbacks and
+available Window FrameMetrics without requesting additional frames. A paired
+native reader marker counts acquired Android buffers and reports the renderer
+frame counter. Draw callbacks, frame metrics, buffer acquisitions and actual
+eye submissions are different measurements. These observers do not suppress
+offscreen drawing, and their timestamps do not establish incremental GPU cost.
+
 Qualification requires actual both-eye form and particle pixels, scroll
 clipping, original button/slider readback, Meta keyboard edits and cancellation
 on lifecycle or content changes. Compare frame timing using actual workload,

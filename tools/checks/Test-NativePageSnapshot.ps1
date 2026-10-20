@@ -20,23 +20,32 @@ $package='io/github/mesmerprism/rustyquest/native_renderer'
 $sourceRoot=Join-Path $repo 'apps/native-renderer-android/src/main/java'
 $testRoot=Join-Path $repo 'apps/native-renderer-android/tests/java'
 $sources=@('NativeMeshUiProducer','NativePageSnapshot','NativePanelFont' | ForEach-Object {Join-Path $sourceRoot ($package+'/'+$_+'.java')})
-$tests=@('NativePageSnapshotTest','NativePageFontTest','NativeMeshPanelInputTest','NativePanelOwnerAttachmentTest')
+$tests=@('NativePageSnapshotTest','NativePageFontTest','NativePageWindowLifetimeTest','NativeMeshPanelInputTest','NativePanelOwnerAttachmentTest')
 $testSources=@($tests|ForEach-Object {Join-Path $testRoot ($package+'/'+$_+'.java')})
 $started=[DateTime]::UtcNow
 & $javac '--release' '8' '-encoding' 'UTF-8' '-cp' $AndroidJar '-sourcepath' $sourceRoot '-d' $classes @sources @testSources *> (Join-Path $OutputRoot 'android-typecheck.log')
 if($LASTEXITCODE -ne 0){throw 'Native page Android API typecheck failed; inspect android-typecheck.log.'}
 $classpath=$classes+[IO.Path]::PathSeparator+$AndroidJar
+$assertionCounts=[ordered]@{}
 foreach($test in $tests){
     $arguments=@('-cp',$classpath,('io.github.mesmerprism.rustyquest.native_renderer.'+$test))
     if($test -ceq 'NativePageSnapshotTest'){$arguments+=@(Join-Path $OutputRoot 'neutral-interop.npg1')}
     & $java @arguments *> (Join-Path $OutputRoot ($test+'.log'))
     if($LASTEXITCODE -ne 0){throw "Native page fixture failed: $test"}
-    Get-Content -LiteralPath (Join-Path $OutputRoot ($test+'.log'))
+    $lines=@(Get-Content -LiteralPath (Join-Path $OutputRoot ($test+'.log')))
+    $lines
+    if($test -cin @('NativePageSnapshotTest','NativePageFontTest','NativePageWindowLifetimeTest')){
+        $reported=@($lines | Where-Object {$_ -cmatch ('^'+[regex]::Escape($test)+' PASS assertions=([0-9]+)\b')})
+        if($reported.Count -ne 1){throw "Missing unique assertion count: $test"}
+        $null=$reported[0] -cmatch ' assertions=([0-9]+)\b'
+        $assertionCounts[$test]=[int]$Matches[1]
+    }
 }
+$assertionTotal=[int](($assertionCounts.Values|Measure-Object -Sum).Sum)
 $pins=@(($sources+$testSources+@($PSCommandPath,$java,$javac,$AndroidJar))|ForEach-Object {
     [ordered]@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()}
 })
-[ordered]@{passed=$true;test_mains=$tests;new_assertions=37;elapsed_seconds=([DateTime]::UtcNow-$started).TotalSeconds;
+[ordered]@{passed=$true;test_mains=$tests;new_assertions=$assertionTotal;assertions_by_test=$assertionCounts;elapsed_seconds=([DateTime]::UtcNow-$started).TotalSeconds;
     scope='Actual production packet, immutable publication, lifetime/clip helpers, page font admission and SDF CPU tests, original InputConnection callback wrapper/owner helper regressions, and Android API typecheck only. No real View layout, TextShaper, system IME, Vulkan, or device claim.';
     neutral_interop_fixture='neutral-interop.npg1';inputs=$pins}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $OutputRoot 'RESULT.json') -Encoding utf8
-Write-Output 'Native page focused host fixtures and Android typecheck PASS (4 test mains, 37 new assertions).'
+Write-Output "Native page focused host fixtures and Android typecheck PASS ($($tests.Count) test mains, $assertionTotal reported new assertions)."

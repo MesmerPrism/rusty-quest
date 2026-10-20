@@ -732,6 +732,10 @@ impl GpuMeshUiPanel {
             if frame % 120 == 0 {
                 crate::marker("native-panel-cost", format!("frame={} prepareCpuMs={:.3} rasterWidth={} rasterHeight={} rasterEpoch={} importRegistry={} detailMode={} visibleProof=false",
                     frame, started.elapsed().as_secs_f64()*1000.0, self.raster_extent.width, self.raster_extent.height, self.raster_epoch, self.registry.len(), self.hybrid.detail.label()));
+                if self.page_ui.is_some() {
+                    crate::marker("native-page-paint", format!("event=reader-activity generation={} frame={frame} acquiredAhbFrames={} nativePageReady={} rasterEpoch={} evidence=reader-acquisition-not-paint-or-presentation visibleProof=false",
+                        self.frame_controls.generation, self.adopted_frames, self.page_ready[slot], self.raster_epoch));
+                }
             }
             Ok(true)
         } else {
