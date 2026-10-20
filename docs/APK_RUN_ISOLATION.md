@@ -189,3 +189,27 @@ The gate validates source guardrails plus valid and damaged capsule fixtures.
 It does not contact a headset.
 
 The ordinary Spatial Camera Panel static gate runs the CMake staging host controls, including the Windows reparse/path cases. The credential-free APK preflight pull-request job runs the same gate on Windows; its candidate execution is non-authoritative and does not replace external validation authority.
+
+## Caller-composed WEF context route
+
+A caller composing this builder with WEF may select an explicit hash-bound
+build context for its tool/environment observations and retained execution.
+The Quest boundary remains this builder's scalar `-CargoPath` and
+`-RustupPath` parameters and the shared
+`tools/lib/SpatialCameraPanelBuildPrerequisites.psm1` function
+`Get-QuestSpatialBuildPrerequisites`. Quest does not import WEF or expose a
+private consumer's readiness mode.
+
+For the composed locked route pass `-RequireInstalledRustTarget`; missing
+Android Rust targets then refuse rather than being provisioned. Direct
+compatibility calls without this switch retain the existing target-add
+behavior. Explicit tool paths support ordinary direct Rust tools and Rustup
+proxies coexisting on PATH; unresolved multiple applications refuse.
+
+The shared prerequisite check consumes explicit SDK/JDK/NDK/cache/tool roots
+and a fresh evidence directory, rejects overlap with declared cache/tool/source
+forest/output roots before probes or writes, and preserves the existing
+platform/signing identity rules. The builder performs its complete generated
+input/source/APK checks separately. Use fresh attempt artifacts with the same
+authenticated compatible cache and shared Gradle distribution. A prerequisite
+result supplies no build, acceptance or device credit.

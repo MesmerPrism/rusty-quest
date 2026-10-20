@@ -1,4 +1,4 @@
-param([string]$RepoRoot)
+param([string]$RepoRoot,[string]$PrerequisiteInputSpecPath='', [string]$PrerequisiteOutRoot='')
 
 $ErrorActionPreference = "Stop"
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
@@ -13,6 +13,10 @@ foreach ($path in @($buildPath, $testPath, $gradlePath)) {
 }
 
 $build = Get-Content -LiteralPath $buildPath -Raw
+$prerequisiteModule=Join-Path $repo 'tools/lib/SpatialCameraPanelBuildPrerequisites.psm1'
+if(-not(Test-Path -LiteralPath $prerequisiteModule -PathType Leaf)){throw 'Shared prerequisite module missing.'}
+$prerequisiteSource=Get-Content -LiteralPath $prerequisiteModule -Raw
+$buildAndPrerequisites=$build+"`n"+$prerequisiteSource
 $test = Get-Content -LiteralPath $testPath -Raw
 $gradle = Get-Content -LiteralPath $gradlePath -Raw
 
@@ -37,14 +41,14 @@ foreach ($token in @(
     '"--no-daemon"',
     'gradle_daemon = $false',
     'android.aapt2FromMavenOverride=$shortAapt2',
-    'Invoke-SmokeChecked -Name "aapt2"',
-    'Invoke-SmokeChecked -Name "android-clang"',
-    'Invoke-SmokeChecked -Name "java"',
-    'Invoke-SmokeChecked -Name "zipalign"',
-    'Invoke-SmokeChecked -Name "apksigner"',
+    "Observe 'aapt2'",
+    "Observe 'android-clang'",
+    "Observe 'java'",
+    "Observe 'zipalign'",
+    "Observe 'apksigner'",
     'Pkg\.Revision',
     'selected_aapt2_sha256',
-    'pinned Temurin JDK 17 contract',
+    'pinned Temurin JDK17',
     'Dynamic Rust std is restricted to an explicitly labeled non-deployable benchmark.',
     'Candidate APKs require static Rust std linkage.',
     '[System.Threading.Mutex]::new',
@@ -67,7 +71,7 @@ foreach ($token in @(
     'plaintext video media',
     'private_path_recorded = $false'
 )) {
-    Require $build $token "Spatial Camera Panel build workflow is missing: $token"
+    Require $buildAndPrerequisites $token "Spatial Camera Panel build workflow is missing: $token"
 }
 
 if ($build.Contains('$intermediateRoot = Join-Path $targetRoot ("apk-i\{0}" -f $buildInputFingerprint', [StringComparison]::Ordinal)) {
@@ -78,17 +82,17 @@ foreach ($forbidden in @('$nativeCacheHit', '$shellCacheHit', '$packageCacheHit'
         throw "Build receipts still overclaim a cache hit instead of prior-cache availability: $forbidden"
     }
 }
-if ($build.IndexOf('Explicit Spatial Camera Panel signer fingerprint mismatch before compilation.', [StringComparison]::Ordinal) -gt
+if ($build.IndexOf('$prerequisites = Get-QuestSpatialBuildPrerequisites', [StringComparison]::Ordinal) -gt
     $build.IndexOf('Spatial Camera Panel native receipt cargo build', [StringComparison]::Ordinal)) {
     throw "The signer mismatch gate occurs after native compilation."
 }
 foreach ($token in @(
-    'Shared-package and candidate builds require an explicit local signer binding before compilation.',
+    'Shared-package and Candidate builds require explicit local signer input.',
     '$SharedSpatialSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"',
     'Explicit Spatial Camera Panel signer fingerprint mismatch before compilation.',
     'signer_path_alias_password_recorded = $false'
 )) {
-    Require $build $token "Shared-package signer fail-closed gate is missing: $token"
+    Require $buildAndPrerequisites $token "Shared-package signer fail-closed gate is missing: $token"
 }
 
 foreach ($token in @(
@@ -126,3 +130,14 @@ if (@($errors).Count -gt 0) { throw "Test wrapper PowerShell parse failed: $($er
 & (Join-Path $repo "tools/checks/Test-NativeReceiptArtifactMetadataHost.ps1") -RepoRoot $repo
 
 Write-Host "Spatial Camera Panel fast build workflow static check: PASS"
+
+# Shared prerequisite extraction and explicit scalar adapters are runtime-qualified separately.
+foreach($name in @('CargoPath','RustupPath','RequireInstalledRustTarget')) {
+    if(-not (Get-Command $buildPath).Parameters.ContainsKey($name)){throw "Missing selected tool parameter: $name"}
+}
+$prerequisiteModule=Join-Path $repo 'tools/lib/SpatialCameraPanelBuildPrerequisites.psm1'
+if(-not(Test-Path -LiteralPath $prerequisiteModule -PathType Leaf)){throw 'Shared owning prerequisite module missing.'}
+if([bool]$PrerequisiteInputSpecPath-ne[bool]$PrerequisiteOutRoot){throw 'Runtime prerequisite inputs and fresh output must be selected together.'}
+if($PrerequisiteInputSpecPath){
+    & (Join-Path $repo 'tools/checks/Test-SpatialCameraPanelBuildPrerequisites.ps1') -RepoRoot $repo -InputSpecPath $PrerequisiteInputSpecPath -OutRoot $PrerequisiteOutRoot
+}

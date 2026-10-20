@@ -1,6 +1,9 @@
 param(
     [string]$RepoRoot,
     [string]$NativeRepoRoot,
+    [string]$CargoPath = '',
+    [string]$RustupPath = '',
+    [switch]$RequireInstalledRustTarget,
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$NdkHome = $env:ANDROID_NDK_HOME,
@@ -85,6 +88,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Import-Module (Join-Path $PSScriptRoot "lib/SpatialCameraPanelBuildPrerequisites.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
 if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
@@ -101,45 +105,6 @@ function Wait-GradleOwnedMutex {
         try{Write-Warning "$Label remains pending past its estimate; retaining the same mutex wait." -WarningAction Continue}catch{}
         [void]$Mutex.WaitOne();return $true
     }catch [Threading.AbandonedMutexException]{$Abandoned.Value=$true;return $true}
-}
-function Get-VerifiedPinnedGradleBat {
-    param([Parameter(Mandatory=$true)][string]$RepoRoot,[string]$SharedGradleToolRoot = "",[ref]$ToolDistribution,[ValidateSet("Bounded","Retained",IgnoreCase=$false)][string]$WaitPolicy="Bounded")
-    $resolver = Join-Path $RepoRoot "tools\Resolve-GradleTool.ps1"
-    if (-not (Test-Path -LiteralPath $resolver -PathType Leaf)) { throw "Pinned Gradle resolver is missing: $resolver" }
-    try {
-        $output = @(& $resolver -RepoRoot $RepoRoot -Mode VerifyCache -TimeoutSeconds 55 -SharedGradleToolRoot $SharedGradleToolRoot -WaitPolicy $WaitPolicy)
-    } catch {
-        throw "Pinned Gradle cache verification failed: $($_.Exception.Message)"
-    }
-    if ($output.Count -eq 0) { throw "Pinned Gradle cache verification returned no receipt." }
-    try { $receipt = (($output -join "`n") | ConvertFrom-Json -ErrorAction Stop) } catch { throw "Pinned Gradle cache verification returned an invalid receipt: $($_.Exception.Message)" }
-    $shared = -not [string]::IsNullOrWhiteSpace($SharedGradleToolRoot)
-    $expectedHome = if ($shared) { [IO.Path]::GetFullPath((Join-Path $SharedGradleToolRoot "tools\gradle-9.4.1")).TrimEnd('\') } else { [IO.Path]::GetFullPath((Join-Path $RepoRoot "local-artifacts\tools\gradle-9.4.1")).TrimEnd('\') }
-    $actualHome = [IO.Path]::GetFullPath([string]$receipt.gradle_home).TrimEnd('\')
-    $actualBat = [IO.Path]::GetFullPath([string]$receipt.gradle_bat)
-    if ($receipt.schema -cne "rusty.quest.gradle_cache_receipt.v2" -or $receipt.mode -cne "VerifyCache" -or
-        $receipt.tool_id -cne "gradle" -or $receipt.version -cne "9.4.1" -or
-        $receipt.archive_sha256 -cne "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb" -or
-        $receipt.tree_sha256 -cne "5c94e8204be25e0c18c94780cf4cf768fefa92e73f8c7b1617c483f33ca088db" -or
-        $actualHome -cne $expectedHome -or
-        -not $actualBat.StartsWith($expectedHome + "\bin\", [StringComparison]::OrdinalIgnoreCase) -or
-        $actualBat -cnotlike "*\bin\gradle.bat" -or
-        -not (Test-Path -LiteralPath $actualBat -PathType Leaf)) {
-        throw "Pinned Gradle cache receipt is invalid or escapes the explicitly selected tool root."
-    }
-    if ($shared) {
-        $distribution = $receipt.tool_distribution
-        if ($receipt.shared_tool_root -cne [IO.Path]::GetFullPath($SharedGradleToolRoot).TrimEnd('\') -or
-            $distribution.schema -cne 'rusty.quest.gradle_tool_distribution.v1' -or $distribution.storage_kind -cne 'explicit-shared' -or
-            $distribution.tool_id -cne $receipt.tool_id -or $distribution.version -cne $receipt.version -or
-            $distribution.archive_sha256 -cne $receipt.archive_sha256 -or $distribution.tree_sha256 -cne $receipt.tree_sha256 -or
-            $distribution.resolver_sha256 -cne (Get-FileHash -LiteralPath $resolver -Algorithm SHA256).Hash.ToLowerInvariant() -or
-            $distribution.config_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $RepoRoot 'config\gradle-9.4.1-tool.json') -Algorithm SHA256).Hash.ToLowerInvariant() -or
-            $distribution.marker_sha256 -cne (Get-FileHash -LiteralPath (Join-Path $SharedGradleToolRoot 'tool-identity.json') -Algorithm SHA256).Hash.ToLowerInvariant() -or
-            $distribution.paths_recorded -ne $false) { throw 'Pinned shared Gradle distribution receipt identity is invalid.' }
-        if ($null -ne $ToolDistribution) { $ToolDistribution.Value = $distribution }
-    }
-    return $actualBat
 }
 $SharedSpatialSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
 $SharedSpatialAppId = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
@@ -1203,37 +1168,22 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 }
 $repoRoot = Resolve-Path $RepoRoot
 $gradleToolDistribution = $null
-$gradleBat = Get-VerifiedPinnedGradleBat -RepoRoot ([string]$repoRoot) -SharedGradleToolRoot $SharedGradleToolRoot -ToolDistribution ([ref]$gradleToolDistribution) -WaitPolicy $WaitPolicy
+# The shared owning prerequisite function authenticates the exact Gradle distribution below.
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
 $buildStartedUtc = [DateTimeOffset]::UtcNow
 $phaseReceipts = [Collections.Generic.List[object]]::new()
 $preflightStopwatch = [Diagnostics.Stopwatch]::StartNew()
-$buildTools = Join-Path $AndroidHome "build-tools\$BuildToolsVersion"
-if (-not (Test-Path -LiteralPath $buildTools -PathType Container)) {
-    throw "Pinned Android build-tools $BuildToolsVersion are not installed."
-}
-$buildToolsSourceProperties = Join-Path $buildTools "source.properties"
-if (-not (Test-Path -LiteralPath $buildToolsSourceProperties -PathType Leaf)) {
-    throw "Pinned Android build-tools source.properties is missing."
-}
-$buildToolsPropertiesText = Get-Content -LiteralPath $buildToolsSourceProperties -Raw
-if ($buildToolsPropertiesText -notmatch ('(?m)^Pkg\.Revision\s*=\s*' + [regex]::Escape($BuildToolsVersion) + '\s*$')) {
-    throw "Android build-tools source.properties revision differs from $BuildToolsVersion."
-}
-$sourceAapt2 = Join-Path $buildTools "aapt2.exe"
-$zipalign = Join-Path $buildTools "zipalign.exe"
-$apksigner = Join-Path $buildTools "apksigner.bat"
-$keytool = Join-Path $JavaHome "bin\keytool.exe"
-$java = Join-Path $JavaHome "bin\java.exe"
-$nativeReceiptLinker = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang.cmd"
-$llvmReadelf = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-readelf.exe"
-$llvmNm = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\llvm-nm.exe"
-foreach ($tool in @($sourceAapt2, $zipalign, $apksigner, $keytool, $java, $nativeReceiptLinker, $llvmReadelf, $llvmNm)) {
-    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
-        throw "Pinned Android build tool not found: $tool"
-    }
-}
+$prerequisiteEvidence = if($OutDir){[IO.Path]::GetFullPath($OutDir)+'.prerequisites'}else{Join-Path ([IO.Path]::GetTempPath()) ('quest-prerequisites-'+[guid]::NewGuid().ToString('N'))}
+$prerequisites = Get-QuestSpatialBuildPrerequisites -RepoRoot ([string]$repoRoot) -AndroidHome $AndroidHome -JavaHome $JavaHome `
+    -NdkHome $NdkHome -NdkVersion $NdkVersion -BuildToolsVersion $BuildToolsVersion -SharedGradleToolRoot $SharedGradleToolRoot -BuildCacheRoot $BuildCacheRoot -ExcludedRoots @($OutDir,$NativeRepoRoot) `
+    -Keystore $Keystore -ExpectedSignerSha256 $ExpectedSignerSha256 -AppId $resolvedAppId -BuildMode $BuildMode `
+    -PublicationBuild:$PublicationBuild -EvidenceDirectory $prerequisiteEvidence -WaitPolicy $WaitPolicy
+$buildTools=$prerequisites.BuildTools;$buildToolsSourceProperties=$prerequisites.BuildToolsSourceProperties
+$sourceAapt2=$prerequisites.Tools.aapt2;$zipalign=$prerequisites.Tools.zipalign;$apksigner=$prerequisites.Tools.apksigner
+$keytool=$prerequisites.Tools.keytool;$java=$prerequisites.Tools.java;$nativeReceiptLinker=$prerequisites.Tools.linker
+$llvmReadelf=$prerequisites.Tools.readelf;$llvmNm=$prerequisites.Tools.nm
+$gradleBat=$prerequisites.GradleBat;$gradleToolDistribution=$prerequisites.GradleToolDistribution
 $shortToolRoot = Join-Path $BuildCacheRoot "t"
 $shortAapt2 = Join-Path $shortToolRoot "aapt2.exe"
 $aapt2Updated = Copy-FileIfChanged -Source $sourceAapt2 -Destination $shortAapt2
@@ -1258,25 +1208,7 @@ $representativeAaptPath = Join-Path $BuildCacheRoot "g\p\app\intermediates\incre
 if ($representativeAaptPath.Length -gt 220) {
     throw "Stable Android cache path exceeds the safe AAPT2 path budget: $($representativeAaptPath.Length) > 220"
 }
-Invoke-SmokeChecked -Name "aapt2" -File $shortAapt2 -Arguments @("version")
-Invoke-SmokeChecked -Name "android-clang" -File $nativeReceiptLinker -Arguments @("--version")
-Invoke-SmokeChecked -Name "java" -File $java -Arguments @("-version")
-Invoke-SmokeChecked -Name "zipalign" -File $zipalign -Arguments @() -AcceptedExitCodes @(0, 1)
-Invoke-SmokeChecked -Name "apksigner" -File $apksigner -Arguments @("version")
-$javaVersionOutput = @(& $java "-version" 2>&1)
-if ($LASTEXITCODE -ne 0) { throw "Resolved Java executable version readback failed." }
-$javaVersionText = $javaVersionOutput -join "`n"
-if ($javaVersionText -notmatch '(?m)^(?:openjdk|java) version "17\.' -or
-    $javaVersionText -notmatch '(?i)Temurin') {
-    throw "Resolved Java executable is not the pinned Temurin JDK 17 contract."
-}
-$keytoolVersionOutput = @(& $keytool "-J-version" 2>&1)
-if ($LASTEXITCODE -ne 0) { throw "Resolved keytool executable version readback failed." }
-$keytoolVersionText = $keytoolVersionOutput -join "`n"
-if ($keytoolVersionText -notmatch '(?m)^(?:openjdk|java) version "17\.' -or
-    $keytoolVersionText -notmatch '(?i)Temurin') {
-    throw "Resolved keytool is not backed by the pinned Temurin JDK 17 contract."
-}
+# Version and tool observations were performed by the shared owning prerequisite function.
 $selectedAapt2Sha256 = Get-FileSha256 -Path $sourceAapt2
 $preflightStopwatch.Stop()
 $phaseReceipts.Add([ordered]@{
@@ -1346,58 +1278,11 @@ if ([string]$assetConformanceLock.schema -ne "rusty.morphospace.workflow.feature
     throw "Spatial asset conformance lock does not select the accepted spatial-asset-model contract: $assetConformanceLockPath"
 }
 $assetConformanceLockSha256 = Get-FileSha256 -Path $assetConformanceLockPath
-$environmentKeystore = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE
-$keystoreWasExplicit = -not [string]::IsNullOrWhiteSpace($Keystore)
-if (-not $keystoreWasExplicit -and -not [string]::IsNullOrWhiteSpace($environmentKeystore)) {
-    $Keystore = $environmentKeystore
-    $keystoreWasExplicit = $true
-}
-$sharedPackageBuild = $resolvedAppId -ceq $SharedSpatialAppId
-$signerRequired = $sharedPackageBuild -or $BuildMode -eq "Candidate" -or [bool]$PublicationBuild
-if ($signerRequired -and -not $keystoreWasExplicit) {
-    throw "Shared-package and candidate builds require an explicit local signer binding before compilation."
-}
-$signingAlias = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS
-$signingStorePassword = $env:RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD
-$signingKeyPassword = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD
-$certificateSha256 = ""
-if ($keystoreWasExplicit) {
-    if (-not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
-        throw "Explicit signing keystore not found."
-    }
-    $Keystore = (Resolve-Path -LiteralPath $Keystore).Path
-    if ([string]::IsNullOrWhiteSpace($signingAlias) -or
-        [string]::IsNullOrWhiteSpace($signingStorePassword) -or
-        [string]::IsNullOrWhiteSpace($signingKeyPassword)) {
-        throw "Explicit signer alias and passwords require local environment bindings."
-    }
-    $signerProbeRoot = Join-Path $BuildCacheRoot "s"
-    New-Item -ItemType Directory -Force -Path $signerProbeRoot | Out-Null
-    $certificatePath = Join-Path $signerProbeRoot "selected-signer.der"
-    Invoke-Checked "selected signer certificate export" $keytool @(
-        "-exportcert",
-        "-keystore", $Keystore,
-        "-storepass", $signingStorePassword,
-        "-alias", $signingAlias,
-        "-file", $certificatePath
-    )
-    $certificateSha256 = Get-FileSha256 -Path $certificatePath
-}
-$normalizedExpectedSignerSha256 = $ExpectedSignerSha256.Trim().ToLowerInvariant()
-if ($sharedPackageBuild) {
-    if (-not [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256) -and
-        $normalizedExpectedSignerSha256 -cne $SharedSpatialSignerSha256) {
-        throw "Shared Spatial Camera Panel package expected signer differs from the pinned public fingerprint."
-    }
-    $normalizedExpectedSignerSha256 = $SharedSpatialSignerSha256
-}
-if ($signerRequired -and [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256)) {
-    throw "Candidate builds require an explicit expected signer fingerprint before compilation."
-}
-if (-not [string]::IsNullOrWhiteSpace($normalizedExpectedSignerSha256) -and
-    $certificateSha256 -cne $normalizedExpectedSignerSha256) {
-    throw "Explicit Spatial Camera Panel signer fingerprint mismatch before compilation."
-}
+$Keystore=$prerequisites.Keystore;$keystoreWasExplicit=$prerequisites.KeystoreWasExplicit
+$certificateSha256=$prerequisites.CertificateSha256;$normalizedExpectedSignerSha256=$prerequisites.ExpectedSignerSha256
+$signingAlias=$env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_ALIAS
+$signingStorePassword=$env:RUSTY_QUEST_SPATIAL_SIGNING_STORE_PASSWORD
+$signingKeyPassword=$env:RUSTY_QUEST_SPATIAL_SIGNING_KEY_PASSWORD
 $embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
     -Path $EmbeddedDuplexProductInputRoot `
     -ApplicationId $resolvedAppId `
@@ -1826,8 +1711,8 @@ Write-Host ("BUILD_CACHE nativePriorAvailable={0} shellPriorAvailable={1} packag
     ($nativeInvalidation -join ","),
     ($shellInvalidation -join ","),
     ($packageInvalidation -join ","))
-$cargoCommand = Get-Command cargo -ErrorAction Stop
-$rustupCommand = Get-Command rustup -ErrorAction SilentlyContinue
+$cargoCommand = Resolve-QuestSpatialApplication -Name cargo -Path $CargoPath
+$rustupCommand = Resolve-QuestSpatialApplication -Name rustup -Path $RustupPath -Optional:(-not $RequireInstalledRustTarget)
 if (-not (Test-Path -LiteralPath $nativeReceiptCargoManifest)) {
     throw "Missing Spatial Camera Panel native receipt Cargo manifest: $nativeReceiptCargoManifest"
 }
@@ -1839,6 +1724,7 @@ if ($null -ne $rustupCommand) {
     $installedTargets = @(& $rustupCommand.Source "target" "list" "--installed")
     if ($LASTEXITCODE -ne 0) { throw "rustup target list --installed failed." }
     $rustTargetInstalled = @($installedTargets | Where-Object { $_.Trim() -ceq "aarch64-linux-android" }).Count -eq 1
+    if (-not $rustTargetInstalled -and $RequireInstalledRustTarget) { throw 'The selected Candidate path requires the Android Rust target already installed.' }
     if (-not $rustTargetInstalled) {
         Invoke-Checked "rustup target add aarch64-linux-android" $rustupCommand.Source @(
             "target",
