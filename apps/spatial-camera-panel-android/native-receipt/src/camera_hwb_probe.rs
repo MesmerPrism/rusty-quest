@@ -1573,7 +1573,6 @@ impl CameraHwbWsiParts {
         let surface = android_surface_loader
             .create_android_surface(&surface_info, None)
             .map_err(|error| {
-                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                 format!("create-android-surface-{error:?}")
             })?;
 
@@ -1594,7 +1593,6 @@ impl CameraHwbWsiParts {
         let (physical_device, queue_family_index, extension_status) =
             select_camera_surface_device(&instance, &surface_loader, surface, &physical_devices)
                 .ok_or_else(|| {
-                    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                     "no-camera-hwb-vulkan-device".to_string()
                 })?;
 
@@ -1615,7 +1613,6 @@ impl CameraHwbWsiParts {
             || !extension_status.sampler_ycbcr_extension_ready
             || !extension_status.sampler_ycbcr_feature_ready
         {
-            #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
 
             return Err(format!(
                 "vulkan-ahb-prereq-missing-externalHwb-{}-samplerYcbcrExt-{}-samplerYcbcrFeature-{}",
@@ -1692,16 +1689,12 @@ impl CameraHwbWsiParts {
             &surface_loader
                 .get_physical_device_surface_formats(physical_device, surface)
                 .map_err(|error| {
-                    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                    #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                     format!("surface-formats-{error:?}")
                 })?,
         );
         let capabilities = surface_loader
             .get_physical_device_surface_capabilities(physical_device, surface)
             .map_err(|error| {
-                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                 format!("surface-capabilities-{error:?}")
             })?;
         let present_modes = surface_loader
@@ -1741,8 +1734,6 @@ impl CameraHwbWsiParts {
         let swapchain = swapchain_loader
             .create_swapchain(&swapchain_info, None)
             .map_err(|error| {
-                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                 format!("create-swapchain-{error:?}")
             })?;
         {
@@ -1754,8 +1745,6 @@ impl CameraHwbWsiParts {
         let images = swapchain_loader
             .get_swapchain_images(swapchain)
             .map_err(|error| {
-                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
-                #[cfg(not(rq_environment_depth_spatial_sdk_api_layer))]
                 format!("swapchain-images-{error:?}")
             })?;
         let image_views = create_image_views(&device, surface_format.format, &images)?;

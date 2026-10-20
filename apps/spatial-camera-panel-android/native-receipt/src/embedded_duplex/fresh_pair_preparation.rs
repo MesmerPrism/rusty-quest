@@ -438,7 +438,7 @@ fn active_phase_from(s: &PairState, id: &str) -> String {
         .unwrap_or_else(|| id.into())
 }
 fn active_phase(host: &Host, id: &str) -> Result<String, String> {
-    Ok(active_phase_from(&state(host)?, id))
+    Ok(active_phase_from(&*state(host)?, id))
 }
 
 fn sign(

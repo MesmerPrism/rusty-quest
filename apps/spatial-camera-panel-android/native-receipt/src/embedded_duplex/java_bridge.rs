@@ -122,7 +122,7 @@ impl JavaOwnerCallbacks {
         );
         self.checked_call(&mut env, call, "java_bridge.bind_incoming_fresh_phase")?
             .v()
-            .map_err(|_| "incoming fresh phase binding result")
+            .map_err(|_| "incoming fresh phase binding result".to_owned())
     }
     pub(crate) fn assert_incoming_fresh_setup_initial_allowed(
         &self,
@@ -148,7 +148,7 @@ impl JavaOwnerCallbacks {
         );
         self.checked_call(&mut env, call, "java_bridge.incoming_initial_admission")?
             .v()
-            .map_err(|_| "incoming admission result")
+            .map_err(|_| "incoming admission result".to_owned())
     }
     pub(crate) fn bind_fresh_setup_operator_phase(
         &self,
@@ -174,7 +174,7 @@ impl JavaOwnerCallbacks {
         );
         self.checked_call(&mut env, call, "java_bridge.bind_operator_fresh_phase")?
             .v()
-            .map_err(|_| "operator fresh phase binding result")
+            .map_err(|_| "operator fresh phase binding result".to_owned())
     }
     pub(crate) fn bind_fresh_setup_phase_context(
         &self,
@@ -215,7 +215,7 @@ impl JavaOwnerCallbacks {
             &[JValue::Object(&JObject::from(native)),JValue::Object(&JObject::from(phase)),JValue::Object(&JObject::from(tx)),JValue::Object(&JObject::from(kind)),JValue::Object(&JObject::from(digest))]);
         self.checked_call(&mut env, call, "java_bridge.bind_fresh_phase_context")?
             .v()
-            .map_err(|_| "fresh phase context binding result")
+            .map_err(|_| "fresh phase context binding result".to_owned())
     }
 
     fn fresh_closure_callback(

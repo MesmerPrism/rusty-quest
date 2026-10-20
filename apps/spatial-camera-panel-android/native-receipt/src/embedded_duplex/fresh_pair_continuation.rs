@@ -701,7 +701,7 @@ fn adopt(
         {
             return Err("continuation phase retry changed ticket".into());
         }
-        return Ok(old.view);
+        return Ok(old.view.clone());
     }
     if old.as_ref().map_or(id.as_str(), |a| a.phase_id.as_str()) != ticket.prior_phase_id {
         return Err("actual old phase differs from signed ticket".into());

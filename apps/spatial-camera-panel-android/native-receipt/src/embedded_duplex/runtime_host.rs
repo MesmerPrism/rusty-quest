@@ -1165,7 +1165,7 @@ fn build_host(
                 &entropy,
                 i64::try_from(clock.now_ms()?).map_err(|_| "authority clock overflow")?,
                 monotonic_ns()?,
-                &mut held
+                &mut *held
                     .broker
                     .lock()
                     .map_err(|_| "construction Broker custody poisoned")?,
@@ -1364,6 +1364,10 @@ fn build_host(
         },
         result,
     ))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn decode_key(value: &str) -> Result<[u8; 32], String> {
