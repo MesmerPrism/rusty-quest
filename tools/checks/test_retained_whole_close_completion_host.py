@@ -87,7 +87,16 @@ with tempfile.TemporaryDirectory(prefix='whole-close-host-') as out:
     assert 'state.whole_close_requested' in continuation and 'state.client.is_none()' in continuation and 'state.last_failure.is_some()' in continuation
     assert 'actual_java_cleanup(env)?' in continuation and 'close_host(value, host, checked)' in continuation
     assert 'stop(' not in continuation and 'operate(' not in continuation and 'apply_media(' not in continuation
-    assert 'if word == 6 { state.whole_close_requested = true; }' in native
+    def has_whole_close_request(source):
+        # rustfmt/EOL changes may alter only whitespace. The actual operation
+        # word, exact field, value and closed one-assignment body stay strict.
+        return 'ifword==6{state.whole_close_requested=true;}' in ''.join(source.split())
+    assert has_whole_close_request(native)
+    assert has_whole_close_request('if word == 6 { state.whole_close_requested = true; }')
+    assert has_whole_close_request('if word == 6 {\n    state.whole_close_requested = true;\n}')
+    assert not has_whole_close_request('if word == 5 { state.whole_close_requested = true; }')
+    assert not has_whole_close_request('if word == 6 { state.peer_close_requested = true; }')
+    assert not has_whole_close_request('if word == 6 { state.whole_close_requested = false; }')
     assert text.index('if (peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE && retainedWholeClose != null)') < text.index('own.requestStopOwn();',text.index('private CompletableFuture<String> concurrentQualificationOnLane'))
     kotlin=(base/'OwnStereoCaptureRuntime.kt').read_text();assert 'if (phase == Phase.Idle) cleanupObserver?.invokeObserved()' in kotlin and 'if (cleanupObserver === registration) cleanupObserver = null' in kotlin
     assert '&& new JSONObject(nativeReceipt).isNull("last_failure")' in text
