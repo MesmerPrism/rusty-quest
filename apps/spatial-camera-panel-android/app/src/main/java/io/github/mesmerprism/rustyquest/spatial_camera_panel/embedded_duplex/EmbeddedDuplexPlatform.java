@@ -338,6 +338,17 @@ final class EmbeddedDuplexPlatform {
             held.requireRequest(execution.getJSONObject("request"));return held.decoder(execution.getJSONObject("decoder")).toString();
         }
     }
+    public String abortPreparedPeerStartResources(String exactRequest)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();
+            EmbeddedDuplexPreparedStart held=preparedStart;
+            if(held==null)throw new IllegalStateException("actual prepared abort owner absent");
+            // The same retained owner validates the closed request, current
+            // cleanup Original/actor/thread, closed delivery gate and SDK joins.
+            // Its actual thirteen-field terminal readback is returned unchanged.
+            return held.abort(new JSONObject(exactRequest)).toString();
+        }
+    }
     public String preparedPeerStartStatusJson(String preparationId)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
             requireProcessCallback();EmbeddedDuplexPreparedStart held=preparedStart;

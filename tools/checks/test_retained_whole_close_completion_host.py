@@ -101,3 +101,38 @@ with tempfile.TemporaryDirectory(prefix='whole-close-host-') as out:
     kotlin=(base/'OwnStereoCaptureRuntime.kt').read_text();assert 'if (phase == Phase.Idle) cleanupObserver?.invokeObserved()' in kotlin and 'if (cleanupObserver === registration) cleanupObserver = null' in kotlin
     assert '&& new JSONObject(nativeReceipt).isNull("last_failure")' in text
 print('Native cleanup-only/selected-operation and original-effect suppression integration source gates PASS')
+
+
+# Real callback, abort/context and callback lease implementations; only SDK/OS
+# and durable Original-registry leaves are modeled by the app-owned fixture.
+platform=(base/'EmbeddedDuplexPlatform.java').read_text()
+prepared=(base/'EmbeddedDuplexPreparedStart.java').read_text()
+fence=(base/'EmbeddedDuplexProcessFence.java').read_text()
+roots=(base/'EmbeddedDuplexPeerRoots.java').read_text()
+fixture=(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/EmbeddedDuplexPreparedAbortCallbackHostTest.java').read_text()
+fragments={
+    'ACTUAL_ENTER_CALLBACK':block(platform,'private EmbeddedDuplexProcessFence.CallbackLease enterProcessCallback('),
+    'ACTUAL_REQUIRE_CALLBACK':block(platform,'private void requireProcessCallback('),
+    'ACTUAL_ABORT_CALLBACK':block(platform,'public String abortPreparedPeerStartResources('),
+    'ACTUAL_OWNED_ABORT':block(prepared,'synchronized JSONObject abort('),
+    'ACTUAL_ABORT_CONTEXT':block(text,'static void requirePreparedAbortContext('),
+    'ACTUAL_CALLBACK_FACTORY':block(fence,'CallbackGuard callbacks('),
+    'ACTUAL_CALLBACK_GUARD':block(fence,'static final class CallbackGuard'),
+    'ACTUAL_CALLBACK_LEASE':block(fence,'static final class CallbackLease'),
+    'ACTUAL_CLOSED_KEYS':block(roots,'static void keys('),
+    'ACTUAL_ACTOR_IDENTITY':block(roots,'static void identity('),
+}
+for name,actual in fragments.items():
+    marker='/* '+name+' */';assert fixture.count(marker)==1;fixture=fixture.replace(marker,actual)
+with tempfile.TemporaryDirectory(prefix='prepared-abort-callback-host-') as directory:
+    target=pathlib.Path(directory);java=target/'EmbeddedDuplexPreparedAbortCallbackHostTest.java'
+    java.write_text(fixture,encoding='utf-8',newline='\n')
+    subprocess.run(['javac','--release','17','-cp',str(jar),'-d',directory,str(java),str(base/'EmbeddedDuplexCanonicalJson.java'),str(base/'EmbeddedDuplexPreparedRenderer.java')],check=True)
+    subprocess.run(['java','-cp',directory+';'+str(jar),'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPreparedAbortCallbackHostTest'],check=True)
+bridge=(root/'apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex/java_bridge.rs').read_text()
+assert 'self.fresh_closure_callback("abortPreparedPeerStartResources", &body)?' in bridge
+no_media=block(text,'private void continueNoMediaClose(')
+assert no_media.index('EmbeddedDuplexNative.retirePreparedPeerStartMetadata(held.config)') < no_media.index('held.platform.retireProcessCallbacksAsync()')
+assert 'requireCurrentHubAttachment' not in fragments['ACTUAL_ABORT_CALLBACK']
+assert 'runtimeCommand' not in fragments['ACTUAL_ABORT_CALLBACK']
+print('Fixed JNI abort callback String ABI, cleanup-before-callback-retirement ordering and actual owned terminal readback source join PASS; no JNI/SDK physical credit')

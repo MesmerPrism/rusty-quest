@@ -92,11 +92,7 @@ impl JavaOwnerCallbacks {
         phase: &str,
         purpose: &str,
     ) -> Result<(), String> {
-        if !matches!(purpose, "initial" | "current_phase" | "linked_fence")
-            || (purpose == "linked_fence") != prior.is_some()
-        {
-            return Err("incoming fresh phase binding purpose differs".into());
-        }
+        super::incoming_fresh_phase::validate(purpose, prior.is_some()).map_err(str::to_owned)?;
         self.capability.require_live()?;
         let mut env = self.attached()?;
         let native = env

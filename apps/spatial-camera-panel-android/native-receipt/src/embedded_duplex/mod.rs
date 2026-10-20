@@ -9,6 +9,8 @@ mod frame_jni;
 pub(crate) mod history_ids;
 #[cfg(any(target_os = "android", test))]
 mod identity_jni;
+#[cfg(any(target_os = "android", test))]
+mod incoming_fresh_phase;
 #[cfg(target_os = "android")]
 mod java_bridge;
 #[cfg(any(target_os = "android", test))]
