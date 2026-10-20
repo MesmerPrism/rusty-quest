@@ -46,12 +46,19 @@ function Assert-QuestRunIsolationEnteredReceipt {
     foreach ($entry in $snapshot) {
         $name = [string]$entry.name
         $value = [string]$entry.value
-        if ($name -notmatch '^[A-Za-z0-9._-]{1,92}$') { throw "Entered run-isolation receipt contains an unsafe property name." }
+        # Names in the original complete manifest exceed the old 92-character
+        # limit. Keep the safe character policy; the shared transport below
+        # bounds the complete UTF-8 setprop operation, just as apply/restore do.
+        if ($name -notmatch '^[A-Za-z0-9._-]+\z') { throw "Entered run-isolation receipt contains an unsafe property name." }
         if ($value.IndexOf([char]0) -ge 0 -or $value.Contains("`r") -or $value.Contains("`n")) { throw "Entered run-isolation receipt contains an unsafe property value." }
         if ($seen.ContainsKey($name)) { throw "Entered run-isolation receipt contains duplicate property names: $name" }
         $seen[$name] = $true
     }
-    return @($snapshot | ForEach-Object { [pscustomobject][ordered]@{ name = [string]$_.name; value = [string]$_.value } })
+    $entries = @($snapshot | ForEach-Object { [pscustomobject][ordered]@{ name = [string]$_.name; value = [string]$_.value } })
+    # Validate every operation before recovery acquires a mutex or invokes ADB,
+    # including force-stop. An oversized later entry cannot cause partial cleanup.
+    $null = @(New-QuestPropertySetpropBatches -Entries $entries)
+    return $entries
 }
 
 function Write-QuestRunIsolationReceiptAtomically {

@@ -118,6 +118,21 @@ atomically writes a distinct `cleaned` or `partial` terminal receipt. Damaged,
 mismatched, terminal, or concurrently owned receipts are rejected; this is not
 a generic shell, property, or package cleanup command.
 
+Recovery retains the receipt's safe property-name character policy without a
+92-character name limit: legitimate complete-manifest property names can be
+longer. Before any ADB operation, including force-stop, it preflights the entire
+snapshot through the same bounded UTF-8 `setprop` batching used by apply and
+restore. Unsafe names/values, duplicate names and oversized operations are
+rejected before effects; the original entered receipt bytes remain unchanged.
+
+The focused host recovery fixture executes the actual recovery CLI against a
+generated fake ADB only:
+
+```powershell
+pwsh -NoProfile -File tools/checks/Test-QuestRunIsolationRecovery.ps1 `
+  -OutputRoot <fresh-absolute-output-directory>
+```
+
 Do not use blanket force-stop of neighboring XR packages as ordinary
 preflight. The Spatial wrapper exposes `-ForceStopKnownXrPackages` only for an
 explicit diagnostic that actually requires that disruption.
