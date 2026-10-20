@@ -1086,6 +1086,40 @@ pub(crate) mod android {
             crate::marker("native-mesh-ui", format!("event=raster-resize-request generation={} rasterEpoch={} rasterWidth={} rasterHeight={} evidence=request-only", self.generation, epoch, extent.width, extent.height));
             Ok(true)
         }
+        /// Copy a published UI-thread snapshot. Null retires native pixels; empty means unchanged.
+        pub(crate) fn read_native_page(
+            &self,
+            app: &android_activity::AndroidApp,
+            revision: u64,
+            atlas_epoch: u64,
+        ) -> Result<Option<Vec<u8>>, String> {
+            let mut packet = None;
+            with_class(app, |env, class, _| {
+                let result = env
+                    .call_static_method(
+                        class,
+                        jni_str!("readNativePage"),
+                        jni_sig!("(JJJ)[B"),
+                        &[
+                            JValue::Long(self.generation as i64),
+                            JValue::Long(revision as i64),
+                            JValue::Long(atlas_epoch as i64),
+                        ],
+                    )?
+                    .l()?;
+                if !result.is_null() {
+                    let bytes = env.cast_local::<jni::objects::JByteArray>(result)?;
+                    if bytes.len(env)? > crate::native_page::MAX_PACKET {
+                        return Err(jni::errors::Error::JniCall(
+                            jni::errors::JniError::InvalidArguments,
+                        ));
+                    }
+                    packet = Some(env.convert_byte_array(&bytes)?);
+                }
+                Ok(())
+            })?;
+            Ok(packet)
+        }
         /// Returns writer commitment only; the first acquired/imported/submitted image is later.
         pub(crate) unsafe fn poll_resize(
             &mut self,

@@ -55,15 +55,25 @@ mod gpu_environment_depth_particle_stats;
 mod gpu_environment_depth_particles;
 #[cfg(target_os = "android")]
 mod gpu_hand_anchor_particles;
+// Host fixtures exercise the real buffer validation and push ABI without a Vulkan device.
+#[cfg(all(test, not(target_os = "android")))]
+mod gpu_hand_mesh_visual {
+    #[derive(Clone, Copy)]
+    pub(crate) struct HandMeshVisualEyeProjection {
+        pub(crate) position: [f32; 4],
+        pub(crate) orientation_xyzw: [f32; 4],
+        pub(crate) fov_tangents: [f32; 4],
+    }
+}
 #[cfg(target_os = "android")]
 mod gpu_hand_mesh_visual;
 #[cfg(target_os = "android")]
 mod gpu_mesh_replay;
 #[cfg(target_os = "android")]
 mod gpu_mesh_ui_panel;
-#[cfg(target_os = "android")]
+#[cfg(any(test, target_os = "android"))]
 mod gpu_native_panel_text;
-#[cfg(target_os = "android")]
+#[cfg(any(test, target_os = "android"))]
 mod gpu_native_panel_ui;
 #[cfg(target_os = "android")]
 mod gpu_private_particles;
@@ -107,6 +117,7 @@ mod native_panel_interaction;
 mod native_panel_info;
 mod native_panel_model;
 mod native_panel_resolution;
+mod native_page;
 mod native_panel_text;
 mod native_panel_text_layout;
 mod native_panel_toolbar;

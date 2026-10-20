@@ -88,7 +88,19 @@ impl Wire<'_> {
     }
 }
 pub(crate) fn parse(data: &[u8]) -> Result<TextAtlas, String> {
-    if data.len() > 1_082_000 {
+    parse_bounded(data, 32, 1024, 1_082_000)
+}
+/// Separate page namespace; toolbar budgets and wire stay unchanged.
+pub(crate) fn parse_page(data: &[u8]) -> Result<TextAtlas, String> {
+    parse_bounded(data, 128, 4096, 1_300_000)
+}
+fn parse_bounded(
+    data: &[u8],
+    run_limit: u32,
+    glyph_limit: u32,
+    wire_limit: usize,
+) -> Result<TextAtlas, String> {
+    if data.len() > wire_limit {
         return Err("font wire budget".into());
     }
     let mut r = Wire { data, at: 0 };
@@ -105,7 +117,7 @@ pub(crate) fn parse(data: &[u8]) -> Result<TextAtlas, String> {
         || height == 0
         || width > 1024
         || height > 1024
-        || count > 32
+        || count > run_limit
         || pixels != width * height
     {
         return Err("font atlas header".into());
@@ -117,7 +129,12 @@ pub(crate) fn parse(data: &[u8]) -> Result<TextAtlas, String> {
         let ascent = r.float()?;
         let descent = r.float()?;
         let n = r.word()?;
-        if advance < 0.0 || ascent > 0.0 || descent < 0.0 || n > 1024 || total + n > 1024 {
+        if advance < 0.0
+            || ascent > 0.0
+            || descent < 0.0
+            || n > glyph_limit
+            || total + n > glyph_limit
+        {
             return Err("font run budget/metrics".into());
         }
         total += n;
@@ -247,6 +264,34 @@ mod tests {
         assert_eq!(a.runs[0].advance, 1.2);
         assert_eq!(a.runs[0].ascent, -0.9);
         assert_eq!(a.runs[0].descent, 0.3);
+    }
+    #[test]
+    fn page_limits_do_not_expand_the_toolbar_namespace() {
+        let mut b = Vec::new();
+        for v in [0x3154504eu32, 1, 64, 64, 128, 4096, 64, 8] {
+            b.extend(v.to_le_bytes());
+        }
+        for _ in 0..128 {
+            for v in [0f32, -0.9, 0.3] {
+                b.extend(v.to_le_bytes());
+            }
+            b.extend(0u32.to_le_bytes());
+        }
+        b.extend(vec![0; 4096]);
+        assert!(parse(&b).is_err());
+        assert_eq!(parse_page(&b).unwrap().runs.len(), 128);
+        b[16..20].copy_from_slice(&129u32.to_le_bytes());
+        assert!(parse_page(&b).is_err());
+        let fixture = fixture();
+        let glyph = &fixture[48..80];
+        let mut b = fixture[..44].to_vec();
+        b.extend(4096u32.to_le_bytes());
+        for _ in 0..4096 {
+            b.extend(glyph);
+        }
+        b.extend(vec![0; 4096]);
+        assert!(parse(&b).is_err());
+        assert_eq!(parse_page(&b).unwrap().runs[0].glyphs.len(), 4096);
     }
     #[test]
     fn rejects_every_truncation_and_trailing() {

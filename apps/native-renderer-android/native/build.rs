@@ -8,6 +8,7 @@ use std::{
 fn main() {
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_NATIVE_PAGE");
     println!("cargo:rerun-if-changed=shaders/native_panel_ui.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/native_panel_text.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/native_panel_text.frag.glsl");

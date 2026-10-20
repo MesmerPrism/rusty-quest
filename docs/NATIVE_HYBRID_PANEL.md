@@ -5,6 +5,10 @@ mesh panel. It retains the original application Activity, forms, text editing,
 settings handlers and private particle renderer. It adds no Makepad,
 Spatial SDK, second OpenXR session or Vulkan device.
 
+The separate opt-in [native form presentation](NATIVE_FORM_PRESENTATION.md)
+extends this substrate to native drawing of the original form area. The hybrid
+feature alone retains the sampled Android form texture.
+
 The native toolbar draws analytic rounded shapes and platform-shaped SDF text
 directly in the existing eye passes. A compact stroke alphabet remains a bounded
 fallback when platform text is unavailable. FORMS changes only the

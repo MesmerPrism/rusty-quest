@@ -10,6 +10,19 @@ function Get-NativeRendererPanelCompositionSelection {
     $originalScene = $ids -ccontains $originalSceneFeature
     $blackEnv = 'RUSTY_QUEST_NATIVE_RENDERER_BACKGROUND_MODE'
     $neutralEnv = 'RUSTY_QUEST_NATIVE_MESH_UI_NEUTRAL_CONTROLS'
+    $nativePageEnv = 'RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_NATIVE_PAGE'
+    $nativePage = $ids -ccontains 'ui.native_mesh_panel.native_page'
+    if ($nativePage) {
+        if (-not $originalScene -or $ids -cnotcontains 'ui.native_mesh_panel.hybrid' -or
+            -not $BuildEnvByName.ContainsKey($nativePageEnv) -or $BuildEnvByName[$nativePageEnv] -cne 'true' -or
+            -not $BuildEnvByName.ContainsKey('RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID') -or
+            $BuildEnvByName['RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID'] -cne 'true') {
+            throw 'Native form presentation requires its exact selected descriptor, hybrid substrate and original owner.'
+        }
+    } elseif ($BuildEnvByName.ContainsKey($nativePageEnv) -or
+        -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($nativePageEnv,'Process'))) {
+        throw 'Native form compile selection requires its exact selected descriptor.'
+    }
     foreach ($rule in @(@($blackFeature,$blackEnv,'solid-black'),@($originalFeature,$neutralEnv,'false'))) {
         $selected = $ids -ccontains $rule[0] -or ($originalScene -and $rule[1] -ceq $neutralEnv)
         if ($selected) {
@@ -38,6 +51,6 @@ function Get-NativeRendererPanelCompositionSelection {
     if ($ids -ccontains $originalFeature -and ($ids -cnotcontains 'ui.native_mesh_panel' -or $ids -cnotcontains $blackFeature)) {
         throw 'Original panel composition requires the mesh panel and explicit composable background.'
     }
-    [pscustomobject]@{solid_black_worldspace_selected=($ids -ccontains $blackFeature);neutral_mesh_controls_enabled=($ids -cnotcontains $originalFeature -and -not $originalScene);original_scene_mesh_selected=$originalScene}
+    [pscustomobject]@{solid_black_worldspace_selected=($ids -ccontains $blackFeature);neutral_mesh_controls_enabled=($ids -cnotcontains $originalFeature -and -not $originalScene);original_scene_mesh_selected=$originalScene;native_page_selected=$nativePage}
 }
 Export-ModuleMember -Function Get-NativeRendererPanelCompositionSelection

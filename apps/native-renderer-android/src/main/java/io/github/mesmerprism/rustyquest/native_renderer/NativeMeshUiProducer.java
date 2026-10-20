@@ -90,7 +90,23 @@ static final class VisibilityReadback {
     private Surface surface;
     private float rasterScale;
     private int rasterWidth,rasterHeight,densityDpi;
-    private long rasterEpoch=1;
+    private volatile long rasterEpoch=1;
+    private volatile long pageContentEpoch=1;
+    private final NativePageSnapshot nativePage=new NativePageSnapshot();
+    private final java.util.concurrent.atomic.AtomicBoolean nativePageRequested=new java.util.concurrent.atomic.AtomicBoolean();
+    private final android.os.Handler pagePolls=new android.os.Handler(android.os.Looper.getMainLooper());
+    private ViewTreeObserver pageTree;
+    private long lastPageObservation;
+    private long lastPageMetrics;
+    private String lastPageFailure="";
+    private View observedPageContent;
+    private final ViewTreeObserver.OnPreDrawListener pageDraw=new ViewTreeObserver.OnPreDrawListener(){
+        public boolean onPreDraw(){observeNativePage(false);return true;}
+    };
+    private final Runnable pagePoll=new Runnable(){public void run(){
+        if(current!=NativeMeshUiProducer.this||root==null)return;
+        observeNativePage(true);pagePolls.postDelayed(this,100);
+    }};
     private RasterLayout rootRaster;
     private final android.os.Handler resizePolls=new android.os.Handler(android.os.Looper.getMainLooper());
     private volatile ResizeRequest resizeRequest;
@@ -564,8 +580,54 @@ static final class VisibilityReadback {
     public static void productContentRemoved(Activity productOwner,View content) {
         NativeMeshUiProducer producer=productProducer(productOwner);
         if(producer==null)return;
+        producer.pageContentEpoch++;
+        producer.nativePage.invalidate();
+        producer.cancelPointer();
         if(contains(content,producer.editor))producer.closeKeyboard();
         if(producer.selectionMode!=null&&contains(content,producer.selectionMode.source))producer.selectionMode.finish();
+    }
+
+    /** XR reads immutable cached bytes only; the first selected read starts UI-thread observation. */
+    public static byte[] readNativePage(long generation,long seenRevision,long seenAtlasEpoch){
+        final NativeMeshUiProducer producer=current;
+        if(producer==null||producer.generation!=generation||cancelledGeneration==generation)return null;
+        if(producer.nativePageRequested.compareAndSet(false,true))producer.activity.runOnUiThread(new Runnable(){public void run(){
+            if(current!=producer||producer.root==null)return;
+            producer.pageTree=producer.root.getViewTreeObserver();producer.pageTree.addOnPreDrawListener(producer.pageDraw);
+            producer.pagePolls.post(producer.pagePoll);
+        }});
+        long content=producer.pageContentEpoch,raster=producer.rasterEpoch;
+        byte[] value=producer.nativePage.read(generation,content,raster,seenRevision,seenAtlasEpoch);
+        return current==producer&&content==producer.pageContentEpoch&&raster==producer.rasterEpoch?value:null;
+    }
+
+    private void observeNativePage(boolean force){
+        long now=SystemClock.uptimeMillis();
+        if(!force&&now-lastPageObservation<32)return;
+        lastPageObservation=now;
+        boolean active=current==this&&root!=null&&panelAttachment instanceof ProductPanelAttachment
+            &&((ProductPanelAttachment)panelAttachment).presentationActive()&&ownerAttachment.resumed()
+            &&visibilityObserved&&effectiveVisible&&visibilityRequest==0&&!resizeInputSuppressed()
+            &&modals.isEmpty()&&keyboard==null&&selectionMode==null;
+        View content=productCarrier;
+        if(content!=observedPageContent){
+            observedPageContent=content;pageContentEpoch++;nativePage.invalidate();
+        }
+        if(!active){nativePage.invalidate();return;}
+        boolean changed=nativePage.observe(content,root,cursor,generation,pageContentEpoch,rasterEpoch,rasterScale,true);
+        String reason=nativePage.failure();
+        if(!reason.equals(lastPageFailure)){
+            lastPageFailure=reason;
+            Log.i(TAG,"event=native-page-observation generation="+generation+" contentEpoch="+pageContentEpoch
+                +" status="+("none".equals(reason)?"complete":"fallback")+" reason="+reason+nativePage.counts()+" textLogged=false visibleProof=false");
+        }
+        if(changed&&now-lastPageMetrics>=2000){lastPageMetrics=now;Log.i(TAG,"event=native-page-metrics generation="+generation+nativePage.counts()+" textLogged=false visibleProof=false");}
+    }
+
+    private void stopNativePage(){
+        pagePolls.removeCallbacksAndMessages(null);
+        if(pageTree!=null&&pageTree.isAlive())pageTree.removeOnPreDrawListener(pageDraw);
+        pageTree=null;nativePage.retire();
     }
 
     private static boolean contains(View parent,View child) {
@@ -579,6 +641,7 @@ static final class VisibilityReadback {
 
     private void showModal(final Dialog dialog,boolean isKeyboard) {
         if(current!=this||presentation==null||root==null)throw new IllegalStateException("mesh-window-retired");
+        nativePage.invalidate();
         Window window=dialog.getWindow();
         WindowManager.LayoutParams attributes=window.getAttributes();
         scaleWindowPlacement(window,attributes);
@@ -697,6 +760,7 @@ static final class VisibilityReadback {
         if(prior!=null){if(pointerDialog==prior)cancelPointer();prior.dismiss();}
     }
     private void closeTransientInput(){
+        nativePage.invalidate();
         cancelPointer();if(selectionMode!=null)selectionMode.finish();closeKeyboard();
         for(Dialog modal:new ArrayList<Dialog>(modals))modal.dismiss();modals.clear();
     }
@@ -875,6 +939,7 @@ static final class VisibilityReadback {
         }
     }
     private void beginResizeMutation(final ResizeRequest request){
+        nativePage.invalidate();
         request.oldWidth=rasterWidth;request.oldHeight=rasterHeight;request.oldScale=rasterScale;request.mutating=true;
         try{
             request.scroll.freeze();display.setSurface(null);display.resize(request.width,request.height,densityDpi);
@@ -1308,6 +1373,7 @@ static final class VisibilityReadback {
         NativeMeshUiProducer owner = current;
         if (owner == null || owner.generation != generation || action < 0 || action > 5
                 || !Float.isFinite(x) || !Float.isFinite(y)) return;
+        final long contentEpoch=owner.pageContentEpoch,rasterEpoch=owner.rasterEpoch;
         if (owner.queuedPointers.incrementAndGet() > 16) {
             owner.queuedPointers.decrementAndGet();
             owner.pointerQueueInvalid = true;
@@ -1316,6 +1382,8 @@ static final class VisibilityReadback {
         owner.activity.runOnUiThread(new Runnable() { @Override public void run() {
             try {
             if (current != owner || owner.root == null) return;
+            if(!NativePageSnapshot.Wire.current(generation,contentEpoch,rasterEpoch,
+                    owner.generation,owner.pageContentEpoch,owner.rasterEpoch)){owner.cancelPointer();return;}
             if(owner.resizeInputSuppressed())return;
             if (owner.pointerQueueInvalid) { owner.cancelPointer(); return; }
             long now = SystemClock.uptimeMillis();
@@ -1426,6 +1494,7 @@ static final class VisibilityReadback {
 
     private boolean close() {
         boolean released = true;
+        stopNativePage();
         stopResizeObservation();
 
         ownerAttachment.retire();

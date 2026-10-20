@@ -5,6 +5,8 @@ layout(location=1) flat in vec4 tint;
 layout(location=2) flat in vec2 atlasMaximum;
 layout(location=3) flat in vec4 tileBounds;
 layout(location=0) out vec4 outColor;
+layout(push_constant) uniform PanelClip { layout(offset=112) vec4 clip; } pc;
+layout(location=4) in vec2 panelPosition;
 void main(){
  vec2 dx=dFdx(uv),dy=dFdy(uv),size=vec2(textureSize(glyphAtlas,0));
  // UV derivatives track the screen footprint even where the SDF has a local extremum.
@@ -22,6 +24,6 @@ void main(){
  }
  coverage*=0.25;
  float a=clamp(tint.a,0.0,1.0)*coverage;
- if(a<=0.001) discard;
+ if(a<=0.001 || any(lessThan(panelPosition,pc.clip.xy)) || any(greaterThanEqual(panelPosition,pc.clip.zw))) discard;
  outColor=vec4(tint.rgb*a,a);
 }

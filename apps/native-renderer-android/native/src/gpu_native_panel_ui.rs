@@ -5,7 +5,9 @@ use crate::{
     native_panel_ui_geometry::Primitive,
 };
 use ash::vk;
-use std::{ffi::CString, mem};
+#[cfg(target_os = "android")]
+use std::ffi::CString;
+use std::mem;
 const CAPACITY: usize = 1024;
 struct Slot {
     buffer: vk::Buffer,
@@ -26,6 +28,7 @@ struct PanelPush {
     eye_far: [f32; 4],
     eye_orientation: [f32; 4],
     fov: [f32; 4],
+    clip: [f32; 4],
 }
 impl GpuNativePanelUi {
     /// Caller owns the device, render pass and depth selection. Two slots match host fences.
@@ -36,7 +39,7 @@ impl GpuNativePanelUi {
         scene_depth_enabled: bool,
     ) -> Result<Self, String> {
         let ranges = [vk::PushConstantRange::default()
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
             .size(mem::size_of::<PanelPush>() as u32)];
         let layout = device
@@ -128,6 +131,32 @@ impl GpuNativePanelUi {
         first: u32,
         count: u32,
     ) {
+        self.record_eye_range_clipped(
+            device,
+            cmd,
+            slot,
+            pose,
+            eye,
+            first,
+            count,
+            crate::native_page::UNBOUNDED_CLIP,
+        );
+    }
+    /// Plane-local clipping is independent of eye viewport and works for tilted panels.
+    pub(crate) unsafe fn record_eye_range_clipped(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        slot: usize,
+        pose: PanelPose,
+        eye: HandMeshVisualEyeProjection,
+        first: u32,
+        count: u32,
+        clip: [f32; 4],
+    ) {
+        if clip.iter().any(|v| !v.is_finite()) || clip[0] >= clip[2] || clip[1] >= clip[3] {
+            return;
+        }
         let Some(s) = self.slots.get(slot) else {
             return;
         };
@@ -141,13 +170,14 @@ impl GpuNativePanelUi {
             eye_far: [eye.position[0], eye.position[1], eye.position[2], 20.0],
             eye_orientation: eye.orientation_xyzw,
             fov: eye.fov_tangents,
+            clip,
         };
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
         device.cmd_bind_vertex_buffers(cmd, 0, &[s.buffer], &[0]);
         device.cmd_push_constants(
             cmd,
             self.layout,
-            vk::ShaderStageFlags::VERTEX,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
             std::slice::from_raw_parts(
                 (&p as *const PanelPush).cast::<u8>(),
@@ -232,6 +262,16 @@ fn words(bytes: &[u8]) -> Result<Vec<u32>, String> {
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
         .collect())
 }
+#[cfg(all(test, not(target_os = "android")))]
+unsafe fn pipeline(
+    _device: &ash::Device,
+    _render_pass: vk::RenderPass,
+    _layout: vk::PipelineLayout,
+    _scene_depth: bool,
+) -> Result<vk::Pipeline, String> {
+    Err("GPU pipeline creation requires the Android shader build".into())
+}
+#[cfg(target_os = "android")]
 unsafe fn pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
@@ -336,4 +376,15 @@ unsafe fn pipeline(
         }
         e.to_string()
     })
+}
+
+#[cfg(test)]
+mod native_page_tests {
+    use super::*;
+    #[test]
+    fn clipped_vector_push_stays_within_portable_budget() {
+        assert_eq!(mem::size_of::<PanelPush>(), 112);
+        assert_eq!(std::mem::offset_of!(PanelPush, clip), 96);
+        assert_eq!(mem::size_of::<Primitive>(), 48);
+    }
 }

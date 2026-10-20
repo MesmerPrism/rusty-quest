@@ -1,5 +1,5 @@
 #version 450
-layout(push_constant) uniform PanelPush { vec4 centerWidth; vec4 rightHeight; vec4 upNear; vec4 eyeFar; vec4 eyeOrientation; vec4 fov; } pc;
+layout(push_constant) uniform PanelPush { vec4 centerWidth; vec4 rightHeight; vec4 upNear; vec4 eyeFar; vec4 eyeOrientation; vec4 fov; vec4 clip; } pc;
 layout(location=0) in vec4 rect;
 layout(location=1) in vec4 color;
 layout(location=2) in vec4 shape;
@@ -7,12 +7,14 @@ layout(location=0) out vec2 local;
 layout(location=1) flat out vec4 boundsRadius;
 layout(location=2) flat out vec4 tint;
 vec3 rotateQuat(vec4 q,vec3 p){return p+2.0*cross(q.xyz,cross(q.xyz,p)+q.w*p);}
+layout(location=3) out vec2 panelPosition;
 void main(){
  const vec2 corners[6]=vec2[](vec2(-1,-1),vec2(-1,1),vec2(1,1),vec2(-1,-1),vec2(1,1),vec2(1,-1));
  // Padding keeps the entire derivative-AA fringe inside the geometry.
  local=corners[gl_VertexIndex]*(rect.zw+vec2(0.002));
  float c=cos(shape.y),s=sin(shape.y);
  vec2 p=rect.xy+mat2(c,s,-s,c)*local;
+ panelPosition=p;
  vec3 world=pc.centerWidth.xyz+(p.x*pc.rightHeight.w)*pc.rightHeight.xyz-(p.y*pc.rightHeight.w)*pc.upNear.xyz;
  vec3 eye=rotateQuat(vec4(-pc.eyeOrientation.xyz,pc.eyeOrientation.w),world-pc.eyeFar.xyz);
  float forward=-eye.z;

@@ -6,7 +6,9 @@ use crate::{
     native_panel_text::{GlyphInstance, TextAtlas},
 };
 use ash::vk;
-use std::{ffi::CString, mem, ptr};
+#[cfg(target_os = "android")]
+use std::ffi::CString;
+use std::{mem, ptr};
 const ATLAS_SIDE: u32 = 1024;
 const GLYPH_CAPACITY: usize = 1024;
 struct MappedBuffer {
@@ -87,6 +89,7 @@ pub(crate) struct GpuNativePanelText {
     pipeline: vk::Pipeline,
     slots: Vec<Slot>,
     upload_recordings: u64,
+    glyph_capacity: usize,
 }
 #[repr(C)]
 struct PanelPush {
@@ -97,6 +100,7 @@ struct PanelPush {
     eye_orientation: [f32; 4],
     fov: [f32; 4],
     atlas_scale: [f32; 4],
+    clip: [f32; 4],
 }
 impl GpuNativePanelText {
     /// Counts recorded atlas copies, not submitted or completed GPU uploads.
@@ -110,6 +114,24 @@ impl GpuNativePanelText {
         render_pass: vk::RenderPass,
         scene_depth: bool,
     ) -> Result<Self, String> {
+        Self::new_bounded(device, memory, render_pass, scene_depth, GLYPH_CAPACITY)
+    }
+    /// Independent page atlas with its own fixed, fence-owned 4096 glyph slots.
+    pub(crate) unsafe fn new_page(
+        device: &ash::Device,
+        memory: vk::PhysicalDeviceMemoryProperties,
+        render_pass: vk::RenderPass,
+        scene_depth: bool,
+    ) -> Result<Self, String> {
+        Self::new_bounded(device, memory, render_pass, scene_depth, 4096)
+    }
+    unsafe fn new_bounded(
+        device: &ash::Device,
+        memory: vk::PhysicalDeviceMemoryProperties,
+        render_pass: vk::RenderPass,
+        scene_depth: bool,
+        glyph_capacity: usize,
+    ) -> Result<Self, String> {
         let mut owner = Self {
             set_layout: vk::DescriptorSetLayout::null(),
             pool: vk::DescriptorPool::null(),
@@ -118,6 +140,7 @@ impl GpuNativePanelText {
             pipeline: vk::Pipeline::null(),
             slots: Vec::with_capacity(2),
             upload_recordings: 0,
+            glyph_capacity,
         };
         let result = (|| -> Result<(), String> {
             let bindings = [vk::DescriptorSetLayoutBinding::default()
@@ -163,7 +186,7 @@ impl GpuNativePanelText {
                 )
                 .map_err(|e| e.to_string())?;
             let ranges = [vk::PushConstantRange::default()
-                .stage_flags(vk::ShaderStageFlags::VERTEX)
+                .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
                 .size(mem::size_of::<PanelPush>() as u32)];
             owner.layout = device
                 .create_pipeline_layout(
@@ -175,7 +198,7 @@ impl GpuNativePanelText {
                 .map_err(|e| e.to_string())?;
             owner.pipeline = pipeline(device, render_pass, owner.layout, scene_depth)?;
             for set in sets {
-                let slot = create_slot(device, &memory, set)?;
+                let slot = create_slot(device, &memory, set, glyph_capacity)?;
                 owner.slots.push(slot);
                 let slot = owner.slots.last().unwrap();
                 let info = [vk::DescriptorImageInfo::default()
@@ -216,7 +239,7 @@ impl GpuNativePanelText {
         if glyphs.is_empty() {
             return Ok(());
         }
-        validate(atlas_generation, atlas, glyphs)?;
+        validate_capacity(atlas_generation, atlas, glyphs, self.glyph_capacity)?;
         if slot.generation == Some(atlas_generation)
             && slot.atlas_size != [atlas.width, atlas.height]
         {
@@ -329,6 +352,32 @@ impl GpuNativePanelText {
         first: u32,
         count: u32,
     ) {
+        self.record_eye_range_clipped(
+            device,
+            cmd,
+            slot,
+            pose,
+            eye,
+            first,
+            count,
+            crate::native_page::UNBOUNDED_CLIP,
+        );
+    }
+    /// Plane-local clipping is independent of eye viewport and works for tilted panels.
+    pub(crate) unsafe fn record_eye_range_clipped(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        slot: usize,
+        pose: PanelPose,
+        eye: HandMeshVisualEyeProjection,
+        first: u32,
+        count: u32,
+        clip: [f32; 4],
+    ) {
+        if clip.iter().any(|v| !v.is_finite()) || clip[0] >= clip[2] || clip[1] >= clip[3] {
+            return;
+        }
         let Some(slot) = self.slots.get(slot) else {
             return;
         };
@@ -342,6 +391,7 @@ impl GpuNativePanelText {
             eye_far: [eye.position[0], eye.position[1], eye.position[2], 20.0],
             eye_orientation: eye.orientation_xyzw,
             fov: eye.fov_tangents,
+            clip,
             atlas_scale: [
                 slot.atlas_size[0] as f32 / ATLAS_SIDE as f32,
                 slot.atlas_size[1] as f32 / ATLAS_SIDE as f32,
@@ -362,7 +412,7 @@ impl GpuNativePanelText {
         device.cmd_push_constants(
             cmd,
             self.layout,
-            vk::ShaderStageFlags::VERTEX,
+            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
             0,
             std::slice::from_raw_parts(
                 (&p as *const PanelPush).cast::<u8>(),
@@ -394,6 +444,14 @@ impl GpuNativePanelText {
     }
 }
 fn validate(generation: u64, atlas: &TextAtlas, glyphs: &[GlyphInstance]) -> Result<(), String> {
+    validate_capacity(generation, atlas, glyphs, GLYPH_CAPACITY)
+}
+fn validate_capacity(
+    generation: u64,
+    atlas: &TextAtlas,
+    glyphs: &[GlyphInstance],
+    capacity: usize,
+) -> Result<(), String> {
     if generation == 0
         || atlas.width == 0
         || atlas.height == 0
@@ -403,7 +461,7 @@ fn validate(generation: u64, atlas: &TextAtlas, glyphs: &[GlyphInstance]) -> Res
     {
         return Err("native text atlas shape/generation invalid".into());
     }
-    if glyphs.len() > GLYPH_CAPACITY {
+    if glyphs.len() > capacity {
         return Err("native text glyph capacity exceeded".into());
     }
     for g in glyphs {
@@ -486,6 +544,7 @@ unsafe fn create_slot(
     device: &ash::Device,
     properties: &vk::PhysicalDeviceMemoryProperties,
     set: vk::DescriptorSet,
+    glyph_capacity: usize,
 ) -> Result<Slot, String> {
     let mut slot = Slot::empty(set);
     let result = (|| -> Result<(), String> {
@@ -498,7 +557,7 @@ unsafe fn create_slot(
         slot.instances = mapped_buffer(
             device,
             properties,
-            (GLYPH_CAPACITY * mem::size_of::<GlyphInstance>()) as u64,
+            (glyph_capacity * mem::size_of::<GlyphInstance>()) as u64,
             vk::BufferUsageFlags::VERTEX_BUFFER,
         )?;
         slot.image = device
@@ -579,6 +638,16 @@ fn words(bytes: &[u8]) -> Result<Vec<u32>, String> {
         .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
         .collect())
 }
+#[cfg(all(test, not(target_os = "android")))]
+unsafe fn pipeline(
+    _device: &ash::Device,
+    _render_pass: vk::RenderPass,
+    _layout: vk::PipelineLayout,
+    _scene_depth: bool,
+) -> Result<vk::Pipeline, String> {
+    Err("GPU pipeline creation requires the Android shader build".into())
+}
+#[cfg(target_os = "android")]
 unsafe fn pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
@@ -733,7 +802,7 @@ mod tests {
     #[test]
     fn instance_abi_and_portable_push_constant_budget() {
         assert_eq!(mem::size_of::<GlyphInstance>(), 48);
-        assert_eq!(mem::size_of::<PanelPush>(), 112);
+        assert_eq!(mem::size_of::<PanelPush>(), 128);
         assert!(mem::size_of::<PanelPush>() <= 128);
         // Atlas-edge texture lookups must clamp to initialized pixel centers in fixed images.
         let size = [17.0_f32, 7.0];
@@ -743,6 +812,13 @@ mod tests {
             let max = (actual - 0.5) / fixed;
             assert!(min > 0.0 && max < actual / fixed && max >= min);
         }
+    }
+    #[test]
+    fn page_capacity_is_separate_from_toolbar_and_clip_abi() {
+        assert!(validate(1, &atlas(), &vec![glyph(); 1025]).is_err());
+        assert!(validate_capacity(1, &atlas(), &vec![glyph(); 4096], 4096).is_ok());
+        assert!(validate_capacity(1, &atlas(), &vec![glyph(); 4097], 4096).is_err());
+        assert_eq!(std::mem::offset_of!(PanelPush, clip), 112);
     }
     #[test]
     fn coherent_upload_memory_respects_compatible_type_mask() {

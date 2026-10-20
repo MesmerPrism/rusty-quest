@@ -23,12 +23,24 @@ public final class NativePanelFont {
     private static final int EM=64, RANGE=8, PAD=10, LIMIT=1024;
     private NativePanelFont() {}
     private static final class Key {
-        final Font font; final int id;
-        Key(Font f,int i) { font=f; id=i; }
-        public int hashCode() { return font.hashCode()*31+id; }
-        public boolean equals(Object o) { return o instanceof Key && ((Key)o).id==id && ((Key)o).font.equals(font); }
+        final Font font; final int id,scale,skew;final boolean bold;
+        Key(Font f,int i,TextPaint paint) { font=f;id=i;scale=Float.floatToIntBits(paint.getTextScaleX());skew=Float.floatToIntBits(paint.getTextSkewX());bold=paint.isFakeBoldText(); }
+        public int hashCode() { return 31*(31*(31*(font.hashCode()*31+id)+scale)+skew)+(bold?1:0); }
+        public boolean equals(Object o) { return o instanceof Key && ((Key)o).id==id && ((Key)o).scale==scale && ((Key)o).skew==skew && ((Key)o).bold==bold && ((Key)o).font.equals(font); }
     }
     private static final class Tile { int left,top,w,h,x,y; byte[] sdf; }
+    /** Per-producer cache; bounded by both entries and coverage bytes, discarded at retirement. */
+    static final class PageCache {
+        private final HashMap<Key,Tile> tiles=new HashMap<Key,Tile>();
+        private int bytes;
+        Tile get(Key key,TextPaint paint){
+            Tile value=tiles.get(key);if(value!=null)return value;
+            value=raster(key,paint);int count=value.sdf==null?0:value.sdf.length;
+            if(tiles.size()>=512||bytes+count>4*1024*1024)clear();
+            tiles.put(key,value);bytes+=count;return value;
+        }
+        void clear(){tiles.clear();bytes=0;}
+    }
     private static final class Glyph { Tile tile; float x,y; }
     private static final class Run { float advance,ascent,descent; final ArrayList<Glyph> glyphs=new ArrayList<Glyph>(); }
     private static void require(boolean ok,String reason) { if(!ok) throw new IllegalArgumentException("native panel font: "+reason); }
@@ -36,15 +48,45 @@ public final class NativePanelFont {
 
     /** NPT1 little-endian wire v1: 8 u32 header, run metrics/count/glyphs, then R8 pixels. */
     public static byte[] prepare(String[] labels) {
+        require(labels!=null && labels.length<=32,"run budget");
+        TextPaint paint=new TextPaint(Paint.ANTI_ALIAS_FLAG|Paint.SUBPIXEL_TEXT_FLAG);
+        paint.setTypeface(Typeface.create("sans-serif",Typeface.NORMAL));paint.setTextSize(EM);paint.setColor(Color.WHITE);
+        TextPaint[] styles=new TextPaint[labels.length];java.util.Arrays.fill(styles,paint);
+        return prepareInternal(labels,styles,false,null);
+    }
+
+    /** Page-only limits/style. Display lines are transient, never copied to diagnostics or JSON. */
+    public static byte[] preparePage(String[] lines,TextPaint[] styles) {
+        return preparePage(lines,styles,new PageCache());
+    }
+    static byte[] preparePage(String[] lines,TextPaint[] styles,PageCache cache) {
+        validatePageLines(lines);
+        require(styles!=null&&lines.length==styles.length&&cache!=null,"page style budget");
+        return prepareInternal(lines,styles,true,cache);
+    }
+    static int validatePageLines(String[] lines){
+        require(lines!=null&&lines.length<=128,"page run budget");int units=0;
+        for(String line:lines){
+            require(line!=null&&line.length()<=256,"page line budget");units+=line.length();
+            for(int i=0;i<line.length();i++){
+                char c=line.charAt(i);require(c!='\n'&&c!='\r'&&c!='\t',"page single line required");
+                if(Character.isHighSurrogate(c))require(i+1<line.length()&&Character.isLowSurrogate(line.charAt(++i)),"page surrogate");
+                else require(!Character.isLowSurrogate(c),"page surrogate");
+            }
+        }
+        return units;
+    }
+
+    private static byte[] prepareInternal(String[] labels,TextPaint[] styles,boolean page,PageCache pageCache) {
         if(Build.VERSION.SDK_INT<31) throw new UnsupportedOperationException("native panel font requires Android API 31");
         long started=System.nanoTime();
-        require(labels!=null && labels.length<=32,"run budget");
-        final TextPaint paint=new TextPaint(Paint.ANTI_ALIAS_FLAG|Paint.SUBPIXEL_TEXT_FLAG);
-        paint.setTypeface(Typeface.create("sans-serif",Typeface.NORMAL)); paint.setTextSize(EM); paint.setColor(Color.WHITE);
         final HashMap<Key,Tile> cache=new HashMap<Key,Tile>();
         final ArrayList<Tile> tiles=new ArrayList<Tile>();
         ArrayList<Run> runs=new ArrayList<Run>(); final int[] total={0};
-        for(String label:labels) {
+        for(int line=0;line<labels.length;line++) {
+            String label=labels[line];
+            require(styles[line]!=null,"style required");
+            final TextPaint paint=new TextPaint(styles[line]);paint.setTextSize(EM);paint.setColor(Color.WHITE);
             require(label!=null && label.length()<=256,"label budget");
             for(int i=0;i<label.length();i++) { char c=label.charAt(i); require(c!='\n'&&c!='\r'&&c!='\t',"single line only");
                 if(Character.isHighSurrogate(c)) { require(i+1<label.length()&&Character.isLowSurrogate(label.charAt(++i)),"surrogate"); }
@@ -52,13 +94,13 @@ public final class NativePanelFont {
             final Run run=new Run();
             TextShaper.shapeText(label,0,label.length(),TextDirectionHeuristics.FIRSTSTRONG_LTR,paint,new TextShaper.GlyphsConsumer() {
                 public void accept(int start,int count,PositionedGlyphs shaped,TextPaint style) {
-                    require(total[0]+shaped.glyphCount()<=1024,"glyph budget"); total[0]+=shaped.glyphCount();
+                    require(total[0]+shaped.glyphCount()<=(page?4096:1024),"glyph budget"); total[0]+=shaped.glyphCount();
                     run.advance+=shaped.getAdvance()/EM;
                     run.ascent=Math.min(run.ascent,shaped.getAscent()/EM); run.descent=Math.max(run.descent,shaped.getDescent()/EM);
                     for(int i=0;i<shaped.glyphCount();i++) {
                         require(shaped.getGlyphId(i)!=0,"missing glyph");
-                        Key key=new Key(shaped.getFont(i),shaped.getGlyphId(i)); Tile tile=cache.get(key);
-                        if(tile==null) { require(cache.size()<256,"unique glyph budget"); tile=raster(key,style); cache.put(key,tile); tiles.add(tile); }
+                        Key key=new Key(shaped.getFont(i),shaped.getGlyphId(i),style); Tile tile=cache.get(key);
+                        if(tile==null) { require(cache.size()<(page?512:256),"unique glyph budget"); tile=pageCache==null?raster(key,style):pageCache.get(key,style); cache.put(key,tile); tiles.add(tile); }
                         if(tile.w>0) { Glyph g=new Glyph(); g.tile=tile; g.x=shaped.getGlyphX(i); g.y=shaped.getGlyphY(i); run.glyphs.add(g); }
                     }
                 }
@@ -80,7 +122,7 @@ public final class NativePanelFont {
             }
         }
         out.put(pixels);
-        Log.i("NativePanelFont","prepared runs="+runs.size()+" unique="+cache.size()+" glyphs="+total[0]+" api="+Build.VERSION.SDK_INT+" atlas="+LIMIT+"x"+height+" prepMs="+((System.nanoTime()-started)/1000000));
+        Log.i("NativePanelFont","prepared page="+page+" runs="+runs.size()+" unique="+cache.size()+" glyphs="+total[0]+" api="+Build.VERSION.SDK_INT+" atlas="+LIMIT+"x"+height+" prepMs="+((System.nanoTime()-started)/1000000));
         return out.array();
     }
     private static Tile raster(Key key,TextPaint paint) {

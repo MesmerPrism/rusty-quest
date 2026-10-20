@@ -45,6 +45,15 @@ impl Drop for TextureLease {
 }
 pub(crate) struct GpuMeshUiPanel {
     native_ui: Option<GpuNativePanelUi>,
+    page_ui: Option<GpuNativePanelUi>,
+    page_text: Option<GpuNativePanelText>,
+    page_cache: crate::native_page::PageCache,
+    page_ready: [bool; 2],
+    page_batches: [Vec<crate::native_page::Batch>; 2],
+    page_stamps: [Option<(u64, u64, u64, u64)>; 2],
+    page_last_state: Option<bool>,
+    page_last_submitted: Option<bool>,
+    page_submissions: u64,
     hybrid: HybridPanelState,
     hybrid_forms_slots: [bool; 2],
     hybrid_geometry: Vec<Primitive>,
@@ -354,8 +363,31 @@ impl GpuMeshUiPanel {
         } else {
             None
         };
+        let page_selected = crate::native_page::selected();
+        let page_ui = if page_selected {
+            GpuNativePanelUi::new(device, memory, render_pass, scene_depth_enabled).ok()
+        } else {
+            None
+        };
+        let page_text = if page_selected {
+            GpuNativePanelText::new_page(device, memory, render_pass, scene_depth_enabled).ok()
+        } else {
+            None
+        };
+        if page_selected {
+            crate::marker("native-page", format!("event=selected nativePageSelected=true generation={generation} nativePageReady=false nativePageColorTextureDrawn=false resourcesReady={} visibleProof=false", page_ui.is_some() && page_text.is_some()));
+        }
         Ok(Self {
             native_ui,
+            page_ui,
+            page_text,
+            page_cache: crate::native_page::PageCache::default(),
+            page_ready: [false; 2],
+            page_batches: [Vec::new(), Vec::new()],
+            page_stamps: [None; 2],
+            page_last_state: None,
+            page_last_submitted: None,
+            page_submissions: 0,
             native_text,
             text_atlas,
             text_glyphs: Vec::new(),
@@ -491,6 +523,9 @@ impl GpuMeshUiPanel {
         if slot >= 2 {
             return Err("mesh UI frame slot out of range".into());
         }
+        self.page_ready[slot] = false;
+        self.page_batches[slot].clear();
+        self.page_stamps[slot] = None;
         self.retired[slot].clear();
         self.slots[slot] = None;
         // Freeze one pose for both eyes; asynchronous Android controls apply next frame.
@@ -663,6 +698,7 @@ impl GpuMeshUiPanel {
                 crate::marker("native-panel-text",format!("event=prepared frame={frame} generation=1 glyphs={} atlasBytes={} fontPrepared=true uploadRecordings={} evidence=recorded-not-visible",self.text_glyphs.len(),atlas.pixels.len(),text.upload_recordings()));
             }
         }
+        self.prepare_native_page(device, cmd, slot, app, frame);
         self.slots[slot] = self.latest.clone();
         // Unused imports transfer back to Android in this frame's command buffer, but their
         // Vk resources and AImages remain pinned until this slot's submission fence retires.
@@ -699,7 +735,84 @@ impl GpuMeshUiPanel {
             }
             Ok(true)
         } else {
-            Ok(false)
+            Ok(self.page_ready[slot])
+        }
+    }
+    /// Exact host slot fence has retired before this function. All page buffers are fixed.
+    unsafe fn prepare_native_page(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        slot: usize,
+        app: &android_activity::AndroidApp,
+        frame: u64,
+    ) {
+        if !crate::native_page::selected() {
+            return;
+        }
+        let (revision, epoch) = self.page_cache.seen();
+        let packet = self
+            .producer
+            .as_ref()
+            .map(|p| p.read_native_page(app, revision, epoch));
+        let mut reason = "owner-unavailable";
+        match packet {
+            Some(Ok(Some(bytes))) if bytes.is_empty() => {
+                reason = "unchanged";
+            }
+            Some(Ok(Some(bytes))) => {
+                if let Err(error) = self
+                    .page_cache
+                    .adopt(&bytes, self.frame_controls.generation)
+                {
+                    reason = error;
+                    self.page_cache.invalidate();
+                } else {
+                    reason = "snapshot-adopted";
+                }
+            }
+            _ => self.page_cache.invalidate(),
+        }
+        if self.page_ui.is_none() || self.page_text.is_none() {
+            reason = "gpu-resources-unavailable";
+        }
+        if self.frame_controls.panel_visible
+            && self.frame_controls.pose_initialized
+            && self.hybrid_forms_slots[slot]
+        {
+            if let (Some(page), Some(ui), Some(text)) = (
+                &self.page_cache.page,
+                &mut self.page_ui,
+                &mut self.page_text,
+            ) {
+                if page.generation == self.frame_controls.generation {
+                    let shapes = ui.prepare_frame(slot, &page.shapes);
+                    let glyphs = text.prepare_frame(
+                        device,
+                        cmd,
+                        slot,
+                        page.atlas_epoch,
+                        &page.atlas,
+                        &page.glyphs,
+                    );
+                    if shapes.is_ok() && glyphs.is_ok() {
+                        self.page_ready[slot] = true;
+                        self.page_batches[slot] = page.batches.clone();
+                        self.page_stamps[slot] = Some((
+                            page.revision,
+                            page.content_epoch,
+                            page.atlas_epoch,
+                            page.raster_epoch,
+                        ));
+                    } else {
+                        reason = "gpu-prepare-rejected";
+                    }
+                }
+            }
+        }
+        if self.page_last_state != Some(self.page_ready[slot]) || frame % 120 == 0 {
+            crate::marker("native-page", format!("event=prepared frame={frame} generation={} nativePageSelected=true nativePageReady={} nativePageFallback={} reason={reason} batches={} glyphs={} evidence=recorded-not-visible visibleProof=false", self.frame_controls.generation, self.page_ready[slot], !self.page_ready[slot], self.page_batches[slot].len(), self.page_cache.page.as_ref().map_or(0, |p| p.glyphs.len())));
+            self.page_last_state = Some(self.page_ready[slot]);
         }
     }
     pub(crate) fn frame_controls(&self) -> native_mesh_ui::ControlSnapshot {
@@ -707,6 +820,22 @@ impl GpuMeshUiPanel {
     }
     /// Call immediately after successful submission of the command buffer recorded for slot.
     pub(crate) fn mark_submitted(&mut self, slot: usize) {
+        if crate::native_page::selected() {
+            self.page_submissions = self.page_submissions.saturating_add(1);
+        }
+        if crate::native_page::selected()
+            && (self.page_last_submitted != Some(self.page_ready[slot])
+                || self.page_submissions % 120 == 0)
+        {
+            let stamp = self.page_stamps[slot].unwrap_or((0, 0, 0, 0));
+            self.page_last_submitted = Some(self.page_ready[slot]);
+            let color_drawn = !self.page_ready[slot]
+                && self.frame_controls.pose_initialized
+                && self.slots[slot].is_some()
+                && self.hybrid_forms_slots[slot]
+                && self.frame_controls.panel_visible;
+            crate::marker("native-page", format!("event=submitted generation={} slot={slot} nativePageReady={} nativePageColorTextureDrawn={color_drawn} batches={} revision={} contentEpoch={} atlasEpoch={} rasterEpoch={} evidence=queue-submission visibleProof=false", self.frame_controls.generation, self.page_ready[slot], self.page_batches[slot].len(), stamp.0, stamp.1, stamp.2, stamp.3));
+        }
         if self.native_ui.is_some()
             && self.frame_controls.panel_visible
             && self.frame_controls.pose_initialized
@@ -777,7 +906,8 @@ impl GpuMeshUiPanel {
             };
             device.cmd_set_viewport(cmd, 0, &[viewport]);
             device.cmd_set_scissor(cmd, 0, &[scissor]);
-            if self.slots[slot].is_some()
+            if !self.page_ready[slot]
+                && self.slots[slot].is_some()
                 && (self.native_ui.is_none() || self.hybrid_forms_slots[slot])
             {
                 device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
@@ -803,6 +933,40 @@ impl GpuMeshUiPanel {
                 device.cmd_set_viewport(cmd, 0, &[viewport]);
                 device.cmd_set_scissor(cmd, 0, &[scissor]);
                 device.cmd_draw(cmd, 6, 1, 0, 0);
+            }
+            if self.page_ready[slot] {
+                for batch in &self.page_batches[slot] {
+                    match batch.kind {
+                        crate::native_page::BatchKind::Shapes => {
+                            if let Some(ui) = &self.page_ui {
+                                ui.record_eye_range_clipped(
+                                    device,
+                                    cmd,
+                                    slot,
+                                    p,
+                                    eye,
+                                    batch.first,
+                                    batch.count,
+                                    batch.clip,
+                                );
+                            }
+                        }
+                        crate::native_page::BatchKind::Text => {
+                            if let Some(text) = &self.page_text {
+                                text.record_eye_range_clipped(
+                                    device,
+                                    cmd,
+                                    slot,
+                                    p,
+                                    eye,
+                                    batch.first,
+                                    batch.count,
+                                    batch.clip,
+                                );
+                            }
+                        }
+                    }
+                }
             }
             if let Some(ui) = &self.native_ui {
                 let r = self.native_ranges[slot];
@@ -1321,6 +1485,12 @@ impl GpuMeshUiPanel {
             }
         }
         self.registry.clear();
+        if let Some(ui) = self.page_ui.take() {
+            ui.destroy(device);
+        }
+        if let Some(text) = self.page_text.take() {
+            text.destroy(device);
+        }
         if let Some(ui) = self.native_ui.take() {
             ui.destroy(device);
         }
