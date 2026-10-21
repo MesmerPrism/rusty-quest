@@ -102,7 +102,7 @@ impl JavaOwnerCallbacks {
             .map(|p| env.new_string(p))
             .transpose()
             .map_err(|_| "incoming fresh prior identity")?;
-        let previous = previous.map(JObject::from).unwrap_or_else(JObject::null);
+        let previous = previous.map(JObject::from).unwrap_or_else(|| JObject::null());
         let current = env
             .new_string(phase)
             .map_err(|_| "incoming fresh phase identity")?;
