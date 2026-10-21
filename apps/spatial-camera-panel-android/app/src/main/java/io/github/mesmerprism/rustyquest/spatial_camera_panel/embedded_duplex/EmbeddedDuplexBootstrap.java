@@ -64,7 +64,7 @@ final class EmbeddedDuplexBootstrap {
         void mark(Failure next) { failure = next; }
         // Only the existing closed resource-install stage can be refined. A
         // cleanup/suppressed exception cannot replace the original failing step.
-        void captureFailure(Exception original) {
+        void captureFailure(Throwable original) {
             if (failure != Failure.RESOURCE_OWN_PROJECTION) return;
             Throwable cause = original;
             for (int depth = 0; depth < 4 && (cause instanceof java.util.concurrent.ExecutionException

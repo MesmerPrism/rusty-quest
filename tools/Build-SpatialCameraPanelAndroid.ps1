@@ -1395,7 +1395,7 @@ $buildInputDescriptor = [ordered]@{
     packaged_inputs = [ordered]@{
         offline_media_packs = if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)) { $null } else { [ordered]@{ path = $resolvedOfflineMediaPackAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedOfflineMediaPackAssetDir } }
         offline_media_key_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex))
-        offline_media_key_sha256 = if ([string]::IsNullOrWhiteSpace($resolvedOfflineMediaKeyHex)) { "" } else { Get-StringSha256 -Value $resolvedOfflineMediaKeyHex }
+        offline_media_key_observation_policy = "presence-only-v1"
         hand_mesh_rig = if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) { $null } else { [ordered]@{ path = $resolvedHandMeshRigAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedHandMeshRigAssetDir } }
         private_source = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureSourceDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureSourceDir } }
         private_assets = if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureAssetDir)) { $null } else { [ordered]@{ path = $resolvedPrivateFeatureAssetDir; sha256 = Get-DirectorySha256 -Path $resolvedPrivateFeatureAssetDir } }
@@ -1690,7 +1690,7 @@ $cacheIdentityReceipt = [ordered]@{
         package = $packageFingerprint
     }
     prior_cache = [ordered]@{
-        semantics = "matching-prior-identity-and-verified-output-available; compilation-still-observed-separately"
+        semantics = "matching-prior-sanitized-metadata-and-verified-output-available; credential-equivalence-not-claimed; compilation-still-observed-separately"
         native = [ordered]@{ available = $nativePriorCacheAvailable; invalidation = $nativeInvalidation }
         android_shell = [ordered]@{ available = $shellPriorCacheAvailable; invalidation = $shellInvalidation }
         package = [ordered]@{ available = $packagePriorCacheAvailable; invalidation = $packageInvalidation }

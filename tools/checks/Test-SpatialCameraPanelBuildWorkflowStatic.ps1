@@ -141,3 +141,34 @@ if([bool]$PrerequisiteInputSpecPath-ne[bool]$PrerequisiteOutRoot){throw 'Runtime
 if($PrerequisiteInputSpecPath){
     & (Join-Path $repo 'tools/checks/Test-SpatialCameraPanelBuildPrerequisites.ps1') -RepoRoot $repo -InputSpecPath $PrerequisiteInputSpecPath -OutRoot $PrerequisiteOutRoot
 }
+
+
+# Execute the actual packaged-input descriptor expression with synthetic keys.
+# This proves metadata redaction only; real Gradle BuildConfig refresh is separately qualified.
+$privacyTokens=$null;$privacyErrors=$null
+$privacyAst=[Management.Automation.Language.Parser]::ParseFile($buildPath,[ref]$privacyTokens,[ref]$privacyErrors)
+if(@($privacyErrors).Count){throw 'Build privacy production AST is invalid.'}
+$packagedTables=@($privacyAst.FindAll({param($node)$node-is[Management.Automation.Language.HashtableAst]-and@($node.KeyValuePairs|Where-Object{$_.Item1-is[Management.Automation.Language.StringConstantExpressionAst]-and$_.Item1.Value-ceq'offline_media_key_configured'}).Count-eq1},$true))
+if($packagedTables.Count-ne1){throw 'One production packaged-input descriptor required.'}
+$resolvedOfflineMediaPackAssetDir='';$resolvedHandMeshRigAssetDir='';$resolvedPrivateFeatureSourceDir='';$resolvedPrivateFeatureAssetDir='';$resolvedPrivateFeatureResourceDir='';$embeddedDuplexProductInputs=$null
+$observed=@()
+foreach($synthetic in @(('1'*64),('2'*64))){
+    $resolvedOfflineMediaKeyHex=$synthetic
+    $descriptor=& ([scriptblock]::Create($packagedTables[0].Extent.Text))
+    if($descriptor.Contains('offline_media_key_sha256')-or-not$descriptor.offline_media_key_configured-or$descriptor.offline_media_key_observation_policy-cne'presence-only-v1'){throw 'Production descriptor leaks a clear-key digest or loses configured policy.'}
+    $encoded=$descriptor|ConvertTo-Json -Depth 20 -Compress
+    $directDigest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($synthetic))).ToLowerInvariant()
+    if($encoded.Contains($synthetic)-or$encoded.Contains($directDigest)){throw 'Synthetic key or key digest appeared in production descriptor.'}
+    $observed+=,$encoded
+}
+if($observed[0]-cne$observed[1]){throw 'Sanitized packaged metadata incorrectly claims credential-value identity.'}
+# The existing real provider must still feed the current environment into Gradle's actual BuildConfig field.
+Require $build '$env:RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX = $resolvedOfflineMediaKeyHex' 'Current key delivery was removed.'
+Require $gradle 'providers.environmentVariable("RUSTY_QUEST_OFFLINE_MEDIA_KEY_HEX")' 'Actual Gradle key input provider missing.'
+Require $gradle '"OFFLINE_MEDIA_KEY_HEX"' 'Actual generated compiler input missing.'
+Require $gradle 'buildConfigString(offlineMediaKeyHex.get())' 'Actual generated compiler input no longer consumes the current provider.'
+Require $build 'credential-equivalence-not-claimed; compilation-still-observed-separately' 'Cache observation overclaims credential equivalence.'
+Write-Host 'Media-key privacy descriptor projection: PASS (synthetic metadata only; real BuildConfig refresh pending actual Gradle qualification)'
+
+Require $build '":app:assemble$BuildType"' 'Sanitized metadata must not remove the actual assembly task.'
+Require $build '& $gradleBat @gradleArguments' 'Sanitized cache metadata must not replace actual Gradle dispatch.'
