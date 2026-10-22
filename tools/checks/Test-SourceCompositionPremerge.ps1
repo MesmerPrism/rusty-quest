@@ -63,6 +63,9 @@ try {
  if(-not$?){throw 'Shared Cargo source-stage regression failed.'}
  $stageResult=Get-Content -LiteralPath (Join-Path $stageProof 'RESULT.json') -Raw|ConvertFrom-Json
  Check 'shared_cargo_source_stage_family' ($stageResult.passed -eq $true)
+ $ownedProof = & (Join-Path $RepoRoot 'tools/checks/Test-SourceCompositionOwnedRepository.ps1') -RepoRoot $RepoRoot
+ $ownedResult = ($ownedProof -join "`n") | ConvertFrom-Json
+ Check 'additional_owned_source_composition_family' ($ownedResult.passed -eq $true)
  [ordered]@{passed=$true;controls=$controls.ToArray();remote_count=0;android_build_or_device_effects=$false}|ConvertTo-Json -Depth 5
 } finally {
  # Only this freshly created, fixed-prefix temporary fixture is removed.
