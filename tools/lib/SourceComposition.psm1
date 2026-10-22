@@ -269,6 +269,22 @@ function Assert-QuestBuildSourceCompositionCurrent {
     }
 }
 
+function Get-QuestBuildOwnedRepositoryObservation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][ValidatePattern('^[a-z][a-z0-9-]*$')][string]$RepositoryId,
+        [switch]$AllowWorkingTreeChanges
+    )
+    $resolved = Get-NormalizedSourceCompositionPath -Path (Resolve-Path -LiteralPath $Root).Path
+    if ((Find-SourceCompositionGitRoot -Path $resolved) -ine $resolved) {
+        throw 'Owned input observation must select its exact Git repository root.'
+    }
+    # Same repository row and overlay algorithm, without resolving a Cargo graph.
+    return Get-SourceCompositionRepository -Root $resolved -RepositoryId $RepositoryId -Role 'app-owned-input' `
+        -AllowWorkingTreeChanges:$AllowWorkingTreeChanges
+}
+
 function Add-QuestBuildOwnedRepository {
     [CmdletBinding()]
     param(
@@ -334,4 +350,4 @@ function Assert-QuestNativeDependencyComposition {
     }
 }
 
-Export-ModuleMember -Function Get-QuestBuildSourceComposition, Get-QuestBuildSourceCompositionIdentityCanonicalText, Add-QuestBuildOwnedRepository, Assert-QuestBuildSourceCompositionCurrent, Assert-QuestNativeDependencyComposition
+Export-ModuleMember -Function Get-QuestBuildSourceComposition, Get-QuestBuildSourceCompositionIdentityCanonicalText, Get-QuestBuildOwnedRepositoryObservation, Add-QuestBuildOwnedRepository, Assert-QuestBuildSourceCompositionCurrent, Assert-QuestNativeDependencyComposition

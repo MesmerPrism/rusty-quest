@@ -20,6 +20,13 @@ try{
   New-Item -ItemType Directory -Path "$root/src"|Out-Null;Invoke-FixtureGit $root @('init','--quiet')|Out-Null
   Write-Text "$root/src/input.txt" 'original input';Commit $root
  }
+ # The private owner can be observed before a cold Cargo graph exists.
+ $standalone=Get-QuestBuildOwnedRepositoryObservation -Root $owned -RepositoryId owned-input
+ $standaloneAgain=Get-QuestBuildOwnedRepositoryObservation -Root $owned -RepositoryId owned-input
+ Check 'standalone_before_cargo_graph_is_stable_flat_row' (($standalone|ConvertTo-Json -Compress)-ceq($standaloneAgain|ConvertTo-Json -Compress)-and
+   (($standalone.PSObject.Properties.Name|Sort-Object)-join',')-ceq'commit,repository,repository_id,role,tracked_worktree_clean,tree,worktree_overlay_sha256')
+ Reject 'standalone_rejects_non_root' {Get-QuestBuildOwnedRepositoryObservation -Root "$owned/src" -RepositoryId owned-input}
+ Reject 'standalone_rejects_invalid_logical_id' {Get-QuestBuildOwnedRepositoryObservation -Root $owned -RepositoryId invalid.id}
  Write-Text "$dep/Cargo.toml" "[package]`nname='owned-dependency'`nversion='0.1.0'`nedition='2021'`n"
  Write-Text "$dep/src/lib.rs" 'pub fn value()->u32 {1}';Commit $dep
  Write-Text "$app/Cargo.toml" "[package]`nname='owned-app'`nversion='0.1.0'`nedition='2021'`n[dependencies]`nowned-dependency={path='../dependency'}`n"
@@ -35,6 +42,7 @@ try{
  $full=Add-QuestBuildOwnedRepository -Composition $cargo -Root $owned -RepositoryId owned-input
  Check 'outside_cargo_root_in_same_v1_document' ($full.schema-ceq'rusty.quest.apk_source_composition.v1'-and$full.repositories.Count-eq3-and$full.fingerprint-cne$cargo.fingerprint)
  $row=@($full.repositories|Where-Object repository_id -CEQ owned-input)[0]
+ Check 'standalone_row_equals_composed_raw_row' (($standalone|ConvertTo-Json -Compress)-ceq($row|ConvertTo-Json -Compress))
  Check 'fixed_owned_role_actual_git_identity' ($row.role-ceq'app-owned-input'-and$row.commit-ceq((Invoke-FixtureGit $owned @('rev-parse','HEAD'))-join'')-and$row.tracked_worktree_clean)
  Check 'input_document_not_mutated' ($cargo.repositories.Count-eq2-and$cargo.fingerprint-ceq$originalFingerprint)
  Check 'observation_preserved_owned_source_bytes' ($beforeOwned-ceq(Get-FileHash -LiteralPath "$owned/src/input.txt").Hash)
@@ -46,13 +54,25 @@ try{
  Reject 'non_root_path_rejected' {Add-QuestBuildOwnedRepository -Composition $cargo -Root "$owned/src" -RepositoryId owned-input}
  Reject 'duplicate_owned_root_rejected' {Add-QuestBuildOwnedRepository -Composition $full -Root $owned -RepositoryId another-id}
  Write-Text "$owned/src/input.txt" 'changed Kotlin-like owned input'
+ Reject 'standalone_candidate_rejects_dirty_root' {Get-QuestBuildOwnedRepositoryObservation -Root $owned -RepositoryId owned-input}
+ $standaloneDirty=Get-QuestBuildOwnedRepositoryObservation -Root $owned -RepositoryId owned-input -AllowWorkingTreeChanges
+ Check 'standalone_tracked_drift_changes_same_overlay_algorithm' (-not$standaloneDirty.tracked_worktree_clean-and$standaloneDirty.worktree_overlay_sha256-cne$standalone.worktree_overlay_sha256)
  Reject 'candidate_rejects_dirty_owned_root' {Add-QuestBuildOwnedRepository -Composition $cargo -Root $owned -RepositoryId owned-input}
  Reject 'old_document_detects_owned_drift' {Assert-QuestBuildSourceCompositionCurrent -Composition $full -AllowWorkingTreeChanges}
  $dirty=Add-QuestBuildOwnedRepository -Composition $cargo -Root $owned -RepositoryId owned-input -AllowWorkingTreeChanges
+ Check 'standalone_dirty_row_equals_composed_raw_row' (($standaloneDirty|ConvertTo-Json -Compress)-ceq(@($dirty.repositories|Where-Object repository_id -CEQ owned-input)[0]|ConvertTo-Json -Compress))
  Check 'tracked_owned_overlay_bound_in_v2' ($dirty.schema-ceq'rusty.quest.apk_source_composition.v2'-and$dirty.fingerprint-cne$full.fingerprint-and@($dirty.repositories|Where-Object repository_id -CEQ owned-input)[0].worktree_overlay_sha256-cmatch'^[a-f0-9]{64}$')
  Assert-QuestBuildSourceCompositionCurrent -Composition $dirty -AllowWorkingTreeChanges
  Reject 'candidate_reobservation_never_accepts_dirty' {Assert-QuestBuildSourceCompositionCurrent -Composition $dirty}
  Write-Text "$owned/new-shader.txt" 'new shader outside Cargo closure'
+ $standaloneExtra=Get-QuestBuildOwnedRepositoryObservation -Root $owned -RepositoryId owned-input -AllowWorkingTreeChanges
+ Check 'standalone_untracked_addition_changes_overlay' ($standaloneExtra.worktree_overlay_sha256-cne$standaloneDirty.worktree_overlay_sha256)
+ Remove-Item -LiteralPath "$owned/src/input.txt"
+ $standaloneDeleted=Get-QuestBuildOwnedRepositoryObservation -Root $owned -RepositoryId owned-input -AllowWorkingTreeChanges
+ Check 'standalone_tracked_deletion_changes_overlay' ($standaloneDeleted.worktree_overlay_sha256-cne$standaloneExtra.worktree_overlay_sha256)
+ Write-Text "$owned/src/input.txt" 'changed Kotlin-like owned input'
+ $standaloneRestored=Get-QuestBuildOwnedRepositoryObservation -Root $owned -RepositoryId owned-input -AllowWorkingTreeChanges
+ Check 'standalone_restored_bytes_restore_raw_observation' (($standaloneRestored|ConvertTo-Json -Compress)-ceq($standaloneExtra|ConvertTo-Json -Compress))
  $extra=Add-QuestBuildOwnedRepository -Composition $cargo -Root $owned -RepositoryId owned-input -AllowWorkingTreeChanges
  Check 'untracked_owned_bytes_change_identity' ($extra.fingerprint-cne$dirty.fingerprint)
  $forged=Copy-Document $extra
