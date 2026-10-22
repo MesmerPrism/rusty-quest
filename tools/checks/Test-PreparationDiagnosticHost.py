@@ -43,6 +43,7 @@ def main():
     declaration=re.search(r'(pub\(crate\)\s+mod preparation_diagnostic;)',runtime).group(1)
     layout='''#![allow(dead_code)]
 mod embedded_duplex {
+ #[path = NATIVE_GUARD] pub(crate) mod preparation_native_guard;
  mod runtime_host { #[path = CORE] DECLARATION }
  mod java_bridge {
   pub fn actual_sibling_reference(attempt:&super::runtime_host::preparation_diagnostic::Attempt) {
@@ -52,7 +53,7 @@ mod embedded_duplex {
  }
 }
 fn main() {}
-'''.replace('CORE',json.dumps((native/'preparation_diagnostic.rs').as_posix())).replace('DECLARATION',declaration)
+'''.replace('CORE',json.dumps((native/'preparation_diagnostic.rs').as_posix())).replace('NATIVE_GUARD',json.dumps((native/'preparation_native_guard.rs').as_posix())).replace('DECLARATION',declaration)
     layout_path=out/'actual-module-layout.rs';layout_path.write_text(layout,encoding='utf-8')
     run('module-layout',['rustc','--edition','2021',str(layout_path),'-o',str(out/'module-layout.exe')])
     private_path=out/'private-module-negative.rs';private_path.write_text(layout.replace(declaration,'mod preparation_diagnostic;'),encoding='utf-8')
@@ -132,7 +133,13 @@ class EmbeddedDuplexProcessHost{
     stages=re.findall(r'attempt\.call\(\s*Stage::(\w+)',prepared,re.S)
     assert stages==['Capability','PriorArchive','OriginalRead','JavaEligibility','OriginalMatch','NativeEligibility','PhysicalEligibility','ResourceTarget','Entropy','ConstructorBinding','ResourceTargetDigest','RequestReservation','SourceSnapshot','ArenaInstall','SdkPreparation'],stages
     assert before==subprocess.check_output(['git','--no-optional-locks','-C',str(root),'status','--porcelain=v1']), 'Host checks changed source status'
-    result=dict(passed=True,rust_test_groups=7,java_decoder_controls=61,production_java_failure_points=9,
+    java_controls=int(re.search(r'(\d+)',(out/'java-decoder.stdout').read_text()).group(1))
+    rust_groups=int(re.search(r'test result: ok\. (\d+) passed',(out/'rust-tests.stdout').read_text()).group(1))
+    java_enum=re.search(r'enum NativeGuard\s*\{([^}]+)\}',(java/'EmbeddedDuplexPreparationDiagnostic.java').read_text(),re.S).group(1)
+    java_guards={s.strip().lower() for s in java_enum.split(',')}
+    rust_guards=set(re.findall(r'Self::\w+\s*=>\s*"([a-z_]+)"',(native/'preparation_native_guard.rs').read_text()))-{'call_failed','predicate_rejected'}
+    assert java_guards==rust_guards,'Closed Java/native guard vocabulary differs'
+    result=dict(passed=True,rust_test_groups=rust_groups,java_decoder_controls=java_controls,production_java_failure_points=9,
         source_boundary_controls=6,native_sibling_layout_controls=2,source_status_unchanged=True,cargo_or_apk_build=False,device_effects=0,
         android_api_compile=True,android_jar_sha256=hashlib.sha256(android_jar.read_bytes()).hexdigest())
     (out/'RESULT.json').write_text(json.dumps(result,indent=2),encoding='utf-8');print(json.dumps(result))

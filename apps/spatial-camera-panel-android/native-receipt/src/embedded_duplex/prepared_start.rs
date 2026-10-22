@@ -316,7 +316,7 @@ pub(super) fn diagnostic(host: &Host, input: &str) -> Result<String, String> {
         .read(&actor, expected)
         .map_err(|_| "preparation diagnostic actor/Original unavailable")?;
     host.capability.require_live()?;
-    Ok(json!({"$schema":"rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v1",
+    Ok(json!({"$schema":"rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v2",
         "operation":"prepare_peer_start","app_process_generation":actor.app_generation,
         "app_record_sha256":actor.app_record,"native_executor_generation":actor.native_generation,
         "config_sha256":actor.config,"state":view.as_ref().map_or("unobserved",|v|v.state.name()),
@@ -327,6 +327,8 @@ pub(super) fn diagnostic(host: &Host, input: &str) -> Result<String, String> {
         "reason":view.as_ref().and_then(|v|v.reason.map(Reason::name)),
         "arena_installed":view.as_ref().map(|v|v.arena_installed),
         "java_failed_guard":view.as_ref().and_then(|v|v.java_guard.map(JavaGuard::name)),
+        "native_failed_guard":view.as_ref().and_then(|v|v.native_guard.map(|g|g.name())),
+        "native_failed_reason":view.as_ref().and_then(|v|v.native_reason.map(|r|r.name())),
         "physical_predicates":view.as_ref().and_then(|v|v.physical.as_ref()).map(|p|json!({
             "shape_matches":p.shape,"schema_matches":p.schema,"app_generation_matches":p.app_generation,
             "app_record_matches":p.app_record,"native_generation_matches":p.native_generation,"config_matches":p.config,
@@ -366,7 +368,7 @@ fn run_observed(host: &Host, attempt: &Attempt) -> Result<String, String> {
         },
     )?;
     let native = attempt.call(Stage::NativeEligibility, Reason::CallFailed, || {
-        peer_lifecycle::fresh_setup_eligibility(host)
+        peer_lifecycle::fresh_setup_eligibility_observed(host, &|guard,reason| attempt.native_failure(guard,reason))
     })?;
     const E: [&str; 8] = [
         "$schema",

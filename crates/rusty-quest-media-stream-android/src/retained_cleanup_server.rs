@@ -527,6 +527,74 @@ mod tests {
     }
 
     #[test]
+    fn projected_history_cannot_reenter_old_signed_cleanup_in_a_new_executor() {
+        // Model only the active replay projection supplied by a committed
+        // disposition. The archive/authentication of that projection is Java's
+        // separate owner; this test executes the actual native ingress gate.
+        let (request, coordinator, projection, old_target) = fixture();
+        let key = coordinator.0.verifying_key().to_bytes();
+        assert_eq!(
+            verify_signed_retained_cleanup_request(
+                &request, &projection, &old_target, 9, "peer.b", "key.peer.a.1", &key, 100,
+            ),
+            Ok(())
+        );
+        struct NextSource {
+            projection: RetainedCleanupAuthorityProjection,
+            target: AndroidMediaExecutionTicket,
+            key: [u8; 32],
+            calls: Arc<AtomicUsize>,
+        }
+        impl RetainedCleanupAuthoritySource for NextSource {
+            fn current_source(
+                &self,
+                _: &RetainedCleanupDispatchRequest,
+                _: u64,
+            ) -> Result<RetainedCleanupLiveSource, String> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(RetainedCleanupLiveSource {
+                    projection: self.projection.clone(),
+                    expected_target: self.target.clone(),
+                    executor_generation: 10,
+                    signer_key_id: "key.peer.a.1".into(),
+                    signer_key: self.key,
+                })
+            }
+        }
+        struct CountStore(Arc<AtomicUsize>);
+        impl RetainedCleanupReplayStore for CountStore {
+            fn commit(&mut self, _: &RetainedCleanupReplaySnapshot) -> Result<(), String> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+        let mut current_target = old_target;
+        current_target.executor_generation = 10;
+        let source_calls = Arc::new(AtomicUsize::new(0));
+        let registry_calls = Arc::new(AtomicUsize::new(0));
+        let store_calls = Arc::new(AtomicUsize::new(0));
+        let mut current = RetainedCleanupDispatchServer::restore(
+            "peer.b".into(),
+            "key.peer.b.1".into(),
+            NextSource { projection, target: current_target, key, calls: source_calls.clone() },
+            Registry(registry_calls.clone()),
+            TestSigner(SigningKey::from_bytes(&[28; 32]), "key.peer.b.1"),
+            Clock,
+            RetainedCleanupReplaySnapshot::default(),
+            CountStore(store_calls.clone()),
+        ).unwrap();
+        // Request age is zero, signature and retained authority are valid.
+        // Its old target is rejected before write-ahead reservation or effects.
+        for _ in 0..2 {
+            assert_eq!(current.handle(&request), Err("retained cleanup target/requester mismatch".into()));
+        }
+        assert_eq!(source_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(store_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(registry_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(current.replay_snapshot(), RetainedCleanupReplaySnapshot::default());
+    }
+
+    #[test]
     fn uncertain_effect_remains_pending_without_second_owner_entry() {
         let (request, coordinator, projection, target) = fixture();
         let executor = TestSigner(SigningKey::from_bytes(&[28; 32]), "key.peer.b.1");

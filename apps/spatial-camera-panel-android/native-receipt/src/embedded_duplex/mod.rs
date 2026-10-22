@@ -22,6 +22,7 @@ mod owner_transport_attempt_read;
 pub(crate) mod packaged_config;
 pub(crate) mod packaged_route;
 pub(crate) mod pair_lifetime_policy;
+mod preparation_native_guard;
 #[cfg(any(target_os = "android", test))]
 mod remote_owner_close;
 #[cfg(target_os = "android")]

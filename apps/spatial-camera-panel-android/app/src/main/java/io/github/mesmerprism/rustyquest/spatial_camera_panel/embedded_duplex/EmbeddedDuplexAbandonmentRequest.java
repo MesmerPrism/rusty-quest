@@ -56,6 +56,20 @@ public final class EmbeddedDuplexAbandonmentRequest {
     }
     boolean historical() throws Exception {return replayDisposition(json());}
     boolean crossBoot() throws Exception {return EmbeddedDuplexKnownBirthAbandonment.crossBoot(json());}
+    boolean requiresBootObservation() throws Exception {return crossBoot() || EmbeddedDuplexKnownBirthAbandonment.replayScope(json());}
+    static Set<String> preservedRecords(JSONObject auth) {
+        return EmbeddedDuplexKnownBirthAbandonment.supported(auth)?EmbeddedDuplexKnownBirthAbandonment.records(auth):EmbeddedDuplexHistoricalAbandonment.RECORDS;
+    }
+    static String preservedDigest(JSONObject auth,String name)throws Exception{
+        Object value=auth.getJSONObject("historical_peers").getJSONObject(auth.getString("role_id"))
+            .getJSONObject("preserved_records").get(name);
+        if(EmbeddedDuplexKnownBirthAbandonment.replayScope(auth) && EmbeddedDuplexKnownBirthAbandonment.CLEANUP_RECORD.equals(name) && value==JSONObject.NULL)return "-";
+        return (String)value;
+    }
+    static boolean projectsReplay(JSONObject auth,String name) {
+        return Set.of("owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup-preparations.v1.json").contains(name)
+            || (EmbeddedDuplexKnownBirthAbandonment.replayScope(auth) && EmbeddedDuplexKnownBirthAbandonment.CLEANUP_RECORD.equals(name));
+    }
     void requireCurrent(int pid,int uid,long ticks,long generation) throws Exception {
         if(EmbeddedDuplexKnownBirthAbandonment.supported(json()))
             EmbeddedDuplexKnownBirthAbandonment.requireCurrent(json(),pid,uid,ticks,generation);

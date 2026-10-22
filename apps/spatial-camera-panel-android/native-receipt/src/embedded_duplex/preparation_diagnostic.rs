@@ -1,4 +1,7 @@
 //! Bounded observation of actual preparation calls. No authority or callbacks.
+use crate::embedded_duplex::preparation_native_guard::{
+    FailureReason as NativeReason, Guard as NativeGuard,
+};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -170,6 +173,8 @@ pub(crate) struct Observation {
     pub arena_installed: bool,
     pub physical: Option<PhysicalPredicates>,
     pub java_guard: Option<JavaGuard>,
+    pub native_guard: Option<NativeGuard>,
+    pub native_reason: Option<NativeReason>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReadError {
@@ -239,6 +244,8 @@ impl Attempt {
                 arena_installed: false,
                 physical: None,
                 java_guard: None,
+                native_guard: None,
+                native_reason: None,
             });
             Some(next)
         });
@@ -317,6 +324,17 @@ impl Attempt {
                 value.stage = Some(Stage::JavaEligibility);
                 value.reason = Some(Reason::JavaGuardFailed);
                 value.java_guard = Some(guard);
+            }
+        })
+    }
+    pub fn native_failure(&self, guard: NativeGuard, reason: NativeReason) {
+        self.update(|value| {
+            if value.state == State::Entered {
+                value.state = State::Failed;
+                value.stage = Some(Stage::NativeEligibility);
+                value.reason = Some(Reason::CallFailed);
+                value.native_guard = Some(guard);
+                value.native_reason = Some(reason);
             }
         })
     }

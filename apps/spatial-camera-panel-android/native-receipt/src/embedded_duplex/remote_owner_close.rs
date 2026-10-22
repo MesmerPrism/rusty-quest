@@ -1,4 +1,5 @@
 //! Closure of current-process remote receiver effects, never a local media Stop.
+use super::preparation_native_guard::{Guard as NativeGuard, FailureReason as NativeReason, Trace as NativeTrace};
 use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_quest_broker_authority::packaged_json_sha256;
 use rusty_quest_media_stream::MediaStreamOwnerKind;
@@ -45,6 +46,30 @@ fn verify_receiver_history(
     executor_generation: u64,
     restored: bool,
 ) -> Result<Value, String> {
+    let trace = NativeTrace::new(&|_, _| {});
+    verify_receiver_history_observed(
+        replay,
+        activation,
+        public_key,
+        key_id,
+        executor_generation,
+        restored,
+        &trace,
+    )
+}
+fn verify_receiver_history_observed(
+    replay: &OwnerDispatchReplaySnapshot,
+    activation: &ProductActivationReplaySnapshot,
+    public_key: &[u8; 32],
+    key_id: &str,
+    executor_generation: u64,
+    restored: bool,
+    trace: &NativeTrace<'_>,
+) -> Result<Value, String> {
+    trace.mark(
+        NativeGuard::ReceiverCompleteHistory,
+        NativeReason::PredicateRejected,
+    );
     if restored
         || executor_generation == 0
         || key_id.is_empty()
@@ -55,6 +80,7 @@ fn verify_receiver_history(
     {
         return Err("remote-owner closure requires current complete receiver history".into());
     }
+    trace.mark(NativeGuard::ReceiverKey, NativeReason::CallFailed);
     let key = VerifyingKey::from_bytes(public_key).map_err(|_| "remote-owner closure key")?;
     let mut groups: BTreeMap<
         (String, String, String, String, String),
@@ -62,6 +88,10 @@ fn verify_receiver_history(
     > = BTreeMap::new();
     let mut ids = BTreeSet::new();
     for (id, response) in &replay.terminal {
+        trace.mark(
+            NativeGuard::ReceiverResponseIdentity,
+            NativeReason::PredicateRejected,
+        );
         if response.schema_id != OWNER_DISPATCH_RESPONSE_SCHEMA
             || &response.dispatch_id != id
             || response.signer_key_id != key_id
@@ -75,19 +105,29 @@ fn verify_receiver_history(
         {
             return Err("remote-owner terminal response identity".into());
         }
+        trace.mark(NativeGuard::ReceiverSignature, NativeReason::CallFailed);
         key.verify_strict(
             &response_signing_bytes(response)?,
             &Signature::from_bytes(&decode_signature_base64(&response.signature_base64)?),
         )
         .map_err(|_| "remote-owner terminal signature")?;
+        trace.mark(NativeGuard::ReceiverEffect, NativeReason::PredicateRejected);
         let effect = response
             .effect
             .as_ref()
             .ok_or("remote-owner terminal effect absent")?;
+        trace.mark(
+            NativeGuard::ReceiverReadbackDecode,
+            NativeReason::CallFailed,
+        );
         let raw: AndroidMediaOwnerReadback = serde_json::from_str(&effect.readback_json)
             .map_err(|_| "remote-owner readback JSON")?;
         let r = &effect.readback;
         let v = &effect.verified;
+        trace.mark(
+            NativeGuard::ReceiverReadbackBinding,
+            NativeReason::PredicateRejected,
+        );
         if raw != *r
             || r.schema_id != ANDROID_MEDIA_READBACK_SCHEMA
             || r.owner_kind != MediaStreamOwnerKind::Sink
@@ -112,6 +152,7 @@ fn verify_receiver_history(
         {
             return Err("remote-owner authenticated registry readback differs".into());
         }
+        trace.mark(NativeGuard::ReceiverState, NativeReason::PredicateRejected);
         let stopped = match (
             r.operation,
             r.action_kind,
@@ -141,6 +182,10 @@ fn verify_receiver_history(
                 r.provider_handle_id.clone(),
             ))
             .or_default();
+        trace.mark(
+            NativeGuard::ReceiverRevision,
+            NativeReason::PredicateRejected,
+        );
         if group
             .insert(r.provider_state_revision, (stopped, r.receipt_id.clone()))
             .is_some()
@@ -150,6 +195,10 @@ fn verify_receiver_history(
     }
     let mut stops = Vec::new();
     for history in groups.values() {
+        trace.mark(
+            NativeGuard::ReceiverLatestStop,
+            NativeReason::PredicateRejected,
+        );
         let (_, last) = history
             .last_key_value()
             .ok_or("remote-owner history absent")?;
@@ -159,6 +208,10 @@ fn verify_receiver_history(
         stops.push(last.1.clone());
     }
     for (id, response) in &activation.terminal {
+        trace.mark(
+            NativeGuard::ReceiverActivationIdentity,
+            NativeReason::PredicateRejected,
+        );
         if response.schema_id != PRODUCT_ACTIVATION_RESPONSE_SCHEMA
             || &response.activation_id != id
             || response.signer_key_id != key_id
@@ -171,6 +224,10 @@ fn verify_receiver_history(
         {
             return Err("remote-owner activation history is incomplete".into());
         }
+        trace.mark(
+            NativeGuard::ReceiverActivationSignature,
+            NativeReason::CallFailed,
+        );
         key.verify_strict(
             &product_activation_response_signing_bytes(response)?,
             &Signature::from_bytes(&decode_signature_base64(&response.signature_base64)?),
@@ -489,6 +546,30 @@ pub(crate) fn fresh_setup_receiver_history(
     executor_generation: u64,
     restored: bool,
 ) -> Result<Value, String> {
+    let trace = NativeTrace::new(&|_, _| {});
+    fresh_setup_receiver_history_observed(
+        replay,
+        activation,
+        public_key,
+        key_id,
+        executor_generation,
+        restored,
+        &trace,
+    )
+}
+pub(crate) fn fresh_setup_receiver_history_observed(
+    replay: &OwnerDispatchReplaySnapshot,
+    activation: &ProductActivationReplaySnapshot,
+    public_key: &[u8; 32],
+    key_id: &str,
+    executor_generation: u64,
+    restored: bool,
+    trace: &NativeTrace<'_>,
+) -> Result<Value, String> {
+    trace.mark(
+        NativeGuard::ReceiverRestoredHistory,
+        NativeReason::PredicateRejected,
+    );
     if restored
         || executor_generation == 0
         || !replay.pending_request_sha256.is_empty()
@@ -497,6 +578,10 @@ pub(crate) fn fresh_setup_receiver_history(
         return Err("fresh incoming history unresolved or restored".into());
     }
     if replay.terminal.is_empty() {
+        trace.mark(
+            NativeGuard::ReceiverActivationWithoutHistory,
+            NativeReason::PredicateRejected,
+        );
         if !activation.terminal.is_empty() {
             return Err("fresh activation without incoming history".into());
         }
@@ -505,13 +590,14 @@ pub(crate) fn fresh_setup_receiver_history(
             "state":"never_started","executor_generation":executor_generation,"physical_cleanup_claimed":false}),
         );
     }
-    let history = verify_receiver_history(
+    let history = verify_receiver_history_observed(
         replay,
         activation,
         public_key,
         key_id,
         executor_generation,
         restored,
+        trace,
     )?;
     Ok(
         json!({"$schema":"rusty.quest.embedded_duplex.fresh_setup_receiver_history.v1",

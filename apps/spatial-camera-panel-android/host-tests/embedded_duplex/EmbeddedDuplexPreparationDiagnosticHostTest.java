@@ -17,6 +17,23 @@ public final class EmbeddedDuplexPreparationDiagnosticHostTest {
     static void reject(Action action)throws Exception{try{action.run();}catch(IllegalArgumentException expected){controls++;return;}throw new AssertionError("negative accepted");}
     static void check(boolean value){if(!value)throw new AssertionError();controls++;}
     public static void main(String[] args)throws Exception{
+        JSONObject nativeV2=failed().put("$schema","rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v2")
+            .put("stage","native_eligibility").put("native_failed_guard","receiver_restored_history").put("native_failed_reason","predicate_rejected");
+        check(read(nativeV2,actor(),ID).getString("native_failed_guard").equals("receiver_restored_history"));
+        for(EmbeddedDuplexPreparationDiagnostic.NativeGuard guard:EmbeddedDuplexPreparationDiagnostic.NativeGuard.values())for(String reason:new String[]{"call_failed","predicate_rejected"}){
+            JSONObject observed=new JSONObject(nativeV2.toString()).put("native_failed_guard",guard.name().toLowerCase(java.util.Locale.ROOT)).put("native_failed_reason",reason);
+            String beforeRead=observed.toString();check(read(observed,actor(),ID).getString("native_failed_reason").equals(reason));check(beforeRead.equals(observed.toString()));
+        }
+        for(String field:new String[]{"native_failed_guard","native_failed_reason"}){
+            JSONObject raw=new JSONObject(nativeV2.toString()).put(field,"private exception text");reject(()->read(raw,actor(),ID));
+            JSONObject partial=new JSONObject(nativeV2.toString()).put(field,JSONObject.NULL);reject(()->read(partial,actor(),ID));
+        }
+        reject(()->read(new JSONObject(nativeV2.toString()).put("stage","java_eligibility"),actor(),ID));
+        reject(()->read(new JSONObject(nativeV2.toString()).put("reason","predicate_rejected"),actor(),ID));
+        reject(()->read(new JSONObject(nativeV2.toString()).put("$schema","rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v1"),actor(),ID));
+        JSONObject preNative=failed().put("$schema","rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v2")
+            .put("native_failed_guard",JSONObject.NULL).put("native_failed_reason",JSONObject.NULL);
+        check(read(preNative,actor(),ID).isNull("native_failed_guard"));
         JSONObject original=failed();String before=original.toString();
         JSONObject value=read(original,actor(),ID);check(before.equals(original.toString()));
         check(!value.getJSONObject("java_census").getBoolean("cleanup_proven"));

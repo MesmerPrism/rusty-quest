@@ -1,4 +1,5 @@
 //! Fixed signed prepare/commit cleanup; original target and fresh requester are separate.
+use super::super::preparation_native_guard::{Guard as NativeGuard, FailureReason as NativeReason, Trace as NativeTrace};
 use super::*;
 use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_quest_media_stream_android::*;
@@ -144,8 +145,19 @@ impl Cleanup {
         &self,
         replay: &RetainedCleanupReplaySnapshot,
     ) -> Result<(), String> {
+        let trace = NativeTrace::new(&|_, _| {});
+        self.fresh_setup_quiescence_observed(replay, &trace)
+    }
+    pub(super) fn fresh_setup_quiescence_observed(
+        &self,
+        replay: &RetainedCleanupReplaySnapshot,
+        trace: &NativeTrace<'_>,
+    ) -> Result<(), String> {
+        trace.mark(NativeGuard::CleanupState, NativeReason::CallFailed);
         self.require_state()?;
+        trace.mark(NativeGuard::CleanupPublicKey, NativeReason::CallFailed);
         let public_key = self.callbacks.local_public_key()?;
+        trace.mark(NativeGuard::CleanupSerial, NativeReason::CallFailed);
         let serial = self
             .serial
             .try_lock()
@@ -153,42 +165,85 @@ impl Cleanup {
         if serial.is_none() {
             return Err("fresh cleanup mutation checked out".into());
         }
+        trace.mark(NativeGuard::CleanupStateLock, NativeReason::CallFailed);
         let state = self
             .state
             .try_lock()
             .map_err(|_| "fresh cleanup retained state busy")?;
+        trace.mark(
+            NativeGuard::CleanupForwardOriginal,
+            NativeReason::PredicateRejected,
+        );
         if state.originals.values().any(|o| o.effect.is_none()) {
             return Err("fresh cleanup forward original unresolved".into());
         }
+        trace.mark(
+            NativeGuard::CleanupPreparedTerminal,
+            NativeReason::PredicateRejected,
+        );
         for id in state.prepared.keys() {
             if !replay.terminal.contains_key(id) {
                 return Err("fresh cleanup Prepare lacks terminal original".into());
             }
         }
+        trace.mark(NativeGuard::CleanupReplayShape, NativeReason::CallFailed);
         replay.validate().map_err(str::to_owned)?;
+        trace.mark(NativeGuard::CleanupPending, NativeReason::PredicateRejected);
         if !replay.pending_request_sha256.is_empty() {
             return Err("fresh cleanup original pending".into());
         }
         for (id, terminal) in &replay.terminal {
-            let r: RetainedCleanupDispatchResponse =
-                serde_json::from_slice(&terminal.response_bytes)
-                    .map_err(|_| "fresh cleanup response decode")?;
+            trace.mark(NativeGuard::CleanupResponseDecode, NativeReason::CallFailed);
+            let r: RetainedCleanupDispatchResponse = serde_json::from_slice(&terminal.response_bytes)
+                .map_err(|_| "fresh cleanup response decode")?;
+            trace.mark(
+                NativeGuard::CleanupResponseIdentity,
+                NativeReason::PredicateRejected,
+            );
             if r.schema_id != RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA
                 || &r.dispatch_id != id
                 || r.executor_peer_id != self.local
                 || r.signer_key_id != self.callbacks.key_id()
                 || r.request_sha256 != terminal.request_sha256
-                || r.status != OwnerDispatchStatus::Completed
-                || r.failure.is_some()
-                || !r.effect.as_ref().is_some_and(|e| {
-                    e.verified.terminal
-                        && e.readback.executor_generation == self.generation
-                        && e.readback.operation == MediaStreamPlatformOperation::Stop
-                        && e.readback.observed_state == "stopped"
-                })
             {
                 return Err("fresh cleanup terminal original not completed".into());
             }
+            trace.mark(
+                NativeGuard::CleanupResponseCompleted,
+                NativeReason::PredicateRejected,
+            );
+            if r.status != OwnerDispatchStatus::Completed || r.failure.is_some() {
+                return Err("fresh cleanup terminal original not completed".into());
+            }
+            trace.mark(
+                NativeGuard::CleanupResponseTerminal,
+                NativeReason::PredicateRejected,
+            );
+            let effect = r
+                .effect
+                .as_ref()
+                .filter(|e| e.verified.terminal)
+                .ok_or("fresh cleanup terminal original not completed")?;
+            trace.mark(
+                NativeGuard::CleanupResponseGeneration,
+                NativeReason::PredicateRejected,
+            );
+            if effect.readback.executor_generation != self.generation {
+                return Err("fresh cleanup terminal original not completed".into());
+            }
+            trace.mark(
+                NativeGuard::CleanupResponseStop,
+                NativeReason::PredicateRejected,
+            );
+            if effect.readback.operation != MediaStreamPlatformOperation::Stop
+                || effect.readback.observed_state != "stopped"
+            {
+                return Err("fresh cleanup terminal original not completed".into());
+            }
+            trace.mark(
+                NativeGuard::CleanupResponseSignature,
+                NativeReason::CallFailed,
+            );
             VerifyingKey::from_bytes(&public_key)
                 .map_err(|_| "fresh cleanup key")?
                 .verify_strict(

@@ -33,7 +33,7 @@ def main():
     rust = out / 'rust'
     (rust / 'src').mkdir(parents=True)
     module = root / 'apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex/remote_owner_close.rs'
-    (rust / 'src/lib.rs').write_text('#[path=' + json.dumps(module.as_posix()) + ']\nmod remote_owner_close;\n', encoding='utf-8')
+    (rust / 'src/lib.rs').write_text('#[path=' + json.dumps(module.as_posix()) + ']\nmod remote_owner_close;\n' + '#[path=' + json.dumps((module.parent/'preparation_native_guard.rs').as_posix()) + ']\nmod preparation_native_guard;\n', encoding='utf-8')
     dependencies = '\n'.join(name + '={path=' + json.dumps((a.supplier_quest_root.resolve() / 'crates' / name).as_posix()) + '}' for name in ['rusty-quest-media-stream-android', 'rusty-quest-media-stream', 'rusty-quest-broker-authority'])
     (rust / 'Cargo.toml').write_text('[package]\nname="remote-owner-close-host"\nversion="0.0.0"\nedition="2021"\n[workspace]\n[dependencies]\ned25519-dalek={version="=2.1.1",default-features=false,features=["std","zeroize"]}\nserde_json="1"\n' + dependencies + '\n', encoding='utf-8')
     run('rust', [a.cargo, 'test', '--offline', '--manifest-path', str(rust / 'Cargo.toml'), '--target-dir', str(out / 'cargo'), '--', '--test-threads=1'])

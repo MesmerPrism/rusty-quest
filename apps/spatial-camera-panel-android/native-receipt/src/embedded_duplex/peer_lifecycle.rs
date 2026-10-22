@@ -1,5 +1,6 @@
 //! Fixed installed-app operations. External callers select an enum word only;
 //! all authority identity, revisions, time and randomness remain native-owned.
+use super::super::preparation_native_guard::{Guard as NativeGuard, FailureReason as NativeReason, Trace as NativeTrace};
 use super::*;
 use rusty_quest_broker_authority::QuestConcurrentPeerCommand;
 use rusty_quest_broker_authority::{
@@ -101,13 +102,26 @@ fn remote_receiver_observation(host: &Host, state: &State) -> Result<Value, Stri
 /// Actual native prerequisites for the private fresh setup phase. Historical
 /// diagnostics never substitute for current absence/terminal proofs.
 pub(super) fn fresh_setup_eligibility(host: &Host) -> Result<Value, String> {
+    fresh_setup_eligibility_observed(host, &|_, _| {})
+}
+pub(super) fn fresh_setup_eligibility_observed(
+    host: &Host,
+    observe: &dyn Fn(NativeGuard, NativeReason),
+) -> Result<Value, String> {
+    let trace = NativeTrace::new(observe);
+    trace.run(|| fresh_setup_eligibility_inner(host, &trace))
+}
+fn fresh_setup_eligibility_inner(host: &Host, trace: &NativeTrace<'_>) -> Result<Value, String> {
+    trace.mark(NativeGuard::Capability, NativeReason::CallFailed);
     host.capability.require_live()?;
+    trace.mark(NativeGuard::LocalSlot, NativeReason::CallFailed);
     let local = {
         let slot = host
             .peer_lifecycle
             .try_lock()
             .map_err(|_| "fresh local lifecycle busy")?;
         let state = slot.as_ref().ok_or("fresh local lifecycle checked out")?;
+        trace.mark(NativeGuard::LocalState, NativeReason::PredicateRejected);
         if state.renewal_pending || state.whole_close_requested {
             return Err("fresh setup has pending renewal or whole close".into());
         }
@@ -138,16 +152,19 @@ pub(super) fn fresh_setup_eligibility(host: &Host) -> Result<Value, String> {
             "renewal_count":state.renewal_count,"renewal_total":state.renewals.len(),
             "current_lifetime_renewal_count":state.current_lifetime_renewal_count})
     };
+    trace.mark(NativeGuard::ActivationSlot, NativeReason::CallFailed);
     let activation = host
         .activation_sender
         .try_lock()
         .map_err(|_| "fresh activation sender busy")?;
-    if let Some(pending) = activation
+    let sender = activation
         .as_ref()
-        .ok_or("fresh activation sender checked out")?
-        .pending
-        .as_ref()
-    {
+        .ok_or("fresh activation sender checked out")?;
+    trace.mark(
+        NativeGuard::ActivationFlight,
+        NativeReason::PredicateRejected,
+    );
+    if let Some(pending) = sender.pending.as_ref() {
         // complete_start intentionally retains historical acknowledgement
         // material. It is not an unresolved flight after a genuine normal Stop.
         // Do not clear it: start() transfers the prior lifetime and then clears.
@@ -165,6 +182,7 @@ pub(super) fn fresh_setup_eligibility(host: &Host) -> Result<Value, String> {
         }
     }
     drop(activation);
+    trace.mark(NativeGuard::DispatchSlot, NativeReason::CallFailed);
     let replay = {
         let slot = host
             .server
@@ -174,6 +192,7 @@ pub(super) fn fresh_setup_eligibility(host: &Host) -> Result<Value, String> {
             .ok_or("fresh dispatch slot checked out")?
             .replay_snapshot()
     };
+    trace.mark(NativeGuard::ActivationReplaySlot, NativeReason::CallFailed);
     let activation = {
         let slot = host
             .activation_server
@@ -183,6 +202,7 @@ pub(super) fn fresh_setup_eligibility(host: &Host) -> Result<Value, String> {
             .ok_or("fresh activation slot checked out")?
             .replay_snapshot()
     };
+    trace.mark(NativeGuard::CleanupReplaySlot, NativeReason::CallFailed);
     let cleanup = {
         let slot = host
             .cleanup_server
@@ -192,6 +212,7 @@ pub(super) fn fresh_setup_eligibility(host: &Host) -> Result<Value, String> {
             .ok_or("fresh cleanup slot checked out")?
             .replay_snapshot()
     };
+    trace.mark(NativeGuard::InboundPending, NativeReason::PredicateRejected);
     if !replay.pending_request_sha256.is_empty()
         || !activation.pending_request_sha256.is_empty()
         || !cleanup.pending_request_sha256.is_empty()
@@ -200,28 +221,32 @@ pub(super) fn fresh_setup_eligibility(host: &Host) -> Result<Value, String> {
     }
     // Same signed receiver history validator, under a distinct scope that makes
     // no claim about absence of a local media transaction or physical cleanup.
-    let receivers = super::super::remote_owner_close::fresh_setup_receiver_history(
+    let receivers = super::super::remote_owner_close::fresh_setup_receiver_history_observed(
         &replay,
         &activation,
         &host.local_public_key,
         host.callbacks.key_id(),
         host.capability.generation,
         host.restored_owner_replay,
+        trace,
     )?;
-    host.cleanup.fresh_setup_quiescence(&cleanup)?;
+    host.cleanup
+        .fresh_setup_quiescence_observed(&cleanup, trace)?;
+    trace.mark(NativeGuard::ProviderSlot, NativeReason::CallFailed);
     let broker = {
         let slot = host
             .provider
             .try_lock()
             .map_err(|_| "fresh provider busy")?;
-        json_value(
-            &slot
-                .as_ref()
-                .ok_or("fresh provider checked out")?
-                .evidence_json()
-                .map_err(|_| "fresh broker evidence unavailable")?,
-        )?
+        let provider = slot.as_ref().ok_or("fresh provider checked out")?;
+        trace.mark(NativeGuard::ProviderEvidence, NativeReason::CallFailed);
+        let evidence = provider
+            .evidence_json()
+            .map_err(|_| "fresh broker evidence unavailable")?;
+        trace.mark(NativeGuard::ProviderDecode, NativeReason::CallFailed);
+        json_value(&evidence)?
     };
+    trace.mark(NativeGuard::BrokerPending, NativeReason::PredicateRejected);
     if !broker
         .get("media_pending_action")
         .is_some_and(Value::is_null)

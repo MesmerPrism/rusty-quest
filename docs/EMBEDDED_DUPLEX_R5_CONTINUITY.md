@@ -803,6 +803,32 @@ crash controls. Its optional `-KnownBirthFixture` input also exercises preserved
 owner bytes supplied by an adopted external workspace. Fixture execution still
 models current actor and external absence; it performs no headset cleanup.
 
+Known-birth nonaccepting disposition v5 keeps v3's same-boot, no-Start-journal
+actor and bilateral absence contract, and adds `retained-cleanup.v2.json` to
+the exact preserved record set. Its `preserved_records` has the original four
+required digest strings plus exactly that cleanup entry: a digest when present,
+or JSON `null` when absent. Absence is checked before and after archiving; no
+file or digest is invented. The immutable authorization and committed-fence
+witness bind that choice. Live and archived sidecars, drift, wrong actor/boot,
+or a missing witness refuse the new projection. v1 through v4 retain their
+existing record sets and meanings.
+
+Only the exactly archived retired scope projects as empty after commit. A new
+or changed current cleanup record remains visible, including pending work.
+This explicitly nonaccepting disposition does not require all historical
+requests to have proved physical cleanup, and does not convert any UNKNOWN
+outcome into success. Original records and the native executor counter remain
+preserved. Fresh signed ingress and current executor/target authority still
+govern any request presented after restart; archive projection grants no old
+request a new effect.
+
+Preparation diagnostic v2 adds nullable, closed `native_failed_guard` and
+`native_failed_reason` observations at the existing native eligibility stage.
+The first actual failed subguard is retained without changing callback order,
+the primary error, or authority. Reads invoke no eligibility callback or SDK
+operation. The Java reader also accepts the unchanged v1 envelope; neither
+version certifies physical eligibility, cleanup, Pair, or streaming success.
+
 ## Failed initialization observation
 
 The existing debug `owner_failure_diagnostic` read also supports an initialization

@@ -11,6 +11,17 @@ final class EmbeddedDuplexPreparationDiagnostic {
     }
     enum Guard { CALLBACK_FENCE, TARGET_ACTOR, TARGET_FIELDS, TARGET_ORIGINAL_ACTOR, TARGET_METADATA,
         ACTOR_IDENTITY, ARM_OBSERVATION, ARM_VALIDATION, ORIGINAL_BINDING, PHYSICAL_OBSERVATION, CALLBACK_CLOSE }
+    enum NativeGuard { CAPABILITY, LOCAL_SLOT, LOCAL_STATE, ACTIVATION_SLOT, ACTIVATION_FLIGHT,
+        DISPATCH_SLOT, ACTIVATION_REPLAY_SLOT, CLEANUP_REPLAY_SLOT, INBOUND_PENDING,
+        RECEIVER_RESTORED_HISTORY, RECEIVER_ACTIVATION_WITHOUT_HISTORY, RECEIVER_COMPLETE_HISTORY,
+        RECEIVER_KEY, RECEIVER_RESPONSE_IDENTITY, RECEIVER_SIGNATURE, RECEIVER_EFFECT,
+        RECEIVER_READBACK_DECODE, RECEIVER_READBACK_BINDING, RECEIVER_STATE, RECEIVER_REVISION,
+        RECEIVER_LATEST_STOP, RECEIVER_ACTIVATION_IDENTITY, RECEIVER_ACTIVATION_SIGNATURE,
+        CLEANUP_STATE, CLEANUP_PUBLIC_KEY, CLEANUP_SERIAL, CLEANUP_STATE_LOCK, CLEANUP_FORWARD_ORIGINAL,
+        CLEANUP_PREPARED_TERMINAL, CLEANUP_REPLAY_SHAPE, CLEANUP_PENDING, CLEANUP_RESPONSE_DECODE,
+        CLEANUP_RESPONSE_IDENTITY, CLEANUP_RESPONSE_COMPLETED, CLEANUP_RESPONSE_TERMINAL,
+        CLEANUP_RESPONSE_GENERATION, CLEANUP_RESPONSE_STOP, CLEANUP_RESPONSE_SIGNATURE,
+        PROVIDER_SLOT, PROVIDER_EVIDENCE, PROVIDER_DECODE, BROKER_PENDING }
     interface Call<T>{T run()throws Exception;}
     static final class EligibilityTrace {
         Guard guard=Guard.CALLBACK_FENCE;
@@ -27,10 +38,13 @@ final class EmbeddedDuplexPreparationDiagnostic {
     static JSONObject read(String raw,JSONObject actor,String expectedOriginal,String phase,
             boolean platformPresent,boolean resourcesPresent,boolean commandPresent)throws Exception {
         JSONObject value=new JSONObject(raw);
-        keys(value,"$schema","operation","app_process_generation","app_record_sha256",
+        boolean v2="rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v2".equals(value.getString("$schema"));
+        java.util.List<String> fields=new java.util.ArrayList<>(Arrays.asList("$schema","operation","app_process_generation","app_record_sha256",
             "native_executor_generation","config_sha256","state","attempt_sequence","original_id","original_bound",
-            "stage","reason","arena_installed","authority_granted","java_failed_guard","physical_predicates");
-        require("rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v1".equals(value.getString("$schema"))
+            "stage","reason","arena_installed","authority_granted","java_failed_guard","physical_predicates"));
+        if(v2){fields.add("native_failed_guard");fields.add("native_failed_reason");}
+        keys(value,fields.toArray(new String[0]));
+        require((v2||"rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v1".equals(value.getString("$schema")))
             &&"prepare_peer_start".equals(value.getString("operation"))&&Boolean.FALSE.equals(value.get("authority_granted")));
         for(String key:new String[]{"app_process_generation","native_executor_generation"})
             require((value.get(key) instanceof Long||value.get(key) instanceof Integer)&&value.getLong(key)>0&&value.getLong(key)==actor.getLong(key));
@@ -58,6 +72,15 @@ final class EmbeddedDuplexPreparationDiagnostic {
             boolean known=false;for(Guard guard:Guard.values())if(guard.name().toLowerCase(java.util.Locale.ROOT).equals(value.getString("java_failed_guard")))known=true;
             require(known);
         }else require(!"java_guard_failed".equals(value.optString("reason")));
+        if(v2){
+            require(value.isNull("native_failed_guard")==value.isNull("native_failed_reason"));
+            if(!value.isNull("native_failed_guard")){
+                require("failed".equals(state)&&"native_eligibility".equals(value.getString("stage"))&&"call_failed".equals(value.getString("reason")));
+                require(Arrays.asList("call_failed","predicate_rejected").contains(value.getString("native_failed_reason")));
+                boolean known=false;for(NativeGuard guard:NativeGuard.values())if(guard.name().toLowerCase(java.util.Locale.ROOT).equals(value.getString("native_failed_guard")))known=true;
+                require(known);
+            }
+        }
         if(!value.isNull("physical_predicates")){
             JSONObject facts=value.getJSONObject("physical_predicates");
             String[] fixed={"shape_matches","schema_matches","app_generation_matches","app_record_matches","native_generation_matches","config_matches","classification_matches","original_matches"};

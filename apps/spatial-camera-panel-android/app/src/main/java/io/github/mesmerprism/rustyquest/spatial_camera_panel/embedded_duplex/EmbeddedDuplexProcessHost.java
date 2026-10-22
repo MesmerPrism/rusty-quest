@@ -2107,7 +2107,7 @@ final class EmbeddedDuplexProcessHost {
                         component,android.os.Process.myUid(),android.os.Process.myPid());
                 if(request.historical()) request.requireCurrent(android.os.Process.myPid(),android.os.Process.myUid(),
                         EmbeddedDuplexHistoricalAbandonment.currentStartTicks(),processFence.generation());
-                if(request.crossBoot()) request.requireBoot(new String(java.nio.file.Files.readAllBytes(
+                if(request.requiresBootObservation()) request.requireBoot(new String(java.nio.file.Files.readAllBytes(
                         java.nio.file.Paths.get("/proc/sys/kernel/random/boot_id")),
                         java.nio.charset.StandardCharsets.US_ASCII).trim());
                 String receipt=processFence.abandon(checkpointSnapshot(),evidenceSnapshot(),request,

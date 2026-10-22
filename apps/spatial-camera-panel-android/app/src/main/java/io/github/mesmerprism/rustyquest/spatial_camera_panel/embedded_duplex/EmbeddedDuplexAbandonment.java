@@ -27,9 +27,9 @@ final class EmbeddedDuplexAbandonment {
     }
     /** Read-only projection of exactly archived historical maps, never native generation state. */
     static synchronized void requireReplayRead(File directory,String name) throws Exception {
-        if(!java.util.Set.of("owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup-preparations.v1.json").contains(name)) return;
         JSONObject marker=ACTIVE.get(directory.getCanonicalPath());
         if(marker==null || !EmbeddedDuplexAbandonmentRequest.replayDisposition(marker.getJSONObject("operator_authorization"))) return;
+        if(!EmbeddedDuplexAbandonmentRequest.projectsReplay(marker.getJSONObject("operator_authorization"),name))return;
         verifyArchive(directory,marker);
         File archive=new File(directory,"abandoned-"+marker.getString("scope_sha256"));
         if(!Files.exists(new File(archive,"committed-fence.raw").toPath(),LinkOption.NOFOLLOW_LINKS))
@@ -40,16 +40,17 @@ final class EmbeddedDuplexAbandonment {
     }
     static synchronized String visibleReplay(File directory,String name,String exact) throws Exception {
         requireReplayRead(directory,name);
-        if(!java.util.Set.of("owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup-preparations.v1.json").contains(name)) return exact;
         JSONObject marker=ACTIVE.get(directory.getCanonicalPath());
         if(marker==null || !EmbeddedDuplexAbandonmentRequest.replayDisposition(marker.getJSONObject("operator_authorization"))) return exact;
+        if(!EmbeddedDuplexAbandonmentRequest.projectsReplay(marker.getJSONObject("operator_authorization"),name))return exact;
         verifyArchive(directory,marker);
         File archive=new File(directory,"abandoned-"+marker.getString("scope_sha256"));
         if(!Files.exists(new File(archive,"committed-fence.raw").toPath(),LinkOption.NOFOLLOW_LINKS))
             throw new IllegalStateException("historical replay disposition uncommitted");
         JSONObject auth=marker.getJSONObject("operator_authorization");
-        String sha=auth.getJSONObject("historical_peers").getJSONObject(auth.getString("role_id"))
-                .getJSONObject("preserved_records").getString(name);
+        String sha=EmbeddedDuplexAbandonmentRequest.preservedDigest(auth,name);
+        // An authorized absent historical file never hides a newly created current file.
+        if("-".equals(sha))return exact;
         if(!EmbeddedDuplexProcessFence.digest(exact).equals(sha)) return exact;
         return name.equals("retained-cleanup-preparations.v1.json") ? "{\"originals\":{},\"prepared\":{}}"
                 : "{\"pending_request_sha256\":{},\"terminal\":{}}";
@@ -94,18 +95,32 @@ final class EmbeddedDuplexAbandonment {
         if (checkpoint != null) writeNew(new File(archive,"checkpoint.raw"),checkpoint,protection);
         if (evidence != null) writeNew(new File(archive,"evidence.raw"),evidence,protection);
         if(EmbeddedDuplexAbandonmentRequest.replayDisposition(authorization)) {
-            JSONObject digests=authorization.getJSONObject("historical_peers")
-                    .getJSONObject(authorization.getString("role_id")).getJSONObject("preserved_records");
-            for(String name:EmbeddedDuplexHistoricalAbandonment.RECORDS) {
+            for(String name:EmbeddedDuplexAbandonmentRequest.preservedRecords(authorization)) {
                 for(String suffix:java.util.List.of(".new",".bak"))
                     if(Files.exists(new File(directory,name+suffix).toPath(),LinkOption.NOFOLLOW_LINKS))
                         throw new IllegalStateException("historical record sidecar unresolved");
+                String sha=EmbeddedDuplexAbandonmentRequest.preservedDigest(authorization,name);
+                if("-".equals(sha)) {
+                    if(Files.exists(new File(directory,name).toPath(),LinkOption.NOFOLLOW_LINKS))
+                        throw new IllegalStateException("historical absent record appeared");
+                    continue;
+                }
                 String exact=read(new File(directory,name),8*1024*1024);
-                if(!EmbeddedDuplexProcessFence.digest(exact).equals(digests.getString(name)))
+                if(!EmbeddedDuplexProcessFence.digest(exact).equals(sha))
                     throw new IllegalStateException("historical durable record differs");
                 writeNew(new File(archive,"preserved-"+name),exact,protection);
-                if(!EmbeddedDuplexProcessFence.digest(read(new File(directory,name),8*1024*1024)).equals(digests.getString(name)))
+                if(!EmbeddedDuplexProcessFence.digest(read(new File(directory,name),8*1024*1024)).equals(sha))
                     throw new IllegalStateException("historical durable record changed while archiving");
+            }
+            // Recheck the entire selected set after all archive writes, including absence/sidecars.
+            if(EmbeddedDuplexKnownBirthAbandonment.replayScope(authorization))for(String name:EmbeddedDuplexAbandonmentRequest.preservedRecords(authorization)) {
+                for(String suffix:java.util.List.of(".new",".bak"))
+                    if(Files.exists(new File(directory,name+suffix).toPath(),LinkOption.NOFOLLOW_LINKS))
+                        throw new IllegalStateException("historical record sidecar changed");
+                String sha=EmbeddedDuplexAbandonmentRequest.preservedDigest(authorization,name);
+                if("-".equals(sha)) {
+                    if(Files.exists(new File(directory,name).toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("historical absent record changed");
+                }else if(!sha.equals(EmbeddedDuplexProcessFence.digest(read(new File(directory,name),8*1024*1024))))throw new IllegalStateException("historical durable record changed");
             }
         }
         JSONObject receipt = new JSONObject().put("$schema",SCHEMA)
@@ -203,10 +218,12 @@ final class EmbeddedDuplexAbandonment {
         verifyOptional(archive,"evidence.raw",marker.getString("evidence_sha256"),8*1024*1024);
         JSONObject authorization=marker.getJSONObject("operator_authorization");
         if(EmbeddedDuplexAbandonmentRequest.replayDisposition(authorization)) {
-            JSONObject digests=authorization.getJSONObject("historical_peers")
-                    .getJSONObject(authorization.getString("role_id")).getJSONObject("preserved_records");
-            for(String name:EmbeddedDuplexHistoricalAbandonment.RECORDS)
-                verifyOptional(archive,"preserved-"+name,digests.getString(name),8*1024*1024);
+            for(String name:EmbeddedDuplexAbandonmentRequest.preservedRecords(authorization)) {
+                verifyOptional(archive,"preserved-"+name,EmbeddedDuplexAbandonmentRequest.preservedDigest(authorization,name),8*1024*1024);
+                if(EmbeddedDuplexKnownBirthAbandonment.replayScope(authorization))for(String suffix:java.util.List.of(".new",".bak"))
+                    if(Files.exists(new File(archive,"preserved-"+name+suffix).toPath(),LinkOption.NOFOLLOW_LINKS))
+                        throw new IllegalStateException("historical archived record sidecar unresolved");
+            }
             File committed=new File(archive,"committed-fence.raw");
             if(Files.exists(committed.toPath(),LinkOption.NOFOLLOW_LINKS) && !read(committed,512).equals(expectedClear(archive)))
                 throw new IllegalStateException("historical commit witness differs");

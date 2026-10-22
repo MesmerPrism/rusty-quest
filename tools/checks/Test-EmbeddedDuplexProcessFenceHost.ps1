@@ -8,6 +8,7 @@ $main = Join-Path $app "src/main/java/$package"
 $test = Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexProcessFenceHostTest.java'
 $historicalTest=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexHistoricalAbandonmentHostTest.java'
 $knownBirthTest=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexKnownBirthAbandonmentHostTest.java'
+$v5Test=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexReplayScopeV5HostTest.java'
 $incarnationTest=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexProcessIncarnationHostTest.java'
 $output = Join-Path ([IO.Path]::GetTempPath()) ('duplex-fence-classes-' + [guid]::NewGuid().ToString('N'))
 [void](New-Item -ItemType Directory -Path $output)
@@ -17,6 +18,10 @@ $jsonJar=Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/fil
 if(-not $jsonJar){throw 'Host org.json test dependency unavailable'}
 & $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') $test $historicalTest $knownBirthTest $incarnationTest
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host compilation failed' }
+& $javac '--release' '17' '-encoding' 'UTF-8' '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) '-d' $output $v5Test
+if($LASTEXITCODE-ne0){throw 'Replay v5 host compilation failed'}
+& $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexReplayScopeV5HostTest'
+if($LASTEXITCODE-ne0){throw 'Replay v5 host regressions failed'}
 & $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexProcessIncarnationHostTest'
 if ($LASTEXITCODE -ne 0) { throw 'Process incarnation host regressions failed' }
 if($AndroidHome){

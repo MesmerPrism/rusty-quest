@@ -1,5 +1,11 @@
+#[path = "../../native-receipt/src/embedded_duplex/preparation_native_guard.rs"]
+pub(crate) mod preparation_native_guard;
+mod embedded_duplex {
+    pub(crate) use crate::preparation_native_guard;
+}
 #[path = "../../native-receipt/src/embedded_duplex/preparation_diagnostic.rs"]
 mod production;
+use preparation_native_guard::{FailureReason as NativeReason, Guard as NativeGuard, Trace};
 use production::*;
 use std::sync::{Arc, Mutex};
 
@@ -15,6 +21,68 @@ fn trail() -> (Arc<Mutex<Journal>>, Attempt) {
     let journal = Arc::new(Mutex::new(Journal::default()));
     let attempt = Attempt::begin(journal.clone(), actor());
     (journal, attempt)
+}
+
+#[test]
+fn native_failure_must_retain_a_closed_subguard_instead_of_only_outer_call_failed() {
+    let (journal, attempt) = trail();
+    let result: Result<(), &str> =
+        attempt.call(Stage::NativeEligibility, Reason::CallFailed, || {
+            let observe = |guard, reason| attempt.native_failure(guard, reason);
+            let trace = Trace::new(&observe);
+            trace.run(|| {
+                trace.mark(
+                    NativeGuard::ReceiverRestoredHistory,
+                    NativeReason::PredicateRejected,
+                );
+                Err("fresh incoming history unresolved or restored")
+            })
+        });
+    assert_eq!(result, Err("fresh incoming history unresolved or restored"));
+    let view = journal
+        .lock()
+        .unwrap()
+        .read(&actor(), None)
+        .unwrap()
+        .unwrap();
+    assert!(
+        format!("{view:?}").contains("native_guard: Some(ReceiverRestoredHistory)"),
+        "actual native failure lost its first closed subguard: {view:?}"
+    );
+}
+
+#[test]
+fn every_native_guard_is_closed_and_cannot_replace_first_failure_or_successor() {
+    let mut names = std::collections::BTreeSet::new();
+    for guard in NativeGuard::ALL {
+        assert!(names.insert(guard.name()));
+        assert!(guard
+            .name()
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b == b'_'));
+        let (journal, attempt) = trail();
+        let id = "c".repeat(32);
+        attempt.bind_original(&id);
+        attempt.native_failure(guard, NativeReason::PredicateRejected);
+        attempt.native_failure(NativeGuard::BrokerPending, NativeReason::CallFailed);
+        attempt.finish(true);
+        let view = journal
+            .lock()
+            .unwrap()
+            .read(&actor(), Some(&id))
+            .unwrap()
+            .unwrap();
+        assert_eq!(view.native_guard, Some(guard));
+        assert_eq!(view.native_reason, Some(NativeReason::PredicateRejected));
+        assert!(!view.arena_installed);
+        let next = Attempt::begin(journal.clone(), actor());
+        let before = journal.lock().unwrap().clone();
+        attempt.native_failure(NativeGuard::Capability, NativeReason::CallFailed);
+        assert_eq!(*journal.lock().unwrap(), before);
+        next.finish(true);
+    }
+    assert_eq!(NativeReason::CallFailed.name(), "call_failed");
+    assert_eq!(NativeReason::PredicateRejected.name(), "predicate_rejected");
 }
 
 #[test]
