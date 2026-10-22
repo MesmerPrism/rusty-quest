@@ -1,6 +1,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "QuestPropertyTransport.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "SourceComposition.psm1")
 
 function Get-QuestRunIsolationHash {
     param([Parameter(Mandatory=$true)][string]$Value)
@@ -21,7 +22,8 @@ function Get-QuestRunIsolationMutexName {
 }
 
 function Get-QuestRunIsolationSnapshotHash {
-    param([Parameter(Mandatory=$true)]$Snapshot)
+    param([Parameter(Mandatory=$true)][AllowEmptyCollection()]$Snapshot)
+    if (@($Snapshot).Count -eq 0) { return Get-QuestRunIsolationHash -Value '[]' }
     $canonical = @($Snapshot | ForEach-Object {
         [ordered]@{ name = [string]$_.name; value = [string]$_.value }
     }) | ConvertTo-Json -Compress -Depth 4
@@ -41,7 +43,13 @@ function Assert-QuestRunIsolationEnteredReceipt {
     $expectedMutexName = Get-QuestRunIsolationMutexName -Serial $ExpectedSerial
     if ([string]$Receipt.mutex_name -ne $expectedMutexName) { throw "Entered run-isolation receipt mutex identity is not bound to the expected serial." }
     $snapshot = @($Receipt.property_snapshot)
-    if ($snapshot.Count -eq 0) { throw "Entered run-isolation receipt property snapshot is empty." }
+    $hasNoneBinding = $Receipt.PSObject.Properties.Name -contains 'property_policy_binding'
+    if ($snapshot.Count -eq 0) {
+        if (-not $hasNoneBinding) { throw "Entered run-isolation receipt property snapshot is empty." }
+        $null = Assert-QuestRunNonePropertyBinding -Binding $Receipt.property_policy_binding -ExpectedPackageName $ExpectedPackageName
+        return @()
+    }
+    if ($hasNoneBinding) { throw 'Explicit-none receipt cannot carry a property snapshot.' }
     $seen = @{}
     foreach ($entry in $snapshot) {
         $name = [string]$entry.name
@@ -156,17 +164,125 @@ function Get-QuestRunCapsuleInstallApk {
     return (Resolve-Path -LiteralPath $stagePath).Path
 }
 
-function Enter-QuestRunIsolation {
+function Get-QuestRunFileRecord {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $resolved = (Resolve-Path -LiteralPath $Path -ErrorAction Stop).Path
+    if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) { throw "Capsule input is not a file: $Path" }
+    return [pscustomobject][ordered]@{ path = $resolved; sha256 = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant() }
+}
+
+function Assert-QuestRunNoneProfile {
+    param([Parameter(Mandatory=$true)]$Capsule)
+    $package = 'io.github.mesmerprism.rustyquest.development_feedback'
+    if ($Capsule.app_lane -cne 'development-feedback-android' -or $Capsule.app_id -cne 'development-feedback' -or
+        $Capsule.android.package_name -cne $package -or $Capsule.android.activity -cne "$package/$package.FeedbackActivity" -or
+        $null -ne $Capsule.property_manifest -or $null -eq $Capsule.runtime_profile) { throw 'Neutral capsule identity/property contract differs.' }
+    if (-not [IO.Path]::IsPathFullyQualified([string]$Capsule.runtime_profile.path)) { throw 'Neutral runtime profile path must be absolute.' }
+    $profileRecord = Get-QuestRunFileRecord -Path $Capsule.runtime_profile.path
+    if ($profileRecord.sha256 -cne $Capsule.runtime_profile.sha256) { throw 'Neutral runtime profile hash differs.' }
+    $profile = Get-Content -LiteralPath $profileRecord.path -Raw | ConvertFrom-Json
+    $fields = @('schema','app_lane','owner_package','property_policy','properties')
+    if (@($profile.PSObject.Properties.Name).Count -ne $fields.Count -or
+        @($profile.PSObject.Properties.Name | Where-Object { $_ -cnotin $fields }).Count -ne 0 -or
+        $profile.schema -cne 'rusty.quest.development_feedback.runtime_profile.v1' -or
+        $profile.app_lane -cne $Capsule.app_lane -or $profile.owner_package -cne $package -or
+        $profile.property_policy -cne 'none' -or $profile.properties -isnot [array] -or $profile.properties.Count -ne 0) {
+        throw 'Neutral runtime profile must be the closed package-owned explicit-none declaration.'
+    }
+}
+
+function Read-QuestRunCapsule {
     [CmdletBinding()]
+    param([Parameter(Mandatory=$true)][Alias('Path')][string]$CapsulePath, [string]$ExpectedLane = '')
+    $path = (Resolve-Path -LiteralPath $CapsulePath -ErrorAction Stop).Path
+    $capsule = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if ($ExpectedLane -and $capsule.app_lane -cne $ExpectedLane) { throw 'APK run capsule lane mismatch.' }
+    if ($capsule.app_lane -cne 'development-feedback-android') {
+        if ($capsule.app_id -ceq 'development-feedback' -or $capsule.android.package_name -ceq 'io.github.mesmerprism.rustyquest.development_feedback') { throw 'Neutral capsule cannot use a legacy lane.' }
+        # Preserve historical manual/DirtyDevFast admission rather than applying
+        # the clean-only JSON schema to legacy callers.
+        $validation = @(& pwsh -NoProfile -File (Join-Path $PSScriptRoot '../Test-ApkRunCapsule.ps1') -CapsulePath $path -ExpectedLane $ExpectedLane 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "Legacy capsule validation failed: $($validation -join ' ')" }
+        return $capsule
+    }
+    if (-not (Get-Content -LiteralPath $path -Raw | Test-Json -SchemaFile (Join-Path $PSScriptRoot '../../schemas/rusty.quest.apk_run_capsule.v1.schema.json') -ErrorAction Stop)) { throw 'Neutral capsule schema differs.' }
+    Assert-QuestRunNoneProfile -Capsule $capsule
+    foreach ($field in @('build_lock','build_manifest','apk','runtime_profile')) {
+        if (-not [IO.Path]::IsPathFullyQualified([string]$capsule.$field.path)) { throw "Neutral capsule $field path must be absolute." }
+        if ((Get-QuestRunFileRecord -Path $capsule.$field.path).sha256 -cne $capsule.$field.sha256) { throw "Neutral capsule $field hash differs." }
+    }
+    $source = $capsule.source
+    if (@($source.packages).Count -ne 1 -or $source.packages[0] -cne $capsule.android.package_name) { throw 'Neutral source application selection differs.' }
+    $records = @([pscustomobject]@{ repository_id='rusty-quest'; role='primary'; repository=$source.repository; commit=$source.commit; tree=$source.tree; tracked_worktree_clean=$source.tracked_worktree_clean; worktree_overlay_sha256='' })
+    $records += @($source.dependencies | ForEach-Object { [pscustomobject]@{ repository_id=$_.repository_id; role=$_.role; repository=$_.repository; commit=$_.commit; tree=$_.tree; tracked_worktree_clean=$_.tracked_worktree_clean; worktree_overlay_sha256='' } })
+    Assert-QuestBuildSourceCompositionCurrent -Composition ([pscustomobject]@{schema='rusty.quest.apk_source_composition.v1';fingerprint=$source.composition_fingerprint;packages=@($source.packages);repositories=$records})
+    return $capsule
+}
+
+function New-QuestRunCapsule {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][Alias('Path')][string]$CapsulePath,
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][string]$CapsuleId,
+        [Parameter(Mandatory=$true)][string]$BuildLockPath,
+        [Parameter(Mandatory=$true)][string]$BuildManifestPath,
+        [Parameter(Mandatory=$true)][string]$ApkPath,
+        [Parameter(Mandatory=$true)][string]$RuntimeProfilePath
+    )
+    $package = 'io.github.mesmerprism.rustyquest.development_feedback'
+    $composition = Get-QuestBuildSourceComposition -RepoRoot $RepoRoot -ApplicationId $package
+    $primary = @($composition.repositories | Where-Object role -CEQ 'primary')[0]
+    $capsule = [ordered]@{
+        schema='rusty.quest.apk_run_capsule.v1';capsule_id=$CapsuleId;app_id='development-feedback';app_lane='development-feedback-android'
+        source=[ordered]@{repository=$primary.repository;commit=$primary.commit;tree=$primary.tree;tracked_worktree_clean=$primary.tracked_worktree_clean;composition_fingerprint=$composition.fingerprint;packages=@($composition.packages);dependencies=@($composition.repositories | Where-Object role -CNE 'primary' | Select-Object repository_id,role,repository,commit,tree,tracked_worktree_clean)}
+        build_lock=Get-QuestRunFileRecord $BuildLockPath;build_manifest=Get-QuestRunFileRecord $BuildManifestPath;apk=Get-QuestRunFileRecord $ApkPath;runtime_profile=Get-QuestRunFileRecord $RuntimeProfilePath;property_manifest=$null
+        android=[ordered]@{package_name=$package;activity="$package/$package.FeedbackActivity"}
+        cleanup=[ordered]@{policy='always-force-stop-and-restore-exact-property-snapshot';serial_exclusive_mutex=$true;restore_on_failure=$true}
+    }
+    Assert-QuestRunNoneProfile -Capsule ([pscustomobject]$capsule)
+    $path = [IO.Path]::GetFullPath($CapsulePath)
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($capsule | ConvertTo-Json -Depth 20))
+    $stream = [IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    try { $stream.Write($bytes,0,$bytes.Length) } finally { $stream.Dispose() }
+    # This is a file/source binding, not APK inspection or build provenance.
+    return Read-QuestRunCapsule -CapsulePath $path -ExpectedLane 'development-feedback-android'
+}
+
+function Get-QuestRunNonePropertyBinding {
+    param([string]$CapsulePath,[string]$ExpectedPackageName)
+    $capsule = Read-QuestRunCapsule -CapsulePath $CapsulePath -ExpectedLane 'development-feedback-android'
+    $file = Get-QuestRunFileRecord $CapsulePath
+    $binding = [pscustomobject][ordered]@{capsule_path=$file.path;capsule_sha256=$file.sha256;runtime_profile_path=$capsule.runtime_profile.path;runtime_profile_sha256=$capsule.runtime_profile.sha256;package_name=$capsule.android.package_name;app_lane=$capsule.app_lane;property_policy='none'}
+    return Assert-QuestRunNonePropertyBinding -Binding $binding -ExpectedPackageName $ExpectedPackageName
+}
+
+function Assert-QuestRunNonePropertyBinding {
+    param([Parameter(Mandatory=$true)]$Binding,[string]$ExpectedPackageName)
+    $fields = @('capsule_path','capsule_sha256','runtime_profile_path','runtime_profile_sha256','package_name','app_lane','property_policy')
+    if (@($Binding.PSObject.Properties.Name).Count -ne $fields.Count -or @($Binding.PSObject.Properties.Name | Where-Object { $_ -cnotin $fields }).Count -ne 0 -or $Binding.package_name -cne $ExpectedPackageName -or $Binding.property_policy -cne 'none') { throw 'Explicit-none receipt binding differs.' }
+    $file = Get-QuestRunFileRecord $Binding.capsule_path
+    if ($file.sha256 -cne $Binding.capsule_sha256) { throw 'Entered capsule hash differs.' }
+    $capsule = Get-Content -LiteralPath $file.path -Raw | ConvertFrom-Json
+    if (-not (Get-Content -LiteralPath $file.path -Raw | Test-Json -SchemaFile (Join-Path $PSScriptRoot '../../schemas/rusty.quest.apk_run_capsule.v1.schema.json') -ErrorAction Stop)) { throw 'Entered neutral capsule schema differs.' }
+    Assert-QuestRunNoneProfile -Capsule $capsule
+    if ($capsule.android.package_name -cne $Binding.package_name -or $capsule.app_lane -cne $Binding.app_lane -or $capsule.runtime_profile.path -cne $Binding.runtime_profile_path -or $capsule.runtime_profile.sha256 -cne $Binding.runtime_profile_sha256) { throw 'Entered capsule/profile binding differs.' }
+    return $Binding
+}
+
+function Enter-QuestRunIsolation {
+    [CmdletBinding(DefaultParameterSetName='Properties')]
     param(
         [Parameter(Mandatory=$true)][string]$Adb,
         [Parameter(Mandatory=$true)][string]$Serial,
         [string]$AdbServerPort,
         [Parameter(Mandatory=$true)][string]$PackageName,
-        [Parameter(Mandatory=$true)][string[]]$PropertyNames,
+        [Parameter(Mandatory=$true,ParameterSetName='Properties')][string[]]$PropertyNames,
+        [Parameter(Mandatory=$true,ParameterSetName='ExplicitNone')][string]$RunCapsulePath,
         [Parameter(Mandatory=$true)][string]$ReceiptPath,
         [int]$MutexTimeoutSeconds = 120
     )
+    $noneBinding = if ($PSCmdlet.ParameterSetName -eq 'ExplicitNone') { Get-QuestRunNonePropertyBinding -CapsulePath $RunCapsulePath -ExpectedPackageName $PackageName } else { $null }
     $mutexName = Get-QuestRunIsolationMutexName -Serial $Serial
     $mutex = [Threading.Mutex]::new($false, $mutexName)
     $acquired = $false
@@ -175,19 +291,22 @@ function Enter-QuestRunIsolation {
         if (-not $acquired) { throw "Quest $Serial is already owned by another Rusty Morphospace run transaction ($mutexName)." }
         $state = Invoke-QuestRunIsolationAdb -Adb $Adb -Serial $Serial -AdbServerPort $AdbServerPort -Arguments @("get-state")
         if ([string]$state.output.Trim() -ne "device") { throw "Quest $Serial is not in device state." }
-        $snapshots = @(Get-QuestPropertySnapshot -Adb $Adb -Serial $Serial -AdbServerPort $AdbServerPort -PropertyNames $PropertyNames)
+        $snapshots = @()
+        if ($null -eq $noneBinding) { $snapshots = @(Get-QuestPropertySnapshot -Adb $Adb -Serial $Serial -AdbServerPort $AdbServerPort -PropertyNames $PropertyNames) }
         $foreground = Invoke-QuestRunIsolationAdb -Adb $Adb -Serial $Serial -AdbServerPort $AdbServerPort -Arguments @("shell", "dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'") -AllowFailure
         $receipt = [pscustomobject][ordered]@{
             schema = "rusty.quest.run_isolation_receipt.v1"; phase = "entered"; status = "active"
             entered_at = [DateTime]::UtcNow.ToString("o"); serial = $Serial; package_name = $PackageName
             mutex_name = $mutexName; property_snapshot = $snapshots; foreground_before = [string]$foreground.output
         }
+        if ($null -ne $noneBinding) { $receipt | Add-Member -NotePropertyName property_policy_binding -NotePropertyValue $noneBinding }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ReceiptPath) | Out-Null
         Write-QuestRunIsolationReceiptAtomically -Receipt $receipt -Path $ReceiptPath
         return [pscustomobject]@{
             Adb = $Adb; Serial = $Serial; AdbServerPort = $AdbServerPort; PackageName = $PackageName
             ReceiptPath = $ReceiptPath; Mutex = $mutex; MutexName = $mutexName; Acquired = $true; PropertySnapshot = $snapshots
             CompletePropertyClear = $false
+            PropertyPolicyBinding = $noneBinding
         }
     } catch {
         if ($acquired) { try { $mutex.ReleaseMutex() } catch {} }
@@ -199,6 +318,12 @@ function Enter-QuestRunIsolation {
 function Clear-QuestRunIsolationProperties {
     [CmdletBinding()]
     param([Parameter(Mandatory=$true)]$Context)
+    if ($Context.PSObject.Properties.Name -contains 'PropertyPolicyBinding' -and $null -ne $Context.PropertyPolicyBinding) {
+        if (@($Context.PropertySnapshot).Count -ne 0) { throw 'Explicit-none context cannot carry properties.' }
+        $null = Assert-QuestRunNonePropertyBinding -Binding $Context.PropertyPolicyBinding -ExpectedPackageName $Context.PackageName
+        $Context.CompletePropertyClear = $true
+        return
+    }
     $clears = @($Context.PropertySnapshot | ForEach-Object { [pscustomobject]@{ name = [string]$_.name; value = "" } })
     Set-QuestPropertyBatch -Adb $Context.Adb -Serial $Context.Serial -AdbServerPort $Context.AdbServerPort -Entries $clears
     $readback = @(Get-QuestPropertySnapshot -Adb $Context.Adb -Serial $Context.Serial -AdbServerPort $Context.AdbServerPort -PropertyNames @($clears.name))
@@ -214,9 +339,12 @@ function Exit-QuestRunIsolation {
     $errors = [Collections.Generic.List[string]]::new()
     $restores = @()
     try {
+        $isNone = $Context.PSObject.Properties.Name -contains 'PropertyPolicyBinding' -and $null -ne $Context.PropertyPolicyBinding
+        if ($isNone -and @($Context.PropertySnapshot).Count -ne 0) { throw 'Explicit-none context cannot carry properties.' }
+        if ($isNone) { $null = Assert-QuestRunNonePropertyBinding -Binding $Context.PropertyPolicyBinding -ExpectedPackageName $Context.PackageName }
         $stop = Invoke-QuestRunIsolationAdb -Adb $Context.Adb -Serial $Context.Serial -AdbServerPort $Context.AdbServerPort -Arguments @("shell", "am force-stop $(ConvertTo-QuestShellSingleQuoted -Value $Context.PackageName)") -AllowFailure
         if ($stop.exit_code -ne 0) { $errors.Add("force-stop failed: $($stop.output)") }
-        try {
+        if (-not $isNone) { try {
             Set-QuestPropertyBatch -Adb $Context.Adb -Serial $Context.Serial -AdbServerPort $Context.AdbServerPort -Entries @($Context.PropertySnapshot)
         } catch {
             $errors.Add("property restore batch failed: $($_.Exception.Message)")
@@ -242,12 +370,14 @@ function Exit-QuestRunIsolation {
             }
             $restores += [pscustomobject][ordered]@{ name = [string]$entry.name; expected_value = [string]$entry.value; observed_value = $observed; status = $status; error = $errorText }
         }
+        }
         $receipt = [pscustomobject][ordered]@{
             schema = "rusty.quest.run_isolation_receipt.v1"; phase = "cleaned"; status = if ($errors.Count -eq 0) { "pass" } else { "partial" }
             completed_at = [DateTime]::UtcNow.ToString("o"); serial = [string]$Context.Serial; package_name = [string]$Context.PackageName
             mutex_name = [string]$Context.MutexName; force_stop_exit_code = $stop.exit_code; complete_property_clear = [bool]$Context.CompletePropertyClear
             property_restore = $restores; errors = @($errors)
         }
+        if ($isNone) { $receipt | Add-Member -NotePropertyName property_policy_binding -NotePropertyValue $Context.PropertyPolicyBinding }
         Write-QuestRunIsolationReceiptAtomically -Receipt $receipt -Path $Context.ReceiptPath
         return $receipt
     } finally {
@@ -282,11 +412,13 @@ function Recover-QuestRunIsolation {
     try {
         $acquired = $mutex.WaitOne($MutexTimeoutSeconds * 1000)
         if (-not $acquired) { throw "Quest $ExpectedSerial is already owned by another Rusty Morphospace run transaction ($mutexName)." }
+        $isNone = $enteredReceipt.PSObject.Properties.Name -contains 'property_policy_binding'
+        if ($isNone) { $null = Assert-QuestRunNonePropertyBinding -Binding $enteredReceipt.property_policy_binding -ExpectedPackageName $ExpectedPackageName }
         $state = Invoke-QuestRunIsolationAdb -Adb $Adb -Serial $ExpectedSerial -AdbServerPort $AdbServerPort -Arguments @("get-state")
         if ([string]$state.output.Trim() -ne "device") { throw "Quest $ExpectedSerial is not in device state." }
         $stop = Invoke-QuestRunIsolationAdb -Adb $Adb -Serial $ExpectedSerial -AdbServerPort $AdbServerPort -Arguments @("shell", "am force-stop $(ConvertTo-QuestShellSingleQuoted -Value $ExpectedPackageName)") -AllowFailure
         if ($stop.exit_code -ne 0) { $errors.Add("force-stop failed: $($stop.output)") }
-        try {
+        if (-not $isNone) { try {
             Set-QuestPropertyBatch -Adb $Adb -Serial $ExpectedSerial -AdbServerPort $AdbServerPort -Entries $snapshot
         } catch {
             $errors.Add("property restore batch failed: $($_.Exception.Message)")
@@ -301,6 +433,7 @@ function Recover-QuestRunIsolation {
         $restoreResult = Test-QuestPropertyExactReadback -Entries $snapshot -Observed $observed
         $restores = @($restoreResult.readbacks)
         foreach ($errorText in @($restoreResult.errors)) { $errors.Add($errorText) }
+        }
         $receipt = [pscustomobject][ordered]@{
             schema = "rusty.quest.run_isolation_receipt.v1"; phase = "cleaned"; status = if ($errors.Count -eq 0) { "pass" } else { "partial" }
             completed_at = [DateTime]::UtcNow.ToString("o"); serial = $ExpectedSerial; package_name = $ExpectedPackageName
@@ -312,6 +445,7 @@ function Recover-QuestRunIsolation {
                 property_snapshot_sha256 = Get-QuestRunIsolationSnapshotHash -Snapshot $snapshot
             }
         }
+        if ($isNone) { $receipt | Add-Member -NotePropertyName property_policy_binding -NotePropertyValue $enteredReceipt.property_policy_binding }
         Write-QuestRunIsolationReceiptAtomically -Receipt $receipt -Path $terminalFullPath
         if ($errors.Count -ne 0) { throw "Quest run-isolation recovery completed partially: $($errors -join '; ')" }
         return $receipt
@@ -321,4 +455,4 @@ function Recover-QuestRunIsolation {
     }
 }
 
-Export-ModuleMember -Function Get-QuestRunCapsuleInstallApk, Enter-QuestRunIsolation, Clear-QuestRunIsolationProperties, Exit-QuestRunIsolation, Recover-QuestRunIsolation
+Export-ModuleMember -Function Read-QuestRunCapsule, New-QuestRunCapsule, Get-QuestRunCapsuleInstallApk, Enter-QuestRunIsolation, Clear-QuestRunIsolationProperties, Exit-QuestRunIsolation, Recover-QuestRunIsolation

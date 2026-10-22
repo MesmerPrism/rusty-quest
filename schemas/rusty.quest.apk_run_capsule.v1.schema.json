@@ -9,7 +9,7 @@
     "schema": { "const": "rusty.quest.apk_run_capsule.v1" },
     "capsule_id": { "type": "string", "minLength": 1 },
     "app_id": { "type": "string", "minLength": 1 },
-    "app_lane": { "enum": ["native-renderer-android", "spatial-camera-panel-android"] },
+    "app_lane": { "enum": ["native-renderer-android", "spatial-camera-panel-android", "development-feedback-android"] },
     "source": {
       "type": "object", "additionalProperties": false,
       "required": ["repository", "commit", "tree", "tracked_worktree_clean"],
@@ -80,7 +80,7 @@
       "required": ["repository_id", "role", "repository", "commit", "tree", "tracked_worktree_clean"],
       "properties": {
         "repository_id": { "type": "string", "minLength": 1 },
-        "role": { "const": "path-dependency" },
+        "role": { "enum": ["path-dependency", "app-owned-input"] },
         "repository": { "type": "string", "minLength": 1 },
         "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
         "tree": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
