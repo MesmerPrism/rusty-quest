@@ -39,6 +39,12 @@ fixed `app-owned-input` role; a root already present in Cargo retains that row.
 The builder writes `source-composition.json` before compile dispatch, reobserves
 the same document before Gradle and handoff, and binds it in the run capsule.
 Candidate/publication clean-source rules remain in effect.
+Before a cold Cargo graph is resolvable,
+`Get-QuestBuildOwnedRepositoryObservation -Root -RepositoryId` returns that same
+flat `app-owned-input` repository row. Its explicit `-AllowWorkingTreeChanges`
+uses the existing tracked/untracked overlay algorithm; the default rejects dirty
+source. This observes an owned root without creating a second composition document
+or supplying native reuse eligibility.
 Artifact directories under an added app-owned repository must be Git-ignored;
 the actual selected Android source/asset/resource directories remain excluded.
 This permits an owner's ignored artifact namespace without writing into its source.
