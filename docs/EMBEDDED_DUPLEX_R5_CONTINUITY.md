@@ -27,7 +27,9 @@ existing owner; it does not replay an UNKNOWN. No automatic retry, clear, cleanu
 or acceptance is added by this diagnostic.
 
 `tools/checks/Test-PreparationDiagnosticHost.py --output <new-host-output>
---json-jar <host-org-json-jar>` compiles the actual Rust journal and Java decoder,
+--json-jar <host-org-json-jar> --android-jar <selected-compileSdk-android.jar>`
+first compiles the complete diagnostic helper against the selected Android API,
+then compiles the actual Rust journal and Java decoder,
 and the actual Java eligibility bodies with modeled Android dependencies. It
 checks each stage, callback failure location/order, predicate retention, stale
 actor/Original rejection, counter exhaustion and repeated read purity. These

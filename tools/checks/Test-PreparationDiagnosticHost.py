@@ -1,7 +1,7 @@
 """Actual diagnostic seams, with modeled Android facts; no Cargo/APK/device work."""
 import sys
 sys.dont_write_bytecode = True
-import argparse, json, pathlib, re, subprocess
+import argparse, hashlib, json, pathlib, re, subprocess, zipfile
 
 def method(text, signature):
     start=text.index(signature); brace=text.index('{',start); depth=0; quoted=False; escape=False
@@ -19,7 +19,9 @@ def method(text, signature):
     raise AssertionError('production method incomplete')
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--output',required=True);p.add_argument('--json-jar',required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--output',required=True);p.add_argument('--json-jar',required=True)
+    p.add_argument('--android-jar',required=True,help='Selected compileSdk android.jar; desktop JSON is runtime-host-only')
+    a=p.parse_args()
     root=pathlib.Path(__file__).resolve().parents[2];out=pathlib.Path(a.output).resolve();out.mkdir(exist_ok=False)
     before=subprocess.check_output(['git','--no-optional-locks','-C',str(root),'status','--porcelain=v1'])
     def run(name,argv):
@@ -27,6 +29,13 @@ def main():
         (out/(name+'.stdout')).write_bytes(r.stdout);(out/(name+'.stderr')).write_bytes(r.stderr)
         if r.returncode:raise RuntimeError(name+' failed; retained stdout/stderr')
     app=root/'apps/spatial-camera-panel-android';java=app/'app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex'
+    # Desktop org.json can expose APIs absent from Android. Compile the complete
+    # production helper against the selected platform API before host execution.
+    android_jar=pathlib.Path(a.android_jar).resolve(strict=True)
+    with zipfile.ZipFile(android_jar) as platform:
+        assert {'android/app/Activity.class','org/json/JSONObject.class'}<=set(platform.namelist()), 'Selected Android platform API jar required'
+    android_classes=out/'android-api-classes';android_classes.mkdir()
+    run('android-api-javac',['javac','--release','17','-cp',str(android_jar),'-d',str(android_classes),str(java/'EmbeddedDuplexPreparationDiagnostic.java')])
     run('rustc',['rustc','--edition','2021','--test',str(app/'host-tests/embedded_duplex/preparation_diagnostic_tests.rs'),'-o',str(out/'rust-tests.exe')])
     run('rust-tests',[str(out/'rust-tests.exe')])
     native=app/'native-receipt/src/embedded_duplex'
@@ -124,7 +133,8 @@ class EmbeddedDuplexProcessHost{
     assert stages==['Capability','PriorArchive','OriginalRead','JavaEligibility','OriginalMatch','NativeEligibility','PhysicalEligibility','ResourceTarget','Entropy','ConstructorBinding','ResourceTargetDigest','RequestReservation','SourceSnapshot','ArenaInstall','SdkPreparation'],stages
     assert before==subprocess.check_output(['git','--no-optional-locks','-C',str(root),'status','--porcelain=v1']), 'Host checks changed source status'
     result=dict(passed=True,rust_test_groups=7,java_decoder_controls=61,production_java_failure_points=9,
-        source_boundary_controls=6,native_sibling_layout_controls=2,source_status_unchanged=True,cargo_or_apk_build=False,device_effects=0)
+        source_boundary_controls=6,native_sibling_layout_controls=2,source_status_unchanged=True,cargo_or_apk_build=False,device_effects=0,
+        android_api_compile=True,android_jar_sha256=hashlib.sha256(android_jar.read_bytes()).hexdigest())
     (out/'RESULT.json').write_text(json.dumps(result,indent=2),encoding='utf-8');print(json.dumps(result))
 
 if __name__=='__main__': main()

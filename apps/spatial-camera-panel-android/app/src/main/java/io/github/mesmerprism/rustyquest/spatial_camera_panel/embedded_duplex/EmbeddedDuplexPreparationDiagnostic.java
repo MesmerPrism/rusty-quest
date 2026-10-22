@@ -18,7 +18,12 @@ final class EmbeddedDuplexPreparationDiagnostic {
         String result(JSONObject value)throws Exception{return new JSONObject().put("value",value==null?JSONObject.NULL:value)
             .put("failure_guard",value==null?guard.name().toLowerCase(java.util.Locale.ROOT):JSONObject.NULL).toString();}
     }
-    private static void keys(JSONObject value,String... names){require(value.keySet().equals(new java.util.HashSet<>(Arrays.asList(names))));}
+    private static void keys(JSONObject value,String... names){
+        java.util.HashSet<String> actual=new java.util.HashSet<>();
+        java.util.Iterator<String> iterator=value.keys();
+        while(iterator.hasNext())actual.add(iterator.next());
+        require(actual.equals(new java.util.HashSet<>(Arrays.asList(names))));
+    }
     static JSONObject read(String raw,JSONObject actor,String expectedOriginal,String phase,
             boolean platformPresent,boolean resourcesPresent,boolean commandPresent)throws Exception {
         JSONObject value=new JSONObject(raw);
