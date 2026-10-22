@@ -9,6 +9,12 @@ public final class StereoRendererTerminalStatus {
     private StereoRendererTerminalStatus() {}
     private static native String nativeRead(long expectedNativeProcess);
     private static native long nativeCurrentProcess();
+    /** Actual Own pool process epoch; independent of the durable app fence generation. */
+    static long currentNativeProcess() {
+        long current=nativeCurrentProcess();
+        if(current<=0)throw new IllegalArgumentException("renderer native Own process unavailable");
+        return current;
+    }
     static String read(String challenge, String epoch, long app, long executor,
             long attachment, String config) throws Exception {
         long nativeProcess = nativeCurrentProcess();

@@ -873,6 +873,15 @@ genuine terminal normal Peer Stop lifetimes while independent Own preview
 remains live. Pending Start, renewal, fresh phase, unresolved owner work,
 revocation, source loss or a changed actor/config/ARM refuses.
 
+Fresh renderer eligibility joins the native Own pool process epoch, independently
+of the durable app-fence generation. The Java consumer reads the existing native
+Own epoch before and after the renderer observation and requires the same positive
+epoch. The native renderer still authenticates the current Own source epoch;
+Java still requires actual independent Own capture, a ready worker/carrier and no
+retained Peer payloads. App-fence, configuration and actor guards remain separate.
+Host regressions reproduce the former cross-domain rejection and check stale or
+changed native epochs; they do not establish the cause of an installed failure.
+
 Each root component that remains current is preserved exactly. Only expired
 retained Active components change, with explicit new owner receipts; at least
 one change is required. The old expiry, prior receipts, lifetime counters and

@@ -33,10 +33,15 @@ final class EmbeddedDuplexRendererRetirement {
         }
         return false;
     }
-    static boolean currentFreshEligible(String actualOwnState,long actualAppGeneration)throws Exception{
-        return freshEligible(new JSONObject(EmbeddedDuplexNative.freshSetupRendererEligibilityStatus()),actualOwnState,actualAppGeneration);
+    static boolean currentFreshEligible(String actualOwnState)throws Exception{
+        long before=StereoRendererTerminalStatus.currentNativeProcess();
+        String raw=EmbeddedDuplexNative.freshSetupRendererEligibilityStatus();
+        long after=StereoRendererTerminalStatus.currentNativeProcess();
+        if(before!=after)throw new IllegalStateException("fresh renderer native Own process changed");
+        return freshEligible(new JSONObject(raw),actualOwnState,before);
     }
-    static boolean freshEligible(JSONObject actual,String actualOwnState,long actualAppGeneration)throws Exception{
+    static boolean freshEligible(JSONObject actual,String actualOwnState,long actualOwnNativeProcess)throws Exception{
+        if(actualOwnNativeProcess<=0)throw new IllegalArgumentException("fresh renderer native Own process unavailable");
         EmbeddedDuplexFreshHandoffStore.keys(actual,"$schema","state","own_process_generation","own_source_generation",
             "construction_attempts","active_workers","peer_source_inactive","retained_peer_payloads","cleanup_code","carrier_live");
         if(!"rusty.quest.embedded_duplex.renderer_fresh_setup_eligibility.v1".equals(actual.getString("$schema")))
@@ -62,9 +67,9 @@ final class EmbeddedDuplexRendererRetirement {
         }
         // Native owns exact renderer claim/window/current Own epoch and real
         // Peer frame-root accounting. Java independently joins its actual Own
-        // runtime classification and actual held app generation.
+        // runtime classification and the actual current native Own process epoch.
         if(actual.isNull("own_process_generation")||actual.isNull("own_source_generation")
-            ||actual.getLong("own_process_generation")!=actualAppGeneration||actual.getLong("own_source_generation")<=0
+            ||actual.getLong("own_process_generation")!=actualOwnNativeProcess||actual.getLong("own_source_generation")<=0
             ||workers!=1||attempts==0||!actual.getBoolean("carrier_live"))
             throw new IllegalStateException("actual independent Own renderer witness incomplete");
         return "live_independent".equals(actualOwnState);

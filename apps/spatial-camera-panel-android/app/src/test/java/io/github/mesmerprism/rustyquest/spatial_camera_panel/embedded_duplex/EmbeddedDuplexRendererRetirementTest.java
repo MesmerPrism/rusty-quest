@@ -53,11 +53,17 @@ public final class EmbeddedDuplexRendererRetirementTest {
         p=fresh("own_live_independent").put("peer_source_inactive",false);
         try{EmbeddedDuplexRendererRetirement.freshEligible(p,"live_independent",11);fail("Peer source still selected");}catch(IllegalStateException expected){}
     }
-    @Test public void wrongOwnEpochAppOrUnjoinedWorkerRefusesFreshEligibility()throws Exception{
-        try{EmbeddedDuplexRendererRetirement.freshEligible(fresh("own_live_independent"),"live_independent",12);fail("app generation differs");}catch(IllegalStateException expected){}
+    @Test public void wrongOwnNativeEpochOrUnjoinedWorkerRefusesFreshEligibility()throws Exception{
+        try{EmbeddedDuplexRendererRetirement.freshEligible(fresh("own_live_independent"),"live_independent",12);fail("native Own process differs");}catch(IllegalStateException expected){}
         JSONObject p=fresh("own_live_independent").put("active_workers",0);
         try{EmbeddedDuplexRendererRetirement.freshEligible(p,"live_independent",11);fail("no actual ready worker");}catch(IllegalStateException expected){}
         assertFalse(EmbeddedDuplexRendererRetirement.freshEligible(fresh("pending_or_unproven"),"live_independent",11));
+    }
+    @Test public void nativeOwnEpochDoesNotUseDurableAppGeneration()throws Exception{
+        long nativeOwn=2059246347458447610L;
+        JSONObject p=fresh("own_live_independent").put("own_process_generation",nativeOwn);
+        assertTrue(EmbeddedDuplexRendererRetirement.freshEligible(p,"live_independent",nativeOwn));
+        try{EmbeddedDuplexRendererRetirement.freshEligible(p,"live_independent",63);fail("app generation is a different domain");}catch(IllegalStateException expected){}
     }
     @Test public void terminalFreshBranchDoesNotTurnOwnLiveIntoCleanup()throws Exception{
         JSONObject p=fresh("terminal").put("active_workers",0).put("carrier_live",false).put("cleanup_code",2);

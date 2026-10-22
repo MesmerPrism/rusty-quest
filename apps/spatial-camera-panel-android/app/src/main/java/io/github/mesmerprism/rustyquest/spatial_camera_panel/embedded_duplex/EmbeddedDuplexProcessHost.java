@@ -200,7 +200,7 @@ final class EmbeddedDuplexProcessHost {
         boolean peer=current.resources!=null && (never || current.resources.productResourcesTerminal());
         boolean control=retirement?actual.actualControlTerminal():actual.freshPeerControlQuiescent();
         boolean rendererTerminal=retirement?EmbeddedDuplexRendererRetirement.currentTerminal()
-            :EmbeddedDuplexRendererRetirement.currentFreshEligible(ownState,current.processFence.generation());
+            :EmbeddedDuplexRendererRetirement.currentFreshEligible(ownState);
         JSONObject out=new JSONObject(identity.toString()).put("$schema",retirement
             ?"rusty.quest.embedded_duplex.fresh_setup_physical_retirement.v1":"rusty.quest.embedded_duplex.fresh_setup_physical_eligibility.v1")
             .put("eligible",correctPhase && ownAllowed && peer && control && rendererTerminal && unresolved==0)
