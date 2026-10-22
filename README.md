@@ -1,5 +1,10 @@
 # Rusty Quest
 
+Owned display capture producers are explicit opt-in utilities. See
+[display/projection capture](apps/display-stream-android/README.md),
+[experimental native square capture](apps/native-browser-capture-android/README.md)
+and their [RMANVID1 process/wire contract](docs/DISPLAY_CAPTURE_WIRE.md).
+
 The optional [shell recenter adapter](docs/SHELL_RECENTER.md) supplies one fixed
 privileged Quest `recenterView` operation for explicit developer/operator
 consumers. It requires a genuine shell process and preserves original callback,
