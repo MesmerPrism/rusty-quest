@@ -21,6 +21,19 @@ pub struct Api {
     pub transform: Option<Transform>,
 }
 
+// Independently checked by tests/abi-layout.c using the selected NDK compiler.
+#[cfg(target_pointer_width = "64")]
+const _: () = {
+    assert!(size_of::<Header>() == 24 && std::mem::align_of::<Header>() == 8);
+    assert!(std::mem::offset_of!(Header, abi_version) == 0);
+    assert!(std::mem::offset_of!(Header, table_size) == 4);
+    assert!(std::mem::offset_of!(Header, contract) == 8);
+    assert!(std::mem::offset_of!(Header, generation) == 16);
+    assert!(size_of::<Api>() == 32 && std::mem::align_of::<Api>() == 8);
+    assert!(std::mem::offset_of!(Api, header) == 0);
+    assert!(std::mem::offset_of!(Api, transform) == 24);
+};
+
 pub fn validate_header(header: Header, generation: u64) -> Result<(), &'static str> {
     if header.abi_version != ABI_VERSION {
         return Err("ABI version");
