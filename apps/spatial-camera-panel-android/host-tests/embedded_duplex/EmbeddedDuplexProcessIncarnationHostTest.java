@@ -58,7 +58,8 @@ public final class EmbeddedDuplexProcessIncarnationHostTest {
             check(f.recoveryOnly());
         }
         for(String remote:new String[]{"owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup.v2.json",
-                "retained-cleanup-preparations.v1.json","owner-dispatch.v1.json.bak","product-activation.v1.json.new"}){
+                "retained-cleanup-preparations.v1.json","owner-dispatch.v1.json.bak","product-activation.v1.json.new",
+                "start-checkpoint.v1.json.new","start-checkpoint.v1.json.bak","recovery-evidence.v1.json.new","recovery-evidence.v1.json.bak"}){
             Path root=pending(false);byte[] exact="unresolved original remote bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
             Files.write(root.resolve(remote),exact);
             try(EmbeddedDuplexProcessFence f=acquire(root,NEXT,p->null,null,null)){check(f.recoveryOnly());}

@@ -117,7 +117,8 @@ final class EmbeddedDuplexProcessIncarnation {
     /** Presence, including AtomicFile sidecars, conservatively retains remote reconciliation. */
     static boolean remoteRecordsPresent(File directory,String checkpoint,String evidence){
         if(checkpoint!=null || evidence!=null)return true;
-        for(String name:new String[]{"owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup.v2.json","retained-cleanup-preparations.v1.json"})
+        for(String name:new String[]{"start-checkpoint.v1.json","recovery-evidence.v1.json",
+                "owner-dispatch.v1.json","product-activation.v1.json","retained-cleanup.v2.json","retained-cleanup-preparations.v1.json"})
             for(String suffix:new String[]{"",".bak",".new"})
                 if(Files.exists(new File(directory,name+suffix).toPath(),LinkOption.NOFOLLOW_LINKS))return true;
         for(String name:new String[]{"embedded-duplex-fresh-closure-v1","embedded-duplex-partial-construction-v1",
