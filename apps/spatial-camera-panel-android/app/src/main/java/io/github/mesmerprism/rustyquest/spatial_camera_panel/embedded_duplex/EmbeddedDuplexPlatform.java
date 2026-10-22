@@ -240,12 +240,19 @@ final class EmbeddedDuplexPlatform {
     private volatile EmbeddedDuplexPreparedStart preparedStart;
     private volatile Throwable preparedReservationFailure;
     private volatile boolean incomingPreparedDesiredStop;
+    private long incomingPreparedStopSequence;
+    private boolean incomingPreparedWholeStop;
+    private final java.util.Set<String> archivedIncomingPreparedRemotes=new java.util.HashSet<>();
     private String incomingPreparedRemote,incomingPreparedLocal;
     private final java.util.Set<OwnerDispatchTcpEndpoint.RequestSpan> incomingPreparedSpans=java.util.concurrent.ConcurrentHashMap.newKeySet();
     private JSONObject lastPreparedArchiveAck;
     private String lastPreparedArchiveId;
-    void requestIncomingPreparedStop(){
-        incomingPreparedDesiredStop=true;
+    void requestIncomingPreparedStop(boolean whole){
+        synchronized(this){
+            incomingPreparedDesiredStop=true;
+            incomingPreparedWholeStop|=whole;
+            if(incomingPreparedStopSequence!=Long.MAX_VALUE)incomingPreparedStopSequence++;
+        }
         EmbeddedDuplexPreparedStart held=preparedStart;
         if(held!=null)try{held.requestStopOwned();EmbeddedDuplexNative.requestPreparedPeerStartStop(held.originalId());}catch(Exception retained){/* No outcome inferred. */}
         synchronized(this){notifyAll();}
@@ -254,6 +261,27 @@ final class EmbeddedDuplexPlatform {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
             requireProcessCallback();OwnerDispatchTcpEndpoint.RequestSpan span=OwnerDispatchTcpEndpoint.currentRequestSpan();
             return incomingPreparedDesiredStop||span==null||endpoint==null||!endpoint.ownsRequestSpan(span)||span.stopRequested();
+        }
+    }
+    public long incomingPreparedStartStopSequence()throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();OwnerDispatchTcpEndpoint.RequestSpan span=OwnerDispatchTcpEndpoint.currentRequestSpan();
+            if(span==null||endpoint==null||!endpoint.ownsRequestSpan(span))throw new IllegalStateException("actual prepared request span absent");
+            synchronized(this){return incomingPreparedStopSequence;}
+        }
+    }
+    public boolean incomingPreparedStartStopRequestedFor(String remote,long sequence,boolean retiredNativeScope)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();OwnerDispatchTcpEndpoint.RequestSpan span=OwnerDispatchTcpEndpoint.currentRequestSpan();
+            if(remote==null||!remote.matches("[0-9a-f]{32}")||sequence<0||span==null||endpoint==null||!endpoint.ownsRequestSpan(span)||span.stopRequested())return true;
+            synchronized(this){
+                if(incomingPreparedWholeStop||incomingPreparedStopSequence==Long.MAX_VALUE||sequence!=incomingPreparedStopSequence||archivedIncomingPreparedRemotes.contains(remote))return true;
+                if(!incomingPreparedDesiredStop)return false;
+                // Only a different authenticated successor may wait behind the
+                // old completed scope. It acquires no old Java borrower/span.
+                return !(retiredNativeScope&&preparedStart!=null&&incomingPreparedRemote!=null
+                    &&!remote.equals(incomingPreparedRemote)&&preparedStart.terminalForSuccessorIngress());
+            }
         }
     }
     public void bindIncomingPreparedPeerStart(String remote,String local)throws Exception {
@@ -301,10 +329,22 @@ final class EmbeddedDuplexPlatform {
             if(held==null)return new EmbeddedDuplexPreparedArchive(EmbeddedDuplexProcessHost.application())
                 .retainedExact(exactBody,EmbeddedDuplexProcessHost.freshClosureIdentity(this),lastPreparedArchiveAck).toString();
             if(!preparedIncomingTasksJoined())throw new IllegalStateException("actual old prepared handlers remain live");
+            final long stopSequence;
+            synchronized(this){stopSequence=incomingPreparedStopSequence;}
+            EmbeddedDuplexOriginals.Record next=EmbeddedDuplexOriginals.capture();
+            boolean nextPreparation=next!=null&&"prepare_peer_start".equals(next.row.getString("operation"));
+            if(nextPreparation)EmbeddedDuplexProcessHost.requireCurrentOriginalStopActor(next);
             JSONObject ack=new EmbeddedDuplexPreparedArchive(EmbeddedDuplexProcessHost.application()).retain(exactBody,EmbeddedDuplexProcessHost.freshClosureIdentity(this),held);
+            // Retire only metadata after durable custody. Stop alone never
+            // clears an ID, projection reservation or a physical owner.
+            held.retireArchivedMetadata(new JSONObject(exactBody));
             synchronized(this) {
                 if(preparedStart!=held)throw new IllegalStateException("prepared archive owner changed");
+                if(!preparedIncomingTasksJoined())throw new IllegalStateException("actual old prepared handlers remain live");
                 lastPreparedArchiveAck=ack;lastPreparedArchiveId=held.id();
+                if(incomingPreparedRemote!=null)archivedIncomingPreparedRemotes.add(incomingPreparedRemote);
+                if(nextPreparation&&!next.desiredStop.get()&&!incomingPreparedWholeStop&&incomingPreparedStopSequence==stopSequence&&stopSequence!=Long.MAX_VALUE)
+                    incomingPreparedDesiredStop=false;
                 preparedStart=null;incomingPreparedRemote=null;incomingPreparedLocal=null;notifyAll();
             }
             return ack.toString();

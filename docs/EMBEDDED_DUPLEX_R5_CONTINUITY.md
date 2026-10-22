@@ -979,6 +979,44 @@ owner and wire codec. Full bilateral Native/provider/Java Start overlap and
 Android SDK behavior require their own coordinated qualification. Syntax and
 apply checks provide no runtime, device or full-media validation credit.
 
+### Prepared metadata representation, clocks and retained lifetimes
+
+`prepared_start_frame.v1.route_configuration_sha256` uses the same canonical
+`sha256:<64 lowercase hexadecimal digits>` value as the actual staged route and
+runtime Host. Encode/decode retain exact route equality and signature binding.
+Raw 64-character test values, uppercase and malformed prefixes are refused;
+earlier synthetic fixtures did not establish wire interoperability. Both peers
+need the corrected codec before using this source-bound preparation route.
+
+Prepared and fresh-setup control frames use the existing five-second issuance
+backdate for metadata only. They gain no media TTL or delivery authority, and
+receivers retain strict issue-time/signature/request/route checks. Authenticated
+fresh-setup contexts keep their real observation and issue times. Before an
+exact-phase constructor, signing or apply, the owner may wait at most two
+seconds for actual local wall time to catch up. Stop, capability/phase drift,
+clock failure, backward time and a larger/frozen clock difference refuse. No
+effective clock, expiry extension, observation backdate or callback replay is
+created; the original strict owner validators still run afterwards.
+
+The read-only preparation diagnostic v3 adds closed SDK stage/reason observations
+for outbound and incoming work, including the first failure. It exposes no raw
+exception text. Its transport snapshot remains the platform's latest observation,
+explicitly unbound to the selected Original and unauthenticated. The snapshot is
+read only for an exact current journal/held-Arena match, without holding owner
+locks across Java; v1 SDK status and v1/v2 diagnostic meanings remain unchanged.
+
+After an earned terminal Stop, exact renderer registration and SDK metadata move
+only through the existing durable lifetime archive and Original consumer/join
+guards. Ordinary Stop alone does not clear reservation IDs. A different signed
+successor frame may await its counterpart's explicit local preparation behind
+an independently proven old terminal scope; it creates no SDK owner or Original.
+A later Stop sequence or whole Close cancels that wait, and archived remote IDs
+remain refused. Metadata retirement preserves independent Own capture and the
+distinct Cold/Own renderer paths. Host controls execute the coordinator, frame
+handlers, codec, signer and terminal/archive seams across two SDK lifetimes;
+Android/JNI, physical SDK/renderer cleanup, media Start and device behavior remain
+separate runtime evidence.
+
 
 ## Retained operator originals and fresh-owner retirement
 

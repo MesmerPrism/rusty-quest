@@ -117,6 +117,15 @@ final class EmbeddedDuplexPreparedStart {
         }
         if(!EmbeddedDuplexProcessHost.originalExchangesJoined(original))throw new IllegalStateException("old prepared exchanges remain live");
     }
+    synchronized void retireArchivedMetadata(JSONObject exactBody)throws Exception {
+        requireArchiveBody(exactBody);
+        resources.retireArchivedPreparedMetadata(id());
+    }
+    synchronized boolean terminalForSuccessorIngress()throws Exception {
+        return resources.productResourcesTerminal()&&original.operationJoined
+            &&"succeeded".equals(original.row.getString("state"))&&!original.row.isNull("consumer_receipt_sha256")
+            &&EmbeddedDuplexProcessHost.originalExchangesJoined(original);
+    }
     synchronized JSONObject abort(JSONObject supplied)throws Exception {
         EmbeddedDuplexPeerRoots.keys(supplied,"$schema","preparation_id","cleanup_original_id","app_process_generation","app_record_sha256","native_executor_generation","config_sha256","request_sha256","resource_target_sha256");
         if(!"rusty.quest.android.media.prepared_abort_request.v1".equals(supplied.getString("$schema"))

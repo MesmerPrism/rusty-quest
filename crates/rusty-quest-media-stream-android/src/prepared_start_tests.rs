@@ -245,7 +245,7 @@ fn actual_source_bound_wire_codec_retains_real_time_without_invented_age_expiry(
         receiver_preparation_id: None,
         sender_peer_id: "peer.q".into(),
         receiver_peer_id: "peer.w".into(),
-        route_configuration_sha256: "5".repeat(64),
+        route_configuration_sha256: format!("sha256:{}", "5".repeat(64)),
         issued_at_ms: 1,
         payload: json!({"view":{"actual":"modeled source metadata"}}),
     };
@@ -260,7 +260,7 @@ fn actual_source_bound_wire_codec_retains_real_time_without_invented_age_expiry(
         &key.verifying_key().to_bytes(),
         "peer.q",
         "peer.w",
-        &"5".repeat(64),
+        &format!("sha256:{}", "5".repeat(64)),
         900001,
     )
     .unwrap();
@@ -270,7 +270,7 @@ fn actual_source_bound_wire_codec_retains_real_time_without_invented_age_expiry(
         &key.verifying_key().to_bytes(),
         "peer.q",
         "peer.w",
-        &"6".repeat(64),
+        &format!("sha256:{}", "6".repeat(64)),
         900001
     )
     .is_err());
@@ -279,7 +279,7 @@ fn actual_source_bound_wire_codec_retains_real_time_without_invented_age_expiry(
         &SigningKey::from_bytes(&[8; 32]).verifying_key().to_bytes(),
         "peer.q",
         "peer.w",
-        &"5".repeat(64),
+        &format!("sha256:{}", "5".repeat(64)),
         900001
     )
     .is_err());
@@ -288,7 +288,7 @@ fn actual_source_bound_wire_codec_retains_real_time_without_invented_age_expiry(
         &key.verifying_key().to_bytes(),
         "peer.q",
         "peer.w",
-        &"5".repeat(64),
+        &format!("sha256:{}", "5".repeat(64)),
         0
     )
     .is_err());

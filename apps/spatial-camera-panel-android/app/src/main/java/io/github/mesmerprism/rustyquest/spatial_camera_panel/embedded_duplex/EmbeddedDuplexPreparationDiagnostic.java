@@ -35,14 +35,63 @@ final class EmbeddedDuplexPreparationDiagnostic {
         while(iterator.hasNext())actual.add(iterator.next());
         require(actual.equals(new java.util.HashSet<>(Arrays.asList(names))));
     }
+    private static final String[] SDK_STAGES={"renderer_begin","sender_prepare","source_check","frame_clock","frame_shape","frame_sign","frame_encode","frame_exchange","frame_decode","response_identity","remote_view","decoder_receipt","decoder_wait","owner_ready","renderer_dormant","incoming_bind","incoming_sender","incoming_decoder","ready_status"};
+    private static void sdkLane(JSONObject value)throws Exception{
+        keys(value,"state","stage","frame_kind","reason");String state=value.getString("state");
+        require(Arrays.asList("unobserved","entered","failed","succeeded").contains(state));
+        if("unobserved".equals(state)||"succeeded".equals(state))require(value.isNull("stage")&&value.isNull("frame_kind")&&value.isNull("reason"));
+        else require(!value.isNull("stage")&&Arrays.asList(SDK_STAGES).contains(value.getString("stage")));
+        if(!value.isNull("frame_kind"))require(Arrays.asList("view","viewed","decoder_prepare","decoder_prepared").contains(value.getString("frame_kind")));
+        if("failed".equals(state))require(!value.isNull("reason")&&Arrays.asList("call_failed","predicate_rejected","source_changed","callback_exception","callback_unavailable","frame_binding_rejected","frame_signature_rejected","frame_shape_rejected","frame_wire_rejected").contains(value.getString("reason")));
+        else require(value.isNull("reason"));
+    }
+    private static void sdk(JSONObject value)throws Exception{
+        keys(value,"$schema","outbound","incoming","first_failure");require("rusty.quest.embedded_duplex.preparation_sdk_observation.v1".equals(value.getString("$schema")));
+        JSONObject outbound=value.getJSONObject("outbound"),incoming=value.getJSONObject("incoming");sdkLane(outbound);sdkLane(incoming);
+        if(value.isNull("first_failure"))require(!"failed".equals(outbound.getString("state"))&&!"failed".equals(incoming.getString("state")));
+        else{
+            JSONObject first=value.getJSONObject("first_failure");keys(first,"direction","observation");String direction=first.getString("direction");require(Arrays.asList("outbound","incoming").contains(direction));
+            JSONObject observation=first.getJSONObject("observation"),lane=value.getJSONObject(direction);sdkLane(observation);require("failed".equals(observation.getString("state")));
+            for(String key:new String[]{"state","stage","frame_kind","reason"})require(observation.get(key).equals(lane.get(key)));
+        }
+    }
+    private static void transport(JSONObject value)throws Exception{
+        keys(value,"schema","qualification_claimed","response_authentication_claimed","strict_parser_status","strict_parser_error","closed_java_fields");
+        require("rusty.quest.embedded_duplex.owner_transport_attempt_native_read.v1".equals(value.getString("schema"))&&Boolean.FALSE.equals(value.get("qualification_claimed"))&&Boolean.FALSE.equals(value.get("response_authentication_claimed")));
+        String status=value.getString("strict_parser_status");require(Arrays.asList("AVAILABLE","REJECTED","UNAVAILABLE").contains(status));
+        if("AVAILABLE".equals(status)){
+            require(value.isNull("strict_parser_error"));JSONObject facts=value.getJSONObject("closed_java_fields");keys(facts,"attempt_sequence","phase","outcome","failure");
+            require((facts.get("attempt_sequence") instanceof Integer||facts.get("attempt_sequence") instanceof Long)&&facts.getLong("attempt_sequence")>=0&&facts.getLong("attempt_sequence")<=9007199254740991L);
+            require(Arrays.asList("NONE","TARGET_BINDING","INPUT_BOUNDS","CONNECT","WRITE_REQUEST","READ_RESPONSE_HEADER","READ_RESPONSE_BODY","RESPONSE_RETURNED").contains(facts.getString("phase")));
+            require(Arrays.asList("NONE","UNAVAILABLE","IN_PROGRESS","RETURNED","FAILED").contains(facts.getString("outcome")));
+            require(Arrays.asList("NONE","TARGET_UNAVAILABLE","INPUT_BOUNDS","CONNECT_FAILURE","EOF","FRAME_BOUNDS","DEADLINE","IO","CALLBACK_REJECTED").contains(facts.getString("failure")));
+            long sequence=facts.getLong("attempt_sequence");String phase=facts.getString("phase"),outcome=facts.getString("outcome"),failure=facts.getString("failure");
+            boolean failed=("TARGET_UNAVAILABLE".equals(failure)&&"TARGET_BINDING".equals(phase))
+                ||("INPUT_BOUNDS".equals(failure)&&"INPUT_BOUNDS".equals(phase))
+                ||("CONNECT_FAILURE".equals(failure)&&"CONNECT".equals(phase))
+                ||("EOF".equals(failure)&&Arrays.asList("READ_RESPONSE_HEADER","READ_RESPONSE_BODY").contains(phase))
+                ||("FRAME_BOUNDS".equals(failure)&&"READ_RESPONSE_HEADER".equals(phase))
+                ||(Arrays.asList("DEADLINE","IO").contains(failure)&&Arrays.asList("CONNECT","WRITE_REQUEST","READ_RESPONSE_HEADER","READ_RESPONSE_BODY","RESPONSE_RETURNED").contains(phase))
+                ||("CALLBACK_REJECTED".equals(failure)&&!Arrays.asList("NONE","RESPONSE_RETURNED").contains(phase));
+            require(("NONE".equals(outcome)&&sequence==0&&"NONE".equals(phase)&&"NONE".equals(failure))
+                ||("UNAVAILABLE".equals(outcome)&&sequence==9007199254740991L&&"NONE".equals(phase)&&"NONE".equals(failure))
+                ||("IN_PROGRESS".equals(outcome)&&sequence>0&&!Arrays.asList("NONE","RESPONSE_RETURNED").contains(phase)&&"NONE".equals(failure))
+                ||("RETURNED".equals(outcome)&&sequence>0&&"RESPONSE_RETURNED".equals(phase)&&"NONE".equals(failure))
+                ||("FAILED".equals(outcome)&&sequence>0&&failed));
+        }else{
+            require(value.isNull("closed_java_fields"));require(("UNAVAILABLE".equals(status)&&"CALL_UNAVAILABLE".equals(value.getString("strict_parser_error")))||("REJECTED".equals(status)&&Arrays.asList("BOUNDS","JSON_OR_SHAPE","CLOSED_VALUES").contains(value.getString("strict_parser_error"))));
+        }
+    }
     static JSONObject read(String raw,JSONObject actor,String expectedOriginal,String phase,
             boolean platformPresent,boolean resourcesPresent,boolean commandPresent)throws Exception {
         JSONObject value=new JSONObject(raw);
-        boolean v2="rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v2".equals(value.getString("$schema"));
+        boolean v3="rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v3".equals(value.getString("$schema"));
+        boolean v2=v3||"rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v2".equals(value.getString("$schema"));
         java.util.List<String> fields=new java.util.ArrayList<>(Arrays.asList("$schema","operation","app_process_generation","app_record_sha256",
             "native_executor_generation","config_sha256","state","attempt_sequence","original_id","original_bound",
             "stage","reason","arena_installed","authority_granted","java_failed_guard","physical_predicates"));
         if(v2){fields.add("native_failed_guard");fields.add("native_failed_reason");}
+        if(v3){fields.add("sdk_observation");fields.add("transport_attempt");fields.add("transport_attempt_original_bound");}
         keys(value,fields.toArray(new String[0]));
         require((v2||"rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v1".equals(value.getString("$schema")))
             &&"prepare_peer_start".equals(value.getString("operation"))&&Boolean.FALSE.equals(value.get("authority_granted")));
@@ -88,6 +137,13 @@ final class EmbeddedDuplexPreparationDiagnostic {
             java.util.List<String> all=new java.util.ArrayList<>(Arrays.asList(fixed));all.addAll(Arrays.asList(nullable));keys(facts,all.toArray(new String[0]));
             for(String key:fixed)require(facts.get(key) instanceof Boolean);
             for(String key:nullable)require(facts.isNull(key)||facts.get(key) instanceof Boolean);
+        }
+        if(v3){
+            require(Boolean.FALSE.equals(value.get("transport_attempt_original_bound")));
+            require(value.isNull("sdk_observation")==value.isNull("transport_attempt"));
+            if(!value.isNull("sdk_observation")){
+                require(bound&&Boolean.TRUE.equals(value.get("arena_installed")));sdk(value.getJSONObject("sdk_observation"));transport(value.getJSONObject("transport_attempt"));
+            }
         }
         value.put("java_census",new JSONObject().put("$schema","rusty.quest.embedded_duplex.preparation_reference_census.v1")
             .put("host_phase",phase).put("platform_reference_present",platformPresent)

@@ -50,7 +50,7 @@ pub fn validate_prepared_start_frame(b: &AndroidPreparedStartFrameBody) -> Resul
         || b.sender_peer_id.is_empty()
         || b.receiver_peer_id.is_empty()
         || b.sender_peer_id == b.receiver_peer_id
-        || !hex(&b.route_configuration_sha256, 64)
+        || !hash(&b.route_configuration_sha256)
         || b.schema != "rusty.quest.embedded_duplex.prepared_start_frame.v1"
         || !exact(&b.payload, keys)
         || (b.kind == "view") != b.receiver_preparation_id.is_none()

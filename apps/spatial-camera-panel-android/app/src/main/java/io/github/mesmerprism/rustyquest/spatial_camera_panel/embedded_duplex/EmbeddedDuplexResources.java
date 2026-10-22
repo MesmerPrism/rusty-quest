@@ -184,6 +184,10 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     JSONObject prepareDecoder(String id,JSONObject peerFormat,java.util.function.BooleanSupplier stop)throws Exception {
         JSONObject renderer=incoming.prepareDormantDecoder(id,peerFormat,stop);pipeline.prepareTransport();return renderer;
     }
+    void retireArchivedPreparedMetadata(String id) {
+        if(!productResourcesTerminal())throw new IllegalStateException("archived SDK owners remain Pending");
+        incoming.retireArchivedPreparedMetadata(id);
+    }
     boolean preparedSenderOwned(){return pipeline!=null&&pipeline.preparedSenderHeld();}
     boolean preparedDecoderOwned(){return incoming.preparedDecoderOwned();}
     boolean preparedDeliveryOpened(){return (pipeline!=null&&pipeline.preparedDeliveryOpened())||incoming.preparedDeliveryOpened();}

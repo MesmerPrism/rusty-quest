@@ -53,7 +53,7 @@ mod prepared_codec_integration {
 
         let seed = [0x37; 32];
         let public = public_from_seed(&seed);
-        let route = "5".repeat(64);
+        let route = format!("sha256:{}", "5".repeat(64));
         for (kind, payload) in [
             ("view", json!({"view":{"source":"host fixture"}})),
             ("viewed", json!({"initiator_view_sha256":"fixture", "view":{}})),
@@ -75,6 +75,10 @@ mod prepared_codec_integration {
                 issued_at_ms: 1,
                 payload,
             };
+            for bad in ["5".repeat(64),format!("SHA256:{}", "5".repeat(64)),format!("sha256:{}", "A".repeat(64)),format!("sha256:{}", "5".repeat(63))] {
+                let mut wrong_route = body.clone();wrong_route.route_configuration_sha256=bad;
+                assert!(prepared_start_frame_signing_bytes(&wrong_route).is_err());
+            }
             let bytes = prepared_start_frame_signing_bytes(&body).unwrap();
             let signature = sign_checked(&seed, &bytes)
                 .expect("production seed signer must accept the typed prepared metadata domain");
@@ -87,7 +91,7 @@ mod prepared_codec_integration {
                 &raw, &public_from_seed(&[0x38; 32]), "peer.q", "peer.w", &route, 1,
             ).is_err());
             assert!(decode_prepared_start_frame(
-                &raw, &public, "peer.q", "peer.w", &"6".repeat(64), 1,
+                &raw, &public, "peer.q", "peer.w", &format!("sha256:{}", "6".repeat(64)), 1,
             ).is_err());
             let mut changed = body;
             changed.payload["view"] = json!({"changed":true});

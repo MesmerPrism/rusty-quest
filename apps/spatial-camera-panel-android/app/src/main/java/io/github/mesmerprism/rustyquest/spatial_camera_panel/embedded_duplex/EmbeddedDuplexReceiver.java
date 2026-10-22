@@ -115,6 +115,17 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         return new org.json.JSONObject(dormantRendererReadback);
     }
     boolean preparedDecoderClosed(){ReceiverRuntime held=receiver;return dormantPrepared &&held!=null&&held.preparedDecoderHeld();}
+    /** Caller has durably retained the exact old PreparedStart archive. No SDK work. */
+    synchronized void retireArchivedPreparedMetadata(String id) {
+        if(id==null||!id.matches("[0-9a-f]{32}")
+            ||dormantPreparationId!=null&&!dormantPreparationId.equals(id))
+            throw new IllegalStateException("archived decoder ID differs");
+        MediaRuntimeSnapshot actual=snapshot();
+        if(!surfaceReleased||!projectionRetired||!actual.terminal()||actual.generation()!=generation)
+            throw new IllegalStateException("archived decoder cleanup remains Pending");
+        display.retireArchivedPreparedRenderer(id);
+        dormantPreparationId=null;dormantRendererReadback=null;dormantPrepared=false;
+    }
     boolean preparedDecoderOwned(){ReceiverRuntime held=receiver;return dormantPrepared&&held!=null&&held.preparedDecoderOwned();}
     boolean preparedDeliveryOpened(){ReceiverRuntime held=receiver;return dormantPrepared&&held!=null&&held.preparedDeliveryOpened();}
     long preparedPeerDeliveryCount(){ReceiverRuntime held=receiver;return held==null?0L:held.preparedPeerDeliveryCount();}

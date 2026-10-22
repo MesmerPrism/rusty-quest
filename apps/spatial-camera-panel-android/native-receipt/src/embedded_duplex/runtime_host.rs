@@ -57,6 +57,8 @@ mod peer_lifecycle;
 mod peer_roots;
 #[path = "preparation_diagnostic.rs"]
 pub(crate) mod preparation_diagnostic;
+#[path = "preparation_sdk_observation.rs"]
+mod preparation_sdk_observation;
 #[path = "prepared_start.rs"]
 mod prepared_start;
 pub(crate) use prepared_start::PreparedRendererIdentity;

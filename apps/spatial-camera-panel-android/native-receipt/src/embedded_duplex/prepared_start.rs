@@ -2,6 +2,10 @@
 //! RQPS1 carries signed format metadata only. Ordinary media tickets remain the
 //! sole authority that can open the already-prepared delivery gates.
 use super::preparation_diagnostic::{Actor, Attempt, JavaGuard, PhysicalPredicates, Reason, Stage};
+use super::preparation_sdk_observation::{
+    Direction as SdkDirection, FrameKind as SdkKind, Reason as SdkReason, Stage as SdkStage,
+    Trace as SdkTrace,
+};
 use super::*;
 use rusty_quest_media_stream_android::{
     prepared_start_canonical, prepared_start_digest, AndroidPreparedDecoderReadback,
@@ -20,6 +24,7 @@ pub(super) struct Arena {
     completed: AtomicBool,
     local_start_consumed: AtomicBool,
     failure: Mutex<Option<String>>,
+    sdk: SdkTrace,
     terminal: Mutex<Option<Value>>,
     aborting: AtomicBool,
     archive_body: Mutex<Option<String>>,
@@ -158,7 +163,19 @@ fn encode(
     receiver: Option<String>,
     payload: Value,
 ) -> Result<Vec<u8>, String> {
-    check_source(host, a)?;
+    let direction = if matches!(kind, "viewed" | "decoder_prepared") {
+        SdkDirection::Incoming
+    } else {
+        SdkDirection::Outbound
+    };
+    let frame_kind = SdkKind::parse(kind);
+    a.sdk.call(
+        direction,
+        SdkStage::SourceCheck,
+        frame_kind,
+        SdkReason::CallFailed,
+        || check_source(host, a),
+    )?;
     let body = Body {
         schema: "rusty.quest.embedded_duplex.prepared_start_frame.v1".into(),
         kind: kind.into(),
@@ -168,13 +185,55 @@ fn encode(
         sender_peer_id: host.local_peer_id.clone(),
         receiver_peer_id: host.remote_peer_id.clone(),
         route_configuration_sha256: host.route_configuration_sha256.clone(),
-        issued_at_ms: host.clock.now_ms()?,
+        issued_at_ms: a.sdk.call(
+            direction,
+            SdkStage::FrameClock,
+            frame_kind,
+            SdkReason::CallFailed,
+            || {
+                host.clock.now_ms().map(|now| {
+                    now.saturating_sub(
+                        crate::embedded_duplex::pair_lifetime_policy::ISSUE_BACKDATE_MS,
+                    )
+                })
+            },
+        )?,
         payload,
     };
-    shape(&body)?;
-    let signature = host.callbacks.sign_prepared_start_frame(&signing(&body)?)?;
-    check_source(host, a)?;
-    rusty_quest_media_stream_android::encode_prepared_start_frame(body, signature)
+    a.sdk.call(
+        direction,
+        SdkStage::FrameShape,
+        frame_kind,
+        SdkReason::PredicateRejected,
+        || shape(&body),
+    )?;
+    let signature = a.sdk.call(
+        direction,
+        SdkStage::FrameSign,
+        frame_kind,
+        SdkReason::CallFailed,
+        || host.callbacks.sign_prepared_start_frame(&signing(&body)?),
+    )?;
+    let direction = if matches!(kind, "viewed" | "decoder_prepared") {
+        SdkDirection::Incoming
+    } else {
+        SdkDirection::Outbound
+    };
+    let frame_kind = SdkKind::parse(kind);
+    a.sdk.call(
+        direction,
+        SdkStage::SourceCheck,
+        frame_kind,
+        SdkReason::CallFailed,
+        || check_source(host, a),
+    )?;
+    a.sdk.call(
+        direction,
+        SdkStage::FrameEncode,
+        frame_kind,
+        SdkReason::CallFailed,
+        || rusty_quest_media_stream_android::encode_prepared_start_frame(body, signature),
+    )
 }
 fn decode(host: &Host, raw: &[u8]) -> Result<Body, String> {
     rusty_quest_media_stream_android::decode_prepared_start_frame(
@@ -262,18 +321,47 @@ fn exchange(
         remote.clone(),
         payload,
     )?;
-    let reply = host.callbacks.clone().exchange(&frame, 128 * 1024)?;
-    check_source(host, a)?;
-    let body = decode(host, &reply)?;
-    if body.kind != response
-        || body.request_id != a.request.preparation_id
-        || body.receiver_preparation_id.as_deref() != Some(a.request.preparation_id.as_str())
-        || remote
-            .as_ref()
-            .is_some_and(|r| r != &body.sender_preparation_id)
-    {
-        return Err("prepared exact response identity differs".into());
-    }
+    let kind = SdkKind::parse(kind);
+    let reply = a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::FrameExchange,
+        kind,
+        SdkReason::CallFailed,
+        || host.callbacks.clone().exchange(&frame, 128 * 1024),
+    )?;
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::SourceCheck,
+        kind,
+        SdkReason::CallFailed,
+        || check_source(host, a),
+    )?;
+    let body = a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::FrameDecode,
+        kind,
+        SdkReason::PredicateRejected,
+        || decode(host, &reply),
+    )?;
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::ResponseIdentity,
+        kind,
+        SdkReason::PredicateRejected,
+        || {
+            if body.kind != response
+                || body.request_id != a.request.preparation_id
+                || body.receiver_preparation_id.as_deref()
+                    != Some(a.request.preparation_id.as_str())
+                || remote
+                    .as_ref()
+                    .is_some_and(|r| r != &body.sender_preparation_id)
+            {
+                return Err("prepared exact response identity differs".into());
+            }
+            Ok(())
+        },
+    )?;
     Ok(body)
 }
 fn diagnostic_actor(host: &Host) -> Actor {
@@ -283,6 +371,12 @@ fn diagnostic_actor(host: &Host) -> Actor {
         native_generation: host.capability.generation,
         config: host.config_sha256.clone(),
     }
+}
+fn sdk_lane(value: &super::preparation_sdk_observation::Observation) -> Value {
+    json!({"state":value.state.name(),"stage":value.stage.map(SdkStage::name),"frame_kind":value.frame_kind.map(SdkKind::name),"reason":value.reason.map(SdkReason::name)})
+}
+fn sdk_snapshot(value: &super::preparation_sdk_observation::Snapshot) -> Value {
+    json!({"$schema":"rusty.quest.embedded_duplex.preparation_sdk_observation.v1","outbound":sdk_lane(&value.outbound),"incoming":sdk_lane(&value.incoming),"first_failure":value.first_failure.as_ref().map(|(direction,observed)|json!({"direction":direction.name(),"observation":sdk_lane(observed)}))})
 }
 pub(super) fn diagnostic(host: &Host, input: &str) -> Result<String, String> {
     host.capability.require_live()?;
@@ -315,8 +409,49 @@ pub(super) fn diagnostic(host: &Host, input: &str) -> Result<String, String> {
         .map_err(|_| "preparation diagnostic unavailable")?
         .read(&actor, expected)
         .map_err(|_| "preparation diagnostic actor/Original unavailable")?;
+    // Clone the exact retained observation, release PROCESS/Arena/journal locks,
+    // then read the existing platform-latest transport snapshot. It is not an
+    // Original-bound transport receipt and grants no completion/authentication.
+    let retained = if let Some(observed) = view.as_ref().filter(|v| v.arena_installed) {
+        let arena = held(host)?;
+        if observed.original.as_deref() == Some(arena.request.original_id.as_str()) {
+            Some(arena)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let sdk = retained
+        .as_ref()
+        .map(|arena| {
+            arena
+                .sdk
+                .read()
+                .map_err(|_| "prepared SDK observation unavailable")
+        })
+        .transpose()?;
+    let transport = if sdk.is_some() {
+        host.callbacks.owner_transport_attempt_read()
+    } else {
+        Value::Null
+    };
     host.capability.require_live()?;
-    Ok(json!({"$schema":"rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v2",
+    if let Some(arena) = retained {
+        if !Arc::ptr_eq(&held(host)?, &arena) {
+            return Err("prepared SDK diagnostic owner changed during read".into());
+        }
+    }
+    let after = host
+        .preparation_admission
+        .lock()
+        .map_err(|_| "preparation diagnostic unavailable")?
+        .read(&actor, expected)
+        .map_err(|_| "preparation diagnostic actor/Original unavailable")?;
+    if after != view {
+        return Err("preparation diagnostic changed during read".into());
+    }
+    Ok(json!({"$schema":"rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v3",
         "operation":"prepare_peer_start","app_process_generation":actor.app_generation,
         "app_record_sha256":actor.app_record,"native_executor_generation":actor.native_generation,
         "config_sha256":actor.config,"state":view.as_ref().map_or("unobserved",|v|v.state.name()),
@@ -334,6 +469,7 @@ pub(super) fn diagnostic(host: &Host, input: &str) -> Result<String, String> {
             "app_record_matches":p.app_record,"native_generation_matches":p.native_generation,"config_matches":p.config,
             "classification_matches":p.classification,"original_matches":p.original,"physical_eligible":p.eligible,
             "unresolved_originals_zero":p.unresolved_zero,"peer_resources_terminal":p.peer,"renderer_terminal":p.renderer,"control_terminal":p.control})),
+        "sdk_observation":sdk.as_ref().map(sdk_snapshot),"transport_attempt":transport,"transport_attempt_original_bound":false,
         "authority_granted":false}).to_string())
 }
 pub(super) fn run(host: &Host) -> Result<String, String> {
@@ -368,7 +504,9 @@ fn run_observed(host: &Host, attempt: &Attempt) -> Result<String, String> {
         },
     )?;
     let native = attempt.call(Stage::NativeEligibility, Reason::CallFailed, || {
-        peer_lifecycle::fresh_setup_eligibility_observed(host, &|guard,reason| attempt.native_failure(guard,reason))
+        peer_lifecycle::fresh_setup_eligibility_observed(host, &|guard, reason| {
+            attempt.native_failure(guard, reason)
+        })
     })?;
     const E: [&str; 8] = [
         "$schema",
@@ -476,6 +614,7 @@ fn run_observed(host: &Host, attempt: &Attempt) -> Result<String, String> {
         completed: AtomicBool::new(false),
         local_start_consumed: AtomicBool::new(false),
         failure: Mutex::new(None),
+        sdk: SdkTrace::default(),
         terminal: Mutex::new(None),
         aborting: AtomicBool::new(false),
         archive_body: Mutex::new(None),
@@ -520,87 +659,173 @@ fn run_observed(host: &Host, attempt: &Attempt) -> Result<String, String> {
     )?;
     attempt.arena_installed();
     let result = attempt.call(Stage::SdkPreparation, Reason::CallFailed, || {
-        // Registers actual construction ownership before any callback may enter
-        // renderer SDK allocation; absence of a renderer slot is never proof.
-        crate::camera_hwb_probe::begin_prepared_peer_renderer(&a.request.preparation_id)?;
-        let sender = a
-            .owner
-            .lock()
-            .map_err(|_| "prepared sender owner poisoned")?
-            .prepare_sender(&mut callback)?;
-        check_source(host, &a)?;
-        let viewed = exchange(host, &a, "view", "viewed", None, json!({"view":a.view}))?;
-        if viewed.payload["initiator_view_sha256"] != view_hash(&a.view)? {
-            return Err("prepared initiator view changed".into());
-        }
-        let remote_value = &viewed.payload["view"];
-        let remote_id = viewed.sender_preparation_id.clone();
-        let remote_request = remote_view(host, &a, remote_value, &remote_id)?;
-        let prepared = exchange(
-            host,
-            &a,
-            "decoder_prepare",
-            "decoder_prepared",
-            Some(remote_id.clone()),
-            json!({"initiator_view":a.view,"responder_view":remote_value,"sender_receipt":sender}),
-        )?;
-        if prepared.payload["initiator_view_sha256"] != view_hash(&a.view)?
-            || prepared.payload["responder_view_sha256"] != view_hash(remote_value)?
-        {
-            return Err("prepared signed metadata views differ".into());
-        }
-        let decoder: AndroidPreparedDecoderReadback =
-            serde_json::from_value(prepared.payload["decoder_receipt"].clone())
-                .map_err(safe_decode)?;
-        let remote_decoder = AndroidPreparedDecoderRequest {
-            schema_id: "rusty.quest.android.media.prepared_decoder_request.v1".into(),
-            preparation_id: remote_id,
-            request_sha256: remote_request.digest()?,
-            peer_preparation_id: a.request.preparation_id.clone(),
-            peer_sender_receipt_sha256: prepared_start_digest(
-                "rusty.quest.android.media.prepared_sender_readback.v1",
-                &sender,
-            )?,
-            peer_format: sender.outgoing_format,
-        };
-        decoder.validate(&remote_request, &remote_decoder)?;
-        *a.remote_decoder
-            .lock()
-            .map_err(|_| "prepared remote receipt poisoned")? = Some(decoder);
-        let estimate = Instant::now() + Duration::from_secs(15);
-        let mut warned = false;
-        loop {
-            check_source(host, &a)?;
-            let ready = a
-                .owner
-                .try_lock()
-                .ok()
-                .is_some_and(|o| o.decoder().is_some());
-            if ready {
-                break;
-            }
-            if Instant::now() >= estimate && !warned {
-                warned = true;
-                estimated_warning::publish(
-                    "prepared decoder estimate elapsed; same original; no cancellation",
-                );
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        a.owner
-            .lock()
-            .map_err(|_| "prepared final owner poisoned")?
-            .require_ready(&callback)?;
-        crate::camera_hwb_probe::prepared_peer_renderer_dormant_for(&a.request.preparation_id)?;
-        a.completed.store(true, Ordering::SeqCst);
-        status(host)
+        sdk_prepare(host, &a, &mut callback)
     });
+    a.sdk.finish(SdkDirection::Outbound, result.is_ok());
     if let Err(e) = &result {
         *a.failure
             .lock()
             .map_err(|_| "prepared failure custody poisoned")? = Some(e.clone());
     }
     result
+}
+fn sdk_prepare(
+    host: &Host,
+    a: &Arc<Arena>,
+    callback: &mut JavaOwnerCallbacks,
+) -> Result<String, String> {
+    // Registers actual construction ownership before any callback may enter
+    // renderer SDK allocation; absence of a renderer slot is never proof.
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::RendererBegin,
+        None,
+        SdkReason::CallFailed,
+        || crate::camera_hwb_probe::begin_prepared_peer_renderer(&a.request.preparation_id),
+    )?;
+    let sender = a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::SenderPrepare,
+        None,
+        SdkReason::CallFailed,
+        || {
+            a.owner
+                .lock()
+                .map_err(|_| "prepared sender owner poisoned")?
+                .prepare_sender(callback)
+        },
+    )?;
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::SourceCheck,
+        None,
+        SdkReason::CallFailed,
+        || check_source(host, a),
+    )?;
+    let viewed = exchange(host, &a, "view", "viewed", None, json!({"view":a.view}))?;
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::ResponseIdentity,
+        Some(SdkKind::Viewed),
+        SdkReason::PredicateRejected,
+        || {
+            if viewed.payload["initiator_view_sha256"] != view_hash(&a.view)? {
+                return Err("prepared initiator view changed".into());
+            }
+            Ok(())
+        },
+    )?;
+    let remote_value = &viewed.payload["view"];
+    let remote_id = viewed.sender_preparation_id.clone();
+    let remote_request = a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::RemoteView,
+        Some(SdkKind::Viewed),
+        SdkReason::PredicateRejected,
+        || remote_view(host, a, remote_value, &remote_id),
+    )?;
+    let prepared = exchange(
+        host,
+        &a,
+        "decoder_prepare",
+        "decoder_prepared",
+        Some(remote_id.clone()),
+        json!({"initiator_view":a.view,"responder_view":remote_value,"sender_receipt":sender}),
+    )?;
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::DecoderReceipt,
+        Some(SdkKind::DecoderPrepared),
+        SdkReason::PredicateRejected,
+        || {
+            if prepared.payload["initiator_view_sha256"] != view_hash(&a.view)?
+                || prepared.payload["responder_view_sha256"] != view_hash(remote_value)?
+            {
+                return Err("prepared signed metadata views differ".into());
+            }
+            let decoder: AndroidPreparedDecoderReadback =
+                serde_json::from_value(prepared.payload["decoder_receipt"].clone())
+                    .map_err(safe_decode)?;
+            let remote_decoder = AndroidPreparedDecoderRequest {
+                schema_id: "rusty.quest.android.media.prepared_decoder_request.v1".into(),
+                preparation_id: remote_id,
+                request_sha256: remote_request.digest()?,
+                peer_preparation_id: a.request.preparation_id.clone(),
+                peer_sender_receipt_sha256: prepared_start_digest(
+                    "rusty.quest.android.media.prepared_sender_readback.v1",
+                    &sender,
+                )?,
+                peer_format: sender.outgoing_format,
+            };
+            decoder.validate(&remote_request, &remote_decoder)?;
+            *a.remote_decoder
+                .lock()
+                .map_err(|_| "prepared remote receipt poisoned")? = Some(decoder);
+            Ok(())
+        },
+    )?;
+    let estimate = Instant::now() + Duration::from_secs(15);
+    let mut warned = false;
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::DecoderWait,
+        None,
+        SdkReason::CallFailed,
+        || {
+            loop {
+                a.sdk.call(
+                    SdkDirection::Outbound,
+                    SdkStage::SourceCheck,
+                    None,
+                    SdkReason::CallFailed,
+                    || check_source(host, a),
+                )?;
+                let ready = a
+                    .owner
+                    .try_lock()
+                    .ok()
+                    .is_some_and(|o| o.decoder().is_some());
+                if ready {
+                    break;
+                }
+                if Instant::now() >= estimate && !warned {
+                    warned = true;
+                    estimated_warning::publish(
+                        "prepared decoder estimate elapsed; same original; no cancellation",
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(())
+        },
+    )?;
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::OwnerReady,
+        None,
+        SdkReason::CallFailed,
+        || {
+            a.owner
+                .lock()
+                .map_err(|_| "prepared final owner poisoned")?
+                .require_ready(callback)
+        },
+    )?;
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::RendererDormant,
+        None,
+        SdkReason::CallFailed,
+        || crate::camera_hwb_probe::prepared_peer_renderer_dormant_for(&a.request.preparation_id),
+    )?;
+    a.completed.store(true, Ordering::SeqCst);
+    a.sdk.call(
+        SdkDirection::Outbound,
+        SdkStage::ReadyStatus,
+        None,
+        SdkReason::CallFailed,
+        || status(host),
+    )
 }
 pub(super) fn incoming_host() -> Result<HostLease, String> {
     let mut p = process()
@@ -648,18 +873,21 @@ fn cleanup_host() -> Result<HostLease, String> {
 /// counterpart's local reservation. Holding it across that wait would reject
 /// the sole-local-owner reserve and create a bilateral startup deadlock.
 pub(super) fn handle_frame(raw: &[u8]) -> Result<Vec<u8>, String> {
-    let (cap, callbacks) = {
+    let (cap, callbacks, observed_host, authenticated) = {
         let h = incoming_host()?;
-        decode(&h, raw)?;
-        (h.capability.clone(), h.callbacks.clone())
+        let authenticated = decode(&h, raw)?;
+        (
+            h.capability.clone(),
+            h.callbacks.clone(),
+            h.0.clone(),
+            authenticated,
+        )
     };
+    let stop_sequence = callbacks.incoming_prepared_start_stop_sequence()?;
     let estimate = Instant::now() + Duration::from_secs(15);
     let mut warned = false;
     loop {
         cap.require_live()?;
-        if callbacks.incoming_prepared_start_stop_requested()? {
-            return Err("prepared incoming actual owner explicitly stopped".into());
-        }
         let candidate = {
             let p = process()
                 .lock()
@@ -675,6 +903,17 @@ pub(super) fn handle_frame(raw: &[u8]) -> Result<Vec<u8>, String> {
             }
             p.prepared_peer_start.clone()
         };
+        let retired = candidate
+            .as_ref()
+            .is_some_and(|a| a.local_start_consumed.load(Ordering::SeqCst))
+            && peer_lifecycle::prepared_terminal_lifetime(&observed_host).is_ok();
+        if callbacks.incoming_prepared_start_stop_requested_for(
+            &authenticated.sender_preparation_id,
+            stop_sequence,
+            retired,
+        )? {
+            return Err("prepared incoming actual owner explicitly stopped".into());
+        }
         let ready = if let Some(a) = candidate {
             if a.local_start_consumed.load(Ordering::SeqCst)
                 || a.terminal
@@ -713,58 +952,133 @@ pub(super) fn handle_frame(raw: &[u8]) -> Result<Vec<u8>, String> {
 pub(super) fn handle(host: &Host, raw: &[u8]) -> Result<Vec<u8>, String> {
     let b = decode(host, raw)?;
     let a = current(host)?;
-    check_source(host, &a)?;
-    host.callbacks
-        .bind_incoming_prepared_start(&b.sender_preparation_id, &a.request.preparation_id)?;
-    if b.kind == "view" {
-        remote_view(host, &a, &b.payload["view"], &b.sender_preparation_id)?;
-        return encode(
+    let result = (|| {
+        a.sdk.call(
+            SdkDirection::Incoming,
+            SdkStage::SourceCheck,
+            SdkKind::parse(&b.kind),
+            SdkReason::CallFailed,
+            || check_source(host, &a),
+        )?;
+        a.sdk.call(
+            SdkDirection::Incoming,
+            SdkStage::IncomingBind,
+            SdkKind::parse(&b.kind),
+            SdkReason::CallFailed,
+            || {
+                host.callbacks.bind_incoming_prepared_start(
+                    &b.sender_preparation_id,
+                    &a.request.preparation_id,
+                )
+            },
+        )?;
+        if b.kind == "view" {
+            a.sdk.call(
+                SdkDirection::Incoming,
+                SdkStage::RemoteView,
+                Some(SdkKind::View),
+                SdkReason::PredicateRejected,
+                || remote_view(host, &a, &b.payload["view"], &b.sender_preparation_id),
+            )?;
+            return a.sdk.call(SdkDirection::Incoming,SdkStage::FrameEncode,Some(SdkKind::Viewed),SdkReason::CallFailed,||encode(
             host,
             &a,
             "viewed",
             &b.request_id,
             Some(b.sender_preparation_id),
             json!({"initiator_view_sha256":view_hash(&b.payload["view"])?,"view":a.view}),
-        );
-    }
-    if b.kind != "decoder_prepare"
-        || b.receiver_preparation_id.as_deref() != Some(a.request.preparation_id.as_str())
-        || b.payload["responder_view"] != a.view
-    {
-        return Err("prepared incoming exact current target differs".into());
-    }
-    let remote_value = &b.payload["initiator_view"];
-    let remote = remote_view(host, &a, remote_value, &b.sender_preparation_id)?;
-    let sender: AndroidPreparedSenderReadback =
-        serde_json::from_value(b.payload["sender_receipt"].clone()).map_err(safe_decode)?;
-    sender.validate(&remote)?;
-    host.callbacks
-        .bind_incoming_prepared_start(&remote.preparation_id, &a.request.preparation_id)?;
-    let decoder_request = AndroidPreparedDecoderRequest {
-        schema_id: "rusty.quest.android.media.prepared_decoder_request.v1".into(),
-        preparation_id: a.request.preparation_id.clone(),
-        request_sha256: a.request.digest()?,
-        peer_preparation_id: remote.preparation_id,
-        peer_sender_receipt_sha256: prepared_start_digest(
-            "rusty.quest.android.media.prepared_sender_readback.v1",
-            &sender,
-        )?,
-        peer_format: sender.outgoing_format,
-    };
-    let receipt = a
-        .owner
-        .lock()
-        .map_err(|_| "prepared decoder owner poisoned")?
-        .prepare_decoder(&mut host.callbacks.clone(), decoder_request)?;
-    check_source(host, &a)?;
-    encode(
+        ));
+        }
+        a.sdk.call(
+            SdkDirection::Incoming,
+            SdkStage::ResponseIdentity,
+            SdkKind::parse(&b.kind),
+            SdkReason::PredicateRejected,
+            || {
+                if b.kind != "decoder_prepare"
+                    || b.receiver_preparation_id.as_deref()
+                        != Some(a.request.preparation_id.as_str())
+                    || b.payload["responder_view"] != a.view
+                {
+                    return Err("prepared incoming exact current target differs".into());
+                }
+                Ok(())
+            },
+        )?;
+        let remote_value = &b.payload["initiator_view"];
+        let remote = a.sdk.call(
+            SdkDirection::Incoming,
+            SdkStage::RemoteView,
+            Some(SdkKind::DecoderPrepare),
+            SdkReason::PredicateRejected,
+            || remote_view(host, &a, remote_value, &b.sender_preparation_id),
+        )?;
+        let sender = a.sdk.call(
+            SdkDirection::Incoming,
+            SdkStage::IncomingSender,
+            Some(SdkKind::DecoderPrepare),
+            SdkReason::PredicateRejected,
+            || {
+                let sender: AndroidPreparedSenderReadback =
+                    serde_json::from_value(b.payload["sender_receipt"].clone())
+                        .map_err(safe_decode)?;
+                sender.validate(&remote)?;
+                Ok(sender)
+            },
+        )?;
+        a.sdk.call(
+            SdkDirection::Incoming,
+            SdkStage::IncomingBind,
+            Some(SdkKind::DecoderPrepare),
+            SdkReason::CallFailed,
+            || {
+                host.callbacks
+                    .bind_incoming_prepared_start(&remote.preparation_id, &a.request.preparation_id)
+            },
+        )?;
+        let receipt = a.sdk.call(
+            SdkDirection::Incoming,
+            SdkStage::IncomingDecoder,
+            Some(SdkKind::DecoderPrepare),
+            SdkReason::CallFailed,
+            || {
+                let decoder_request = AndroidPreparedDecoderRequest {
+                    schema_id: "rusty.quest.android.media.prepared_decoder_request.v1".into(),
+                    preparation_id: a.request.preparation_id.clone(),
+                    request_sha256: a.request.digest()?,
+                    peer_preparation_id: remote.preparation_id,
+                    peer_sender_receipt_sha256: prepared_start_digest(
+                        "rusty.quest.android.media.prepared_sender_readback.v1",
+                        &sender,
+                    )?,
+                    peer_format: sender.outgoing_format,
+                };
+                let receipt = a
+                    .owner
+                    .lock()
+                    .map_err(|_| "prepared decoder owner poisoned")?
+                    .prepare_decoder(&mut host.callbacks.clone(), decoder_request)?;
+                Ok(receipt)
+            },
+        )?;
+        a.sdk.call(
+            SdkDirection::Incoming,
+            SdkStage::SourceCheck,
+            SdkKind::parse(&b.kind),
+            SdkReason::CallFailed,
+            || check_source(host, &a),
+        )?;
+        a.sdk.call(SdkDirection::Incoming,SdkStage::FrameEncode,Some(SdkKind::DecoderPrepared),SdkReason::CallFailed,||encode(
         host,
         &a,
         "decoder_prepared",
         &b.request_id,
         Some(b.sender_preparation_id),
         json!({"initiator_view_sha256":view_hash(remote_value)?,"responder_view_sha256":view_hash(&a.view)?,"decoder_receipt":receipt}),
-    )
+    ))
+    })();
+    a.sdk.finish(SdkDirection::Incoming, result.is_ok());
+    result
 }
 pub(super) fn status(host: &Host) -> Result<String, String> {
     let a = held(host)?;
@@ -1043,6 +1357,10 @@ fn archive_prior(host: &Host, current_cleanup: Option<&str>) -> Result<(), Strin
     } else {
         peer_lifecycle::prepared_terminal_lifetime(host)?
     };
+    // Join the same registered renderer after its earned terminal lifetime.
+    // Existing-Own reuse may be released without its metadata being closed;
+    // this exact terminal join never aborts or retires independent Own.
+    crate::camera_hwb_probe::prepared_peer_renderer_terminal_for(&old.request.preparation_id)?;
     let mut body = old
         .archive_body
         .lock()

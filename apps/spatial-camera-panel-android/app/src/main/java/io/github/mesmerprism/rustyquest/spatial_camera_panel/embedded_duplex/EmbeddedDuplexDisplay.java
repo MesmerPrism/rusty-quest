@@ -19,6 +19,8 @@ public interface EmbeddedDuplexDisplay {
     default long reserveDormantPeerProjection() { throw new IllegalStateException("dormant reader route unavailable"); }
     default String prepareDormantPeerRenderer(String preparationId,long generation,java.util.function.BooleanSupplier desiredStop){throw new IllegalStateException("retained renderer preparation unavailable");}
     default String abortDormantPeerRenderer(String preparationId){throw new IllegalStateException("retained renderer abort unavailable");}
+    /** Metadata only, after exact durable archive and actual terminal owner joins. */
+    default void retireArchivedPreparedRenderer(String preparationId){throw new IllegalStateException("prepared renderer metadata retirement unavailable");}
     void bindPeerProjection(long routeGeneration, long decoderToken, long readerGeneration);
     void activatePeerProjection(long routeGeneration, long decoderToken, long readerGeneration);
     long[] currentProjection(long routeGeneration);

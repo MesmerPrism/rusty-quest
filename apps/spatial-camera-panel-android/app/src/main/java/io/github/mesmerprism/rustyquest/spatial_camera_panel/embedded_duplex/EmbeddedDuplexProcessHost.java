@@ -122,7 +122,7 @@ final class EmbeddedDuplexProcessHost {
         EmbeddedDuplexPlatform actual=platform;EmbeddedDuplexOriginals.Record entered=activeCommandOriginal;
         if(actual!=null){
             if(entered!=null)actual.requestDesiredStop(entered);
-            actual.requestIncomingFreshStop();actual.requestIncomingPreparedStop();
+            actual.requestIncomingFreshStop();actual.requestIncomingPreparedStop(whole);
         }else if(entered!=null)entered.desiredStop.set(true);
         if(whole){OwnStereoCaptureRuntime own=OwnStereoCaptureRuntime.currentForApplication();if(own!=null)own.requestStopOwn();}
     }

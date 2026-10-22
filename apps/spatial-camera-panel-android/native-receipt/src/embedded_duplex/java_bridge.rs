@@ -452,6 +452,46 @@ impl JavaOwnerCallbacks {
             .z()
             .map_err(|_| "prepared incoming actual Stop type".into())
     }
+    pub(crate) fn incoming_prepared_start_stop_sequence(&self) -> Result<i64, String> {
+        let mut env = self.attached()?;
+        let call = env.call_method(
+            self.callback.as_obj(),
+            "incomingPreparedStartStopSequence",
+            "()J",
+            &[],
+        );
+        self.checked_call(
+            &mut env,
+            call,
+            "java_bridge.prepared_incoming_stop_sequence",
+        )?
+        .j()
+        .map_err(|_| "prepared incoming Stop sequence type".into())
+    }
+    pub(crate) fn incoming_prepared_start_stop_requested_for(
+        &self,
+        remote: &str,
+        sequence: i64,
+        retired: bool,
+    ) -> Result<bool, String> {
+        let mut env = self.attached()?;
+        let id = env
+            .new_string(remote)
+            .map_err(|_| "prepared incoming remote ID")?;
+        let call = env.call_method(
+            self.callback.as_obj(),
+            "incomingPreparedStartStopRequestedFor",
+            "(Ljava/lang/String;JZ)Z",
+            &[
+                JValue::Object(id.as_ref()),
+                JValue::Long(sequence),
+                JValue::Bool(u8::from(retired)),
+            ],
+        );
+        self.checked_call(&mut env, call, "java_bridge.prepared_incoming_scoped_stop")?
+            .z()
+            .map_err(|_| "prepared incoming scoped Stop type".into())
+    }
     pub(crate) fn bind_incoming_prepared_start(
         &self,
         remote: &str,

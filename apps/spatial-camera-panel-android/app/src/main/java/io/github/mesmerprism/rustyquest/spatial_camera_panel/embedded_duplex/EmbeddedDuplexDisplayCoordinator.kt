@@ -68,6 +68,13 @@ internal class EmbeddedDuplexDisplayCoordinator(
   private var retirementGeneration = 0L
   private var ownedDecoderToken = 0L
   private var ownedReaderGeneration = 0L
+  override fun retireArchivedPreparedRenderer(id:String) = serialized {
+    check(preparedRendererId==null || preparedRendererId==id) { "archived renderer ID differs" }
+    check(dormantPeerRoute==null && ownedPeerGeneration==0L && retirementGeneration==0L &&
+        ownedDecoderToken==0L && ownedReaderGeneration==0L) { "archived renderer projection remains Pending" }
+    preparedRendererId=null
+    Unit
+  }
   override fun activateOwnProjectionAsync(ownerAlive: java.util.function.BooleanSupplier): CompletableFuture<Void> {
     val own = OwnStereoCaptureRuntime.currentForApplication()
         ?: return CompletableFuture<Void>().also { it.completeExceptionally(IllegalStateException("Own capture unavailable")) }

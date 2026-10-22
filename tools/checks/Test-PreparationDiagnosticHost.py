@@ -128,7 +128,10 @@ class EmbeddedDuplexProcessHost{
     assert 'fields.keys == setOf("original_id")' in selector and 'id is String' in selector and '[0-9a-f]{32}' in selector
     native=app/'native-receipt/src/embedded_duplex';prepared=(native/'prepared_start.rs').read_text();runtime=(native/'runtime_host.rs').read_text()
     diag=method(prepared,'pub(super) fn diagnostic(')
-    for prohibited in ['callbacks.', 'clock.', 'source(host)', 'run(', 'held(host)', 'status(host)']: assert prohibited not in diag,prohibited
+    for prohibited in ['clock.', 'source(host)', 'run(', 'status(host)', 'sdk_prepare(', 'exchange(']: assert prohibited not in diag,prohibited
+    assert diag.count('callbacks.')==1 and diag.count('owner_transport_attempt_read()')==1
+    assert 'observed.original.as_deref()==Some(arena.request.original_id.as_str())' in diag.replace(' ', '').replace('\n','') or 'observed.original.as_deref() == Some(arena.request.original_id.as_str())' in diag
+    assert diag.index('let sdk')<diag.index('let transport')<diag.rindex('host.capability.require_live()?')
     assert runtime.index('return prepared_start::diagnostic(&host, input)')<runtime.index('let now = host.clock.now_ms()?;',runtime.index('fn command('))
     stages=re.findall(r'attempt\.call\(\s*Stage::(\w+)',prepared,re.S)
     assert stages==['Capability','PriorArchive','OriginalRead','JavaEligibility','OriginalMatch','NativeEligibility','PhysicalEligibility','ResourceTarget','Entropy','ConstructorBinding','ResourceTargetDigest','RequestReservation','SourceSnapshot','ArenaInstall','SdkPreparation'],stages

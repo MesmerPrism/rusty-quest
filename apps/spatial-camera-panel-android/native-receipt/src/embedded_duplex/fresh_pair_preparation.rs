@@ -469,9 +469,14 @@ fn sign(
                 .authority
                 .selected_fresh_pair_setup_policy()?
                 .ok_or("actual fresh policy absent")?
-        || context.issued_at_ms > host.clock.now_ms()?
         || local != &a.view
     {
+        return Err("preparation exact native selected context differs".into());
+    }
+    // The signed frame and exact phase/local view joined above. Preserve actual
+    // observation/issue bytes and wait before the unchanged strict owner gate.
+    let now = authenticated_context_time(host, id, context.issued_at_ms)?;
+    if context.issued_at_ms > now {
         return Err("preparation exact native selected context differs".into());
     }
     let actual = host.authority.fresh_phase_prepare_view(
@@ -521,6 +526,7 @@ fn apply(
     if a.context.as_ref() != Some(&request.context) {
         return Err("preparation exact retained context changed".into());
     }
+    authenticated_context_time(host, id, request.context.issued_at_ms)?;
     // Actual owning lookup is reconciliation, never a blind re-dispatch.
     let old = host
         .authority
@@ -673,11 +679,17 @@ pub(super) fn run(host: &Host, id: &str, current_original: &str) -> Result<Strin
         }
         let mut views = vec![local, remote];
         views.sort_by(|a, b| a.local_peer_id.cmp(&b.local_peer_id));
+        let observed = views
+            .iter()
+            .map(|view| view.observed_at_ms)
+            .max()
+            .ok_or("preparation views absent")?;
+        let issued = authenticated_context_time(host, id, observed)?;
         let mut context:ManifoldFreshPhasePrepareContext=serde_json::from_value(json!({"$schema":"rusty.manifold.peer.fresh_phase_prepare_context.v2",
             "request_id":phase_id,"setup_request_id":id,"native_phase_id":phase_id,
             "policy":host.authority.selected_fresh_pair_setup_policy()?.ok_or("actual preparation policy absent")?,
             "selection":host.authority.selected_fresh_setup_enrollment_selection()?.ok_or("actual preparation selection absent")?,
-            "peer_ids":peers(host)?,"views":views,"issued_at_ms":host.clock.now_ms()?})).map_err(safe_decode)?;
+            "peer_ids":peers(host)?,"views":views,"issued_at_ms":issued})).map_err(safe_decode)?;
         context.request_id = rusty_manifold_peer::fresh_phase_prepare_transaction_id(&context)?;
         update_preparation(host, id, |a| {
             a.transaction_id = context.request_id.to_string();
@@ -734,10 +746,16 @@ fn finish_prepared(
     }
     let mut views = vec![local, remote];
     views.sort_by(|a, b| a.local_peer_id.cmp(&b.local_peer_id));
+    let observed = views
+        .iter()
+        .map(|view| view.observed_at_ms)
+        .max()
+        .ok_or("prepared setup views absent")?;
+    let issued = authenticated_context_time(host, id, observed)?;
     let mut setup:ManifoldFreshPairSetupContext=serde_json::from_value(json!({"$schema":"rusty.manifold.peer.fresh_pair_setup_context.v3",
         "request_id":a.phase_id,"native_setup_request_id":id,"native_phase_id":a.phase_id,
         "policy":host.authority.selected_fresh_pair_setup_policy()?.ok_or("actual setup policy absent")?,
-        "peer_ids":peers(host)?,"views":views,"issued_at_ms":host.clock.now_ms()?})).map_err(safe_decode)?;
+        "peer_ids":peers(host)?,"views":views,"issued_at_ms":issued})).map_err(safe_decode)?;
     setup.request_id = rusty_manifold_peer::fresh_pair_setup_transaction_id(&setup)?;
     update(host, id, |a| {
         a.transaction_id = setup.request_id.to_string();

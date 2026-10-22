@@ -17,6 +17,39 @@ public final class EmbeddedDuplexPreparationDiagnosticHostTest {
     static void reject(Action action)throws Exception{try{action.run();}catch(IllegalArgumentException expected){controls++;return;}throw new AssertionError("negative accepted");}
     static void check(boolean value){if(!value)throw new AssertionError();controls++;}
     public static void main(String[] args)throws Exception{
+        JSONObject lane=new JSONObject().put("state","failed").put("stage","frame_shape").put("frame_kind","view").put("reason","predicate_rejected");
+        JSONObject unobserved=new JSONObject().put("state","unobserved").put("stage",JSONObject.NULL).put("frame_kind",JSONObject.NULL).put("reason",JSONObject.NULL);
+        JSONObject sdk=new JSONObject().put("$schema","rusty.quest.embedded_duplex.preparation_sdk_observation.v1").put("outbound",lane).put("incoming",unobserved)
+            .put("first_failure",new JSONObject().put("direction","outbound").put("observation",new JSONObject(lane.toString())));
+        JSONObject transport=new JSONObject().put("schema","rusty.quest.embedded_duplex.owner_transport_attempt_native_read.v1")
+            .put("qualification_claimed",false).put("response_authentication_claimed",false).put("strict_parser_status","AVAILABLE").put("strict_parser_error",JSONObject.NULL)
+            .put("closed_java_fields",new JSONObject().put("attempt_sequence",0).put("phase","NONE").put("outcome","NONE").put("failure","NONE"));
+        JSONObject v3=failed().put("$schema","rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v3").put("stage","sdk_preparation").put("arena_installed",true)
+            .put("native_failed_guard",JSONObject.NULL).put("native_failed_reason",JSONObject.NULL).put("sdk_observation",sdk).put("transport_attempt",transport).put("transport_attempt_original_bound",false);
+        check(read(v3,actor(),ID).getJSONObject("sdk_observation").getJSONObject("outbound").getString("stage").equals("frame_shape"));
+        for(String stage:new String[]{"renderer_begin","sender_prepare","source_check","frame_clock","frame_shape","frame_sign","frame_encode","frame_exchange","frame_decode","response_identity","remote_view","decoder_receipt","decoder_wait","owner_ready","renderer_dormant","incoming_bind","incoming_sender","incoming_decoder","ready_status"})for(String reason:new String[]{"call_failed","predicate_rejected","source_changed","callback_exception","callback_unavailable","frame_binding_rejected","frame_signature_rejected","frame_shape_rejected","frame_wire_rejected"}){
+            JSONObject current=new JSONObject(v3.toString());JSONObject observed=current.getJSONObject("sdk_observation");observed.getJSONObject("outbound").put("stage",stage).put("reason",reason);
+            observed.getJSONObject("first_failure").put("observation",new JSONObject(observed.getJSONObject("outbound").toString()));
+            check(read(current,actor(),ID).getJSONObject("sdk_observation").getJSONObject("outbound").getString("reason").equals(reason));
+        }
+        for(String field:new String[]{"state","stage","reason","frame_kind"}){
+            JSONObject current=new JSONObject(v3.toString());current.getJSONObject("sdk_observation").getJSONObject("outbound").put(field,"private error text");reject(()->read(current,actor(),ID));
+        }
+        reject(()->read(new JSONObject(v3.toString()).put("transport_attempt_original_bound",true),actor(),ID));
+        JSONObject authority=new JSONObject(v3.toString());authority.getJSONObject("transport_attempt").put("qualification_claimed",true);reject(()->read(authority,actor(),ID));
+        for(String damage:new String[]{"phase","failure","attempt_sequence"}){
+            JSONObject impossible=new JSONObject(v3.toString());JSONObject facts=impossible.getJSONObject("transport_attempt").getJSONObject("closed_java_fields");
+            if(damage.equals("phase"))facts.put("phase","CONNECT").put("outcome","RETURNED").put("attempt_sequence",1);
+            if(damage.equals("failure"))facts.put("phase","CONNECT").put("outcome","FAILED").put("attempt_sequence",1).put("failure","EOF");
+            if(damage.equals("attempt_sequence"))facts.put("attempt_sequence",0.5);
+            reject(()->read(impossible,actor(),ID));
+        }
+        JSONObject unavailable=new JSONObject(v3.toString());unavailable.getJSONObject("transport_attempt").put("strict_parser_status","UNAVAILABLE").put("strict_parser_error","CALL_UNAVAILABLE").put("closed_java_fields",JSONObject.NULL);
+        check(read(unavailable,actor(),ID).getJSONObject("transport_attempt").getString("strict_parser_status").equals("UNAVAILABLE"));
+        JSONObject extraSdk=new JSONObject(v3.toString());extraSdk.getJSONObject("sdk_observation").put("raw_error","secret text");reject(()->read(extraSdk,actor(),ID));
+        JSONObject wrongFirst=new JSONObject(v3.toString());wrongFirst.getJSONObject("sdk_observation").getJSONObject("first_failure").put("direction","incoming");reject(()->read(wrongFirst,actor(),ID));
+        reject(()->read(new JSONObject(v3.toString()).put("arena_installed",false),actor(),ID));
+        check(read(new JSONObject(v3.toString()).put("arena_installed",false).put("sdk_observation",JSONObject.NULL).put("transport_attempt",JSONObject.NULL),actor(),ID).isNull("sdk_observation"));
         JSONObject nativeV2=failed().put("$schema","rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v2")
             .put("stage","native_eligibility").put("native_failed_guard","receiver_restored_history").put("native_failed_reason","predicate_rejected");
         check(read(nativeV2,actor(),ID).getString("native_failed_guard").equals("receiver_restored_history"));

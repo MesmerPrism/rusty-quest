@@ -250,7 +250,7 @@ fn encode_inner(
         sender_peer_id: host.local_peer_id.clone(),
         receiver_peer_id: host.remote_peer_id.clone(),
         route_configuration_sha256: host.route_configuration_sha256.clone(),
-        issued_at_ms: now,
+        issued_at_ms: now.saturating_sub(ISSUE_BACKDATE_MS),
         payload,
     };
     shape(&body)?;
@@ -521,6 +521,15 @@ fn phase<'a>(host: &'a Host, id: &'a str) -> Result<FreshSetupPhase<'a>, String>
     Ok(FreshSetupPhase { host, request: id })
 }
 
+// Called only after a signed peer frame or verified signed request has joined
+// this exact phase, or for the local constructor of those authenticated views.
+fn authenticated_context_time(host: &Host, id: &str, issued: u64) -> Result<u64, String> {
+    crate::embedded_duplex::preparation_clock::authenticated_context_time(
+        issued,
+        || host.clock.now_ms(),
+        || phase(host, id).map(|_| ()),
+    )
+}
 fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), String> {
     host.capability.require_live()?;
     let prepared = {
@@ -824,7 +833,6 @@ fn sign_setup(
 ) -> Result<ManifoldFreshPairSetupSignature, String> {
     let host = token.host;
     let a = active(host, token.request)?;
-    let now = host.clock.now_ms()?;
     let policy = host
         .authority
         .selected_fresh_pair_setup_policy()?
@@ -844,7 +852,6 @@ fn sign_setup(
         || c.policy != policy
         || c.views.len() != 2
         || *local != a.view
-        || c.issued_at_ms > now
     {
         return Err("fresh prepared context binding changed".into());
     }
@@ -864,6 +871,10 @@ fn sign_setup(
                 return Err("fresh setup enrolled identity mismatch".into());
             }
         }
+    }
+    let now = authenticated_context_time(host, token.request, c.issued_at_ms)?;
+    if c.issued_at_ms > now {
+        return Err("fresh prepared context binding changed".into());
     }
     // Rejoin the exact actual owner bytes before signing, not merely the cached view.
     let actual = host.authority.fresh_pair_setup_view(
@@ -929,6 +940,7 @@ fn apply_setup(
     if a.phase_fenced || a.context.as_ref() != Some(&request.context) {
         return Err("fresh setup exact signed context changed".into());
     }
+    authenticated_context_time(host, id, request.context.issued_at_ms)?;
     let current_physical = validate_physical(
         host,
         peer_lifecycle::fresh_setup_eligibility(host)?,
@@ -1124,7 +1136,12 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
         }
         let mut views = vec![a.view, remote];
         views.sort_by(|a, b| a.local_peer_id.cmp(&b.local_peer_id));
-        let now = host.clock.now_ms()?;
+        let observed = views
+            .iter()
+            .map(|view| view.observed_at_ms)
+            .max()
+            .ok_or("fresh views absent")?;
+        let now = authenticated_context_time(host, &id, observed)?;
         let mut c:ManifoldFreshPairSetupContext=serde_json::from_value(json!({"$schema":"rusty.manifold.peer.fresh_pair_setup_context.v3",
             "request_id":id,"native_setup_request_id":id,"native_phase_id":id,"policy":policy,"peer_ids":peers(host)?,"views":views,"issued_at_ms":now})).map_err(safe_decode)?;
         c.request_id = rusty_manifold_peer::fresh_pair_setup_transaction_id(&c)?;
