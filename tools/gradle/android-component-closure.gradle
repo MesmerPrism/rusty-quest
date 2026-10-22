@@ -1,0 +1,90 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ConfigurableFileCollection
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.tasks.*
+
+/** Actual selected compiler sources, not a second source scanner/compiler. */
+abstract class ObserveAndroidComponentInputs extends DefaultTask {
+    @InputFile @PathSensitive(PathSensitivity.NONE)
+    abstract RegularFileProperty getInventoryFile()
+    @InputFiles @PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract ConfigurableFileCollection getCompilerSources()
+    @Input abstract ListProperty<String> getClassRoots()
+    @OutputFile abstract RegularFileProperty getReceiptFile()
+
+    static String digest(byte[] bytes) {
+        MessageDigest.getInstance('SHA-256').digest(bytes).encodeHex().toString()
+    }
+
+    @TaskAction void observe() {
+        byte[] input = inventoryFile.get().asFile.bytes
+        def inventory = new JsonSlurper().parse(input)
+        if (inventory.schema != 'rusty.quest.android_component_inventory.v1') {
+            throw new GradleException('component-inventory-schema')
+        }
+        def roots = inventory.roots.collectEntries { name, value ->
+            [(name): new File(value as String).canonicalFile.toPath()]
+        }
+        def rows = []
+        compilerSources.files.findAll { it.isFile() && (it.name.endsWith('.kt') || it.name.endsWith('.java')) }.each { file ->
+            def path = file.canonicalFile.toPath()
+            def matches = roots.findAll { name, root -> path.startsWith(root) }
+            if (matches.size() > 1) throw new GradleException('component-source-root-overlap')
+            if (matches.size() == 1) {
+                def match = matches.entrySet().iterator().next()
+                rows.add([root: match.key, path: match.value.relativize(path).toString().replace('\\', '/'),
+                          bytes: file.length(), sha256: ObserveAndroidComponentInputs.digest(file.bytes)])
+            }
+        }
+        rows = rows.unique { it.root + ':' + it.path }.sort { a, b ->
+            (a.root <=> b.root) ?: (a.path <=> b.path)
+        }
+        def expected = inventory.sources.sort { a, b -> (a.root <=> b.root) ?: (a.path <=> b.path) }
+        if (rows != expected) throw new GradleException('component-compiler-input-source-closure')
+        def result = [schema: 'rusty.quest.android_component_gradle_inputs.v1',
+                      inventory_sha256: digest(input), sources: rows, class_roots: classRoots.get()]
+        def output = receiptFile.get().asFile
+        output.parentFile.mkdirs()
+        output.setText(JsonOutput.toJson(result), 'UTF-8')
+    }
+}
+
+def componentInventory = providers.gradleProperty('rqAndroidComponentInventory').filter { !it.isEmpty() }
+def componentEvidence = providers.gradleProperty('rqAndroidComponentEvidenceDir').filter { !it.isEmpty() }
+if (componentInventory.isPresent() != componentEvidence.isPresent()) {
+    throw new GradleException('component-inventory-and-evidence-required-together')
+}
+if (componentInventory.isPresent()) {
+    def expectedFile = file(componentInventory.get())
+    def evidenceFile = file(componentEvidence.get()).toPath().resolve('gradle-inputs.json').toFile()
+    def variant = new JsonSlurper().parse(expectedFile).variant.capitalize()
+    def kotlinName = providers.gradleProperty('rqAndroidComponentKotlinTask').orElse('compile' + variant + 'Kotlin').get()
+    def javaName = providers.gradleProperty('rqAndroidComponentJavaTask').orElse('compile' + variant + 'JavaWithJavac').get()
+    afterEvaluate {
+        def kotlinTask = tasks.getByName(kotlinName)
+        def javaTask = tasks.findByName(javaName)
+        def actualSources = objects.fileCollection().from(kotlinTask.sources)
+        def destinations = [kotlinTask.destinationDirectory.get().asFile.absolutePath]
+        if (javaTask != null) {
+            actualSources.from(javaTask.source)
+            destinations.add(javaTask.destinationDirectory.get().asFile.absolutePath)
+        }
+        def observer = tasks.register('verifySelectedAndroidComponentInputs', ObserveAndroidComponentInputs) {
+            inventoryFile.set(expectedFile)
+            compilerSources.from(actualSources)
+            classRoots.set(destinations)
+            receiptFile.set(evidenceFile)
+            // Every attempt observes current Gradle selection; this does not force compilation.
+            outputs.upToDateWhen { false }
+        }
+        [kotlinTask, javaTask].findAll { it != null }.each { task ->
+            task.inputs.file(expectedFile).withPathSensitivity(PathSensitivity.NONE)
+                .withPropertyName('rqSelectedAndroidComponentInventory')
+            task.dependsOn(observer)
+        }
+    }
+}

@@ -426,6 +426,10 @@ android {
       cmake {
         path = file("src/main/cpp/spatial_depth_layer/CMakeLists.txt")
         version = "3.22.1"
+        val staging = providers.gradleProperty("rqCmakeStagingDirectory").orNull
+        require(!staging.isNullOrBlank()) { "Select CMake staging through Build-SpatialCameraPanelAndroid.ps1 and an explicit short BuildCacheRoot" }
+        require(file(staging).isAbsolute) { "CMake staging must be absolute" }
+        buildStagingDirectory = file(staging)
       }
     }
   }
@@ -600,3 +604,6 @@ spatial {
     sources.add(project.layout.projectDirectory.dir("src/shaders"))
   }
 }
+
+// Optional typed selected-component closure; compatibility callers remain unverified.
+apply(from = rootProject.file("../../tools/gradle/android-component-closure.gradle"))

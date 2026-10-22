@@ -122,6 +122,13 @@ $errors = $null
 [void][System.Management.Automation.Language.Parser]::ParseFile($testPath, [ref]$tokens, [ref]$errors)
 if (@($errors).Count -gt 0) { throw "Test wrapper PowerShell parse failed: $($errors[0].Message)" }
 
+& (Join-Path $repo "tools/checks/Test-SpatialCmakeStagingHost.ps1")
+& (Join-Path $repo 'tools/checks/Test-AndroidNativeSourcePaths.ps1') -RepoRoot $repo
+& (Join-Path $repo 'tools/checks/Test-AndroidComponentBuildSeam.ps1') -RepoRoot $repo
+& (Join-Path $repo 'tools/checks/Test-AndroidComponentOwnedSource.ps1') -RepoRoot $repo
+& python (Join-Path $repo 'tools/checks/test_android_component_closure.py')
+if ($LASTEXITCODE -ne 0) { throw 'Selected Android component source controls failed.' }
+
 Write-Host "Spatial Camera Panel fast build workflow static check: PASS"
 
 # Evaluate the real cache geometry and final Gradle argv without running the
@@ -160,6 +167,8 @@ function Assert-KotlinIsolationBuildObservation([object]$Observed,[string]$Expec
     $configuration=if($Mode-ceq'Candidate'){'--no-configuration-cache'}else{'--configuration-cache'}
     if('--no-daemon'-cnotin$Observed.arguments-or$configuration-cnotin$Observed.arguments-or(":app:assemble$Type")-cnotin$Observed.arguments){throw 'Kotlin isolation changed the existing Gradle mode or assembly task.'}
     if(($Mode-ceq'DevFast')-ne('-Pkotlin.compiler.execution.strategy=in-process'-cin$Observed.arguments)){throw 'Kotlin isolation changed the existing compiler strategy.'}
+    if("-PrqAndroidComponentKotlinTask=compile${Type}Kotlin" -cnotin $Observed.arguments -or
+        "-PrqAndroidComponentJavaTask=compile${Type}JavaWithJavac" -cnotin $Observed.arguments){throw 'Selected Android component compiler task names must be explicit.'}
 }
 foreach($mode in @('DevFast','Candidate')) {
     foreach($case in @(@{product='Broker.Sample';type='Debug';lane='k\broker.sample-debug'},@{product='Other.Product';type='Release';lane='k\other.product-release'})) {

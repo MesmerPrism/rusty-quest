@@ -206,6 +206,119 @@ function Get-QuestBuildSourceComposition {
     }
 }
 
+function Assert-QuestBuildSourceCompositionCurrent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]$Composition,
+        [switch]$AllowWorkingTreeChanges
+    )
+    if ($Composition.schema -cnotin @('rusty.quest.apk_source_composition.v1', 'rusty.quest.apk_source_composition.v2') -or
+            [string]$Composition.fingerprint -cnotmatch '^[0-9a-f]{64}$') {
+        throw 'Unsupported or malformed APK source composition.'
+    }
+    $packages = @($Composition.packages)
+    if ($packages.Count -eq 0 -or @($packages | Where-Object { $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_) }).Count -gt 0 -or
+            @($packages | Sort-Object -Unique).Count -ne $packages.Count) {
+        throw 'APK source composition package selection is invalid.'
+    }
+    $records = @($Composition.repositories)
+    if ($records.Count -eq 0 -or @($records | Where-Object role -CEQ 'primary').Count -ne 1) {
+        throw 'APK source composition requires exactly one primary repository.'
+    }
+    if (@($records | Where-Object role -CEQ 'primary')[0].repository_id -cne 'rusty-quest') {
+        throw 'APK source composition primary identity differs.'
+    }
+    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $roots = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($record in $records) {
+        if ([string]::IsNullOrWhiteSpace([string]$record.repository_id) -or
+                -not $ids.Add([string]$record.repository_id) -or
+                $record.role -cnotin @('primary', 'path-dependency', 'app-owned-input') -or
+                [string]$record.commit -cnotmatch '^[0-9a-f]{40}$' -or
+                [string]$record.tree -cnotmatch '^[0-9a-f]{40}$' -or
+                $record.tracked_worktree_clean -isnot [bool] -or
+                -not [IO.Path]::IsPathFullyQualified([string]$record.repository)) {
+            throw 'APK source composition repository identity is invalid or duplicated.'
+        }
+        if ($record.tracked_worktree_clean) {
+            if ([string]$record.worktree_overlay_sha256 -cne '') { throw 'Clean source composition record cannot carry an overlay.' }
+        } elseif ([string]$record.worktree_overlay_sha256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'Dirty source composition record lacks an exact overlay.'
+        }
+        $root = Get-NormalizedSourceCompositionPath -Path (Resolve-Path -LiteralPath $record.repository).Path
+        if (-not $roots.Add($root) -or (Find-SourceCompositionGitRoot -Path $root) -ine $root) {
+            throw 'APK source composition repository path is duplicated or is not a Git root.'
+        }
+    }
+    $dirty = @($records | Where-Object tracked_worktree_clean -NE $true).Count -gt 0
+    $expectedSchema = 'rusty.quest.apk_source_composition.v' + $(if ($dirty) { '2' } else { '1' })
+    if ($Composition.schema -cne $expectedSchema) { throw 'APK source composition schema does not match its overlays.' }
+    $canonical = Get-QuestBuildSourceCompositionIdentityCanonicalText -PackageName $packages -Repository $records
+    if ((Get-SourceCompositionSha256 -Value $canonical) -cne $Composition.fingerprint) {
+        throw 'APK source composition fingerprint differs from its document.'
+    }
+    foreach ($record in $records) {
+        # Never trust a caller-supplied overlay, even when its document checksum is self-consistent.
+        $actual = Get-SourceCompositionRepository -Root $record.repository -RepositoryId $record.repository_id `
+            -Role $record.role -AllowWorkingTreeChanges:$AllowWorkingTreeChanges
+        if ($actual.commit -cne $record.commit -or $actual.tree -cne $record.tree -or
+                $actual.tracked_worktree_clean -ne $record.tracked_worktree_clean -or
+                $actual.worktree_overlay_sha256 -cne $record.worktree_overlay_sha256) {
+            throw "APK source composition repository changed: $($record.repository_id)"
+        }
+    }
+}
+
+function Get-QuestBuildOwnedRepositoryObservation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][ValidatePattern('^[a-z][a-z0-9-]*$')][string]$RepositoryId,
+        [switch]$AllowWorkingTreeChanges
+    )
+    $resolved = Get-NormalizedSourceCompositionPath -Path (Resolve-Path -LiteralPath $Root).Path
+    if ((Find-SourceCompositionGitRoot -Path $resolved) -ine $resolved) {
+        throw 'Owned input observation must select its exact Git repository root.'
+    }
+    # Same repository row and overlay algorithm, without resolving a Cargo graph.
+    return Get-SourceCompositionRepository -Root $resolved -RepositoryId $RepositoryId -Role 'app-owned-input' `
+        -AllowWorkingTreeChanges:$AllowWorkingTreeChanges
+}
+
+function Add-QuestBuildOwnedRepository {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]$Composition,
+        [Parameter(Mandatory=$true)][string]$Root,
+        [Parameter(Mandatory=$true)][ValidatePattern('^[a-z][a-z0-9-]*$')][string]$RepositoryId,
+        [switch]$AllowWorkingTreeChanges
+    )
+    Assert-QuestBuildSourceCompositionCurrent -Composition $Composition -AllowWorkingTreeChanges:$AllowWorkingTreeChanges
+    $resolved = Get-NormalizedSourceCompositionPath -Path (Resolve-Path -LiteralPath $Root).Path
+    if ((Find-SourceCompositionGitRoot -Path $resolved) -ine $resolved) {
+        throw 'Additional owned input must select its exact Git repository root.'
+    }
+    foreach ($record in @($Composition.repositories)) {
+        $existing = Get-NormalizedSourceCompositionPath -Path $record.repository
+        if ($record.repository_id -ieq $RepositoryId) { throw 'Additional owned repository identity already exists.' }
+        if ($existing -ieq $resolved -or
+                $existing.StartsWith($resolved + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+                $resolved.StartsWith($existing + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'Additional owned repository path conflicts with an existing source owner; retain its existing record.'
+        }
+    }
+    $owned = Get-SourceCompositionRepository -Root $resolved -RepositoryId $RepositoryId -Role 'app-owned-input' `
+        -AllowWorkingTreeChanges:$AllowWorkingTreeChanges
+    $records = @(@($Composition.repositories) + $owned | Sort-Object repository_id)
+    $canonical = Get-QuestBuildSourceCompositionIdentityCanonicalText -PackageName $Composition.packages -Repository $records
+    return [pscustomobject][ordered]@{
+        schema = 'rusty.quest.apk_source_composition.v' + $(if (@($records | Where-Object tracked_worktree_clean -NE $true).Count -gt 0) { '2' } else { '1' })
+        fingerprint = Get-SourceCompositionSha256 -Value $canonical
+        packages = @($Composition.packages)
+        repositories = $records
+    }
+}
+
 function Assert-QuestNativeDependencyComposition {
     [CmdletBinding()]
     param(
@@ -237,4 +350,4 @@ function Assert-QuestNativeDependencyComposition {
     }
 }
 
-Export-ModuleMember -Function Get-QuestBuildSourceComposition, Get-QuestBuildSourceCompositionIdentityCanonicalText, Assert-QuestNativeDependencyComposition
+Export-ModuleMember -Function Get-QuestBuildSourceComposition, Get-QuestBuildSourceCompositionIdentityCanonicalText, Get-QuestBuildOwnedRepositoryObservation, Add-QuestBuildOwnedRepository, Assert-QuestBuildSourceCompositionCurrent, Assert-QuestNativeDependencyComposition
