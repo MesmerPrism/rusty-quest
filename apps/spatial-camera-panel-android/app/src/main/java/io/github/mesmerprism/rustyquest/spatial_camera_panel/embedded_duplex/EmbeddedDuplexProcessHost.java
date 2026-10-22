@@ -1422,7 +1422,22 @@ final class EmbeddedDuplexProcessHost {
             if(retainedWholeClose!=null)return retainedWholeClose.challenge;
             JSONObject actual=ConcurrentStereoQualification.retirementArmObservation(processFence.epochId(),runtimeConfigSha256,nativeExecutorGeneration);
             return "established".equals(actual.getString("binding"))?actual.getString("challenge"):internalChallenge();
-        }).thenCompose(challenge->peerLifecycle(EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE,challenge));
+        }).thenCompose(challenge->peerLifecycle(EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE,challenge)).thenApply(receipt->{
+            try{
+                JSONObject result=new JSONObject(receipt);
+                JSONObject physical=result.optJSONObject("peer_lifecycle");
+                if(physical==null)physical=result; // No-media whole retirement returns its direct joined proof.
+                if(!"whole_app_close".equals(physical.optString("action")))
+                    throw new IllegalStateException("ordinary Close owner proof unavailable");
+                if(physical.has("status") && !"terminal".equals(physical.optString("status")))
+                    throw new IllegalStateException("ordinary Close owner result remains pending or failed");
+                for(String key:new String[]{"whole_app_physical_cleanup","app_process_fence_cleanup",
+                        "java_own_capture_cleanup","java_renderer_cleanup","java_control_cleanup"})
+                    if(!"terminal".equals(physical.optString(key)))
+                        throw new IllegalStateException("ordinary Close physical cleanup remains pending");
+                return receipt;
+            }catch(Exception pendingOrInvalid){throw new java.util.concurrent.CompletionException(pendingOrInvalid);}
+        });
     }
 
     CompletableFuture<String> closeRealPeerNoMedia(long expectedGeneration) {

@@ -58,13 +58,16 @@ public class OrdinaryProductCloseHost {
 '''
 TESTS='''
  static void check(boolean value){if(!value)throw new AssertionError("ordinary Close selection");}
+ static String terminal(boolean envelope){JSONObject p=new JSONObject().put("action","whole_app_close");
+  for(String key:new String[]{"whole_app_physical_cleanup","app_process_fence_cleanup","java_own_capture_cleanup","java_renderer_cleanup","java_control_cleanup"})p.put(key,"terminal");
+  return envelope?new JSONObject().put("peer_lifecycle",p).toString():p.toString();}
  public static void main(String[] args){
   for(boolean armed:new boolean[]{false,true}){
    ConcurrentStereoQualification.armed=armed;OrdinaryProductCloseHost h=new OrdinaryProductCloseHost();
    CompletableFuture<String> close=h.closeProduct(7);check(!close.isDone());check(h.desiredStops==1&&h.dispatches==1);
    check(h.actualAction==EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE);
    check((armed?"actual-arm":"new-no-media-challenge").equals(h.actualChallenge));
-   h.owner.complete("actual terminal proof");check("actual terminal proof".equals(close.join()));
+   String proof=terminal(armed);h.owner.complete(proof);check(proof.equals(close.join()));
    h.attachmentGeneration=0;check(h.closeProduct(7).isCompletedExceptionally());
   }
   OrdinaryProductCloseHost held=new OrdinaryProductCloseHost();held.retainedWholeClose=new RetainedWholeClose();
@@ -75,6 +78,21 @@ TESTS='''
   }
   OrdinaryProductCloseHost fail=new OrdinaryProductCloseHost();CompletableFuture<String> closing=fail.closeProduct(7);
   fail.owner.completeExceptionally(new IllegalStateException("actual cleanup pending"));check(closing.isCompletedExceptionally());check(fail.attachmentGeneration==7);
+  for(String payload:new String[]{"{}", "{\\"status\\":\\"error\\"}","{\\"action\\":\\"whole_app_close\\",\\"whole_app_physical_cleanup\\":\\"pending\\"}",
+      "{\\"peer_lifecycle\\":{\\"action\\":\\"whole_app_close\\",\\"whole_app_physical_cleanup\\":\\"pending\\",\\"last_failure\\":\\"stop_failed\\"}}"}){
+   OrdinaryProductCloseHost h=new OrdinaryProductCloseHost();int[] activityCleanup={0};CompletableFuture<String> close=h.closeProduct(7);
+   close.whenComplete((receipt,failure)->{if(failure==null){h.attachmentGeneration=0;activityCleanup[0]++;}});
+   h.owner.complete(payload);check(close.isCompletedExceptionally());check(h.attachmentGeneration==7&&activityCleanup[0]==0);
+  }
+  for(String key:new String[]{"whole_app_physical_cleanup","app_process_fence_cleanup","java_own_capture_cleanup","java_renderer_cleanup","java_control_cleanup"}){
+   OrdinaryProductCloseHost h=new OrdinaryProductCloseHost();CompletableFuture<String> close=h.closeProduct(7);
+   h.owner.complete(new JSONObject(terminal(false)).put(key,"pending").toString());check(close.isCompletedExceptionally());check(h.attachmentGeneration==7);
+  }
+  for(boolean envelope:new boolean[]{false,true}){
+   OrdinaryProductCloseHost h=new OrdinaryProductCloseHost();CompletableFuture<String> close=h.closeProduct(7);
+   JSONObject error=new JSONObject(terminal(false)).put("status","error");
+   h.owner.complete(envelope?new JSONObject().put("peer_lifecycle",error).toString():error.toString());check(close.isCompletedExceptionally());check(h.attachmentGeneration==7);
+  }
   System.out.println("Ordinary Close production selection PASS; physical/native owner completion modeled, never inferred.");
  }
 }

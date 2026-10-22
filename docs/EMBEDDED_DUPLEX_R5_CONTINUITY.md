@@ -38,6 +38,10 @@ on the durable incarnation evidence. Close completion still requires the
 actual Stop, Own, renderer, callback, control and whole-product joins. Pending
 or failed owners retain their attachment; only real terminal completion permits
 reopen. No new app quit button or OS lifecycle guarantee is introduced here.
+An owner future returning normally is insufficient: ordinary Close validates
+the direct or wrapped whole-app proof and its fence/Own/renderer/control joins.
+A Pending, failed or malformed receipt leaves the Activity and its executor
+owned, even when the transport future itself succeeded.
 
 `tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1` exercises the real fence
 and private filesystem, with modeled kernel observations, plus genuine Android
