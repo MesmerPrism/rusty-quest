@@ -1017,6 +1017,16 @@ handlers, codec, signer and terminal/archive seams across two SDK lifetimes;
 Android/JNI, physical SDK/renderer cleanup, media Start and device behavior remain
 separate runtime evidence.
 
+The process-owned display slot forwards prepared renderer creation, abort and
+archived metadata retirement through the same attachment/in-flight barrier as
+the other display operations. Testing a coordinator directly does not exercise
+that production wrapper: an omitted forward inherits the interface's closed
+unavailable default. The receiver host fixture therefore uses the actual slot
+and coordinator, and the slot fixture checks every interface default, exact
+argument/exception propagation, detach/drain, replacement and cleanup retry.
+These host checks preserve the throwing defaults for genuinely unavailable
+implementations and grant no media or cleanup authority.
+
 
 ## Retained operator originals and fresh-owner retirement
 

@@ -3,7 +3,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.*
 import io.github.mesmerprism.rustyquest.media.*
 
-/** Actual receiver/display/routing chain; only Android/native/media resources are modeled. */
+/** Actual receiver/process display slot/display/routing chain; only Android/native/media resources are modeled. */
 internal object PreparedSecondLifetimeHost {
   @JvmStatic fun main(args:Array<String>){
     val f=Fixture();val first="1".repeat(32);val second="2".repeat(32)
@@ -46,6 +46,7 @@ internal object PreparedSecondLifetimeHost {
     }
     val routing = SpatialVideoSourceRoutingCoordinator(adapter) { 1000L }
     val display: EmbeddedDuplexDisplayCoordinator
+    val slot = EmbeddedDuplexDisplaySlot()
     val receiver: EmbeddedDuplexReceiver
     init {
       OwnPackedPoolNative.retirementAllowed = true
@@ -54,7 +55,8 @@ internal object PreparedSecondLifetimeHost {
           { SpatialVideoSourceCarrierContext(11, 12) }, { true }, { true },
           { words(it, SpatialVideoSourceResult.Effective, SpatialVideoSourceStage.requiredFor(SpatialVideoSource.Peer)) },
           { longArrayOf() }, { error("unexpected Own restart") }, prepareRenderer={id,route->ready(id,route)}, readPreparedRenderer={ error("unexpected pending read") })
-      receiver = EmbeddedDuplexReceiver(17, display, "127.0.0.1", 7777, 64, 64, 30,
+      slot.attach(display)
+      receiver = EmbeddedDuplexReceiver(17, slot, "127.0.0.1", 7777, 64, 64, 30,
           PackedStereoMediaReceiver.Bounds(65536, 65536, 64, 64, 2, 3000, 4000, 100, 15000, 10000, 8, 250),
           object : EmbeddedDuplexReceiver.RuntimeFactory {
             override fun stage(w: Int, h: Int, n: Int, fps: Int, route: Long) = object : EmbeddedDuplexReceiver.ProjectionResource {

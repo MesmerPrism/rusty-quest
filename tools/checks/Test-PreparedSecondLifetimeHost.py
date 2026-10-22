@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Whole production Receiver/Display/routing; modeled Android/SDK resources only."""
+"""Whole production Receiver/DisplaySlot/Display/routing; modeled Android/SDK resources only."""
 import sys
 sys.dont_write_bytecode=True
 import argparse,hashlib,json,os,pathlib,re,subprocess
@@ -24,16 +24,17 @@ def main():
  peer=out/'EmbeddedDuplexPeerRoots.java';peer.write_text('''package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 class EmbeddedDuplexPeerRoots {static void keys(org.json.JSONObject v,String... names){java.util.Set<String>s=new java.util.HashSet<>();v.keys().forEachRemaining(s::add);if(!s.equals(new java.util.HashSet<>(java.util.Arrays.asList(names))))throw new IllegalArgumentException();}static void identity(org.json.JSONObject a,org.json.JSONObject b){} }
 ''',encoding='utf-8')
- classes=out/'classes';classes.mkdir();cp=os.pathsep.join([str(classes),str(support),*libraries,*compiler]);fixture=root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/PreparedSecondLifetimeHost.kt'
- production=[java/(name+'.java') for name in ['EmbeddedDuplexReceiver','EmbeddedDuplexDisplay','EmbeddedDuplexPreparedRenderer','EmbeddedDuplexOwnProjectionFailure','EmbeddedDuplexEstimate','EmbeddedDuplexCanonicalJson']]+[app/'SpatialVideoSourceRoutingCoordinator.kt',java/'EmbeddedDuplexDisplayCoordinator.kt']
- before=[{'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for path in [*production,fixture]]
+ classes=out/'classes';classes.mkdir();cp=os.pathsep.join([str(classes),str(support),*libraries,*compiler]);fixture=root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/PreparedSecondLifetimeHost.kt';slot_fixture=fixture.with_name('PreparedDisplaySlotHost.java')
+ production=[java/(name+'.java') for name in ['EmbeddedDuplexReceiver','EmbeddedDuplexDisplay','EmbeddedDuplexPreparedRenderer','EmbeddedDuplexOwnProjectionFailure','EmbeddedDuplexEstimate','EmbeddedDuplexCanonicalJson','EmbeddedDuplexDisplaySlot']]+[app/'SpatialVideoSourceRoutingCoordinator.kt',java/'EmbeddedDuplexDisplayCoordinator.kt']
+ before=[{'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for path in [*production,fixture,slot_fixture,pathlib.Path(__file__).resolve()]]
  def run(name,argv):
   result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.PIPE);(out/(name+'.stdout')).write_bytes(result.stdout);(out/(name+'.stderr')).write_bytes(result.stderr);return result.returncode
- code=run('java',[spec['tools']['javac'],'--release','17','-cp',cp,'-d',str(classes),str(seams['looper']),str(seams['native']),str(peer),*[str(x) for x in production[:6]]]);assert code==0,'Java compile'
- code=run('kotlin',[spec['tools']['java'],'-cp',os.pathsep.join(compiler),'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler','-no-stdlib','-no-reflect','-jvm-target','17','-classpath',cp,'-d',str(classes),str(seams['seams']),str(seams['own']),*[str(x) for x in production[6:]],str(fixture)]);assert code==0,'Kotlin compile'
+ code=run('java',[spec['tools']['javac'],'--release','17','-cp',cp,'-d',str(classes),str(seams['looper']),str(seams['native']),str(peer),*[str(x) for x in production[:7]],str(slot_fixture)]);assert code==0,'Java compile'
+ code=run('kotlin',[spec['tools']['java'],'-cp',os.pathsep.join(compiler),'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler','-no-stdlib','-no-reflect','-jvm-target','17','-classpath',cp,'-d',str(classes),str(seams['seams']),str(seams['own']),*[str(x) for x in production[7:]],str(fixture)]);assert code==0,'Kotlin compile'
  argv=[spec['tools']['java'],'-cp',cp,'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.PreparedSecondLifetimeHost'];argv+=['baseline'] if a.baseline else []
  code=run('controls',argv)
- result={'passed':code==0,'exit':code,'baseline':a.baseline,'source_pins':before,'input_spec':{'path':str(pathlib.Path(a.input_spec).resolve()),'sha256':hashlib.sha256(pathlib.Path(a.input_spec).read_bytes()).hexdigest()},'limits':__doc__}
+ slot_code=run('slot-controls',[spec['tools']['java'],'-cp',cp,'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.PreparedDisplaySlotHost'])
+ result={'passed':code==0 and slot_code==0,'exit':code,'slot_exit':slot_code,'baseline':a.baseline,'source_pins':before,'input_spec':{'path':str(pathlib.Path(a.input_spec).resolve()),'sha256':hashlib.sha256(pathlib.Path(a.input_spec).read_bytes()).hexdigest()},'limits':__doc__}
  for row in before:bind(row)
- (out/'RESULT.json').write_text(json.dumps(result,indent=2),encoding='utf-8');print(json.dumps({'passed':code==0,'exit':code}));return code
+ (out/'RESULT.json').write_text(json.dumps(result,indent=2),encoding='utf-8');print(json.dumps({'passed':code==0 and slot_code==0,'exit':code,'slot_exit':slot_code}));return code or slot_code
 if __name__=='__main__':sys.exit(main())
