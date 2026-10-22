@@ -95,6 +95,19 @@ Validate the host contract before a focused or aggregate run:
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PowerShellHost.ps1 -SelfTest
 ```
 
+Development feedback module preparation has independent CPU-only host checks:
+
+```powershell
+pwsh -NoProfile -File tools/Test-DevelopmentFeedback.ps1
+pwsh -NoProfile -File examples/development-feedback-native/Run-Conformance.ps1 -Rustc <rustc>
+```
+
+See [Development Feedback Modules](DEVELOPMENT_FEEDBACK_MODULES.md) for the
+resident contract, immutable generation staging, rejection/state controls and
+later Android integration. Host classloader/dynamic-library execution and real
+SDK/D8 compilation are separate from Quest runtime and edit-to-feedback proof.
+These checks do not add a prerequisite to unrelated APK or runtime work.
+
 The pure breath lifecycle has a dependency-free focused gate:
 
 ```powershell
