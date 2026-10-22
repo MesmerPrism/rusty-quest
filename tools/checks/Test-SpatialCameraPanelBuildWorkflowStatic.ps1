@@ -133,7 +133,7 @@ Write-Host "Spatial Camera Panel fast build workflow static check: PASS"
 
 # Evaluate the real cache geometry and final Gradle argv without running the
 # builder, creating cache directories, or starting Gradle/Kotlin.
-function Get-KotlinIsolationBuildObservation([string]$Source,[string]$Mode,[string]$Product,[string]$Type) {
+function Get-KotlinIsolationBuildObservation([string]$Source,[string]$Mode,[string]$Product,[string]$Type,[string]$Phase='Assemble') {
     $parseTokens=$null;$parseErrors=$null
     $ast=[Management.Automation.Language.Parser]::ParseInput($Source,[ref]$parseTokens,[ref]$parseErrors)
     if(@($parseErrors).Count){throw 'Kotlin isolation production AST is invalid.'}
@@ -144,8 +144,8 @@ function Get-KotlinIsolationBuildObservation([string]$Source,[string]$Mode,[stri
     if($lane.Count-ne1-or$kotlin.Count-ne1-or$directories.Count-ne1){throw 'One production Kotlin cache lane and directory setup required.'}
     $targets=@($directories[0].CommandElements|Where-Object{$_-is[Management.Automation.Language.ArrayExpressionAst]})
     $argv=@($assignments|Where-Object{$_.Left.VariablePath.UserPath-ceq'gradleArguments'}|Sort-Object{$_.Extent.StartOffset})
-    $stopwatch=@($assignments|Where-Object{$_.Left.VariablePath.UserPath-ceq'gradleStopwatch'})
-    if($targets.Count-ne1-or$argv.Count-eq0-or$stopwatch.Count-ne1){throw 'Actual Gradle argument boundary or cache directory targets missing.'}
+    $dispatch=@($assignments|Where-Object{$_.Left.VariablePath.UserPath-ceq'phaseArguments'})
+    if($targets.Count-ne1-or$argv.Count-eq0-or$dispatch.Count-ne1){throw 'Actual Gradle argument boundary or cache directory targets missing.'}
     $BuildCacheRoot=Join-Path ([IO.Path]::GetTempPath()) 'rq-kotlin-contract'
     $appRoot=Join-Path ([IO.Path]::GetTempPath()) 'rq-kotlin-source'
     $resolvedProductId=$Product;$BuildType=$Type;$buildTypeLower=$Type.ToLowerInvariant();$RustStdLinkage='Static';$BuildMode=$Mode
@@ -154,31 +154,50 @@ function Get-KotlinIsolationBuildObservation([string]$Source,[string]$Mode,[stri
     $created=@(& ([scriptblock]::Create($targets[0].Extent.Text)))
     $shortAapt2='fixture-aapt2';$cmakeStaging=@{path='fixture-cmake'};$mediaAndroidJar='fixture-android.jar';$mediaAndroidBuildRoot='fixture-media'
     $sourceBankBuildInputs=@{enabled=$false};$UseSourceCompositionVersionName=$false;$gradleTimingInitPath='fixture-timing.gradle'
-    $argumentConstruction=$Source.Substring($argv[0].Extent.StartOffset,$stopwatch[0].Extent.StartOffset-$argv[0].Extent.StartOffset)
+    $argumentConstruction=$Source.Substring($argv[0].Extent.StartOffset,$dispatch[0].Extent.StartOffset-$argv[0].Extent.StartOffset)
     . ([scriptblock]::Create($argumentConstruction))
-    [pscustomobject]@{root=$BuildCacheRoot;kotlin=$kotlinProjectPersistentDir;created=$created;arguments=@($gradleArguments)}
+    # Consume only the real fixed-phase assignments, never invoke a tool or the
+    # environment/owner body while observing argv. Expected tokens stay below.
+    $moduleAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repo 'tools/lib/AndroidComponentClosure.psm1'),[ref]$parseTokens,[ref]$parseErrors)
+    if(@($parseErrors).Count){throw 'Gradle owner module AST is invalid.'}
+    $function=@($moduleAst.FindAll({param($node)$node-is[Management.Automation.Language.FunctionDefinitionAst]-and$node.Name-ceq'Invoke-AndroidComponentGradlePhase'},$true))
+    if($function.Count-ne1){throw 'One fixed phase owner required.'}
+    $ownerAssignments=@($function[0].FindAll({param($node)$node-is[Management.Automation.Language.AssignmentStatementAst]-and$node.Left-is[Management.Automation.Language.VariableExpressionAst]},$true))
+    $InventoryPath='';$EvidenceDirectory='';$Arguments=@($gradleArguments);$ProjectDirectory=$appRoot;$GradleUserHome=$gradleUserHome
+    foreach($name in @('task','selected','effectiveArguments')){
+        $assignment=@($ownerAssignments|Where-Object{$_.Left.VariablePath.UserPath-ceq$name})
+        if($assignment.Count-ne1){throw 'One actual fixed-phase argument assignment required.'}
+        . ([scriptblock]::Create($assignment[0].Extent.Text))
+    }
+    [pscustomobject]@{root=$BuildCacheRoot;kotlin=$kotlinProjectPersistentDir;created=$created;arguments=@($effectiveArguments)}
 }
-function Assert-KotlinIsolationBuildObservation([object]$Observed,[string]$ExpectedLane,[string]$Mode,[string]$Type) {
+function Assert-KotlinIsolationBuildObservation([object]$Observed,[string]$ExpectedLane,[string]$Mode,[string]$Type,[string]$Phase='Assemble') {
     $expected=Join-Path $Observed.root $ExpectedLane
     if($Observed.kotlin-cne$expected-or@($Observed.created|Where-Object{$_-ceq$expected}).Count-ne1){throw 'Kotlin persistence must use the created product/type cache lane.'}
     $persistent=@($Observed.arguments|Where-Object{$_-clike'-Pkotlin.project.persistent.dir=*'})
     $disable=@($Observed.arguments|Where-Object{$_-clike'-Pkotlin.project.persistent.dir.gradle.disableWrite=*'})
     if($persistent.Count-ne1-or$persistent[0]-cne"-Pkotlin.project.persistent.dir=$expected"-or$disable.Count-ne1-or$disable[0]-cne'-Pkotlin.project.persistent.dir.gradle.disableWrite=true'){throw 'Actual Gradle argv must isolate Kotlin persistence and suppress legacy writes in both modes.'}
     $configuration=if($Mode-ceq'Candidate'){'--no-configuration-cache'}else{'--configuration-cache'}
-    if('--no-daemon'-cnotin$Observed.arguments-or$configuration-cnotin$Observed.arguments-or(":app:assemble$Type")-cnotin$Observed.arguments){throw 'Kotlin isolation changed the existing Gradle mode or assembly task.'}
+    $expectedTask=if($Phase-ceq'JvmPreflight'){':app:verifySelectedAndroidJvmCompilation'}else{":app:assemble$Type"}
+    $tasks=@($Observed.arguments|Where-Object{$_-clike':app:*'})
+    if('--no-daemon'-cnotin$Observed.arguments-or$configuration-cnotin$Observed.arguments-or$tasks.Count-ne1-or$tasks[0]-cne$expectedTask){throw 'Kotlin isolation changed the existing Gradle mode or fixed phase task.'}
     if(($Mode-ceq'DevFast')-ne('-Pkotlin.compiler.execution.strategy=in-process'-cin$Observed.arguments)){throw 'Kotlin isolation changed the existing compiler strategy.'}
     if("-PrqAndroidComponentKotlinTask=compile${Type}Kotlin" -cnotin $Observed.arguments -or
         "-PrqAndroidComponentJavaTask=compile${Type}JavaWithJavac" -cnotin $Observed.arguments){throw 'Selected Android component compiler task names must be explicit.'}
 }
 foreach($mode in @('DevFast','Candidate')) {
     foreach($case in @(@{product='Broker.Sample';type='Debug';lane='k\broker.sample-debug'},@{product='Other.Product';type='Release';lane='k\other.product-release'})) {
-        $observation=Get-KotlinIsolationBuildObservation $build $mode $case.product $case.type
-        Assert-KotlinIsolationBuildObservation $observation $case.lane $mode $case.type
+        foreach($phase in @('Assemble','JvmPreflight')){
+            $observation=Get-KotlinIsolationBuildObservation $build $mode $case.product $case.type $phase
+            Assert-KotlinIsolationBuildObservation $observation $case.lane $mode $case.type $phase
+        }
     }
 }
 $persistentToken='"-Pkotlin.project.persistent.dir=$kotlinProjectPersistentDir",'
 $disableToken='"-Pkotlin.project.persistent.dir.gradle.disableWrite=true",'
-$devFastOnly=$build.Replace($persistentToken,'').Replace('$gradleStopwatch = [Diagnostics.Stopwatch]::StartNew()',('if ($BuildMode -eq "DevFast") { $gradleArguments += "-Pkotlin.project.persistent.dir=$kotlinProjectPersistentDir" }'+"`n"+'$gradleStopwatch = [Diagnostics.Stopwatch]::StartNew()'))
+$dispatchBoundary='    $phaseArguments=@{'
+if(-not$build.Contains($dispatchBoundary)){throw 'Actual common Gradle argv boundary is missing.'}
+$devFastOnly=$build.Replace($persistentToken,'').Replace($dispatchBoundary,('if ($BuildMode -eq "DevFast") { $gradleArguments += "-Pkotlin.project.persistent.dir=$kotlinProjectPersistentDir" }'+"`n"+$dispatchBoundary))
 $damages=@(
     @{name='missing persistent directory option';source=$build.Replace($persistentToken,'')},
     @{name='missing legacy-write suppression';source=$build.Replace($disableToken,'')},

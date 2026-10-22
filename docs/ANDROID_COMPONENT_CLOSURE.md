@@ -78,11 +78,39 @@ in-memory selection and validates its fingerprint. Rewriting the evidence file,
 even with a matching rewritten compiler receipt, cannot change the selected
 requirements while retaining the original build input binding.
 
+With a selected component contract, the canonical builder first calls
+`Invoke-AndroidComponentJvmCompilation` before Cargo setup or compilation. This
+owner API invokes only `:app:verifySelectedAndroidJvmCompilation`, then joins
+the original raw inventory to actual JVM class output with `verify-compiled`.
+It needs no APK or DEX. Its receipt has scope `jvm-compilation-only` and grants
+no runtime authority. Callers without a selected contract remain unverified.
+
+The early aggregate depends on the selected variant's real Kotlin and Java
+compiler tasks. Actual SDK bootclasspath, compiler classpaths, generated source
+files and class directories are observed from Gradle. A typed dependency and
+finalizer closure is checked while Gradle constructs the graph; an unexpected
+producer is refused before task execution. This is a closed compiler/resource/
+managed-library preparation route, not permission to select arbitrary tasks.
+It does not sandbox configuration-time build code. Configuration-cache reuse
+retains the checked graph; the observer still resamples selected source bytes.
+
+Early compilation and later assembly share one environment projection and
+`finally` restoration body. Fixed phase selection owns task/variant/inventory
+arguments; caller common arguments cannot append another task or replace those
+properties. Both phases hold the selected Gradle executable and original source
+inventory. A failed child retains its exit/output metadata even if a subsequent
+source check also fails. Assembly remains after native publication and retains
+all final source, signer, native, APK and all-DEX closure checks.
+
 Ignored output `android-components/` contains `inventory.json`,
 `gradle-inputs.json` and `closure.json`. The input lock records the selected
 contract/feature-lock/source fingerprints; APK inspection and build manifest
 record the passing closure hash and APK binding. The run capsule hashes those
 normal outputs. Local paths stay in ignored evidence.
+Early evidence is separate: `android-components/jvm-preflight/` contains actual
+pre/post-compile observations and `compiled.json`; assembly never overwrites it.
+The normal phase receipt records early elapsed time, and the capsule binds the
+original inventory, early compiler receipts and final assembled closure.
 
 Android source/contract changes affect shell/package identities, never the native
 identity through a full repository overlay. The existing native key remains bound
@@ -119,3 +147,11 @@ descriptor/access/duplicate/missing/truncation controls. Both keep output under 
 fresh `target/` directory and perform no device calls. Product owner tests supply
 their real contract/source and exact artifact controls separately. Host fixtures
 do not establish APK runtime, native rendering or media acceptance.
+
+`Test-AndroidComponentEarlyCompile.py` accepts explicit Gradle/Java/SDK/cache
+paths and uses a fresh real Android project with Compose, generated BuildConfig/
+resources and a project AAR. Its full scenario tests unavailable Android Java
+and Kotlin APIs, Java/Kotlin signature mismatch, source add/change, unchanged
+configuration-cache reuse, unexpected dependency/finalizer refusal and stale
+source rejection. The `graph` scenario isolates the latter affected controls.
+No native task, APK packaging or device operation is part of this fixture.

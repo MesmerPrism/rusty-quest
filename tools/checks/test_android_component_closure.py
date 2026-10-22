@@ -1,7 +1,7 @@
 """Behavioral controls for selected source/compiler/class/DEX joins."""
 import sys
 sys.dont_write_bytecode = True
-import importlib.util, json, pathlib, tempfile, unittest
+import importlib.util, json, pathlib, subprocess, tempfile, unittest
 MODULE = pathlib.Path(__file__).parents[1] / "lib/android_component_closure.py"
 spec = importlib.util.spec_from_file_location("closure", MODULE)
 closure = importlib.util.module_from_spec(spec); spec.loader.exec_module(closure)
@@ -57,6 +57,22 @@ class SelectedSourceTests(unittest.TestCase):
     def test_source_drift_after_compiler_receipt_refuses(self):
         inventory=self.prepare();(self.sources/"Owner.kt").write_text("package fixture\nobject Owner\n")
         with self.assertRaisesRegex(ValueError,"source-drift"):closure.verify_current_sources(inventory)
+    def test_source_only_cli_keeps_original_raw_binding_and_scoped_currentness(self):
+        inventory=self.prepare(); path=self.root/'inventory.json';path.write_bytes(closure.canonical(inventory))
+        command=[sys.executable,'-B',str(MODULE),'verify-sources','--inventory',str(path),
+            '--expected-inventory-sha256',closure.file_sha(path),'--output','-']
+        result=subprocess.run(command,capture_output=True)
+        self.assertEqual(0,result.returncode,result.stderr)
+        value=json.loads(result.stdout)
+        self.assertEqual('selected-source-currentness-only',value['scope'])
+        self.assertFalse(value['runtime_authority']);self.assertNotIn('class_outputs',value)
+        path.write_bytes(closure.canonical(inventory)+b'\n')
+        result=subprocess.run(command,capture_output=True)
+        self.assertNotEqual(0,result.returncode);self.assertIn(b'prepared-inventory-changed',result.stderr)
+        path.write_bytes(closure.canonical(inventory))
+        (self.sources/'Owner.kt').write_text('package fixture\nobject Changed\n')
+        result=subprocess.run(command,capture_output=True)
+        self.assertNotEqual(0,result.returncode);self.assertIn(b'source-drift',result.stderr)
     def test_duplicate_feature_id_cannot_replace_missing_selected_feature(self):
         rows=[{"feature_id":feature,"module_id":module,"owner_lane":"private","selected":True}
             for feature,module in [("a","first"),("a","second"),("c","third")]]
