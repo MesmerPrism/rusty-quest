@@ -29,6 +29,10 @@ feature source root. Requirements belong to the selected owner's contract,
 including concrete classes used by its entrypoint factories. Public tools contain
 no product-specific definition list. Relative paths cannot escape or traverse
 links. The contract must reside in the explicit private source owner's repository.
+`class` names the emitted JVM binary definition, including a Kotlin file facade
+for a top-level function. It does not name an arbitrary source symbol. Bind that
+definition and exact emitted method to the owning source with actual class/DEX
+evidence; source-text class-name matching cannot establish this contract.
 
 The existing Quest source-composition provider retains the original Cargo graph
 for native supplier proof. An absent private Git root is added to the full app
@@ -104,9 +108,12 @@ pwsh -NoProfile -File tools/checks/Test-AndroidComponentBuildSeam.ps1
 pwsh -NoProfile -File tools/checks/Test-AndroidNativeSourcePaths.ps1
 ```
 
-`Test-AndroidComponentWarmCompile.py` accepts explicit Gradle/Java/cache paths and
+`Test-AndroidComponentWarmCompile.py` accepts explicit Gradle/Java/cache/D8/android.jar paths and
 uses one fresh JVM fixture project for initial/add/change/unchanged builds,
-configuration-cache reuse and missing-source rejection. `Test-AndroidComponentBinaryClosure.py`
+configuration-cache reuse and missing-source rejection.
+It verifies a top-level function's real Kotlin file facade and source/method/class/DEX
+closure, and rejects the function name used incorrectly as a class definition.
+`Test-AndroidComponentBinaryClosure.py`
 accepts explicit Java/D8/android.jar paths and verifies real JVM/DEX output plus
 descriptor/access/duplicate/missing/truncation controls. Both keep output under a
 fresh `target/` directory and perform no device calls. Product owner tests supply
