@@ -30,6 +30,69 @@ an APK build comparison or performance improvement claim. Generated wrappers,
 compiler output, full compiler version, tests and host proof remain alongside
 the receipt.
 
+## Optional Android native preparation
+
+The same runner can additionally prepare Android AArch64 CPU libraries with
+the selected, already installed standard Rust compiler and NDK:
+
+```powershell
+pwsh -NoProfile -File examples/development-feedback-native/Run-Conformance.ps1 `
+  -Rustc <absolute-path-to-standard-toolchain-rustc> `
+  -AndroidNdk <installed-ndk-root> -AndroidApi 26
+```
+
+`AndroidApi` defaults to 26 and requires `AndroidNdk`. It must be at least 26,
+within that NDK's advertised platform range, and have an actual target
+sysroot library directory. Before any compilation the runner checks the real
+NDK clang, linker, readelf, objdump, sysroot and metadata, then asks the selected
+Rust compiler for its Android target library directory and requires installed
+`std`/`core` libraries. It never installs a missing target or changes global
+tooling. Invalid preflight stops before host compilation and retains a failed
+receipt. Optional preparation still runs all existing host conformance checks.
+
+After the host proof, the runner uses that NDK's C compiler to compile
+[`tests/abi-layout.c`](tests/abi-layout.c). Its static assertions independently
+match Rust's compile-time target layout assertions: header offsets 0/4/8/16,
+header size/alignment 24/8, and table header/function offsets 0/24 with table
+size/alignment 32/8. Both compilers use actual AArch64 target types. A real
+negative shared object without the API getter must fail ELF admission.
+
+Fresh A1/B2/A3 Android cdylibs use ordinary NDK clang linking and distinct
+filenames/SONAMEs containing a fresh run identity. Real ELF inspection requires
+ELF64 little-endian AArch64 shared objects, the exact SONAME, a defined global
+API getter, and a closed set of Android platform CPU dependencies. Exact
+dependencies are recorded; there are no supplied stub libraries. The runner
+finds the actual local transform function symbol and disassembles only that
+function. It compares instruction words after removing display addresses:
+B2 must differ from A1, while fresh A3 must restore A1's transform instructions.
+Generation-token or whole-file differences cannot satisfy that check.
+Android compilation uses optimization to expose the changed arithmetic inside
+the transform while retaining that function for inspection. The C ABI table,
+version, contract identity and generation semantics remain unchanged.
+
+Receipts retain exact command arguments, target/API, NDK revision, tool
+versions, artifact hashes, selected tool/target-library/API-stub hashes and
+source/header/runner/test hashes before and after the run. Generated wrapper
+sources also receive before/after hashes. A changed input fails the run.
+Selected tool bindings identify the files used for this preparation; they are
+not a byte inventory of the entire NDK installation. Failed commands and
+preflights keep `passed=false`; successful Android preparation separately
+records `executed=false`, `jni_host_tested=false` and device/Quest false.
+
+Quick negative preflights exercise a missing NDK, API without an NDK, and
+out-of-contract/out-of-NDK API levels without compiling:
+
+```powershell
+pwsh -NoProfile -File examples/development-feedback-native/tests/Test-AndroidPreparation.ps1 `
+  -Rustc <absolute-path-to-standard-toolchain-rustc> -AndroidNdk <installed-ndk-root>
+```
+
+Android cross-compilation and ELF/layout/disassembly inspection establish
+source preparation. The Android libraries are never loaded or executed by
+this runner. Actual resident JNI host integration and Android/Quest runtime
+proof remain pending. This creates no APK packaging path, device transfer or
+current runtime activation.
+
 ## Contract and ownership
 
 [`include/rm030_feedback.h`](include/rm030_feedback.h) and
@@ -99,7 +162,8 @@ snapshot; state rollback requires a separately specified host transaction.
 
 This proves host conformance only. Windows is the initially exercised path;
 the Unix loader branch still requires a run on the selected Unix host.
-Android/Quest native loading restrictions, CPU/NDK ABI, resident JNI bridge,
+Optional preparation checks the selected AArch64 C/Rust layout, link closure
+and emitted ELF code. Android/Quest native loading restrictions, resident JNI bridge,
 ART/Activity/process continuity, signed staging, device feedback, memory after
 many replacements and device timings remain unvalidated. Future integration
 must keep a resident JNI bridge as the sole platform entry and translate into

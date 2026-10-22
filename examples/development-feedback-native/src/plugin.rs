@@ -3,19 +3,23 @@
 use abi::{Api, Header, ABI_VERSION, CONTRACT};
 
 #[cfg(phase_b)]
+#[inline(always)]
 fn changed_helper(input: i64) -> Option<i64> {
     input.checked_mul(2)?.checked_add(2)
 }
 
 #[cfg(not(phase_b))]
+#[inline(always)]
 fn calculation(input: i64) -> Option<i64> {
     input.checked_add(1)
 }
 #[cfg(phase_b)]
+#[inline(always)]
 fn calculation(input: i64) -> Option<i64> {
     changed_helper(input)
 }
 
+#[inline(never)]
 unsafe extern "C" fn transform(
     input: i64,
     prior: i64,
