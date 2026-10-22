@@ -17,13 +17,14 @@ function Get-SpatialCmakeStaging {
     # Same serialized product/type lane as Gradle; a sibling of temporary a/r
     # build directories, so Gradle clean cannot delete its persistent metadata.
     $variant = if ($BuildType -ceq 'debug') { 'Debug' } else { 'Release' }
-    $object = Join-Path $path "$variant/12345678/arm64-v8a/CMakeFiles/XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff.dir/spatial_depth_queue_broker.cpp.o.d"
+    $objectDirectory = Join-Path $path "$variant/12345678/arm64-v8a/CMakeFiles/XR_APILAYER_MESMERPRISM_spatial_sdk_depth_handoff.dir"
+    $object = Join-Path $objectDirectory 'spatial_depth_queue_broker.cpp.o.d'
     # CMake's default Windows object-path maximum is 250. This owner-known
     # directory and longest source/object suffix must fit before any compiler.
     if ($IsWindows -and $object.Length -ge 250) {
         throw "Spatial CMake object path would be $($object.Length) characters (CMake limit 250). Select a shorter absolute -BuildCacheRoot; source/output relocation is unnecessary."
     }
-    [pscustomobject]@{path=$path;projected_object_path_chars=$object.Length;object_path_limit=250;policy='serialized-product-type-cache-sibling'}
+    [pscustomobject]@{path=$path;object_directory=$objectDirectory;projected_object_path_chars=$object.Length;object_path_limit=250;policy='serialized-product-type-cache-sibling'}
 }
 function Get-SpatialCmakeStagingReceipt {
     param([Parameter(Mandatory)]$Staging)
