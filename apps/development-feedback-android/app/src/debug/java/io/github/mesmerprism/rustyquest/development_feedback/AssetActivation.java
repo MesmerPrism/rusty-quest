@@ -14,9 +14,13 @@ final class AssetActivation {
     static Map<String,String> read(AssetManager assets) throws IOException {
         byte[] lockBytes=bytes(assets,"feedback-feature-lock.json");
         byte[] runtimeBytes=bytes(assets,"feedback-runtime-profile.json");
+        return parse(lockBytes,runtimeBytes);
+    }
+    static Map<String,String> parse(byte[] lockBytes,byte[] runtimeBytes) throws IOException {
+        if(lockBytes.length>1048576||runtimeBytes.length>1048576)throw new IOException("Oversized packaged activation input");
         try {
             JSONObject lock=new JSONObject(new String(lockBytes,StandardCharsets.UTF_8));
-            if(!"rusty.morphospace.feature_lock.v2".equals(lock.getString("schema"))||
+            if(!"rusty.morphospace.workflow.feature_lock.v2".equals(lock.getString("schema"))||
                 !"quest-development-feedback".equals(lock.getString("project_id"))||
                 !"disabled".equals(lock.getString("default_activation"))||
                 !"selected-lock-and-runtime-input".equals(lock.getString("activation_rule")))throw new IOException("Unexpected packaged feature lock");
