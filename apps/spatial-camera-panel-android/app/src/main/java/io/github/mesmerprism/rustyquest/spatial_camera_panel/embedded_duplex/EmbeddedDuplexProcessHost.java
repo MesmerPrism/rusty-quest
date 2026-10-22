@@ -177,6 +177,13 @@ final class EmbeddedDuplexProcessHost {
         return new JSONObject().put("app_process_generation",held.appGeneration).put("app_record_sha256",held.appRecord)
             .put("native_executor_generation",held.nativeGeneration).put("config_sha256",held.config);
     }
+    static boolean priorOriginalScopeDisposed(JSONObject row)throws Exception{
+        EmbeddedDuplexProcessHost current=instance;
+        if(current==null || current.processFence==null)return false;
+        JSONObject actor=row.getJSONObject("actor_binding");
+        if(!current.applicationContext.getPackageName().equals(actor.getString("package_id")) || actor.isNull("app_record_sha256"))return false;
+        return current.processFence.priorOriginalScopeDisposed(actor.getString("app_record_sha256"),current.applicationContext.getPackageName());
+    }
     static JSONObject freshPhysical(EmbeddedDuplexPlatform actual,JSONObject originalBinding,boolean retirement)throws Exception{
         EmbeddedDuplexProcessHost current=instance;JSONObject identity=freshClosureIdentity(actual);
         boolean correctPhase=retirement?current.phase.get()==Phase.CLOSING:current.phase.get()==Phase.READY;

@@ -15,14 +15,14 @@ $javac = (Get-Command javac -ErrorAction Stop).Source
 $java = Join-Path (Split-Path $javac -Parent) 'java.exe'
 $jsonJar=Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json') -Recurse -Filter 'json-*.jar' | Sort-Object FullName -Descending | Select-Object -First 1
 if(-not $jsonJar){throw 'Host org.json test dependency unavailable'}
-& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') $test $historicalTest $knownBirthTest $incarnationTest
+& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') $test $historicalTest $knownBirthTest $incarnationTest
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host compilation failed' }
 & $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexProcessIncarnationHostTest'
 if ($LASTEXITCODE -ne 0) { throw 'Process incarnation host regressions failed' }
 if($AndroidHome){
     $androidJar=Join-Path $AndroidHome 'platforms/android-34/android.jar'
     $apiOutput=Join-Path $output 'api34';[void](New-Item -ItemType Directory -Path $apiOutput)
-    & $javac -source 8 -target 8 -bootclasspath $androidJar -encoding UTF-8 -d $apiOutput (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java')
+    & $javac -source 8 -target 8 -bootclasspath $androidJar -encoding UTF8 -d $apiOutput (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java')
     if($LASTEXITCODE -ne 0){throw 'Process incarnation genuine API34 typecheck failed'}
     Write-Output 'Process fence and incarnation companion genuine Android API34 typecheck passed; no APK/device qualification.'
 }
@@ -97,3 +97,5 @@ $preflight=$platformSource.IndexOf('EmbeddedDuplexAbandonment.requireReplayRead(
 $atomicRead=$platformSource.IndexOf('file.openRead()', $readerBegin)
 if($readerBegin-lt0-or$preflight-lt$readerBegin-or$atomicRead-le$preflight) {throw 'Historical sidecar preflight must precede AtomicFile.openRead'}
 Write-Output 'App startup/callback source gate passed. No native process-fence or physical-cleanup attestation.'
+& python -B (Join-Path $PSScriptRoot 'Test-OriginalScopeDispositionHost.py') --output (Join-Path $output 'original-scopes') --json-jar $jsonJar.FullName
+if($LASTEXITCODE-ne0){throw 'Actual Original scope disposition and counter controls failed'}

@@ -994,3 +994,32 @@ neither reconstructs a pristine owner or clears replay/floor history.
 Host/unit/socket controls model protocol and owner boundaries only. Android/JNI,
 physical camera/GL cleanup, APK deployment, network streaming and source EOF
 require their own selected artifact and owner evidence.
+
+### Old process scopes and new local admission
+
+An immutable UNKNOWN Original remains queryable and prevents same-ID replay.
+Its historical process scope does not block a new local admission after the
+existing fence owner has authentically disposed that exact scope. Admission
+accounting uses only the exact Original actor's app-record digest, the current
+package/UID, and either a verified committed nonaccepting abandonment archive
+or an observed local process termination followed by a permitted clear-fence
+commit. Current, foreign, live, uncommitted, corrupt or ambiguous scopes remain
+blocking. Readonly calls with no current Original count unresolved disk rows;
+two absent object references are not a current-operation exclusion.
+
+Future v1 abandonment writes the same immutable `committed-fence.raw` witness
+already used by newer abandonment routes. Existing archives are never rewritten
+to add evidence. Automatic incarnation retirement additionally retains its clear
+commit witness only after the existing no-remote-record predicate permits that
+transition. Mere PID absence or the presence of a termination receipt alone is
+insufficient. Existing conservative remote-record/sidecar guards remain; archive
+and metadata history is not inferred terminal from its filename or age.
+
+This changes local unresolved accounting only. Original rows, state, outcome,
+request, consumer retention, signed authority, remote UNKNOWN, replay history,
+native floors and writable-restore fences are unchanged. It does not manufacture
+a graceful cleanup join, consumer ACK or authority transfer. A genuine remote
+obligation still requires its existing owner reconciliation or explicitly
+authorized nonaccepting disposition. Host controls execute the production
+archive/fence classes and all three counter methods with modeled kernel facts;
+Android API compilation and the actual app/package build remain separate gates.

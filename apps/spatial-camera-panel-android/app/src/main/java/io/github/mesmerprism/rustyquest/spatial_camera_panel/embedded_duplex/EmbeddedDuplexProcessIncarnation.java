@@ -115,6 +115,43 @@ final class EmbeddedDuplexProcessIncarnation {
         binding.terminationReceiptSha=EmbeddedDuplexProcessFence.digest(read(path,4096));binding.terminated=true;return true;
     }
     /** Presence, including AtomicFile sidecars, conservatively retains remote reconciliation. */
+    static void commitClear(File directory,Binding binding,String clear,EmbeddedDuplexProcessFence.DirectorySync sync)throws Exception{
+        if(binding==null || !binding.terminated)throw new IllegalStateException("local termination not observed");
+        EmbeddedDuplexOriginalScopeDisposition.clearAfter(binding.originalRecord,clear);
+        String stem="terminated-incarnation-"+EmbeddedDuplexProcessFence.digest(binding.originalRecord);
+        if(!binding.terminationReceiptSha.equals(EmbeddedDuplexProcessFence.digest(read(new File(directory,stem+".json").toPath(),4096))))
+            throw new IllegalStateException("local termination receipt changed before clear commit");
+        Path witness=new File(directory,"process-incarnation-clear-"+EmbeddedDuplexProcessFence.digest(binding.originalRecord)+".raw").toPath();
+        if(Files.exists(witness,LinkOption.NOFOLLOW_LINKS)){
+            EmbeddedDuplexOriginalScopeDisposition.clearAfter(binding.originalRecord,read(witness,512));return;
+        }
+        writeNew(witness,clear);sync.sync();
+    }
+    /** Local accounting may follow only a clear transition already permitted by the fence owner. */
+    static String[] committedOriginalScope(File directory,String scope,int uid)throws Exception{
+        String stem="terminated-incarnation-"+scope;
+        Path receipt=new File(directory,stem+".json").toPath(),witness=new File(directory,"process-incarnation-clear-"+scope+".raw").toPath();
+        if(!Files.exists(receipt,LinkOption.NOFOLLOW_LINKS)||!Files.exists(witness,LinkOption.NOFOLLOW_LINKS))return null;
+        JSONObject value=new JSONObject(read(receipt,4096));
+        if(!keys(value).equals(Set.of("$schema","original_owner","observed_by","original_fence_record","termination_reason",
+                "effect_category","local_handles_disposition","graceful_cleanup_confirmed","remote_authority_transferred"))
+                || !"rusty.quest.embedded_duplex.process_termination.v1".equals(value.getString("$schema"))
+                || !"process_local_resources".equals(value.getString("effect_category"))
+                || !"terminated_by_process_or_boot".equals(value.getString("local_handles_disposition"))
+                || !Boolean.FALSE.equals(value.get("graceful_cleanup_confirmed")) || !Boolean.FALSE.equals(value.get("remote_authority_transferred"))
+                || !Set.of("boot_changed","process_absent","pid_reused").contains(value.getString("termination_reason")))
+            throw new IllegalStateException("local scope termination receipt invalid");
+        Identity owner=Identity.read(value.getJSONObject("original_owner")),observer=Identity.read(value.getJSONObject("observed_by"));
+        if(owner.uid!=observer.uid || owner.uid!=uid)return null;
+        if("boot_changed".equals(value.getString("termination_reason"))==owner.boot.equals(observer.boot))
+            throw new IllegalStateException("local scope termination boot differs");
+        if(owner.boot.equals(observer.boot) && owner.pid==observer.pid && owner.ticks==observer.ticks)
+            throw new IllegalStateException("local scope termination observed the same live actor");
+        String original=value.getString("original_fence_record");
+        if(!scope.equals(EmbeddedDuplexProcessFence.digest(original)))throw new IllegalStateException("local termination scope differs");
+        String clear=read(witness,512);EmbeddedDuplexOriginalScopeDisposition.clearAfter(original,clear);
+        return new String[]{original,clear};
+    }
     static boolean remoteRecordsPresent(File directory,String checkpoint,String evidence){
         if(checkpoint!=null || evidence!=null)return true;
         for(String name:new String[]{"start-checkpoint.v1.json","recovery-evidence.v1.json",

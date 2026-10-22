@@ -450,6 +450,7 @@ public final class EmbeddedDuplexOriginals {
             JSONObject row=actual==null?read(file):actual.row;
             if(!"compacted".equals(row.getString("retention"))
                     && java.util.Arrays.asList("registered","pending","unknown").contains(row.getString("state"))){
+                if(EmbeddedDuplexProcessHost.priorOriginalScopeDisposed(row))continue;
                 if(prior!=null && earnedPriorCustody(row,prior))continue;
                 count++;
             }
@@ -845,11 +846,12 @@ public final class EmbeddedDuplexOriginals {
         if (rows == null) throw new IllegalStateException("original listing unavailable");
         for (File file : rows) {
             String id = file.getName().substring(0, 32);
-            Record actual = live.get(id); if (actual == current || actual!=null && actual==predecessor) continue;
+            Record actual = live.get(id); if (actual!=null && (actual == current || actual==predecessor)) continue;
             JSONObject row = actual == null ? read(file) : actual.row;
             String state = row.getString("state");
             if (!"compacted".equals(row.getString("retention"))
                     && (state.equals("registered") || state.equals("pending") || state.equals("unknown"))){
+                if(EmbeddedDuplexProcessHost.priorOriginalScopeDisposed(row))continue;
                 if(current!=null && earnedPriorCustody(row,current))continue;
                 count++;
             }
@@ -1018,7 +1020,8 @@ public final class EmbeddedDuplexOriginals {
             String id=file.getName().substring(0,32);Record actual=live.get(id);
             if(actual!=null && (actual==current || actual==excluded || actual==predecessor))continue;
             JSONObject row=actual==null?read(file):actual.row;String state=row.getString("state");
-            if(!"compacted".equals(row.getString("retention")) && java.util.Arrays.asList("registered","pending","unknown").contains(state))count++;
+            if(!"compacted".equals(row.getString("retention")) && java.util.Arrays.asList("registered","pending","unknown").contains(state)
+                    && !EmbeddedDuplexProcessHost.priorOriginalScopeDisposed(row))count++;
         }
         return count;
     }

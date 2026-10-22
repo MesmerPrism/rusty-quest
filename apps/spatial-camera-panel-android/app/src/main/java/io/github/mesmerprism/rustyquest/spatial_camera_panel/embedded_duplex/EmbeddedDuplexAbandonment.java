@@ -130,7 +130,7 @@ final class EmbeddedDuplexAbandonment {
 
     static synchronized void committed(File directory, JSONObject receipt,String clearRecord,Protection protection) throws Exception {
         verifyArchive(directory,receipt);
-        if(EmbeddedDuplexAbandonmentRequest.replayDisposition(receipt.getJSONObject("operator_authorization"))) {
+        {
             File archive=new File(directory,"abandoned-"+receipt.getString("scope_sha256"));
             if(!clearRecord.equals(expectedClear(archive))) throw new IllegalStateException("historical commit fence differs");
             writeNew(new File(archive,"committed-fence.raw"),clearRecord,protection);
@@ -213,11 +213,33 @@ final class EmbeddedDuplexAbandonment {
         }
     }
     private static String expectedClear(File archive) throws Exception {
-        String[] fields=read(new File(archive,"recovery-fence.raw"),512).split("\n",-1);
-        if(fields.length!=8 || !"pending".equals(fields[3]) || !"-".equals(fields[4]) || !"-".equals(fields[5]))
+        String[] fields=EmbeddedDuplexOriginalScopeDisposition.fence(read(new File(archive,"recovery-fence.raw"),512));
+        if(!"pending".equals(fields[3]))
             throw new IllegalStateException("historical recovery fence shape differs");
-        fields[3]="clear";String body=String.join("\n",java.util.Arrays.copyOf(fields,6))+"\n";
+        fields[3]="clear";fields[4]="-";fields[5]="-";String body=String.join("\n",java.util.Arrays.copyOf(fields,6))+"\n";
         return body+EmbeddedDuplexProcessFence.digest(body)+"\n";
+    }
+    /** Exact immutable old scope, only after its real clear-fence commit. Legacy archives stay unchanged. */
+    static synchronized String[] committedOriginalScope(File directory,String scope,int uid,String packageId)throws Exception{
+        File archive=new File(directory,"abandoned-"+scope),receipt=new File(archive,"receipt.json"),committed=new File(archive,"committed-fence.raw");
+        if(!Files.exists(receipt.toPath(),LinkOption.NOFOLLOW_LINKS) || !Files.exists(committed.toPath(),LinkOption.NOFOLLOW_LINKS))return null;
+        JSONObject marker=readMarker(receipt);verifyArchive(directory,marker);
+        JSONObject authorization=marker.getJSONObject("operator_authorization");
+        if(!scope.equals(marker.getString("scope_sha256")) || uid!=authorization.getInt("package_uid")
+                || !packageId.equals(authorization.getString("package_id")))return null;
+        if(!scope.equals(authorization.getString("expected_predecessor_sha256"))
+                || !marker.getString("recovery_fence_sha256").equals(authorization.getString("expected_current_fence_sha256")))
+            throw new IllegalStateException("disposed scope authorization differs");
+        String prior=read(new File(archive,"prior-fence.raw"),512),recovery=read(new File(archive,"recovery-fence.raw"),512);
+        if(marker.getLong("successor_generation")!=Long.parseLong(EmbeddedDuplexOriginalScopeDisposition.fence(recovery)[1]))
+            throw new IllegalStateException("disposed scope successor differs");
+        new EmbeddedDuplexAbandonmentRequest(authorization.toString()).bind(prior,recovery,
+            "-".equals(marker.getString("checkpoint_sha256"))?null:read(new File(archive,"checkpoint.raw"),256*1024),
+            "-".equals(marker.getString("evidence_sha256"))?null:read(new File(archive,"evidence.raw"),8*1024*1024));
+        String clear=read(committed,512);
+        if(!clear.equals(expectedClear(archive)))throw new IllegalStateException("disposed scope commit differs");
+        EmbeddedDuplexOriginalScopeDisposition.clearAfter(prior,clear);
+        return new String[]{prior,clear};
     }
     private static boolean sameObject(JSONObject left,JSONObject right) throws Exception {
         java.util.Set<String> keys=new java.util.HashSet<>();for(java.util.Iterator<String> iterator=left.keys();iterator.hasNext();) keys.add(iterator.next());

@@ -76,6 +76,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             boolean pending = false;
             String predecessorRecord = null;
             EmbeddedDuplexProcessIncarnation.Binding binding=null;
+            boolean localTerminationCleared=false;
             String checkpointHash = digest(checkpoint), evidenceHash = digest(evidence);
             if (created) {
                 if (checkpoint != null || evidence != null) {
@@ -119,7 +120,9 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 if(pending && incarnation!=null){
                     binding=EmbeddedDuplexProcessIncarnation.load(directory,record);
                     if(binding!=null && EmbeddedDuplexProcessIncarnation.observeTermination(directory,binding,incarnation,probe,sync)
-                            && !EmbeddedDuplexProcessIncarnation.remoteRecordsPresent(directory,checkpoint,evidence))pending=false;
+                            && !EmbeddedDuplexProcessIncarnation.remoteRecordsPresent(directory,checkpoint,evidence)){
+                        pending=false;localTerminationCleared=true;
+                    }
                 }
             }
             EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, channel, lock,
@@ -128,6 +131,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             result.incarnation=incarnation;
             result.incarnationBinding=pending?binding:null;
             result.persist();
+            if(localTerminationCleared)EmbeddedDuplexProcessIncarnation.commitClear(directory,binding,result.serializedRecord(),sync);
             return result;
         } catch (Throwable failure) {
             if (lock != null) lock.release();
@@ -188,6 +192,11 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     String epochId() { requireLive(generation); return "app-process." + generation + "." + nonce; }
     synchronized boolean effectsPending() { return pending; }
     synchronized boolean recoveryOnly() { return recoveryOnly; }
+    synchronized boolean priorOriginalScopeDisposed(String scope,String packageId)throws Exception{
+        requireFresh();
+        if(incarnation==null)return false;
+        return EmbeddedDuplexOriginalScopeDisposition.disposed(directory,scope,serializedRecord(),generation,incarnation.uid,packageId);
+    }
     synchronized void requireLive(long expectedGeneration) {
         if (persistenceFailed || !lock.isValid() || !channel.isOpen() || expectedGeneration != generation) {
             throw new IllegalStateException("stale app process generation");
