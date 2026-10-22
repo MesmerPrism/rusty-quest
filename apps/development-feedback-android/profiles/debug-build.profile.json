@@ -22,7 +22,11 @@
       "apps/development-feedback-android/app/src/main/AndroidManifest.xml",
       "apps/development-feedback-android/app/src/debug/AndroidManifest.xml"
     ],
-    "lockfiles": ["config/gradle-9.4.1-tool.json"],
+    "lockfiles": [
+      "config/gradle-9.4.1-tool.json",
+      "local-artifacts/development-feedback/selected/feature.lock.json",
+      "local-artifacts/development-feedback/selected/runtime-profile.json"
+    ],
     "toolchain": {
       "repository_files": ["apps/development-feedback-android/build.gradle.kts", "apps/development-feedback-android/app/build.gradle.kts"],
       "required_targets": []

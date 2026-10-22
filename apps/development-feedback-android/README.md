@@ -79,6 +79,15 @@ these exact raw files into generated debug assets before AGP packaging; it
 neither issues a feature lock nor assembles another APK. Compare the status's
 `selection_*` identities against the capsule's actual selected inputs.
 
+Prepare verified raw copies of the selected owner inputs at
+`local-artifacts/development-feedback/selected/feature.lock.json` and
+`runtime-profile.json` under the Quest root. Both file bindings must select
+those exact paths. The portable profile hashes them as explicit lock inputs,
+so changing selected bytes changes the retained output address even when
+source and tool versions stay fixed. Keep immutable copies beside the final
+APK/capsule for later verification and cleanup; the working selection paths
+are preparation inputs, not long-term evidence storage.
+
 The debug keystore must already exist and use the conventional development
 `androiddebugkey` alias and `android` password. This project never generates
 a key or uses a product release signer. Machine paths, signer identity,

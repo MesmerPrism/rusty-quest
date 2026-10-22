@@ -11,6 +11,11 @@ val selectedFeatureLock = providers.environmentVariable("RM_FEEDBACK_FEATURE_LOC
     ?: throw GradleException("Explicit RM_FEEDBACK_FEATURE_LOCK input is required")
 val selectedRuntimeProfile = providers.environmentVariable("RM_FEEDBACK_RUNTIME_PROFILE").orNull
     ?: throw GradleException("Explicit RM_FEEDBACK_RUNTIME_PROFILE input is required")
+val selectedInputRoot = rootProject.projectDir.parentFile.parentFile.resolve("local-artifacts/development-feedback/selected")
+require(file(selectedFeatureLock).canonicalFile == selectedInputRoot.resolve("feature.lock.json").canonicalFile &&
+    file(selectedRuntimeProfile).canonicalFile == selectedInputRoot.resolve("runtime-profile.json").canonicalFile) {
+    "Activation bindings must select the exact files hashed by the reviewed build profile"
+}
 val activationAssets = rootProject.file("../../target/apk-i/development-feedback/warm/activation-assets")
 val prepareFeedbackActivation = tasks.register("prepareFeedbackActivation") {
     inputs.files(file(selectedFeatureLock), file(selectedRuntimeProfile))
@@ -18,6 +23,7 @@ val prepareFeedbackActivation = tasks.register("prepareFeedbackActivation") {
     doLast {
         val selected = listOf(file(selectedFeatureLock) to "feedback-feature-lock.json", file(selectedRuntimeProfile) to "feedback-runtime-profile.json")
         Files.createDirectories(activationAssets.toPath())
+        require(!Files.isSymbolicLink(activationAssets.toPath())) { "Generated activation directory may not be aliased" }
         for ((input, name) in selected) {
             require(Files.isRegularFile(input.toPath()) && !Files.isSymbolicLink(input.toPath()) && input.length() <= 1048576) { "Selected activation input is absent, aliased or oversized" }
             Files.copy(input.toPath(), activationAssets.toPath().resolve(name), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
