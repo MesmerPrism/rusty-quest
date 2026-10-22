@@ -25,6 +25,17 @@ the Gradle user home, Gradle project cache, and product/host build directories.
 It is local build state, not source or release evidence, and must not be
 committed.
 
+Kotlin sessions, errors and persistent metadata use
+`<BuildCacheRoot>/k/<product-build-type>` beside the other stable lanes.
+Both DevFast and Candidate pass
+`-Pkotlin.project.persistent.dir=<selected-k-lane>` and
+`-Pkotlin.project.persistent.dir.gradle.disableWrite=true` to the actual Gradle
+invocation. The first redirects Kotlin's default source-root `.kotlin` output;
+the second suppresses its additional legacy `.gradle/kotlin/errors` fallback.
+Kotlin still writes metadata in the selected cache lane. Keep the same product,
+build type and cache root for compatible reuse; source pre/postguards remain
+strict, with no source ignore exception or JVM override required.
+
 ## Cache identities
 
 Each run writes `build-cache-identities.json` beside the final APK. It records
