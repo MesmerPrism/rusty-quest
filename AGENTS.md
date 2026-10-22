@@ -23,7 +23,7 @@ read only the applicable section alongside its focused guide.
 | Work | Required focused route |
 | --- | --- |
 | Protected validation, workflow, policy, schema, publisher or updater authority | `docs/EXTERNAL_VALIDATION_AUTHORITY.md`; `docs/PACKAGE_UPDATE_LABS_DISTRIBUTION.md` |
-| APK builds or repeated headset runs | `docs/APK_RUN_ISOLATION.md`; project lock and hashed run capsule |
+| APK builds or repeated headset runs | `docs/APK_RUN_ISOLATION.md`; `docs/ANDROID_COMPONENT_CLOSURE.md` for selected Android components; project lock and hashed run capsule |
 | Spatial Camera Panel workspace or feature selection | Its inert v2 index/spec/feature lock/workspace/current unit; `docs/FEATURE_ACTIVATION.md` |
 | Generic media and Android AAR consumers | `docs/MEDIA_SESSION_RUNTIME.md`; `docs/MEDIA_STREAM_RUNTIME.md` |
 | Embedded duplex native fences or debug operators | `docs/EMBEDDED_DUPLEX_R5_CONTINUITY.md`; conditional debug-host receipt boundary |

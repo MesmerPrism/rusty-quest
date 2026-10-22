@@ -38,6 +38,8 @@ param(
     [string]$PrivateSurfaceParticleMarkerPrefix = "",
     [string]$HandMeshRigAssetDir = "",
     [string]$PrivateFeatureSourceDir = "",
+    [string]$AndroidComponentContractPath = "",
+    [string]$PythonPath = "python",
     [string]$PrivateFeatureAssetDir = "",
     [string]$PrivateFeatureResourceDir = "",
     [string]$EmbeddedDuplexProductInputRoot = "",
@@ -91,6 +93,8 @@ $ErrorActionPreference = "Stop"
 Import-Module (Join-Path $PSScriptRoot "lib/SpatialCameraPanelBuildPrerequisites.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -Force
 if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
 $selectedEmbeddedDuplexMediaPolicy = Get-EmbeddedDuplexMediaPolicy -Selection $EmbeddedDuplexMediaPolicy
 if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpace($EmbeddedDuplexProductInputRoot)) { throw "Ongoing media requires explicit real-peer product inputs." }
@@ -1170,6 +1174,10 @@ $repoRoot = Resolve-Path $RepoRoot
 $gradleToolDistribution = $null
 # The shared owning prerequisite function authenticates the exact Gradle distribution below.
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
+$androidNativeSourcePaths = $null
+if ($EnvironmentDepthOwner -ceq 'spatial-sdk-api-layer') {
+    $androidNativeSourcePaths = Assert-AndroidNativeSourcePaths -SourceDirectory (Join-Path $appRoot 'app/src/main/cpp/spatial_depth_layer') -ObjectDirectory $cmakeStaging.object_directory
+}
 $targetRoot = Join-Path $repoRoot "target"
 $buildStartedUtc = [DateTimeOffset]::UtcNow
 $phaseReceipts = [Collections.Generic.List[object]]::new()
@@ -1239,6 +1247,26 @@ $sourceComposition = Get-QuestBuildSourceComposition `
     -RepoRoot ([string]$repoRoot) `
     -PackageName @("spatial-camera-panel-native-receipt") `
     -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
+$cargoSourceComposition = $sourceComposition
+if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
+    if ([string]::IsNullOrWhiteSpace($resolvedPrivateFeatureSourceDir)) { throw 'Selected Android components require an explicit private source root.' }
+    $componentOwnerRoot = (& git -C $resolvedPrivateFeatureSourceDir rev-parse --show-toplevel).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Selected Android component owner is not an owned Git repository.' }
+    $componentContractFull = [IO.Path]::GetFullPath($AndroidComponentContractPath)
+    if (-not $componentContractFull.StartsWith([IO.Path]::GetFullPath($componentOwnerRoot)+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Selected Android component contract must belong to the explicit source owner repository.'
+    }
+    $alreadyOwned = @($sourceComposition.repositories | Where-Object {
+        [IO.Path]::GetFullPath([string]$_.repository).TrimEnd([char[]]@('\','/')) -eq [IO.Path]::GetFullPath($componentOwnerRoot).TrimEnd([char[]]@('\','/'))
+    })
+    if ($alreadyOwned.Count -eq 0) {
+        $sourceComposition = Add-QuestBuildOwnedRepository -Composition $sourceComposition -Root $componentOwnerRoot `
+            -RepositoryId (Get-AndroidComponentOwnerRepositoryId -Root $componentOwnerRoot) -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
+    }
+    if ($BuildMode -eq 'Candidate' -and @($sourceComposition.repositories | Where-Object { -not $_.tracked_worktree_clean }).Count -gt 0) {
+        throw 'Candidate builds require a frozen clean owned Android source composition.'
+    }
+}
 $primarySource = @($sourceComposition.repositories | Where-Object { $_.role -eq "primary" })
 if ($primarySource.Count -ne 1) { throw "Spatial APK source composition did not resolve exactly one primary Rusty Quest repository." }
 $sourceHead = [string]$primarySource[0].commit
@@ -1287,6 +1315,14 @@ $embeddedDuplexProductInputs = Test-EmbeddedDuplexProductInputRoot `
     -Path $EmbeddedDuplexProductInputRoot `
     -ApplicationId $resolvedAppId `
     -SigningCertificateSha256 $normalizedExpectedSignerSha256
+$androidComponentSelection = $null
+if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
+    if ($null -eq $embeddedDuplexProductInputs) { throw 'Selected Android components require authenticated product inputs.' }
+    $androidComponentSelection = New-AndroidComponentInventory -ContractPath $AndroidComponentContractPath `
+        -ValidatedProductInputs $embeddedDuplexProductInputs -ApplicationSourceRoot (Join-Path $appRoot 'app/src') `
+        -PrivateSourceRoot $resolvedPrivateFeatureSourceDir -Variant $buildTypeLower -PythonPath $PythonPath
+}
+$androidComponentInputs = Get-AndroidComponentInputSummary -Selection $androidComponentSelection
 $freshBuildSelection=Resolve-EmbeddedDuplexFreshSetupBuildSelection -Selection $EmbeddedDuplexFreshSetupPolicy -MediaPolicy $EmbeddedDuplexMediaPolicy `
     -ValidatedProductInputs $embeddedDuplexProductInputs -EnrollmentSelectionPath $EmbeddedDuplexFreshEnrollmentSelectionPath `
     -ExpectedEnrollmentSelectionSha256 $ExpectedEmbeddedDuplexFreshEnrollmentSelectionSha256
@@ -1337,6 +1373,7 @@ $embeddedMediaBuildInputsSha256 = Get-StringSha256 -Value $embeddedMediaBuildInp
 Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
 $sourceVersionMetadata=New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) -Enabled:$UseSourceCompositionVersionName
 $buildInputDescriptor = [ordered]@{
+    android_components = $androidComponentInputs
     embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
     source_commit = $sourceHead
@@ -1470,6 +1507,7 @@ Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $nativeIdentityDescript
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
 $shellIdentityInputs = [ordered]@{
+    component_observer = Join-Path $PSScriptRoot 'gradle/android-component-closure.gradle'
     settings_gradle = Join-Path $appRoot "settings.gradle.kts"
     root_build_gradle = Join-Path $appRoot "build.gradle.kts"
     version_catalog = Join-Path $appRoot "gradle\libs.versions.toml"
@@ -1491,6 +1529,7 @@ if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateFeatureResourceDir)) {
 }
 $shellSourceSha256 = Get-PathSetSha256 -Paths $shellIdentityInputs
 $shellIdentityDescriptor = [ordered]@{
+    android_components = $androidComponentInputs
     schema = "rusty.quest.spatial_camera_panel.android_shell_cache_identity.v1"
     source_sha256 = $shellSourceSha256
     product_id = $resolvedProductId
@@ -1546,7 +1585,12 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
-    $excludedArtifactRoots = @($sourceComposition.repositories | ForEach-Object { [string]$_.repository }) + @($BuildCacheRoot,$SharedGradleToolRoot,$NativeRepoRoot)
+    # App-owned Git identity includes ignored owner artifacts. Exclude actual
+    # selected Android input directories, preserving the existing Cargo boundary.
+    $excludedArtifactRoots = @((@($cargoSourceComposition.repositories | ForEach-Object { [string]$_.repository }) +
+        @($resolvedPrivateFeatureSourceDir,$resolvedPrivateFeatureAssetDir,$resolvedPrivateFeatureResourceDir,
+          $BuildCacheRoot,$SharedGradleToolRoot,$NativeRepoRoot)) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Assert-AndroidComponentArtifactRoot -Composition $sourceComposition -Parent $ArtifactOutputParent -Output $OutDir
     $OutDir = New-ExternalArtifactDirectory -Parent $ArtifactOutputParent -Output $OutDir -ExcludedRoots $excludedArtifactRoots -Mode $BuildMode -Replace:$ReplaceExistingOutput -Create
 } else {
     New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
@@ -1562,6 +1606,16 @@ if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
     New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 }
 $buildInputLockPath = Join-Path $OutDir "build-input-lock.json"
+$sourceCompositionPath = Join-Path $OutDir 'source-composition.json'
+[void](Set-TextFileIfChanged -Path $sourceCompositionPath -Value ($sourceComposition | ConvertTo-Json -Depth 20))
+$androidComponentInventoryPath = ''
+$androidComponentEvidenceDir = ''
+if ($null -ne $androidComponentSelection) {
+    $androidComponentEvidenceDir = Join-Path $OutDir 'android-components'
+    New-Item -ItemType Directory -Path $androidComponentEvidenceDir | Out-Null
+    $androidComponentInventoryPath = Join-Path $androidComponentEvidenceDir 'inventory.json'
+    [IO.File]::WriteAllText($androidComponentInventoryPath,$androidComponentSelection.json,[Text.UTF8Encoding]::new($false))
+}
 [void](Set-TextFileIfChanged -Path $buildInputLockPath -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20))
 $embeddedMediaSourceManifestPath = Join-Path $OutDir "embedded-media-aar-source-inputs.json"
 [void](Set-TextFileIfChanged -Path $embeddedMediaSourceManifestPath -Value $embeddedMediaSourceManifestJson)
@@ -1649,7 +1703,7 @@ if($NativeRepoRoot){
            (Get-FileSha256 -Path $nativeFile)-cne(Get-FileSha256 -Path (Join-Path $repoRoot $path))){throw 'Native/shell raw source bytes differ.'}
     }
     if(((& git.exe -C $nativeRoot ls-files --others -z)-join'').Length){throw 'Native source contains generated/unexpected payload; retain it.'}
-    Assert-QuestNativeDependencyComposition -ShellComposition $sourceComposition -NativeRepoRoot $nativeRoot
+    Assert-QuestNativeDependencyComposition -ShellComposition $cargoSourceComposition -NativeRepoRoot $nativeRoot
     $nativeReceiptCargoManifest=Join-Path $nativeRoot 'apps/spatial-camera-panel-android/native-receipt/Cargo.toml'
 }
 $nativeReceiptJniRoot = Join-Path $appBuildDir "generated\rustJniLibs"
@@ -2135,6 +2189,7 @@ try {
     if (-not (Test-Path -LiteralPath $mediaAndroidJar -PathType Leaf)) {
         throw "The embedded media module requires the same Android 34 platform as its host."
     }
+    Assert-QuestBuildSourceCompositionCurrent -Composition $sourceComposition -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
     $gradleArguments = @(
         "--no-daemon",
         $(if ($BuildMode -eq "DevFast") { "--configuration-cache" } else { "--no-configuration-cache" }),
@@ -2151,6 +2206,11 @@ try {
         "-p", ([string]$appRoot),
         ":app:assemble$BuildType"
     )
+    # Empty values explicitly disable ambient properties for compatibility callers.
+    $gradleArguments = @("-PrqAndroidComponentInventory=$androidComponentInventoryPath",
+        "-PrqAndroidComponentEvidenceDir=$androidComponentEvidenceDir",
+        "-PrqAndroidComponentKotlinTask=compile${BuildType}Kotlin",
+        "-PrqAndroidComponentJavaTask=compile${BuildType}JavaWithJavac") + $gradleArguments
     # Explicit empty default prevents ambient Gradle properties from choosing metadata.
     $versionProperty=if($UseSourceCompositionVersionName){$sourceVersionMetadata.source_composition_fingerprint}else{''}
     $gradleArguments=@("-PrqDeveloperSourceCompositionFingerprint=$versionProperty")+$gradleArguments
@@ -2413,6 +2473,13 @@ $apkSource = Join-Path $appBuildDir "outputs\apk\$buildTypeLower\app-$buildTypeL
 if (-not (Test-Path -LiteralPath $apkSource)) {
     throw "Gradle build did not produce expected APK: $apkSource"
 }
+$androidComponentClosure = $androidComponentInputs
+if ($null -ne $androidComponentSelection) {
+    $androidComponentClosure = Assert-AndroidComponentClosure -InventoryPath $androidComponentInventoryPath `
+        -ExpectedInventorySha256 $androidComponentSelection.sha256 `
+        -EvidenceDirectory $androidComponentEvidenceDir -ApkPath $apkSource -PythonPath $PythonPath
+}
+Assert-QuestBuildSourceCompositionCurrent -Composition $sourceComposition -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
 
 $apkOut = Join-Path $OutDir $resolvedApkFileName
 $apkCopied = Copy-FileIfChanged -Source $apkSource -Destination $apkOut
@@ -2533,6 +2600,7 @@ if ($missingRustDynamicStd.Count -gt 0) {
 }
 $inspectionStopwatch.Stop()
 $apkInspection = [ordered]@{
+    android_components = $androidComponentClosure
     schema = "rusty.quest.spatial_camera_panel.apk_inspection.v1"
     package_name = $resolvedAppId
     min_sdk = 34
@@ -2639,6 +2707,8 @@ $offlineMediaPackagedAssets =
     -not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1"
+    android_components = $androidComponentClosure
+    android_native_source_paths = $androidNativeSourcePaths
     product_id = $resolvedProductId
     build_input_fingerprint = $buildInputFingerprint
     build_input_lock_path = $buildInputLockPath
@@ -3309,6 +3379,7 @@ $runCapsule = [ordered]@{
     source = [ordered]@{
         repository = [string]$repoRoot; commit = $sourceHead; tree = $sourceTree; tracked_worktree_clean = $sourceTrackedWorktreeClean; worktree_overlay_sha256 = $sourceWorktreeOverlaySha256
         composition_fingerprint = [string]$sourceComposition.fingerprint; packages = @($sourceComposition.packages); dependencies = $sourceDependencies
+        provider_document = [ordered]@{path=$sourceCompositionPath;sha256=(Get-FileSha256 -Path $sourceCompositionPath)}
     }
     build_lock = [ordered]@{
         path = $buildInputLockPath; sha256 = Get-FileSha256 -Path $buildInputLockPath; resolution_fingerprint = $buildInputFingerprint

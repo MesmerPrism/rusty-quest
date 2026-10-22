@@ -640,3 +640,6 @@ spatial {
     sources.add(project.layout.projectDirectory.dir("src/shaders"))
   }
 }
+
+// Optional typed selected-component closure; compatibility callers remain unverified.
+apply(from = rootProject.file("../../tools/gradle/android-component-closure.gradle"))
