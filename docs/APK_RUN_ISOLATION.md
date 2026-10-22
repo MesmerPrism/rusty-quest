@@ -75,6 +75,13 @@ already belongs to the Cargo composition, retain its existing record and role;
 an explicit duplicate or overlapping root is rejected. No caller-supplied
 commit or overlay can replace the observed source.
 
+For an explicitly selected Java-only app, use
+`Get-QuestBuildSourceComposition -RepoRoot <quest-root> -ApplicationId <package>`.
+This parameter set observes the exact Git root and logical application identity
+without invoking Cargo. It shares the existing canonical fingerprint, clean v1
+and explicit-overlay v2 records, and current-source assertion. It does not
+discover undeclared external inputs or claim a native dependency closure.
+
 Generic consumers can load a provider's exact raw document and call
 `Assert-QuestBuildSourceCompositionCurrent -Composition <document>` before and
 after a child build. The same optional working-tree switch is required for
@@ -99,9 +106,19 @@ Direct Gradle builds with the depth layer require an explicit absolute
 the source tree. Host controls: `tools/checks/Test-SpatialCmakeStagingHost.ps1`.
 
 Every locked build writes `run-capsule.json`. The capsule hashes the APK, build
-manifest, selected lock or build-input lock, runtime profile, and complete
-property manifest, and binds the package/activity plus exact source
-commit/tree. Validate it before device mutation:
+manifest, selected lock or build-input lock and runtime profile, and binds the
+package/activity plus exact source commit/tree. Apps with Android property
+consumers also bind their complete property manifest. The opt-in
+`development-feedback-android` lane instead permits a null property manifest
+only with its hash-bound runtime profile explicitly declaring `property_policy`
+`none` and an empty `properties` array for the exact owner package. A null field
+alone never permits an unexplained empty isolation snapshot.
+
+`New-QuestRunCapsule` and `Read-QuestRunCapsule` in the existing
+`QuestRunIsolation.psm1` provide the neutral lane's create-new construction and
+reader. Construction observes actual Git source and actual file hashes; it
+does not assemble an APK or turn a build record into runtime acceptance.
+The existing `Test-ApkRunCapsule.ps1` facade remains the validation entry point:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass `
@@ -169,6 +186,16 @@ The transaction mutex protects callers using these wrappers. Cross-tool or
 cross-agent scheduling should additionally claim the headset serial, Android
 package, property namespace, and output through the project work-environment
 resource-claim protocol.
+
+For the explicit-none neutral lane, call `Enter-QuestRunIsolation` with
+`-RunCapsulePath` instead of `-PropertyNames`. Entry authenticates the capsule,
+package and profile declaration and retains their exact binding in the entered
+receipt. Clear, exit and recovery perform no property reads or writes for that
+case. Recovery reauthenticates the retained declaration before the fixed
+package stop. Existing nonempty property snapshots and legacy dirty-development
+capsules retain their behavior; unexplained or contradictory empty receipts
+still refuse. Keep the normal `try`/`finally` cleanup transaction around the
+chosen exact-APK deployment and app-owned probes.
 
 For Windows path compatibility, a launcher verifies and stages the capsule APK
 at `target/apk-r/<full-apk-sha256>.apk` before calling `adb install`. The short

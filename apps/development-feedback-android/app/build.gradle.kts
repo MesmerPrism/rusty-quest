@@ -7,6 +7,23 @@ layout.buildDirectory.set(rootProject.file("../../target/apk-i/development-feedb
 val debugKeystore = providers.environmentVariable("RM_FEEDBACK_DEBUG_KEYSTORE").orNull
     ?: throw GradleException("Explicit RM_FEEDBACK_DEBUG_KEYSTORE input is required; no key is generated")
 require(file(debugKeystore).isFile) { "Explicit debug keystore is absent" }
+val selectedFeatureLock = providers.environmentVariable("RM_FEEDBACK_FEATURE_LOCK").orNull
+    ?: throw GradleException("Explicit RM_FEEDBACK_FEATURE_LOCK input is required")
+val selectedRuntimeProfile = providers.environmentVariable("RM_FEEDBACK_RUNTIME_PROFILE").orNull
+    ?: throw GradleException("Explicit RM_FEEDBACK_RUNTIME_PROFILE input is required")
+val activationAssets = rootProject.file("../../target/apk-i/development-feedback/warm/activation-assets")
+val prepareFeedbackActivation = tasks.register("prepareFeedbackActivation") {
+    inputs.files(file(selectedFeatureLock), file(selectedRuntimeProfile))
+    outputs.dir(activationAssets)
+    doLast {
+        val selected = listOf(file(selectedFeatureLock) to "feedback-feature-lock.json", file(selectedRuntimeProfile) to "feedback-runtime-profile.json")
+        Files.createDirectories(activationAssets.toPath())
+        for ((input, name) in selected) {
+            require(Files.isRegularFile(input.toPath()) && !Files.isSymbolicLink(input.toPath()) && input.length() <= 1048576) { "Selected activation input is absent, aliased or oversized" }
+            Files.copy(input.toPath(), activationAssets.toPath().resolve(name), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+}
 
 android {
     namespace = "io.github.mesmerprism.rustyquest.development_feedback"
@@ -33,6 +50,7 @@ android {
     sourceSets {
         getByName("debug") {
             java.srcDirs("../../../android/development-feedback/src/main/java", "../../../android/development-feedback/src/android/java")
+            assets.srcDir(activationAssets)
         }
     }
     compileOptions {
@@ -42,6 +60,7 @@ android {
 }
 // This project is a debug consumer only. It cannot produce a release carrying its controls.
 androidComponents { beforeVariants(selector().withBuildType("release")) { enable = false } }
+tasks.named("preBuild") { dependsOn(prepareFeedbackActivation) }
 
 tasks.register("retainDebugApk") {
     group = "build"

@@ -15,6 +15,14 @@ not artifact authentication. Generation selection changes code only and never
 rewinds host state. Failed activation preserves the prior active generation;
 failed loader attempts remain charged against the resident 64-load cap.
 
+The debug APK must package the owner's resolved v2 feature lock and the exact
+neutral runtime profile. The Application reads those two bounded assets once
+and projects their actual SHA256 values, project, lock revision/fingerprint and
+closed selected features into immutable controller status. The workflow owner
+resolves full feature policy; this reader reports the selected compiled inputs.
+A DEX controller refuses an absent selection. Pure host fixtures are explicitly
+marked `host-only-unbound` and establish no packaged/runtime activation.
+
 This loads trusted development code. The loader provides contract identity,
 digest/definition checks, readonly staging and scratch-state probing; it does
 not sandbox Java code or remove Android platform trust boundaries.
@@ -57,6 +65,19 @@ environment bindings and fresh retained receipt. The profile binds:
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | `android-sdk` | directory |
 | `GRADLE_USER_HOME` | `feedback-gradle-home` | directory |
 | `RM_FEEDBACK_DEBUG_KEYSTORE` | `debug-keystore` | file |
+| `RM_FEEDBACK_FEATURE_LOCK` | `feedback-feature-lock` | file |
+| `RM_FEEDBACK_RUNTIME_PROFILE` | `feedback-runtime-profile` | file |
+
+The existing owner resolver must select exactly `development-feedback-core`
+and `development-feedback-debug-host` for project `quest-development-feedback`,
+with default activation disabled and `selected-lock-and-runtime-input`.
+The runtime input has exactly five keys: schema
+`rusty.quest.development_feedback.runtime_profile.v1`, app lane
+`development-feedback-android`, this exact `owner_package`, `property_policy`
+`none`, and an empty `properties` array. The Gradle preparation task copies
+these exact raw files into generated debug assets before AGP packaging; it
+neither issues a feature lock nor assembles another APK. Compare the status's
+`selection_*` identities against the capsule's actual selected inputs.
 
 The debug keystore must already exist and use the conventional development
 `androiddebugkey` alias and `android` password. This project never generates

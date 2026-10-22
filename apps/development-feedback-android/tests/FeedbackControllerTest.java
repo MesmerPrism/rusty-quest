@@ -42,10 +42,40 @@ public final class FeedbackControllerTest {
     private static Map<String,String> activate(String id,String digest,int delta) {
         return fields("generation",id,"sha256",digest,"probe_input","5","probe_counter","3","probe_initial","00000000000000000000000000000000","probe_result",Integer.toString(8+delta),"probe_expected",String.format(Locale.ROOT,"%02x",delta)+"000000000000000000000000000000");
     }
+    private static Map<String,String> selection() {
+        return fields("project_id","quest-development-feedback","lock_revision","1",
+            "lock_fingerprint",String.join("",Collections.nCopies(64,"a")),
+            "feature_lock_sha256",String.join("",Collections.nCopies(64,"b")),
+            "runtime_profile_sha256",String.join("",Collections.nCopies(64,"c")),
+            "selected_features","development-feedback-core,development-feedback-debug-host");
+    }
+    private static void rejectSelection(Path root,Map<String,String> value) throws Exception {
+        boolean rejected=false;
+        try { new FeedbackController(root.resolve(UUID.randomUUID().toString()).toFile(),new HostUrlLoader(),false,"selection-test",value); }
+        catch(IllegalArgumentException expected) { rejected=true; }
+        check(rejected,"malformed packaged selection accepted");
+    }
     public static void main(String[] args) throws Exception {
         Path root=Files.createDirectory(Paths.get(args[0]).resolve("controller-data"));Files.createDirectory(root.resolve("incoming"));
         FeedbackController controller=new FeedbackController(root.toFile(),new HostUrlLoader(),false,"process-test");
         Map<String,String> initial=controller.execute("status",fields());
+        check("host-only-unbound".equals(initial.get("selection_mode")),"host fixture implies packaged activation");
+        Map<String,String> selected=selection();
+        FeedbackController bound=new FeedbackController(root.resolve("selected").toFile(),new HostUrlLoader(),false,"bound-process",selected);
+        Map<String,String> selectedStatus=bound.execute("status",fields());
+        check("packaged-lock-and-runtime-profile".equals(selectedStatus.get("selection_mode")),"packaged selection absent");
+        for(Map.Entry<String,String> field:selected.entrySet())check(field.getValue().equals(selectedStatus.get("selection_"+field.getKey())),"packaged identity changed");
+        selected.put("lock_fingerprint","changed-after-construction");
+        check(selection().get("lock_fingerprint").equals(bound.execute("status",fields()).get("selection_lock_fingerprint")),"caller changed resident activation identity");
+        Map<String,String> damaged=selection();damaged.remove("runtime_profile_sha256");rejectSelection(root,damaged);
+        damaged=selection();damaged.put("lock_revision","0");rejectSelection(root,damaged);
+        damaged=selection();damaged.put("feature_lock_sha256","A"+damaged.get("feature_lock_sha256").substring(1));rejectSelection(root,damaged);
+        damaged=selection();damaged.put("selected_features","undeclared-product");rejectSelection(root,damaged);
+        damaged=selection();damaged.put("extra","unbound");rejectSelection(root,damaged);
+        boolean unboundDexRejected=false;
+        try { new FeedbackController(root.resolve("unbound-dex").toFile(),new HostUrlLoader(),true,"unbound"); }
+        catch(IllegalArgumentException expected) { unboundDexRejected=true; }
+        check(unboundDexRejected,"DEX controller accepted no packaged selection");
         check("none".equals(initial.get("generation")),"unexpected bundled implementation");
         String app=initial.get("application_token"),allocation=initial.get("buffer_allocation"),process=initial.get("process_token");
         reject(controller,"compute",fields("input","1"));

@@ -9,7 +9,9 @@
     "ANDROID_HOME": "android-sdk",
     "ANDROID_SDK_ROOT": "android-sdk",
     "GRADLE_USER_HOME": "feedback-gradle-home",
-    "RM_FEEDBACK_DEBUG_KEYSTORE": "debug-keystore"
+    "RM_FEEDBACK_DEBUG_KEYSTORE": "debug-keystore",
+    "RM_FEEDBACK_FEATURE_LOCK": "feedback-feature-lock",
+    "RM_FEEDBACK_RUNTIME_PROFILE": "feedback-runtime-profile"
   },
   "artifact": {
     "relative_path": "local-artifacts/development-feedback/apks/{content_sha256}.apk",

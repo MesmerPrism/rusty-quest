@@ -14,7 +14,7 @@ public final class FeedbackApplication extends Application {
         // Providers can be created before Application.onCreate; always initialize once here.
         if(controller==null) {
             String process=Process.myPid()+":"+SystemClock.elapsedRealtime()+":"+UUID.randomUUID();
-            try{controller=new FeedbackController(getFilesDir(),new AndroidDexLoader(),true,process);}
+            try{controller=new FeedbackController(getFilesDir(),new AndroidDexLoader(),true,process,AssetActivation.read(getAssets()));}
             catch(IOException failure){throw new IllegalStateException("Cannot initialize private feedback storage",failure);}
         }
         return controller;

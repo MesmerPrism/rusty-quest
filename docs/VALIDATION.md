@@ -1666,6 +1666,15 @@ The source-only premerge build contract has a focused actual Git/Cargo check:
 It uses local repositories without remotes and no Android compilation or device
 access; the same check is included in `tools/check_all.ps1`.
 
+The same family exercises `Get-QuestBuildSourceComposition -ApplicationId`
+through `Test-SourceCompositionOwnedRepository.ps1`: actual Git-only Java
+selection, zero Cargo calls, source drift and explicit overlays. Neutral capsule
+construction/reading and capsule-bound zero-property cleanup/recovery are covered
+by `Test-ApkRunIsolationStatic.ps1` and `Test-QuestRecordingHostReliability.ps1`.
+The [feedback app source check](../apps/development-feedback-android/README.md)
+also tests immutable packaged selection identity in its real controller. These
+remain host/source evidence; run an actual selected APK for device proof.
+
 For the generic stable Cargo source forest and byte-preserving materialization,
 run `pwsh -NoProfile -File tools/checks/Test-ContentStableCargoStage.ps1 -OutputRoot <new-proof-directory>`.
 The existing `Test-SourceCompositionPremerge.ps1` family also invokes this gate,
