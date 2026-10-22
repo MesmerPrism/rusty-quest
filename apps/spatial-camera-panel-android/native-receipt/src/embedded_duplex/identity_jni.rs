@@ -3,13 +3,14 @@
 use ed25519_dalek::{Signer, SigningKey};
 
 const MAX_AUTHORITY_BYTES: usize = 131_142;
-const SIGNING_DOMAINS: [&[u8]; 16] = [
+const SIGNING_DOMAINS: [&[u8]; 17] = [
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0request\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0terminal_response\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0product_activation\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0product_activation_ack\0",
     b"rusty.manifold.peer.common_lan_reciprocal_ed25519_context.v1\0",
     b"rusty.quest.embedded_duplex.pair_ceremony.v1\0",
+    b"rusty.quest.embedded_duplex.prepared_start_frame.v1\0",
     b"rusty.quest.embedded_duplex.fresh_pair_setup_frame.v1\0",
     b"rusty.quest.embedded_duplex.fresh_pair_setup_frame.v2\0",
     b"rusty.manifold.peer.fresh_pair_setup_authorization.v3\0",
@@ -133,6 +134,52 @@ mod tests {
 
     use super::{public_from_seed, sign_checked, Signer, SigningKey};
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    #[test]
+    fn prepared_metadata_domain_signs_exact_bytes_with_seed() {
+        let seed = [0x37; 32];
+        let domain = b"rusty.quest.embedded_duplex.prepared_start_frame.v1\0";
+        let mut bytes = domain.to_vec();
+        bytes.extend_from_slice(br#"{"metadata":"host fixture"}"#);
+        let signature = sign_checked(&seed, &bytes)
+            .expect("production seed signer must accept prepared metadata domain");
+        VerifyingKey::from_bytes(&public_from_seed(&seed))
+            .unwrap()
+            .verify_strict(&bytes, &Signature::from_bytes(&signature))
+            .unwrap();
+        bytes.push(b'x');
+        assert!(VerifyingKey::from_bytes(&public_from_seed(&seed))
+            .unwrap()
+            .verify_strict(&bytes, &Signature::from_bytes(&signature))
+            .is_err());
+        assert!(sign_checked(&seed, domain).is_none());
+    }
+
+    #[test]
+    fn every_fixed_seed_domain_keeps_exact_prefix_and_size_refusals() {
+        let seed = [0x37; 32];
+        let key = VerifyingKey::from_bytes(&public_from_seed(&seed)).unwrap();
+        for domain in super::SIGNING_DOMAINS {
+            assert!(sign_checked(&seed, domain).is_none());
+            let mut input = domain.to_vec();
+            input.extend_from_slice(b"{}");
+            let signature = sign_checked(&seed, &input).unwrap();
+            key.verify_strict(&input, &Signature::from_bytes(&signature))
+                .unwrap();
+            let mut wrong_prefix = domain[..domain.len() - 1].to_vec();
+            wrong_prefix.extend_from_slice(b".extra\0{}");
+            assert!(sign_checked(&seed, &wrong_prefix).is_none());
+            input.resize(super::MAX_AUTHORITY_BYTES + 1, 0);
+            assert!(sign_checked(&seed, &input).is_none());
+        }
+        assert!(sign_checked(
+            &seed,
+            b"rusty.quest.embedded_duplex.prepared_start_frame.v2\0{}"
+        )
+        .is_none());
+        assert!(sign_checked(&seed, b"unknown\0{}").is_none());
+        assert!(sign_checked(&seed, b"").is_none());
+    }
 
     #[test]
     fn retained_cleanup_domains_sign_exact_bytes_with_seed() {
