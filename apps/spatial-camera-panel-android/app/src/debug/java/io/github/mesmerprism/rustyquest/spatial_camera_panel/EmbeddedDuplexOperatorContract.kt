@@ -12,6 +12,7 @@ internal object EmbeddedDuplexOperatorContract {
   const val METHOD_REVIEW = "review"
   const val METHOD_CONFIRM = "confirm"
   const val METHOD_RUNTIME_STATUS = "runtime_status"
+  const val METHOD_PREPARATION_DIAGNOSTIC = "prepared_peer_start_diagnostic"
   const val METHOD_OWNER_FAILURE_DIAGNOSTIC = "owner_failure_diagnostic"
   const val METHOD_OWN_CAPTURE_DIAGNOSTIC = "own_capture_diagnostic"
   const val METHOD_STREAM_DROPOUT_DIAGNOSTIC = "stream_dropout_diagnostic"
@@ -51,6 +52,14 @@ internal object EmbeddedDuplexOperatorContract {
   )
 
   fun callerIsShell(uid: Int): Boolean = uid == Process.SHELL_UID
+
+  internal fun preparationDiagnosticOriginal(fields: Map<String, Any?>): String? {
+    require(fields.isEmpty() || fields.keys == setOf("original_id")) { "preparation-diagnostic-fields-invalid" }
+    if(fields.isEmpty()) return null
+    val id=fields["original_id"]
+    require(id is String && id.matches(Regex("[0-9a-f]{32}"))) { "preparation-diagnostic-original-invalid" }
+    return id
+  }
 
   fun parseCall(method: String, argument: String?, extras: Bundle?): Request {
     val fields = extras?.keySet()?.associateWith { extras.get(it) } ?: emptyMap()

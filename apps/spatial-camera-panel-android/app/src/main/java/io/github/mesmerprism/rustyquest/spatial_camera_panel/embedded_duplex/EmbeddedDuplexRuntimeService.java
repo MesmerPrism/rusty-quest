@@ -7,6 +7,11 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
 
+    /** Fixed retained metadata read; absent process host remains unavailable. */
+    public static CompletableFuture<String> preparationDiagnosticRead(String expectedOriginal) {
+        return EmbeddedDuplexProcessHost.preparationDiagnosticRead(expectedOriginal);
+    }
+
     /** Read-only token/current-actor check; NEW alone is never proof of full cleanup. */
     public static boolean wholeCloseRolloverCurrent(Context context, EmbeddedDuplexWholeCloseRollover proof) {
         return EmbeddedDuplexProcessHost.forApplication(context).wholeCloseRolloverCurrent(proof);

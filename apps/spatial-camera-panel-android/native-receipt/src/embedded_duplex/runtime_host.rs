@@ -55,6 +55,8 @@ mod pair_ceremony;
 mod peer_lifecycle;
 #[path = "peer_roots.rs"]
 mod peer_roots;
+#[path = "preparation_diagnostic.rs"]
+pub(crate) mod preparation_diagnostic;
 #[path = "prepared_start.rs"]
 mod prepared_start;
 pub(crate) use prepared_start::PreparedRendererIdentity;
@@ -167,6 +169,7 @@ struct Host {
     peer_lifecycle: Arc<Mutex<Option<peer_lifecycle::State>>>,
     owner_effect_attempted: Arc<AtomicBool>,
     owner_dispatch_failure: Arc<Mutex<Option<&'static str>>>,
+    preparation_admission: Arc<Mutex<preparation_diagnostic::Journal>>,
     restored_owner_replay: bool,
 }
 
@@ -1360,6 +1363,7 @@ fn build_host(
             peer_lifecycle: Arc::new(Mutex::new(Some(peer_lifecycle::State::default()))),
             owner_effect_attempted: Arc::new(AtomicBool::new(false)),
             owner_dispatch_failure,
+            preparation_admission: Arc::new(Mutex::new(preparation_diagnostic::Journal::default())),
             restored_owner_replay,
         },
         result,
@@ -1843,7 +1847,10 @@ fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String>
 fn command(operation: &str, input: &str) -> Result<String, String> {
     let host = if matches!(
         operation,
-        "prepared_peer_start_status" | "abort_prepared_peer_start" | "prepare_peer_start"
+        "prepared_peer_start_status"
+            | "abort_prepared_peer_start"
+            | "prepare_peer_start"
+            | "prepared_peer_start_diagnostic"
     ) {
         prepared_start::operation_host()?
     } else if operation == "peer_root_status" {
@@ -1858,6 +1865,10 @@ fn command(operation: &str, input: &str) -> Result<String, String> {
                 | "peer_root_status"
         ))?
     };
+    if operation == "prepared_peer_start_diagnostic" {
+        // Fixed journal read only: no clock, Original, eligibility, SDK or transport callback.
+        return prepared_start::diagnostic(&host, input);
+    }
     if matches!(
         operation,
         "media_command"

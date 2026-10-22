@@ -1,6 +1,7 @@
 //! Source-bound SDK preparation, before the final expiring media admission.
 //! RQPS1 carries signed format metadata only. Ordinary media tickets remain the
 //! sole authority that can open the already-prepared delivery gates.
+use super::preparation_diagnostic::{Actor, Attempt, JavaGuard, PhysicalPredicates, Reason, Stage};
 use super::*;
 use rusty_quest_media_stream_android::{
     prepared_start_canonical, prepared_start_digest, AndroidPreparedDecoderReadback,
@@ -275,15 +276,98 @@ fn exchange(
     }
     Ok(body)
 }
-pub(super) fn run(host: &Host) -> Result<String, String> {
-    host.capability.require_live()?;
-    archive_prior(host, None)?;
-    let original = host.callbacks.current_operator_original_id()?;
-    let eligibility = host.callbacks.prepared_start_eligibility()?;
-    if eligibility["original_binding"] != json!({"kind":"operator","original_id":original}) {
-        return Err("prepared actual wrapper Original differs".into());
+fn diagnostic_actor(host: &Host) -> Actor {
+    Actor {
+        app_generation: host.capability.binding.generation,
+        app_record: host.capability.binding.record_sha256.clone(),
+        native_generation: host.capability.generation,
+        config: host.config_sha256.clone(),
     }
-    let native = peer_lifecycle::fresh_setup_eligibility(host)?;
+}
+pub(super) fn diagnostic(host: &Host, input: &str) -> Result<String, String> {
+    host.capability.require_live()?;
+    let fields: Value = serde_json::from_str(input).map_err(safe_decode)?;
+    let map = fields
+        .as_object()
+        .ok_or("closed preparation diagnostic selector required")?;
+    if map.len() > 1 || map.keys().any(|key| key != "original_id") {
+        return Err("closed preparation diagnostic selector required".into());
+    }
+    let expected = if let Some(value) = map.get("original_id") {
+        let id = value
+            .as_str()
+            .ok_or("typed preparation Original selector required")?;
+        if id.len() != 32
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err("canonical preparation Original selector required".into());
+        }
+        Some(id)
+    } else {
+        None
+    };
+    let actor = diagnostic_actor(host);
+    let view = host
+        .preparation_admission
+        .lock()
+        .map_err(|_| "preparation diagnostic unavailable")?
+        .read(&actor, expected)
+        .map_err(|_| "preparation diagnostic actor/Original unavailable")?;
+    host.capability.require_live()?;
+    Ok(json!({"$schema":"rusty.quest.embedded_duplex.prepared_peer_start_diagnostic.v1",
+        "operation":"prepare_peer_start","app_process_generation":actor.app_generation,
+        "app_record_sha256":actor.app_record,"native_executor_generation":actor.native_generation,
+        "config_sha256":actor.config,"state":view.as_ref().map_or("unobserved",|v|v.state.name()),
+        "attempt_sequence":view.as_ref().map(|v|v.sequence),
+        "original_id":view.as_ref().and_then(|v|v.original.as_deref()),
+        "original_bound":view.as_ref().is_some_and(|v|v.original.is_some()),
+        "stage":view.as_ref().and_then(|v|v.stage.map(Stage::name)),
+        "reason":view.as_ref().and_then(|v|v.reason.map(Reason::name)),
+        "arena_installed":view.as_ref().map(|v|v.arena_installed),
+        "java_failed_guard":view.as_ref().and_then(|v|v.java_guard.map(JavaGuard::name)),
+        "physical_predicates":view.as_ref().and_then(|v|v.physical.as_ref()).map(|p|json!({
+            "shape_matches":p.shape,"schema_matches":p.schema,"app_generation_matches":p.app_generation,
+            "app_record_matches":p.app_record,"native_generation_matches":p.native_generation,"config_matches":p.config,
+            "classification_matches":p.classification,"original_matches":p.original,"physical_eligible":p.eligible,
+            "unresolved_originals_zero":p.unresolved_zero,"peer_resources_terminal":p.peer,"renderer_terminal":p.renderer,"control_terminal":p.control})),
+        "authority_granted":false}).to_string())
+}
+pub(super) fn run(host: &Host) -> Result<String, String> {
+    let attempt = Attempt::begin(host.preparation_admission.clone(), diagnostic_actor(host));
+    let result = run_observed(host, &attempt);
+    attempt.finish(result.is_ok());
+    result
+}
+fn run_observed(host: &Host, attempt: &Attempt) -> Result<String, String> {
+    attempt.call(Stage::Capability, Reason::CallFailed, || {
+        host.capability.require_live()
+    })?;
+    attempt.call(Stage::PriorArchive, Reason::CallFailed, || {
+        archive_prior(host, None)
+    })?;
+    let original = attempt.call(Stage::OriginalRead, Reason::CallFailed, || {
+        host.callbacks.current_operator_original_id()
+    })?;
+    attempt.bind_original(&original);
+    let eligibility = attempt.call(Stage::JavaEligibility, Reason::CallFailed, || {
+        host.callbacks.prepared_start_eligibility(attempt)
+    })?;
+    attempt.call(
+        Stage::OriginalMatch,
+        Reason::PredicateRejected,
+        || -> Result<(), String> {
+            if eligibility["original_binding"] != json!({"kind":"operator","original_id":original})
+            {
+                return Err("prepared actual wrapper Original differs".into());
+            }
+            Ok(())
+        },
+    )?;
+    let native = attempt.call(Stage::NativeEligibility, Reason::CallFailed, || {
+        peer_lifecycle::fresh_setup_eligibility(host)
+    })?;
     const E: [&str; 8] = [
         "$schema",
         "app_process_generation",
@@ -295,48 +379,92 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
         "physical_eligibility",
     ];
     let physical = &eligibility["physical_eligibility"];
-    if !eligibility
-        .as_object()
-        .is_some_and(|o| o.len() == 8 && E.iter().all(|k| o.contains_key(*k)))
-        || eligibility["$schema"]
-            != "rusty.quest.embedded_duplex.peer_start_preparation_eligibility.v1"
-        || eligibility["app_process_generation"] != host.capability.binding.generation
-        || eligibility["app_record_sha256"] != host.capability.binding.record_sha256
-        || eligibility["native_executor_generation"] != host.capability.generation
-        || eligibility["config_sha256"] != host.config_sha256
-        || physical["eligible"] != true
-        || physical["classification"] != native["local"]["state"]
-        || physical["unresolved_original_count"] != 0
-        || physical["original_binding"] != eligibility["original_binding"]
-        || physical["peer_resources_terminal"] != true
-        || physical["renderer_terminal"] != true
-        || physical["control_terminal"] != true
-    {
-        return Err("actual preparation physical/Original/Native lifetime proof differs".into());
-    }
-    let target = host.callbacks.peer_start_resource_target()?;
+    attempt.physical(PhysicalPredicates {
+        shape: eligibility
+            .as_object()
+            .is_some_and(|o| o.len() == 8 && E.iter().all(|k| o.contains_key(*k))),
+        schema: eligibility["$schema"]
+            == "rusty.quest.embedded_duplex.peer_start_preparation_eligibility.v1",
+        app_generation: eligibility["app_process_generation"] == host.capability.binding.generation,
+        app_record: eligibility["app_record_sha256"] == host.capability.binding.record_sha256,
+        native_generation: eligibility["native_executor_generation"] == host.capability.generation,
+        config: eligibility["config_sha256"] == host.config_sha256,
+        classification: physical["classification"] == native["local"]["state"],
+        original: physical["original_binding"] == eligibility["original_binding"],
+        eligible: physical["eligible"].as_bool(),
+        unresolved_zero: physical["unresolved_original_count"]
+            .as_u64()
+            .map(|v| v == 0),
+        peer: physical["peer_resources_terminal"].as_bool(),
+        renderer: physical["renderer_terminal"].as_bool(),
+        control: physical["control_terminal"].as_bool(),
+    });
+    attempt.call(
+        Stage::PhysicalEligibility,
+        Reason::PredicateRejected,
+        || -> Result<(), String> {
+            if !eligibility
+                .as_object()
+                .is_some_and(|o| o.len() == 8 && E.iter().all(|k| o.contains_key(*k)))
+                || eligibility["$schema"]
+                    != "rusty.quest.embedded_duplex.peer_start_preparation_eligibility.v1"
+                || eligibility["app_process_generation"] != host.capability.binding.generation
+                || eligibility["app_record_sha256"] != host.capability.binding.record_sha256
+                || eligibility["native_executor_generation"] != host.capability.generation
+                || eligibility["config_sha256"] != host.config_sha256
+                || physical["eligible"] != true
+                || physical["classification"] != native["local"]["state"]
+                || physical["unresolved_original_count"] != 0
+                || physical["original_binding"] != eligibility["original_binding"]
+                || physical["peer_resources_terminal"] != true
+                || physical["renderer_terminal"] != true
+                || physical["control_terminal"] != true
+            {
+                return Err(
+                    "actual preparation physical/Original/Native lifetime proof differs".into(),
+                );
+            }
+            Ok(())
+        },
+    )?;
+    let target = attempt.call(Stage::ResourceTarget, Reason::CallFailed, || {
+        host.callbacks.peer_start_resource_target()
+    })?;
     let request = AndroidPreparedStartRequest {
         schema_id: "rusty.quest.embedded_duplex.prepared_start_request.v1".into(),
-        preparation_id: id()?,
+        preparation_id: attempt.call(Stage::Entropy, Reason::CallFailed, id)?,
         original_id: original,
         app_process_generation: host.capability.binding.generation,
         app_record_sha256: host.capability.binding.record_sha256.clone(),
         native_executor_generation: host.capability.generation,
         config_sha256: host.config_sha256.clone(),
         arm_binding: eligibility["arm_binding"].clone(),
-        configuration_binding: host
-            .runtime_configuration_binding
-            .clone()
-            .ok_or("prepared actual successful constructor absent")?,
-        resource_target_sha256: prepared_start_digest(
-            "rusty.quest.embedded_duplex.peer_start_resource_target.v1",
-            &target,
+        configuration_binding: attempt.call(
+            Stage::ConstructorBinding,
+            Reason::CallFailed,
+            || {
+                host.runtime_configuration_binding
+                    .clone()
+                    .ok_or("prepared actual successful constructor absent")
+            },
+        )?,
+        resource_target_sha256: attempt.call(
+            Stage::ResourceTargetDigest,
+            Reason::CallFailed,
+            || {
+                prepared_start_digest(
+                    "rusty.quest.embedded_duplex.peer_start_resource_target.v1",
+                    &target,
+                )
+            },
         )?,
         resource_target: target,
     };
     let mut callback = host.callbacks.clone();
-    let owner = AndroidPreparedStartOwner::reserve(&callback, request.clone())?;
-    let view = json!({"$schema":"rusty.quest.embedded_duplex.prepared_start_view.v1","request":request,"source":source(host)?});
+    let owner = attempt.call(Stage::RequestReservation, Reason::CallFailed, || {
+        AndroidPreparedStartOwner::reserve(&callback, request.clone())
+    })?;
+    let view = json!({"$schema":"rusty.quest.embedded_duplex.prepared_start_view.v1","request":request,"source":attempt.call(Stage::SourceSnapshot,Reason::CallFailed,||source(host))?});
     let a = Arc::new(Arena {
         request,
         owner: Mutex::new(owner),
@@ -352,34 +480,44 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
     });
     let reserve_estimate = Instant::now() + Duration::from_secs(15);
     let mut reserve_warned = false;
-    loop {
-        host.capability.require_live()?;
-        let mut p = process()
-            .lock()
-            .map_err(|_| "prepared reservation process poisoned")?;
-        if p.prepared_peer_start.is_some()
-            || p.root_reestablishment.is_some()
-            || p.fresh_setup_request.is_some()
-            || p.initializing
-            || p.closing
-            || p.lease_integrity_failed
-        {
-            return Err("prepared requires same Native owner before resource effects".into());
-        }
-        if p.host_leases == 1 {
-            p.prepared_peer_start = Some(a.clone());
-            break;
-        }
-        drop(p);
-        if Instant::now() >= reserve_estimate && !reserve_warned {
-            reserve_warned = true;
-            estimated_warning::publish(
+    attempt.call(
+        Stage::ArenaInstall,
+        Reason::CallFailed,
+        || -> Result<(), String> {
+            loop {
+                host.capability.require_live()?;
+                let mut p = process()
+                    .lock()
+                    .map_err(|_| "prepared reservation process poisoned")?;
+                if p.prepared_peer_start.is_some()
+                    || p.root_reestablishment.is_some()
+                    || p.fresh_setup_request.is_some()
+                    || p.initializing
+                    || p.closing
+                    || p.lease_integrity_failed
+                {
+                    return Err(
+                        "prepared requires same Native owner before resource effects".into(),
+                    );
+                }
+                if p.host_leases == 1 {
+                    p.prepared_peer_start = Some(a.clone());
+                    break;
+                }
+                drop(p);
+                if Instant::now() >= reserve_estimate && !reserve_warned {
+                    reserve_warned = true;
+                    estimated_warning::publish(
                 "prepared reserve waits for actual authentication/read borrowers; same original",
             );
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-    let result = (|| {
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(())
+        },
+    )?;
+    attempt.arena_installed();
+    let result = attempt.call(Stage::SdkPreparation, Reason::CallFailed, || {
         // Registers actual construction ownership before any callback may enter
         // renderer SDK allocation; absence of a renderer slot is never proof.
         crate::camera_hwb_probe::begin_prepared_peer_renderer(&a.request.preparation_id)?;
@@ -454,7 +592,7 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
         crate::camera_hwb_probe::prepared_peer_renderer_dormant_for(&a.request.preparation_id)?;
         a.completed.store(true, Ordering::SeqCst);
         status(host)
-    })();
+    });
     if let Err(e) = &result {
         *a.failure
             .lock()

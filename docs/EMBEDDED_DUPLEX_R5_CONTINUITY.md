@@ -1,5 +1,38 @@
 # Embedded duplex finite authority and native fencing
 
+## Retained preparation admission diagnostic
+
+The fixed debug-only `prepared_peer_start_diagnostic` operator call accepts a
+fresh challenge and an optional typed `original_id`. It reads the existing
+process/native preparation journal without creating a host or Original,
+rerunning eligibility, entering SDK/transport work, or requiring a preparation
+Arena. A supplied Original must match an actually bound attempt. Failures before
+that binding leave the Original explicitly unknown. Missing attempts are
+`unobserved`; an unavailable current actor/journal refuses the read. Neither
+case proves absence of effects or upgrades an older UNKNOWN.
+
+The journal retains the actual first failed stage and closed reason while the
+primary operation and its generic JNI error remain unchanged. Java eligibility
+failures include the actual closed callback guard. The combined native physical
+guard includes Boolean/nullable predicate results derived only from its already
+computed values. No raw exception text, keys or caller-supplied native operation
+is returned. The Java census contains phase/reference presence only and always
+reports `cleanup_proven=false`; it does not call the no-media classifier or SDK.
+
+There is no preparation retry quota. The diagnostic attempt counter never limits
+the operation, including exhaustion. A live Arena, unresolved Original or stale
+actor is an ownership/idempotency guard. Fresh preparation after actual terminal
+cleanup uses a fresh Original and archives the prior preparation through its
+existing owner; it does not replay an UNKNOWN. No automatic retry, clear, cleanup
+or acceptance is added by this diagnostic.
+
+`tools/checks/Test-PreparationDiagnosticHost.py --output <new-host-output>
+--json-jar <host-org-json-jar>` compiles the actual Rust journal and Java decoder,
+and the actual Java eligibility bodies with modeled Android dependencies. It
+checks each stage, callback failure location/order, predicate retention, stale
+actor/Original rejection, counter exhaustion and repeated read purity. These
+controls do not qualify an APK, JNI runtime, camera, pair, media or cleanup.
+
 ## Process incarnation and ordinary app Close
 
 New local-resource obligations retain the existing write-ahead v1 fence and

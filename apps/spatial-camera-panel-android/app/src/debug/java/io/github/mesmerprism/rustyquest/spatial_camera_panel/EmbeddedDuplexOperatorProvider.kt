@@ -32,6 +32,12 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     val snapshot = extras?.let { Bundle(it) } ?: Bundle()
     val challenge = argument ?: closed()
     if (!challenge.matches(Regex("[0-9a-f]{32}"))) closed()
+    if(method == EmbeddedDuplexOperatorContract.METHOD_PREPARATION_DIAGNOSTIC){
+      val fields=snapshot.keySet().associateWith { snapshot.get(it) }
+      val original=EmbeddedDuplexOperatorContract.preparationDiagnosticOriginal(fields)
+      val receipt=EmbeddedDuplexRuntimeService.preparationDiagnosticRead(original).awaitOperatorCompletion(10)
+      return Bundle().apply { header("observed");putString("challenge",challenge);putString("receipt",receipt) }
+    }
     val originals = EmbeddedDuplexOriginals.forApplication(app)
     if(method == "operation_continuation_handoff"){
       if(snapshot.keySet()!=setOf("original_id") || snapshot.get("original_id") !is String)closed()

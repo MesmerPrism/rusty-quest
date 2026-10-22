@@ -280,6 +280,15 @@ final class EmbeddedDuplexPlatform {
             requireProcessCallback();return EmbeddedDuplexProcessHost.preparedStartEligibility(this).toString();
         }
     }
+    /** Same one actual eligibility call, with closed failure-location metadata only. */
+    public String peerStartPreparationEligibilityObservationJson()throws Exception {
+        EmbeddedDuplexPreparationDiagnostic.EligibilityTrace trace=new EmbeddedDuplexPreparationDiagnostic.EligibilityTrace();
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();JSONObject value=EmbeddedDuplexProcessHost.preparedStartEligibility(this,trace);
+            trace.guard=EmbeddedDuplexPreparationDiagnostic.Guard.CALLBACK_CLOSE;
+            return trace.result(value);
+        }catch(Exception failure){return trace.result(null);}
+    }
     public String abortPeerStartResources(String exactRequest)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
             requireProcessCallback();EmbeddedDuplexPreparedStart held=preparedStart;

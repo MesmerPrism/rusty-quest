@@ -1224,13 +1224,18 @@ final class EmbeddedDuplexProcessHost {
         EmbeddedDuplexPeerRoots.identity(actor,freshClosureIdentity(held.platform));
     }
     static JSONObject preparedStartTarget(EmbeddedDuplexPlatform actual)throws Exception {
-        EmbeddedDuplexProcessHost host=instance;freshClosureIdentity(actual);
+        return preparedStartTarget(actual,new EmbeddedDuplexPreparationDiagnostic.EligibilityTrace());
+    }
+    private static JSONObject preparedStartTarget(EmbeddedDuplexPlatform actual,EmbeddedDuplexPreparationDiagnostic.EligibilityTrace trace)throws Exception {
+        EmbeddedDuplexProcessHost host=instance;
+        trace.call(EmbeddedDuplexPreparationDiagnostic.Guard.TARGET_ACTOR,()->freshClosureIdentity(actual));
         EmbeddedDuplexOriginals.Record original=EmbeddedDuplexOriginals.capture();
+        trace.guard=EmbeddedDuplexPreparationDiagnostic.Guard.TARGET_FIELDS;
         if(host==null||host.phase.get()!=Phase.READY||host.resources==null||host.nativeConfigurationContext==null
             ||original==null||!"prepare_peer_start".equals(original.row.getString("operation"))||original.desiredStop.get())
             throw new IllegalStateException("actual selected prepared resource owner absent");
-        requireCurrentOriginalStopActor(original);
-        return host.resources.preparationTarget(host.runtimeConfigSha256);
+        trace.call(EmbeddedDuplexPreparationDiagnostic.Guard.TARGET_ORIGINAL_ACTOR,()->{requireCurrentOriginalStopActor(original);return null;});
+        return trace.call(EmbeddedDuplexPreparationDiagnostic.Guard.TARGET_METADATA,()->host.resources.preparationTarget(host.runtimeConfigSha256));
     }
     static EmbeddedDuplexPreparedStart reservePreparedStart(EmbeddedDuplexPlatform actual,JSONObject request)throws Exception {
         EmbeddedDuplexProcessHost host=instance;freshClosureIdentity(actual);
@@ -1255,12 +1260,17 @@ final class EmbeddedDuplexProcessHost {
             .put("arm_binding",arm).put("physical_eligibility",physical);
     }
     static JSONObject preparedStartEligibility(EmbeddedDuplexPlatform actual)throws Exception {
-        preparedStartTarget(actual);EmbeddedDuplexProcessHost host=instance;
-        JSONObject identity=freshClosureIdentity(actual),arm=ConcurrentStereoQualification.retirementArmObservation(host.processFence.epochId(),host.runtimeConfigSha256,host.nativeExecutorGeneration);
-        EmbeddedDuplexPeerRoots.arm(arm);
+        return preparedStartEligibility(actual,new EmbeddedDuplexPreparationDiagnostic.EligibilityTrace());
+    }
+    static JSONObject preparedStartEligibility(EmbeddedDuplexPlatform actual,EmbeddedDuplexPreparationDiagnostic.EligibilityTrace trace)throws Exception {
+        preparedStartTarget(actual,trace);EmbeddedDuplexProcessHost host=instance;
+        JSONObject identity=trace.call(EmbeddedDuplexPreparationDiagnostic.Guard.ACTOR_IDENTITY,()->freshClosureIdentity(actual));
+        JSONObject arm=trace.call(EmbeddedDuplexPreparationDiagnostic.Guard.ARM_OBSERVATION,()->ConcurrentStereoQualification.retirementArmObservation(host.processFence.epochId(),host.runtimeConfigSha256,host.nativeExecutorGeneration));
+        trace.call(EmbeddedDuplexPreparationDiagnostic.Guard.ARM_VALIDATION,()->{EmbeddedDuplexPeerRoots.arm(arm);return null;});
+        // Preserve the original callback order: the binding is read before physical facts.
         return new JSONObject(identity.toString()).put("$schema","rusty.quest.embedded_duplex.peer_start_preparation_eligibility.v1")
-            .put("original_binding",new JSONObject().put("kind","operator").put("original_id",EmbeddedDuplexOriginals.capture().id()))
-            .put("arm_binding",arm).put("physical_eligibility",freshPhysical(actual,null,false));
+            .put("original_binding",trace.call(EmbeddedDuplexPreparationDiagnostic.Guard.ORIGINAL_BINDING,()->new JSONObject().put("kind","operator").put("original_id",EmbeddedDuplexOriginals.capture().id())))
+            .put("arm_binding",arm).put("physical_eligibility",trace.call(EmbeddedDuplexPreparationDiagnostic.Guard.PHYSICAL_OBSERVATION,()->freshPhysical(actual,null,false)));
     }
     static void requirePreparedAbortContext(JSONObject request)throws Exception {
         EmbeddedDuplexProcessHost host=instance;EmbeddedDuplexOriginals.Record actual=EmbeddedDuplexOriginals.capture();
@@ -1293,6 +1303,29 @@ final class EmbeddedDuplexProcessHost {
             String raw=EmbeddedDuplexNative.runtimeCommand("prepare_peer_start","{}");
             JSONObject receipt=new JSONObject(raw);requirePreparedOriginal(actual,receipt);return raw;
         });
+    }
+    /** Existing-host journal read only. No Original, fence creation, eligibility or SDK observation. */
+    static CompletableFuture<String> preparationDiagnosticRead(String expectedOriginal){
+        if(expectedOriginal!=null&&!expectedOriginal.matches("[0-9a-f]{32}"))
+            return failed(new IllegalArgumentException("preparation diagnostic selector invalid"));
+        EmbeddedDuplexProcessHost host=instance;
+        if(host==null)return failed(new IllegalStateException("existing preparation host unavailable"));
+        CompletableFuture<String> result=new CompletableFuture<>();
+        try{host.commands.execute(()->{
+            try{
+                if(instance!=host||host.processFence==null||host.phase.get()!=Phase.READY
+                    ||host.platform==null||host.nativeExecutorGeneration<=0||host.runtimeConfigSha256==null)
+                    throw new IllegalStateException("existing preparation actor unavailable");
+                JSONObject actor=freshClosureIdentity(host.platform);
+                JSONObject selector=new JSONObject();if(expectedOriginal!=null)selector.put("original_id",expectedOriginal);
+                String raw=EmbeddedDuplexNative.runtimeCommand("prepared_peer_start_diagnostic",selector.toString());
+                JSONObject current=freshClosureIdentity(host.platform);
+                if(!actor.toString().equals(current.toString()))throw new IllegalStateException("preparation actor changed during read");
+                result.complete(EmbeddedDuplexPreparationDiagnostic.read(raw,current,expectedOriginal,host.phase.get().name(),
+                    host.platform!=null,host.resources!=null,host.activeCommandOriginal!=null).toString());
+            }catch(Throwable failure){result.completeExceptionally(failure);}
+        });}catch(java.util.concurrent.RejectedExecutionException failure){result.completeExceptionally(failure);}
+        return result;
     }
     CompletableFuture<String> preparedPeerStartStatus(){
         return submit(()->{

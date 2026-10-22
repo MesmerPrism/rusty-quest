@@ -102,7 +102,9 @@ impl JavaOwnerCallbacks {
             .map(|p| env.new_string(p))
             .transpose()
             .map_err(|_| "incoming fresh prior identity")?;
-        let previous = previous.map(JObject::from).unwrap_or_else(|| JObject::null());
+        let previous = previous
+            .map(JObject::from)
+            .unwrap_or_else(|| JObject::null());
         let current = env
             .new_string(phase)
             .map_err(|_| "incoming fresh phase identity")?;
@@ -382,8 +384,36 @@ impl JavaOwnerCallbacks {
     pub(crate) fn sign_fresh_setup_frame(&self, bytes: &[u8]) -> Result<[u8; 64], String> {
         self.sign_callback(bytes, "signFreshPairSetupFrameBytes")
     }
-    pub(crate) fn prepared_start_eligibility(&self) -> Result<serde_json::Value, String> {
-        self.prepared_readonly_callback("peerStartPreparationEligibilityJson")
+    pub(crate) fn prepared_start_eligibility(
+        &self,
+        attempt: &super::runtime_host::preparation_diagnostic::Attempt,
+    ) -> Result<serde_json::Value, String> {
+        let envelope =
+            self.prepared_readonly_callback("peerStartPreparationEligibilityObservationJson")?;
+        let fields = envelope
+            .as_object()
+            .ok_or("prepared eligibility observation shape")?;
+        if fields.len() != 2
+            || !fields.contains_key("value")
+            || !fields.contains_key("failure_guard")
+        {
+            return Err("prepared eligibility observation shape".into());
+        }
+        if let Some(name) = envelope["failure_guard"].as_str() {
+            if !envelope["value"].is_null() {
+                return Err("prepared eligibility observation conflict".into());
+            }
+            let guard = super::runtime_host::preparation_diagnostic::JavaGuard::parse(name)
+                .ok_or("prepared eligibility observation guard")?;
+            attempt.java_failure(guard);
+            // Same primary error returned when the old callback threw. Only the
+            // retained closed diagnostic gains the actual Java guard location.
+            return Err("java_bridge.prepared_readonly".into());
+        }
+        if !envelope["failure_guard"].is_null() || !envelope["value"].is_object() {
+            return Err("prepared eligibility observation value".into());
+        }
+        Ok(envelope["value"].clone())
     }
     pub(crate) fn peer_start_resource_target(&self) -> Result<serde_json::Value, String> {
         self.prepared_readonly_callback("peerStartResourceTargetJson")
