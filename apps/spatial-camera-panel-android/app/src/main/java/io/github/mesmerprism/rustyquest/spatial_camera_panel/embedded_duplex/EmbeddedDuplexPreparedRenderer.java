@@ -25,7 +25,10 @@ final class EmbeddedDuplexPreparedRenderer {
         JSONObject v=parse(raw);String schema=v.getString("$schema");
         if(NONE.equals(schema))throw new IllegalStateException("renderer registration did not earn SDK readiness");
         if(!id.equals(v.getString("preparation_id"))||v.getLong(COLD.equals(schema)?"route_generation":"peer_route_generation")!=route)throw new IllegalStateException("renderer route identity changed");
-        if(!Boolean.TRUE.equals(v.get("source_hold_acquired"))||!Boolean.FALSE.equals(v.get("source_hold_released"))
+        // Cold WSI retains its construction hold; existing-Own reuse releases
+        // that hold before readiness while retaining the distinct Peer reservation.
+        boolean expectedHoldReleased=OWN.equals(schema);
+        if(!Boolean.TRUE.equals(v.get("source_hold_acquired"))||!Boolean.valueOf(expectedHoldReleased).equals(v.get("source_hold_released"))
             ||!(v.get("prepare_calls_joined")instanceof Boolean))throw new IllegalStateException("actual dormant source hold differs");
         if(COLD.equals(schema)){
             if(!v.isNull("failure"))throw new IllegalStateException("actual retained renderer construction failed");
