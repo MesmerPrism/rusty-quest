@@ -331,7 +331,7 @@ def verify_dex(inventory, apk):
     return entries
 
 
-def verify(inventory, actual, apk, expected_inventory_sha256):
+def verify_compiled(inventory, actual, expected_inventory_sha256):
     need(json_sha(inventory) == expected_inventory_sha256, "prepared-inventory-changed")
     verify_current_sources(inventory)
     verify_inputs(inventory, actual)
@@ -346,13 +346,23 @@ def verify(inventory, actual, apk, expected_inventory_sha256):
         need(observed["name"] == definition["class"] and observed["source"] == pathlib.PurePosixPath(definition["source"]).name, "class-source-binding")
         required_methods(definition, observed)
         class_rows.append(dict(name=definition["class"], sha256=file_sha(path), source=definition["source"]))
+    verify_current_sources(inventory)
+    return dict(schema="rusty.quest.android_component_jvm_compilation.v1", status="passed",
+        contract_sha256=inventory["contract_sha256"], feature_lock_sha256=inventory["feature_lock_sha256"],
+        inventory_sha256=json_sha(inventory), source_fingerprint=inventory["fingerprint"],
+        gradle_inputs_sha256=json_sha(actual), class_outputs=class_rows,
+        runtime_authority=False)
+
+
+def verify(inventory, actual, apk, expected_inventory_sha256):
+    compiled = verify_compiled(inventory, actual, expected_inventory_sha256)
     dex = verify_dex(inventory, apk)
     verify_current_sources(inventory)
     return dict(schema="rusty.quest.android_component_closure.v1", status="passed",
-        contract_sha256=inventory["contract_sha256"], feature_lock_sha256=inventory["feature_lock_sha256"],
-        inventory_sha256=json_sha(inventory), source_fingerprint=inventory["fingerprint"],
-        gradle_inputs_sha256=json_sha(actual), class_outputs=class_rows, dex=dex, apk_sha256=file_sha(apk),
-        runtime_authority=False)
+        contract_sha256=compiled["contract_sha256"], feature_lock_sha256=compiled["feature_lock_sha256"],
+        inventory_sha256=compiled["inventory_sha256"], source_fingerprint=compiled["source_fingerprint"],
+        gradle_inputs_sha256=compiled["gradle_inputs_sha256"], class_outputs=compiled["class_outputs"],
+        dex=dex, apk_sha256=file_sha(apk), runtime_authority=False)
 
 
 def main():
@@ -362,9 +372,15 @@ def main():
     for name in ("contract", "feature-lock", "expected-feature-lock-sha256", "private-root", "variant", "output"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--application-root")
-    p = commands.add_parser("verify")
-    for name in ("inventory", "expected-inventory-sha256", "gradle-receipt", "apk", "output"):
+    p = commands.add_parser("verify-sources")
+    for name in ("inventory", "expected-inventory-sha256", "output"):
         p.add_argument("--" + name, required=True)
+    for command in ("verify", "verify-compiled"):
+        p = commands.add_parser(command)
+        for name in ("inventory", "expected-inventory-sha256", "gradle-receipt", "output"):
+            p.add_argument("--" + name, required=True)
+        if command == "verify":
+            p.add_argument("--apk", required=True)
     p = commands.add_parser("check-dex")
     for name in ("inventory", "apk", "output"):
         p.add_argument("--" + name, required=True)
@@ -374,9 +390,18 @@ def main():
     if args.command == "prepare":
         value = prepare(args.contract, args.feature_lock, args.expected_feature_lock_sha256,
             {"application": args.application_root, "private": args.private_root}, args.variant)
-    elif args.command == "verify":
+    elif args.command == "verify-sources":
         need(file_sha(args.inventory) == args.expected_inventory_sha256, "prepared-inventory-changed")
-        value = verify(load(args.inventory), load(args.gradle_receipt), args.apk, args.expected_inventory_sha256)
+        inventory = load(args.inventory)
+        need(json_sha(inventory) == args.expected_inventory_sha256, "prepared-inventory-changed")
+        verify_current_sources(inventory)
+        value = dict(status="passed", scope="selected-source-currentness-only",
+            inventory_sha256=args.expected_inventory_sha256, runtime_authority=False)
+    elif args.command in ("verify", "verify-compiled"):
+        need(file_sha(args.inventory) == args.expected_inventory_sha256, "prepared-inventory-changed")
+        inventory, actual = load(args.inventory), load(args.gradle_receipt)
+        value = (verify(inventory, actual, args.apk, args.expected_inventory_sha256) if args.command == "verify"
+                 else verify_compiled(inventory, actual, args.expected_inventory_sha256))
     else:
         inventory = load(args.inventory)
         dex = verify_dex(inventory, args.apk)

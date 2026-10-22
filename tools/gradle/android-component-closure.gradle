@@ -5,7 +5,58 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.ConfigurableFileCollection
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.*
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
+
+/** Configuration-time, typed dependency/finalizer closure; no execution listener. */
+class AndroidJvmTaskClosure {
+    static List<String> types(Task task) {
+        def result = []
+        for (Class type = task.class; type != null; type = type.superclass) result.add(type.name)
+        result
+    }
+
+    static Map inspect(Task task) {
+        def permittedAndroid = [
+            'com.android.build.gradle.tasks.GenerateBuildConfig',
+            'com.android.build.gradle.tasks.GenerateResValues',
+            'com.android.build.gradle.tasks.MergeResources',
+            'com.android.build.gradle.tasks.ProcessApplicationManifest',
+            'com.android.build.gradle.tasks.ProcessLibraryManifest',
+            'com.android.build.gradle.tasks.ProcessMultiApkApplicationManifest',
+            'com.android.build.gradle.tasks.ProcessPackagedManifestTask',
+            'com.android.build.gradle.tasks.CompatibleScreensManifest',
+            'com.android.build.gradle.tasks.ExtractDeepLinksTask',
+            'com.android.build.gradle.tasks.CompileLibraryResourcesTask',
+            'com.android.build.gradle.tasks.JavaPreCompileTask',
+            'com.android.build.gradle.tasks.MapSourceSetPathsTask',
+            'com.android.build.gradle.tasks.ProcessAndroidResources',
+            'com.android.build.gradle.internal.tasks.CheckAarMetadataTask',
+            'com.android.build.gradle.internal.tasks.AarMetadataTask',
+            'com.android.build.gradle.internal.tasks.ValidateResourcesTask',
+            'com.android.build.gradle.internal.tasks.MergeSourceSetFolders',
+            'com.android.build.gradle.internal.tasks.BundleLibraryClassesJar',
+            'com.android.build.gradle.internal.tasks.BundleLibraryClassesDir',
+            'com.android.build.gradle.internal.res.GenerateLibraryRFileTask',
+            'com.android.build.gradle.internal.res.ParseLibraryResourcesTask',
+            'com.android.build.gradle.internal.res.LinkApplicationAndroidResourcesTask',
+            'org.jetbrains.kotlin.gradle.plugin.diagnostics.CheckKotlinGradlePluginConfigurationErrors'
+        ] as Set
+        def hierarchy = types(task)
+        def lifecycle = hierarchy.contains('org.gradle.api.DefaultTask') && task.actions.isEmpty()
+        def archive = task instanceof AbstractArchiveTask && task.archiveExtension.get() in ['jar', 'aar']
+        def allowed = lifecycle || archive || task instanceof JavaCompile ||
+            hierarchy.contains('org.jetbrains.kotlin.gradle.tasks.KotlinCompile') ||
+            hierarchy.contains('org.gradle.language.jvm.tasks.ProcessResources') ||
+            task instanceof ObserveAndroidComponentInputs || hierarchy.any { permittedAndroid.contains(it) }
+        if (!allowed) throw new GradleException('component-early-task-graph: ' + task.path + ' type=' + hierarchy[0])
+        [path: task.path, type: hierarchy.find { !it.endsWith('_Decorated') },
+            dependencies: task.taskDependencies.getDependencies(task).collect { it.path }.sort(),
+            finalizers: task.finalizedBy.getDependencies(task).collect { it.path }.sort()]
+    }
+}
 
 /** Actual selected compiler sources, not a second source scanner/compiler. */
 abstract class ObserveAndroidComponentInputs extends DefaultTask {
@@ -14,6 +65,15 @@ abstract class ObserveAndroidComponentInputs extends DefaultTask {
     @InputFiles @PathSensitive(PathSensitivity.ABSOLUTE)
     abstract ConfigurableFileCollection getCompilerSources()
     @Input abstract ListProperty<String> getClassRoots()
+    @Input abstract ListProperty<String> getCompilerTasks()
+    @InputFiles @PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract ConfigurableFileCollection getBootClasspath()
+    @InputFiles @PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract ConfigurableFileCollection getKotlinClasspath()
+    @InputFiles @PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract ConfigurableFileCollection getJavaClasspath()
+    @Input abstract ListProperty<String> getEarlyTaskGraph()
+    @Input abstract Property<String> getObservationPhase()
     @OutputFile abstract RegularFileProperty getReceiptFile()
 
     static String digest(byte[] bytes) {
@@ -29,7 +89,7 @@ abstract class ObserveAndroidComponentInputs extends DefaultTask {
         def roots = inventory.roots.collectEntries { name, value ->
             [(name): new File(value as String).canonicalFile.toPath()]
         }
-        def rows = []
+        def rows = []; def generated = []
         compilerSources.files.findAll { it.isFile() && (it.name.endsWith('.kt') || it.name.endsWith('.java')) }.each { file ->
             def path = file.canonicalFile.toPath()
             def matches = roots.findAll { name, root -> path.startsWith(root) }
@@ -38,6 +98,8 @@ abstract class ObserveAndroidComponentInputs extends DefaultTask {
                 def match = matches.entrySet().iterator().next()
                 rows.add([root: match.key, path: match.value.relativize(path).toString().replace('\\', '/'),
                           bytes: file.length(), sha256: ObserveAndroidComponentInputs.digest(file.bytes)])
+            } else {
+                generated.add([path: file.canonicalPath, bytes: file.length(), sha256: digest(file.bytes)])
             }
         }
         rows = rows.unique { it.root + ':' + it.path }.sort { a, b ->
@@ -45,8 +107,21 @@ abstract class ObserveAndroidComponentInputs extends DefaultTask {
         }
         def expected = inventory.sources.sort { a, b -> (a.root <=> b.root) ?: (a.path <=> b.path) }
         if (rows != expected) throw new GradleException('component-compiler-input-source-closure')
+        def observePath = { String value ->
+            def path = new File(value)
+            [path: path.canonicalPath, kind: path.isFile() ? 'file' : (path.isDirectory() ? 'directory' : 'not-yet-materialized'),
+             sha256: path.isFile() ? digest(path.bytes) : null]
+        }
+        def compilerFacts = compilerTasks.get().collect { new JsonSlurper().parseText(it) }
         def result = [schema: 'rusty.quest.android_component_gradle_inputs.v1',
-                      inventory_sha256: digest(input), sources: rows, class_roots: classRoots.get()]
+            inventory_sha256: digest(input), sources: rows, class_roots: classRoots.get(),
+            observation_phase: observationPhase.get(), compiler_tasks: compilerFacts,
+            boot_classpath: bootClasspath.files.collect { it.absolutePath }.sort().collect(observePath),
+            compiler_classpaths: compilerFacts.collect { row ->
+                def paths = row.language == 'kotlin' ? kotlinClasspath.files : javaClasspath.files
+                [task: row.path, entries: paths.collect { it.absolutePath }.sort().collect(observePath)]
+            }, generated_sources: generated.sort { it.path },
+            early_task_graph: earlyTaskGraph.get().collect { new JsonSlurper().parseText(it) }]
         def output = receiptFile.get().asFile
         output.parentFile.mkdirs()
         output.setText(JsonOutput.toJson(result), 'UTF-8')
@@ -64,27 +139,81 @@ if (componentInventory.isPresent()) {
     def variant = new JsonSlurper().parse(expectedFile).variant.capitalize()
     def kotlinName = providers.gradleProperty('rqAndroidComponentKotlinTask').orElse('compile' + variant + 'Kotlin').get()
     def javaName = providers.gradleProperty('rqAndroidComponentJavaTask').orElse('compile' + variant + 'JavaWithJavac').get()
+    def earlyName = 'verifySelectedAndroidJvmCompilation'
+    def earlyRequested = gradle.startParameter.taskNames.any { it == earlyName || it == project.path + ':' + earlyName }
+    if (earlyRequested && gradle.startParameter.taskNames.size() != 1) {
+        throw new GradleException('component-early-task-selection')
+    }
     afterEvaluate {
         def kotlinTask = tasks.getByName(kotlinName)
         def javaTask = tasks.findByName(javaName)
+        if (earlyRequested && (!AndroidJvmTaskClosure.types(kotlinTask).contains('org.jetbrains.kotlin.gradle.tasks.KotlinCompile') || !(javaTask instanceof JavaCompile))) {
+            throw new GradleException('component-early-compiler-task-selection')
+        }
         def actualSources = objects.fileCollection().from(kotlinTask.sources)
         def destinations = [kotlinTask.destinationDirectory.get().asFile.absolutePath]
         if (javaTask != null) {
             actualSources.from(javaTask.source)
             destinations.add(javaTask.destinationDirectory.get().asFile.absolutePath)
         }
-        def observer = tasks.register('verifySelectedAndroidComponentInputs', ObserveAndroidComponentInputs) {
-            inventoryFile.set(expectedFile)
-            compilerSources.from(actualSources)
-            classRoots.set(destinations)
-            receiptFile.set(evidenceFile)
+        def configureObservation = { ObserveAndroidComponentInputs task, File destination, String phase ->
+            task.inventoryFile.set(expectedFile)
+            task.compilerSources.from(actualSources)
+            task.classRoots.set(destinations)
+            task.compilerTasks.set([kotlinTask, javaTask].findAll { it != null }.collect { compiler ->
+                JsonOutput.toJson([path: compiler.path, language: compiler == kotlinTask ? 'kotlin' : 'java',
+                    type: AndroidJvmTaskClosure.types(compiler).find { name -> !name.endsWith('_Decorated') }])
+            })
+            // Keep Gradle file collections lazy. Only the post-compile aggregate
+            // consumes classpaths: a pre-compile observer cannot depend on its
+            // own compiler outputs through Java's Kotlin-output classpath.
+            if (phase == 'post-compile') {
+                task.bootClasspath.from(javaTask != null && javaTask.options.bootstrapClasspath != null ? javaTask.options.bootstrapClasspath :
+                    (extensions.findByName('android')?.bootClasspath ?: []))
+                task.kotlinClasspath.from(kotlinTask.libraries)
+                if (javaTask != null) task.javaClasspath.from(javaTask.classpath)
+            }
+            task.earlyTaskGraph.set([])
+            task.observationPhase.set(phase)
+            task.receiptFile.set(destination)
+            task.outputs.upToDateWhen { false }
+        }
+        def observer = tasks.register('verifySelectedAndroidComponentInputs', ObserveAndroidComponentInputs) { task ->
             // Every attempt observes current Gradle selection; this does not force compilation.
-            outputs.upToDateWhen { false }
+            configureObservation(task, earlyRequested ? new File(evidenceFile.parentFile, 'gradle-precompile-inputs.json') : evidenceFile, 'pre-compile')
         }
         [kotlinTask, javaTask].findAll { it != null }.each { task ->
             task.inputs.file(expectedFile).withPathSensitivity(PathSensitivity.NONE)
                 .withPropertyName('rqSelectedAndroidComponentInventory')
             task.dependsOn(observer)
+        }
+        def aggregate = tasks.register(earlyName, ObserveAndroidComponentInputs) { task ->
+            configureObservation(task, evidenceFile, 'post-compile')
+            task.dependsOn([kotlinTask, javaTask].findAll { it != null })
+        }
+        if (earlyRequested) {
+            def graph = objects.listProperty(String).convention([])
+            observer.configure { earlyTaskGraph.set(graph) }
+            aggregate.configure { earlyTaskGraph.set(graph) }
+            def facts = new java.util.concurrent.ConcurrentHashMap<String, String>()
+            def inspecting = new java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+            // Gradle resolves these dependency suppliers while constructing the
+            // graph, under each task's owning project lock, before any task runs.
+            // Cache hits restore the already checked graph and plain input facts;
+            // no execution-time listener or Task reference is stored in inputs.
+            rootProject.allprojects { owner ->
+                owner.tasks.configureEach { selected ->
+                    selected.dependsOn {
+                        if (inspecting.putIfAbsent(selected.path, true) == null) {
+                            try {
+                                facts[selected.path] = JsonOutput.toJson(AndroidJvmTaskClosure.inspect(selected))
+                                graph.set(facts.keySet().toList().sort().collect { facts[it] })
+                            } finally { inspecting.remove(selected.path) }
+                        }
+                        []
+                    }
+                }
+            }
         }
     }
 }
