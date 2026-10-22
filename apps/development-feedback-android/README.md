@@ -37,6 +37,16 @@ pwsh -NoProfile -File apps/development-feedback-android/tests/Test-FeedbackAppli
   -D8 <android-sdk/build-tools/34.0.0/d8.bat>
 ```
 
+To execute the packaged-selection parser against the actual selected owner
+inputs on the host, add all three explicit options `-JsonJar <org.json.jar>`,
+`-FeatureLock <resolved-feature.lock.json>` and
+`-RuntimeProfile <development-feedback-runtime.v1.json>`. This mode requires
+`-AndroidJar` for Android type declarations and hashes the JSON tool and both
+raw input files before and after. It exercises the owner schema
+`rusty.morphospace.workflow.feature_lock.v2`, rejects incompatible inputs and
+checks the reported raw digests. Upstream host `org.json` execution does not
+establish Android's `JSONObject` behavior or APK asset packaging.
+
 This compiles and exercises the real pure Java controller with fresh compiled
 host plugins, including tamper, failed probe, invalid field, Activity lifetime
 and retained-code selection cases. It separately typechecks all Android source
