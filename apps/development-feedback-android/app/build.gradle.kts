@@ -1,0 +1,75 @@
+import java.nio.file.Files
+import java.nio.file.Paths
+
+plugins { id("com.android.application") }
+
+layout.buildDirectory.set(rootProject.file("../../target/apk-i/development-feedback/warm/app-build"))
+val debugKeystore = providers.environmentVariable("RM_FEEDBACK_DEBUG_KEYSTORE").orNull
+    ?: throw GradleException("Explicit RM_FEEDBACK_DEBUG_KEYSTORE input is required; no key is generated")
+require(file(debugKeystore).isFile) { "Explicit debug keystore is absent" }
+
+android {
+    namespace = "io.github.mesmerprism.rustyquest.development_feedback"
+    compileSdk = 34
+    buildToolsVersion = "36.0.0"
+    defaultConfig {
+        applicationId = "io.github.mesmerprism.rustyquest.development_feedback"
+        minSdk = 26
+        targetSdk = 34
+        versionCode = 1
+        versionName = "0.1-development"
+    }
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file(debugKeystore)
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+    buildTypes {
+        getByName("debug") { isDebuggable = true; signingConfig = signingConfigs.getByName("debug") }
+    }
+    sourceSets {
+        getByName("debug") {
+            java.srcDirs("../../../android/development-feedback/src/main/java", "../../../android/development-feedback/src/android/java")
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+}
+// This project is a debug consumer only. It cannot produce a release carrying its controls.
+androidComponents { beforeVariants(selector().withBuildType("release")) { enable = false } }
+
+tasks.register("retainDebugApk") {
+    group = "build"
+    description = "Retain the existing AGP-signed debug APK at the canonical runner's create-new address"
+    dependsOn("assembleDebug")
+    doLast {
+        val text = providers.environmentVariable("MORPHOSPACE_CONTENT_ADDRESSED_ARTIFACT").orNull
+            ?: throw GradleException("Use the reviewed WEF build profile to derive the retained artifact address")
+        val destination = Paths.get(text)
+        val repository = rootProject.projectDir.parentFile.parentFile.toPath().toAbsolutePath().normalize()
+        val parent = repository.resolve("local-artifacts/development-feedback/apks")
+        require(destination.isAbsolute && destination == destination.normalize() && destination.parent == parent) {
+            "Retained APK must be a direct child of the app's canonical artifact namespace"
+        }
+        require(destination.fileName.toString().matches(Regex("[a-f0-9]{64}\\.apk"))) { "Invalid retained APK filename" }
+        var cursor = repository
+        val realRepository = repository.toRealPath()
+        for (part in repository.relativize(parent)) {
+            cursor = cursor.resolve(part)
+            require(!Files.isSymbolicLink(cursor) && (!Files.exists(cursor) || cursor.toRealPath() == realRepository.resolve(repository.relativize(cursor)))) {
+                "Retained APK ancestor may not be a symbolic link or directory alias"
+            }
+        }
+        Files.createDirectories(parent)
+        val source = layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile.toPath()
+        require(Files.isRegularFile(source) && !Files.isSymbolicLink(source)) { "AGP signed debug APK is absent" }
+        // Files.copy without REPLACE_EXISTING has create-new semantics. No assembly or signing here.
+        Files.copy(source, destination)
+        logger.lifecycle("Retained AGP debug APK")
+    }
+}

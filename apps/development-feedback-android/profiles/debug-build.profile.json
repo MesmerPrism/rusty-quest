@@ -1,0 +1,38 @@
+{
+  "schema": "rusty.morphospace.quest_build_profile.v1",
+  "profile_id": "development-feedback-debug",
+  "working_directory": "apps/development-feedback-android",
+  "executable": "gradle",
+  "arguments": [":app:retainDebugApk", "--console=plain", "--no-daemon", "--project-cache-dir", "../../target/apk-i/development-feedback/warm/project-cache"],
+  "environment": {
+    "JAVA_HOME": "jdk17",
+    "ANDROID_HOME": "android-sdk",
+    "ANDROID_SDK_ROOT": "android-sdk",
+    "GRADLE_USER_HOME": "feedback-gradle-home",
+    "RM_FEEDBACK_DEBUG_KEYSTORE": "debug-keystore"
+  },
+  "artifact": {
+    "relative_path": "local-artifacts/development-feedback/apks/{content_sha256}.apk",
+    "kind": "single-base-apk"
+  },
+  "preflight": {
+    "manifest_relative_dependencies": [
+      "apps/development-feedback-android/app/src/main/AndroidManifest.xml",
+      "apps/development-feedback-android/app/src/debug/AndroidManifest.xml"
+    ],
+    "lockfiles": ["config/gradle-9.4.1-tool.json"],
+    "toolchain": {
+      "repository_files": ["apps/development-feedback-android/build.gradle.kts", "apps/development-feedback-android/app/build.gradle.kts"],
+      "required_targets": []
+    },
+    "identity": {
+      "package_id": "io.github.mesmerprism.rustyquest.development_feedback",
+      "application_id": "io.github.mesmerprism.rustyquest.development_feedback"
+    },
+    "environment_projection": {
+      "passthrough": ["PATH", "SYSTEMROOT", "TEMP", "TMP"],
+      "prohibited_parent_variables": ["GIT_PAGER"]
+    },
+    "output": {"lane": "candidate", "collision_policy": "content-addressed", "allow_source_root": true}
+  }
+}
