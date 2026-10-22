@@ -1725,6 +1725,29 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return result
   }
 
+  /** Explicit app quit entry; callers finish only after this actual owner completes. */
+  fun closeEmbeddedDuplexProduct(): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation == 0L || embeddedDuplexActivityDestroying) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(IllegalStateException("embedded display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.closeProduct(this, generation)
+    result.whenComplete { _, failure ->
+      if (failure == null) {
+        embeddedDuplexAttachmentGeneration = 0L
+        embeddedDuplexRuntimeFuture = null
+      }
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "product-closed" else "product-close-pending")
+      }
+    }
+    return result
+  }
+
   fun closeEmbeddedDuplexNoMedia(): CompletableFuture<String> {
     val generation = embeddedDuplexAttachmentGeneration
     if (generation == 0L || embeddedDuplexActivityDestroying) {
@@ -3628,7 +3651,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         val pending = embeddedDuplexRuntimeFuture
         val close = {
           io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
-              .EmbeddedDuplexRuntimeService.closeNoMedia(this, generation)
+              .EmbeddedDuplexRuntimeService.closeProduct(this, generation)
               .whenComplete { _, failure ->
                 if (failure == null) {
                   embeddedDuplexAttachmentGeneration = 0L
@@ -3636,9 +3659,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   scheduleOrderedActivityDestroyCleanup()
                 } else {
                   // Keep the old display callback and lifecycle executor reachable.
-                  // The process host remains CLOSING for exact no-media retry;
+                  // The actual product owner retains pending Stop/cleanup for retry;
                   // Activity replacement must not silently adopt this generation.
-                  runOnUiThread { marker("channel=embedded-duplex status=no-media-close-pending") }
+                  runOnUiThread { marker("channel=embedded-duplex status=product-close-pending") }
                 }
               }
         }

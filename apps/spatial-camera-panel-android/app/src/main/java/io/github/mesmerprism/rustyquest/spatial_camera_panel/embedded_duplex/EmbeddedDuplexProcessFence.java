@@ -29,9 +29,17 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private boolean pending;
     private String checkpointDigest;
     private String evidenceDigest;
+    private EmbeddedDuplexProcessIncarnation.Identity incarnation;
+    private EmbeddedDuplexProcessIncarnation.Binding incarnationBinding;
 
     static EmbeddedDuplexProcessFence acquire(File directory, String checkpoint,
             String evidence, DirectorySync sync) throws Exception {
+        return acquire(directory,checkpoint,evidence,sync,null,null);
+    }
+    static EmbeddedDuplexProcessFence acquire(File directory, String checkpoint,
+            String evidence, DirectorySync sync,EmbeddedDuplexProcessIncarnation.Identity incarnation,
+            EmbeddedDuplexProcessIncarnation.Probe probe) throws Exception {
+        if((incarnation==null)!=(probe==null))throw new IllegalArgumentException("process observation incomplete");
         if (directory == null || sync == null || !directory.isDirectory()
                 || Files.isSymbolicLink(directory.toPath())) {
             throw new IllegalStateException("process fence directory unavailable");
@@ -67,6 +75,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             long priorGeneration = 0;
             boolean pending = false;
             String predecessorRecord = null;
+            EmbeddedDuplexProcessIncarnation.Binding binding=null;
             String checkpointHash = digest(checkpoint), evidenceHash = digest(evidence);
             if (created) {
                 if (checkpoint != null || evidence != null) {
@@ -107,10 +116,17 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 if (!fields[4].equals(checkpointHash) || !fields[5].equals(evidenceHash)) {
                     throw new IllegalStateException("process fence journal binding differs; migration unsupported");
                 }
+                if(pending && incarnation!=null){
+                    binding=EmbeddedDuplexProcessIncarnation.load(directory,record);
+                    if(binding!=null && EmbeddedDuplexProcessIncarnation.observeTermination(directory,binding,incarnation,probe,sync)
+                            && !EmbeddedDuplexProcessIncarnation.remoteRecordsPresent(directory,checkpoint,evidence))pending=false;
+                }
             }
             EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, channel, lock,
                     sync, Math.addExact(priorGeneration, 1), pending, checkpointHash, evidenceHash);
             result.predecessorRecord = predecessorRecord;
+            result.incarnation=incarnation;
+            result.incarnationBinding=pending?binding:null;
             result.persist();
             return result;
         } catch (Throwable failure) {
@@ -184,7 +200,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     /** Actual app-owned closing entry, including failure before native claim; allocates no native capability. */
     synchronized void beforeNativeAbsenceRetirement(String checkpoint,String evidence) throws Exception {
         requireFresh();
-        if(!pending){pending=true;bind(checkpoint,evidence);persist();}
+        if(!pending){pending=true;bind(checkpoint,evidence);bindIncarnation();persist();}
         else requireLive(generation);
     }
     synchronized void beforeRuntimeEffects(String checkpoint, String evidence) throws Exception {
@@ -192,7 +208,11 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         if (pending) throw new IllegalStateException("previous app effects require cleanup");
         pending = true;
         bind(checkpoint, evidence);
+        bindIncarnation();
         persist();
+    }
+    private void bindIncarnation() throws Exception {
+        if(incarnation!=null)incarnationBinding=new EmbeddedDuplexProcessIncarnation.Binding(incarnation,serializedRecord());
     }
     /** Caller must first validate native no-media closure and Java/display barriers.
      * Never call based on an empty registry, force-stop, or lock acquisition. */
@@ -275,6 +295,10 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         channel.truncate(bytes.length);
         channel.force(true);
         directorySync.sync();
+        // The primary remains write-ahead. No caller can enter an effect until
+        // the exact companion also commits; a crash in between stays unknown.
+        if(pending && incarnationBinding!=null)
+            EmbeddedDuplexProcessIncarnation.persist(directory,incarnationBinding,serializedRecord(),directorySync);
         } catch (Exception failure) { persistenceFailed = true; throw failure; }
     }
     static String digest(String exact) throws Exception {

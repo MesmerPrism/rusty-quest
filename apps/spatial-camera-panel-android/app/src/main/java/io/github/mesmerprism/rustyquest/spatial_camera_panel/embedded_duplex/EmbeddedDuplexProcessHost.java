@@ -1406,6 +1406,25 @@ final class EmbeddedDuplexProcessHost {
         return ownCapture != null ? new EmbeddedDuplexRuntimeStatus(status, ownCapture.phase().name(), ownCapture.cleanupStatus()) : status;
     }
 
+    /** Ordinary app Close uses the same actual whole-product owner as the typed operator.
+     * It never creates an ARM, renews a peer session, or substitutes no-media cleanup for Stop. */
+    CompletableFuture<String> closeProduct(long expectedGeneration) {
+        synchronized(attachmentGate){
+            if(expectedGeneration<=0 || attachmentGeneration!=expectedGeneration || displayDetaching || localFixture)
+                return failed(new IllegalStateException("ordinary Close attachment unavailable"));
+        }
+        try{requestDesiredStopOutsideCommandLane(true);}catch(Exception failure){return failed(failure);}
+        return submit(()->{
+            synchronized(attachmentGate){
+                if(attachmentGeneration!=expectedGeneration || displayDetaching || localFixture)
+                    throw new IllegalStateException("ordinary Close attachment superseded");
+            }
+            if(retainedWholeClose!=null)return retainedWholeClose.challenge;
+            JSONObject actual=ConcurrentStereoQualification.retirementArmObservation(processFence.epochId(),runtimeConfigSha256,nativeExecutorGeneration);
+            return "established".equals(actual.getString("binding"))?actual.getString("challenge"):internalChallenge();
+        }).thenCompose(challenge->peerLifecycle(EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE,challenge));
+    }
+
     CompletableFuture<String> closeRealPeerNoMedia(long expectedGeneration) {
         if(EmbeddedDuplexOriginals.capture()==null){String challenge=internalChallenge();return appOriginal("close_no_media",challenge,
             ()->closeRealPeerNoMedia(expectedGeneration),closed->{android.os.Bundle response=EmbeddedDuplexOperatorResponses.runtimeBundle(challenge,closedNoMediaStatus());
@@ -2065,11 +2084,13 @@ final class EmbeddedDuplexProcessHost {
         String evidence = new EmbeddedDuplexRecoveryEvidenceJournal(applicationContext).readRaw();
         java.io.File directory = new java.io.File(applicationContext.getNoBackupFilesDir(),
                 "embedded-duplex-replay");
+        EmbeddedDuplexProcessIncarnation.Identity incarnation=EmbeddedDuplexProcessIncarnation.current(
+                android.os.Process.myPid(),android.os.Process.myUid());
         processFence = EmbeddedDuplexProcessFence.acquire(directory, checkpoint, evidence, () -> {
             java.io.FileDescriptor fd = android.system.Os.open(directory.getAbsolutePath(),
                     android.system.OsConstants.O_RDONLY | android.system.OsConstants.O_CLOEXEC, 0);
             try { android.system.Os.fsync(fd); } finally { android.system.Os.close(fd); }
-        });
+        },incarnation,EmbeddedDuplexProcessIncarnation::kernelStartTicks);
         android.system.Os.chmod(new java.io.File(directory, "process-fence.v1.lock").getAbsolutePath(), 0600);
         EmbeddedDuplexOriginals.bindActualAppGeneration(processFence.generation());
     }

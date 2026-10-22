@@ -82,6 +82,11 @@ public final class EmbeddedDuplexRuntimeService {
                 .closeRealPeerNoMedia(displayGeneration);
     }
 
+    /** Explicit app Close and lifecycle fallback share the authoritative whole-product close. */
+    public static CompletableFuture<String> closeProduct(Context context,long displayGeneration) {
+        return EmbeddedDuplexProcessHost.forApplication(context).closeProduct(displayGeneration);
+    }
+
     public static CompletableFuture<String> completedSetupRecoveryStatus(Context context,String challenge){
         return EmbeddedDuplexProcessHost.existingForRecovery(context).completedSetupRecoveryStatus(challenge);
     }

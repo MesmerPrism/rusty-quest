@@ -1,5 +1,78 @@
 # Embedded duplex finite authority and native fencing
 
+## Process incarnation and ordinary app Close
+
+New local-resource obligations retain the existing write-ahead v1 fence and
+native admission ABI. Before an effect can enter, a synced private companion
+binds that exact fence to the kernel boot ID, PID, package UID and process birth
+ticks. Status reacquisition preserves the original effect owner. It cannot
+reassign that owner's effects to the status reader or infer death from a lock
+release, generation increment, elapsed time or relaunch alone.
+
+A distinct actual boot, an absent original PID, or a different birth at that PID
+can retire the original process's local handles. A private retained receipt
+contains the original fence bytes and incarnation, the actual observer and the
+closed termination reason. Its disposition is termination by process or boot;
+graceful cleanup remains unconfirmed and remote authority is never transferred.
+Same-boot births are never compared across different boots. Unreadable kernel
+observations, UID mismatch, legacy/missing/interrupted/corrupt companions and
+missing retained termination evidence keep recovery pending. A primary write
+without a committed companion earns no termination inference.
+
+Automatic fresh admission additionally requires absent Start/evidence journals
+and absent remote replay/cleanup/retained-setup records, including sidecars.
+All remote records retain their original bytes, owner, revocation, expiry and
+unknown outcome; the local termination receipt neither reconciles nor replays
+them. Presence is deliberately conservative, including retained completed
+records whose authority cannot be inferred by this local fence. Existing
+explicit nonaccepting disposition remains the route for legacy ambiguity.
+Enrollment, settings, archives and replay tombstones are untouched.
+
+The ordinary app `closeProduct` entry selects the existing `WHOLE_APP_CLOSE`
+owner with its retained or actual current ARM challenge. It creates no ARM or
+session and never substitutes no-media closure for a started route. The
+Activity exposes the explicit close future and uses the same owner as its
+`onDestroy` fallback. The existing panel Close still dismisses the panel.
+Android need not invoke `onDestroy`; process-death handling therefore depends
+on the durable incarnation evidence. Close completion still requires the
+actual Stop, Own, renderer, callback, control and whole-product joins. Pending
+or failed owners retain their attachment; only real terminal completion permits
+reopen. No new app quit button or OS lifecycle guarantee is introduced here.
+
+`tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1` exercises the real fence
+and private filesystem, with modeled kernel observations, plus genuine Android
+API34 compilation when an Android SDK is selected. It covers status/relaunch,
+same-boot death, changed boot, PID reuse, uncertainty, interrupted persistence,
+legacy records, retained remote bytes and verified close/reopen. The production
+bootstrap prefix, pre-native claim failure, never-started teardown prefix and
+ordinary Close selection run through `Test-OrdinaryProductCloseHost.py`.
+These controls establish neither Android physical cleanup nor APK/device
+qualification. Existing retained whole-close completion controls remain
+applicable.
+
+### Remaining independent Own admission
+
+An unresolved remote transaction still blocks
+`EmbeddedDuplexRecoveryCoordinator.requireFreshBootstrap()` in
+`EmbeddedDuplexProcessHost.initializeOnCommandLane`, before native initialization
+and `EmbeddedDuplexResources.installAsync` can start Own. Native
+`runtime_host::authenticate_own_capture_lock` currently derives the Own lock
+from `QuestBrokerRuntimeConfig.packaged_authority.client_locks`, and
+`runtime_host::build_host` publishes `own_capture_bootstrap` alongside the Peer Host's
+provider, transport servers, lifecycle state and native capability. Bypassing
+that gate would reuse authority rather than separate local capture.
+
+The next bounded design needs a distinct local Own admission owned by Quest:
+authenticate the installed package/signing identity and selected
+`quest-stereo-input-set` feature lock against an actual current app/native
+incarnation, without loading or replaying Peer transactions. Hold its capture,
+display and local stop owner separately from `EmbeddedDuplexResources`' Peer
+pipeline, incoming receiver and registry. Keep Manifold's accepted Peer
+session/dispatch/expiry/revocation owners unchanged. Compose observations so
+local capture/cleanup can be current while remote reconciliation is pending;
+local completion must never claim whole-product or remote transaction cleanup.
+That separate admission and resource split is outside this source slice.
+
 ## Optional current receiver cleanup observation
 
 Existing `peer_status` can include
