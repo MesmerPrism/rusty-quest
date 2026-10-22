@@ -172,3 +172,72 @@ Write-Host 'Media-key privacy descriptor projection: PASS (synthetic metadata on
 
 Require $build '":app:assemble$BuildType"' 'Sanitized metadata must not remove the actual assembly task.'
 Require $build '& $gradleBat @gradleArguments' 'Sanitized cache metadata must not replace actual Gradle dispatch.'
+
+# Evaluate the real cache geometry and final Gradle argv without running the
+# builder, creating cache directories, or starting Gradle/Kotlin.
+function Get-KotlinIsolationBuildObservation([string]$Source,[string]$Mode,[string]$Product,[string]$Type) {
+    $parseTokens=$null;$parseErrors=$null
+    $ast=[Management.Automation.Language.Parser]::ParseInput($Source,[ref]$parseTokens,[ref]$parseErrors)
+    if(@($parseErrors).Count){throw 'Kotlin isolation production AST is invalid.'}
+    $assignments=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.AssignmentStatementAst]-and$node.Left-is[Management.Automation.Language.VariableExpressionAst]},$true))
+    $lane=@($assignments|Where-Object{$_.Left.VariablePath.UserPath-ceq'cacheLaneId'})
+    $kotlin=@($assignments|Where-Object{$_.Left.VariablePath.UserPath-ceq'kotlinProjectPersistentDir'})
+    $directories=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.CommandAst]-and$node.GetCommandName()-ceq'New-Item'-and$node.Extent.Text.Contains('$cacheLaneRoot')},$true))
+    if($lane.Count-ne1-or$kotlin.Count-ne1-or$directories.Count-ne1){throw 'One production Kotlin cache lane and directory setup required.'}
+    $targets=@($directories[0].CommandElements|Where-Object{$_-is[Management.Automation.Language.ArrayExpressionAst]})
+    $argv=@($assignments|Where-Object{$_.Left.VariablePath.UserPath-ceq'gradleArguments'}|Sort-Object{$_.Extent.StartOffset})
+    $stopwatch=@($assignments|Where-Object{$_.Left.VariablePath.UserPath-ceq'gradleStopwatch'})
+    if($targets.Count-ne1-or$argv.Count-eq0-or$stopwatch.Count-ne1){throw 'Actual Gradle argument boundary or cache directory targets missing.'}
+    $BuildCacheRoot=Join-Path ([IO.Path]::GetTempPath()) 'rq-kotlin-contract'
+    $appRoot=Join-Path ([IO.Path]::GetTempPath()) 'rq-kotlin-source'
+    $resolvedProductId=$Product;$BuildType=$Type;$buildTypeLower=$Type.ToLowerInvariant();$RustStdLinkage='Static';$BuildMode=$Mode
+    $geometry=$Source.Substring($lane[0].Extent.StartOffset,$directories[0].Extent.StartOffset-$lane[0].Extent.StartOffset)
+    . ([scriptblock]::Create($geometry))
+    $created=@(& ([scriptblock]::Create($targets[0].Extent.Text)))
+    $shortAapt2='fixture-aapt2';$cmakeStaging=@{path='fixture-cmake'};$mediaAndroidJar='fixture-android.jar';$mediaAndroidBuildRoot='fixture-media'
+    $sourceBankBuildInputs=@{enabled=$false};$UseSourceCompositionVersionName=$false;$gradleTimingInitPath='fixture-timing.gradle'
+    $argumentConstruction=$Source.Substring($argv[0].Extent.StartOffset,$stopwatch[0].Extent.StartOffset-$argv[0].Extent.StartOffset)
+    . ([scriptblock]::Create($argumentConstruction))
+    [pscustomobject]@{root=$BuildCacheRoot;kotlin=$kotlinProjectPersistentDir;created=$created;arguments=@($gradleArguments)}
+}
+function Assert-KotlinIsolationBuildObservation([object]$Observed,[string]$ExpectedLane,[string]$Mode,[string]$Type) {
+    $expected=Join-Path $Observed.root $ExpectedLane
+    if($Observed.kotlin-cne$expected-or@($Observed.created|Where-Object{$_-ceq$expected}).Count-ne1){throw 'Kotlin persistence must use the created product/type cache lane.'}
+    $persistent=@($Observed.arguments|Where-Object{$_-clike'-Pkotlin.project.persistent.dir=*'})
+    $disable=@($Observed.arguments|Where-Object{$_-clike'-Pkotlin.project.persistent.dir.gradle.disableWrite=*'})
+    if($persistent.Count-ne1-or$persistent[0]-cne"-Pkotlin.project.persistent.dir=$expected"-or$disable.Count-ne1-or$disable[0]-cne'-Pkotlin.project.persistent.dir.gradle.disableWrite=true'){throw 'Actual Gradle argv must isolate Kotlin persistence and suppress legacy writes in both modes.'}
+    $configuration=if($Mode-ceq'Candidate'){'--no-configuration-cache'}else{'--configuration-cache'}
+    if('--no-daemon'-cnotin$Observed.arguments-or$configuration-cnotin$Observed.arguments-or(":app:assemble$Type")-cnotin$Observed.arguments){throw 'Kotlin isolation changed the existing Gradle mode or assembly task.'}
+    if(($Mode-ceq'DevFast')-ne('-Pkotlin.compiler.execution.strategy=in-process'-cin$Observed.arguments)){throw 'Kotlin isolation changed the existing compiler strategy.'}
+}
+foreach($mode in @('DevFast','Candidate')) {
+    foreach($case in @(@{product='Broker.Sample';type='Debug';lane='k\broker.sample-debug'},@{product='Other.Product';type='Release';lane='k\other.product-release'})) {
+        $observation=Get-KotlinIsolationBuildObservation $build $mode $case.product $case.type
+        Assert-KotlinIsolationBuildObservation $observation $case.lane $mode $case.type
+    }
+}
+$persistentToken='"-Pkotlin.project.persistent.dir=$kotlinProjectPersistentDir",'
+$disableToken='"-Pkotlin.project.persistent.dir.gradle.disableWrite=true",'
+$devFastOnly=$build.Replace($persistentToken,'').Replace('$gradleStopwatch = [Diagnostics.Stopwatch]::StartNew()',('if ($BuildMode -eq "DevFast") { $gradleArguments += "-Pkotlin.project.persistent.dir=$kotlinProjectPersistentDir" }'+"`n"+'$gradleStopwatch = [Diagnostics.Stopwatch]::StartNew()'))
+$damages=@(
+    @{name='missing persistent directory option';source=$build.Replace($persistentToken,'')},
+    @{name='missing legacy-write suppression';source=$build.Replace($disableToken,'')},
+    @{name='false legacy-write suppression';source=$build.Replace($disableToken,'"-Pkotlin.project.persistent.dir.gradle.disableWrite=false",')},
+    @{name='source-tree persistence';source=$build.Replace('$kotlinProjectPersistentDir = Join-Path $BuildCacheRoot ("k\{0}" -f $cacheLaneId)','$kotlinProjectPersistentDir = Join-Path $appRoot ".kotlin"')},
+    @{name='directory omitted from setup';source=$build.Replace('$kotlinProjectPersistentDir,','')},
+    @{name='duplicate persistence option';source=$build.Replace($persistentToken,($persistentToken+"`n"+$persistentToken))},
+    @{name='DevFast-only persistence';source=$devFastOnly}
+)
+foreach($damage in $damages) {
+    if($damage.source-ceq$build){throw "Kotlin isolation damage fixture did not change production input: $($damage.name)"}
+    $refused=$false;$failure=''
+    try {
+        $observation=Get-KotlinIsolationBuildObservation $damage.source 'Candidate' 'Broker.Sample' 'Debug'
+        Assert-KotlinIsolationBuildObservation $observation 'k\broker.sample-debug' 'Candidate' 'Debug'
+    } catch {
+        $failure=$_.Exception.Message
+        $refused=$failure-cin@('Kotlin persistence must use the created product/type cache lane.','Actual Gradle argv must isolate Kotlin persistence and suppress legacy writes in both modes.')
+    }
+    if(-not$refused){throw "Kotlin isolation damage '$($damage.name)' did not fail at its geometry/argv guard: $failure"}
+}
+Write-Host 'Kotlin persistence isolation: PASS (actual production geometry/argv in both modes; seven damaged variants refused; no Gradle execution)'

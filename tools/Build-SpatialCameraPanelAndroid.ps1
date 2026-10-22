@@ -1592,6 +1592,7 @@ $appBuildDir = Join-Path $productBuildRoot "a"
 $rootBuildDir = Join-Path $productBuildRoot "r"
 $gradleProjectCacheDir = Join-Path $BuildCacheRoot "gp"
 $gradleUserHome = Join-Path $BuildCacheRoot "gu"
+$kotlinProjectPersistentDir = Join-Path $BuildCacheRoot ("k\{0}" -f $cacheLaneId)
 $nativeReceiptTargetDir = Join-Path $BuildCacheRoot ("c\{0}" -f $RustStdLinkage.Substring(0, 1).ToLowerInvariant())
 New-Item -ItemType Directory -Force -Path @(
     $cacheLaneRoot,
@@ -1601,6 +1602,7 @@ New-Item -ItemType Directory -Force -Path @(
     $rootBuildDir,
     $gradleProjectCacheDir,
     $gradleUserHome,
+    $kotlinProjectPersistentDir,
     $nativeReceiptTargetDir
 ) | Out-Null
 $embeddedDuplexAssetRoot = ""
@@ -2139,6 +2141,8 @@ try {
         "--console=plain",
         "--build-cache",
         "--project-cache-dir", $gradleProjectCacheDir,
+        "-Pkotlin.project.persistent.dir=$kotlinProjectPersistentDir",
+        "-Pkotlin.project.persistent.dir.gradle.disableWrite=true",
         "-Pandroid.aapt2FromMavenOverride=$shortAapt2",
         "-PrqCmakeStagingDirectory=$($cmakeStaging.path)",
         "-PandroidJar=$mediaAndroidJar",
