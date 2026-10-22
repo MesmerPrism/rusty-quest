@@ -1,0 +1,42 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.mesmerprism.rustyquest.displaystream">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <application
+        android:allowBackup="false"
+        android:hasCode="true"
+        android:label="Rusty Quest Display Stream"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:usesCleartextTraffic="false">
+        <activity
+            android:name=".DisplayStreamActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".DisplayStreamStimulusActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:finishOnTaskLaunch="true"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar.Fullscreen" />
+        <service
+            android:name=".DisplayStreamService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection"
+            android:stopWithTask="true" />
+        <receiver
+            android:name=".DisplayStreamControlReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.mesmerprism.rustyquest.displaystream.action.STOP" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

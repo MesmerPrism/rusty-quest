@@ -1,5 +1,24 @@
 # Rusty Quest Validation
 
+For the opt-in owned display producers, run these focused host checks:
+
+```powershell
+pwsh -NoProfile -File tools/checks/Test-DisplayStreamRetirementHost.ps1 -JavaHome $env:JAVA_HOME
+pwsh -NoProfile -File tools/checks/Test-DisplayStreamAndroidStatic.ps1
+python tools/Build-NativeBrowserCapture.py --java-home $env:JAVA_HOME --android-home $env:ANDROID_HOME
+```
+
+The native builder runs seven protocol/options/ownership/transport host groups,
+API 34 compilation and D8 minimum API 31 without APK or device operations.
+The generic harness uses modeled Android codec classes and a real blocking NIO
+Pipe; the static check is source/manifest coverage. Generic full API 34 javac
+is separate from those models and from APK packaging. See the
+[wire contract](DISPLAY_CAPTURE_WIRE.md) and producer READMEs for output paths,
+exact argument/lifecycle contracts and firmware/evidence limits. Hosted
+package-updater checks do not claim capture test coverage; run these focused
+checks for affected capture source. No host pass attests physical capture,
+service cleanup acknowledgment or browser playback.
+
 The optional privileged shell recenter adapter uses the focused host gate
 `pwsh -NoProfile -File tools/Test-ShellRecenter.ps1 -AndroidJar <sdk/android.jar>`.
 It compiles and exercises the real controller and Android binding against
