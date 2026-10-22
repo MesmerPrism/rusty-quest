@@ -15,6 +15,14 @@ not artifact authentication. Generation selection changes code only and never
 rewinds host state. Failed activation preserves the prior active generation;
 failed loader attempts remain charged against the resident 64-load cap.
 
+The debug APK must package the owner's resolved v2 feature lock and the exact
+neutral runtime profile. The Application reads those two bounded assets once
+and projects their actual SHA256 values, project, lock revision/fingerprint and
+closed selected features into immutable controller status. The workflow owner
+resolves full feature policy; this reader reports the selected compiled inputs.
+A DEX controller refuses an absent selection. Pure host fixtures are explicitly
+marked `host-only-unbound` and establish no packaged/runtime activation.
+
 This loads trusted development code. The loader provides contract identity,
 digest/definition checks, readonly staging and scratch-state probing; it does
 not sandbox Java code or remove Android platform trust boundaries.
@@ -28,6 +36,16 @@ pwsh -NoProfile -File apps/development-feedback-android/tests/Test-FeedbackAppli
   -JavaHome <jdk17> -AndroidJar <android-sdk/platforms/android-34/android.jar> `
   -D8 <android-sdk/build-tools/34.0.0/d8.bat>
 ```
+
+To execute the packaged-selection parser against the actual selected owner
+inputs on the host, add all three explicit options `-JsonJar <org.json.jar>`,
+`-FeatureLock <resolved-feature.lock.json>` and
+`-RuntimeProfile <development-feedback-runtime.v1.json>`. This mode requires
+`-AndroidJar` for Android type declarations and hashes the JSON tool and both
+raw input files before and after. It exercises the owner schema
+`rusty.morphospace.workflow.feature_lock.v2`, rejects incompatible inputs and
+checks the reported raw digests. Upstream host `org.json` execution does not
+establish Android's `JSONObject` behavior or APK asset packaging.
 
 This compiles and exercises the real pure Java controller with fresh compiled
 host plugins, including tamper, failed probe, invalid field, Activity lifetime
@@ -57,6 +75,28 @@ environment bindings and fresh retained receipt. The profile binds:
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | `android-sdk` | directory |
 | `GRADLE_USER_HOME` | `feedback-gradle-home` | directory |
 | `RM_FEEDBACK_DEBUG_KEYSTORE` | `debug-keystore` | file |
+| `RM_FEEDBACK_FEATURE_LOCK` | `feedback-feature-lock` | file |
+| `RM_FEEDBACK_RUNTIME_PROFILE` | `feedback-runtime-profile` | file |
+
+The existing owner resolver must select exactly `development-feedback-core`
+and `development-feedback-debug-host` for project `quest-development-feedback`,
+with default activation disabled and `selected-lock-and-runtime-input`.
+The runtime input has exactly five keys: schema
+`rusty.quest.development_feedback.runtime_profile.v1`, app lane
+`development-feedback-android`, this exact `owner_package`, `property_policy`
+`none`, and an empty `properties` array. The Gradle preparation task copies
+these exact raw files into generated debug assets before AGP packaging; it
+neither issues a feature lock nor assembles another APK. Compare the status's
+`selection_*` identities against the capsule's actual selected inputs.
+
+Prepare verified raw copies of the selected owner inputs at
+`local-artifacts/development-feedback/selected/feature.lock.json` and
+`runtime-profile.json` under the Quest root. Both file bindings must select
+those exact paths. The portable profile hashes them as explicit lock inputs,
+so changing selected bytes changes the retained output address even when
+source and tool versions stay fixed. Keep immutable copies beside the final
+APK/capsule for later verification and cleanup; the working selection paths
+are preparation inputs, not long-term evidence storage.
 
 The debug keystore must already exist and use the conventional development
 `androiddebugkey` alias and `android` password. This project never generates

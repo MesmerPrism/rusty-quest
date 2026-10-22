@@ -17,16 +17,31 @@ public final class FeedbackController {
     private final File incoming,generations;
     private final ModuleHost host;
     private final boolean dex;
+    private final Map<String,String> selection;
     private long activityCreations;
     private String latestActivity="none";
     private Long lastResult;
 
     public FeedbackController(File filesDirectory,GenerationLoader loader,boolean dex,String processToken) throws IOException {
+        this(filesDirectory,loader,dex,processToken,null);
+    }
+    public FeedbackController(File filesDirectory,GenerationLoader loader,boolean dex,String processToken,Map<String,String> selection) throws IOException {
         if(filesDirectory==null||loader==null||processToken==null||processToken.isEmpty())throw new IllegalArgumentException("Missing resident inputs");
+        if(selection==null&&dex)throw new IllegalArgumentException("DEX consumer requires its packaged selection");
+        this.selection=selection==null?Collections.<String,String>emptyMap():validatedSelection(selection);
         File root=filesDirectory.getCanonicalFile();
         incoming=containedDirectory(root,"incoming");generations=containedDirectory(root,"generations");
         this.dex=dex;this.processToken=processToken;
         host=new ModuleHost(loader,64,new byte[BUFFER_BYTES]);
+    }
+    private static Map<String,String> validatedSelection(Map<String,String> input) {
+        Map<String,String> value=new LinkedHashMap<>(input);
+        exact(value,"project_id","lock_revision","lock_fingerprint","feature_lock_sha256","runtime_profile_sha256","selected_features");
+        if(!value.get("project_id").matches("[a-z0-9][a-z0-9-]{1,127}")||!value.get("lock_revision").matches("[1-9][0-9]{0,18}"))throw new IllegalArgumentException("Invalid selected project/revision");
+        try{Long.parseLong(value.get("lock_revision"));}catch(NumberFormatException bad){throw new IllegalArgumentException("Lock revision outside signed64",bad);}
+        for(String key:Arrays.asList("lock_fingerprint","feature_lock_sha256","runtime_profile_sha256"))if(!value.get(key).matches("[0-9a-f]{64}"))throw new IllegalArgumentException("Invalid selected identity digest");
+        if(!"development-feedback-core,development-feedback-debug-host".equals(value.get("selected_features")))throw new IllegalArgumentException("Unexpected selected feature closure");
+        return Collections.unmodifiableMap(value);
     }
     private static File containedDirectory(File root,String name) throws IOException {
         File result=new File(root,name);
@@ -65,6 +80,8 @@ public final class FeedbackController {
     private Map<String,String> snapshot() {
         Map<String,String> result=new LinkedHashMap<>();
         result.put("schema","rusty.quest.development_feedback.status.v1");
+        result.put("selection_mode",selection.isEmpty()?"host-only-unbound":"packaged-lock-and-runtime-profile");
+        for(Map.Entry<String,String> field:selection.entrySet())result.put("selection_"+field.getKey(),field.getValue());
         result.put("process_token",processToken);result.put("application_token",applicationToken);
         result.put("latest_activity_token",latestActivity);result.put("activity_creations",Long.toString(activityCreations));
         result.put("counter",Long.toString(host.counter()));result.put("buffer_allocation",Long.toString(host.bufferAllocationId()));

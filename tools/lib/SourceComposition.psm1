@@ -126,14 +126,32 @@ function Get-SourceCompositionRepository {
 }
 
 function Get-QuestBuildSourceComposition {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName='Native')]
     param(
         [Parameter(Mandatory=$true)][string]$RepoRoot,
-        [Parameter(Mandatory=$true)][string[]]$PackageName,
+        [Parameter(Mandatory=$true,ParameterSetName='Native')][string[]]$PackageName,
+        [Parameter(Mandatory=$true,ParameterSetName='Application')]
+        [ValidatePattern('\A[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+\z')][string]$ApplicationId,
         [switch]$AllowWorkingTreeChanges
     )
 
     $root = Get-NormalizedSourceCompositionPath -Path (Resolve-Path -LiteralPath $RepoRoot).Path
+    if ($PSCmdlet.ParameterSetName -ceq 'Application') {
+        if ((Find-SourceCompositionGitRoot -Path $root) -ine $root) {
+            throw 'Application source composition must select its exact Git repository root.'
+        }
+        # Java-only applications bind the selected logical APK identity and real
+        # Git source through the same document/overlay contract, without Cargo.
+        $record = Get-SourceCompositionRepository -Root $root -RepositoryId 'rusty-quest' -Role 'primary' `
+            -AllowWorkingTreeChanges:$AllowWorkingTreeChanges
+        $canonicalIdentity = Get-QuestBuildSourceCompositionIdentityCanonicalText -PackageName @($ApplicationId) -Repository @($record)
+        return [pscustomobject][ordered]@{
+            schema = 'rusty.quest.apk_source_composition.v' + $(if ($record.tracked_worktree_clean) { '1' } else { '2' })
+            fingerprint = Get-SourceCompositionSha256 -Value $canonicalIdentity
+            packages = @($ApplicationId)
+            repositories = @($record)
+        }
+    }
     $metadataErrorPath = [IO.Path]::GetTempFileName()
     Push-Location $root
     try {

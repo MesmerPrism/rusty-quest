@@ -59,7 +59,20 @@ explicit inputs, establish source/package compatibility only. Desktop JVM
 classloaders and the desktop dynamic linker do not establish ART or Quest
 loader behavior.
 
-## Later Android integration
+## Opt-in Android consumer
+
+The plain Java [debug application](../apps/development-feedback-android/README.md)
+uses the parent contract and Android loader with Application-owned state and
+closed DUMP/shell-UID controls. Its canonical Gradle profile packages the
+explicit selected feature lock and runtime profile as debug assets. App status
+reports their actual byte digests and selected lock identity alongside process,
+Activity, allocation, counter and generation observations. These joins must
+match the exact capsule and inspected APK during device validation.
+
+The source-only app checks compile against the Android SDK and inspect actual
+D8 definitions. They do not prove AGP assembly or ART execution. Use the
+[APK isolation](APK_RUN_ISOLATION.md) source/capsule and explicit-none cleanup
+contract for this neutral app; a generic run request alone is not its capsule.
 
 An application must deliberately adopt a development-only resident host through
 its supported build/provider route. Keep release packaging independent: the

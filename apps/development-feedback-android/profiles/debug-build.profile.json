@@ -9,7 +9,9 @@
     "ANDROID_HOME": "android-sdk",
     "ANDROID_SDK_ROOT": "android-sdk",
     "GRADLE_USER_HOME": "feedback-gradle-home",
-    "RM_FEEDBACK_DEBUG_KEYSTORE": "debug-keystore"
+    "RM_FEEDBACK_DEBUG_KEYSTORE": "debug-keystore",
+    "RM_FEEDBACK_FEATURE_LOCK": "feedback-feature-lock",
+    "RM_FEEDBACK_RUNTIME_PROFILE": "feedback-runtime-profile"
   },
   "artifact": {
     "relative_path": "local-artifacts/development-feedback/apks/{content_sha256}.apk",
@@ -20,7 +22,11 @@
       "apps/development-feedback-android/app/src/main/AndroidManifest.xml",
       "apps/development-feedback-android/app/src/debug/AndroidManifest.xml"
     ],
-    "lockfiles": ["config/gradle-9.4.1-tool.json"],
+    "lockfiles": [
+      "config/gradle-9.4.1-tool.json",
+      "local-artifacts/development-feedback/selected/feature.lock.json",
+      "local-artifacts/development-feedback/selected/runtime-profile.json"
+    ],
     "toolchain": {
       "repository_files": ["apps/development-feedback-android/build.gradle.kts", "apps/development-feedback-android/app/build.gradle.kts"],
       "required_targets": []
