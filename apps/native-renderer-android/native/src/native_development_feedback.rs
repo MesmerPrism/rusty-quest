@@ -436,7 +436,7 @@ impl NativeDevelopmentFeedback {
             observation["scene"]["effective_result_delta"] = json!(self.visual_delta);
             observation["scene"]["visual_value_mod40"] = json!(self.visual_value);
             observation["scene"]["effective_shader_generation"] = json!(self.shader_generation);
-            let result = atomic_json(
+            let _result = atomic_json(
                 &self.directory,
                 &format!("observation-{id}.json"),
                 &observation,
@@ -454,6 +454,7 @@ impl NativeDevelopmentFeedback {
                         .unwrap_or("?")
                 );
             }
+            #[cfg(target_os = "android")]
             crate::marker(
                 "development-feedback",
                 format!(
@@ -462,7 +463,7 @@ impl NativeDevelopmentFeedback {
                     self.generation,
                     self.value,
                     frame,
-                    result.is_ok()
+                    _result.is_ok()
                 ),
             );
         }
