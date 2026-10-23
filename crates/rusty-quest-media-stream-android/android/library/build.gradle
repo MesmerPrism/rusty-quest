@@ -46,6 +46,7 @@ tasks.register("bundleReleaseAar", Zip) {
     from("src/main/AndroidManifest.xml") { rename { "AndroidManifest.xml" } }
     from("src/main/R.txt") { rename { "R.txt" } }
     from(tasks.named("aarClassesJar"))
+    archiveExtension = "aar"
     archiveFileName = "rusty-quest-media-stream-android-release.aar"
     destinationDirectory = layout.buildDirectory.dir("outputs/aar")
 }
