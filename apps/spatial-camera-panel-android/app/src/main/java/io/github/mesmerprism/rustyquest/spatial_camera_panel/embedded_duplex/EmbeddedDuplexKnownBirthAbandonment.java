@@ -11,12 +11,17 @@ final class EmbeddedDuplexKnownBirthAbandonment {
     static final String SCHEMA="rusty.quest.embedded_duplex.abandonment_authorization.v3";
     static final String CROSS_BOOT_SCHEMA="rusty.quest.embedded_duplex.abandonment_authorization.v4";
     static final String REPLAY_SCOPE_SCHEMA="rusty.quest.embedded_duplex.abandonment_authorization.v5";
+    static final String CROSS_BOOT_REPLAY_SCOPE_SCHEMA="rusty.quest.embedded_duplex.abandonment_authorization.v6";
     static final String CLEANUP_RECORD="retained-cleanup.v2.json";
-    static boolean replayScope(JSONObject auth) {return REPLAY_SCOPE_SCHEMA.equals(auth.optString("$schema"));}
+    static boolean replayScope(JSONObject auth) {
+        return REPLAY_SCOPE_SCHEMA.equals(auth.optString("$schema")) || CROSS_BOOT_REPLAY_SCOPE_SCHEMA.equals(auth.optString("$schema"));
+    }
     static boolean supported(JSONObject auth) {
         return SCHEMA.equals(auth.optString("$schema")) || CROSS_BOOT_SCHEMA.equals(auth.optString("$schema")) || replayScope(auth);
     }
-    static boolean crossBoot(JSONObject auth) {return CROSS_BOOT_SCHEMA.equals(auth.optString("$schema"));}
+    static boolean crossBoot(JSONObject auth) {
+        return CROSS_BOOT_SCHEMA.equals(auth.optString("$schema")) || CROSS_BOOT_REPLAY_SCOPE_SCHEMA.equals(auth.optString("$schema"));
+    }
     private static final Set<String> ROOT=Set.of("$schema","role_id","package_id","component_id",
         "installed_apk_sha256","signer_sha256","physical_serial","boot_id","user_id","package_uid",
         "expected_predecessor_sha256","expected_current_fence_sha256","authorize_abandonment",
@@ -78,7 +83,7 @@ final class EmbeddedDuplexKnownBirthAbandonment {
     static void requireBoot(JSONObject auth,String actualBoot) throws Exception {
         if(crossBoot(auth) && !auth.getString("current_boot_id").equals(actualBoot))
             deny("current recovery boot differs");
-        if(replayScope(auth) && !auth.getString("boot_id").equals(actualBoot))deny("same recovery boot differs");
+        if(replayScope(auth) && !crossBoot(auth) && !auth.getString("boot_id").equals(actualBoot))deny("same recovery boot differs");
     }
     static void bind(JSONObject auth,String prior,String current,String checkpoint,String evidence) throws Exception {
         shape(auth);

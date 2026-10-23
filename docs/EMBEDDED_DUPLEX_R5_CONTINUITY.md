@@ -822,6 +822,28 @@ preserved. Fresh signed ingress and current executor/target authority still
 govern any request presented after restart; archive projection grants no old
 request a new effect.
 
+The separately closed `rusty.quest.embedded_duplex.abandonment_authorization.v6`
+combines v4's distinct-current-boot binding with v5's five-record preservation
+and nullable cleanup entry. Its root shape is exactly v5 plus `current_boot_id`;
+`boot_id` continues to identify the selected historical peer. The current boot
+must be valid, different from that historical boot and equal the live boot
+observed by the effect owner. Linux birth ticks are not compared across boots.
+Exact original ARM/birth closures, complete package/UID absence, direct-next
+app generation, current actor/installed identity and absent Start journals
+remain required. v1 through v5 retain their existing shapes and behavior.
+
+A new v6 transaction earns its own immutable archive and committed-fence
+witness. It preserves the prior disposition archive rather than adopting its
+witness or rewriting old receipts. Only its exact retired cleanup bytes project
+as empty; new current cleanup stays visible. The ordinary focused host gate
+tests v5-to-v4 and v5-to-v6 marker replacement, archive/commit/restart, present
+and absent cleanup, boot/actor/schema and sidecar/drift/crash refusal. Optional
+`-ReplayScopeV6Fixture` supplies exact external cleanup bytes and expected
+terminal generations; its current actor and external absence remain modeled.
+`-OutputDirectory` retains classes and API34 compilation output in a fresh
+caller-selected directory. These host checks grant no native, physical cleanup
+or media acceptance.
+
 Preparation diagnostic v2 adds nullable, closed `native_failed_guard` and
 `native_failed_reason` observations at the existing native eligibility stage.
 The first actual failed subguard is retained without changing callback order,
