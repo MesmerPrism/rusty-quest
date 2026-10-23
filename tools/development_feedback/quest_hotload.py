@@ -172,7 +172,9 @@ class Operator:
         if source.is_symlink() or not source.is_file():
             raise ValueError("ordinary source file required")
         size = source.stat().st_size
-        limit = 16 * 1024 * 1024 if kind == "dex" else 4 * 1024 * 1024
+        # The trusted JNI bridge uses the Android bridge's staged-byte cap;
+        # native replacement images and shaders retain their smaller cap.
+        limit = {"bridge": 64 * 1024 * 1024, "dex": 16 * 1024 * 1024}.get(kind, 4 * 1024 * 1024)
         if not 0 < size <= limit:
             raise ValueError("candidate size limit")
         data = source.read_bytes()

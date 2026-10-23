@@ -6,8 +6,9 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
-from quest_hotload import create_json, decode, publication_script, validate
+from quest_hotload import Operator, create_json, decode, publication_script, validate
 
 
 class CommandContractTests(unittest.TestCase):
@@ -44,6 +45,30 @@ class CommandContractTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 create_json(path, {"state": "pretend_not_dispatched"})
             self.assertEqual(original, path.read_bytes())
+
+    def test_stage_bridge_has_separate_limit_from_native_candidates(self):
+        operator = Operator(SimpleNamespace(host="spatial-sdk", session="owner-1", native_session="native-1"))
+        identities, publications = [], []
+        operator.identity = lambda: identities.append(True)
+        operator.publish = lambda target, data: publications.append((target, len(data), hashlib.sha256(data).hexdigest()))
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "bridge.so"
+            # Match the retained trusted JNI bridge: genuinely larger than the
+            # native candidate's 4 MiB cap, within the bridge's 64 MiB cap.
+            with source.open("wb") as stream:
+                stream.truncate(4_316_368)
+            result = operator.stage(source, "bridge", "1")
+            self.assertEqual("files/development-feedback/owner-1/native-feedback/native-1/bridge.so", result["target"])
+            self.assertEqual(4_316_368, result["bytes"])
+            self.assertEqual([(result["target"], result["bytes"], result["sha256"])], publications)
+            with self.assertRaisesRegex(ValueError, "candidate size limit"):
+                operator.stage(source, "native", "1")
+            with source.open("wb") as stream:
+                stream.truncate(64 * 1024 * 1024 + 1)
+            with self.assertRaisesRegex(ValueError, "candidate size limit"):
+                operator.stage(source, "bridge", "1")
+            self.assertEqual(3, len(identities))
+            self.assertEqual(1, len(publications))
 
     def test_actual_shell_publish_refusal_leaves_no_extra_files(self):
         shell = shutil.which("sh") if os.name != "nt" else str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
