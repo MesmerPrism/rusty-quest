@@ -31,11 +31,14 @@ mod os {
 #[cfg(unix)]
 mod os {
     use super::*;
-    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    use std::{
+        ffi::{c_char, CString},
+        os::unix::ffi::OsStrExt,
+    };
     #[cfg_attr(not(target_os = "macos"), link(name = "dl"))]
     extern "C" {
-        fn dlopen(name: *const i8, flags: i32) -> *mut c_void;
-        fn dlsym(handle: *mut c_void, name: *const i8) -> *mut c_void;
+        fn dlopen(name: *const c_char, flags: i32) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, name: *const c_char) -> *mut c_void;
     }
     pub fn open(path: &Path) -> *mut c_void {
         let Ok(name) = CString::new(path.as_os_str().as_bytes()) else {

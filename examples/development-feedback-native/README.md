@@ -66,8 +66,10 @@ finds the actual local transform function symbol and disassembles only that
 function. It compares instruction words after removing display addresses:
 B2 must differ from A1, while fresh A3 must restore A1's transform instructions.
 Generation-token or whole-file differences cannot satisfy that check.
-Android compilation uses optimization to expose the changed arithmetic inside
-the transform while retaining that function for inspection. The C ABI table,
+Android compilation strips debug information and uses optimization to expose
+the changed arithmetic while retaining the function symbol for inspection.
+Preparation refuses modules larger than the resident 4 MiB image limit.
+The C ABI table,
 version, contract identity and generation semantics remain unchanged.
 
 Receipts retain exact command arguments, target/API, NDK revision, tool
@@ -89,9 +91,70 @@ pwsh -NoProfile -File examples/development-feedback-native/tests/Test-AndroidPre
 
 Android cross-compilation and ELF/layout/disassembly inspection establish
 source preparation. The Android libraries are never loaded or executed by
-this runner. Actual resident JNI host integration and Android/Quest runtime
-proof remain pending. This creates no APK packaging path, device transfer or
-current runtime activation.
+this runner. Optional resident JNI preparation is described below. This creates
+no APK packaging path, device transfer or current application activation.
+
+## Resident JNI bridge and Android proof preparation
+
+The opt-in resident bridge composes the same host, state and guarded buffer.
+The Java facade owns its private native token for the process lifetime and
+serializes activation, computation and observation, including callers on
+different Java threads. The fixed JNI adapter uses real `jni.h`, registers
+four private methods in `JNI_OnLoad` and copies bounded primitive arrays with
+the JNI Region APIs. It exports only `JNI_OnLoad`. No native owner pointer
+appears in status. The facade freezes one canonical resident bridge path and
+SHA-256 per Java class after successful loading; another identity is refused
+before it can replace the class's JNI registrations. Failed loading does not
+freeze that identity. Retain the facade until process exit.
+
+Prepare the bridge using the existing runner:
+
+```powershell
+pwsh -NoProfile -File examples/development-feedback-native/Run-Conformance.ps1 `
+  -Rustc <installed-rustc> -AndroidNdk <installed-ndk> -AndroidApi 26 `
+  -PrepareAndroidBridge -JavaHome <installed-jdk17>
+```
+
+This runs resident Rust tests and a real JDK17 `-Xcheck:jni` proof using the
+same C/Rust sources, then links the Android Rust archive and C PIC object with
+ordinary NDK clang. The Unix FFI uses target `c_char`, including Android targets
+where C strings use unsigned characters. The final ELF must have the exact
+SONAME, AArch64 layout, only the JNI entry export and closed platform CPU
+dependencies. The receipt keeps host execution distinct from Android
+preparation. Windows host JNI is not Android runtime evidence.
+
+Add `-AndroidJar <android-sdk/platforms/android-34/android.jar>` and
+`-D8Jar <android-sdk/build-tools/36.0.0/lib/d8.jar>` together to prepare the
+standalone `AndroidBridgeProof` DEX JAR. The runner compiles the actual facade
+and proof against Android's API declarations, then invokes D8 with the selected
+JDK. It also compiles a real bad-behavior generation for semantic refusal.
+These options build no APK and launch no device process.
+
+The standalone proof takes a bridge pathname, its expected SHA-256, a module
+directory and a fresh session directory. Its module `artifacts.tsv` has four
+rows (`a1`, `b2`, `a3`, `bad-behavior`), each containing name, generation,
+SHA-256 and relative basename separated by tabs. Generations are 1, 2, 3 and 7.
+All inputs are trusted local development artifacts. Run it through the
+selected Android runtime's `app_process` with only its exact DEX JAR on
+`CLASSPATH`. It exercises actual JNI, readonly staging, A/B/A native dispatch,
+refusal, retained state/buffer and Java thread serialization. A fifth argument
+`interactive` pauses before B2 and A3; the host supplies the fixed phase and
+fresh artifact SHA-256 after compilation and transfer. This exposes a complete
+saved-edit-to-effective-feedback measurement in the same native process.
+
+The shell-runtime harness is an independent neutral module consumer. It does
+not enable native code in the debug Android application's feature lock, prove
+its app UID/linker namespace or Activity lifetime, or replace its DEX controller.
+Application adoption requires its own explicit feature and resident owner.
+Keep exact device identity, source/artifact hashes, process birth, commands,
+effective snapshots and timings in private evidence. Do not treat a prepared
+proof JAR as executed evidence.
+
+The example limits are 64 activation attempts, 4 MiB per image and 64 MiB of
+charged staging. Failed attempts remain charged and staged files are never
+overwritten; use a fresh generation after refusal. Every opened image remains
+loaded, including a candidate rejected after loading. These limits are example
+policy, not a measured memory bound or a product recycling policy.
 
 ## Contract and ownership
 
@@ -163,9 +226,10 @@ snapshot; state rollback requires a separately specified host transaction.
 This proves host conformance only. Windows is the initially exercised path;
 the Unix loader branch still requires a run on the selected Unix host.
 Optional preparation checks the selected AArch64 C/Rust layout, link closure
-and emitted ELF code. Android/Quest native loading restrictions, resident JNI bridge,
-ART/Activity/process continuity, signed staging, device feedback, memory after
-many replacements and device timings remain unvalidated. Future integration
-must keep a resident JNI bridge as the sole platform entry and translate into
-this private CPU C ABI. Nothing here makes a new module the current runtime
+and emitted ELF code. The resident JNI proof adds host execution and an
+independently runnable Android harness. Application-specific loading
+restrictions, Activity/process continuity, signed product staging, memory after
+many replacements and product timings require their own evidence. Integration
+keeps the resident JNI bridge as the sole platform entry and translates into
+this private CPU C ABI. Nothing here makes a new module the current application
 owner or enables it in an APK.
