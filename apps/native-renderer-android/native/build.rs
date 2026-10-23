@@ -6,6 +6,15 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(native_meta_xr_operator)");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_META_XR_OPERATOR_ENABLED");
+    let operator_feature = env::var_os("CARGO_FEATURE_META_XR_OPERATOR").is_some();
+    let operator_selected = env::var("RUSTY_QUEST_NATIVE_RENDERER_META_XR_OPERATOR_ENABLED").as_deref() == Ok("true");
+    assert_eq!(operator_feature, operator_selected, "Operator feature requires its exact selected app build input");
+    if operator_selected {
+        assert_eq!(env::var("RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED").as_deref(), Ok("true"), "Operator requires the development host");
+        println!("cargo:rustc-cfg=native_meta_xr_operator");
+    }
     println!("cargo:rustc-check-cfg=cfg(native_development_feedback)");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED");
     println!("cargo:rerun-if-changed=shaders/development_feedback_scene.vert.glsl");

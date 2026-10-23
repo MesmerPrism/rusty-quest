@@ -3,7 +3,7 @@
 import {readFile,open} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
-import {requiredTools,schemaHash,validateCapsule} from './lib/meta-xr-operator-backend.mjs';
+import {requiredTools,requiredHandTools,schemaHash,validateCapsule,validateHandTargetCapsule} from './lib/meta-xr-operator-backend.mjs';
 const sha = value => createHash('sha256').update(value).digest('hex');
 export async function bindOperatorCapsule(prepared,binding) {
   if(!binding || Object.keys(binding).sort().join()!==['identity','origin','plan','owner_route'].sort().join()) throw Error('Only runtime binding fields permitted');
@@ -13,12 +13,13 @@ export async function bindOperatorCapsule(prepared,binding) {
   if(sha(bytes)!==prepared.registry.sha256) throw Error('Reviewed registry changed');
   const registry=JSON.parse(bytes), tools=registry.result?.tools;
   const pins={};
-  for(const name of requiredTools) {
+  const handTarget=binding.plan?.kind==='hand_target';
+  for(const name of handTarget?requiredHandTools:requiredTools) {
     const entries=tools?.filter(x=>x.name===name)??[];
     if(entries.length!==1 || /\[OFFLINE\]/.test(entries[0].description??'')) throw Error('Reviewed online registry required');
     pins[name]=schemaHash(entries[0].inputSchema);
   }
-  return validateCapsule({schema:'rusty.quest.meta_xr_input.capsule.v1',enabled:true,selection:prepared.selection,proxy:prepared.proxy,
+  return (handTarget?validateHandTargetCapsule:validateCapsule)({schema:handTarget?'rusty.quest.meta_xr_input.hand_target_capsule.v1':'rusty.quest.meta_xr_input.capsule.v1',enabled:true,selection:prepared.selection,proxy:prepared.proxy,
     schema_pins:pins,...binding});
 }
 // Import from a source-owned consumer. The CLI only binds a capsule; it cannot run it.

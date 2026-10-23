@@ -7,6 +7,14 @@ param(
     [string]$GradleUserHome,
     [string]$AgentBoardScript,
     [string]$BuildLeaseId,
+    [string]$BuildCacheLeaseId,
+    [switch]$MetaXrOperator,
+    [string]$MetaXrOperatorFeatureLockPath='',
+    [string]$MetaXrOperatorFeatureLockSha256='',
+    [string]$MetaXrOperatorLibraryPath='',
+    [string]$MetaXrOperatorLibrarySha256='',
+    [string]$MetaXrOperatorManifestPath='',
+    [string]$MetaXrOperatorManifestSha256='',
     [string]$IntermediateRoot,
     [string]$OutputRoot,
     [Parameter(Mandatory=$true)][string]$WorkloadInputsDirectory,
@@ -49,10 +57,18 @@ $observerRelativeRoot='android/openxr-submission-observer'
 Import-Module (Join-Path $appRoot 'SpatialSessionComposition.psm1') -Force
 Import-Module (Join-Path $appRoot 'SpatialWorkloadPermissions.psm1') -Force
 Import-Module (Join-Path $appRoot 'SpatialNativeDependencies.psm1') -Force
+Import-Module (Join-Path $appRoot 'SpatialOperatorPackaging.psm1') -Force
+$operatorHelper=Join-Path $repoRoot 'tools/lib/MetaXrOperatorPackaging.psm1'
+Import-Module $operatorHelper -Force
+$operatorPackage=Get-SpatialOperatorPackage -Enabled ([bool]$MetaXrOperator) -DevelopmentFeedback ([bool]$DevelopmentFeedback)
+$operatorContract=Read-SpatialOperatorManifest -Enabled ([bool]$MetaXrOperator)
+$operatorArguments=@{Enable=[bool]$MetaXrOperator;FeatureLockPath=$MetaXrOperatorFeatureLockPath;FeatureLockSha256=$MetaXrOperatorFeatureLockSha256;LibraryPath=$MetaXrOperatorLibraryPath;LibrarySha256=$MetaXrOperatorLibrarySha256;LayerManifestPath=$MetaXrOperatorManifestPath;LayerManifestSha256=$MetaXrOperatorManifestSha256;Consumer='SpatialSdk'}
+if($MetaXrOperator){$operatorArguments.AndroidManifestPath=$operatorContract.path;$operatorArguments.PackageName=$operatorPackage}
+$operatorSelection=Get-QuestMetaXrOperatorSelection @operatorArguments
 if(-not $SessionCore -and (-not [string]::IsNullOrWhiteSpace($SessionCompositionManifest) -or -not [string]::IsNullOrWhiteSpace($PrivateAppIdentityManifest))){throw 'Session inputs require explicit SessionCore selection.'}
 if($SessionCore -and (-not $SubmissionObserver -or [string]::IsNullOrWhiteSpace($SessionCompositionManifest) -or [string]::IsNullOrWhiteSpace($PrivateAppIdentityManifest))){throw 'SessionCore requires actual submission observer and exact composition/identity manifests.'}
 $session=if($SessionCore){Read-SpatialSessionComposition -Manifest $SessionCompositionManifest -IdentityManifest $PrivateAppIdentityManifest}else{$null}
-$packageName=if($SessionCore){[string]$session.identity.application_id}else{'io.github.mesmerprism.rustyquest.spatial_worldspace_hotload'}
+$packageName=if($SessionCore){[string]$session.identity.application_id}else{$operatorPackage}
 $activityName='io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.SpatialWorldspaceHotloadActivity'
 if(-not $SubmissionObserver -and -not [string]::IsNullOrWhiteSpace($SubmissionObserverIncludeDirectory)){throw 'Observer headers require explicit SubmissionObserver selection.'}
 $contractPath=Join-Path $appRoot 'workload-build.lock.json'
@@ -159,6 +175,15 @@ if($SessionCore){
 }
 $externalInventory=@(ExternalInventory)
 $externalInventory+=@($sessionInventory)
+$operatorInputs=@()
+if($MetaXrOperator){
+    foreach($path in @($MetaXrOperatorFeatureLockPath,$MetaXrOperatorLibraryPath,$MetaXrOperatorManifestPath)){
+        $record=FileRecord $path
+        $operatorInputs+=[ordered]@{path=('operator-inputs/'+[IO.Path]::GetFileName($path));source=$record.path;bytes=$record.bytes;sha256=$record.sha256}
+    }
+    if(@($operatorInputs.path|Sort-Object -Unique).Count-ne3){throw 'Operator input filenames collide.'}
+    $externalInventory+=@($operatorInputs)
+}
 $externalHash=TextHash ($externalInventory|ConvertTo-Json -Depth 10 -Compress)
 $assetManifest=Get-Content -LiteralPath (Join-Path $externalRoots[$sceneInputsKey] 'assets/workload/manifest.json') -Raw|ConvertFrom-Json
 if($DevelopmentFeedback){
@@ -219,6 +244,7 @@ $ndkRoot=Join-Path $AndroidHome ('ndk/'+$contract.ndk)
 $cmakeRoot=Join-Path $AndroidHome ('cmake/'+$contract.cmake)
 $toolsRoot=Join-Path $AndroidHome ('build-tools/'+$contract.build_tools)
 $toolInputs=@(
+    FileRecord $operatorHelper
     FileRecord $java
     FileRecord (Join-Path $JavaHome 'bin/keytool.exe')
     FileRecord (Join-Path $JavaHome 'release')
@@ -262,6 +288,8 @@ $inputLock=[ordered]@{
     external_inputs=$externalInventory;external_inventory_sha256=$externalHash;
     submission_observer_selected=[bool]$SubmissionObserver
     sdk_graphics_hot_reload_selected=[bool]$SdkGraphicsHotReload
+    meta_xr_operator=$operatorSelection
+    operator_capability_input_scope='Native feature-lock input selects only debug.meta_xr_operator capability; it is not the SDK app composition or package identity. SDK fixed package and source manifest are independently bound.'
     development_feedback_selected=[bool]$DevelopmentFeedback
     development_feedback_source_inventory=$feedbackInventory
     development_feedback_source_inventory_sha256=$feedbackInventoryHash
@@ -287,13 +315,12 @@ if($VerifyOnly) {
     return
 }
 if([string]::IsNullOrWhiteSpace($AgentBoardScript) -or [string]::IsNullOrWhiteSpace($BuildLeaseId)) {
-    throw 'Execution requires explicit AgentBoardScript and active apk-build:rusty-quest BuildLeaseId; VerifyOnly never builds.'
+    throw 'Execution requires explicit AgentBoardScript and active SDK build lease; VerifyOnly never builds.'
 }
 $boardJson=@(& pwsh -NoProfile -File $AgentBoardScript status --json)
 if($LASTEXITCODE -ne 0){throw 'Agent Board status failed.'}
 $board=($boardJson -join "`n")|ConvertFrom-Json
-$lease=@($board.active_leases | Where-Object {$_.id -eq $BuildLeaseId -and $_.resource -eq 'apk-build:rusty-quest' -and $_.status -eq 'active'})
-if($lease.Count -ne 1){throw 'Supplied build lease is not active for apk-build:rusty-quest.'}
+$lease=@(Assert-SpatialOperatorBuildLease -Board $board -BuildLeaseId $BuildLeaseId -CacheLeaseId $BuildCacheLeaseId -GradleUserHome $GradleUserHome -IntermediateRoot $intermediateBase -OutputRoot $outputBase -SourceRoot $repoRoot)
 if(Test-Path -LiteralPath $output){throw 'Content address already exists; validate/reuse it or change inputs. Output replacement is deliberately unsupported.'}
 if(Test-Path -LiteralPath $cache){throw 'Existing staging address may contain incomplete build state; inspect it, or change inputs. No automatic deletion.'}
 [IO.Directory]::CreateDirectory($output)|Out-Null
@@ -328,6 +355,7 @@ foreach($entry in $externalInventory){
     if((FileRecord $destination).sha256 -ne $entry.sha256){throw 'External staging drift.'}
 }
 WriteJson (Join-Path $output 'external-inputs.json') $externalInventory
+if($MetaXrOperator){Copy-QuestMetaXrOperatorLayer -Selection $operatorSelection -OutputRoot (Join-Path $cache 'operator-assets') -NativeStageRoot (Join-Path $cache 'operator-native')}
 $previousEnvironment=@{}
 $names=@('ANDROID_HOME','ANDROID_SDK_ROOT','ANDROID_NDK_HOME','JAVA_HOME','GRADLE_USER_HOME','GRADLE_OPTS','JAVA_TOOL_OPTIONS','_JAVA_OPTIONS','JDK_JAVA_OPTIONS','ORG_GRADLE_PROJECT_probeDebugKeystore','PATH')
 $names+=@(Get-ChildItem Env: | Where-Object {$_.Name -match '^RUSTY_QUEST_(SPATIAL|NATIVE)|^ORG_GRADLE_PROJECT_|^RQ_(WORKLOAD|HOTLOAD)'} | Select-Object -ExpandProperty Name)
@@ -354,6 +382,13 @@ try {
     $gradleArguments+=('-PworkloadSubmissionObserver='+([bool]$SubmissionObserver).ToString().ToLowerInvariant())
     $gradleArguments+=('-PworkloadSdkGraphicsHotReload='+([bool]$SdkGraphicsHotReload).ToString().ToLowerInvariant())
     $gradleArguments+=('-PworkloadDevelopmentFeedback='+([bool]$DevelopmentFeedback).ToString().ToLowerInvariant())
+    $gradleArguments+=('-PworkloadMetaXrOperator='+([bool]$MetaXrOperator).ToString().ToLowerInvariant())
+    if($MetaXrOperator){$gradleArguments+=@(
+        ('-PworkloadOperatorAssets='+(Join-Path $cache 'operator-assets/assets')),
+        ('-PworkloadOperatorLibraries='+(Join-Path $cache 'operator-native/lib')),
+        ('-PworkloadOperatorBinding='+$operatorSelection.fingerprint),
+        ('-PworkloadOperatorLibrarySha256='+$MetaXrOperatorLibrarySha256),
+        ('-PworkloadOperatorManifestSha256='+$MetaXrOperatorManifestSha256))}
     if($DevelopmentFeedback){$gradleArguments+=@(('-PworkloadFeedbackCore='+(Join-Path $cache 'local-source/android/development-feedback')),('-PworkloadFeedbackHost='+(Join-Path $cache 'local-source/android/development-feedback-host')))}
     $gradleArguments+=('-PworkloadExternalWorkloadHotload='+([bool]$ExternalWorkloadHotload).ToString().ToLowerInvariant())
     if($SubmissionObserver){$gradleArguments+=@(
@@ -379,6 +414,8 @@ try {
     $postExternal=@(ExternalInventory)
     foreach($row in $sessionInventory){$record=FileRecord $row.source;if($record.bytes -ne $row.bytes -or $record.sha256 -cne $row.sha256){throw 'Selected session input drifted during compilation.'}}
     $postExternal+=@($sessionInventory)
+    foreach($row in $operatorInputs){$record=FileRecord $row.source;if($record.bytes-ne$row.bytes-or$record.sha256-cne$row.sha256){throw 'Selected Operator input drifted.'}}
+    $postExternal+=@($operatorInputs)
     if((TextHash ($postExternal|ConvertTo-Json -Depth 10 -Compress)) -ne $externalHash){throw 'External inputs drifted during compilation.'}
     $postInventory=@(SourceInventory)
     $postFeedbackInventory=if($DevelopmentFeedback){@($feedbackRoots|ForEach-Object{SourceInventory $_})}else{@()}
@@ -391,6 +428,7 @@ try {
     if((FileRecord $DebugKeystore).sha256 -ne $inputLock.signing_keystore.sha256){throw 'Signing keystore changed during compilation.'}
     $apk=Join-Path $output 'spatial-worldspace-hotload-debug.apk'
     Copy-Item -LiteralPath (Join-Path $cache 'app/build/outputs/apk/debug/app-debug.apk') -Destination $apk
+    Assert-QuestMetaXrOperatorArchive -Selection $operatorSelection -ApkPath $apk
     $zip=[IO.Compression.ZipFile]::OpenRead($apk)
     try {
         $closedAssets=@($nativeHotloadAssets)
@@ -460,7 +498,18 @@ try {
        ($inspection -join "`n") -notmatch "launchable-activity: name='$activityPattern'"){throw 'APK identity inspection mismatch.'}
     $observedPermissions=@([regex]::Matches(($inspection -join "`n"),"(?m)^uses-permission: name='([^']+)'") | ForEach-Object {$_.Groups[1].Value})
     Assert-SpatialWorkloadPermissions -ContractPackageName $contract.package_name -SelectedPackageName $packageName `
-        -PermissionAllowlist $contract.permission_allowlist -ObservedPermissions $observedPermissions
+        -PermissionAllowlist @($contract.permission_allowlist+$(if($MetaXrOperator){'android.permission.INTERNET'})) -ObservedPermissions $observedPermissions
+    if($MetaXrOperator){
+        if($observedPermissions-cnotcontains'android.permission.INTERNET'-or($inspection-join"`n")-notmatch"uses-feature-not-required: name='com.oculus.experimental.enabled'"){throw 'Selected APK Operator capabilities absent.'}
+        $merged=Join-Path $cache 'app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml'
+        $mergedArguments=$operatorArguments.Clone();$mergedArguments.AndroidManifestPath=$merged
+        $null=Get-QuestMetaXrOperatorSelection @mergedArguments
+        $xmlDump=@(& (Join-Path $toolsRoot 'aapt2.exe') dump xmltree $apk --file AndroidManifest.xml 2>&1)
+        $dumpCode=$LASTEXITCODE
+        Assert-QuestMetaXrOperatorManifestDump -Selection $operatorSelection -Lines $xmlDump -ExitCode $dumpCode -RequireNativeExtraction
+        [IO.File]::WriteAllLines((Join-Path $output 'operator-manifest-inspection.txt'),[string[]]$xmlDump)
+        WriteJson (Join-Path $output 'operator-selection.json') $operatorSelection
+    }
     $signature=@(& (Join-Path $toolsRoot 'apksigner.bat') verify --verbose --print-certs $apk 2>&1)
     if($LASTEXITCODE -ne 0){throw 'APK signer verification failed.'}
     $certificate=@(& (Join-Path $JavaHome 'bin/keytool.exe') -exportcert -rfc -alias androiddebugkey -keystore $DebugKeystore -storepass android 2>&1)
@@ -482,7 +531,7 @@ try {
     $capsulePath=Join-Path $output 'run-capsule.json'
     WriteJson $capsulePath ([ordered]@{
         schema='rusty.quest.apk_run_capsule.v1';capsule_id='spatial-worldspace-hotload-'+$fingerprint
-        app_id=$contract.app_id;app_lane='spatial-worldspace-hotload-android'
+        app_id=$(if($MetaXrOperator){'spatial-worldspace-hotload-operator'}else{$contract.app_id});app_lane='spatial-worldspace-hotload-android'
         source=[ordered]@{repository=$repoRoot;commit=$head;tree=$tree;tracked_worktree_clean=$clean;worktree_overlay_sha256=if($clean){''}else{$inventoryHash}}
         build_lock=FileRecord (Join-Path $output 'build-input-lock.json');build_manifest=FileRecord $manifestPath;apk=FileRecord $apk
         runtime_profile=FileRecord $profilePath;property_manifest=([ordered]@{path=$propertiesPath;sha256=(FileRecord $propertiesPath).sha256;scope='complete-manifest'})

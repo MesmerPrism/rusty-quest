@@ -12,7 +12,7 @@
         <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />
         <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
         <uses-native-library android:name="libossdk.oculus.so" android:required="true" />
-        <activity android:name=".SpatialWorldspaceHotloadActivity" android:exported="true"
+        <activity android:name="io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.SpatialWorldspaceHotloadActivity" android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode">
             <intent-filter>

@@ -57,6 +57,7 @@ class SpatialWorldspaceHotloadActivity : SessionOwnerActivity(), ProbeControlTar
     private var cpuTexture: SceneTexture?=null
     private var cpuReferenceBytes:ByteBuffer?=null
     private var feedbackState by mutableStateOf("{}")
+    private val operatorGeometry=if(BuildConfig.META_XR_OPERATOR)OperatorPanelObserver(activityInstanceId)else null
     private var feedbackVisualRevision=0L
     private var feedbackVisualValue:Long?=null
     private val feedbackObservations by lazy{FeedbackObservationStore(SdkFeedbackSession.filesDirectory(this))}
@@ -439,7 +440,8 @@ class SpatialWorldspaceHotloadActivity : SessionOwnerActivity(), ProbeControlTar
         return "bounds_setters_invoked:no_pixel_proof"
         }catch(_:Exception){restoreBounds();return "failed:bounds_setter"}
     }
-    override fun registerPanels():List<PanelRegistration> = listOf(ComposeViewPanelRegistration(R.id.probe_controls,composeViewCreator={_,ctx->
+    override fun registerPanels():List<PanelRegistration> {
+        val creator:(Entity,android.content.Context)->ComposeView={_,ctx->
         ComposeView(ctx).apply{setContent{MaterialTheme{Surface(modifier=Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.surface,contentColor=MaterialTheme.colorScheme.onSurface){Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)){
             Text(if(BuildConfig.DEVELOPMENT_FEEDBACK)"SDK development feedback" else if(BuildConfig.SESSION_CORE)"Session" else "GPU workload")
             Text("$source Â· ${if(resumed)"ready" else "paused"}")
@@ -447,13 +449,14 @@ class SpatialWorldspaceHotloadActivity : SessionOwnerActivity(), ProbeControlTar
             Button(onClick={selectCpu()}){Text("CPU reference / stop GPU")}
             if(BuildConfig.DEVELOPMENT_FEEDBACK){
                 var digest by remember{mutableStateOf("")};var generation by remember{mutableStateOf("1")};var probe by remember{mutableStateOf("13")}
+                if(BuildConfig.META_XR_OPERATOR)Button(onClick={feedbackUi("native_compute",mapOf("input" to "4"))},modifier=requireNotNull(operatorGeometry).widgetModifier()){Text("Native step / update scene")}
                 Text("64 public CPU markers; resident code/state is independent of this panel and scene.")
                 OutlinedTextField(value=digest,onValueChange={digest=it},label={Text("Trusted SHA256")},singleLine=true)
                 Button(onClick={feedbackUi("native_init",mapOf("sha256" to digest))}){Text("Initialize received bridge")}
                 OutlinedTextField(value=generation,onValueChange={generation=it},label={Text("Native generation")},singleLine=true)
                 OutlinedTextField(value=probe,onValueChange={probe=it},label={Text("Independent probe result")},singleLine=true)
                 Button(onClick={feedbackUi("native_activate",mapOf("generation" to generation,"sha256" to digest,"probe_result" to probe))}){Text("Activate received native code")}
-                Button(onClick={feedbackUi("native_compute",mapOf("input" to "4"))}){Text("Native step / update scene")}
+                if(!BuildConfig.META_XR_OPERATOR)Button(onClick={feedbackUi("native_compute",mapOf("input" to "4"))}){Text("Native step / update scene")}
                 Button(onClick={feedbackUi("compute",mapOf("input" to "4"))}){Text("DEX step / update scene")}
                 Button(onClick={feedbackUi("status",emptyMap())}){Text("Refresh module state")}
                 Text(feedbackState)
@@ -524,7 +527,12 @@ class SpatialWorldspaceHotloadActivity : SessionOwnerActivity(), ProbeControlTar
             Text(benchmarkReceipt)
             Text("Barcode rows: frame32 then generation32, left-to-right low bits. Red = invalid packet. Culling disabled by default; no automatic displaced bounds.")
             }
-        }}}}}},settingsCreator={UIPanelSettings(shape=QuadShapeOptions(.7f,1.0f),style=PanelStyleOptions(themeResourceId=R.style.ProbeTheme),display=DpPerMeterDisplayOptions())}))
+        }}}}}}
+        val settings:(Entity)->PanelSettings={UIPanelSettings(shape=QuadShapeOptions(.7f,1.0f),style=PanelStyleOptions(themeResourceId=R.style.ProbeTheme),display=DpPerMeterDisplayOptions())}
+        return listOf(if(BuildConfig.META_XR_OPERATOR)ComposeViewPanelRegistration(R.id.probe_controls,composeViewCreator=creator,settingsCreator=settings,
+            panelSetupWithComposeView={view,panel,entity->requireNotNull(operatorGeometry).attach(view,panel,entity)})
+            else ComposeViewPanelRegistration(R.id.probe_controls,composeViewCreator=creator,settingsCreator=settings))
+    }
     override fun applyProbeControl(control:ProbeControl,value:Boolean?):String {
         if(control==ProbeControl.STATUS)return "status"
         if(destroyed)return "blocked:destroyed"
@@ -758,15 +766,24 @@ class SpatialWorldspaceHotloadActivity : SessionOwnerActivity(), ProbeControlTar
             .put("controls",JSONObject(controls.json())).put("sdkSampledProof",false).put("controllerInputProof",false).toString()
     }
     override fun applyFeedbackControl(method:String,arguments:Map<String,String>):String {
-        return applyFeedbackRequest("ui-${java.util.UUID.randomUUID()}",method,arguments)
+        val id="ui-${java.util.UUID.randomUUID()}"
+        if(method=="native_compute")operatorGeometry?.requested(id)
+        val observation=applyFeedbackRequest(id,method,arguments)
+        if(method=="native_compute")operatorGeometry?.completed(id,JSONObject(observation).optString("status","error"))
+        return observation
     }
     override fun applyFeedbackRequest(requestId:String,method:String,arguments:Map<String,String>):String {
         check(Looper.myLooper()==Looper.getMainLooper())
         check(BuildConfig.DEBUG&&BuildConfig.DEVELOPMENT_FEEDBACK){"Development feedback unselected"}
-        feedbackState=feedbackObservations.execute(requestId,{SdkFeedbackSession.snapshot(this)},{
+        feedbackState=feedbackObservations.execute(requestId,{operatorGeometry?.state(SdkFeedbackSession.snapshot(this))?:SdkFeedbackSession.snapshot(this)},{
             JSONObject().put("activity_instance_id",activityInstanceId).put("scene_ready_count",sceneReadyCount)
                 .put("visualRevision",feedbackVisualRevision).put("visualValue",feedbackVisualValue?:JSONObject.NULL)
-                .put("textureUpdateCompleted",feedbackVisualValue!=null).put("pixelsProven",false)
+                .put("textureUpdateCompleted",feedbackVisualValue!=null).put("pixelsProven",false).also{sceneObservation->
+                    if(BuildConfig.META_XR_OPERATOR){
+                        sceneObservation.put("input_geometry",requireNotNull(operatorGeometry).snapshot(JSONObject(SdkFeedbackSession.snapshot(this)),!destroyed&&resumed&&xrReady,runCatching{scene.getViewerPose()}.getOrNull()))
+                        sceneObservation.put("operator_layer_loaded",requireNotNull(operatorGeometry).layerLoaded())
+                    }
+                }
         }){
             check(!destroyed&&ProbeDebugFeatures.target()===this){"Retired SDK scene owner"}
             if(method !in setOf("status","native_status"))check(resumed&&xrReady&&source=="cpu"&&producerHandle==0L&&retiringHandle==0L&&cpuTexture!=null){"CPU scene is not ready"}
@@ -801,6 +818,7 @@ class SpatialWorldspaceHotloadActivity : SessionOwnerActivity(), ProbeControlTar
         }finally{try{stopProducer()}finally{super.onPause()}}
     }
     override fun onDestroy(){
+        operatorGeometry?.clear()
         endBindingComparison("destroy")
         destroyed=true;resumed=false
         try{revokeSessionOwner(true);ProbeDebugFeatures.detach(this)}

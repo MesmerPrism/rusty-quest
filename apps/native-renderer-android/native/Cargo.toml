@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 
 [features]
 default = []
+meta-xr-operator = []
 rusty-lsl-backend = ["dep:rusty-lsl"]
 
 [dependencies]

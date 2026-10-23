@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.operator">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature android:name="com.oculus.experimental.enabled" android:required="false" />
+    <application android:debuggable="true" android:extractNativeLibs="true">
+        <provider android:name="io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.ProbeControlProvider"
+            android:authorities="${applicationId}.probe-control" android:exported="true" android:permission="android.permission.DUMP" />
+    </application>
+</manifest>

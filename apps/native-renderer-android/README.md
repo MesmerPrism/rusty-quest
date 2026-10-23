@@ -22,6 +22,26 @@ streaming are excluded by that app's lock. The existing app defaults remain
 unchanged. The native panel keeps Android widgets, text and focus behavior.
 Its compute button uses the same typed handler as the app-private operator.
 
+The separate
+[`native-development-hotload-operator.app.json`](../../fixtures/native-app-builds/native-development-hotload-operator.app.json)
+selects seven features and the coinstalled `development_hotload_operator` package.
+Only that debug selection admits the external Meta XR Operator layer, INTERNET
+and optional experimental feature. Pass `-EnableMetaXrOperator` plus
+`-MetaXrOperatorLibrary`, `-MetaXrOperatorLibrarySha256`,
+`-MetaXrOperatorManifest` and `-MetaXrOperatorManifestSha256` to the existing
+canonical builder. Its selected output and capsule include the external input
+fingerprint; vendor binaries remain local build inputs.
+
+The Operator-only Cargo feature and locked build input jointly enable read-only
+`native_status.scene.input_geometry`. It joins the original Compute widget's
+current clipped layout/revision with the frozen panel pose after successful
+`xrEndFrame`, including the actual LOCAL/STAGE fallback and owner generation.
+It does not report pixels or tracking availability beyond that submitted frame.
+Ordinary/unselected apps omit the observer and UI correlation telemetry; the
+canonical helper also requires a debuggable APK before packaging the layer.
+Input simulation and original-session retirement remain separate finite owner
+operations described in [Meta XR input automation](../../docs/META_XR_INPUT_AUTOMATION.md).
+
 See [the common two-host scenarios](../../docs/REPRESENTATIVE_HOTLOAD_HOSTS.md)
 and [the native integration guide](../../docs/NATIVE_WORLDSPACE_INTEGRATION.md)
 for build/launch, fresh session discovery, CPU generation staging and shader

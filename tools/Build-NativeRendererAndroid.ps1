@@ -6,6 +6,11 @@ param(
     [string]$OutDir = "",
     [string]$Keystore = "",
     [string]$AppBuildLock = "",
+    [switch]$EnableMetaXrOperator,
+    [string]$MetaXrOperatorLibrary = "",
+    [string]$MetaXrOperatorLibrarySha256 = "",
+    [string]$MetaXrOperatorManifest = "",
+    [string]$MetaXrOperatorManifestSha256 = "",
     [string]$RecordedHandCaptureDir = "",
     [int]$RecordedHandFrameLimit = 12,
     [switch]$RequireRecordedHandCapture,
@@ -477,6 +482,22 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
 }
 
 Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib\MetaXrOperatorPackaging.psm1") -Force
+$operatorSelected = $null -ne $appBuildLockObject -and @($appBuildLockObject.selected_feature_ids) -ccontains 'debug.meta_xr_operator'
+$operatorFlag = 'RUSTY_QUEST_NATIVE_RENDERER_META_XR_OPERATOR_ENABLED'
+if ($operatorSelected -ne [bool]$EnableMetaXrOperator -or
+    $appBuildEnvByName.ContainsKey($operatorFlag) -ne $operatorSelected -or
+    ($operatorSelected -and [string]$appBuildEnvByName[$operatorFlag] -cne 'true')) {
+    throw 'Operator feature, explicit switch and app build input must match.'
+}
+$operatorOptions = @{}
+if ($operatorSelected) {
+    $operatorOptions = @{Enable=$true;FeatureLockPath=$appBuildLockPath;FeatureLockSha256=$appBuildLockSha256;
+        AndroidManifestPath=$manifestInputPath;PackageName=$packageName;Consumer='NativeOpenXr'}
+}
+$operatorSelection = Get-QuestMetaXrOperatorSelection @operatorOptions `
+    -LibraryPath $MetaXrOperatorLibrary -LibrarySha256 $MetaXrOperatorLibrarySha256 `
+    -LayerManifestPath $MetaXrOperatorManifest -LayerManifestSha256 $MetaXrOperatorManifestSha256
 $sourceComposition = Get-QuestBuildSourceComposition `
     -RepoRoot ([string]$repoRoot) `
     -PackageName @("rusty-quest-native-renderer-android-native", "rusty-quest-broker-authority")
@@ -495,6 +516,9 @@ if ([string]::IsNullOrWhiteSpace($requestedOutDir)) {
 } else {
     $OutDir = $requestedOutDir
 }
+$operatorSuffix = if ($operatorSelection.enabled) { 'operator-' + $operatorSelection.fingerprint.Substring(0,16) } else { '' }
+$operatorCapsuleSuffix = if ($operatorSelection.enabled) { '-' + $operatorSuffix } else { '' }
+if ($operatorSelection.enabled) { $OutDir = Join-Path $OutDir $operatorSuffix }
 $resolvedOutParent = Split-Path -Parent $OutDir
 New-Item -ItemType Directory -Force -Path $targetRoot, $resolvedOutParent | Out-Null
 $resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd("\")
@@ -532,6 +556,15 @@ if ([string]::IsNullOrWhiteSpace($Keystore)) {
 }
 
 New-Item -ItemType Directory -Force -Path $assetsDir, $classesDir, $dexDir, $nativeLibDir | Out-Null
+if ($operatorSelection.enabled) {
+    $operatorAssets = Join-Path $OutDir 'operator-assets'
+    $operatorNative = Join-Path $OutDir 'operator-native'
+    Copy-QuestMetaXrOperatorLayer -Selection $operatorSelection -OutputRoot $operatorAssets -NativeStageRoot $operatorNative
+    $layerTarget = Join-Path $OutDir $operatorSelection.layer_manifest.apk_path
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $layerTarget) | Out-Null
+    Copy-Item -LiteralPath (Join-Path $operatorAssets $operatorSelection.layer_manifest.apk_path) -Destination $layerTarget
+    Copy-Item -LiteralPath (Join-Path $operatorNative $operatorSelection.library.apk_path) -Destination (Join-Path $nativeStageRoot $operatorSelection.library.apk_path)
+}
 if (-not (Test-Path $Keystore)) {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Keystore) | Out-Null
     Invoke-Checked "keytool" $keytool @(
@@ -1721,6 +1754,7 @@ $cargoBuildArguments = @(
 if ($rustyLslBackendPackaged) {
     $cargoBuildArguments += @("--features", "rusty-lsl-backend")
 }
+if ($operatorSelection.enabled) { $cargoBuildArguments += @('--features', 'meta-xr-operator') }
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:ANDROID_NDK_HOME = $NdkHome
@@ -1850,7 +1884,16 @@ Invoke-Checked "apksigner" $apksigner @(
 )
 
 $sha256 = Get-FileSha256 -Path $apkSigned
+Assert-QuestMetaXrOperatorArchive -Selection $operatorSelection -ApkPath $apkSigned
+if ($operatorSelection.enabled) {
+    $operatorManifestDump = @(& $aapt2 dump xmltree $apkSigned --file AndroidManifest.xml 2>&1 | ForEach-Object ToString)
+    $operatorManifestExit = $LASTEXITCODE
+    Assert-QuestMetaXrOperatorManifestDump -Selection $operatorSelection -Lines $operatorManifestDump -ExitCode $operatorManifestExit -RequireNativeExtraction
+    [ordered]@{schema='rusty.quest.aapt2_manifest_dump.v1';apk_sha256=$sha256;exit_code=$operatorManifestExit;lines=$operatorManifestDump} |
+        ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutDir 'operator-manifest-dump.json') -Encoding utf8NoBOM
+}
 $manifest = [ordered]@{
+    meta_xr_operator = $operatorSelection
     '$schema' = "rusty.quest.native_renderer_android.build_manifest.v1"
     app_id = if ($null -eq $appBuildLockObject) { "unlocked-development" } else { [string]$appBuildLockObject.app_id }
     package_name = $packageName
@@ -1984,8 +2027,9 @@ $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $manifest
 if ($script:BuildUsesLock) {
     $propertyManifestPath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-property-manifest.json"
     $runCapsule = [ordered]@{
+        meta_xr_operator = $operatorSelection
         schema = "rusty.quest.apk_run_capsule.v1"
-        capsule_id = "native-renderer-$([string]$appBuildLockObject.app_id)-$($appBuildLockSha256.Substring(0, 12))-$(([string]$sourceComposition.fingerprint).Substring(0, 12))"
+        capsule_id = "native-renderer-$([string]$appBuildLockObject.app_id)-$($appBuildLockSha256.Substring(0, 12))-$(([string]$sourceComposition.fingerprint).Substring(0, 12))$operatorCapsuleSuffix"
         app_id = [string]$appBuildLockObject.app_id
         app_lane = "native-renderer-android"
         source = [ordered]@{
