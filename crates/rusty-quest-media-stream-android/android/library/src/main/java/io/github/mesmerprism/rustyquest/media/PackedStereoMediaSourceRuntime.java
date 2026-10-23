@@ -440,6 +440,9 @@ public final class PackedStereoMediaSourceRuntime {
         volatile String error = "";
         volatile boolean stopRequested;
         volatile boolean terminal;
+        // Published only by the actual source loop after camera/worker setup.
+        // Route/socket milestones are independent and cannot revoke or mint it.
+        volatile boolean sourceStreaming;
         volatile Thread sourceThread;
         volatile Thread acceptThread;
         volatile ServerSocket serverSocket;
@@ -660,7 +663,7 @@ public final class PackedStereoMediaSourceRuntime {
                     + stage + " cause=" + PackedSourceFailureCode.cause(failure)
                     + " detail=" + PackedSourceFailureCode.detail(operation, failure)
                     + " operation=" + operation.name()
-                    + " sourceCurrent=" + state.startsWith("source_streaming_")
+                    + " sourceCurrent=" + sourceStreaming
                     + " sharedCaptureFresh=" + captureFresh
                     + " sharedCaptureFreshMask=" + captureFreshMask
                     + " captureFirstFailureOrigin=" + captureFirstFailureOrigin
@@ -717,6 +720,7 @@ public final class PackedStereoMediaSourceRuntime {
                         ? "source_streaming_packed_synthetic"
                         : "source_streaming_packed_camera2";
                 sourceStreamingSinceMs = SystemClock.elapsedRealtime();
+                sourceStreaming = true;
                 long nextSyntheticNs = SystemClock.elapsedRealtimeNanos();
                 long frameDurationNs = 1_000_000_000L / Math.max(1, profile.frameRateHz);
                 long syntheticFrame = 1L;
@@ -757,6 +761,7 @@ public final class PackedStereoMediaSourceRuntime {
                     state = "failed";
                 }
             } finally {
+                sourceStreaming = false;
                 // This thread is the sole codec output consumer. Keep it alive
                 // through input retirement, including an interrupted/failed
                 // source loop: a full output queue can block the input worker's
@@ -1292,13 +1297,14 @@ public final class PackedStereoMediaSourceRuntime {
         }
 
         boolean sourceFresh() {
+            if (!sourceStreaming || stopRequested || terminal || "failed".equals(state)) return false;
             if (sharedCapture != null) {
                 PackedStereoEncoderWorker worker = encoderWorker;
-                return state.startsWith("source_streaming_") && sharedCapture.fresh()
+                return sharedCapture.fresh()
                         && worker != null && worker.failure() == null;
             }
             PackedStereoGlCompositor active = compositor;
-            if (active == null || !state.startsWith("source_streaming_")) return false;
+            if (active == null) return false;
             if (synthetic) return active.syntheticFrames() >= 2L && active.composedFrames() >= 2L
                     && active.compositionFreshNow();
             CameraEndpoint left = leftCamera;
@@ -1309,7 +1315,7 @@ public final class PackedStereoMediaSourceRuntime {
         }
 
         boolean freshnessExpired() {
-            if (!state.startsWith("source_streaming_") || sourceStreamingSinceMs < 0L) return false;
+            if (!sourceStreaming || sourceStreamingSinceMs < 0L) return false;
             long now=SystemClock.elapsedRealtime();
             if (now-sourceStreamingSinceMs <= SOURCE_FRESHNESS_TIMEOUT_MS) return false;
             boolean fresh = sourceFresh();

@@ -1171,3 +1171,28 @@ python tools/checks/Test-PreparedTransportHost.py --output target/prepared-trans
   --media-classes <authenticated-prior-media-classes.jar> `
   --media-artifacts <matching-embedded-media-aar-artifacts.json>
 ```
+
+### Prepared source readiness across ordinary owner Start
+
+SDK preparation already runs the actual source loop behind a closed delivery
+gate. Later socket binding and route validation record independent startup
+milestones; those labels must not replace evidence that the source loop entered
+streaming. The loop now publishes a separate streaming flag after actual source
+setup and clears it on every exit. Freshness still requires current capture and
+encoder-worker health, or changing camera frames and fresh compositor
+timestamps. Stop, terminal state and source failure refuse readiness. The
+existing freshness deadline remains active after route/socket milestones.
+
+The focused regression runs the production sender preparation, transport
+finalization, route/socket/codec/processor/source methods and whole media owner
+set through ordinary Start, reverse Stop and a second resource lifetime. It
+also tests delayed source publication, Stop interleavings and stale camera,
+compositor, capture, worker and transport refusals. Camera/codec allocation,
+LAN connection state and physical Stop are explicit host leaves; these tests do not prove headset media
+or cleanup. Whole changed media source compilation remains a separate Android
+API check through the finalization command above.
+
+```powershell
+python tools/checks/Test-PreparedCaptureReadinessHost.py `
+  --output target/prepared-capture-readiness-host --json-jar <host-json.jar>
+```
