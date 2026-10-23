@@ -5,6 +5,7 @@ param(
     [string]$SharedGradleToolRoot = '',
     [switch]$SelfTest,
     [ValidateRange(1, 55)][int]$TimeoutSeconds = 55,
+    [ValidateSet('Bounded','Retained',IgnoreCase=$false)][string]$WaitPolicy = 'Bounded',
     [Parameter(DontShow)][switch]$InternalSelfTestWorker,
     [Parameter(DontShow)][string]$InternalSelfTestRoot,
     [Parameter(DontShow)][string]$InternalSelfTestFixture,
@@ -13,6 +14,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$questPrerequisitesModule = Import-Module (Join-Path $PSScriptRoot 'lib/SpatialCameraPanelBuildPrerequisites.psm1') -PassThru
 $script:ExpectedVersion = '9.4.1'
 $script:ExpectedSha256 = '2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb'
 $script:ExpectedTreeSha256 = '5c94e8204be25e0c18c94780cf4cf768fefa92e73f8c7b1617c483f33ca088db'
@@ -146,30 +148,35 @@ function Write-AtomicJson {
     param([Parameter(Mandatory)][string]$Path,[Parameter(Mandatory)]$Value,[Parameter(Mandatory)][string]$Parent)
     Assert-NotReparse $Parent 'resolver parent';$canonical=$Value|ConvertTo-Json -Depth 10 -Compress;if(Test-Path -LiteralPath $Path){Assert-NotReparse $Path 'immutable resolver record';Assert-NoHardLink $Path;$existing=Get-Content -LiteralPath $Path -Raw|ConvertFrom-Json|ConvertTo-Json -Depth 10 -Compress;if($existing -cne $canonical){throw "Immutable resolver record conflicts: $Path"};return};$tmp=Join-Path $Parent (".$([IO.Path]::GetFileName($Path)).$([Guid]::NewGuid().ToString('N')).tmp");try{[IO.File]::WriteAllText($tmp,$canonical,[Text.UTF8Encoding]::new($false));Assert-NoHardLink $tmp;Assert-NotReparse $Parent 'resolver parent';[IO.File]::Move($tmp,$Path,$false)}finally{if(Test-Path -LiteralPath $tmp){Remove-Item -LiteralPath $tmp -Force}}
 }
+function Wait-GradleDownloadTask {
+    param([Parameter(Mandatory)][Threading.Tasks.Task]$Task,[ValidateSet('Bounded','Retained',IgnoreCase=$false)][string]$WaitPolicy='Bounded',
+        [TimeSpan]$Estimate=([TimeSpan]::FromSeconds(55)),[string]$Label='Gradle request')
+    &$questPrerequisitesModule {param($t,$p,$e,$l)Wait-QuestSpatialOperation -Task $t -WaitPolicy $p -Estimate $e -Label $l} $Task $WaitPolicy $Estimate $Label
+}
 function Copy-GradleDownloadBody {
-    param([IO.Stream]$InputStream,[IO.Stream]$OutputStream,[int64]$MaxBytes,[Threading.CancellationToken]$CancellationToken)
+    param([IO.Stream]$InputStream,[IO.Stream]$OutputStream,[int64]$MaxBytes,[Threading.CancellationToken]$CancellationToken,[ValidateSet('Bounded','Retained',IgnoreCase=$false)][string]$WaitPolicy='Bounded',[TimeSpan]$Estimate=([TimeSpan]::FromSeconds(55)))
     $buffer=New-Object byte[] 65536;[int64]$bytes=0
-    while(($read=$InputStream.ReadAsync($buffer,0,$buffer.Length,$CancellationToken).GetAwaiter().GetResult()) -gt 0){
+    while(($read=(Wait-GradleDownloadTask ($InputStream.ReadAsync($buffer,0,$buffer.Length,$CancellationToken)) -WaitPolicy $WaitPolicy -Estimate $Estimate -Label 'Gradle response body')) -gt 0){
         $CancellationToken.ThrowIfCancellationRequested();$bytes += $read
         if($bytes -gt $MaxBytes){throw 'Gradle response exceeds byte bound.'}
-        [void]$OutputStream.WriteAsync($buffer,0,$read,$CancellationToken).GetAwaiter().GetResult()
+        $write=$OutputStream.WriteAsync($buffer,0,$read,$CancellationToken);[void](Wait-GradleDownloadTask $write -WaitPolicy $WaitPolicy -Estimate $Estimate -Label 'Gradle archive write')
     }
     $CancellationToken.ThrowIfCancellationRequested();return $bytes
 }
 function Invoke-Download {
-    param([Parameter(Mandatory)][Uri]$Uri,[Parameter(Mandatory)][string]$Part,[Parameter(Mandatory)]$Identity,[int]$Timeout,[switch]$Fail)
-    if($Fail){[IO.File]::WriteAllText($Part,'simulated-provider-partial');$script:SelfTestObservedPart=$Part;if(-not(Test-Path -LiteralPath $Part -PathType Leaf) -or [IO.Path]::GetFileName($Part) -notmatch '^\.gradle-9\.4\.1-bin\.zip\.[0-9a-f]{32}\.part$'){throw 'Simulated provider did not create the expected GUID temporary archive.'};throw 'Simulated Gradle provider failure.'};$h=[Net.Http.HttpClientHandler]::new();$h.AllowAutoRedirect=$false;$h.SslProtocols=[Security.Authentication.SslProtocols]::Tls12 -bor [Security.Authentication.SslProtocols]::Tls13;$c=[Net.Http.HttpClient]::new($h);$deadline=[Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($Timeout));$chain=@();try{$u=$Uri;for($n=0;$n -le 3;$n++){if($u.Scheme -cne 'https' -or @($Identity.allowed_redirect_hosts) -notcontains $u.Host.ToLowerInvariant()){throw "Gradle redirect violates HTTPS allow-list: $($u.GetLeftPart([UriPartial]::Path))"};$chain += $u.GetLeftPart([UriPartial]::Path);$r=$c.GetAsync($u,[Net.Http.HttpCompletionOption]::ResponseHeadersRead,$deadline.Token).GetAwaiter().GetResult();try{if([int]$r.StatusCode -in 301,302,303,307,308){$l=$r.Headers.Location;if($null -eq $l){throw 'Gradle redirect lacks Location.'};$u=if($l.IsAbsoluteUri){$l}else{[Uri]::new($u,$l)};continue};if(-not $r.IsSuccessStatusCode){$s=[int]$r.StatusCode;throw "Gradle provider returned HTTP $s."};if($r.Content.Headers.ContentLength -and [int64]$r.Content.Headers.ContentLength -gt [int64]$Identity.max_archive_bytes){throw 'Gradle response exceeds byte bound.'};$inputStream=$r.Content.ReadAsStreamAsync($deadline.Token).GetAwaiter().GetResult();try{$out=[IO.FileStream]::new($Part,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$bytes=Copy-GradleDownloadBody $inputStream $out ([int64]$Identity.max_archive_bytes) $deadline.Token;$out.Flush($true)}finally{$out.Dispose()}}finally{$inputStream.Dispose()};$headers=[ordered]@{etag=[string]$r.Headers.ETag;last_modified=[string]$r.Content.Headers.LastModified;content_length=[string]$r.Content.Headers.ContentLength;content_type=[string]$r.Content.Headers.ContentType};return [pscustomobject]@{uri_chain=$chain;bytes=$bytes;headers=$headers}}finally{$r.Dispose()}}
+    param([Parameter(Mandatory)][Uri]$Uri,[Parameter(Mandatory)][string]$Part,[Parameter(Mandatory)]$Identity,[int]$Timeout,[switch]$Fail,[ValidateSet('Bounded','Retained',IgnoreCase=$false)][string]$WaitPolicy='Bounded')
+    if($Fail){[IO.File]::WriteAllText($Part,'simulated-provider-partial');$script:SelfTestObservedPart=$Part;if(-not(Test-Path -LiteralPath $Part -PathType Leaf) -or [IO.Path]::GetFileName($Part) -notmatch '^\.gradle-9\.4\.1-bin\.zip\.[0-9a-f]{32}\.part$'){throw 'Simulated provider did not create the expected GUID temporary archive.'};throw 'Simulated Gradle provider failure.'};$h=[Net.Http.HttpClientHandler]::new();$h.AllowAutoRedirect=$false;$h.SslProtocols=[Security.Authentication.SslProtocols]::Tls12 -bor [Security.Authentication.SslProtocols]::Tls13;$c=[Net.Http.HttpClient]::new($h);$deadline=if($WaitPolicy -ceq 'Retained'){[Threading.CancellationTokenSource]::new()}else{[Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds($Timeout))};if($WaitPolicy -ceq 'Retained'){$c.Timeout=[Threading.Timeout]::InfiniteTimeSpan};$chain=@();try{$u=$Uri;for($n=0;$n -le 3;$n++){if($u.Scheme -cne 'https' -or @($Identity.allowed_redirect_hosts) -notcontains $u.Host.ToLowerInvariant()){throw "Gradle redirect violates HTTPS allow-list: $($u.GetLeftPart([UriPartial]::Path))"};$chain += $u.GetLeftPart([UriPartial]::Path);$r=Wait-GradleDownloadTask ($c.GetAsync($u,[Net.Http.HttpCompletionOption]::ResponseHeadersRead,$deadline.Token)) -WaitPolicy $WaitPolicy -Estimate ([TimeSpan]::FromSeconds($Timeout)) -Label 'Gradle HTTP headers';try{if([int]$r.StatusCode -in 301,302,303,307,308){$l=$r.Headers.Location;if($null -eq $l){throw 'Gradle redirect lacks Location.'};$u=if($l.IsAbsoluteUri){$l}else{[Uri]::new($u,$l)};continue};if(-not $r.IsSuccessStatusCode){$s=[int]$r.StatusCode;throw "Gradle provider returned HTTP $s."};if($r.Content.Headers.ContentLength -and [int64]$r.Content.Headers.ContentLength -gt [int64]$Identity.max_archive_bytes){throw 'Gradle response exceeds byte bound.'};$inputStream=Wait-GradleDownloadTask ($r.Content.ReadAsStreamAsync($deadline.Token)) -WaitPolicy $WaitPolicy -Estimate ([TimeSpan]::FromSeconds($Timeout)) -Label 'Gradle HTTP stream';try{$out=[IO.FileStream]::new($Part,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);try{$bytes=Copy-GradleDownloadBody $inputStream $out ([int64]$Identity.max_archive_bytes) $deadline.Token -WaitPolicy $WaitPolicy -Estimate ([TimeSpan]::FromSeconds($Timeout));$out.Flush($true)}finally{$out.Dispose()}}finally{$inputStream.Dispose()};$headers=[ordered]@{etag=[string]$r.Headers.ETag;last_modified=[string]$r.Content.Headers.LastModified;content_length=[string]$r.Content.Headers.ContentLength;content_type=[string]$r.Content.Headers.ContentType};return [pscustomobject]@{uri_chain=$chain;bytes=$bytes;headers=$headers}}finally{$r.Dispose()}}
         throw 'Gradle redirect limit exceeded.'}finally{$deadline.Dispose();$c.Dispose();$h.Dispose()}
 }
 function Invoke-Resolver {
-    param([Parameter(Mandatory)][string]$Repo,[ValidateSet('Resolve','VerifyCache')][string]$RequestedMode,[int]$Timeout,[object]$TestIdentity=$null,[string]$Fixture='',[switch]$ProviderFailure,[string]$SharedRoot='')
+    param([Parameter(Mandatory)][string]$Repo,[ValidateSet('Resolve','VerifyCache')][string]$RequestedMode,[int]$Timeout,[object]$TestIdentity=$null,[string]$Fixture='',[switch]$ProviderFailure,[string]$SharedRoot='',[ValidateSet('Bounded','Retained',IgnoreCase=$false)][string]$WaitPolicy='Bounded')
     $root=Get-FullPath $Repo;if(-not(Test-Path -LiteralPath $root -PathType Container)){throw "RepoRoot is missing: $root"};Assert-NotReparse $root 'RepoRoot';$identity=if($null -eq $TestIdentity){Read-Identity $root}else{$TestIdentity};if($identity.tool_id -cne 'gradle' -or $identity.version -cne $script:ExpectedVersion -or [string]$identity.sha256 -notmatch '^[a-f0-9]{64}$' -or [string]$identity.tree_sha256 -notmatch '^[a-f0-9]{64}$' -or -not $identity.max_path_chars -or -not $identity.max_path_depth){throw 'Resolver identity fixture is malformed.'}
     $shared=-not [string]::IsNullOrWhiteSpace($SharedRoot)
     $storageRoot=if($shared){Get-SafeSharedRoot $SharedRoot $root}else{$root}
     $sharedIdentity=if($shared){Get-SharedIdentity $root $identity}else{$null}
     $mutex=[Threading.Mutex]::new($false,(Get-ResolverMutexName $storageRoot));$held=$false
     try{
-        $held=$mutex.WaitOne([TimeSpan]::FromSeconds($Timeout));if(-not $held){throw 'Timed out waiting for Gradle resolver lock.'}
+        $abandoned=$false;$held=&$questPrerequisitesModule {param($m,$p,$s,$a)Wait-QuestSpatialOperation -Mutex $m -WaitPolicy $p -Estimate ([TimeSpan]::FromSeconds($s)) -Abandoned $a -Label 'Gradle resolver'} $mutex $WaitPolicy $Timeout ([ref]$abandoned);if(-not $held){throw 'Timed out waiting for Gradle resolver lock.'}
         if($shared){
             [void](Get-SafeSharedRoot $storageRoot $root);Assert-SharedPayload $storageRoot $identity
             $identityPath=Join-Path $storageRoot 'tool-identity.json'
@@ -197,7 +204,7 @@ function Invoke-Resolver {
             }
             $part=Join-Path $downloads (".$script:ArchiveName.$([Guid]::NewGuid().ToString('N')).part")
             try {
-                $meta=if($Fixture){Copy-Item -LiteralPath $Fixture -Destination $part -ErrorAction Stop;[pscustomobject]@{uri_chain=@('fixture://offline/gradle-9.4.1-bin.zip');bytes=(Get-Item $part).Length;headers=@{}}}else{Invoke-Download ([Uri]$identity.distribution_url) $part $identity $Timeout -Fail:$ProviderFailure}
+                $meta=if($Fixture){Copy-Item -LiteralPath $Fixture -Destination $part -ErrorAction Stop;[pscustomobject]@{uri_chain=@('fixture://offline/gradle-9.4.1-bin.zip');bytes=(Get-Item $part).Length;headers=@{}}}else{Invoke-Download ([Uri]$identity.distribution_url) $part $identity $Timeout -Fail:$ProviderFailure -WaitPolicy $WaitPolicy}
                 Assert-NotReparse $part 'Gradle download temporary';Assert-NoHardLink $part;if((Get-Sha256 $part) -cne [string]$identity.sha256){throw 'Downloaded Gradle archive hash mismatch.'}
                 Assert-SameEvidence $downloadParentEvidence $downloads 'downloads root';[IO.File]::Move($part,$archive,$false);Assert-SameEvidence $downloadParentEvidence $downloads 'downloads root'
                 if($retiredArchive){Assert-SameEvidence $archiveEvidence $retiredArchive 'retired archive';Assert-NoHardLink $retiredArchive;Remove-Item -LiteralPath $retiredArchive -Force;Assert-SameEvidence $downloadParentEvidence $downloads 'downloads root'}
@@ -381,5 +388,5 @@ function Invoke-InternalSelfTestWorker {
 }
 if($InternalSelfTestWorker){Invoke-InternalSelfTestWorker;exit 0}
 if($SelfTest){Invoke-SelfTest;exit 0}
-$receipt=Invoke-Resolver $RepoRoot $Mode $TimeoutSeconds -SharedRoot $SharedGradleToolRoot
+$receipt=Invoke-Resolver $RepoRoot $Mode $TimeoutSeconds -SharedRoot $SharedGradleToolRoot -WaitPolicy $WaitPolicy
 $receipt|ConvertTo-Json -Depth 8
