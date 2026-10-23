@@ -46,9 +46,10 @@ click completion. A vendor `auto_release=true` call blocks until it has already
 opened, so its ACK cannot provide a later pressed-state observation. The
 100–500 ms hold excludes transport/readback time; the finite attempt always
 opens and retires its original actor, including after an unknown response.
-The native host's ordinary controller-first pointer policy still applies:
-use genuine hands mode with inactive controllers for this hand-only test.
-An inactive aim action alone does not exclude a tracked controller grip.
+The selected native Operator hand-test host prefers a valid tracked hand,
+with controller fallback when no hand is available. Its ordinary unselected
+build keeps controller-first ownership. A controller can retain an active pose
+while stationary; an inactive aim action alone also does not exclude its grip.
 
 The source-owned development-host adapter supplies read-only actor/status/grant
 callbacks and a separately named `stopOriginal` callback through

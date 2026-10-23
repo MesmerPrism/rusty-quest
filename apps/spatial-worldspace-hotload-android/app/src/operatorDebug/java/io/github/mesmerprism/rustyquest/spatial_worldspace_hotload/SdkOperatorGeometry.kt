@@ -33,6 +33,10 @@ internal class OperatorPoseEvidence(private val ownerToken:String) {
 
 /** SDK metric pose -> OpenXR metric pose in the SAME LOCAL_FLOOR reference space. */
 internal object SdkOperatorGeometry {
+    fun requireCenteredQuad(isQuad:Boolean,pivotWidth:Float,pivotHeight:Float) {
+        // SDK 0.14 quad bounds are [-size*pivot, size*(1-pivot)].
+        require(isQuad&&pivotWidth==.5f&&pivotHeight==.5f){"Only the current centered quad is qualified"}
+    }
     fun operatorLayerMapped(bytes:ByteArray):Boolean {
         if(bytes.size>2*1024*1024)return false
         return bytes.toString(Charsets.UTF_8).lineSequence().any{line->

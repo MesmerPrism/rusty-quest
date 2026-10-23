@@ -162,6 +162,17 @@ impl AlternatePointer {
     pub(crate) fn reset(&mut self) {
         *self = Self::default();
     }
+    /// The dedicated Operator hand-test host prefers a current valid hand sample.
+    /// Samples have already passed the same runtime tracking/aim gates as physical hands.
+    /// Reuse the ordinary ownership transition and pinch arming state machine.
+    #[cfg(any(native_meta_xr_operator, test))]
+    pub(crate) fn update_preferring_hands(
+        &mut self,
+        controller: bool,
+        hand: Option<HandPointerSample>,
+    ) -> (PointerOwner, bool, bool) {
+        self.update(controller && hand.is_none(), hand)
+    }
     /// Controller priority. Ownership changes must cancel the previous UI capture first.
     /// A new/lost hand must first open its pinch before it can generate a down event.
     pub(crate) fn update(
@@ -345,6 +356,63 @@ mod tests {
             pinch_distance: distance,
             right: true,
         }
+    }
+    fn operator_update(
+        state: &mut AlternatePointer,
+        controller: bool,
+        sample: Option<HandPointerSample>,
+    ) -> (PointerOwner, bool, bool) {
+        state.update_preferring_hands(controller, sample)
+    }
+    #[test]
+    fn operator_hand_preference_selects_valid_hand_despite_active_controller() {
+        let mut state = AlternatePointer::default();
+        assert_eq!(
+            operator_update(&mut state, true, Some(hand(0.05))),
+            (PointerOwner::RightHand, false, true)
+        );
+        assert_eq!(
+            operator_update(&mut state, true, Some(hand(0.01))),
+            (PointerOwner::RightHand, true, false)
+        );
+    }
+    #[test]
+    fn operator_hand_loss_falls_back_and_reentry_requires_open_pinch() {
+        let mut state = AlternatePointer::default();
+        operator_update(&mut state, true, Some(hand(0.05)));
+        assert!(operator_update(&mut state, true, Some(hand(0.01))).1);
+        assert_eq!(
+            operator_update(&mut state, true, None),
+            (PointerOwner::Controllers, false, true)
+        );
+        assert_eq!(
+            operator_update(&mut state, true, Some(hand(0.01))),
+            (PointerOwner::RightHand, false, true)
+        );
+        assert!(!operator_update(&mut state, true, Some(hand(0.05))).1);
+        assert!(operator_update(&mut state, true, Some(hand(0.01))).1);
+        assert_eq!(operator_update(&mut state, false, None), (PointerOwner::None, false, true));
+        assert!(!operator_update(&mut state, false, Some(hand(0.01))).1);
+    }
+    #[test]
+    fn operator_hand_handoff_cancels_capture_and_runtime_pinch_rearms() {
+        let mut state = AlternatePointer::default();
+        let sample = |right, pinch| runtime_aim_pointer(
+            [0.; 3], [0., 0., 0., 1.], right, true, false, pinch
+        );
+        operator_update(&mut state, true, sample(true, false));
+        let (_, pressed, _) = operator_update(&mut state, true, sample(true, true));
+        let mut capture = crate::native_mesh_ui::PointerCapture::default();
+        assert_eq!(capture.update(true, pressed, Some([512., 169.])).unwrap().0, 0);
+        let (owner, pressed, changed) = operator_update(&mut state, true, sample(false, true));
+        assert_eq!((owner, pressed, changed), (PointerOwner::LeftHand, false, true));
+        // The render loop cancels the original capture on this ownership edge.
+        assert_eq!(capture.update(false, false, None).unwrap().0, 3);
+        assert!(!capture.captured());
+        assert!(!operator_update(&mut state, true, sample(false, false)).1);
+        assert!(operator_update(&mut state, true, sample(false, true)).1);
+        state.reset();
+        assert!(!operator_update(&mut state, true, sample(false, true)).1);
     }
     #[test]
     fn pinch_hysteresis_and_tracking_loss_require_open_hand() {

@@ -7,6 +7,11 @@ object OperatorGeometryHostTest {
         var checks=0
         fun near(actual:Double,expected:Double){check(abs(actual-expected)<1e-5){"$actual != $expected"};checks++}
         fun deny(action:()->Unit){var failed=false;try{action()}catch(_:IllegalArgumentException){failed=true};check(failed);checks++}
+        SdkOperatorGeometry.requireCenteredQuad(true,.5f,.5f);checks++
+        deny{SdkOperatorGeometry.requireCenteredQuad(true,0f,0f)}
+        deny{SdkOperatorGeometry.requireCenteredQuad(false,.5f,.5f)}
+        deny{SdkOperatorGeometry.requireCenteredQuad(true,Float.NaN,.5f)}
+        deny{SdkOperatorGeometry.requireCenteredQuad(true,.5f,1f)}
         val pose=SdkOperatorGeometry.project(doubleArrayOf(-1.05,1.4,1.3),doubleArrayOf(0.0,0.0,0.0,1.0))
         near(pose.center[0],-1.05);near(pose.center[1],1.4);near(pose.center[2],-1.3)
         near(pose.right[0],1.0);near(pose.up[1],1.0);near(pose.normal[2],1.0)

@@ -2292,6 +2292,8 @@ unsafe fn run_projection_frames(
         crate::marker("worldspace-input", format!("status=config trackedHandPointerSelected={} compactRigInputSelected={} handPointerSource=XR_EXT_hand_tracking handAdapterRequiredForRawPointer=false simultaneousTrackingRequired=false",
             crate::native_alternate_input::tracked_pointer_enabled_for_mode(render_mode.marker_value()),
             compact_hand_input_source_mode.selects_live_frame()));
+        #[cfg(native_meta_xr_operator)]
+        crate::marker("worldspace-input", "status=operator-policy inputPolicy=tracked-hands-first controllerFallback=true originalUiHandler=true");
     }
     let mut ui_particle_phase_frame = 0_u64;
     let experiment_frame_gate_clock = Instant::now();
@@ -2882,7 +2884,11 @@ unsafe fn run_projection_frames(
                     && ray.is_some_and(|ray| ray.valid)
                     && renderer_focus_session_state == "FOCUSED";
                 let (owner, hand_pressed, changed) = if alternate_input_enabled {
-                    alternate_pointer.update(controller_selected, ui_hand_sample)
+                    #[cfg(native_meta_xr_operator)]
+                    let selection = alternate_pointer.update_preferring_hands(controller_selected, ui_hand_sample);
+                    #[cfg(not(native_meta_xr_operator))]
+                    let selection = alternate_pointer.update(controller_selected, ui_hand_sample);
+                    selection
                 } else {
                     (
                         crate::native_alternate_input::PointerOwner::Controllers,

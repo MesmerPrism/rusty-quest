@@ -32,6 +32,12 @@ and optional experimental feature. Pass `-EnableMetaXrOperator` plus
 canonical builder. Its selected output and capsule include the external input
 fingerprint; vendor binaries remain local build inputs.
 
+That dedicated hand-test host prefers a valid tracked hand over an active
+controller pose and falls back to controllers when the hand is unavailable.
+It keeps the existing capture cancellation, open-pinch arming and original
+Android widget handler. Ordinary builds retain controller-first ownership;
+the Operator selection does not simulate or disable any controller itself.
+
 The Operator-only Cargo feature and locked build input jointly enable read-only
 `native_status.scene.input_geometry`. It joins the original Compute widget's
 current clipped layout/revision with the frozen panel pose after successful

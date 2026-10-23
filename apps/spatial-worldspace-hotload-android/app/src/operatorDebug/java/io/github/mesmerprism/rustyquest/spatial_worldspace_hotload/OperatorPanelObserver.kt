@@ -65,6 +65,7 @@ internal class OperatorPanelObserver(private val activityInstanceId:String) {
     }
     fun snapshot(host:JSONObject,active:Boolean,viewer:Pose?):JSONObject {
         val result=JSONObject().put("schema","rusty.quest.development_input_geometry.v1").put("status","pending")
+            .put("reason","awaiting-panel-layout")
             .put("host_kind","spatial-sdk").put("process_id",Process.myPid()).put("host_session_id",host.optString("host_session_id"))
             .put("owner_token",activityInstanceId).put("panel_generation",generation).put("layout_revision",layoutRevision)
             .put("evidence","sdk-ecs-panel-transform").put("source_coordinate_system","sdk-left-handed-z-forward")
@@ -76,22 +77,33 @@ internal class OperatorPanelObserver(private val activityInstanceId:String) {
         val v=view?:return result;val p=panel?:return result;val e=entity?:return result
         val b=bounds?:return result;val c=clipped?:return result
         result.put("surface_width_pixels",v.width).put("surface_height_pixels",v.height)
+            .put("view_attached_to_window",v.isAttachedToWindow).put("view_shown",v.isShown)
+            .put("view_visibility",v.visibility).put("view_window_visibility",v.windowVisibility)
+            .put("sdk_root_view_matches",p.rootView===v)
         val widget=JSONObject().put("id","compute").put("enabled",active).put("visible",false)
             .put("bounds_pixels",JSONArray(b.toList())).put("clipped_bounds_pixels",JSONArray(c.toList()))
         result.put("widget",widget)
-        if(!active||!v.isAttachedToWindow||!v.isShown)return result.put("status","unavailable")
+        if(!active)return result.put("status","unavailable").put("reason","scene-inactive")
+        if(!v.isAttachedToWindow)return result.put("status","unavailable").put("reason","view-not-attached")
+        if(!v.isShown)return result.put("status","unavailable").put("reason","view-not-shown")
         var current:View?=widgetView
         while(current!=null&&current!==v)current=current.parent as? View
-        if(current!==v||v.width!=rootWidth||v.height!=rootHeight)return result.put("status","stale")
+        if(current!==v||v.width!=rootWidth||v.height!=rootHeight)return result.put("status","stale").put("reason","layout-owner-or-size-changed")
+        var phase="panel-shape"
         try{
             val shape=requireNotNull(p.panelShapeConfig)
-            require(shape.panelShapeType==PanelShapeType.QUAD&&shape.pivotOffsetWidth==0f&&shape.pivotOffsetHeight==0f){"Only the current centered quad is qualified"}
+            result.put("panel_shape",shape.panelShapeType.name).put("pivot_offset_width",shape.pivotOffsetWidth)
+                .put("pivot_offset_height",shape.pivotOffsetHeight)
+            SdkOperatorGeometry.requireCenteredQuad(shape.panelShapeType==PanelShapeType.QUAD,shape.pivotOffsetWidth,shape.pivotOffsetHeight)
+            phase="ecs-pose"
             val pose=e.getComponent<Transform>().transform
             val rawT=doubleArrayOf(pose.t.x.toDouble(),pose.t.y.toDouble(),pose.t.z.toDouble())
             val rawQ=doubleArrayOf(pose.q.x.toDouble(),pose.q.y.toDouble(),pose.q.z.toDouble(),pose.q.w.toDouble())
             val mapped=SdkOperatorGeometry.project(rawT,rawQ)
             val width=shape.width.toDouble();val height=shape.height.toDouble()
+            phase="widget-bounds"
             val center=SdkOperatorGeometry.widget(v.width,v.height,b,c,width,height)
+            phase="viewer-facing"
             requireNotNull(viewer)
             val eye=doubleArrayOf(viewer.t.x.toDouble(),viewer.t.y.toDouble(),-viewer.t.z.toDouble())
             require(eye.all{it.isFinite()}&&mapped.normal.indices.sumOf{(eye[it]-mapped.center[it])*mapped.normal[it]}>0){"Panel front is not viewer-facing"}
@@ -101,9 +113,9 @@ internal class OperatorPanelObserver(private val activityInstanceId:String) {
                 .put("pose_revision",observedPose.poseRevision).put("effective_pose_revision",observedPose.effectivePoseRevision)
                 .put("center",JSONArray(mapped.center.toList())).put("orientation_xyzw",JSONArray(mapped.orientation.toList()))
                 .put("right",JSONArray(mapped.right.toList())).put("up",JSONArray(mapped.up.toList())).put("normal",JSONArray(mapped.normal.toList()))
-                .put("width_meters",width).put("height_meters",height).put("panel_visible",true).put("status","applied")
+                .put("width_meters",width).put("height_meters",height).put("panel_visible",true).put("status","applied").put("reason","qualified")
             widget.put("visible",true).put("center_panel_meters",JSONArray(center.toList()))
-        }catch(_:Exception){result.put("status","unavailable")}
+        }catch(_:Exception){result.put("status","unavailable").put("reason","invalid-$phase")}
         return result
     }
 }
