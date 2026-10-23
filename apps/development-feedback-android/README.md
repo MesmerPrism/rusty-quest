@@ -57,6 +57,12 @@ hashes before/after. It does not assemble, sign or execute an APK. Keep the
 landed module's existing `tools/Test-DevelopmentFeedback.ps1` conformance checks
 as the core validation; this consumer's tests do not replace them.
 
+Changes to the Gradle recipe also require an actual canonical APK build below.
+The Java, API typecheck and D8 checks do not compile Kotlin build scripts,
+configure AGP variants or execute asset preparation. Retain the canonical
+build's real terminal result, raw output and APK identity as source validation;
+a successful host check cannot stand in for this build.
+
 ## Canonical APK build
 
 The project pins AGP8.11.1, compile/target API34, min API26 and Build Tools36.0.0.

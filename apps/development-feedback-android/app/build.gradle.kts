@@ -1,5 +1,6 @@
 import java.nio.file.Files
 import java.nio.file.Paths
+import java.nio.file.StandardCopyOption
 
 plugins { id("com.android.application") }
 
@@ -26,7 +27,7 @@ val prepareFeedbackActivation = tasks.register("prepareFeedbackActivation") {
         require(!Files.isSymbolicLink(activationAssets.toPath())) { "Generated activation directory may not be aliased" }
         for ((input, name) in selected) {
             require(Files.isRegularFile(input.toPath()) && !Files.isSymbolicLink(input.toPath()) && input.length() <= 1048576) { "Selected activation input is absent, aliased or oversized" }
-            Files.copy(input.toPath(), activationAssets.toPath().resolve(name), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            Files.copy(input.toPath(), activationAssets.toPath().resolve(name), StandardCopyOption.REPLACE_EXISTING)
         }
     }
 }
@@ -65,7 +66,7 @@ android {
     }
 }
 // This project is a debug consumer only. It cannot produce a release carrying its controls.
-androidComponents { beforeVariants(selector().withBuildType("release")) { enable = false } }
+androidComponents { beforeVariants(selector().withBuildType("release")) { variantBuilder -> variantBuilder.enable = false } }
 tasks.named("preBuild") { dependsOn(prepareFeedbackActivation) }
 
 tasks.register("retainDebugApk") {
