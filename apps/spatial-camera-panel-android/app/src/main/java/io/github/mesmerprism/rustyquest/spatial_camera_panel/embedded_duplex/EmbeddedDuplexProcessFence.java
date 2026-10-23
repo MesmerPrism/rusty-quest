@@ -24,7 +24,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private final File directory;
     private boolean persistenceFailed;
     private final FileDescriptor descriptor;
-    private final FileOutputStream descriptorOwner;
+    private final FileOutputStream descriptorView;
     private final FileChannel channel;
     private final FileLock lock;
     private final DirectorySync directorySync;
@@ -73,14 +73,14 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         // FileChannel data operations close this lifetime descriptor on interrupt.
         FileDescriptor descriptor = Os.open(file.getAbsolutePath(),
                 OsConstants.O_RDWR | OsConstants.O_CLOEXEC | OsConstants.O_NOFOLLOW, 0);
-        FileOutputStream descriptorOwner = null;
+        FileOutputStream descriptorView = null;
         FileLock lock = null;
         try {
             if (!OsConstants.S_ISREG(Os.fstat(descriptor).st_mode)) {
                 throw new IllegalStateException("process fence opened file is not regular");
             }
-            descriptorOwner = new FileOutputStream(descriptor);
-            FileChannel channel = descriptorOwner.getChannel();
+            descriptorView = new FileOutputStream(descriptor);
+            FileChannel channel = descriptorView.getChannel();
             try { lock = channel.tryLock(); }
             catch (OverlappingFileLockException competing) {
                 throw new IllegalStateException("embedded process writer already held", competing);
@@ -138,7 +138,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 }
             }
             EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, descriptor,
-                    descriptorOwner, channel, lock,
+                    descriptorView, channel, lock,
                     sync, Math.addExact(priorGeneration, 1), pending, checkpointHash, evidenceHash);
             result.predecessorRecord = predecessorRecord;
             result.incarnation=incarnation;
@@ -148,18 +148,18 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             return result;
         } catch (Throwable failure) {
             try { if (lock != null) lock.release(); }
-            catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
-            try { if (descriptorOwner != null) descriptorOwner.close(); else Os.close(descriptor); }
-            catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
+            catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            try { closeDescriptor(descriptorView, descriptor); }
+            catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
             throw failure;
         }
     }
 
     private EmbeddedDuplexProcessFence(File directory, FileDescriptor descriptor,
-            FileOutputStream descriptorOwner, FileChannel channel, FileLock lock, DirectorySync sync,
+            FileOutputStream descriptorView, FileChannel channel, FileLock lock, DirectorySync sync,
             long generation, boolean pending, String checkpoint, String evidence) {
         this.directory = directory;
-        this.descriptor = descriptor; this.descriptorOwner = descriptorOwner;
+        this.descriptor = descriptor; this.descriptorView = descriptorView;
         this.channel = channel; this.lock = lock; this.directorySync = sync;
         this.generation = generation; this.nonce = UUID.randomUUID().toString();
         this.pending = pending; this.recoveryOnly = pending;
@@ -318,6 +318,18 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         }
         return bytes;
     }
+    private static void closeDescriptor(FileOutputStream view, FileDescriptor descriptor) throws Exception {
+        // Android's public FileOutputStream(fd) borrows fd. The fence owns it.
+        try { if (view != null) view.close(); }
+        catch (Throwable failure) {
+            try { if (descriptor.valid()) Os.close(descriptor); }
+            catch (Throwable cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+            if (failure instanceof Exception) throw (Exception) failure;
+            if (failure instanceof Error) throw (Error) failure;
+            throw new IllegalStateException("process fence descriptor close failed", failure);
+        }
+        if (descriptor.valid()) Os.close(descriptor);
+    }
     private void persist() throws Exception {
         requireLive(generation);
         try {
@@ -346,6 +358,6 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     }
     /** Release is resource management only; pending remains durable. */
     public synchronized void close() throws Exception {
-        try { if (lock.isValid()) lock.release(); } finally { descriptorOwner.close(); }
+        try { if (lock.isValid()) lock.release(); } finally { closeDescriptor(descriptorView, descriptor); }
     }
 }

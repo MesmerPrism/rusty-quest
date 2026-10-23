@@ -1204,7 +1204,11 @@ can then close the lifetime channel and invalidate its writer lock even though
 the durable record has not changed. App-fence record I/O therefore uses the same
 single descriptor through Android's public `Os` calls. Acquisition retains
 atomic `O_NOFOLLOW` and opens without create or truncate; the channel view is
-used only for writer exclusion and liveness. No second descriptor is opened for
+used only for writer exclusion and liveness. The fence explicitly closes its
+raw descriptor after closing the stream/channel view: Android's public stream
+constructor borrows an existing descriptor, as shown by the
+[libcore ownership handling](https://android.googlesource.com/platform/libcore/+/db41296f4b9b8d9fd0cded98779beaca5b109fb1/ojluni/src/main/java/java/io/FileOutputStream.java).
+No second descriptor is opened for
 the locked inode, no worker interrupt is cleared, and no new I/O thread is
 introduced. Bounded reads still compare the exact serialized record; writes
 still truncate, fsync and sync the directory/companion in the existing order.
