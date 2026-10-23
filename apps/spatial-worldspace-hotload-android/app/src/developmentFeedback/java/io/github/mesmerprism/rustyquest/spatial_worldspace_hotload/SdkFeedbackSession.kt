@@ -16,9 +16,15 @@ internal object SdkFeedbackSession {
     private var resident:ResidentFeedbackHost?=null
     private var visualLane="none"
     private var visualDelta:Long?=null
+    private var filesRoot:FrameworkFilesRoot?=null
+    @Synchronized fun filesDirectory(context:Context):File {
+        check(BuildConfig.DEBUG&&BuildConfig.DEVELOPMENT_FEEDBACK){"Development feedback unselected"}
+        return (filesRoot?:FrameworkFilesRoot(context.applicationContext.filesDir).also{filesRoot=it}).directory
+    }
     @Synchronized private fun host(context:Context):ResidentFeedbackHost {
         check(BuildConfig.DEBUG&&BuildConfig.DEVELOPMENT_FEEDBACK){"Development feedback unselected"}
-        return resident?:ResidentFeedbackHost(context.applicationContext.filesDir,AndroidDexLoader(),
+        val files=filesDirectory(context)
+        return resident?:ResidentFeedbackHost(files,AndroidDexLoader(),
             "${Process.myPid()}:${UUID.randomUUID()}").also{created->
                 val state=created.snapshot()
                 val descriptor=JSONObject().put("schema","rusty.quest.hotload_current_session.v1")
@@ -26,7 +32,7 @@ internal object SdkFeedbackSession {
                     .put("session_id",state.getValue("host_session_id"))
                     .put("host_session_id",state.getValue("host_session_id"))
                     .put("native_session_id",state.getValue("native_session_id"))
-                val directory=File(context.applicationContext.filesDir,"development-feedback")
+                val directory=File(files,"development-feedback")
                 val temporary=File.createTempFile("current-session-",".writing",directory)
                 FileOutputStream(temporary).use{it.write(descriptor.toString().toByteArray(Charsets.UTF_8));it.fd.sync()}
                 Files.move(temporary.toPath(),File(directory,"current-session.json").toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING)

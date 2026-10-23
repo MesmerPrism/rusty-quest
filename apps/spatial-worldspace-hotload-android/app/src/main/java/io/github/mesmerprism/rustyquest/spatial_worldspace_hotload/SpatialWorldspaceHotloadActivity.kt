@@ -59,7 +59,7 @@ class SpatialWorldspaceHotloadActivity : SessionOwnerActivity(), ProbeControlTar
     private var feedbackState by mutableStateOf("{}")
     private var feedbackVisualRevision=0L
     private var feedbackVisualValue:Long?=null
-    private val feedbackObservations by lazy{FeedbackObservationStore(filesDir)}
+    private val feedbackObservations by lazy{FeedbackObservationStore(SdkFeedbackSession.filesDirectory(this))}
     private var maskTexture: SceneTexture?=null
     private var replacementMaskTexture:SceneTexture?=null
     private var textureProbe="baseline"

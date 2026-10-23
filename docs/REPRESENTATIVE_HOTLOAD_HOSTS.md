@@ -102,8 +102,15 @@ Read `files/development-feedback-native/current-session.json` for native, or
 descriptor also identifies its native bridge session. Stage candidates with
 `stage <file> --kind native|dex|bridge|vertex|fragment --generation <id>` as
 appropriate. The operator computes the digest and publishes a completed readonly
-file into a create-new fixed target. Candidate bytes are never an arbitrary
+file into a fixed target under a create-new identity lock. Android app-data
+SELinux prohibits the hard-link publication used by some host filesystems, so
+the operator uses a no-clobber rename. The retained per-target lock serializes
+operator writers. A failed publication consumes that identity; choose a fresh
+generation/request instead of replaying it. Candidate bytes are never an arbitrary
 command path or provider extra.
+Binary input uses ADB `exec-in`; its exit alone does not establish remote
+completion. The operator reads back a nonce-bound completion marker and the
+target's SHA-256, size and readonly mode before reporting successful staging.
 
 Write one closed JSON command, then call `send <command.json> --journal <dir>`.
 For example, a native compute command is:

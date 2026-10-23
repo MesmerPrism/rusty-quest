@@ -58,13 +58,13 @@ class CommandContractTests(unittest.TestCase):
             self.assertEqual(0, publish("first.receiving"))
             for n in range(4):
                 self.assertNotEqual(0, publish(str(n) + ".receiving"))
-            self.assertEqual(["generation-1.so"], sorted(p.name for p in Path(root).iterdir()))
+            self.assertEqual(["generation-1.so", "generation-1.so.publish-lock"], sorted(p.name for p in Path(root).iterdir()))
             self.assertEqual(data, (Path(root) / "generation-1.so").read_bytes())
             # Independent failed hash has no retained temporary or destination.
             script = publication_script("generation-2.so", "bad.receiving", "0" * 64)
             result = subprocess.run([shell, "-c", script], cwd=root, input=data, capture_output=True)
             self.assertNotEqual(0, result.returncode)
-            self.assertEqual(["generation-1.so"], sorted(p.name for p in Path(root).iterdir()))
+            self.assertEqual(["generation-1.so", "generation-1.so.publish-lock", "generation-2.so.publish-lock"], sorted(p.name for p in Path(root).iterdir()))
 
 
 if __name__ == "__main__":

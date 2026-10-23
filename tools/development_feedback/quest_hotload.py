@@ -75,16 +75,30 @@ def create_json(path, value):
         stream.write("\n")
 
 
-def publication_script(target, temp, digest):
-    # Open the exact fresh file before installing cleanup, so failed creation
-    # cannot delete someone else's file. Cleanup runs on write/hash/link failure.
-    script = "set -eu; umask 077; set -C; test ! -e " + shlex.quote(target)
-    script += "; test ! -L " + shlex.quote(target) + "; exec 3> " + shlex.quote(temp)
-    script += "; trap " + shlex.quote("rm -f -- " + shlex.quote(temp)) + " 0"
-    script += "; cat >&3; exec 3>&-; chmod 400 " + shlex.quote(temp)
+def publication_scripts(target, temp, digest):
+    # Android app-data SELinux disallows hard links. A create-new, retained
+    # identity lock serializes compliant publishers before no-clobber rename.
+    # Failed publication consumes the identity; never replay an uncertain write.
+    prepare = "set -eu; umask 077; test ! -e " + shlex.quote(target)
+    prepare += "; test ! -L " + shlex.quote(target)
+    prepare += "; mkdir -- " + shlex.quote(target + ".publish-lock")
+    # Keep cat the final exec-in command, as in the proven Android DEX route.
+    # Finalization is a separate shell transaction with a remote exit status.
+    receive = "umask 077; set -C; cat > " + shlex.quote(temp)
+    script = "set -eu; set -C; trap " + shlex.quote("rm -f -- " + shlex.quote(temp)) + " 0"
+    script += "; chmod 400 " + shlex.quote(temp)
     script += "; test \"$(sha256sum " + shlex.quote(temp) + " | cut -d ' ' -f 1)\" = " + digest
-    script += "; ln " + shlex.quote(temp) + " " + shlex.quote(target)
-    return script
+    script += "; test ! -e " + shlex.quote(target) + "; test ! -L " + shlex.quote(target)
+    script += "; mv -n -- " + shlex.quote(temp) + " " + shlex.quote(target)
+    script += "; test ! -e " + shlex.quote(temp)
+    proof = hashlib.sha256(temp.encode()).hexdigest()
+    script += "; printf '%s' " + proof + " > " + shlex.quote(target + ".publish-lock/complete")
+    return prepare, receive, script
+
+
+def publication_script(target, temp, digest):
+    """Combined form for actual POSIX filesystem regression checks."""
+    return "; ".join(publication_scripts(target, temp, digest))
 
 
 class Operator:
@@ -93,10 +107,13 @@ class Operator:
         self.package = PACKAGES[args.host]
 
     def shell(self, command, data=None, check=True):
-        result = subprocess.run([self.args.adb, "-s", self.args.serial, "shell", "-T", command],
+        # exec-in preserves complete binary stdin with the selected Android
+        # run-as route. Its exit is transport-only; publish verifies app bytes.
+        route = ["exec-in", command] if data is not None else ["shell", "-T", command]
+        result = subprocess.run([self.args.adb, "-s", self.args.serial] + route,
                                 input=data, capture_output=True, timeout=15)
         if check and result.returncode:
-            raise RuntimeError("adb command failed: " + result.stderr.decode(errors="replace")[:512])
+            raise RuntimeError("adb command failed (" + str(result.returncode) + "): " + result.stderr.decode(errors="replace")[:512])
         return result
 
     def app(self, script, data=None, check=True):
@@ -130,11 +147,24 @@ class Operator:
         return value
 
     def publish(self, target, data):
-        # Link a completed readonly temporary file into a create-new fixed target.
+        # Publish a completed readonly temporary into an identity-locked target.
         # No overwrite, shared external staging directory, or caller-supplied path.
         temp = target + ".receiving-" + uuid.uuid4().hex
         digest = hashlib.sha256(data).hexdigest()
-        self.app(publication_script(target, temp, digest), data)
+        prepare, receive, finalize = publication_scripts(target, temp, digest)
+        self.app(prepare)
+        try:
+            self.app(receive, data)
+            self.app(finalize)
+        except BaseException:
+            self.app("rm -f -- " + shlex.quote(temp), check=False)
+            raise
+        # Correlate this exact publication, not an older equal-byte target.
+        expected = hashlib.sha256(temp.encode()).hexdigest()
+        proof = self.app("cat " + shlex.quote(target + ".publish-lock/complete")).stdout.decode().strip()
+        actual = self.app("sha256sum -- " + shlex.quote(target) + "; stat -c '%a:%s' " + shlex.quote(target)).stdout.decode().split()
+        if proof != expected or len(actual) != 3 or actual[0] != digest or actual[2] != "400:" + str(len(data)):
+            raise RuntimeError("Publication unconfirmed; preserve identity and observe original request")
 
     def stage(self, source, kind, generation):
         self.identity()

@@ -101,6 +101,10 @@ Only an explicit debug command-line selection compiles the shared core and
 inventories, stages and rechecks them. Release and unselected debug builds use an
 inert adapter without shared loader linkage. The process-owned host retains code,
 counter and buffer; each Activity owns its scene/texture resources independently.
+The selected SDK adapter resolves its trusted framework application-files path
+to its physical directory once per process. The shared host, session descriptor
+and observation store receive that same directory; strict owner containment
+checks remain in force for all derived paths and staged artifacts.
 Successful native/DEX computations update the existing CPU texture's marker
 spacing and color. The projection uses the actual native value difference;
 trusted DEX result projection subtracts input and the pre-dispatch host counter.
