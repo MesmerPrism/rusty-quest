@@ -166,3 +166,25 @@ finalizer tasks before execution. It accepts explicit Gradle/Java/android.jar
 paths and fresh output and optional reusable fixture Gradle-home paths under
 `target/`. This checks managed task metadata and graph behavior, not an Android
 app build or media runtime.
+
+The shared Spatial Camera Panel builder accepts optional absolute `CargoPath`
+and `RustupPath` selections. Unspecified applications must resolve uniquely;
+invalid explicit paths and ambiguous applications fail closed. With
+`RequireInstalledRustTarget`, a missing Android Rust target is refused before
+target installation. Existing defaults remain available when that switch is absent.
+
+`SpatialCameraPanelBuildPrerequisites.psm1` owns Android/Java/NDK/Gradle and
+signer prerequisite observations. The builder consumes its result before compiler
+staging. Evidence uses a fresh non-overlapping directory; signer secrets are not
+recorded. `WaitPolicy` defaults to `Bounded`; explicit `Retained` keeps the same
+mutex or asynchronous operation after an advisory estimate, including through
+the actual pinned Gradle resolver. Hash, path, redirect, size, actual cancellation,
+and cleanup checks remain mandatory. This platform adapter adds no workflow
+context authority or application media/provider policy.
+
+The focused `Test-SpatialCameraPanelBuildWorkflowStatic.ps1
+-PrerequisiteCompatibilityOnly` controls use independent fixture mutex/task
+owners, actual executable selection and an absent-cache resolver refusal.
+Optional explicit prerequisite input/output arguments qualify existing platform
+tools with a fresh fixture signer. These are host prerequisite controls; they
+do not establish APK, application adoption or runtime behavior.
