@@ -155,3 +155,36 @@ and Kotlin APIs, Java/Kotlin signature mismatch, source add/change, unchanged
 configuration-cache reuse, unexpected dependency/finalizer refusal and stale
 source rejection. The `graph` scenario isolates the latter affected controls.
 No native task, APK packaging or device operation is part of this fixture.
+
+`Test-AndroidComponentMediaAarGraph.py` uses the complete media library Gradle
+script with a small host Java payload to exercise its actual Java/Jar/Zip AAR
+chain through the unchanged task classifier. A custom AAR archive must declare
+`archiveExtension = "aar"`; an explicit `.aar` filename alone leaves a `Zip`
+task's extension metadata as `zip`. The fixture checks the unchanged output
+filename and archive entry payloads, and refuses extra ZIP, APK and native
+finalizer tasks before execution. It accepts explicit Gradle/Java/android.jar
+paths and fresh output and optional reusable fixture Gradle-home paths under
+`target/`. This checks managed task metadata and graph behavior, not an Android
+app build or media runtime.
+
+The shared Spatial Camera Panel builder accepts optional absolute `CargoPath`
+and `RustupPath` selections. Unspecified applications must resolve uniquely;
+invalid explicit paths and ambiguous applications fail closed. With
+`RequireInstalledRustTarget`, a missing Android Rust target is refused before
+target installation. Existing defaults remain available when that switch is absent.
+
+`SpatialCameraPanelBuildPrerequisites.psm1` owns Android/Java/NDK/Gradle and
+signer prerequisite observations. The builder consumes its result before compiler
+staging. Evidence uses a fresh non-overlapping directory; signer secrets are not
+recorded. `WaitPolicy` defaults to `Bounded`; explicit `Retained` keeps the same
+mutex or asynchronous operation after an advisory estimate, including through
+the actual pinned Gradle resolver. Hash, path, redirect, size, actual cancellation,
+and cleanup checks remain mandatory. This platform adapter adds no workflow
+context authority or application media/provider policy.
+
+The focused `Test-SpatialCameraPanelBuildWorkflowStatic.ps1
+-PrerequisiteCompatibilityOnly` controls use independent fixture mutex/task
+owners, actual executable selection and an absent-cache resolver refusal.
+Optional explicit prerequisite input/output arguments qualify existing platform
+tools with a fresh fixture signer. These are host prerequisite controls; they
+do not establish APK, application adoption or runtime behavior.
