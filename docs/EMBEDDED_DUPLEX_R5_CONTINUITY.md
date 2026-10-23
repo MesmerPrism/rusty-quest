@@ -851,6 +851,24 @@ the primary error, or authority. Reads invoke no eligibility callback or SDK
 operation. The Java reader also accepts the unchanged v1 envelope; neither
 version certifies physical eligibility, cleanup, Pair, or streaming success.
 
+## Ordinary remote proof observation
+
+The existing `native_owner_dispatch_failure` first-cause observation distinguishes
+exact native ordinary-executor errors for remote response binding/signature,
+enrolled key, proof identity/binding, target ticket/evidence, recursive proof,
+source wrapper, effect comparison/decoding, and current-route ticket/configuration.
+The finite `ORDINARY_REMOTE_*` and `ORDINARY_ROUTE_*` codes carry no payload,
+identity, request, signature, or exception text. The original Result is unchanged;
+later compensation cannot replace the first observation. Other retained stages
+keep their existing codes even when the same error literal reaches them.
+
+This exact literal set is intentionally bounded. Unlisted frame/decode errors,
+other authority rejection strings and altered or suffixed literals still produce
+`RETAINED_ORDINARY_CALLBACK`. The observation does not certify response acceptance,
+owner completion, cleanup or streaming, and does not repair a rejected effect.
+`tools/checks/Test-RetainedOwnerDiagnosticsHost.py` runs the production cause/latch
+controls and modeled JNI exception bodies; no Android or device result is inferred.
+
 ## Failed initialization observation
 
 The existing debug `owner_failure_diagnostic` read also supports an initialization

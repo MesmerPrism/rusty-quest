@@ -88,6 +88,24 @@ fn ordinary_cause(error: &str) -> Option<&'static str> {
         "remote owner dispatch rejected" => "ORDINARY_REMOTE_DISPATCH_REJECTED",
         "verified owner effect mismatch" => "ORDINARY_VERIFIED_EFFECT_MISMATCH",
         "verified readback JSON is invalid" => "ORDINARY_READBACK_INVALID",
+        "dispatch response binding mismatch" => "ORDINARY_REMOTE_RESPONSE_BINDING",
+        "dispatch response signature" | "remote owner signature" => {
+            "ORDINARY_REMOTE_RESPONSE_SIGNATURE"
+        }
+        "remote owner key" => "ORDINARY_REMOTE_KEY",
+        "remote owner proof identity differs" => "ORDINARY_REMOTE_PROOF_IDENTITY",
+        "remote owner response binding differs" => "ORDINARY_REMOTE_PROOF_BINDING",
+        "remote source/target ticket mismatch" => "ORDINARY_REMOTE_TARGET_TICKET",
+        "remote target ticket missing" => "ORDINARY_REMOTE_TARGET_TICKET_MISSING",
+        "remote target evidence missing" => "ORDINARY_REMOTE_TARGET_EVIDENCE_MISSING",
+        "recursive remote owner proof" => "ORDINARY_REMOTE_RECURSIVE_PROOF",
+        "remote source wrapper differs" => "ORDINARY_REMOTE_SOURCE_WRAPPER",
+        "remote effect differs from signed target" => "ORDINARY_REMOTE_EFFECT_COMPARISON",
+        "remote decoded effect differs" => "ORDINARY_REMOTE_EFFECT_DECODE",
+        "ticket is outside current route authority" => "ORDINARY_ROUTE_TICKET_AUTHORITY",
+        "current route differs from packaged control/media configuration" => {
+            "ORDINARY_ROUTE_CONFIGURATION"
+        }
         "runtime busy" => "ORDINARY_RUNTIME_BUSY",
         "runtime slot poisoned" => "ORDINARY_RUNTIME_POISONED",
         "java_bridge.execute_call" | "java_bridge.execute_call.exception" => {
@@ -126,32 +144,124 @@ mod tests {
     use super::*;
     #[test]
     fn ordinary_cause_is_exact_closed_first_and_never_rewrites_result() {
-        for error in [
-            "remote platform effect uncertain",
-            "remote owner dispatch rejected",
-            "verified owner effect mismatch",
-            "verified readback JSON is invalid",
-            "runtime busy",
-            "runtime slot poisoned",
-            "java_bridge.execute_call",
-            "java_bridge.execute_call.exception",
-            "java_bridge.attach",
+        for (error, expected) in [
+            (
+                "remote platform effect uncertain",
+                "ORDINARY_REMOTE_EFFECT_UNCERTAIN",
+            ),
+            (
+                "remote owner dispatch rejected",
+                "ORDINARY_REMOTE_DISPATCH_REJECTED",
+            ),
+            (
+                "verified owner effect mismatch",
+                "ORDINARY_VERIFIED_EFFECT_MISMATCH",
+            ),
+            (
+                "verified readback JSON is invalid",
+                "ORDINARY_READBACK_INVALID",
+            ),
+            ("runtime busy", "ORDINARY_RUNTIME_BUSY"),
+            ("runtime slot poisoned", "ORDINARY_RUNTIME_POISONED"),
+            (
+                "java_bridge.execute_call",
+                "ORDINARY_JAVA_CALLBACK_REJECTED",
+            ),
+            (
+                "java_bridge.execute_call.exception",
+                "ORDINARY_JAVA_CALLBACK_REJECTED",
+            ),
+            ("java_bridge.attach", "ORDINARY_JAVA_ATTACH_UNAVAILABLE"),
+            (
+                "dispatch response binding mismatch",
+                "ORDINARY_REMOTE_RESPONSE_BINDING",
+            ),
+            (
+                "dispatch response signature",
+                "ORDINARY_REMOTE_RESPONSE_SIGNATURE",
+            ),
+            (
+                "remote owner signature",
+                "ORDINARY_REMOTE_RESPONSE_SIGNATURE",
+            ),
+            ("remote owner key", "ORDINARY_REMOTE_KEY"),
+            (
+                "remote owner proof identity differs",
+                "ORDINARY_REMOTE_PROOF_IDENTITY",
+            ),
+            (
+                "remote owner response binding differs",
+                "ORDINARY_REMOTE_PROOF_BINDING",
+            ),
+            (
+                "remote source/target ticket mismatch",
+                "ORDINARY_REMOTE_TARGET_TICKET",
+            ),
+            (
+                "remote target ticket missing",
+                "ORDINARY_REMOTE_TARGET_TICKET_MISSING",
+            ),
+            (
+                "remote target evidence missing",
+                "ORDINARY_REMOTE_TARGET_EVIDENCE_MISSING",
+            ),
+            (
+                "recursive remote owner proof",
+                "ORDINARY_REMOTE_RECURSIVE_PROOF",
+            ),
+            (
+                "remote source wrapper differs",
+                "ORDINARY_REMOTE_SOURCE_WRAPPER",
+            ),
+            (
+                "remote effect differs from signed target",
+                "ORDINARY_REMOTE_EFFECT_COMPARISON",
+            ),
+            (
+                "remote decoded effect differs",
+                "ORDINARY_REMOTE_EFFECT_DECODE",
+            ),
+            (
+                "ticket is outside current route authority",
+                "ORDINARY_ROUTE_TICKET_AUTHORITY",
+            ),
+            (
+                "current route differs from packaged control/media configuration",
+                "ORDINARY_ROUTE_CONFIGURATION",
+            ),
         ] {
             let slot = Mutex::new(None);
             assert_eq!(
                 observe::<()>(Err(error.into()), &slot, Stage::OrdinaryCallback),
                 Err(error.into())
             );
-            let first = ordinary_cause(error).unwrap();
-            assert_eq!(*slot.lock().unwrap(), Some(first));
+            assert_eq!(*slot.lock().unwrap(), Some(expected));
             assert!(observe::<()>(
                 Err("later private cleanup".into()),
                 &slot,
                 Stage::SourceReadback
             )
             .is_err());
-            assert_eq!(*slot.lock().unwrap(), Some(first));
+            assert_eq!(*slot.lock().unwrap(), Some(expected));
             assert_eq!(observe(Ok(7), &slot, Stage::OrdinaryCallback), Ok(7));
+            for altered in [
+                format!(" {error}"),
+                format!("{error};private"),
+                format!("{error}\nprivate"),
+            ] {
+                let unknown = Mutex::new(None);
+                assert_eq!(
+                    observe::<()>(Err(altered.clone()), &unknown, Stage::OrdinaryCallback),
+                    Err(altered)
+                );
+                assert_eq!(*unknown.lock().unwrap(), Some("RETAINED_ORDINARY_CALLBACK"));
+            }
+            let retained = Mutex::new(None);
+            assert_eq!(
+                observe::<()>(Err(error.into()), &retained, Stage::RemoteProof),
+                Err(error.into())
+            );
+            assert_eq!(*retained.lock().unwrap(), Some("RETAINED_REMOTE_PROOF"));
         }
         for error in [
             "private payload",
