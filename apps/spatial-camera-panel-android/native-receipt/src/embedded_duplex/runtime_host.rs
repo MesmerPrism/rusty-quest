@@ -1643,10 +1643,12 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             return result;
         }
         if bytes.starts_with(retained_cleanup_host::PREPARE_MAGIC) {
-            let result = owner_failure::observe(
+            let result = retained_cleanup_host::observe_incoming(
                 host.cleanup.prepare_frame(&bytes),
                 &host.owner_dispatch_failure,
                 OwnerFailureStage::Prepare,
+                "incoming_retained_prepare",
+                &bytes,
             );
             owner_failure::observe(
                 host.capability.require_live(),
@@ -1660,7 +1662,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         >(&bytes)
         {
             host.owner_effect_attempted.store(true, Ordering::SeqCst);
-            let result = owner_failure::observe(
+            let result = retained_cleanup_host::observe_incoming(
                 (|| {
                     Checkout::take(host.cleanup_server.clone())?
                         .get()
@@ -1668,6 +1670,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
                 })(),
                 &host.owner_dispatch_failure,
                 OwnerFailureStage::Dispatch,
+                "incoming_retained_dispatch",
+                &bytes,
             );
             owner_failure::observe(
                 host.capability.require_live(),

@@ -3,6 +3,8 @@ use super::super::preparation_native_guard::{
     FailureReason as NativeReason, Guard as NativeGuard, Trace as NativeTrace,
 };
 use super::*;
+#[path = "cleanup_admission.rs"]
+mod cleanup_admission;
 use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_quest_media_stream_android::*;
 use serde::{Deserialize, Serialize};
@@ -78,10 +80,46 @@ pub(super) struct Cleanup {
     remote_key: [u8; 32],
     generation: u64,
     poisoned: Arc<AtomicBool>,
-    serial: Arc<Mutex<Option<()>>>,
+    serial: Arc<cleanup_admission::Admission>,
     state: Arc<Mutex<PreparedState>>,
     pub(super) requester: Arc<Mutex<Option<Requester>>>,
     failure: Arc<Mutex<Option<&'static str>>>,
+}
+// The first-latch owner code remains independent of current request diagnostics.
+pub(super) fn observe_incoming<T>(
+    result: Result<T, String>,
+    failure: &Mutex<Option<&'static str>>,
+    stage: OwnerFailureStage,
+    boundary: &'static str,
+    frame: &[u8],
+) -> Result<T, String> {
+    let result = owner_failure::observe(result, failure, stage);
+    if let (Err(error), Some(operation)) = (
+        &result,
+        super::super::operation_diagnostics::scope().current(),
+    ) {
+        operation.record(
+            rusty_quest_media_stream::FailureInput::new(
+                rusty_quest_media_stream::DiagnosticPhase::Cleanup,
+                rusty_quest_media_stream::DiagnosticLayer::Rust,
+                "retained_cleanup_ingress",
+                boundary,
+                "retained_cleanup",
+                "unclassified",
+            )
+            .private_context(vec![
+                rusty_quest_media_stream::PrivateFailureChunk {
+                    name: "error",
+                    bytes: error.as_bytes(),
+                },
+                rusty_quest_media_stream::PrivateFailureChunk {
+                    name: "request_frame",
+                    bytes: frame,
+                },
+            ]),
+        );
+    }
+    result
 }
 fn key(t: &AndroidMediaExecutionTicket) -> String {
     format!(
@@ -121,7 +159,7 @@ impl Cleanup {
         self.require_state()?;
         let serial = self
             .serial
-            .try_lock()
+            .try_enter()
             .map_err(|_| "construction cleanup serial busy")?;
         if serial.is_none()
             || self
@@ -162,7 +200,7 @@ impl Cleanup {
         trace.mark(NativeGuard::CleanupSerial, NativeReason::CallFailed);
         let serial = self
             .serial
-            .try_lock()
+            .try_enter()
             .map_err(|_| "fresh cleanup mutation busy")?;
         if serial.is_none() {
             return Err("fresh cleanup mutation checked out".into());
@@ -287,7 +325,7 @@ impl Cleanup {
             remote_key,
             generation,
             poisoned: Arc::new(AtomicBool::new(false)),
-            serial: Arc::new(Mutex::new(Some(()))),
+            serial: Arc::new(cleanup_admission::Admission::default()),
             state: Arc::new(Mutex::new(state)),
             requester: Arc::new(Mutex::new(None)),
             failure,
@@ -398,8 +436,8 @@ impl Cleanup {
     pub(super) fn prepare_frame(&self, bytes: &[u8]) -> Result<Vec<u8>, String> {
         let mut failure_stage = OwnerFailureStage::IncomingPrepare;
         let result = (|| {
+            let _mutation = self.serial.enter()?;
             self.require_state()?;
-            let _mutation = Checkout::take(self.serial.clone())?;
             if bytes.len() > 128 * 1024 || !bytes.starts_with(PREPARE_MAGIC) {
                 return Err("cleanup prepare frame bounds".into());
             }
@@ -575,9 +613,11 @@ impl RetainedCleanupAuthoritySource for Cleanup {
     fn current_source(
         &self,
         request: &RetainedCleanupDispatchRequest,
-        now: u64,
+        _observed_now: u64,
     ) -> Result<RetainedCleanupLiveSource, String> {
+        let _observation = self.serial.enter()?;
         self.require_state()?;
+        let now = self.clock.now_ms()?;
         let prepared = self
             .state
             .lock()
@@ -625,6 +665,18 @@ impl RetainedCleanupAuthoritySource for Cleanup {
         if current != prepared.authority || request.cleanup.target != prepared.target_ticket {
             return Err("prepared cleanup authority/target changed".into());
         }
+        // The server's sample preceded admission. Revalidate the complete signed
+        // request against the refreshed clock before its replay/effect admission.
+        verify_signed_retained_cleanup_request(
+            request,
+            &current,
+            &prepared.target_ticket,
+            self.generation,
+            &self.local,
+            &self.remote_key_id,
+            &self.remote_key,
+            now,
+        )?;
         Ok(RetainedCleanupLiveSource {
             projection: current,
             expected_target: prepared.target_ticket,
@@ -668,8 +720,44 @@ impl RetainingRegistry {
         target_ticket: &AndroidMediaExecutionTicket,
         mode: AndroidMediaExecutionMode,
     ) -> Result<AuthenticatedOwnerEffect, String> {
+        let _mutation = self.cleanup.serial.enter()?;
         self.cleanup.require_state()?;
-        let _mutation = Checkout::take(self.cleanup.serial.clone())?;
+        if let Some(original) = authority.filter(|a| {
+            a.authority_peer_id == self.cleanup.local && a.executor_peer_id == self.cleanup.local
+        }) {
+            // A local projection was read before waiting. Reborrow the actual
+            // C1 source (including its existing Stop fallback), never a clone
+            // of Broker authority. Remote projections retain their independent
+            // receiving-peer enrollment admission below.
+            let now = self.cleanup.clock.now_ms()?;
+            let source = rusty_quest_broker_authority::QuestEmbeddedDuplexProjectionSource::new(
+                self.cleanup.authority.clone(),
+                serde_json::from_value(json!(original.route_grant_id)).map_err(safe_decode)?,
+                serde_json::from_value(json!(original.authority_peer_id)).map_err(safe_decode)?,
+            );
+            let current = source.current_projection(ticket, &self.cleanup.local, mode, now)?;
+            // The live receipt digest includes its observation time. Join the
+            // route identity and authority instead; never extend held expiry.
+            if original.schema_id != current.schema_id
+                || original.authority_peer_id != current.authority_peer_id
+                || original.executor_peer_id != current.executor_peer_id
+                || original.peer_session_id != current.peer_session_id
+                || original.route_grant_id != current.route_grant_id
+                || original.route_authority_revision != current.route_authority_revision
+                || original.authority_runtime_host_id != current.authority_runtime_host_id
+                || original.authority_provider_epoch_id != current.authority_provider_epoch_id
+                || original.platform_runtime_spec_id != current.platform_runtime_spec_id
+                || original.authority_client_id != current.authority_client_id
+                || original.authority_runtime_lease_id != current.authority_runtime_lease_id
+                || original.signed_topology_sha256 != current.signed_topology_sha256
+                || original.route_configuration_sha256 != current.route_configuration_sha256
+                || original.authorization_kind != current.authorization_kind
+                || original.expires_at_ms <= now
+                || original.expires_at_ms > current.expires_at_ms
+            {
+                return Err("cleanup admission current authority differs".into());
+            }
+        }
         // Abort carriers retain operation=Start, but Stop/Cleanup must never
         // replace the forward ticket/projection needed to authenticate cleanup.
         let retain_forward = ticket.operation == MediaStreamPlatformOperation::Start
@@ -1190,3 +1278,7 @@ impl AndroidMediaOwnerExecutor for Executor {
         }
     }
 }
+
+#[cfg(all(test, not(target_os = "android")))]
+#[path = "retained_cleanup_admission_tests.rs"]
+mod admission_tests;

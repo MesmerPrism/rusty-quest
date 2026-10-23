@@ -1327,3 +1327,42 @@ python tools/checks/Test-ProcessFenceInterruptHost.py `
   --prepared-classes <prepared-capture-readiness-host/classes> `
   --android-jar <selected-android.jar>
 ```
+
+
+### Concurrent cleanup transaction admission
+
+The native cleanup owner distinguishes an in-flight durable commit from a failed
+commit. Local outgoing and incoming peer registries share one cleanup admission
+owner. A distinct thread waits for the current transaction to join before reading
+its durable-uncertain flag; same-thread callback reentry still refuses `runtime
+busy`. No admission mutex crosses a Java callback, network exchange, or condition
+wait. The original durable-before-effect transaction extent is unchanged. A failed
+persistence leaves uncertainty latched and wakes waiters only to refuse effects.
+
+This is owned pending admission, not a retry, new authority, or hard wall-clock
+completion promise. A stuck prior callback retains its actual obligation; no timer
+fabricates its retirement. Snapshots and fresh-setup eligibility remain nonwaiting.
+The retained-cleanup source rechecks its complete signed request and current clock
+after admission, so waiting cannot extend freshness or requester authority. Local
+registry projections are reborrowed through the existing C1 projection source
+with its unchanged Stop fallback. Route identity and bounded held expiry must
+still match; a refreshed observation-receipt digest alone is not a route change.
+Incoming remote originals keep their receiving-peer enrollment guard rather than
+fabricating a route in the receiver's distinct local Broker.
+
+The full native owner host fixture compiles production modules directly by path.
+Its barriers cover the real persistence/state transaction and provider callback;
+JVM filesystem/provider effects and authority/clock leaves are explicitly modeled.
+These controls prove admission and preserved guards, not headset media or physical
+cleanup. The fixture entry is `tools/checks/fixtures/cleanup_admission_host.rs`;
+its Cargo data selects the existing media crates and retained host dependency graph.
+
+Receiving retained Prepare/dispatch failures also preserve the exact bounded
+incoming frame with the current raw error in the existing private diagnostic
+context. Public data names only the closed receiving boundary; it does not invent
+a local Original or publish request material. The earlier first-failure latch,
+returned error, endpoint close/no-reply, replay and ACK behavior remain unchanged.
+This enables correlation of future receiving failures; it is not a fix or a
+retrospective explanation for a caller's EOF. Two-peer in-memory signed dispatch
+controls exercise real Composite/server/retaining paths with modeled platform
+leaves; separate actual endpoint controls cover handler throw/no-reply semantics.
