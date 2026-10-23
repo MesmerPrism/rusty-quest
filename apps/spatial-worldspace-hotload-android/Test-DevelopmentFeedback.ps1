@@ -18,7 +18,7 @@ $sharedSources+=Join-Path $repoRoot 'android/development-feedback/src/host/java/
 $javac=Join-Path (Split-Path $Java) 'javac.exe'
 $jars=@($CompilerClasspath|ForEach-Object{(Resolve-Path -LiteralPath $_).Path})+@((Resolve-Path -LiteralPath $JsonJar).Path)
 $tools=@((Resolve-Path -LiteralPath $Java).Path,(Resolve-Path -LiteralPath $Python).Path,(Resolve-Path -LiteralPath $javac).Path)+$jars
-$inputs=$sources+$sharedSources+@($PSCommandPath,(Join-Path $PSScriptRoot 'Prepare-DevelopmentFeedbackInputs.py'),(Join-Path $PSScriptRoot 'Test-DevelopmentFeedbackInputs.py'))
+$inputs=$sources+$sharedSources+@($PSCommandPath,(Join-Path $PSScriptRoot 'Prepare-DevelopmentFeedbackInputs.py'),(Join-Path $PSScriptRoot 'Test-DevelopmentFeedbackInputs.py'),(Join-Path $PSScriptRoot 'Test-DevelopmentShader.py'),(Join-Path $PSScriptRoot 'app/src/shaders/workload.vert'))
 function Bind([string[]]$Paths){@($Paths|Sort-Object -Unique|ForEach-Object{[ordered]@{path=$_;sha256=(Get-FileHash -LiteralPath $_).Hash.ToLowerInvariant()}})}
 $before=Bind ($inputs+$tools);$steps=[Collections.Generic.List[object]]::new();$status='failed'
 function Run([string]$Name,[string]$Tool,[string[]]$Arguments){
@@ -45,6 +45,7 @@ try{
     foreach($test in @('WorkloadContractHostTest','AtlasDiagnosticHostTest','WorkloadTopologyHostTest','DevelopmentSceneHostTest','FeedbackObservationHostTest','FrameworkFilesHostTest')){
         Run $test $Java @('-cp',$runtime,('io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.'+$test),$packet)
     }
+    Run 'actual-atlas-shader-layout' $Python @((Join-Path $PSScriptRoot 'Test-DevelopmentShader.py'),'--header',(Join-Path $output 'development-atlas-header.json'))
     $status='passed'
 }finally{
     $after=Bind ($inputs+$tools);$match=($before|ConvertTo-Json -Depth 4 -Compress)-ceq($after|ConvertTo-Json -Depth 4 -Compress)

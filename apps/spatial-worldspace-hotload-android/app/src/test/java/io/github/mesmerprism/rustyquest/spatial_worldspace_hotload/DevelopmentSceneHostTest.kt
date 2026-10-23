@@ -16,6 +16,7 @@ object DevelopmentSceneHostTest {
         check(WorkloadTopology.plan("p512",descriptor).vertices==2048)
         try{WorkloadTopology.plan("hfull",descriptor);error("Public packet admitted hand topology")}catch(_:IllegalArgumentException){}
         val bytes=AtlasPacket.reference(layout);val originalHeader=ByteArray(256);bytes.duplicate().get(originalHeader)
+        Files.write(assets.parent.parent.resolve("development-atlas-header.json"),org.json.JSONArray((0..47).map{AtlasPacket.readHeader(originalHeader,it)}).toString().toByteArray(Charsets.UTF_8))
         fun point():Float {
             var bits=0;repeat(4){bits=bits or ((bytes.get(AtlasPacket.byteOffset(AtlasPacket.HEADER_TEXELS*3+it)).toInt() and 255) shl (it*8))}
             return Float.fromBits(bits)

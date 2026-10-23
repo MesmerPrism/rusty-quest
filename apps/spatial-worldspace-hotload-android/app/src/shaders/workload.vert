@@ -1,6 +1,9 @@
 #version 430
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
+#ifndef RQ_DEVELOPMENT_FEEDBACK
+#define RQ_DEVELOPMENT_FEEDBACK 0
+#endif
 #include <data/shaders/common.glsl>
 #include <data/shaders/app2vertex.glsl>
 #include <data/shaders/metaSpatialSdkCommon.glsl>
@@ -27,6 +30,15 @@ uint byteAt(uint b) {
 }
 uint word(uint b){return byteAt(b)|(byteAt(b+1u)<<8u)|(byteAt(b+2u)<<16u)|(byteAt(b+3u)<<24u);}
 uint header(uint w){return word(w*4u);}
+bool packetLayoutValid(){
+#if RQ_DEVELOPMENT_FEEDBACK
+    return header(6u)==0u&&header(7u)==512u&&header(8u)==0u&&header(10u)==512u
+        &&header(14u)==0u&&header(16u)==0u&&header(25u)<=512u&&header(26u)==0u&&header(27u)==0u&&header(28u)==0u;
+#else
+    return header(7u)==2562u&&header(8u)==17934u&&(header(10u)==20496u||header(10u)==20498u)
+        &&header(25u)<=2562u&&header(26u)<=17934u;
+#endif
+}
 bool finite3(vec3 v){return !any(isnan(v))&&!any(isinf(v));}
 bool handCornerValid(uint record,uint frame,uint generation){
     uint b=(64u+record*8u)*3u;
@@ -45,11 +57,11 @@ void main(){
     uint expectedGeneration=uint(round(material.meshFlags.z))|((sourceAndHigh&65535u)<<16u);
     bool valid=all(equal(textureSize(atlas,0),ivec2(1024)))&&header(0u)==0x34415752u&&header(1u)==4u
         &&header(2u)==1024u&&header(3u)==1024u&&header(29u)==1u&&header(35u)==1u
-        &&header(7u)==2562u&&header(8u)==17934u&&header(9u)==0u&&(header(10u)==20496u||header(10u)==20498u)
+        &&packetLayoutValid()&&header(9u)==0u
         &&header(11u)==header(10u)&&header(12u)==header(10u)&&header(13u)==2u*header(10u)
         &&header(14u)<131064u&&header(16u)<131064u&&header(15u)==header(13u)+header(14u)
         &&header(15u)+header(16u)<=131064u&&header(14u)%3u==0u&&header(16u)%3u==0u
-        &&header(25u)<=2562u&&header(26u)<=17934u&&header(4u)!=0u
+        &&header(4u)!=0u
         &&header(40u)==header(15u)+header(16u)&&header(41u)==2u&&header(42u)==header(40u)+2u&&header(43u)==2u
         &&header(42u)+header(43u)<=131064u
         &&header(30u)==floatBitsToUint(2.0)&&header(39u)==floatBitsToUint(16.0)
@@ -64,6 +76,9 @@ void main(){
         workloadColor=valid?(bit?vec4(1,1,1,1):vec4(.03,.03,.03,1)):vec4(1,0,0,1);drawable=1u;if(material.meshFlags.x>2.5)workloadColor=vec4(.35,.35,.35,1);
         if(material.meshFlags.x<2.5&&material.transportFlags.z>1.5)drawable=0u;
         world=g_PrimitiveUniform.worldFromObject*world;
+#if RQ_DEVELOPMENT_FEEDBACK
+        drawable=0u; // Legacy barcode and occluder are outside the selected public scene.
+#endif
     } else {
         ivec2 p=ivec2(round(app.uv*vec2(1024)-.5));int linear=p.y*1024+p.x;
         uint record=uint(max(0,(linear-64)/8));uint b=(64u+record*8u)*3u;

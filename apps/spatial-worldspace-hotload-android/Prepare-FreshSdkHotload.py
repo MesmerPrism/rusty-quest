@@ -26,7 +26,7 @@ def headers(root):
     return {p.relative_to(root).as_posix(): record(p)['sha256'] for p in sorted(root.rglob('*.glsl'))}
 
 
-def prepare(source, baseline_path, output, tools, header_root, config_path, revert=False):
+def prepare(source, baseline_path, output, tools, header_root, config_path, revert=False, development_feedback=False):
     output = pathlib.Path(output).resolve()
     if output.exists():
         raise ValueError('output exists; use a fresh batch directory')
@@ -82,7 +82,8 @@ def prepare(source, baseline_path, output, tools, header_root, config_path, reve
                     target.write_bytes(original_files[name].read_bytes())
                 else:
                     catalog.run([str(tools['glslc']), str(shader), '-I'+str(header_root), '--target-env=vulkan1.1', '-Werror',
-                                 *['-D'+f+'=1' for f in flags+config['hsr_flags']], '-o', str(target)])
+                                 *['-D'+f+'=1' for f in flags+config['hsr_flags']],
+                                 '-DRQ_DEVELOPMENT_FEEDBACK='+str(int(development_feedback)), '-o', str(target)])
                     catalog.run([str(tools['spirv-val']), str(target)])
                     disassembly = catalog.run([str(tools['spirv-dis']), str(target)])
                     if catalog.material_uniform_bytes(disassembly) != 80 or catalog.digest(catalog.abi(disassembly).encode()) != entries[name]['abiSha256']:
@@ -105,6 +106,7 @@ def prepare(source, baseline_path, output, tools, header_root, config_path, reve
                         status='host-validated-not-uploaded', baselineCatalog=record(baseline_path),
                         mode='exact-baseline-revert' if revert else 'fresh-source', files=files, changed=changed,
                         sourceSha256={s: catalog.digest(b) for s, b in sources.items()},
+                        developmentFeedback=development_feedback if not revert else None,
                         tools=baseline['tools'], headers=header_pins, gpuCompletionProof=False, sdkSampledProof=False)
         (temporary/'MANIFEST.json').write_text(json.dumps(manifest, indent=2)+'\n')
         if output.exists():
@@ -128,10 +130,11 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--source-directory', type=pathlib.Path)
     mode.add_argument('--baseline-revert', action='store_true')
+    parser.add_argument('--development-feedback', action='store_true')
     args = parser.parse_args()
     result = prepare(args.source_directory, args.baseline_catalog, args.output,
                      {'glslc': args.glslc, 'spirv-val': args.spirv_val, 'spirv-dis': args.spirv_dis},
-                     args.headers, args.shader_config, args.baseline_revert)
+                     args.headers, args.shader_config, args.baseline_revert, args.development_feedback)
     print(json.dumps(dict(status=result['status'], mode=result['mode'], changed=len(result['changed']))))
 
 

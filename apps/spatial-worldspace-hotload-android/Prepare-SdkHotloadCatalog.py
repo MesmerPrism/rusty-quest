@@ -49,6 +49,7 @@ def material_uniform_bytes(disassembly):
 def main():
     p=argparse.ArgumentParser()
     for name in ('glslc','spirv-val','spirv-dis','headers','shader-config','output'): p.add_argument('--'+name,required=True)
+    p.add_argument('--development-feedback',action='store_true')
     a=p.parse_args(); config=json.loads(pathlib.Path(a.shader_config).read_text())
     if config['hsr_flags']!=['GRAPHICS_HSR'] or len(config['vertex_flags'])!=8 or len(config['fragment_flags'])!=4:
         raise ValueError('Closed SDK shader variant configuration changed')
@@ -56,7 +57,7 @@ def main():
     if output.exists(): raise ValueError('output exists; choose a fresh numbered catalog directory')
     temporary=pathlib.Path(tempfile.mkdtemp(prefix=output.name+'-prepare-',dir=output.parent))
     baseline={}; catalog={'schema':'rusty.quest.sdk_hotload.catalog.v1','sdkVersion':'0.14.0','batches':[],
-        'materialUniformBytes':80,'shaderConfigSha256':digest(pathlib.Path(a.shader_config).read_bytes()),
+        'materialUniformBytes':80,'developmentFeedback':a.development_feedback,'shaderConfigSha256':digest(pathlib.Path(a.shader_config).read_bytes()),
         'tools':{name:digest(pathlib.Path(value).read_bytes()) for name,value in (('glslc',a.glslc),('spirv-val',a.spirv_val),('spirv-dis',a.spirv_dis))},
         'headers':{f.relative_to(pathlib.Path(a.headers)).as_posix():digest(f.read_bytes()) for f in sorted(pathlib.Path(a.headers).rglob('*.glsl'))}}
     try:
@@ -75,7 +76,7 @@ def main():
                 for flags in config[key]:
                     suffix=''.join(config['flag_map'][f] for f in flags)
                     relative='workload.'+stage+suffix+'.spv'; target=temporary/'hotload'/batch/relative; target.parent.mkdir(parents=True,exist_ok=True)
-                    run([a.glslc,str(src),'-I'+str(pathlib.Path(a.headers)),*[ '-D'+f+'=1' for f in flags+config['hsr_flags']],'-o',str(target)])
+                    run([a.glslc,str(src),'-I'+str(pathlib.Path(a.headers)),*[ '-D'+f+'=1' for f in flags+config['hsr_flags']],'-DRQ_DEVELOPMENT_FEEDBACK='+str(int(a.development_feedback)),'-o',str(target)])
                     run([a.spirv_val,str(target)])
                     disassembly=run([a.spirv_dis,str(target)])
                     if material_uniform_bytes(disassembly)!=catalog['materialUniformBytes']:

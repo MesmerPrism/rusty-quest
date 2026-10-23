@@ -105,6 +105,15 @@ The selected SDK adapter resolves its trusted framework application-files path
 to its physical directory once per process. The shared host, session descriptor
 and observation store receive that same directory; strict owner containment
 checks remain in force for all derived paths and staged artifacts.
+The selected shader build defines `RQ_DEVELOPMENT_FEEDBACK=1`, admitting the
+public512/0 CPU packet with0..512 visible markers and no rig/tracers. The default
+shader retains its genuine2562/17934 validation. Development selection suppresses
+legacy barcode/occluder draws and omits the independent opaque atlas-byte grid;
+public positions retain their actual RH floor coordinates at2m. Shader catalogs
+must be freshly prepared with `Prepare-SdkHotloadCatalog.py --development-feedback`;
+the builder rejects a catalog whose selection or original source hashes differ.
+Preserve and remove stale external `app_assets` overrides before qualifying a new
+packaged baseline: installation can retain those earlier runtime inputs.
 Successful native/DEX computations update the existing CPU texture's marker
 spacing and color. The projection uses the actual native value difference;
 trusted DEX result projection subtracts input and the pre-dispatch host counter.

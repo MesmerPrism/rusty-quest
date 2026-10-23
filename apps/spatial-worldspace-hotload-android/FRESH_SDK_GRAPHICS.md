@@ -25,6 +25,15 @@ edit with the same interface. Run:
 python Prepare-FreshSdkHotload.py --source-directory <reviewed-edit-directory> --baseline-catalog <selected-assets/hotload/catalog.json> --glslc <pinned-glslc> --spirv-val <pinned-spirv-val> --spirv-dis <pinned-spirv-dis> --headers <selected-SDK-headers> --shader-config <selected-shader_config.json> --output <new-batch-directory>
 ```
 
+The explicitly selected public CPU development scene also passes
+`--development-feedback`; its source and manifest bind that compile define.
+The original packaged catalog can remain an ABI/baseline reference for a fresh
+compatible shader, but it is not a newly selected public catalog. The independent
+atlas diagnostic grid belongs to a separate shader family: omitting that grid
+from the public scene needs the coherent enabling APK, not a twelve-file workload
+override. Keep raw record positions unchanged and qualify the packaged scene
+with no stale external overrides before collecting code-generation comparisons.
+
 The catalog and baseline binaries must be the exact inputs of the selected
 enabling APK, not an unrelated earlier capability app. The preparer checks
 their actual bytes, tool/header/config identities, compiles/validates all

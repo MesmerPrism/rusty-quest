@@ -10,6 +10,19 @@ val feedbackSelection = gradle.startParameter.projectProperties["workloadDevelop
 require(feedbackSelection in listOf("true", "false")) { "workloadDevelopmentFeedback must be explicit true or false" }
 val feedbackSelected = feedbackSelection == "true"
 require(!feedbackSelected || gradle.startParameter.taskNames.none { it.contains("release", ignoreCase = true) }) { "Development feedback is debug-only" }
+val feedbackShaderSources=layout.buildDirectory.dir("generated/development-feedback-shaders")
+val writeFeedbackShaders=tasks.register("writeDevelopmentFeedbackShaders") {
+    inputs.dir(layout.projectDirectory.dir("src/shaders"));inputs.property("developmentFeedback",feedbackSelected)
+    outputs.dir(feedbackShaderSources);onlyIf{feedbackSelected}
+    doLast {
+        val destination=feedbackShaderSources.get().asFile;destination.mkdirs()
+        file("src/shaders").listFiles()!!.filter{it.extension in listOf("vert","frag")}.forEach{source->
+            val text=source.readText();require(text.startsWith("#version "))
+            destination.resolve(source.name).writeText(text.replaceFirst("\n","\n#define RQ_DEVELOPMENT_FEEDBACK 1\n"))
+        }
+    }
+}
+tasks.matching{it.name.startsWith("compileShadersFor")}.configureEach{dependsOn(writeFeedbackShaders)}
 
 val observerSelection = providers.gradleProperty("workloadSubmissionObserver").getOrElse("false")
 require(observerSelection == "true" || observerSelection == "false") { "workloadSubmissionObserver must be true or false" }
@@ -220,7 +233,10 @@ val editorCli = providers.gradleProperty("spatialEditorCli")
 
 spatial {
     allowUsageDataCollection.set(false)
-    shaders { sources.add(layout.projectDirectory.dir("src/shaders")) }
+    shaders {
+        if(feedbackSelected)sources.add(feedbackShaderSources)
+        else sources.add(layout.projectDirectory.dir("src/shaders"))
+    }
     scenes {
         if (exportEditorScene) {
             if (editorCli.isPresent) cliPath.set(editorCli.get())

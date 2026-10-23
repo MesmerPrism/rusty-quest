@@ -78,6 +78,18 @@ class FreshTests(unittest.TestCase):
                 self.assertFalse(values[2].exists());self.assertEqual(old.read_bytes(),b'accepted')
                 self.assertEqual(list(values[2].parent.glob('candidate-prepare-*')),[])
 
+    def test_development_define_is_explicit_and_bound_to_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values=self.fixture(pathlib.Path(directory));seen=[];compiler=self.compiler()
+            def actual_edge(command):
+                if command[0].endswith('glslc'):seen.append(command)
+                return compiler(command)
+            with patch.object(fresh.catalog,'run',side_effect=actual_edge):
+                proof=fresh.prepare(*values,development_feedback=True)
+            self.assertIs(proof['developmentFeedback'],True)
+            self.assertEqual(len(seen),12)
+            self.assertTrue(all('-DRQ_DEVELOPMENT_FEEDBACK=1' in command for command in seen))
+
     def test_drift_and_incomplete_or_escaping_variant_refused(self):
         for failure in ('binary','header','tool','name','duplicate'):
             with self.subTest(failure=failure),tempfile.TemporaryDirectory() as directory:

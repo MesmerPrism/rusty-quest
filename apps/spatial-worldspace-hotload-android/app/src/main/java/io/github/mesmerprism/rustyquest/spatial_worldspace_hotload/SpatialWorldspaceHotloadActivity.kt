@@ -251,7 +251,7 @@ class SpatialWorldspaceHotloadActivity : SessionOwnerActivity(), ProbeControlTar
                     WorkloadGeometry.diagnostic(diagnostic)}
             }
             carrier=PanelSceneObject(scene,entity,options).also{it.shouldFrustumCull(false);addFixedObject("barcode-carrier",entity,it)}
-            ProbeDebugFeatures.createDiagnostic(this,requireNotNull(cpuTexture))
+            if(!BuildConfig.DEVELOPMENT_FEEDBACK)ProbeDebugFeatures.createDiagnostic(this,requireNotNull(cpuTexture))
             ProbeDebugFeatures.createCohort(this)
             diagnosticState=ProbeDebugFeatures.diagnosticStatus(this)
             status=if(BuildConfig.DEVELOPMENT_FEEDBACK)"Public 64-marker CPU scene; rig and external workload absent. Feedback code/state is resident."

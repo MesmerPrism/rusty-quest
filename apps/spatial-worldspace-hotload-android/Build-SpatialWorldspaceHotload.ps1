@@ -126,6 +126,8 @@ if(-not(Test-Path -LiteralPath (Join-Path $externalRoots['hotload-inputs'] 'asse
    -not(Test-Path -LiteralPath (Join-Path $externalRoots['hotload-inputs'] 'native-catalog/hotload_catalog.h'))){throw 'Explicit frozen SDK/native hotload catalogs required.'}
 $hotloadCatalog=Get-Content -Raw -LiteralPath (Join-Path $externalRoots['hotload-inputs'] 'assets/hotload/catalog.json')|ConvertFrom-Json
 if($hotloadCatalog.schema -cne 'rusty.quest.sdk_hotload.catalog.v1' -or $hotloadCatalog.sdkVersion -cne '0.14.0' -or $hotloadCatalog.batches.Count -ne 3){throw 'Closed SDK hotload catalog rejected'}
+if(($null-ne$hotloadCatalog.PSObject.Properties['developmentFeedback']-and$hotloadCatalog.developmentFeedback-isnot[bool])-or
+   (($hotloadCatalog.developmentFeedback -eq $true) -ne [bool]$DevelopmentFeedback)){throw 'Shader catalog development selection differs from the explicit app build.'}
 if($null -eq $hotloadCatalog.PSObject.Properties['materialUniformBytes'] -or $hotloadCatalog.materialUniformBytes -ne 80){throw 'Fresh reflected five-row material catalog required; old 32-byte catalogs are incompatible.'}
 $batchNames=@($hotloadCatalog.batches|ForEach-Object{[string]$_.name})
 if(($batchNames|Sort-Object)-join ',' -cne 'baseline,offset,tint'){throw 'Unexpected SDK hotload preset set'}
