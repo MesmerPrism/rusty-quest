@@ -67,7 +67,7 @@ async function attempt(scenario='hand-target',options={}){
       evidence_ref:'neutral-owner-receipt',evidence_sha256:'e'.repeat(64),status:'ready',installed_bytes_verified:true,layer_loaded:true,
       exclusive_input_grant:true,geometry:structuredClone(c.plan.geometry)};
     if(context.phase==='original_effect'||context.phase==='after_open_effect')r.status=(context.phase==='after_open_effect'?options.afterOpenEffect:options.effect)??'confirmed';
-    if(context.phase==='after_open_effect'&&options.requireOpenDelivery&&!finalOpenDelivered)r.status='rejected';
+    if(['original_effect','after_open_effect'].includes(context.phase)&&options.requireOpenDelivery&&!finalOpenDelivered)r.status='rejected';
     if(options.change)options.change(r,phases);return r;
   },retireOriginal:async context=>{retired++;return {...context,owner_route:'neutral.original',observed_at_utc:new Date().toISOString(),
     evidence_ref:'original-actor-retirement',evidence_sha256:'f'.repeat(64),status:'retired',scope:'original_actor_retirement',
@@ -100,6 +100,12 @@ test('vendor completed aim omits ACK generation; fresh delivered generation and 
   const a=await attempt('hand-target-vendor-aim');assert.equal(a.result.completed,true);
   assert.equal(a.result.dispatch_state,'delivered');assert.equal(a.retired,1);
   assert.equal(a.calls.filter(x=>x.name==='openxr_hand_gesture'&&x.arguments.gesture==='pinch').length,1);
+});
+test('blocking vendor pinch stays held until delivered readback then explicit final open',async()=>{
+  const a=await attempt('hand-target-blocking-release',{requireOpenDelivery:true});assert.equal(a.result.completed,true);
+  const pinch=a.calls.find(x=>x.name==='openxr_hand_gesture'&&x.arguments.gesture==='pinch');
+  assert.equal(pinch.arguments.auto_release,false);
+  assert.deepEqual(a.phases.filter(x=>x==='original_effect'||x==='after_open_effect'),['original_effect','after_open_effect']);
 });
 test('changed geometry stops new effects; compensation targets original actor',async()=>{
   const a=await attempt('hand-target',{change:r=>{if(r.phase==='guard')r.geometry.layout_revision++;}});

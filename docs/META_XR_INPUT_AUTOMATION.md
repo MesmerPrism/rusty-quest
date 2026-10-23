@@ -40,6 +40,16 @@ The selected registry/schema pins include only instance/session/frame reads,
 hand state, controller-pose reads, hand gestures and space conversion. Existing
 synthetic hand or controller ownership refuses the attempt before mutation.
 
+This hand-target route explicitly holds the pinch through delivered-state
+readback, then opens in its bounded cleanup before observing the original
+click completion. A vendor `auto_release=true` call blocks until it has already
+opened, so its ACK cannot provide a later pressed-state observation. The
+100–500 ms hold excludes transport/readback time; the finite attempt always
+opens and retires its original actor, including after an unknown response.
+The native host's ordinary controller-first pointer policy still applies:
+use genuine hands mode with inactive controllers for this hand-only test.
+An inactive aim action alone does not exclude a tracked controller grip.
+
 The source-owned development-host adapter supplies read-only actor/status/grant
 callbacks and a separately named `stopOriginal` callback through
 `createDevelopmentHostOwner`. A fresh native completed counter and original UI

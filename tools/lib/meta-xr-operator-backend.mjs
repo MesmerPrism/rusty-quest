@@ -451,11 +451,9 @@ export async function runOperatorHandTarget({capsule,owner,evidenceDirectory,tim
     const dir=ray.direction.map(v=>v/length),to=targetStage.map((v,i)=>v-ray.origin[i]),along=to.reduce((s,v,i)=>s+v*dir[i],0),miss=Math.hypot(...to.map((v,i)=>v-along*dir[i]));
     await report('aim-intersection',{target:targetStage,ray,along,miss,tolerance_m:.015});if(!(along>0)||miss>.015)fail('Delivered aim misses original Compute target');
     result.dispatch_state='outcome_unknown';
-    response=await mutate({gesture:'pinch',wrist_position:wrist,wrist_orientation:orientation,transition_seconds:.1,auto_release:true,hold_duration:c.plan.hold_ms/1000});
-    if(response.edge_produced!==true||response.auto_release!==true)fail('Finite fresh pinch edge unavailable');result.dispatch_state='acknowledged';
+    response=await mutate({gesture:'pinch',wrist_position:wrist,wrist_orientation:orientation,transition_seconds:.1,auto_release:false});
+    if(response.edge_produced!==true||response.auto_release!==false)fail('Fresh explicitly released pinch edge unavailable');result.dispatch_state='acknowledged';
     await delivered('pinch-delivered',true,response.generation);result.dispatch_state='delivered';await pause(c.plan.hold_ms);
-    const effect=await observe('original_effect');if(!['confirmed','pending','rejected'].includes(effect.status))fail('Original handler evidence missing');
-    result.original_effect_state=effect.status;result.receipts.original_effect=effect;
   }catch(error){result.errors.push(String(error));}
   finally{
     if(attempted){
@@ -464,6 +462,12 @@ export async function runOperatorHandTarget({capsule,owner,evidenceDirectory,tim
         // ACK is not app adoption. Wait for the original app to consume this
         // exact open before checking it produced no second handler operation.
         await delivered('final-open-delivered',false,opened.generation,false);
+        // Click handlers commonly complete on pointer-up. Observe their
+        // original completion only after the bounded pinch has opened.
+        if(result.dispatch_state==='delivered'){
+          const effect=await observe('original_effect');if(!['confirmed','pending','rejected'].includes(effect.status))fail('Original handler evidence missing');
+          result.original_effect_state=effect.status;result.receipts.original_effect=effect;
+        }
         if(result.original_effect_state==='confirmed'){
           const after=await observe('after_open_effect');result.receipts.after_open_effect=after;
           if(after.status!=='confirmed')fail('Original handler changed again during release');
