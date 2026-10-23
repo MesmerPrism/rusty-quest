@@ -21,6 +21,8 @@ public final class NativeFeedbackBridge {
     public static final int ATTEMPT_LIMIT = 64;
     public static final long IMAGE_LIMIT = 4L * 1024 * 1024;
     public static final long STAGED_LIMIT = 64L * 1024 * 1024;
+    private static Path residentLibrary;
+    private static byte[] residentSha256;
     private final long owner; // Private opaque process-lifetime owner, never a status field.
     private final Path incoming;
     private final Path staged;
@@ -30,6 +32,7 @@ public final class NativeFeedbackBridge {
     /** Caller supplies an inspected actual bridge file and a fresh app-private session.
      * Packaging/extraction and application lifetime are deliberately outside this class.
      * There is no destroy/unload/finalizer/cleaner; retain the facade until process exit.
+     * The first successful load fixes this class's bridge path and digest for all facades.
      */
     public NativeFeedbackBridge(File bridge, byte[] bridgeSha256, File privateSession) throws IOException {
         requireDigest(bridgeSha256);
@@ -49,9 +52,22 @@ public final class NativeFeedbackBridge {
         try (DirectoryStream<Path> children = Files.newDirectoryStream(staged)) {
             if (children.iterator().hasNext()) throw new IOException("Native staging session must be fresh and empty");
         }
-        System.load(library.toString());
+        loadBridge(library, bridgeSha256);
         owner = nativeCreate();
         if (owner == 0) throw new IllegalStateException("Native owner creation failed");
+    }
+
+    private static synchronized void loadBridge(Path library, byte[] digest) {
+        if (residentLibrary != null) {
+            if (!residentLibrary.equals(library) || !MessageDigest.isEqual(residentSha256, digest)) {
+                throw new IllegalStateException("Native bridge identity already selected");
+            }
+            return;
+        }
+        byte[] selectedDigest = digest.clone();
+        System.load(library.toString());
+        residentLibrary = library;
+        residentSha256 = selectedDigest;
     }
 
     /** Copies the derived incoming/<positive generation>.so create-new and readonly.

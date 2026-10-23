@@ -5,6 +5,8 @@ param(
     [int]$AndroidApi = 26,
     [switch]$PrepareAndroidBridge,
     [string]$JavaHome = '',
+    [string]$AndroidJar = '',
+    [string]$D8Jar = '',
     [string]$OutputRoot = (Join-Path $PSScriptRoot '.local')
 )
 $ErrorActionPreference = 'Stop'
@@ -76,6 +78,7 @@ try {
     if ($PrepareAndroidBridge -and -not $AndroidNdk) { throw 'PrepareAndroidBridge requires explicit AndroidNdk' }
     if ($PrepareAndroidBridge -and -not $JavaHome) { throw 'PrepareAndroidBridge requires explicit JavaHome for host JNI proof' }
     if ($JavaHome -and -not $PrepareAndroidBridge) { throw 'JavaHome requires PrepareAndroidBridge' }
+    if (($AndroidJar -or $D8Jar) -and (-not $PrepareAndroidBridge -or -not $AndroidJar -or -not $D8Jar)) { throw 'Android proof preparation requires PrepareAndroidBridge, AndroidJar and D8Jar together' }
     if ($PrepareAndroidBridge) {
         $hostTarget = @($compilerVersion | Where-Object { $_ -cmatch '^host: ' } | ForEach-Object { $_.Substring(6) })
         if ($hostTarget.Count -ne 1) { throw 'Missing selected rustc host target for C shim' }
@@ -96,6 +99,15 @@ try {
         if ($jdkVersion -notmatch '^javac 17(?:\.|\s|$)') { throw 'Bridge host proof requires selected JDK 17' }
         Invoke-Tool 'bridge-java-version' $java @('-version') | Out-Null
         $bridge.java_home = $jdk; $bridge.host_target = $hostTarget; $bridge.host_os = [Runtime.InteropServices.RuntimeInformation]::OSDescription
+        if ($AndroidJar) {
+            $androidApiJar = (Resolve-Path -LiteralPath $AndroidJar).Path
+            $d8CompilerJar = (Resolve-Path -LiteralPath $D8Jar).Path
+            foreach ($required in @($androidApiJar,$d8CompilerJar)) {
+                if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw 'Missing selected Android proof compiler input' }
+            }
+            $toolPaths += @($androidApiJar,$d8CompilerJar)
+            $toolsBefore = Get-Bindings $toolPaths
+        }
     }
     if ($AndroidNdk) {
         $ndk = (Resolve-Path -LiteralPath $AndroidNdk).Path
@@ -223,7 +235,20 @@ public final class BridgeHostProof {
         Files.copy(root.resolve("native-incoming/2.so"), alias); check(alias.toFile().setReadOnly());
         try { new NativeFeedbackBridge(library.toFile(), new byte[32], root.toFile()); throw new AssertionError("bad bridge digest accepted"); }
         catch (java.io.IOException expected) { check(expected.getMessage().contains("SHA256")); }
-        NativeFeedbackBridge b = new NativeFeedbackBridge(library.toFile(), hash(library), root.toFile());
+        Path invalidLibrary = root.resolveSibling(root.getFileName() + "-invalid-library.dll");
+        Files.write(invalidLibrary, new byte[]{1,2,3,4});
+        try { new NativeFeedbackBridge(invalidLibrary.toFile(), hash(invalidLibrary), root.resolveSibling(root.getFileName() + "-failed-load-session").toFile()); throw new AssertionError("invalid resident library accepted"); }
+        catch (UnsatisfiedLinkError expected) { check(true); }
+        byte[] residentDigest = hash(library);
+        NativeFeedbackBridge b = new NativeFeedbackBridge(library.toFile(), residentDigest, root.toFile());
+        residentDigest[0] ^= 1; // The process identity must retain its own digest copy.
+        state(b,0,0,0,0);
+        NativeFeedbackBridge independent = new NativeFeedbackBridge(library.toFile(), hash(library), root.resolveSibling(root.getFileName() + "-independent-session").toFile());
+        state(independent,0,0,0,0);
+        Path alternateLibrary = root.resolveSibling(root.getFileName() + "-alternate-library.dll");
+        Files.copy(library, alternateLibrary);
+        try { new NativeFeedbackBridge(alternateLibrary.toFile(), hash(alternateLibrary), root.resolveSibling(root.getFileName() + "-alternate-session").toFile()); throw new AssertionError("different resident bridge path accepted"); }
+        catch (IllegalStateException expected) { check(expected.getMessage().contains("identity")); }
         state(b,0,0,0,0);
         try { b.compute(4); throw new AssertionError("empty dispatch accepted"); }
         catch (IllegalStateException expected) { check(expected.getMessage().contains("code 3")); }
@@ -235,6 +260,7 @@ public final class BridgeHostProof {
         check((Integer)activate.invoke(null,owner.getLong(b),new byte[]{1},new byte[31],1L,13L) == 1);
         check((Integer)activate.invoke(null,owner.getLong(b),new byte[4097],new byte[32],1L,13L) == 1);
         b.activate(1,hashes.get("a1"),13); b.compute(4); state(b,1,5,1,1);
+        state(independent,0,0,0,0);
         byte[] path = root.resolve("native-incoming/2.so").toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         check((Integer)activate.invoke(null,owner.getLong(b),path,new byte[32],2L,19L) == 2);
         state(b,1,5,1,1); b.compute(4);
@@ -282,6 +308,16 @@ public final class BridgeHostProof {
         $jniProof = @(Invoke-Tool 'bridge-host-jni-proof' $java @('-Xcheck:jni','-cp',$classes,'BridgeHostProof',$hostBridge,$manifestPath,(Join-Path $run 'bridge-java-session')))
         if (@($jniProof | Where-Object { $_ -match '^PASS real host JNI registration/regions/A1-B2-A3/rejection/budgets/thread serialization assertions=' }).Count -ne 1) { throw 'Host JNI proof missing' }
         $bridge.host_jni_tested = $true
+        if ($AndroidJar) {
+            $androidProofSource = Join-Path $PSScriptRoot 'tests/AndroidBridgeProof.java'
+            $proofClasses = Join-Path $run 'android-proof-classes'
+            New-Item -ItemType Directory -Path $proofClasses | Out-Null
+            Invoke-Tool 'android-proof-javac' $javac @('-source','8','-target','8','-bootclasspath',$androidApiJar,'-Xlint:all,-options','-Werror','-d',$proofClasses,$facade,$androidProofSource) | Out-Null
+            $proofJar = Join-Path $run 'android-bridge-proof.jar'
+            $classFiles = @((Get-ChildItem -LiteralPath $proofClasses -Recurse -File -Filter '*.class').FullName)
+            Invoke-Tool 'android-proof-d8' $java (@('-cp',$d8CompilerJar,'com.android.tools.r8.D8','--min-api','26','--lib',$androidApiJar,'--output',$proofJar) + $classFiles) | Out-Null
+            $bridge.android_proof = [ordered]@{ file = $proofJar; sha256 = (Get-FileHash -LiteralPath $proofJar).Hash.ToLowerInvariant(); bytes = (Get-Item -LiteralPath $proofJar).Length; entry = 'AndroidBridgeProof'; executed = $false; app_adopted = $false }
+        }
         $bridge.host_artifact = [ordered]@{ file = $hostBridge; sha256 = (Get-FileHash -LiteralPath $hostBridge).Hash.ToLowerInvariant(); bytes = (Get-Item -LiteralPath $hostBridge).Length }
     }
     if ($AndroidNdk) {
@@ -301,14 +337,21 @@ public final class BridgeHostProof {
         $android.artifacts = $androidArtifacts
         $machineCode = @{}
         $identity = [guid]::NewGuid().ToString('N')
-        foreach ($definition in @(@('a1',1),@('b2',2),@('a3',3))) {
+        $androidDefinitions = @(@('a1',1),@('b2',2),@('a3',3))
+        if ($AndroidJar) { $androidDefinitions += ,@('bad-behavior',7) }
+        foreach ($definition in $androidDefinitions) {
             $name, $generation = $definition
             $soname = 'librm030_' + $name + '_' + $identity + '.so'
             $artifact = Join-Path $run $soname
-            $arguments = @('--edition','2021','--crate-type','cdylib','--crate-name',$name,(Join-Path $run ($name + '.rs')),'--target',$android.target,'-C','panic=abort','-C','opt-level=2','-C','strip=none','-D','warnings','-C',('linker=' + $clang),'-C',('link-arg=--target=' + $target),'-C',('link-arg=--sysroot=' + $sysroot),'-C',('link-arg=-Wl,-soname,' + $soname),'-o',$artifact)
+            $arguments = @('--edition','2021','--crate-type','cdylib','--crate-name',($name -replace '-','_'),(Join-Path $run ($name + '.rs')),'--target',$android.target,'-C','panic=abort','-C','opt-level=2','-C','strip=debuginfo','-D','warnings','-C',('linker=' + $clang),'-C',('link-arg=--target=' + $target),'-C',('link-arg=--sysroot=' + $sysroot),'-C',('link-arg=-Wl,-soname,' + $soname),'-o',$artifact)
             if ($name -eq 'b2') { $arguments += @('--cfg','phase_b') }
             Invoke-Compiler ('android-' + $name) $arguments
+            if ((Get-Item -LiteralPath $artifact).Length -gt $bridge.image_byte_limit) { throw 'Prepared Android module exceeds resident image-byte limit' }
             $dependencies = @(Assert-AndroidElf ('android-' + $name) $artifact $soname)
+            if ($name -eq 'bad-behavior') {
+                $androidArtifacts.Add([ordered]@{ name = $name; generation = $generation; file = $artifact; soname = $soname; sha256 = (Get-FileHash -LiteralPath $artifact).Hash.ToLowerInvariant(); dependencies = $dependencies; negative_probe = $true })
+                continue
+            }
             $symbols = (Invoke-Tool ('android-' + $name + '-symbols') $readelf @('--symbols','--wide',$artifact)) -join "`n"
             $transformSymbols = @([regex]::Matches($symbols,'(?m)^\s*\d+:\s+[0-9a-fA-F]+\s+\d+\s+FUNC\s+LOCAL\s+DEFAULT\s+\S+\s+(\S*transform\S*)\s*$'))
             if ($transformSymbols.Count -ne 1) { throw 'Expected exactly one real local transform function symbol' }
@@ -357,7 +400,7 @@ public final class BridgeHostProof {
         compiler_path = $compiler; compiler_sha256 = $compilerHash; source_hashes = $sourceHashes;
         artifacts = $artifacts; timings = $timings; full_elapsed_seconds = $whole.Elapsed.TotalSeconds;
         commands = $commands; inputs_before = $inputsBefore; inputs_after = $inputsAfter; generated_sources_before = $generatedBefore; generated_sources_after = $generatedAfter; tools_before = $toolsBefore; tools_after = $toolsAfter; android_preparation = $android; resident_bridge_preparation = $bridge; failure = $failure;
-        claim = 'host conformance and optional Android preparation only; no Android execution, Quest, JNI, unload or device performance proof' } |
+        claim = 'host conformance and optional real host JNI plus Android preparation only; no Android execution, Quest, unload or device performance proof' } |
         ConvertTo-Json -Depth 8 | Set-Content (Join-Path $run 'receipt.json') -Encoding utf8NoBOM
     Write-Output "Evidence: $run"
 }

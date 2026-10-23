@@ -78,7 +78,11 @@ An application must deliberately adopt a development-only resident host through
 its supported build/provider route. Keep release packaging independent: the
 same contract can use a packaged static implementation with the loader absent.
 JNI registration, buffer allocation, Activity and process ownership remain with
-the resident host. The native example does not yet supply an Android JNI host.
+the resident host. The native example supplies an opt-in resident JNI bridge,
+real host-JVM checks and standalone Android proof preparation. It does not
+adopt that bridge into this Android application's feature selection. The
+standalone shell-runtime proof cannot establish app UID, Activity or product
+lifecycle behavior; those remain separate adoption evidence.
 
 On a coordinated device slot, record process-start and Activity identities,
 actual executing generation, challenge-dependent result, counter history,
