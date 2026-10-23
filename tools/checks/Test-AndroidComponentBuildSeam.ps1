@@ -127,6 +127,26 @@ try {
     try{$null=Assert-AndroidComponentClosure -InventoryPath $contractPath -ExpectedInventorySha256 $selected.sha256 -EvidenceDirectory $scratch -ApkPath (Join-Path $scratch 'absent.apk');throw 'Absent compile receipt accepted.'}
     catch{if($_.Exception.Message -notlike '*assertion failed*'){throw}}
     $code=$ast.Extent.Text
+    foreach($parameter in @('CargoPath','RustupPath','RequireInstalledRustTarget','WaitPolicy')){
+        if(@($ast.ParamBlock.Parameters|Where-Object {$_.Name.VariablePath.UserPath-ceq$parameter}).Count-ne1){throw 'Shared platform compatibility parameter was lost.'}
+    }
+    foreach($binding in @('$prerequisites = Get-QuestSpatialBuildPrerequisites', '$cargoCommand = Resolve-QuestSpatialApplication -Name cargo -Path $CargoPath', '$rustupCommand = Resolve-QuestSpatialApplication -Name rustup -Path $RustupPath', 'if (-not $rustTargetInstalled -and $RequireInstalledRustTarget)')){
+        if(-not$code.Contains($binding)){throw ('Shared prerequisite contract was lost: '+$binding)}
+    }
+    # Run the actual builder selection/target block, stopping before staging or Cargo.
+    $toolOwner=Import-Module (Join-Path $originalRepo 'tools/lib/SpatialCameraPanelBuildPrerequisites.psm1') -PassThru
+    $nativeReceiptCargoManifest=Join-Path $scratch 'fixture-Cargo.toml'
+    $nativeReceiptLinker=Join-Path $scratch 'fixture-linker.cmd'
+    $RustupPath=Join-Path $scratch 'fixture-rustup.cmd';$CargoPath=Join-Path $PSHOME 'pwsh.exe'
+    [IO.File]::WriteAllText($nativeReceiptCargoManifest,'fixture');[IO.File]::WriteAllText($nativeReceiptLinker,'@exit /b 0')
+    $targetBlock=$code.Substring($code.IndexOf('$cargoCommand ='),$code.IndexOf('Write-Host ("BUILD_CACHE rust_target=')-$code.IndexOf('$cargoCommand ='))
+    [IO.File]::WriteAllText($RustupPath,"@echo off`necho x86_64-pc-windows-msvc`nexit /b 0`n")
+    $RequireInstalledRustTarget=$true;$denied=$false
+    try{Invoke-Expression $targetBlock}catch{$denied=$_.Exception.Message-ceq'The selected build requires the Android Rust target already installed.'}
+    if(-not$denied){throw 'Actual installed-target selection did not refuse before target installation.'}
+    [IO.File]::WriteAllText($RustupPath,"@echo off`necho aarch64-linux-android`nexit /b 0`n")
+    Invoke-Expression $targetBlock
+    if(-not$rustTargetInstalled-or$cargoCommand.Source-cne$CargoPath){throw 'Actual selected tool/installed-target positive was lost.'}
     if($code.IndexOf('$androidComponentClosure = Assert-AndroidComponentClosure') -gt $code.IndexOf('$apkCopied = Copy-FileIfChanged')){throw 'APK handed off before closure.'}
     if($code.IndexOf('Assert-AndroidNativeSourcePaths -SourceDirectory') -gt $code.IndexOf('$nativeStopwatch =')){throw 'CMake source guard is not early.'}
     if(-not $code.Contains('-ShellComposition $cargoSourceComposition')){throw 'Native proof consumed full app composition.'}
