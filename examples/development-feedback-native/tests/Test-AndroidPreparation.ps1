@@ -19,9 +19,11 @@ function Rejects-BeforeCompilation([string]$Name, [string[]]$Arguments) {
         throw "Invalid preparation reached compilation or claimed pass: $Name"
     }
 }
+Rejects-BeforeCompilation 'bridge-without-ndk' @('-PrepareAndroidBridge')
 Rejects-BeforeCompilation 'invalid-ndk' @('-AndroidNdk',(Join-Path $output 'missing-ndk'))
 Rejects-BeforeCompilation 'api-without-ndk' @('-AndroidApi','26')
 if ($AndroidNdk) {
+    Rejects-BeforeCompilation 'bridge-without-jdk' @('-PrepareAndroidBridge','-AndroidNdk',$AndroidNdk)
     Rejects-BeforeCompilation 'api-below-contract' @('-AndroidNdk',$AndroidNdk,'-AndroidApi','25')
     Rejects-BeforeCompilation 'api-outside-ndk' @('-AndroidNdk',$AndroidNdk,'-AndroidApi','999')
 }
