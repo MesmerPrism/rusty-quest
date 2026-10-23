@@ -29,6 +29,20 @@ pub(crate) struct JavaOwnerCallbacks {
 }
 
 impl JavaOwnerCallbacks {
+    pub(super) fn finalize_prepared_transport(
+        &self,
+        request: &rusty_quest_media_stream_android::AndroidPreparedStartRequest,
+    ) -> Result<(), String> {
+        request.validate()?;
+        let body = serde_json::to_string(request)
+            .map_err(|_| "prepared transport request serialization")?;
+        let current = self.fresh_closure_callback("finalizePeerStartTransport", &body)?;
+        prepared_registry_readback(&current, request)?;
+        if current["state"] != "decoder_ready" || current["delivery_gate_closed"] != true {
+            return Err("prepared transport finalization readback differs".into());
+        }
+        Ok(())
+    }
     pub(crate) fn fresh_setup_continuation_binding(&self) -> Result<serde_json::Value, String> {
         let mut env = self.attached()?;
         self.capability.require_live()?;

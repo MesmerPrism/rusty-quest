@@ -1131,3 +1131,43 @@ obligation still requires its existing owner reconciliation or explicitly
 authorized nonaccepting disposition. Host controls execute the production
 archive/fence classes and all three counter methods with modeled kernel facts;
 Android API compilation and the actual app/package build remain separate gates.
+
+### Receiver-first SDK transport finalization
+
+The incoming prepared-decoder callback creates only its local decoder, dormant
+renderer and bound listener. Its reply proves that listener; it cannot assume
+the other peer has entered its decoder callback. Connecting the local outgoing
+forwarder inside that callback introduced an ordering race: the remote listener
+could still be absent, and the first refused prepared connection correctly
+remained a failed, non-replayable attempt.
+
+The native SDK coordinator validates the remote decoder receipt and joins the
+local decoder callback before entering a separate, fixed transport-finalization
+callback. That callback binds the exact held request and process callback lease,
+enters once, and establishes the actual existing source-to-peer connection while
+delivery stays closed. Java readiness additionally requires that same transport
+to remain connected. Status getters and readback verification perform no effects.
+The SDK diagnostic reports this outgoing effect as `transport_finalize`; it does
+not attribute its failure to incoming decoder creation. Existing status v1,
+Native160, signed frame and decoder receipt schemas retain their meanings.
+
+Stop cancels the same published sockets and workers. Failed or cancelled
+finalization retains its entered Original and grants neither retry nor media
+authority. Ordinary lifetime retirement and the next distinct lifetime retain
+their existing seven-owner, archive and consumer-ACK requirements.
+
+Focused validation combines the actual native coordinator/handlers with the
+whole Java prepared holder, exact callback/resource/pipeline bodies and real
+loopback transport sockets. It covers delayed peer decoder entry, once-only and
+foreign-request refusal, lost connection, concurrent entry, Stop, source changes
+and two resource lifetimes. The changed whole media source also compiles against
+the selected Android API using an authenticated prior AAR only for unchanged
+dependencies. JNI API typechecking and these host controls prove no headset SDK,
+LAN streaming, presentation or physical cleanup behavior.
+
+```powershell
+python tools/checks/Test-PreparedTransportHost.py --output target/prepared-transport-host `
+  --json-jar <host-json.jar> --android-jar <selected-android.jar> `
+  --media-classes <authenticated-prior-media-classes.jar> `
+  --media-artifacts <matching-embedded-media-aar-artifacts.json>
+```

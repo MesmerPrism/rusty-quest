@@ -801,6 +801,17 @@ fn sdk_prepare(
     )?;
     a.sdk.call(
         SdkDirection::Outbound,
+        SdkStage::TransportFinalize,
+        None,
+        SdkReason::CallFailed,
+        || {
+            check_source(host, a)?;
+            callback.finalize_prepared_transport(&a.request)?;
+            check_source(host, a)
+        },
+    )?;
+    a.sdk.call(
+        SdkDirection::Outbound,
         SdkStage::OwnerReady,
         None,
         SdkReason::CallFailed,

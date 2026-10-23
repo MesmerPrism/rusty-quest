@@ -35,7 +35,7 @@ final class EmbeddedDuplexPreparationDiagnostic {
         while(iterator.hasNext())actual.add(iterator.next());
         require(actual.equals(new java.util.HashSet<>(Arrays.asList(names))));
     }
-    private static final String[] SDK_STAGES={"renderer_begin","sender_prepare","source_check","frame_clock","frame_shape","frame_sign","frame_encode","frame_exchange","frame_decode","response_identity","remote_view","decoder_receipt","decoder_wait","owner_ready","renderer_dormant","incoming_bind","incoming_sender","incoming_decoder","ready_status"};
+    private static final String[] SDK_STAGES={"renderer_begin","sender_prepare","source_check","frame_clock","frame_shape","frame_sign","frame_encode","frame_exchange","frame_decode","response_identity","remote_view","decoder_receipt","decoder_wait","transport_finalize","owner_ready","renderer_dormant","incoming_bind","incoming_sender","incoming_decoder","ready_status"};
     private static void sdkLane(JSONObject value)throws Exception{
         keys(value,"state","stage","frame_kind","reason");String state=value.getString("state");
         require(Arrays.asList("unobserved","entered","failed","succeeded").contains(state));

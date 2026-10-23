@@ -54,6 +54,7 @@ pub(crate) enum Stage {
     RemoteView,
     DecoderReceipt,
     DecoderWait,
+    TransportFinalize,
     OwnerReady,
     RendererDormant,
     IncomingBind,
@@ -63,7 +64,7 @@ pub(crate) enum Stage {
 }
 impl Stage {
     #[cfg(test)]
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::RendererBegin,
         Self::SenderPrepare,
         Self::SourceCheck,
@@ -77,6 +78,7 @@ impl Stage {
         Self::RemoteView,
         Self::DecoderReceipt,
         Self::DecoderWait,
+        Self::TransportFinalize,
         Self::OwnerReady,
         Self::RendererDormant,
         Self::IncomingBind,
@@ -99,6 +101,7 @@ impl Stage {
             Self::RemoteView => "remote_view",
             Self::DecoderReceipt => "decoder_receipt",
             Self::DecoderWait => "decoder_wait",
+            Self::TransportFinalize => "transport_finalize",
             Self::OwnerReady => "owner_ready",
             Self::RendererDormant => "renderer_dormant",
             Self::IncomingBind => "incoming_bind",

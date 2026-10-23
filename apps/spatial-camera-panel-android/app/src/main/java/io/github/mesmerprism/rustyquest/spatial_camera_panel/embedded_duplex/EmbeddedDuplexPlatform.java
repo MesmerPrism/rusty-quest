@@ -423,6 +423,14 @@ final class EmbeddedDuplexPlatform {
             held.requireRequest(execution.getJSONObject("request"));return held.decoder(execution.getJSONObject("decoder")).toString();
         }
     }
+    public String finalizePeerStartTransport(String exactRequest)throws Exception {
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
+            requireProcessCallback();EmbeddedDuplexPreparedStart held=preparedStart;
+            if(held==null)throw new IllegalStateException("actual prepared sender owner absent");
+            held.requireRequest(new JSONObject(exactRequest));held.finalizeTransport();
+            return held.status(held.id()).toString();
+        }
+    }
     public String abortPreparedPeerStartResources(String exactRequest)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
             requireProcessCallback();

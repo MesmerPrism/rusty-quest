@@ -167,6 +167,13 @@ public final class PackedStereoMediaSourceRuntime {
             if(runtime!=held || held.stopRequested || held.packetCount!=0L || held.headerWriteCount!=0L)
                 throw new IllegalStateException("prepared transport source/gate changed");
         }
+        /** Observation only: the same prepared source and actual transport remain held. */
+        public boolean preparedTransportConnected() {
+            Runtime held=preparedRuntime;
+            return preparedSenderHeld() && held.serverSocket!=null && held.serverSocket.isBound()
+                && !held.serverSocket.isClosed()
+                && (held.lanTransport==null || held.lanTransport.preparedConnected());
+        }
         public boolean preparedSenderHeld() {
             Runtime held=preparedRuntime;
             return held!=null && runtime==held && held.preparedFormat!=null && !held.stopRequested && !held.terminal;

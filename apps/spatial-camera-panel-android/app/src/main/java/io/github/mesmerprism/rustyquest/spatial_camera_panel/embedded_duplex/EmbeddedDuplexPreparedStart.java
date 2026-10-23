@@ -12,7 +12,7 @@ final class EmbeddedDuplexPreparedStart {
     private final String exactRequest;
     private JSONObject sender,decoder;
     private String exactDecoder;
-    private boolean senderEntered,decoderEntered,abortEntered;
+    private boolean senderEntered,decoderEntered,transportEntered,abortEntered;
     private String exactAbort;
     private JSONObject abortReceipt;
     private long revision;
@@ -86,6 +86,22 @@ final class EmbeddedDuplexPreparedStart {
             return new JSONObject(decoder.toString());
         }
     }
+    void finalizeTransport()throws Exception {
+        synchronized(this){
+            if(sender==null ||decoder==null ||transportEntered ||original.desiredStop.get() ||abortEntered)
+                throw new IllegalStateException("transport entered/changed: no SDK replay");
+            transportEntered=true;revision++;
+        }
+        // Native enters this effect only after validating the remote decoder
+        // receipt and joining the local decoder callback. Both listeners exist;
+        // the connection is still real, once-only and delivery remains closed.
+        resources.finalizePreparedTransport();
+        synchronized(this){
+            if(original.desiredStop.get() ||abortEntered ||!resources.preparedTransportConnected()
+                ||!resources.preparedSenderClosed() ||!resources.preparedDecoderClosed())
+                throw new IllegalStateException("prepared transport superseded");
+        }
+    }
     synchronized String originalId(){return original.id();}
     synchronized boolean gatedCleanupCandidate(){
         // Trusted Stop may already have closed sockets/woken SDK workers. This
@@ -146,6 +162,7 @@ final class EmbeddedDuplexPreparedStart {
         return new JSONObject(abortReceipt.toString());
     }
     synchronized boolean ready(){return !abortEntered && !original.desiredStop.get() && sender!=null &&decoder!=null
+        &&transportEntered &&resources.preparedTransportConnected()
         &&resources.preparedSenderOwned() &&resources.preparedDecoderOwned();}
     synchronized void requireNativeStatus(JSONObject status,boolean requireReady)throws Exception {
         EmbeddedDuplexPeerRoots.keys(status,"$schema","preparation_id","original_id","app_process_generation","app_record_sha256",

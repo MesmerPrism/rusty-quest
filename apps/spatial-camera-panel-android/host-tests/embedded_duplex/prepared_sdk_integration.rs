@@ -111,6 +111,22 @@ struct JavaOwnerCallbacks {
     calls: Arc<Mutex<Calls>>,
 }
 impl JavaOwnerCallbacks {
+    fn finalize_prepared_transport(&self, request: &AndroidPreparedStartRequest) -> Result<(), String> {
+        self.event("transport_finalize")?;
+        // This modeled Java leaf checks the actual extracted coordinator has
+        // earned BOTH exact decoder receipts before entering the effect.
+        let h = process().lock().unwrap().host.clone().unwrap();
+        prepared::transport_inputs(&h, request)?;
+        let fault = self.calls.lock().unwrap().fault.clone();
+        if fault.as_deref() == Some("transport_source") {
+            h.source.lock().unwrap()["floor_sha256"] =
+                json!(format!("sha256:{}", "b".repeat(64)));
+        }
+        if fault.as_deref() == Some("transport_stop") {
+            prepared::stop_during_transport(&h);
+        }
+        Ok(())
+    }
     fn event(&self, name: &str) -> Result<(), String> {
         let mut c = self.calls.lock().unwrap();
         c.events.push(name.into());
@@ -549,6 +565,29 @@ mod prepared {
     use crate::preparation_diagnostic::{Actor, Attempt, JavaGuard, Reason, Stage};
     type Body = AndroidPreparedStartFrameBody;
     PRODUCTION_ITEMS
+    pub(super) fn transport_inputs(
+        h: &Host,
+        request: &AndroidPreparedStartRequest,
+    ) -> Result<(), String> {
+        let a = held(h)?;
+        if &a.request != request
+            || a.owner
+                .try_lock()
+                .map_err(|_| "owner held across transport callback")?
+                .decoder()
+                .is_none()
+            || a.remote_decoder.lock().unwrap().is_none()
+        {
+            return Err("transport before bilateral decoder receipts".into());
+        }
+        if a.stop.load(Ordering::SeqCst) {
+            return Err("transport after Stop".into());
+        }
+        Ok(())
+    }
+    pub(super) fn stop_during_transport(h: &Host) {
+        held(h).unwrap().stop.store(true, Ordering::SeqCst);
+    }
     fn setup() -> [Arc<Host>; 2] {
         renderer::reset();
         let hosts = std::array::from_fn(|peer| {
@@ -662,11 +701,53 @@ mod prepared {
             assert!(trace.first_failure.is_none());
             assert_eq!(events.iter().filter(|e| e.as_str() == "sender").count(), 1);
             assert_eq!(events.iter().filter(|e| e.as_str() == "decoder").count(), 1);
+            assert_eq!(
+                events.iter().filter(|e| e.as_str() == "transport_finalize").count(),
+                1,
+                "actual SDK coordinator must finalize transport after bilateral decoder receipts"
+            );
+            assert!(
+                events.iter().position(|e| e == "decoder").unwrap()
+                    < events.iter().position(|e| e == "transport_finalize").unwrap()
+            );
             assert_eq!(events.iter().filter(|e| e.as_str() == "sign").count(), 4);
             assert_eq!(
                 events.iter().filter(|e| e.as_str() == "exchange").count(),
                 2
             );
+        }
+    }
+    #[test]
+    fn transport_failure_stop_and_source_change_keep_exact_stage_and_no_ready() {
+        for fault in ["transport_finalize", "transport_source", "transport_stop"] {
+            let hosts = setup();
+            hosts[0].callbacks.calls.lock().unwrap().fault = Some(fault.into());
+            let workers: Vec<_> = hosts.into_iter().enumerate().map(|(peer, h)| {
+                std::thread::spawn(move || on(peer, || {
+                    let result = execute(&h);
+                    let a = held(&h).unwrap();
+                    (
+                        result,
+                        a.sdk.read().unwrap(),
+                        a.completed.load(Ordering::SeqCst),
+                        a.local_start_consumed.load(Ordering::SeqCst),
+                        h.callbacks.calls.lock().unwrap().events.clone(),
+                    )
+                }))
+            }).collect();
+            for (peer, worker) in workers.into_iter().enumerate() {
+                let (result, trace, completed, consumed, events) = worker.join().unwrap();
+                if peer == 0 {
+                    assert!(result.is_err(), "{fault}");
+                    assert!(!completed && !consumed);
+                    assert_eq!(trace.outbound.stage, Some(SdkStage::TransportFinalize));
+                    for event in ["transport_finalize", "decoder", "sender"] {
+                        assert_eq!(events.iter().filter(|e| e.as_str() == event).count(), 1);
+                    }
+                } else {
+                    assert!(result.is_ok(), "{fault}: {result:?}");
+                }
+            }
         }
     }
     #[test]
