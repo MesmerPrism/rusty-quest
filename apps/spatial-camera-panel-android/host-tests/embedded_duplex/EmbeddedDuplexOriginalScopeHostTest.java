@@ -139,6 +139,27 @@ public final class EmbeddedDuplexOriginalScopeHostTest {
                     check(proof!=null&&EmbeddedDuplexProcessFence.digest(proof[0]).equals(scope),"newer authentic committed archive rejected");tests++;
                 }
             }
+            Path a=Files.createDirectory(output.resolve("post-media-a")),b=Files.createDirectory(output.resolve("post-media-b"));
+            JSONObject pa=EmbeddedDuplexPostMediaAbandonmentHostTest.peer(a,"A",10001,"checkpoint","evidence",EmbeddedDuplexPostMediaAbandonmentHostTest.MAP);
+            JSONObject pb=EmbeddedDuplexPostMediaAbandonmentHostTest.peer(b,"B",10002,null,null,null);
+            Path originals=Files.createDirectory(output.resolve("operator-originals-v1"));String id="4".repeat(32);
+            JSONObject oldRow=new JSONObject().put("schema","rusty.quest.embedded_duplex.operator_original.v1")
+                .put("original_id",id).put("state","unknown").put("effect_state","unknown").put("retention","owned")
+                .put("actor_binding",new JSONObject().put("package_id","test.product.app").put("app_record_sha256",pa.getString("original_fence_sha256")))
+                .put("outcome_sha256","d".repeat(64)).put("consumer_receipt_sha256",JSONObject.NULL);
+            Path row=originals.resolve(id+".json");Files.writeString(row,oldRow.toString());byte[] exact=Files.readAllBytes(row);
+            try(EmbeddedDuplexProcessFence current=EmbeddedDuplexProcessFence.acquire(a.toFile(),"checkpoint","evidence",()->{},
+                    new EmbeddedDuplexProcessIncarnation.Identity(EmbeddedDuplexPostMediaAbandonmentHostTest.BOOT,900,10001,12345),p->null)){
+                EmbeddedDuplexProcessHost.instance=new EmbeddedDuplexProcessHost(current,"test.product.app");
+                OriginalCounters counters=new OriginalCounters(originals.toFile());
+                refused(()->counters.unresolvedExceptCurrent()); // Recovery-only denies before admission accounting.
+                current.abandon("checkpoint","evidence",new EmbeddedDuplexAbandonmentRequest(EmbeddedDuplexPostMediaAbandonmentHostTest.auth(current,pa,pb).toString()),(p,d)->{});
+                check(counters.unresolvedExceptCurrent()==0&&counters.unresolvedForRetirement(null)==0&&counters.unrelated()==0,"committed post-media scope still blocks counters");tests++;
+                Bundle queried=counters.query(id,"5".repeat(32));JSONObject observed=new JSONObject(queried.getString("observation_json"));
+                check("unknown".equals(queried.getString("status"))&&"unknown".equals(observed.getString("state"))&&"unknown".equals(observed.getString("effect_state")),"disposed Original query lost UNKNOWN");
+                check("owned".equals(observed.getString("retention"))&&observed.isNull("consumer_receipt_sha256")&&"d".repeat(64).equals(observed.getString("outcome_sha256")),"query changed outcome/retention/ACK");
+                check(Arrays.equals(exact,Files.readAllBytes(row)),"query or disposition mutated immutable Original");tests++;
+            }
         }else throw new AssertionError("unknown test group");
         System.out.println("PASS actual scope/counter group="+group+" controls="+tests+" modeled kernel/Android facts; no devices");
     }

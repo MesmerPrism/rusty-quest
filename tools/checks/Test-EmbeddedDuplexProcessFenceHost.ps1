@@ -20,10 +20,12 @@ $jsonJar=Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/fil
 if(-not $jsonJar){throw 'Host org.json test dependency unavailable'}
 $hostOs=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/android-system-host/android/system'
 $hostOsSources=@((Join-Path $hostOs 'Os.java'),(Join-Path $hostOs 'OsConstants.java'),(Join-Path $hostOs 'StructStat.java'))
-& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') $test $historicalTest $knownBirthTest $incarnationTest @hostOsSources
+& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') (Join-Path $main 'EmbeddedDuplexPostMediaAbandonment.java') $test $historicalTest $knownBirthTest $incarnationTest @hostOsSources
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host compilation failed' }
-& $javac '--release' '17' '-encoding' 'UTF-8' '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) '-d' $output $v5Test $v6Test
+& $javac '--release' '17' '-encoding' 'UTF-8' '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) '-d' $output $v5Test $v6Test (Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/EmbeddedDuplexPostMediaAbandonmentHostTest.java')
 if($LASTEXITCODE-ne0){throw 'Replay v5/v6 host compilation failed'}
+& $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPostMediaAbandonmentHostTest'
+if($LASTEXITCODE-ne0){throw 'Post-media v7 host regressions failed'}
 & $java '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexReplayScopeV5HostTest'
 if($LASTEXITCODE-ne0){throw 'Replay v5 host regressions failed'}
 $v6Args=@();if($ReplayScopeV6Fixture){$v6Args=@((Resolve-Path -LiteralPath $ReplayScopeV6Fixture).Path)}
@@ -34,7 +36,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Process incarnation host regressions failed' }
 if($AndroidHome){
     $androidJar=Join-Path $AndroidHome 'platforms/android-34/android.jar'
     $apiOutput=Join-Path $output 'api34';[void](New-Item -ItemType Directory -Path $apiOutput)
-    & $javac -source 8 -target 8 -bootclasspath $androidJar -encoding UTF8 -d $apiOutput (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java')
+    & $javac -source 8 -target 8 -bootclasspath $androidJar -encoding UTF8 -d $apiOutput (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') (Join-Path $main 'EmbeddedDuplexPostMediaAbandonment.java')
     if($LASTEXITCODE -ne 0){throw 'Process incarnation genuine API34 typecheck failed'}
     Write-Output 'Process fence and incarnation companion genuine Android API34 typecheck passed; no APK/device qualification.'
 }

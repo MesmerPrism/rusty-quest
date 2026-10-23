@@ -1172,6 +1172,57 @@ authorized nonaccepting disposition. Host controls execute the production
 archive/fence classes and all three counter methods with modeled kernel facts;
 Android API compilation and the actual app/package build remain separate gates.
 
+### Explicit same-boot post-media disposition (v7)
+
+`abandon_retained_scope` additionally accepts the separately closed
+`rusty.quest.embedded_duplex.abandonment_authorization.v7`. This is an explicit
+post-media **nonaccepting** disposition, not a no-media route. v1–v6 retain their
+existing meanings and predicates. In particular, absent Java journals alone do
+not turn a process that entered media into a no-media actor.
+
+The root contains the v5 identity/authorization/current-recovery-actor fields and
+`scope_kind="post_media_nonaccepting"`. Each of exactly two historical peers
+contains its installed package/APK/signer, physical serial, boot/user/UID,
+recorded PID/start ticks and exact known-actor birth receipt with SHA, exact
+recorded pending app fence with SHA, `checkpoint_sha256` and `evidence_sha256`
+(`-` for authenticated absence), complete-package-UID absence attestation, and
+the fixed preserved-record digest object. No ARM receipt or reconstructed
+no-journal fence is accepted. The root absence-evidence SHA pins the operator's
+complete bilateral absence evidence; the app does not independently observe
+remote package absence. The request remains bounded to 24 KiB.
+
+The selected peer must match current package/signer/device/boot/user/UID. Its old
+APK may differ from the current installed APK; both historical peers must match
+their original package/APK/signer closure. Both recorded births must join their
+own exact pending fence epoch/generation and installed scope. The current actor
+must be the actual later-birth same-boot effect-free recovery process, with the
+immediate successor app generation and a different nonce. Existing installed
+identity, exclusive fence, NEW/no-native/no-display/no-Own guards still apply.
+Current and predecessor fences must bind the actual present or absent journal
+bytes. This route neither invents nor requires a Start journal for media that
+actually left none.
+
+The fixed five records are `owner-dispatch.v1.json`,
+`product-activation.v1.json`, `retained-cleanup-preparations.v1.json`,
+`native-process-fence.v1.lock`, and `retained-cleanup.v2.json`. Only cleanup may
+be explicitly null/absent. Archive-first preservation, strict exact byte/hash
+checks, sidecar and drift refusal, clear successor commit and immutable
+`committed-fence.raw` remain mandatory. Only exact archived replay maps project
+empty after that witness; changed/new records remain visible. The native
+generation floor is preserved and never projected empty. All old Original
+rows, UNKNOWNs, outcomes, queries and consumer retention remain unchanged. The
+existing committed Original-scope reader excludes only that exact disposed old
+scope from local admission accounting.
+
+The receipt still states `old_scope_abandoned_cleanup_unknown`,
+`old_cleanup_confirmed=false`, and `old_authority_transferred=false`. Independent
+native/bootstrap/SDK/Pair/Start admission must pass its normal current-owner
+guards. No old Stop becomes a new loop's bilateral Stop, and no old request is
+replayed or ACKed. Host controls exercise the production transaction, Original
+query/counters and the production native restored-history/fresh-history guard
+using modeled OS actor/absence facts; they do not prove device cleanup, SDK
+admission, streaming, an APK build or installation.
+
 ### Receiver-first SDK transport finalization
 
 The incoming prepared-decoder callback creates only its local decoder, dormant

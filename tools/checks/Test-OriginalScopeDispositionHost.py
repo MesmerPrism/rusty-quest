@@ -21,6 +21,8 @@ def main():
  root=pathlib.Path(__file__).resolve().parents[2];out=pathlib.Path(a.output).resolve();out.mkdir(parents=True,exist_ok=False)
  java=root/'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex';source=(java/'EmbeddedDuplexOriginals.java').read_text()
  bodies='\n'.join(method(source,s) for s in ('synchronized int unresolvedExceptCurrent()', 'synchronized int unresolvedForRetirement(', 'private int unrelatedUnresolved('))
+ queries='\n'.join(method(source,s) for s in ('public synchronized Bundle query(', 'private Record find(', 'private Bundle envelope(', 'private File path(', 'private static void requireId('))
+ constants='\n'.join(re.findall(r'^    (?:public|private) static final String (?:TRANSPORT|RECORD|CONTINUATION_RECORD) = .*?;',source,re.M))
  host_source=(java/'EmbeddedDuplexProcessHost.java').read_text();sig='static boolean priorOriginalScopeDisposed('
  host_body=method(host_source,sig) if sig in host_source else 'static boolean priorOriginalScopeDisposed(JSONObject row)throws Exception{return false;}'
  harness='''package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
@@ -32,7 +34,8 @@ class EmbeddedDuplexProcessHost{
  HOST
 }
 class OriginalCounters{
- static class Record{JSONObject row;String id(){return row.getString("original_id");}}
+ CONSTANTS
+ static class Record{JSONObject row;boolean restored;Throwable persistenceFailure;Record(){}Record(JSONObject r){row=r;}String id(){return row.getString("original_id");}}
  final File directory;Map<String,Record> live=new HashMap<>();OriginalCounters(File d){directory=d;}
  static Record ACTIVE=new Record();static Record capture(){return ACTIVE;}Record continuationPredecessor(Record r){return null;}
  Record requireTerminalUnknown(String s){throw new AssertionError("no pair continuation modeled");}
@@ -40,16 +43,18 @@ class OriginalCounters{
  JSONObject read(File f)throws Exception{return new JSONObject(Files.readString(f.toPath()));}
  int unrelated()throws Exception{return unrelatedUnresolved(null,null);}
  BODIES
+ QUERIES
 }
-'''.replace('HOST',host_body).replace('BODIES',bodies)
+class Bundle{Map<String,String> values=new HashMap<>();void putString(String k,String v){values.put(k,v);}String getString(String k){return values.get(k);}}
+'''.replace('HOST',host_body).replace('BODIES',bodies).replace('QUERIES',queries).replace('CONSTANTS',constants)
  generated=out/'OriginalCounters.java';generated.write_text(harness,encoding='utf-8')
- files=[str(java/n) for n in ('EmbeddedDuplexProcessFence.java','EmbeddedDuplexProcessIncarnation.java','EmbeddedDuplexAbandonment.java','EmbeddedDuplexAbandonmentRequest.java','EmbeddedDuplexHistoricalAbandonment.java','EmbeddedDuplexKnownBirthAbandonment.java')]
+ files=[str(java/n) for n in ('EmbeddedDuplexProcessFence.java','EmbeddedDuplexProcessIncarnation.java','EmbeddedDuplexAbandonment.java','EmbeddedDuplexAbandonmentRequest.java','EmbeddedDuplexHistoricalAbandonment.java','EmbeddedDuplexKnownBirthAbandonment.java','EmbeddedDuplexPostMediaAbandonment.java','EmbeddedDuplexCanonicalJson.java')]
  extra=java/'EmbeddedDuplexOriginalScopeDisposition.java'
  if extra.exists():files.append(str(extra))
  # Explicit host Android-Os leaves; real same-descriptor classic I/O and lock.
  files += list(map(str,(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/android-system-host/android/system').glob('*.java')))
  files += [str(generated),str(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/EmbeddedDuplexOriginalScopeHostTest.java')]
- files += [str(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex'/n) for n in ('EmbeddedDuplexKnownBirthAbandonmentHostTest.java','EmbeddedDuplexHistoricalAbandonmentHostTest.java')]
+ files += [str(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex'/n) for n in ('EmbeddedDuplexKnownBirthAbandonmentHostTest.java','EmbeddedDuplexHistoricalAbandonmentHostTest.java','EmbeddedDuplexPostMediaAbandonmentHostTest.java')]
  def run(name,argv):
   r=subprocess.run(argv,capture_output=True,cwd=root);(out/(name+'.stdout')).write_bytes(r.stdout);(out/(name+'.stderr')).write_bytes(r.stderr)
   return r.returncode

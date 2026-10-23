@@ -113,7 +113,7 @@ final class EmbeddedDuplexAbandonment {
                     throw new IllegalStateException("historical durable record changed while archiving");
             }
             // Recheck the entire selected set after all archive writes, including absence/sidecars.
-            if(EmbeddedDuplexKnownBirthAbandonment.replayScope(authorization))for(String name:EmbeddedDuplexAbandonmentRequest.preservedRecords(authorization)) {
+            if(EmbeddedDuplexAbandonmentRequest.replayScope(authorization))for(String name:EmbeddedDuplexAbandonmentRequest.preservedRecords(authorization)) {
                 for(String suffix:java.util.List.of(".new",".bak"))
                     if(Files.exists(new File(directory,name+suffix).toPath(),LinkOption.NOFOLLOW_LINKS))
                         throw new IllegalStateException("historical record sidecar changed");
@@ -220,7 +220,7 @@ final class EmbeddedDuplexAbandonment {
         if(EmbeddedDuplexAbandonmentRequest.replayDisposition(authorization)) {
             for(String name:EmbeddedDuplexAbandonmentRequest.preservedRecords(authorization)) {
                 verifyOptional(archive,"preserved-"+name,EmbeddedDuplexAbandonmentRequest.preservedDigest(authorization,name),8*1024*1024);
-                if(EmbeddedDuplexKnownBirthAbandonment.replayScope(authorization))for(String suffix:java.util.List.of(".new",".bak"))
+                if(EmbeddedDuplexAbandonmentRequest.replayScope(authorization))for(String suffix:java.util.List.of(".new",".bak"))
                     if(Files.exists(new File(archive,"preserved-"+name+suffix).toPath(),LinkOption.NOFOLLOW_LINKS))
                         throw new IllegalStateException("historical archived record sidecar unresolved");
             }

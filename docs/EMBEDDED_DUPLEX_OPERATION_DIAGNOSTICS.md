@@ -67,11 +67,8 @@ Android transport limit. Read projection can omit older operations and counts
 them in the collection's dropped count. It preserves primary and latest cleanup
 observations within each retained operation and does not modify stored evidence.
 
-The merged read is capped at 64 Ki characters and 128 KiB of UTF-8. It trims
-older operations from a read copy and reports omissions in collection
-`dropped_count`; retained primaries, latest cleanup observations and private
-files remain unchanged. An Original selector is applied before this transport
-bound, so its available observation is preferred over unrelated history.
+An Original selector is applied before this transport bound, so its available
+observation is preferred over unrelated history.
 
 For an authorized private investigation, retrieve a referenced fixed app-private
 context file with the existing bounded `run-as` capture owner. Validate the
