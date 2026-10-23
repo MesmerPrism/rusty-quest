@@ -1056,6 +1056,36 @@ fn check_current(host: &Host, value: &Value, session: &str, expiry: u64) -> Resu
     Ok(())
 }
 
+// Only authenticated peer-frame receipts (or their retained exact phase copy)
+// reach these callsites. Their validated timestamp belongs to the peer's clock.
+// Bind every non-time predicate before waiting, then rerun the unchanged strict
+// validator with actual local time; no expiry, signature or authority is widened.
+fn check_remote_current(
+    host: &Host,
+    id: &str,
+    value: &Value,
+    session: &str,
+    expiry: u64,
+) -> Result<(), String> {
+    let receipt: rusty_manifold_peer::ManifoldPeerSessionCurrentReceiptV2 =
+        serde_json::from_value(value.clone()).map_err(safe_decode)?;
+    if receipt.schema_id.as_str() != "rusty.manifold.peer.session_current_receipt.v2"
+        || !receipt.current
+        || receipt.rejection_reason.is_some()
+        || receipt.session_id.as_str() != session
+        || receipt.expires_at_ms != Some(expiry)
+        || expiry <= host.clock.now_ms()?
+        || receipt.decision_id.is_none()
+        || receipt.peer_ids != peers(host)?
+        || receipt.topology_contract_id.as_ref().map(|id| id.as_str())
+            != Some(COMMON_LAN_PAIR_TOPOLOGY_CONTRACT_ID)
+    {
+        return Err("fresh setup new current session receipt differs".into());
+    }
+    authenticated_context_time(host, id, receipt.validated_at_ms)?;
+    check_current(host, value, session, expiry)
+}
+
 fn complete(host: &Host, id: &str) -> Result<Value, String> {
     phase(host, id)?;
     let a = active(host, id)?;
@@ -1072,8 +1102,9 @@ fn complete(host: &Host, id: &str) -> Result<Value, String> {
         .and_then(|v| v.get("expires_at_ms"))
         .and_then(Value::as_u64)
         .ok_or("fresh local expiry absent")?;
-    check_current(
+    check_remote_current(
         host,
+        id,
         a.remote_current
             .as_ref()
             .ok_or("fresh remote receipt absent")?,
@@ -1433,7 +1464,13 @@ fn handle_frame_inner(host: &Host, input: &[u8]) -> Result<Vec<u8>, String> {
                 context.expires_at_ms,
                 host.clock.now_ms()?,
             )?;
-            check_current(host, &b.payload["initiator_current"], &a.session, expiry)?;
+            check_remote_current(
+                host,
+                id,
+                &b.payload["initiator_current"],
+                &a.session,
+                expiry,
+            )?;
             let remote = parse_signature(&b.payload["signature"])?;
             let current = apply(
                 host,
@@ -1714,7 +1751,7 @@ fn finish_phase(
         json!({"signature":sa_for_b,"initiator_current":local_current}),
     )?;
     let remote_current = finished["current_session"].clone();
-    check_current(host, &remote_current, &session, expiry)?;
+    check_remote_current(host, id, &remote_current, &session, expiry)?;
     check_current(host, &local_current, &session, expiry)?;
     update(host, &id, |a| {
         a.remote_current = Some(remote_current.clone())
@@ -1730,7 +1767,7 @@ fn finish_phase(
         return Err("fresh completion original differs".into());
     }
     let final_remote = done["current_session"].clone();
-    check_current(host, &final_remote, &session, expiry)?;
+    check_remote_current(host, id, &final_remote, &session, expiry)?;
     let final_local = complete(host, &id)?;
     Ok(json!({"$schema":"rusty.quest.embedded_duplex.fresh_pair_setup_result.v2","request_id":id,"session_id":session,
             "phase_request_id":active(host,id)?.phase_id,"phase_archive":state(host)?.fresh.history,

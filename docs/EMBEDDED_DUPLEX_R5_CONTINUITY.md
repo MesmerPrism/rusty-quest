@@ -998,6 +998,18 @@ clock failure, backward time and a larger/frozen clock difference refuse. No
 effective clock, expiry extension, observation backdate or callback replay is
 created; the original strict owner validators still run afterwards.
 
+Authenticated remote current-session receipts also carry the producing peer's
+wall-clock timestamp. The four remote consumption sites bind their exact
+session, peers, topology, decision presence and unchanged expiry before using
+that same bounded actual-clock catch-up, then run the original strict current
+receipt validator. Local receipts remain strict without a wait; final completion
+still rereads local authority and requires its retained decision to match. No
+remote decision identifier is assumed equal to the independent local decision.
+Expired, foreign or malformed receipts cannot earn a wait or extend authority.
+The producer/consumer host controls exercise two successive sessions in the
+same Broker authorities with asymmetric clock samples and the actual clock
+helper; their modeled phase and clocks do not qualify Android/JNI or media.
+
 The read-only preparation diagnostic v3 adds closed SDK stage/reason observations
 for outbound and incoming work, including the first failure. It exposes no raw
 exception text. Its transport snapshot remains the platform's latest observation,
