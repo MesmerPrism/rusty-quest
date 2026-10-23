@@ -16,7 +16,9 @@ $javac = (Get-Command javac -ErrorAction Stop).Source
 $java = Join-Path (Split-Path $javac -Parent) 'java.exe'
 $jsonJar=Get-ChildItem (Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json') -Recurse -Filter 'json-*.jar' | Sort-Object FullName -Descending | Select-Object -First 1
 if(-not $jsonJar){throw 'Host org.json test dependency unavailable'}
-& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') $test $historicalTest $knownBirthTest $incarnationTest
+$hostOs=Join-Path (Split-Path $app -Parent) 'host-tests/embedded_duplex/android-system-host/android/system'
+$hostOsSources=@((Join-Path $hostOs 'Os.java'),(Join-Path $hostOs 'OsConstants.java'),(Join-Path $hostOs 'StructStat.java'))
+& $javac '--release' '17'  '-encoding' 'UTF-8' '-cp' $jsonJar.FullName '-d' $output (Join-Path $main 'EmbeddedDuplexOriginalScopeDisposition.java') (Join-Path $main 'EmbeddedDuplexProcessFence.java') (Join-Path $main 'EmbeddedDuplexProcessIncarnation.java') (Join-Path $main 'EmbeddedDuplexAbandonment.java') (Join-Path $main 'EmbeddedDuplexAbandonmentRequest.java') (Join-Path $main 'EmbeddedDuplexHistoricalAbandonment.java') (Join-Path $main 'EmbeddedDuplexKnownBirthAbandonment.java') $test $historicalTest $knownBirthTest $incarnationTest @hostOsSources
 if ($LASTEXITCODE -ne 0) { throw 'Process fence host compilation failed' }
 & $javac '--release' '17' '-encoding' 'UTF-8' '-cp' ($output+[IO.Path]::PathSeparator+$jsonJar.FullName) '-d' $output $v5Test
 if($LASTEXITCODE-ne0){throw 'Replay v5 host compilation failed'}
