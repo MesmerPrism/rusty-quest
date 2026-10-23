@@ -125,21 +125,73 @@ impl CurrentOwnerProjectionSource for ConfiguredProjectionSource {
         mode: AndroidMediaExecutionMode,
         now_ms: u64,
     ) -> Result<OwnerDispatchAuthorityProjection, String> {
-        let grant = self
-            .route_grant_id
-            .lock()
-            .map_err(|_| "current route binding poisoned")?
-            .clone();
-        let source = QuestEmbeddedDuplexProjectionSource::new(
-            self.authority.clone(),
-            serde_json::from_value(json!(grant)).map_err(safe_decode)?,
-            serde_json::from_value(json!(self.authority_peer_id)).map_err(safe_decode)?,
-        );
-        let current = source.current_projection(ticket, target_peer_id, mode, now_ms)?;
-        if current.route_configuration_sha256 != self.route_configuration_sha256 {
-            return Err("current route differs from packaged control/media configuration".into());
+        let mut boundary = "route_binding_lock";
+        let mut retained_projection = None;
+        let mut retained_grant = None;
+        let result: Result<OwnerDispatchAuthorityProjection, String> = (|| {
+            let grant = self
+                .route_grant_id
+                .lock()
+                .map_err(|_| "current route binding poisoned")?
+                .clone();
+            retained_grant = Some(grant.clone());
+            boundary = "projection_source_binding";
+            let source = QuestEmbeddedDuplexProjectionSource::new(
+                self.authority.clone(),
+                serde_json::from_value(json!(grant)).map_err(safe_decode)?,
+                serde_json::from_value(json!(self.authority_peer_id)).map_err(safe_decode)?,
+            )
+            .with_diagnostic_scope(super::operation_diagnostics::scope());
+            boundary = "current_authority_projection";
+            let current = source.current_projection(ticket, target_peer_id, mode, now_ms)?;
+            retained_projection = Some(current.clone());
+            boundary = "packaged_route_configuration_binding";
+            if current.route_configuration_sha256 != self.route_configuration_sha256 {
+                return Err(
+                    "current route differs from packaged control/media configuration".into(),
+                );
+            }
+            Ok(current)
+        })();
+        if let (Err(error), Some(operation)) =
+            (&result, super::operation_diagnostics::scope().current())
+        {
+            let context =
+                json!({"ticket":ticket,"target_peer_id":target_peer_id,"mode":mode,"now_ms":now_ms,
+                "route_grant_id":retained_grant,"authority_peer_id":self.authority_peer_id,
+                "expected_route_configuration_sha256":self.route_configuration_sha256,
+                "returned_projection":retained_projection})
+                .to_string();
+            operation.record(
+                rusty_quest_media_stream::FailureInput::new(
+                    if mode == AndroidMediaExecutionMode::CompensateUncertain {
+                        rusty_quest_media_stream::DiagnosticPhase::Compensation
+                    } else if ticket.operation
+                        == rusty_quest_media_stream::MediaStreamPlatformOperation::Stop
+                    {
+                        rusty_quest_media_stream::DiagnosticPhase::Cleanup
+                    } else {
+                        rusty_quest_media_stream::DiagnosticPhase::Primary
+                    },
+                    rusty_quest_media_stream::DiagnosticLayer::Rust,
+                    "configured_projection_source",
+                    boundary,
+                    "authority_projection",
+                    "unclassified",
+                )
+                .private_context(vec![
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "error",
+                        bytes: error.as_bytes(),
+                    },
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "projection_inputs",
+                        bytes: context.as_bytes(),
+                    },
+                ]),
+            );
         }
-        Ok(current)
+        result
     }
 }
 
@@ -1219,7 +1271,8 @@ fn build_host(
         clock.clone(),
         cleanup_replay,
         callbacks.clone(),
-    )?;
+    )?
+    .with_diagnostic_scope(super::operation_diagnostics::scope());
     let cleanup_server_slot = Arc::new(Mutex::new(Some(cleanup_server)));
     if let Some(held) = &partial {
         *held
@@ -1233,7 +1286,8 @@ fn build_host(
         callbacks.clone(),
         remote_public_key,
         bootstrap.remote_key_id.clone(),
-    )?;
+    )?
+    .with_diagnostic_scope(super::operation_diagnostics::scope());
     let route_grant_binding = Arc::new(Mutex::new(bootstrap.route_grant_id.clone()));
     let projections = ConfiguredProjectionSource {
         authority: authority.clone(),
@@ -1252,20 +1306,26 @@ fn build_host(
         Box::new(remote),
         Box::new(projections),
         Box::new(clock.clone()),
-    )?;
+    )?
+    .with_diagnostic_scope(super::operation_diagnostics::scope());
     let executor = retained_cleanup_host::Executor::new(
         executor,
         cleanup.clone(),
         placements.clone(),
         route_grant_binding.clone(),
     );
-    provider_slot
-        .lock()
-        .map_err(|_| "constructor provider slot poisoned")?
-        .as_mut()
-        .ok_or("constructor provider checked out")?
-        .install_media_owner_executor(Box::new(executor))
-        .map_err(|_| "owner executor rejected")?;
+    {
+        let mut selected = provider_slot
+            .lock()
+            .map_err(|_| "constructor provider slot poisoned")?;
+        let provider = selected
+            .as_mut()
+            .ok_or("constructor provider checked out")?;
+        provider.set_media_diagnostic_scope(super::operation_diagnostics::scope());
+        provider
+            .install_media_owner_executor(Box::new(executor))
+            .map_err(|_| "owner executor rejected")?;
+    }
     let verifier =
         QuestOwnerDispatchAuthorityVerifier::new(authority.clone(), Arc::new(clock.clone()));
     let server = OwnerDispatchServer::restore(
@@ -1279,7 +1339,8 @@ fn build_host(
         Box::new(clock.clone()),
         bootstrap.replay,
         Box::new(callbacks.clone()),
-    )?;
+    )?
+    .with_diagnostic_scope(super::operation_diagnostics::scope());
     let server_slot = Arc::new(Mutex::new(Some(server)));
     if let Some(held) = &partial {
         *held
@@ -1474,6 +1535,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     bootstrap: JString<'_>,
     callback: JObject<'_>,
 ) -> jstring {
+    let _diagnostic_scope = super::operation_diagnostics::fallback(&mut env, "initialize_runtime");
     let result = (|| {
         let config = read_string(&mut env, &config, 2 * 1024 * 1024)?;
         let sha = read_string(&mut env, &sha, 64)?;
@@ -1481,6 +1543,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         let bootstrap = read_string(&mut env, &bootstrap, 33 * 1024 * 1024)?;
         initialize(&mut env, config, sha, entropy, bootstrap, callback)
     })();
+    if let Err(error) = &result {
+        super::operation_diagnostics::failure("initialize_runtime", error.as_bytes());
+    }
     return_string(&mut env, result)
 }
 
@@ -1551,6 +1616,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _class: JClass<'_>,
     frame: JByteArray<'_>,
 ) -> jbyteArray {
+    let _diagnostic_scope = super::operation_diagnostics::fallback(&mut env, "owner_dispatch");
     let result = (|| {
         let length = env
             .get_array_length(&frame)
@@ -1621,6 +1687,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
                 .get()
                 .handle_frame(&bytes)
                 .map_err(|error| {
+                    super::operation_diagnostics::failure("incoming_owner_dispatch", error.as_bytes());
                     let stage = match error.as_str() {
                         "dispatch frame bounds"|"dispatch frame bounds or magic"|"dispatch frame lengths"|
                         "metadata length"|"payload length"|"payload digest mismatch"|"invalid dispatch request metadata"|
@@ -1657,6 +1724,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             .byte_array_from_slice(&bytes)
             .map_or(std::ptr::null_mut(), |array| array.into_raw()),
         Err(reason) => {
+            super::operation_diagnostics::failure("owner_frame", reason.as_bytes());
             let _ = env.throw_new("java/lang/IllegalStateException", reason);
             std::ptr::null_mut()
         }
@@ -2063,6 +2131,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     operation: JString<'_>,
     input: JString<'_>,
 ) -> jstring {
+    let _diagnostic_scope = super::operation_diagnostics::fallback(&mut env, "runtime_command");
     let mut selected_operation = None;
     let result = (|| {
         let operation = read_string(&mut env, &operation, 64)?;
@@ -2073,6 +2142,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     match result {
         Ok(value) => return_string(&mut env, Ok(value)),
         Err(error) => {
+            let detail = json!({"operation":selected_operation,"error":error}).to_string();
+            super::operation_diagnostics::failure("runtime_command", detail.as_bytes());
             let payload = operation_failure::jni_payload(selected_operation.as_deref(), &error);
             let _ = env.throw_new(operation_failure::EXCEPTION_CLASS, payload);
             std::ptr::null_mut()

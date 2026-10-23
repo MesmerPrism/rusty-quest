@@ -445,6 +445,10 @@ pub trait CurrentOwnerProjectionSource: Send + Sync {
 
 /// Object-safe remote dispatch client.
 pub trait OwnerDispatchClient: Send {
+    /// Optional shared diagnostic scope; unrelated implementations remain unchanged.
+
+    fn set_diagnostic_scope(&mut self, _scope: rusty_quest_media_stream::DiagnosticScope) {}
+
     /// Dispatches one exact pre-authorized owner ticket.
     ///
     /// # Errors
@@ -618,7 +622,8 @@ pub struct CompositeAndroidMediaOwnerExecutor {
     remote: Box<dyn OwnerDispatchClient>,
     projections: Box<dyn CurrentOwnerProjectionSource>,
     clock: Box<dyn OwnerDispatchClock>,
-    verified: Mutex<BTreeMap<String, (AndroidMediaExecutionTicket, AuthenticatedOwnerEffect)>>,
+    verified: Mutex<BTreeMap<String, (AndroidMediaExecutionTicket, AuthenticatedOwnerEffect, AndroidMediaExecutionMode)>>,
+    diagnostic_scope: rusty_quest_media_stream::DiagnosticScope,
 }
 
 impl CompositeAndroidMediaOwnerExecutor {
@@ -626,6 +631,7 @@ impl CompositeAndroidMediaOwnerExecutor {
     ///
     /// # Errors
     /// Returns an error for an invalid generation or incomplete placement set.
+
     pub fn new(
         generation: u64,
         local_peer_id: String,
@@ -679,81 +685,221 @@ impl CompositeAndroidMediaOwnerExecutor {
             projections,
             clock,
             verified: Mutex::new(BTreeMap::new()),
+            diagnostic_scope: Default::default(),
         })
     }
+    /// Shares the root operation's diagnostics across local and remote owner callbacks.
+
+    pub fn with_diagnostics(self, operation: rusty_quest_media_stream::DiagnosticOperation) -> Self {
+        self.diagnostic_scope.set(Some(operation));
+        self
+    }
+    /// Injects a shared operation slot into this long-lived executor.
+
+    pub fn with_diagnostic_scope(mut self, scope: rusty_quest_media_stream::DiagnosticScope) -> Self {
+        self.diagnostic_scope = scope;
+        self
+    }
+
 }
 
 impl crate::AndroidMediaOwnerExecutor for CompositeAndroidMediaOwnerExecutor {
+
+    fn set_diagnostic_scope(&mut self, scope: rusty_quest_media_stream::DiagnosticScope) {
+        self.remote.set_diagnostic_scope(scope.clone());
+        self.diagnostic_scope = scope;
+    }
+
+    fn last_failure_diagnostic(&self) -> Option<rusty_quest_media_stream::FailureObservation> {
+        self.diagnostic_scope
+            .current()
+            .and_then(|operation| operation.last_failure())
+    }
     fn executor_generation(&self) -> u64 {
         self.generation
     }
+
 
     fn execute(
         &mut self,
         ticket: &AndroidMediaExecutionTicket,
         mode: AndroidMediaExecutionMode,
     ) -> Result<AndroidMediaOwnerReadback, String> {
-        if ticket.executor_generation != self.generation {
-            return Err("executor generation mismatch".to_owned());
+        let diagnostics = self.diagnostic_scope.current();
+        self.remote
+            .set_diagnostic_scope(self.diagnostic_scope.clone());
+        let mut failure_proof = None;
+        let mut boundary = "ticket_generation";
+        let result = (|| {
+            if ticket.executor_generation != self.generation {
+                return Err("executor generation mismatch".to_owned());
+            }
+            boundary = "owner_placement";
+            let key = (
+                ticket.owner_kind,
+                ticket.owner_id.clone(),
+                ticket.provider_kind.clone(),
+                ticket.resource_id.clone(),
+            );
+            let target = self
+                .placements
+                .get(&key)
+                .ok_or_else(|| "owner placement absent".to_owned())?
+                .clone();
+            boundary = "clock_read";
+            let now_ms = self.clock.now_ms()?;
+            let target_peer_id = match &target {
+                AndroidMediaOwnerPlacementTarget::Local => self.local_peer_id.clone(),
+                AndroidMediaOwnerPlacementTarget::Remote { peer_id } => peer_id.clone(),
+            };
+            boundary = "current_route_projection";
+            let projection =
+                self.projections
+                    .current_projection(ticket, &target_peer_id, mode, now_ms)?;
+            boundary = "owner_execute_and_verify";
+            let effect = match target {
+                AndroidMediaOwnerPlacementTarget::Local => {
+                    self.local
+                        .execute_and_verify(Some(&projection), ticket, mode)?
+                }
+                AndroidMediaOwnerPlacementTarget::Remote { peer_id } => {
+                    self.remote
+                        .execute(peer_id, projection, ticket.clone(), mode, now_ms)?
+                }
+            };
+            let readback = if let Some(proof) = &effect.remote_dispatch {
+                failure_proof = Some(proof.clone());
+                boundary = "remote_proof_verify";
+                let target_effect = proof.verify(
+                    ticket,
+                    &proof.enrolled_target_key_id,
+                    &proof.enrolled_target_key,
+                )?;
+                boundary = "remote_target_effect_equality";
+                let mut raw = effect.clone();
+                raw.remote_dispatch = None;
+                if raw != target_effect {
+                    return Err("remote effect differs from signed target".into());
+                }
+                boundary = "remote_source_wrapper";
+                proof.clone().source_readback(
+                    ticket,
+                    &proof.enrolled_target_key_id,
+                    &proof.enrolled_target_key,
+                )?
+            } else {
+                boundary = "local_effect_readback";
+                validate_effect(ticket, mode, &effect)?;
+                effect.readback.clone()
+            };
+            boundary = "verified_cache_insert";
+            self.verified
+                .lock()
+                .map_err(|_| "verified effect lock poisoned".to_owned())?
+                .insert(ticket.capability.clone(), (ticket.clone(), effect, mode));
+            Ok(readback)
+        })();
+        if let Err(error) = &result {
+            if let Some(proof) = failure_proof {
+                let request = encode_request_frame(&proof.request).ok();
+                crate::owner_diagnostics::observe_error(
+                    diagnostics.as_ref(),
+                    ticket,
+                    mode,
+                    boundary,
+                    "proof",
+                    error,
+                    request.as_deref(),
+                    Some(&proof.response_bytes),
+                    Some(&proof.enrolled_target_key),
+                );
+            } else {
+                crate::owner_diagnostics::observe_error(
+                    diagnostics.as_ref(),
+                    ticket,
+                    mode,
+                    boundary,
+                    "owner",
+                    error,
+                    None,
+                    None,
+                    None,
+                );
+            }
         }
-        let key = (
-            ticket.owner_kind,
-            ticket.owner_id.clone(),
-            ticket.provider_kind.clone(),
-            ticket.resource_id.clone(),
-        );
-        let target = self
-            .placements
-            .get(&key)
-            .ok_or_else(|| "owner placement absent".to_owned())?
-            .clone();
-        let now_ms = self.clock.now_ms()?;
-        let target_peer_id = match &target {
-            AndroidMediaOwnerPlacementTarget::Local => self.local_peer_id.clone(),
-            AndroidMediaOwnerPlacementTarget::Remote { peer_id } => peer_id.clone(),
-        };
-        let projection =
-            self.projections
-                .current_projection(ticket, &target_peer_id, mode, now_ms)?;
-        let effect = match target {
-            AndroidMediaOwnerPlacementTarget::Local => {
-                self.local
-                    .execute_and_verify(Some(&projection), ticket, mode)?
-            }
-            AndroidMediaOwnerPlacementTarget::Remote { peer_id } => {
-                self.remote
-                    .execute(peer_id, projection, ticket.clone(), mode, now_ms)?
-            }
-        };
-        let readback = if let Some(proof) = &effect.remote_dispatch {
-            let target_effect = proof.verify(ticket, &proof.enrolled_target_key_id, &proof.enrolled_target_key)?;
-            let mut raw = effect.clone();
-            raw.remote_dispatch = None;
-            if raw != target_effect { return Err("remote effect differs from signed target".into()); }
-            proof.clone().source_readback(ticket, &proof.enrolled_target_key_id, &proof.enrolled_target_key)?
-        } else {
-            validate_effect(ticket, mode, &effect)?;
-            effect.readback.clone()
-        };
-        self.verified
-            .lock()
-            .map_err(|_| "verified effect lock poisoned".to_owned())?
-            .insert(ticket.capability.clone(), (ticket.clone(), effect));
-        Ok(readback)
+        result
     }
+
 
     fn verify(
         &self,
         ticket: &AndroidMediaExecutionTicket,
         readback: &AndroidMediaOwnerReadback,
     ) -> bool {
-        self.verified
-            .lock()
-            .ok()
-            .and_then(|mut verified| verified.remove(&ticket.capability))
-            .is_some_and(|(expected, effect)| expected == *ticket && if let Some(proof) = &effect.remote_dispatch {
-                proof.validate_source_readback(ticket, readback).is_ok()
-            } else { effect.readback == *readback })
+        let diagnostics = self.diagnostic_scope.current();
+        let mut boundary = "verified_cache_lock";
+        let mut diagnostic_mode = AndroidMediaExecutionMode::Execute;
+        let checked: Result<(), String> = (|| {
+            let mut verified = self
+                .verified
+                .lock()
+                .map_err(|_| "verified effect lock poisoned".to_owned())?;
+            boundary = "verified_cache_lookup";
+            let (expected, effect, mode) = verified
+                .remove(&ticket.capability)
+                .ok_or_else(|| "verified effect absent".to_owned())?;
+            drop(verified);
+            diagnostic_mode = mode;
+            boundary = "verified_ticket_binding";
+            if expected != *ticket {
+                return Err("verified ticket differs".into());
+            }
+            if let Some(proof) = &effect.remote_dispatch {
+                boundary = "remote_source_readback_verify";
+                if let Err(error) = proof.validate_source_readback(ticket, readback) {
+                    let request = encode_request_frame(&proof.request).ok();
+                    let wrapper = serde_json::to_vec(readback).unwrap_or_default();
+                    crate::owner_diagnostics::observe_error_with_context(
+                        diagnostics.as_ref(),
+                        ticket,
+                        diagnostic_mode,
+                        boundary,
+                        "proof",
+                        &error,
+                        request.as_deref(),
+                        Some(&proof.response_bytes),
+                        Some(&proof.enrolled_target_key),
+                        &[rusty_quest_media_stream::PrivateFailureChunk {
+                            name: "source_wrapper_readback",
+                            bytes: &wrapper,
+                        }],
+                    );
+                    return Err(error);
+                }
+            } else {
+                boundary = "verified_local_readback_equality";
+                if effect.readback != *readback {
+                    return Err("verified local readback differs".into());
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = &checked {
+            if boundary != "remote_source_readback_verify" {
+                crate::owner_diagnostics::observe_error(
+                    diagnostics.as_ref(),
+                    ticket,
+                    diagnostic_mode,
+                    boundary,
+                    "readback",
+                    error,
+                    None,
+                    None,
+                    None,
+                );
+            }
+        }
+        checked.is_ok()
     }
 }
 
@@ -1057,6 +1203,7 @@ where
 
 /// Fail-closed dispatch server for a single target peer process.
 pub struct OwnerDispatchServer<V, R, S> {
+    diagnostic_scope: rusty_quest_media_stream::DiagnosticScope,
     target_peer_id: String,
     verifier: V,
     registry: R,
@@ -1076,6 +1223,7 @@ where
     ///
     /// # Errors
     /// Returns an error when identity or replay bounds are invalid.
+
     pub fn restore(
         target_peer_id: String,
         verifier: V,
@@ -1090,11 +1238,21 @@ where
             || replay.terminal.len() > MAX_OWNER_DISPATCH_REPLAYS
             || replay.target_bindings.len() > MAX_OWNER_DISPATCH_REPLAYS
             || replay.target_bindings.iter().any(|(key, binding)| {
-                !valid_sha256(key) || binding.source.executor_generation == 0
-                    || binding.source.capability.is_empty() || binding.source.action_id.is_empty()
-                    || crate::remote_owner_dispatch::validate_target_ticket(&binding.source, &binding.target).is_err()
-                    || binding.cleanup_source.as_ref().is_some_and(|cleanup|
-                        !crate::remote_owner_dispatch::valid_retained_cleanup_source(&binding.source, cleanup))
+                !valid_sha256(key)
+                    || binding.source.executor_generation == 0
+                    || binding.source.capability.is_empty()
+                    || binding.source.action_id.is_empty()
+                    || crate::remote_owner_dispatch::validate_target_ticket(
+                        &binding.source,
+                        &binding.target,
+                    )
+                    .is_err()
+                    || binding.cleanup_source.as_ref().is_some_and(|cleanup| {
+                        !crate::remote_owner_dispatch::valid_retained_cleanup_source(
+                            &binding.source,
+                            cleanup,
+                        )
+                    })
             })
             || serde_json::to_vec(&replay)
                 .map_or(true, |bytes| bytes.len() > MAX_OWNER_DISPATCH_REPLAY_BYTES)
@@ -1106,6 +1264,7 @@ where
             return Err("invalid dispatch replay state".to_owned());
         }
         Ok(Self {
+            diagnostic_scope: Default::default(),
             target_peer_id,
             verifier,
             registry,
@@ -1114,6 +1273,13 @@ where
             replay,
             replay_store,
         })
+    }
+
+    /// Injects the thread-local calling operation without changing replay or signatures.
+
+    pub fn with_diagnostic_scope(mut self, scope: rusty_quest_media_stream::DiagnosticScope) -> Self {
+        self.diagnostic_scope = scope;
+        self
     }
 
     /// Returns durable replay state for the app-owned persistence boundary.
@@ -1125,119 +1291,199 @@ where
     ///
     /// # Errors
     /// Returns an error for invalid authority, framing, persistence, or execution evidence.
+
     pub fn handle_frame(&mut self, frame: &[u8]) -> Result<Vec<u8>, String> {
         if frame.is_empty() || frame.len() > MAX_OWNER_DISPATCH_FRAME_BYTES {
             return Err("dispatch frame bounds".to_owned());
         }
         let request = decode_request_frame(frame)?;
-        validate_request_shape(&request, &self.target_peer_id)?;
-        let request_sha256 = sha256_prefixed(frame);
-        if let Some(cached) = self.replay.terminal.get(&request.dispatch_id) {
-            if cached.request_sha256 != request_sha256 {
-                return Err("dispatch replay identity collision".to_owned());
+        let diagnostic = self.diagnostic_scope.current();
+        let mut boundary = "target_request_shape";
+        let result: Result<Vec<u8>, String> = (|| {
+            validate_request_shape(&request, &self.target_peer_id)?;
+            boundary = "target_replay_identity";
+            let request_sha256 = sha256_prefixed(frame);
+            if let Some(cached) = self.replay.terminal.get(&request.dispatch_id) {
+                if cached.request_sha256 != request_sha256 {
+                    return Err("dispatch replay identity collision".to_owned());
+                }
+                return encode_response_frame(cached);
             }
-            return encode_response_frame(cached);
-        }
-        if let Some(pending) = self.replay.pending_request_sha256.get(&request.dispatch_id) {
-            if pending != &request_sha256 {
-                return Err("dispatch replay identity collision".to_owned());
+            if let Some(pending) = self.replay.pending_request_sha256.get(&request.dispatch_id) {
+                if pending != &request_sha256 {
+                    return Err("dispatch replay identity collision".to_owned());
+                }
+                return self.signed_response(
+                    &request.dispatch_id,
+                    &request_sha256,
+                    OwnerDispatchStatus::Uncertain,
+                    None,
+                    None,
+                    Some("pending_compensation_required".to_owned()),
+                );
             }
-            return self.signed_response(
-                &request.dispatch_id,
-                &request_sha256,
-                OwnerDispatchStatus::Uncertain,
-                None,
-                None,
-                Some("pending_compensation_required".to_owned()),
-            );
-        }
-        let target_now_ms = self.clock.now_ms()?;
-        if target_now_ms == 0
-            || request.issued_at_ms
-                > target_now_ms.saturating_add(MAX_OWNER_DISPATCH_FUTURE_SKEW_MS)
-            || target_now_ms.saturating_sub(request.issued_at_ms)
-                > MAX_OWNER_DISPATCH_REQUEST_AGE_MS
-        {
-            return Err("dispatch request is not currently fresh".to_owned());
-        }
-        if self.replay.pending_request_sha256.len() >= MAX_OWNER_DISPATCH_PENDING
-            || self.replay.terminal.len() >= MAX_OWNER_DISPATCH_REPLAYS
-        {
-            return Err("dispatch replay capacity".to_owned());
-        }
-        let signing_bytes = request_signing_bytes(&request)?;
-        let signature = decode_signature_base64(&request.signature_base64)?;
-        self.verifier
-            .verify_current(&request, &signing_bytes, &signature)?;
+            boundary = "target_clock_read";
+            let target_now_ms = self.clock.now_ms()?;
+            boundary = "target_request_freshness";
+            if target_now_ms == 0
+                || request.issued_at_ms
+                    > target_now_ms.saturating_add(MAX_OWNER_DISPATCH_FUTURE_SKEW_MS)
+                || target_now_ms.saturating_sub(request.issued_at_ms)
+                    > MAX_OWNER_DISPATCH_REQUEST_AGE_MS
+            {
+                return Err("dispatch request is not currently fresh".to_owned());
+            }
+            boundary = "target_replay_capacity";
+            if self.replay.pending_request_sha256.len() >= MAX_OWNER_DISPATCH_PENDING
+                || self.replay.terminal.len() >= MAX_OWNER_DISPATCH_REPLAYS
+            {
+                return Err("dispatch replay capacity".to_owned());
+            }
+            boundary = "target_request_signing_bytes";
+            let signing_bytes = request_signing_bytes(&request)?;
+            boundary = "target_request_signature_decode";
+            let signature = decode_signature_base64(&request.signature_base64)?;
+            boundary = "target_current_authority_verify";
+            self.verifier
+                .verify_current(&request, &signing_bytes, &signature)?;
 
-        // Authenticate original bytes before deriving any target-local execution identity.
-        let generation = self.registry.current_executor_generation()?;
-        let binding_key = target_binding_key(&request)?;
-        let (target_ticket, binding) = bind_target_ticket(
-            &request, generation, self.replay.target_bindings.get(&binding_key))?;
-        if !self.replay.target_bindings.contains_key(&binding_key)
-            && self.replay.target_bindings.len() >= MAX_OWNER_DISPATCH_REPLAYS {
-            return Err("target binding capacity".into());
-        }
-        let previous_binding = self.replay.target_bindings.insert(binding_key.clone(), binding);
-        // Persistable uncertainty and the fixed target identity precede platform code.
-        self.replay
-            .pending_request_sha256
-            .insert(request.dispatch_id.clone(), request_sha256.clone());
-        if let Err(error) = self.replay_store.commit(&self.replay) {
+            // Authenticate original bytes before deriving any target-local execution identity.
+            boundary = "target_executor_generation";
+            let generation = self.registry.current_executor_generation()?;
+            boundary = "target_binding_key";
+            let binding_key = target_binding_key(&request)?;
+            boundary = "target_binding_derive";
+            let (target_ticket, binding) = bind_target_ticket(
+                &request,
+                generation,
+                self.replay.target_bindings.get(&binding_key),
+            )?;
+            if !self.replay.target_bindings.contains_key(&binding_key)
+                && self.replay.target_bindings.len() >= MAX_OWNER_DISPATCH_REPLAYS
+            {
+                return Err("target binding capacity".into());
+            }
+            let previous_binding = self
+                .replay
+                .target_bindings
+                .insert(binding_key.clone(), binding);
+            // Persistable uncertainty and the fixed target identity precede platform code.
             self.replay
                 .pending_request_sha256
-                .remove(&request.dispatch_id);
-            if let Some(previous) = previous_binding {
-                self.replay.target_bindings.insert(binding_key, previous);
-            } else { self.replay.target_bindings.remove(&binding_key); }
-            return Err(format!("dispatch pending persistence: {error}"));
-        }
-        let execution = self.registry.execute_remote_and_verify(
-            &request.authority, &request.ticket, &target_ticket, request.mode,
-        );
-        let (status, effect, failure) = match execution {
-            Ok(effect) if validate_effect(&target_ticket, request.mode, &effect).is_ok() => {
-                (OwnerDispatchStatus::Completed, Some(effect), None)
+                .insert(request.dispatch_id.clone(), request_sha256.clone());
+            boundary = "target_pending_persistence";
+            if let Err(error) = self.replay_store.commit(&self.replay) {
+                self.replay
+                    .pending_request_sha256
+                    .remove(&request.dispatch_id);
+                if let Some(previous) = previous_binding {
+                    self.replay.target_bindings.insert(binding_key, previous);
+                } else {
+                    self.replay.target_bindings.remove(&binding_key);
+                }
+                return Err(format!("dispatch pending persistence: {error}"));
             }
-            Ok(_) => (
-                OwnerDispatchStatus::Uncertain,
+            boundary = "target_registry_execute";
+            let execution = self.registry.execute_remote_and_verify(
+                &request.authority,
+                &request.ticket,
+                &target_ticket,
+                request.mode,
+            );
+            let diagnostic = self.diagnostic_scope.current();
+            let (status, effect, failure) = match execution {
+                Ok(effect) => match validate_effect(&target_ticket, request.mode, &effect) {
+                    Ok(()) => (OwnerDispatchStatus::Completed, Some(effect), None),
+                    Err(error) => {
+                        let bytes = serde_json::to_vec(&effect).unwrap_or_default();
+                        crate::owner_diagnostics::observe_error_with_context(
+                            diagnostic.as_ref(),
+                            &target_ticket,
+                            request.mode,
+                            "target_effect_readback",
+                            "readback",
+                            &error,
+                            Some(frame),
+                            None,
+                            None,
+                            &[rusty_quest_media_stream::PrivateFailureChunk {
+                                name: "target_owner_effect",
+                                bytes: &bytes,
+                            }],
+                        );
+                        (
+                            OwnerDispatchStatus::Uncertain,
+                            None,
+                            Some("platform_evidence_invalid".to_owned()),
+                        )
+                    }
+                },
+                Err(error) => {
+                    crate::owner_diagnostics::observe_error(
+                        diagnostic.as_ref(),
+                        &target_ticket,
+                        request.mode,
+                        "target_registry_execute",
+                        "platform",
+                        &error,
+                        Some(frame),
+                        None,
+                        None,
+                    );
+                    (
+                        OwnerDispatchStatus::Uncertain,
+                        None,
+                        Some("platform_effect_uncertain".to_owned()),
+                    )
+                }
+            };
+            boundary = "target_response_sign";
+            let encoded = self.signed_response(
+                &request.dispatch_id,
+                &request_sha256,
+                status,
+                Some(target_ticket),
+                effect,
+                failure,
+            )?;
+            let response = decode_response_frame(&encoded)?;
+            let mut committed = self.replay.clone();
+            if status == OwnerDispatchStatus::Completed && is_terminal_owner_request(&request) {
+                committed
+                    .target_bindings
+                    .get_mut(&binding_key)
+                    .ok_or("target binding lost")?
+                    .terminal = true;
+            }
+            committed
+                .pending_request_sha256
+                .remove(&request.dispatch_id);
+            committed
+                .terminal
+                .insert(request.dispatch_id.clone(), response);
+            if serde_json::to_vec(&committed)
+                .map_or(true, |bytes| bytes.len() > MAX_OWNER_DISPATCH_REPLAY_BYTES)
+            {
+                return Err("dispatch replay byte capacity".to_owned());
+            }
+            self.replay_store.commit(&committed)?;
+            self.replay = committed;
+            Ok(encoded)
+        })();
+        if let Err(error) = &result {
+            crate::owner_diagnostics::observe_error(
+                diagnostic.as_ref(),
+                &request.ticket,
+                request.mode,
+                boundary,
+                "owner_dispatch",
+                error,
+                Some(frame),
                 None,
-                Some("platform_evidence_invalid".to_owned()),
-            ),
-            Err(_) => (
-                OwnerDispatchStatus::Uncertain,
                 None,
-                Some("platform_effect_uncertain".to_owned()),
-            ),
-        };
-        let encoded = self.signed_response(
-            &request.dispatch_id,
-            &request_sha256,
-            status,
-            Some(target_ticket),
-            effect,
-            failure,
-        )?;
-        let response = decode_response_frame(&encoded)?;
-        let mut committed = self.replay.clone();
-        if status == OwnerDispatchStatus::Completed && is_terminal_owner_request(&request) {
-            committed.target_bindings.get_mut(&binding_key).ok_or("target binding lost")?.terminal = true;
+            );
         }
-        committed
-            .pending_request_sha256
-            .remove(&request.dispatch_id);
-        committed
-            .terminal
-            .insert(request.dispatch_id.clone(), response);
-        if serde_json::to_vec(&committed)
-            .map_or(true, |bytes| bytes.len() > MAX_OWNER_DISPATCH_REPLAY_BYTES)
-        {
-            return Err("dispatch replay byte capacity".to_owned());
-        }
-        self.replay_store.commit(&committed)?;
-        self.replay = committed;
-        Ok(encoded)
+        result
     }
 
     fn signed_response(
@@ -1274,6 +1520,7 @@ pub struct RemoteOwnerDispatchExecutor<T, S> {
     executor_key: VerifyingKey,
     executor_key_id: String,
     next_sequence: u64,
+    diagnostic_scope: rusty_quest_media_stream::DiagnosticScope,
 }
 
 impl<T: OwnerDispatchTransport, S: OwnerDispatchSigner> RemoteOwnerDispatchExecutor<T, S> {
@@ -1298,13 +1545,28 @@ impl<T: OwnerDispatchTransport, S: OwnerDispatchSigner> RemoteOwnerDispatchExecu
             executor_key,
             executor_key_id,
             next_sequence: 1,
+            diagnostic_scope: Default::default(),
         })
+    }
+
+    /// Attaches an existing operation scope without changing signed requests or results.
+
+    pub fn with_diagnostics(self, operation: rusty_quest_media_stream::DiagnosticOperation) -> Self {
+        self.diagnostic_scope.set(Some(operation));
+        self
+    }
+    /// Injects a shared operation slot into this long-lived executor.
+
+    pub fn with_diagnostic_scope(mut self, scope: rusty_quest_media_stream::DiagnosticScope) -> Self {
+        self.diagnostic_scope = scope;
+        self
     }
 
     /// Dispatches one pre-authorized ticket and authenticates the exact result.
     ///
     /// # Errors
     /// Returns an error when preparation, transport, or response verification fails.
+
     pub fn execute(
         &mut self,
         target_peer_id: String,
@@ -1313,7 +1575,15 @@ impl<T: OwnerDispatchTransport, S: OwnerDispatchSigner> RemoteOwnerDispatchExecu
         mode: AndroidMediaExecutionMode,
         now_ms: u64,
     ) -> Result<AuthenticatedOwnerEffect, String> {
-        let request = self.prepare_request(target_peer_id, authority, ticket, mode, now_ms)?;
+        let diagnostics = self.diagnostic_scope.current();
+        let request = crate::owner_diagnostics::observed(
+            diagnostics.as_ref(),
+            &ticket,
+            mode,
+            "prepare_request",
+            "authority",
+            self.prepare_request(target_peer_id, authority, ticket.clone(), mode, now_ms),
+        )?;
         self.execute_prepared(&request)
     }
 
@@ -1356,50 +1626,100 @@ impl<T: OwnerDispatchTransport, S: OwnerDispatchSigner> RemoteOwnerDispatchExecu
     ///
     /// # Errors
     /// Returns an error on transport failure, invalid response, or uncertainty.
+
     pub fn execute_prepared(
         &mut self,
         request: &OwnerDispatchRequest,
     ) -> Result<AuthenticatedOwnerEffect, String> {
-        let frame = encode_request_frame(request)?;
-        let response_frame = self
-            .transport
-            .exchange(&frame, MAX_OWNER_DISPATCH_FRAME_BYTES)?;
-        let response = decode_response_frame(&response_frame)?;
-        if response.schema_id != OWNER_DISPATCH_RESPONSE_SCHEMA
-            || response.dispatch_id != request.dispatch_id
-            || response.request_sha256 != sha256_prefixed(&frame)
-            || response.signer_key_id != self.executor_key_id
-        {
-            return Err("dispatch response binding mismatch".to_owned());
-        }
-        let signature =
-            Signature::from_bytes(&decode_signature_base64(&response.signature_base64)?);
-        self.executor_key
-            .verify_strict(&response_signing_bytes(&response)?, &signature)
-            .map_err(|_| "dispatch response signature".to_owned())?;
-        match (response.status, response.effect) {
-            (OwnerDispatchStatus::Completed, Some(effect)) => {
-                let proof = RemoteOwnerDispatchProof {
-                    request: request.clone(), response_bytes: response_frame,
-                    enrolled_target_key: self.executor_key.to_bytes(),
-                    enrolled_target_key_id: self.executor_key_id.clone(),
-                };
-                let mut authenticated = proof.verify(&request.ticket, &self.executor_key_id, &self.executor_key.to_bytes())?;
-                if authenticated != effect { return Err("remote decoded effect differs".into()); }
-                authenticated.remote_dispatch = Some(Box::new(proof));
-                Ok(authenticated)
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let diagnostics = diagnostic_operation.as_ref();
+        let frame = crate::owner_diagnostics::observed(
+            diagnostics,
+            &request.ticket,
+            request.mode,
+            "request_frame_encode",
+            "encoding",
+            encode_request_frame(request),
+        )?;
+        let mut response_frame = Vec::new();
+        let mut boundary = "transport_exchange";
+        let result = (|| {
+            response_frame = self
+                .transport
+                .exchange(&frame, MAX_OWNER_DISPATCH_FRAME_BYTES)?;
+            boundary = "response_frame_decode";
+            let response = decode_response_frame(&response_frame)?;
+            boundary = "response_binding";
+            if response.schema_id != OWNER_DISPATCH_RESPONSE_SCHEMA
+                || response.dispatch_id != request.dispatch_id
+                || response.request_sha256 != sha256_prefixed(&frame)
+                || response.signer_key_id != self.executor_key_id
+            {
+                return Err("dispatch response binding mismatch".to_owned());
             }
-            (OwnerDispatchStatus::Uncertain, _) => {
-                Err("remote platform effect uncertain".to_owned())
+            boundary = "response_signature_decode";
+            let signature =
+                Signature::from_bytes(&decode_signature_base64(&response.signature_base64)?);
+            boundary = "response_signature_verify";
+            self.executor_key
+                .verify_strict(&response_signing_bytes(&response)?, &signature)
+                .map_err(|_| "dispatch response signature".to_owned())?;
+            boundary = "remote_status";
+            match (response.status, response.effect) {
+                (OwnerDispatchStatus::Completed, Some(effect)) => {
+                    let proof = RemoteOwnerDispatchProof {
+                        request: request.clone(),
+                        response_bytes: response_frame.clone(),
+                        enrolled_target_key: self.executor_key.to_bytes(),
+                        enrolled_target_key_id: self.executor_key_id.clone(),
+                    };
+                    boundary = "remote_proof_verify";
+                    let mut authenticated = proof.verify(
+                        &request.ticket,
+                        &self.executor_key_id,
+                        &self.executor_key.to_bytes(),
+                    )?;
+                    boundary = "remote_decoded_effect_equality";
+                    if authenticated != effect {
+                        return Err("remote decoded effect differs".into());
+                    }
+                    authenticated.remote_dispatch = Some(Box::new(proof));
+                    Ok(authenticated)
+                }
+                (OwnerDispatchStatus::Uncertain, _) => {
+                    Err("remote platform effect uncertain".to_owned())
+                }
+                _ => Err("remote owner dispatch rejected".to_owned()),
             }
-            _ => Err("remote owner dispatch rejected".to_owned()),
+        })();
+        if let Err(error) = &result {
+            crate::owner_diagnostics::observe_error(
+                diagnostics,
+                &request.ticket,
+                request.mode,
+                boundary,
+                if boundary == "transport_exchange" {
+                    "transport"
+                } else {
+                    "proof"
+                },
+                error,
+                Some(&frame),
+                (!response_frame.is_empty()).then_some(response_frame.as_slice()),
+                Some(self.executor_key.as_bytes()),
+            );
         }
+        result
     }
 }
 
 impl<T: OwnerDispatchTransport, S: OwnerDispatchSigner> OwnerDispatchClient
     for RemoteOwnerDispatchExecutor<T, S>
 {
+
+    fn set_diagnostic_scope(&mut self, scope: rusty_quest_media_stream::DiagnosticScope) {
+        self.diagnostic_scope = scope;
+    }
     fn execute(
         &mut self,
         target_peer_id: String,
@@ -2192,6 +2512,388 @@ mod tests {
                 .expect("sign"),
         );
         request
+    }
+
+    #[test]
+
+    fn diagnostic_transport_failure_keeps_exact_request_and_primary_during_compensation() {
+        struct FailingTransport;
+        impl OwnerDispatchTransport for FailingTransport {
+            fn exchange(&mut self, _: &[u8], _: usize) -> Result<Vec<u8>, String> {
+                Err("timeout with private remote context".into())
+            }
+        }
+        let collector = rusty_quest_media_stream::DiagnosticCollector::default();
+        let operation = collector.operation("start", Default::default());
+        let signer = TestSigner {
+            id: "key.a".into(),
+            key: SigningKey::from_bytes(&[3; 32]),
+        };
+        let key = SigningKey::from_bytes(&[4; 32]).verifying_key().to_bytes();
+        let mut executor =
+            RemoteOwnerDispatchExecutor::new(FailingTransport, signer, key, "key.b".into())
+                .unwrap()
+                .with_diagnostics(operation.clone());
+        let error = executor
+            .execute(
+                "peer.b".into(),
+                projection(),
+                ticket(),
+                AndroidMediaExecutionMode::Execute,
+                1000,
+            )
+            .unwrap_err();
+        assert_eq!(error, "timeout with private remote context");
+        let first = operation.snapshot().unwrap();
+        assert_eq!(first.primary.boundary, "transport_exchange");
+        assert!(first.primary.detail_sha256.is_some());
+        assert!(first.primary.correlation.request_sha256.is_some());
+        assert_eq!(
+            first.primary.correlation.native_generation,
+            Some(ticket().executor_generation)
+        );
+        executor
+            .execute(
+                "peer.b".into(),
+                projection(),
+                ticket(),
+                AndroidMediaExecutionMode::CompensateUncertain,
+                1000,
+            )
+            .unwrap_err();
+        let after = operation.snapshot().unwrap();
+        assert_eq!(after.primary, first.primary);
+        assert_eq!(
+            after.secondary[0].phase,
+            rusty_quest_media_stream::DiagnosticPhase::Compensation
+        );
+        assert!(!serde_json::to_string(&after)
+            .unwrap()
+            .contains("private remote context"));
+    }
+
+    #[test]
+
+    fn diagnostics_distinguish_signed_response_binding_signature_and_generation_failures() {
+        #[derive(Default)]
+        struct ReplaySink {
+            chunks: Mutex<Vec<(String, Vec<u8>)>>,
+        }
+        impl rusty_quest_media_stream::PrivateFailureSink for ReplaySink {
+            fn retain(
+                &self,
+                id: &str,
+                chunks: &[rusty_quest_media_stream::PrivateFailureChunk<'_>],
+                max_bytes: u64,
+            ) -> Result<rusty_quest_media_stream::PrivateContextDescriptor, ()> {
+                let chunks = chunks
+                    .iter()
+                    .map(|chunk| (chunk.name.to_owned(), chunk.bytes.to_vec()))
+                    .collect::<Vec<_>>();
+                let bytes = serde_json::to_vec(&chunks).unwrap();
+                assert!((bytes.len() as u64) <= max_bytes);
+                *self.chunks.lock().unwrap() = chunks;
+                Ok(rusty_quest_media_stream::PrivateContextDescriptor {
+                    status: "available".into(),
+                    context_id: Some(id.into()),
+                    bytes: bytes.len() as u64,
+                    sha256: Some(format!("{:x}", Sha256::digest(&bytes))),
+                    truncated: false,
+                })
+            }
+        }
+        struct MutatingTransport {
+            server: OwnerDispatchServer<TestVerifier, TestRegistry, TestSigner>,
+            signer: TestSigner,
+            variant: u8,
+        }
+        impl OwnerDispatchTransport for MutatingTransport {
+            fn exchange(&mut self, frame: &[u8], _: usize) -> Result<Vec<u8>, String> {
+                let bytes = self.server.handle_frame(frame)?;
+                if self.variant == 0 {
+                    return Ok(bytes);
+                }
+                let mut response = decode_response_frame(&bytes)?;
+                match self.variant {
+                    1 => response.dispatch_id.push_str(".changed"),
+                    2 => response.signature_base64 = encode_signature_base64(&[7; 64]),
+                    3 => {
+                        response.target_ticket.as_mut().unwrap().executor_generation += 1;
+                        response.signature_base64 = encode_signature_base64(
+                            &self.signer.sign(&response_signing_bytes(&response)?)?,
+                        );
+                    }
+                    4 => {
+                        response.effect.as_mut().unwrap().readback_json.push(' ');
+                        response.signature_base64 = encode_signature_base64(
+                            &self.signer.sign(&response_signing_bytes(&response)?)?,
+                        );
+                    }
+                    _ => unreachable!(),
+                }
+                encode_response_frame(&response)
+            }
+        }
+        for (variant, expected) in [
+            (0, None),
+            (1, Some("response_binding")),
+            (2, Some("response_signature_verify")),
+            (3, Some("remote_proof_verify")),
+            (4, Some("remote_proof_verify")),
+        ] {
+            let source = TestSigner {
+                id: "key.a".into(),
+                key: SigningKey::from_bytes(&[9; 32]),
+            };
+            let target = TestSigner {
+                id: "key.b".into(),
+                key: SigningKey::from_bytes(&[10; 32]),
+            };
+            let target_key = target.key.verifying_key().to_bytes();
+            let server = OwnerDispatchServer::restore(
+                "peer.b".into(),
+                TestVerifier {
+                    key: source.key.verifying_key(),
+                },
+                TestRegistry {
+                    calls: Arc::new(Mutex::new(0)),
+                },
+                target.clone(),
+                Box::new(TestClock),
+                Default::default(),
+                Box::new(TestStore::default()),
+            )
+            .unwrap();
+            let sink = Arc::new(ReplaySink::default());
+            let collector = rusty_quest_media_stream::DiagnosticCollector::new(Some(sink.clone()));
+            let operation = collector.operation("start", Default::default());
+            let mut executor = RemoteOwnerDispatchExecutor::new(
+                MutatingTransport {
+                    server,
+                    signer: target,
+                    variant,
+                },
+                source,
+                target_key,
+                "key.b".into(),
+            )
+            .unwrap()
+            .with_diagnostics(operation.clone());
+            let actual = executor.execute(
+                "peer.b".into(),
+                projection(),
+                ticket(),
+                AndroidMediaExecutionMode::Execute,
+                1000,
+            );
+            if let Some(expected) = expected {
+                assert!(actual.is_err());
+                let failure = operation.snapshot().unwrap().primary;
+                assert_eq!(failure.boundary, expected);
+                assert!(failure.detail_sha256.is_some());
+                assert!(failure.correlation.request_sha256.is_some());
+                let chunks = sink.chunks.lock().unwrap();
+                let get = |name: &str| {
+                    chunks
+                        .iter()
+                        .find(|(key, _)| key == name)
+                        .unwrap()
+                        .1
+                        .clone()
+                };
+                let request_frame = get("signed_request_frame");
+                let request = decode_request_frame(&request_frame).unwrap();
+                assert_eq!(encode_request_frame(&request).unwrap(), request_frame);
+                let proof = RemoteOwnerDispatchProof {
+                    request: request.clone(),
+                    response_bytes: get("signed_response_frame"),
+                    enrolled_target_key: get("enrolled_target_public_key").try_into().unwrap(),
+                    enrolled_target_key_id: "key.b".into(),
+                };
+                assert!(
+                    proof
+                        .verify(&request.ticket, "key.b", &proof.enrolled_target_key)
+                        .is_err(),
+                    "retained exact context must replay the production rejection"
+                );
+                let actual_envelope = serde_json::to_vec(&*chunks).unwrap();
+                assert_eq!(
+                    failure.private_context.sha256,
+                    Some(format!("{:x}", Sha256::digest(&actual_envelope)))
+                );
+                assert_eq!(failure.private_context.bytes, actual_envelope.len() as u64);
+            } else {
+                assert!(actual.is_ok());
+                assert!(operation.snapshot().is_none());
+            }
+        }
+    }
+
+    #[test]
+
+    fn diagnostics_preserve_target_registry_cause_without_changing_signed_uncertainty() {
+        struct FailedRegistry;
+        impl AuthenticatedOwnerRegistry for FailedRegistry {
+            fn current_executor_generation(&self) -> Result<u64, String> {
+                Ok(7)
+            }
+            fn execute_and_verify(
+                &mut self,
+                _: Option<&OwnerDispatchAuthorityProjection>,
+                _: &AndroidMediaExecutionTicket,
+                _: AndroidMediaExecutionMode,
+            ) -> Result<AuthenticatedOwnerEffect, String> {
+                Err("MODELED codec resource unavailable".into())
+            }
+        }
+        let source = TestSigner {
+            id: "key.a".into(),
+            key: SigningKey::from_bytes(&[9; 32]),
+        };
+        let target = TestSigner {
+            id: "key.b".into(),
+            key: SigningKey::from_bytes(&[10; 32]),
+        };
+        let collector = rusty_quest_media_stream::DiagnosticCollector::default();
+        let operation = collector.operation("incoming_owner", Default::default());
+        let scope = rusty_quest_media_stream::DiagnosticScope::default();
+        let _scope = scope.enter(operation.clone());
+        let mut server = OwnerDispatchServer::restore(
+            "peer.b".into(),
+            TestVerifier {
+                key: source.key.verifying_key(),
+            },
+            FailedRegistry,
+            target,
+            Box::new(TestClock),
+            Default::default(),
+            Box::new(TestStore::default()),
+        )
+        .unwrap()
+        .with_diagnostic_scope(scope);
+        let bytes = server
+            .handle_frame(&encode_request_frame(&signed_request(&source)).unwrap())
+            .unwrap();
+        let response = decode_response_frame(&bytes).unwrap();
+        assert_eq!(response.status, OwnerDispatchStatus::Uncertain);
+        assert_eq!(
+            response.failure.as_deref(),
+            Some("platform_effect_uncertain")
+        );
+        assert!(response.effect.is_none());
+        let failure = operation.snapshot().unwrap().primary;
+        assert_eq!(failure.boundary, "target_registry_execute");
+        assert_eq!(failure.correlation.native_generation, Some(7));
+        assert_eq!(
+            failure.effect_state,
+            rusty_quest_media_stream::DiagnosticEffectState::Unknown
+        );
+        assert!(!serde_json::to_string(&failure)
+            .unwrap()
+            .contains("codec resource unavailable"));
+    }
+
+    #[test]
+
+    fn diagnostic_full_cross_generation_wrapper_positive_and_rejected_readback_use_production_verifier()
+    {
+        let source = TestSigner {
+            id: "key.a".into(),
+            key: SigningKey::from_bytes(&[9; 32]),
+        };
+        let target = TestSigner {
+            id: "key.b".into(),
+            key: SigningKey::from_bytes(&[10; 32]),
+        };
+        let target_key = target.key.verifying_key().to_bytes();
+        let calls = Arc::new(Mutex::new(0));
+        let server = OwnerDispatchServer::restore(
+            "peer.b".into(),
+            TestVerifier {
+                key: source.key.verifying_key(),
+            },
+            TestRegistry {
+                calls: calls.clone(),
+            },
+            target,
+            Box::new(TestClock),
+            Default::default(),
+            Box::new(TestStore::default()),
+        )
+        .unwrap();
+        let remote =
+            RemoteOwnerDispatchExecutor::new(Loopback { server }, source, target_key, "key.b".into())
+                .unwrap();
+        let families = [
+            MediaStreamOwnerKind::Source,
+            MediaStreamOwnerKind::Processor,
+            MediaStreamOwnerKind::Route,
+            MediaStreamOwnerKind::Socket,
+            MediaStreamOwnerKind::Codec,
+            MediaStreamOwnerKind::Sink,
+            MediaStreamOwnerKind::Cleanup,
+        ];
+        let placements = families
+            .into_iter()
+            .map(|owner_kind| AndroidMediaOwnerPlacement {
+                owner_kind,
+                owner_id: format!("owner.{owner_kind:?}"),
+                provider_kind: format!("provider.{owner_kind:?}"),
+                resource_id: format!("resource.{owner_kind:?}"),
+                target: AndroidMediaOwnerPlacementTarget::Remote {
+                    peer_id: "peer.b".into(),
+                },
+            })
+            .collect();
+        let collector = rusty_quest_media_stream::DiagnosticCollector::default();
+        let operation = collector.operation("start", Default::default());
+        let scope = rusty_quest_media_stream::DiagnosticScope::default();
+        let _scope = scope.enter(operation.clone());
+        let mut executor = CompositeAndroidMediaOwnerExecutor::new(
+            66,
+            "peer.a".into(),
+            placements,
+            Box::new(TestRegistry {
+                calls: calls.clone(),
+            }),
+            Box::new(remote),
+            Box::new(TestProjection),
+            Box::new(TestClock),
+        )
+        .unwrap()
+        .with_diagnostic_scope(scope);
+        let mut ticket = ticket();
+        ticket.executor_generation = 66;
+        ticket.owner_kind = MediaStreamOwnerKind::Sink;
+        ticket.owner_id = "owner.Sink".into();
+        ticket.provider_kind = "provider.Sink".into();
+        ticket.resource_id = "resource.Sink".into();
+        let mut readback = crate::AndroidMediaOwnerExecutor::execute(
+            &mut executor,
+            &ticket,
+            AndroidMediaExecutionMode::Execute,
+        )
+        .unwrap();
+        assert!(operation.snapshot().is_none());
+        let proof = readback.remote_dispatch.as_ref().unwrap();
+        assert_eq!(
+            proof
+                .verify(&ticket, "key.b", &target_key)
+                .unwrap()
+                .readback
+                .executor_generation,
+            7
+        );
+        assert_eq!(readback.executor_generation, 66);
+        readback.receipt_id.push_str(".damaged");
+        assert!(!crate::AndroidMediaOwnerExecutor::verify(
+            &executor, &ticket, &readback
+        ));
+        let failure = operation.snapshot().unwrap().primary;
+        assert_eq!(failure.boundary, "remote_source_readback_verify");
+        assert_eq!(failure.correlation.native_generation, Some(66));
+        assert!(failure.detail_sha256.is_some());
+        assert_eq!(*calls.lock().unwrap(), 1);
     }
 
     #[test]

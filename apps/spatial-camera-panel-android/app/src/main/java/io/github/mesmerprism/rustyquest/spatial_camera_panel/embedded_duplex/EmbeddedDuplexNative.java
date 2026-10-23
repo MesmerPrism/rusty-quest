@@ -71,6 +71,11 @@ public final class EmbeddedDuplexNative {
             long appGeneration);
 
     static native String ownerFailureDiagnosticRead();
+    /** Additive plain-data read; requires no live native host or lifecycle authority. */
+    static native String operationDiagnostics(String originalId);
+    /** Same-thread diagnostic scope only; nesting restores the preceding Original. */
+    static native void beginOperationDiagnostics(String operation, String originalId);
+    static native void endOperationDiagnostics();
     static native String closeNoMediaRuntime(String expectedConfigSha256);
     static native String retireNeverClaimedNoMedia(Object actualAppFenceSource);
     static native String retireUninitializedNoMedia();

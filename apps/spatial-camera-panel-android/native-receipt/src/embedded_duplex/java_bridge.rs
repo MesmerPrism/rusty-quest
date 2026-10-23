@@ -822,7 +822,26 @@ impl JavaOwnerCallbacks {
         result: jni::errors::Result<T>,
         error_class: &'static str,
     ) -> Result<T, String> {
+        // Preserve the original exception-clearing/result semantics. Throwable detail is
+        // inspected only after the original JNI helper has cleared its pending exception.
+        let throwable = env
+            .exception_occurred()
+            .ok()
+            .filter(|value| !value.is_null());
+        let jni_error = result.as_ref().err().map(|error| format!("{error:?}"));
         let result = checked_call(env, result, error_class);
+        if result.is_err() {
+            let mut detail = jni_error.unwrap_or_else(|| error_class.into());
+            if let Some(throwable) = throwable {
+                if let Some(context) =
+                    super::operation_diagnostics::throwable_detail(env, throwable.as_ref())
+                {
+                    detail.push('\n');
+                    detail.push_str(&context);
+                }
+            }
+            super::operation_diagnostics::failure(error_class, detail.as_bytes());
+        }
         self.capability.require_live()?;
         result
     }
@@ -855,6 +874,13 @@ impl JavaOwnerCallbacks {
         ticket: &AndroidMediaExecutionTicket,
         compensate: bool,
     ) -> Result<AuthenticatedOwnerEffect, String> {
+        let _diagnostic_phase = super::operation_diagnostics::phase(if compensate {
+            rusty_quest_media_stream::DiagnosticPhase::Compensation
+        } else if ticket.operation == rusty_quest_media_stream::MediaStreamPlatformOperation::Stop {
+            rusty_quest_media_stream::DiagnosticPhase::Cleanup
+        } else {
+            rusty_quest_media_stream::DiagnosticPhase::Primary
+        });
         let authority_json =
             Ok::<_, String>(authority_json).map_err(|_| "java_bridge.authority_json".to_owned())?;
         let ticket_json =

@@ -278,7 +278,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                         }
                     }
                 }
-            } catch (java.io.IOException unreadable) { lines.clear(); }
+            } catch (java.io.IOException unreadable) { EmbeddedDuplexOperationDiagnostics.observe("cleanup","activation_log","prior_log_read",unreadable);lines.clear(); }
             String attributed = "schema=rusty.quest.embedded_duplex.activation_failure.v1 wallMs="
                     + System.currentTimeMillis() + " processStartedWallMs=" + PROCESS_STARTED_WALL_MS
                     + " processStartedElapsedNs=" + PROCESS_STARTED_ELAPSED_NS
@@ -294,6 +294,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
                 out.write((String.join("\n", lines) + "\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
                 atomic.finishWrite(out);
             } catch (java.io.IOException failed) {
+                EmbeddedDuplexOperationDiagnostics.observe("cleanup","activation_log","log_write",failed);
                 if (out != null) atomic.failWrite(out);
             }
         }

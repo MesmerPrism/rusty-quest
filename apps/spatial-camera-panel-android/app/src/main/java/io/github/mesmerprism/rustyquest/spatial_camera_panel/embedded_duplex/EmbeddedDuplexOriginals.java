@@ -56,6 +56,7 @@ public final class EmbeddedDuplexOriginals {
         return singleton;
     }
     private EmbeddedDuplexOriginals(Context context) throws Exception {
+        EmbeddedDuplexOperationDiagnostics.initialize(context);
         directory = new File(context.getNoBackupFilesDir(), "operator-originals-v1");
         if (!directory.exists() && !directory.mkdir()) throw new IllegalStateException("original directory create");
         if (!Files.isDirectory(directory.toPath(), LinkOption.NOFOLLOW_LINKS))
@@ -72,7 +73,14 @@ public final class EmbeddedDuplexOriginals {
     static AutoCloseable enter(Record next) {
         Record previous = CURRENT.get();
         if (next == null) CURRENT.remove(); else CURRENT.set(next);
-        return () -> { if (previous == null) CURRENT.remove(); else CURRENT.set(previous); };
+        boolean began=false;
+        try{EmbeddedDuplexNative.beginOperationDiagnostics(next==null?"native_operation":next.row.getString("operation"),next==null?null:next.id());began=true;}
+            catch(Throwable unavailable){/* Correlation is optional, never an admission step. */}
+        final boolean nativeScope=began;
+        return () -> {
+            if(nativeScope)try{EmbeddedDuplexNative.endOperationDiagnostics();}catch(Throwable unavailable){/* Observation only. */}
+            if (previous == null) CURRENT.remove(); else CURRENT.set(previous);
+        };
     }
     public static Runnable carry(Runnable action) {
         Record actual = capture();
@@ -181,6 +189,8 @@ public final class EmbeddedDuplexOriginals {
                     JSONObject retainedPending = nativePending(record,row.getString("operation"),actual);
                     if(retainedPending!=null){
                         row.put("state","unknown").put("effect_state","unknown");
+                        EmbeddedDuplexOperationDiagnostics.observe(record,"primary","original","native_pending",null,
+                            new JSONObject().put("native_pending",true).put("native_cause_present",!retainedPending.isNull("last_failure_cause")));
                         if(retainedPending.has("last_failure_cause") && !retainedPending.isNull("last_failure_cause"))
                             row.put("failure",new EmbeddedDuplexNativeOperationFailure(
                                 retainedPending.getJSONObject("last_failure_cause").toString()).validatedFailure());
@@ -190,6 +200,7 @@ public final class EmbeddedDuplexOriginals {
                             || failure instanceof java.util.concurrent.ExecutionException) && failure.getCause() != null)
                         failure = failure.getCause();
                     record.retainedFailure = failure;
+                    EmbeddedDuplexOperationDiagnostics.observe(record,"primary","original","operation_completion",failure,new JSONObject());
                     JSONObject cause = failure instanceof EmbeddedDuplexNativeOperationFailure
                         ? ((EmbeddedDuplexNativeOperationFailure)failure).validatedFailure()
                         : new JSONObject().put("schema", "rusty.quest.embedded_duplex.unclassified_failure.v1")
@@ -199,18 +210,22 @@ public final class EmbeddedDuplexOriginals {
                 }
                 row.put("outcome_sha256", EmbeddedDuplexCanonicalJson.sha256(outcome(row)));
                 persist(record);
+                EmbeddedDuplexOperationDiagnostics.completed(record);
             }
         } catch (Throwable unavailable) {
             synchronized (this) { record.persistenceFailure = unavailable; }
+            EmbeddedDuplexOperationDiagnostics.observe(record,"cleanup","original","outcome_publication",unavailable,new JSONObject());
         }
     }
     private void afterOriginalCallback(Record record){
         // The registered result publication callback's dependent stage is now genuinely terminal.
         record.callbackJoined.complete(null);
         try{retainPhysicalJoin(record);}
-        catch(Exception unavailable){synchronized(this){record.joinPublicationFailure=unavailable;}}
+        catch(Exception unavailable){synchronized(this){record.joinPublicationFailure=unavailable;}
+            EmbeddedDuplexOperationDiagnostics.observe(record,"cleanup","original","physical_join_publication",unavailable,new JSONObject());}
         try{retainAppServiceDelivery(record);}
-        catch(Exception unavailable){synchronized(this){record.persistenceFailure=unavailable;}}
+        catch(Exception unavailable){synchronized(this){record.persistenceFailure=unavailable;}
+            EmbeddedDuplexOperationDiagnostics.observe(record,"cleanup","original","service_delivery_publication",unavailable,new JSONObject());}
         EmbeddedDuplexProcessHost.originalCompletion(record);
     }
 
@@ -283,7 +298,8 @@ public final class EmbeddedDuplexOriginals {
         if(first){
             String response=null;String disposition;
             try{response=EmbeddedDuplexProcessHost.signalOriginalStop(actual);disposition=response==null?"latched_before_setup_binding":"native_stop_observed";}
-            catch(Throwable unavailable){disposition="native_stop_unavailable";}
+            catch(Throwable unavailable){disposition="native_stop_unavailable";
+                EmbeddedDuplexOperationDiagnostics.observe(actual,"cleanup","original","desired_stop_signal",unavailable,new JSONObject());}
             synchronized(this){stop.put("native_stop_disposition",disposition)
                 .put("native_stop_response",response==null?JSONObject.NULL:response);persistStop(id,stop);}
         }

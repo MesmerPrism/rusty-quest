@@ -215,16 +215,17 @@ final class EmbeddedDuplexActivationGate {
         ActivationAttempt attempt = new ActivationAttempt();
         try { return activateObserved(activationId, authorityJson, proofJson, attempt); }
         catch (Exception failure) {
+            EmbeddedDuplexOperationDiagnostics.observe("primary","incoming_activation",attempt.stage.name().toLowerCase(java.util.Locale.ROOT),failure);
             String category = closedActivationCause(failure);
             String receiverDiagnostic;
             try { receiverDiagnostic = target.incomingDiagnostic(); }
-            catch (RuntimeException unavailable) { receiverDiagnostic = "receiverState=UNAVAILABLE connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1"; }
+            catch (RuntimeException unavailable) { EmbeddedDuplexOperationDiagnostics.observe("cleanup","incoming_activation","receiver_diagnostic_read",unavailable);receiverDiagnostic = "receiverState=UNAVAILABLE connection=UNAVAILABLE packets=-1 frames=-1 reconnects=-1"; }
             String record = "stage=" + attempt.stage.name() + " cause=" + category
                     + " elapsedMs=" + attempt.elapsedMs()
                     + " code=ACTIVATION_EFFECT_UNCERTAIN " + receiverDiagnostic;
             // Persist first: logcat capture has already missed this line once.
-            try { target.recordActivationFailure(record); } catch (RuntimeException ignored) { }
-            try { target.logActivationFailure(record); } catch (RuntimeException ignored) { }
+            try { target.recordActivationFailure(record); } catch (RuntimeException unavailable) { EmbeddedDuplexOperationDiagnostics.observe("cleanup","incoming_activation","diagnostic_persistence",unavailable); }
+            try { target.logActivationFailure(record); } catch (RuntimeException unavailable) { EmbeddedDuplexOperationDiagnostics.observe("cleanup","incoming_activation","diagnostic_log",unavailable); }
             throw failure;
         }
     }

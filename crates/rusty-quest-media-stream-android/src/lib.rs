@@ -4,6 +4,7 @@
 mod prepared_start;
 pub use prepared_start::*;
 mod owner_dispatch;
+mod owner_diagnostics;
 mod remote_cleanup_proof;
 mod remote_owner_dispatch;
 mod retained_cleanup;
@@ -139,6 +140,16 @@ pub struct AndroidMediaOwnerReadback {
 /// Process-local owner executor. Implementations must authenticate readback
 /// against their own retained registry; caller JSON never implements this trait.
 pub trait AndroidMediaOwnerExecutor: Send {
+    /// Updates the shared operation scope without reconstructing the executor.
+
+    fn set_diagnostic_scope(&mut self, _scope: rusty_quest_media_stream::DiagnosticScope) {}
+
+    /// Latest additive failure observation; never authorization or readback evidence.
+
+    fn last_failure_diagnostic(&self) -> Option<rusty_quest_media_stream::FailureObservation> {
+        None
+    }
+
     /// Current nonzero registry generation.
     fn executor_generation(&self) -> u64;
 

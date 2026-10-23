@@ -32,24 +32,29 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     val snapshot = extras?.let { Bundle(it) } ?: Bundle()
     val challenge = argument ?: closed()
     if (!challenge.matches(Regex("[0-9a-f]{32}"))) closed()
+    if(method == EmbeddedDuplexOperatorContract.METHOD_OPERATION_DIAGNOSTICS) {
+      val original=EmbeddedDuplexOperatorContract.operationDiagnosticOriginal(snapshot.keySet().associateWith { snapshot.get(it) })
+      val receipt=io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOperationDiagnostics.read(app,original,challenge)
+      return Bundle().apply { header("observed");putString("challenge",challenge);putString("receipt",receipt) }
+    }
     if(method == EmbeddedDuplexOperatorContract.METHOD_PREPARATION_DIAGNOSTIC){
       val fields=snapshot.keySet().associateWith { snapshot.get(it) }
       val original=EmbeddedDuplexOperatorContract.preparationDiagnosticOriginal(fields)
-      val receipt=EmbeddedDuplexRuntimeService.preparationDiagnosticRead(original).awaitOperatorCompletion(10)
+      val receipt=supportedRead(method) { EmbeddedDuplexRuntimeService.preparationDiagnosticRead(original).awaitOperatorCompletion(10) }
       return Bundle().apply { header("observed");putString("challenge",challenge);putString("receipt",receipt) }
     }
     val originals = EmbeddedDuplexOriginals.forApplication(app)
     if(method == "operation_continuation_handoff"){
       if(snapshot.keySet()!=setOf("original_id") || snapshot.get("original_id") !is String)closed()
-      return originals.queryContinuationHandoff(requireNotNull(snapshot.getString("original_id")),challenge)
+      return supportedRead(method) { originals.queryContinuationHandoff(requireNotNull(snapshot.getString("original_id")),challenge) }
     }
     if(method == "operation_continuation_status"){
       if(snapshot.keySet()!=setOf("original_id") || snapshot.get("original_id") !is String)closed()
-      return originals.queryContinuationJoin(requireNotNull(snapshot.getString("original_id")),challenge)
+      return supportedRead(method) { originals.queryContinuationJoin(requireNotNull(snapshot.getString("original_id")),challenge) }
     }
     if(method == "operation_join_status"){
       if(snapshot.keySet()!=setOf("original_id") || snapshot.get("original_id") !is String)closed()
-      return originals.queryJoin(requireNotNull(snapshot.getString("original_id")),challenge)
+      return supportedRead(method) { originals.queryJoin(requireNotNull(snapshot.getString("original_id")),challenge) }
     }
     if (method == "operation_stop") {
       val expected=setOf("original_id","request_sha256","stop_intent_sha256")
@@ -61,7 +66,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
       val expected = if (method == "operation_query") setOf("original_id") else
         setOf("original_id","request_sha256","outcome_sha256","consumer_receipt_sha256")
       if (snapshot.keySet() != expected || expected.any { snapshot.get(it) !is String }) closed()
-      return if (method == "operation_query") originals.query(requireNotNull(snapshot.getString("original_id")), challenge)
+      return if (method == "operation_query") supportedRead(method) { originals.query(requireNotNull(snapshot.getString("original_id")), challenge) }
       else originals.acknowledge(requireNotNull(snapshot.getString("original_id")), challenge,
           requireNotNull(snapshot.getString("request_sha256")), requireNotNull(snapshot.getString("outcome_sha256")),
           requireNotNull(snapshot.getString("consumer_receipt_sha256")))
@@ -86,7 +91,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     }
     if(method=="prepared_peer_start_status"){
       if(!snapshot.isEmpty)closed()
-      val receipt=EmbeddedDuplexRuntimeService.preparedPeerStartStatus(app).awaitOperatorCompletion(10)
+      val receipt=supportedRead(method) { EmbeddedDuplexRuntimeService.preparedPeerStartStatus(app).awaitOperatorCompletion(10) }
       return Bundle().apply { header("observed");putString("challenge",challenge);putString("receipt",receipt) }
     }
     if(method=="reestablish_peer_roots"){
@@ -100,12 +105,12 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     }
     if(method=="peer_root_status"){
       if(!snapshot.isEmpty)closed()
-      val receipt=EmbeddedDuplexRuntimeService.peerRootStatus(app).awaitOperatorCompletion(10)
+      val receipt=supportedRead(method) { EmbeddedDuplexRuntimeService.peerRootStatus(app).awaitOperatorCompletion(10) }
       return Bundle().apply { header("observed");putString("challenge",challenge);putString("receipt",receipt) }
     }
     if(method=="pair_setup_recovery_status"){
       if(!snapshot.isEmpty) closed()
-      val receipt=EmbeddedDuplexRuntimeService.completedSetupRecoveryStatus(app,challenge).awaitOperatorCompletion(10)
+      val receipt=supportedRead(method) { EmbeddedDuplexRuntimeService.completedSetupRecoveryStatus(app,challenge).awaitOperatorCompletion(10) }
       return Bundle().apply { header("observed");putString("challenge",challenge);putString("receipt",receipt) }
     }
     val effect = method in setOf("bootstrap_real_peer","concurrent_arm","pair_session","start","renew_authority",
@@ -261,7 +266,11 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
           }
         }
       }
-    } catch (_: Exception) { closed() }
+    } catch (failure: Exception) {
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOperationDiagnostics.providerFailure(app,method,failure)
+      throw SecurityException("embedded_duplex_operator_read_failed:"+request.route.name+":"+
+        io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOperationDiagnostics.safeFailureCategory(failure))
+    }
   }
 
   /** Starts exactly one existing app-owned Future; no provider worker or estimate cancellation. */
@@ -314,6 +323,11 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
 
   private fun Bundle.header(status: String) {
     putString("schema",EmbeddedDuplexOperatorContract.SCHEMA);putString("status",status)
+  }
+  private fun <T> supportedRead(method:String, action:()->T):T = try { action() } catch(failure:Exception) {
+    io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOperationDiagnostics.providerFailure(requireNotNull(context).applicationContext,method,failure)
+    throw SecurityException("embedded_duplex_operator_read_failed:"+method+":"+
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOperationDiagnostics.safeFailureCategory(failure))
   }
   private fun runtimeBundle(challenge: String,state: EmbeddedDuplexRuntimeStatus): Bundle =
     io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOperatorResponses.runtimeBundle(challenge,state)

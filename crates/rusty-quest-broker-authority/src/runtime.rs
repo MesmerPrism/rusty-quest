@@ -500,6 +500,7 @@ pub struct QuestBrokerRuntimeInitializeStatus {
 
 /// One live stateful authority instance retained by a provider process.
 pub struct QuestBrokerAuthorityRuntime {
+    media_diagnostic_scope: rusty_quest_media_stream::DiagnosticScope,
     bridge_kind: QuestBrokerAuthorityBridgeKind,
     provider_epoch_id: DottedId,
     runtime: Arc<RwLock<ManifoldBrokerRuntime>>,
@@ -513,6 +514,7 @@ pub struct QuestBrokerAuthorityRuntime {
 
 /// Process-local owner that distinguishes same-provider rebind from restart.
 pub struct QuestBrokerRuntimeProvider {
+    media_diagnostic_scope: rusty_quest_media_stream::DiagnosticScope,
     runtime: Option<QuestBrokerAuthorityRuntime>,
     config_sha256: Option<String>,
     media_owner_executor: Option<Box<dyn AndroidMediaOwnerExecutor>>,
@@ -520,11 +522,13 @@ pub struct QuestBrokerRuntimeProvider {
 }
 
 impl Default for QuestBrokerRuntimeProvider {
+
     fn default() -> Self {
         Self {
             runtime: None,
             config_sha256: None,
             media_owner_executor: None,
+            media_diagnostic_scope: Default::default(),
             next_media_execution_nonce: 1,
         }
     }
@@ -535,10 +539,12 @@ struct QuestBrokerAndroidMediaOwnerProvider<'a> {
     sequence: u32,
     capability: String,
     executor: &'a mut dyn AndroidMediaOwnerExecutor,
-    verified: Option<(AndroidMediaExecutionTicket, AndroidMediaOwnerReadback)>,
+    verified: Option<(AndroidMediaExecutionTicket, AndroidMediaOwnerReadback, AndroidMediaExecutionMode)>,
+    diagnostic_scope: rusty_quest_media_stream::DiagnosticScope,
 }
 
 impl<'a> QuestBrokerAndroidMediaOwnerProvider<'a> {
+
     fn new(
         owner: MediaStreamOwnerAction,
         sequence: u32,
@@ -551,8 +557,65 @@ impl<'a> QuestBrokerAndroidMediaOwnerProvider<'a> {
             capability,
             executor,
             verified: None,
+            diagnostic_scope: Default::default(),
         }
     }
+
+
+    fn observe_failure(
+        &self,
+        action: &MediaStreamPlatformAction,
+        owner: &MediaStreamOwnerAction,
+        mode: AndroidMediaExecutionMode,
+        boundary: &'static str,
+        error: &str,
+        ticket: Option<&AndroidMediaExecutionTicket>,
+        android: Option<&AndroidMediaOwnerReadback>,
+    ) {
+        use rusty_quest_media_stream::{
+            DiagnosticCleanupState, DiagnosticEffectState, DiagnosticLayer, DiagnosticPhase,
+            FailureInput, PrivateFailureChunk,
+        };
+        if let Some(operation) = self.diagnostic_scope.current() {
+            let phase = if mode == AndroidMediaExecutionMode::CompensateUncertain {
+                DiagnosticPhase::Compensation
+            } else if action.operation == MediaStreamPlatformOperation::Stop {
+                DiagnosticPhase::Cleanup
+            } else {
+                DiagnosticPhase::Primary
+            };
+            let bytes = serde_json::to_vec(&(action, owner, ticket, android)).unwrap_or_default();
+            operation.record(
+                FailureInput::new(
+                    phase,
+                    DiagnosticLayer::Rust,
+                    "broker_media_provider",
+                    boundary,
+                    "readback",
+                    "unclassified",
+                )
+                .states(
+                    DiagnosticEffectState::Unknown,
+                    if phase == DiagnosticPhase::Primary {
+                        DiagnosticCleanupState::NotRequested
+                    } else {
+                        DiagnosticCleanupState::Unknown
+                    },
+                )
+                .private_context(vec![
+                    PrivateFailureChunk {
+                        name: "error",
+                        bytes: error.as_bytes(),
+                    },
+                    PrivateFailureChunk {
+                        name: "broker_owner_readback",
+                        bytes: &bytes,
+                    },
+                ]),
+            );
+        }
+    }
+
 
     fn execute(
         &mut self,
@@ -572,14 +635,37 @@ impl<'a> QuestBrokerAndroidMediaOwnerProvider<'a> {
         )
         .map_err(|error| error.to_string())?;
         let android_readback = self.executor.execute(&ticket, mode)?;
-        let readback =
-            validate_readback(&ticket, &android_readback).map_err(|error| error.to_string())?;
-        self.verified = Some((ticket, android_readback));
+        let readback = validate_readback(&ticket, &android_readback).map_err(|error| {
+            let raw = error.to_string();
+            self.observe_failure(
+                action,
+                owner_action,
+                mode,
+                "broker_android_readback_validate",
+                &raw,
+                Some(&ticket),
+                Some(&android_readback),
+            );
+            raw
+        })?;
+        self.verified = Some((ticket, android_readback, mode));
         Ok(readback)
     }
 }
 
 impl MediaStreamTrustedOwnerProvider for QuestBrokerAndroidMediaOwnerProvider<'_> {
+
+    fn last_failure_diagnostic(&self) -> Option<rusty_quest_media_stream::FailureObservation> {
+        self.diagnostic_scope
+            .current()
+            .and_then(|operation| operation.last_failure())
+            .or_else(|| self.executor.last_failure_diagnostic())
+    }
+
+    fn set_diagnostic_scope(&mut self, scope: rusty_quest_media_stream::DiagnosticScope) {
+        self.diagnostic_scope = scope.clone();
+        self.executor.set_diagnostic_scope(scope);
+    }
     fn owner_kind(&self) -> MediaStreamOwnerKind {
         self.owner.selection.owner_kind
     }
@@ -604,26 +690,66 @@ impl MediaStreamTrustedOwnerProvider for QuestBrokerAndroidMediaOwnerProvider<'_
         )
     }
 
+
     fn verify_readback(
         &self,
         action: &MediaStreamPlatformAction,
         owner_action: &MediaStreamOwnerAction,
         readback: &MediaStreamOwnerProviderReadback,
     ) -> bool {
-        self.verified.as_ref().is_some_and(|(ticket, android)| {
-            owner_action == &self.owner
-                && execution_ticket(
+        let operation = self.diagnostic_scope.current();
+        let before = operation
+            .as_ref()
+            .and_then(|operation| operation.last_failure())
+            .map(|failure| failure.sequence);
+        let mut mode = AndroidMediaExecutionMode::Execute;
+        let checked: Result<(), &str> = (|| {
+            let (ticket, android, actual_mode) = self
+                .verified
+                .as_ref()
+                .ok_or("broker_verified_readback_absent")?;
+            mode = *actual_mode;
+            if owner_action != &self.owner {
+                return Err("broker_owner_action_binding");
+            }
+            if execution_ticket(
+                action,
+                owner_action,
+                self.sequence,
+                self.executor.executor_generation(),
+                self.capability.clone(),
+            )
+            .as_ref()
+                != Ok(ticket)
+            {
+                return Err("broker_execution_ticket_binding");
+            }
+            if validate_readback(ticket, android).as_ref() != Ok(readback) {
+                return Err("broker_verified_readback_binding");
+            }
+            if !self.executor.verify(ticket, android) {
+                return Err("broker_executor_verify_readback");
+            }
+            Ok(())
+        })();
+        if let Err(boundary) = checked {
+            let after = operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|failure| failure.sequence);
+            if before == after {
+                self.observe_failure(
                     action,
                     owner_action,
-                    self.sequence,
-                    self.executor.executor_generation(),
-                    self.capability.clone(),
-                )
-                .as_ref()
-                    == Ok(ticket)
-                && validate_readback(ticket, android).as_ref() == Ok(readback)
-                && self.executor.verify(ticket, android)
-        })
+                    mode,
+                    boundary,
+                    "broker owner verification returned false",
+                    self.verified.as_ref().map(|(ticket, _, _)| ticket),
+                    self.verified.as_ref().map(|(_, android, _)| android),
+                );
+            }
+        }
+        checked.is_ok()
     }
 }
 
@@ -632,6 +758,21 @@ mod construction_custody;
 pub use construction_custody::QuestBrokerConstructionCustody;
 
 impl QuestBrokerRuntimeProvider {
+    /// Injects the root diagnostic scope; adds no authority or lifecycle state.
+
+    pub fn set_media_diagnostic_scope(&mut self, scope: rusty_quest_media_stream::DiagnosticScope) {
+        self.media_diagnostic_scope = scope.clone();
+        if let Some(executor) = self.media_owner_executor.as_mut() {
+            executor.set_diagnostic_scope(scope.clone());
+        }
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.media_diagnostic_scope = scope.clone();
+            for media in runtime.media_sessions.values_mut() {
+                media.set_diagnostic_scope(scope.clone());
+            }
+        }
+    }
+
     /// Returns the embedded-duplex faÃƒÆ’Ã‚Â§ade for the currently initialized provider.
     ///
     /// # Errors
@@ -652,13 +793,15 @@ impl QuestBrokerRuntimeProvider {
     /// # Errors
     ///
     /// Rejects generation zero because it cannot authorize an execution ticket.
+
     pub fn install_media_owner_executor(
         &mut self,
-        executor: Box<dyn AndroidMediaOwnerExecutor>,
+        mut executor: Box<dyn AndroidMediaOwnerExecutor>,
     ) -> Result<(), QuestBrokerRuntimeError> {
         if executor.executor_generation() == 0 {
             return Err(QuestBrokerRuntimeError::InvalidMediaExecutorGeneration);
         }
+        executor.set_diagnostic_scope(self.media_diagnostic_scope.clone());
         self.media_owner_executor = Some(executor);
         self.next_media_execution_nonce = 1;
         Ok(())
@@ -670,6 +813,7 @@ impl QuestBrokerRuntimeProvider {
     ///
     /// Rejects malformed/drifted config, invalid epoch entropy, or a rebind that
     /// supplies a different immutable product/grant configuration.
+
     pub fn initialize(
         &mut self,
         config_json: &str,
@@ -699,6 +843,7 @@ impl QuestBrokerRuntimeProvider {
         )?;
         let status = initialize_status(&runtime, config_sha256.clone(), false)?;
         self.runtime = Some(runtime);
+        self.set_media_diagnostic_scope(self.media_diagnostic_scope.clone());
         self.config_sha256 = Some(config_sha256);
         Ok(status)
     }
@@ -706,6 +851,7 @@ impl QuestBrokerRuntimeProvider {
     /// Selected-fresh constructor with actual partial-owner retention. A failed
     /// call must keep this provider AND custody until explicit retained cleanup.
     /// Ordinary initialize/rebind behavior is unchanged.
+
     pub fn initialize_retaining_construction(
         &mut self,
         config_json: &str,
@@ -744,6 +890,7 @@ impl QuestBrokerRuntimeProvider {
         // Publish ownership to this retained provider BEFORE fallible formatting.
         self.config_sha256 = Some(sha.clone());
         self.runtime = Some(actual);
+        self.set_media_diagnostic_scope(self.media_diagnostic_scope.clone());
         initialize_status(
             self.runtime.as_ref().expect("stored real constructor"),
             sha,
@@ -1165,6 +1312,7 @@ impl QuestBrokerAuthorityRuntime {
         )
     }
 
+
     fn from_config_retaining(
         config: QuestBrokerRuntimeConfig,
         provider_epoch_entropy_hex: &str,
@@ -1274,8 +1422,7 @@ impl QuestBrokerAuthorityRuntime {
                 .initial_leases
                 .iter()
                 .filter(|l| {
-                    l.holder_id == grant.identity.client_id
-                        && l.scope.as_str() == "lease.media.session"
+                    l.holder_id == grant.identity.client_id && l.scope.as_str() == "lease.media.session"
                 })
                 .collect();
             if leases.len() != 1 {
@@ -1321,8 +1468,12 @@ impl QuestBrokerAuthorityRuntime {
             .runtime_mut()
             .map_err(QuestBrokerRuntimeError::RuntimeState)?;
         if let Some(policy) = ongoing_policy {
-            if policy == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2() {
-                runtime.enable_ongoing_history().map_err(QuestBrokerRuntimeError::RuntimeState)?;
+            if policy
+                == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2()
+            {
+                runtime
+                    .enable_ongoing_history()
+                    .map_err(QuestBrokerRuntimeError::RuntimeState)?;
             }
             peer_runtime_host
                 .as_ref()
@@ -1357,6 +1508,7 @@ impl QuestBrokerAuthorityRuntime {
             held.unpublished = None;
         }
         Ok(Self {
+            media_diagnostic_scope: Default::default(),
             bridge_kind: config.bridge_kind,
             provider_epoch_id,
             runtime,
@@ -1504,6 +1656,7 @@ impl QuestBrokerAuthorityRuntime {
         })
     }
 
+
     fn start_media_session(
         &mut self,
         mutation: &ManifoldBrokerMutationRequest,
@@ -1623,6 +1776,7 @@ impl QuestBrokerAuthorityRuntime {
             now_ms,
         )
         .map_err(QuestBrokerRuntimeError::MediaRuntime)?;
+        media.set_diagnostic_scope(self.media_diagnostic_scope.clone());
         let action = media
             .prepare(
                 format!("platform.{}", mutation.command.request_id.as_str()),
@@ -4140,6 +4294,239 @@ mod tests {
             initiator_signature: signature("peer.quest-a", "key.peer.quest-a.1", alpha),
             responder_signature: signature("peer.quest-b", "key.peer.quest-b.1", beta),
         }
+    }
+
+    #[test]
+
+    fn diagnostics_broker_readback_retains_exact_verifier_inputs_and_unchanged_error() {
+        use rusty_quest_media_stream::{
+            DiagnosticCollector, DiagnosticScope, PrivateContextDescriptor, PrivateFailureChunk,
+            PrivateFailureSink,
+        };
+        struct Damaged {
+            inner: DeterministicAndroidMediaOwnerExecutor,
+        }
+        impl AndroidMediaOwnerExecutor for Damaged {
+            fn executor_generation(&self) -> u64 {
+                self.inner.executor_generation()
+            }
+            fn execute(
+                &mut self,
+                ticket: &AndroidMediaExecutionTicket,
+                mode: AndroidMediaExecutionMode,
+            ) -> Result<AndroidMediaOwnerReadback, String> {
+                let mut readback = self.inner.execute(ticket, mode)?;
+                readback.expected_runtime_revision += 1;
+                Ok(readback)
+            }
+            fn verify(
+                &self,
+                ticket: &AndroidMediaExecutionTicket,
+                readback: &AndroidMediaOwnerReadback,
+            ) -> bool {
+                self.inner.verify(ticket, readback)
+            }
+        }
+        #[derive(Default)]
+        struct Capture {
+            raw: std::sync::Mutex<Vec<(String, Vec<u8>)>>,
+        }
+        impl PrivateFailureSink for Capture {
+            fn retain(
+                &self,
+                id: &str,
+                chunks: &[PrivateFailureChunk<'_>],
+                max_bytes: u64,
+            ) -> Result<PrivateContextDescriptor, ()> {
+                let chunks = chunks
+                    .iter()
+                    .map(|chunk| (chunk.name.into(), chunk.bytes.to_vec()))
+                    .collect::<Vec<_>>();
+                let bytes = serde_json::to_vec(&chunks).unwrap();
+                assert!((bytes.len() as u64) <= max_bytes);
+                *self.raw.lock().unwrap() = chunks;
+                Ok(PrivateContextDescriptor {
+                    status: "available".into(),
+                    context_id: Some(id.into()),
+                    bytes: bytes.len() as u64,
+                    sha256: Some(sha256_hex(&bytes)),
+                    truncated: false,
+                })
+            }
+        }
+        let kind = QuestBrokerAuthorityBridgeKind::StandaloneProcessJni;
+        let command = "command.media.session.start";
+        let mut runtime = runtime_for(
+            kind.clone(),
+            vec![ManifoldBrokerFeature::MediaSession],
+            command,
+            true,
+            "31",
+        );
+        let (use_id, token_id) = admit(&mut runtime, command);
+        let action = runtime
+            .handle_server_mutation(
+                &mutation(
+                    &runtime,
+                    kind,
+                    use_id,
+                    token_id,
+                    command,
+                    Some("lease.broker.media-session.quest.runtime"),
+                ),
+                4000,
+            )
+            .unwrap()
+            .platform_action
+            .unwrap();
+        let sink = Arc::new(Capture::default());
+        let collector = DiagnosticCollector::new(Some(sink.clone()));
+        let operation = collector.operation("start", Default::default());
+        let scope = DiagnosticScope::default();
+        let _scope = scope.enter(operation.clone());
+        let mut executor = Damaged {
+            inner: DeterministicAndroidMediaOwnerExecutor::new(9).unwrap(),
+        };
+        let owner = action.owner_actions[0].clone();
+        let mut provider = QuestBrokerAndroidMediaOwnerProvider::new(
+            owner.clone(),
+            1,
+            "MODELED-capability".into(),
+            &mut executor,
+        );
+        provider.set_diagnostic_scope(scope);
+        let error = provider.execute_and_readback(&action, &owner).unwrap_err();
+        let failure = operation.snapshot().unwrap().primary;
+        assert_eq!(failure.boundary, "broker_android_readback_validate");
+        let raw = sink.raw.lock().unwrap();
+        let bytes = &raw
+            .iter()
+            .find(|(name, _)| name == "broker_owner_readback")
+            .unwrap()
+            .1;
+        let (_, _, ticket, readback): (
+            MediaStreamPlatformAction,
+            MediaStreamOwnerAction,
+            Option<AndroidMediaExecutionTicket>,
+            Option<AndroidMediaOwnerReadback>,
+        ) = serde_json::from_slice(bytes).unwrap();
+        assert_eq!(
+            validate_readback(&ticket.unwrap(), &readback.unwrap())
+                .unwrap_err()
+                .to_string(),
+            error
+        );
+        assert_eq!(
+            provider.last_failure_diagnostic().unwrap().sequence,
+            failure.sequence
+        );
+        assert!(!serde_json::to_string(&failure)
+            .unwrap()
+            .contains("MODELED-capability"));
+    }
+
+    #[test]
+
+    fn diagnostics_route_failure_captures_actual_state_then_releases_locks_before_sink_and_keeps_compensation_phase(
+    ) {
+        use rusty_quest_media_stream::{
+            DiagnosticCollector, DiagnosticPhase, DiagnosticScope, PrivateContextDescriptor,
+            PrivateFailureChunk, PrivateFailureSink,
+        };
+        use rusty_quest_media_stream_android::CurrentOwnerProjectionSource;
+        struct GuardProbe {
+            broker: Arc<RwLock<ManifoldBrokerRuntime>>,
+            peer: Arc<RwLock<ManifoldPeerRuntimeHost>>,
+            calls: std::sync::atomic::AtomicU64,
+        }
+        impl PrivateFailureSink for GuardProbe {
+            fn retain(
+                &self,
+                id: &str,
+                chunks: &[PrivateFailureChunk<'_>],
+                max_bytes: u64,
+            ) -> Result<PrivateContextDescriptor, ()> {
+                assert!(
+                    self.broker.try_write().is_ok(),
+                    "diagnostic callback held Broker read guard"
+                );
+                assert!(
+                    self.peer.try_write().is_ok(),
+                    "diagnostic callback held peer read guard"
+                );
+                self.calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let bytes = serde_json::to_vec(
+                    &chunks
+                        .iter()
+                        .map(|chunk| (chunk.name, chunk.bytes))
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap();
+                assert!((bytes.len() as u64) <= max_bytes);
+                Ok(PrivateContextDescriptor {
+                    status: "available".into(),
+                    context_id: Some(id.into()),
+                    bytes: bytes.len() as u64,
+                    sha256: Some(sha256_hex(&bytes)),
+                    truncated: false,
+                })
+            }
+        }
+        let runtime = runtime_for(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+            "09",
+        );
+        let authority = runtime.embedded_duplex_authority().unwrap();
+        let sink = Arc::new(GuardProbe {
+            broker: runtime.runtime.clone(),
+            peer: runtime.peer_runtime_host.as_ref().unwrap().clone(),
+            calls: std::sync::atomic::AtomicU64::new(0),
+        });
+        let collector = DiagnosticCollector::new(Some(sink.clone()));
+        let operation = collector.operation("start", Default::default());
+        let scope = DiagnosticScope::default();
+        let _scope = scope.enter(operation.clone());
+        let source = crate::embedded_duplex::QuestEmbeddedDuplexProjectionSource::new(
+            authority,
+            id("grant.absent"),
+            id("peer.a"),
+        )
+        .with_diagnostic_scope(scope);
+        let ticket = AndroidMediaExecutionTicket {
+            schema_id: rusty_quest_media_stream_android::ANDROID_MEDIA_EXECUTION_TICKET_SCHEMA.into(),
+            capability: "MODELED-capability".into(),
+            executor_generation: 66,
+            action_id: "action.MODELED".into(),
+            authority_epoch_id: runtime.provider_epoch_id.to_string(),
+            media_acceptance_authority_revision: 1,
+            expected_runtime_revision: 1,
+            client_id: "client.MODELED".into(),
+            lease_id: "lease.MODELED".into(),
+            sequence: 1,
+            operation: MediaStreamPlatformOperation::Start,
+            owner_kind: MediaStreamOwnerKind::Sink,
+            action_kind: rusty_quest_media_stream::MediaStreamOwnerActionKind::ArmReceiver,
+            owner_id: "owner.MODELED".into(),
+            provider_kind: "provider.MODELED".into(),
+            resource_id: "resource.MODELED".into(),
+        };
+        assert!(source
+            .current_projection(
+                &ticket,
+                "peer.b",
+                AndroidMediaExecutionMode::CompensateUncertain,
+                2000
+            )
+            .is_err());
+        let failure = operation.snapshot().unwrap().primary;
+        assert_eq!(failure.phase, DiagnosticPhase::Compensation);
+        assert_eq!(failure.boundary, "validate_current_route_live_broker");
+        assert_eq!(failure.private_context.status, "available");
+        assert_eq!(sink.calls.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
     #[test]

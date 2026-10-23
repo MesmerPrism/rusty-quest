@@ -265,6 +265,16 @@ pub struct MediaStreamOwnerProviderReadback {
 /// platform/native handle registry and verify the returned state from that
 /// registry. This trait is intentionally not projected through JSON/JNI.
 pub trait MediaStreamTrustedOwnerProvider {
+    /// Optional dynamic root scope for providers retained across operations.
+
+    fn set_diagnostic_scope(&mut self, _scope: crate::DiagnosticScope) {}
+
+    /// Latest additive failure observation, independent of trusted readback.
+
+    fn last_failure_diagnostic(&self) -> Option<crate::FailureObservation> {
+        None
+    }
+
     /// Durable owner family implemented by this provider.
     fn owner_kind(&self) -> MediaStreamOwnerKind;
 
@@ -528,6 +538,7 @@ pub struct MediaStreamPlatformAbortReceipt {
 
 /// Stateful packaged media adoption authority.
 pub struct MediaStreamSessionProductRuntime {
+    diagnostic_scope: crate::DiagnosticScope,
     binding: MediaStreamRuntimeProductBinding,
     current_acceptance: ManifoldMediaSessionCurrentReceipt,
     authority: MediaStreamAuthoritySource,
@@ -581,6 +592,97 @@ pub struct MediaStreamConcurrentAuthorityAdoptionReceipt {
 }
 
 impl MediaStreamSessionProductRuntime {
+    /// Injects one shared thread-local operation scope into this retained runtime.
+
+    pub fn set_diagnostic_scope(&mut self, scope: crate::DiagnosticScope) {
+        self.diagnostic_scope = scope;
+    }
+    /// Latest additive failure observation for the currently entered operation.
+
+    pub fn last_failure_diagnostic(&self) -> Option<crate::FailureObservation> {
+        self.diagnostic_scope
+            .current()
+            .and_then(|operation| operation.last_failure())
+    }
+
+    fn owner_diagnostic_phase(&self) -> crate::DiagnosticPhase {
+        if self.abort_in_progress {
+            crate::DiagnosticPhase::Compensation
+        } else if self
+            .pending_action
+            .as_ref()
+            .is_some_and(|action| action.operation == MediaStreamPlatformOperation::Stop)
+        {
+            crate::DiagnosticPhase::Cleanup
+        } else {
+            crate::DiagnosticPhase::Primary
+        }
+    }
+
+    fn observe_failure(&self, phase: crate::DiagnosticPhase, boundary: &'static str, error: &str) {
+        self.observe_failure_context(phase, boundary, error, &[]);
+    }
+
+    fn observe_failure_context(
+        &self,
+        phase: crate::DiagnosticPhase,
+        boundary: &'static str,
+        error: &str,
+        extra: &[crate::PrivateFailureChunk<'_>],
+    ) {
+        if let Some(operation) = self.diagnostic_scope.current() {
+            let action = serde_json::to_vec(&self.pending_action).unwrap_or_default();
+            let acceptance = serde_json::to_vec(&self.current_acceptance).unwrap_or_default();
+            let mut chunks = vec![
+                crate::PrivateFailureChunk {
+                    name: "error",
+                    bytes: error.as_bytes(),
+                },
+                crate::PrivateFailureChunk {
+                    name: "pending_media_action",
+                    bytes: &action,
+                },
+                crate::PrivateFailureChunk {
+                    name: "current_media_acceptance",
+                    bytes: &acceptance,
+                },
+            ];
+            chunks.extend(extra.iter().map(|chunk| crate::PrivateFailureChunk {
+                name: chunk.name,
+                bytes: chunk.bytes,
+            }));
+            operation.record(
+                crate::FailureInput::new(
+                    phase,
+                    crate::DiagnosticLayer::Media,
+                    "product_runtime",
+                    boundary,
+                    "media_runtime",
+                    "unclassified",
+                )
+                .states(
+                    if matches!(
+                        boundary,
+                        "prepare"
+                            | "review_prepare"
+                            | "refresh_authority"
+                            | "validate_media_session_live_broker"
+                    ) {
+                        crate::DiagnosticEffectState::NotEntered
+                    } else {
+                        crate::DiagnosticEffectState::Unknown
+                    },
+                    if phase == crate::DiagnosticPhase::Primary {
+                        crate::DiagnosticCleanupState::NotRequested
+                    } else {
+                        crate::DiagnosticCleanupState::Unknown
+                    },
+                )
+                .private_context(chunks),
+            );
+        }
+    }
+
     /// Adopts an exact live owner renewal without recreating any physical media owner.
     /// The host must already retain the coupled operation and the live Broker join.
     pub fn adopt_concurrent_authority_renewal(
@@ -821,6 +923,7 @@ impl MediaStreamSessionProductRuntime {
     }
 
     /// Creates one runtime bound to a live in-process Manifold peer Runtime Host.
+
     pub fn new(
         binding: MediaStreamRuntimeProductBinding,
         authority: Arc<RwLock<ManifoldPeerRuntimeHost>>,
@@ -847,6 +950,7 @@ impl MediaStreamSessionProductRuntime {
         let runtime = MediaStreamSessionRuntime::new(binding.spec.clone())
             .map_err(MediaStreamProductRuntimeError::RuntimeSpecInvalid)?;
         Ok(Self {
+            diagnostic_scope: Default::default(),
             binding,
             current_acceptance,
             authority: MediaStreamAuthoritySource::Live {
@@ -884,6 +988,7 @@ impl MediaStreamSessionProductRuntime {
     /// Rejects an invalid product binding, unavailable synchronized authority,
     /// non-current accepted session, provider-epoch mismatch, or invalid
     /// platform runtime specification.
+
     pub fn new_with_live_broker_runtime(
         binding: MediaStreamRuntimeProductBinding,
         authority: Arc<RwLock<ManifoldPeerRuntimeHost>>,
@@ -916,6 +1021,7 @@ impl MediaStreamSessionProductRuntime {
         let runtime = MediaStreamSessionRuntime::new(binding.spec.clone())
             .map_err(MediaStreamProductRuntimeError::RuntimeSpecInvalid)?;
         Ok(Self {
+            diagnostic_scope: Default::default(),
             binding,
             current_acceptance,
             authority: MediaStreamAuthoritySource::Live {
@@ -947,6 +1053,7 @@ impl MediaStreamSessionProductRuntime {
 
     /// Constructs a receipt-backed runtime only for unit/damaged tests.
     #[cfg(any(test, feature = "test-support"))]
+
     pub fn new_for_test(
         binding: MediaStreamRuntimeProductBinding,
         current_acceptance: ManifoldMediaSessionCurrentReceipt,
@@ -964,6 +1071,7 @@ impl MediaStreamSessionProductRuntime {
         let runtime = MediaStreamSessionRuntime::new(binding.spec.clone())
             .map_err(MediaStreamProductRuntimeError::RuntimeSpecInvalid)?;
         Ok(Self {
+            diagnostic_scope: Default::default(),
             binding,
             authority: MediaStreamAuthoritySource::Test {
                 current: Arc::new(RwLock::new(current_acceptance.clone())),
@@ -1069,6 +1177,7 @@ impl MediaStreamSessionProductRuntime {
 
     /// Installs the trusted write-ahead journal and commits the current
     /// baseline. Restored runtimes require this before any provider callback.
+
     pub fn install_recovery_journal(
         &mut self,
         journal: Arc<dyn MediaStreamRecoveryJournal>,
@@ -1077,7 +1186,17 @@ impl MediaStreamSessionProductRuntime {
             return Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable);
         }
         let snapshot = self.recovery_snapshot()?;
-        if journal.commit(&snapshot).is_err() {
+        if let Err(error) = journal.commit(&snapshot) {
+            let bytes = serde_json::to_vec(&snapshot).unwrap_or_default();
+            self.observe_failure_context(
+                crate::DiagnosticPhase::Recovery,
+                "recovery_journal_initial_commit",
+                &error,
+                &[crate::PrivateFailureChunk {
+                    name: "recovery_snapshot",
+                    bytes: &bytes,
+                }],
+            );
             self.recovery_journal_poisoned = true;
             return Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable);
         }
@@ -1085,23 +1204,55 @@ impl MediaStreamSessionProductRuntime {
         Ok(())
     }
 
+
     fn commit_recovery_journal(&mut self) -> Result<(), MediaStreamProductRuntimeError> {
-        if self.recovery_journal_poisoned {
-            return Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable);
-        }
-        let Some(journal) = self.recovery_journal.as_ref().map(Arc::clone) else {
-            return if self.cleanup_only_after_restore {
-                Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)
-            } else {
-                Ok(())
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
+            .as_ref()
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            if self.recovery_journal_poisoned {
+                return Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable);
+            }
+            let Some(journal) = self.recovery_journal.as_ref().map(Arc::clone) else {
+                return if self.cleanup_only_after_restore {
+                    Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable)
+                } else {
+                    Ok(())
+                };
             };
-        };
-        let snapshot = self.recovery_snapshot()?;
-        if journal.commit(&snapshot).is_err() {
-            self.recovery_journal_poisoned = true;
-            return Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable);
+            let snapshot = self.recovery_snapshot()?;
+            if let Err(error) = journal.commit(&snapshot) {
+                let bytes = serde_json::to_vec(&snapshot).unwrap_or_default();
+                self.observe_failure_context(
+                    crate::DiagnosticPhase::Recovery,
+                    "recovery_journal_commit",
+                    &error,
+                    &[crate::PrivateFailureChunk {
+                        name: "recovery_snapshot",
+                        bytes: &bytes,
+                    }],
+                );
+                self.recovery_journal_poisoned = true;
+                return Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable);
+            }
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    crate::DiagnosticPhase::Recovery,
+                    "commit_recovery_journal",
+                    &error.to_string(),
+                );
+            }
         }
-        Ok(())
+        result
     }
 
     /// Restores only cleanup authority after the peer and Broker have rejoined
@@ -1191,6 +1342,7 @@ impl MediaStreamSessionProductRuntime {
         Self::restore_from_checked_snapshot(binding, snapshot, current, authority)
     }
 
+
     fn restore_from_checked_snapshot(
         binding: MediaStreamRuntimeProductBinding,
         snapshot: MediaStreamSessionProductRecoverySnapshot,
@@ -1205,11 +1357,9 @@ impl MediaStreamSessionProductRuntime {
         {
             return Err(MediaStreamProductRuntimeError::RecoverySnapshotInvalid);
         }
-        let runtime = MediaStreamSessionRuntime::restore_cleanup_state(
-            binding.spec.clone(),
-            snapshot.lifecycle,
-        )
-        .map_err(|_| MediaStreamProductRuntimeError::RecoverySnapshotInvalid)?;
+        let runtime =
+            MediaStreamSessionRuntime::restore_cleanup_state(binding.spec.clone(), snapshot.lifecycle)
+                .map_err(|_| MediaStreamProductRuntimeError::RecoverySnapshotInvalid)?;
         let active_provider_handles = snapshot
             .active_provider_handles
             .into_iter()
@@ -1226,6 +1376,7 @@ impl MediaStreamSessionProductRuntime {
                 .as_ref()
                 .is_some_and(|action| action.operation == MediaStreamPlatformOperation::Start);
         Ok(Self {
+            diagnostic_scope: Default::default(),
             binding,
             current_acceptance: current,
             authority,
@@ -1307,47 +1458,89 @@ impl MediaStreamSessionProductRuntime {
     /// Revalidates every retained receipt against the app's independent native
     /// effect journal before a restored instance may publish aggregate cleanup.
     /// A failed check leaves the aggregate fence closed.
+
     pub fn revalidate_recovered_receipts<V: MediaStreamRecoveryReceiptVerifier>(
         &mut self,
         verifier: &V,
     ) -> Result<(), MediaStreamProductRuntimeError> {
-        if !self.cleanup_only_after_restore || self.recovery_journal_poisoned {
-            return Err(MediaStreamProductRuntimeError::RecoverySnapshotInvalid);
-        }
-        self.recovery_receipts_revalidated = false;
-        let start_valid = self.active_start_action.as_ref().is_none_or(|action| {
-            self.active_start_receipts
-                .iter()
-                .all(|receipt| verifier.verify_retained_receipt(action, receipt))
-        });
-        let pending_valid = self.pending_action.as_ref().is_none_or(|action| {
-            self.pending_owner_receipts
-                .iter()
-                .all(|receipt| verifier.verify_retained_receipt(action, receipt))
-        });
-        let abort_valid = self.pending_abort_action().is_none_or(|action| {
-            self.pending_abort_receipts
-                .iter()
-                .all(|receipt| verifier.verify_retained_receipt(&action, receipt))
-        });
-        let completed_abort_valid =
-            self.completed_start_abort.as_ref().is_none_or(|record| {
-                record.started_receipts.iter().all(|receipt| {
-                    verifier.verify_retained_receipt(&record.original_action, receipt)
-                }) && record.rollback_receipts.iter().all(|receipt| {
-                    verifier.verify_retained_receipt(&record.rollback_action, receipt)
-                })
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
+            .as_ref()
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            if !self.cleanup_only_after_restore || self.recovery_journal_poisoned {
+                return Err(MediaStreamProductRuntimeError::RecoverySnapshotInvalid);
+            }
+            self.recovery_receipts_revalidated = false;
+            let verify = |action: &MediaStreamPlatformAction,
+                          receipt: &MediaStreamOwnerCompletionReceipt| {
+                let accepted = verifier.verify_retained_receipt(action, receipt);
+                if !accepted {
+                    let bytes = serde_json::to_vec(&(action, receipt)).unwrap_or_default();
+                    self.observe_failure_context(
+                        crate::DiagnosticPhase::Recovery,
+                        "recovery_retained_receipt_verify",
+                        "retained receipt verifier returned false",
+                        &[crate::PrivateFailureChunk {
+                            name: "retained_action_receipt",
+                            bytes: &bytes,
+                        }],
+                    );
+                }
+                accepted
+            };
+            let start_valid = self.active_start_action.as_ref().is_none_or(|action| {
+                self.active_start_receipts
+                    .iter()
+                    .all(|receipt| verify(action, receipt))
             });
-        if !start_valid || !pending_valid || !abort_valid || !completed_abort_valid {
-            return Err(MediaStreamProductRuntimeError::RecoveryReceiptsUnverified);
+            let pending_valid = self.pending_action.as_ref().is_none_or(|action| {
+                self.pending_owner_receipts
+                    .iter()
+                    .all(|receipt| verify(action, receipt))
+            });
+            let abort_valid = self.pending_abort_action().is_none_or(|action| {
+                self.pending_abort_receipts
+                    .iter()
+                    .all(|receipt| verify(&action, receipt))
+            });
+            let completed_abort_valid = self.completed_start_abort.as_ref().is_none_or(|record| {
+                record
+                    .started_receipts
+                    .iter()
+                    .all(|receipt| verify(&record.original_action, receipt))
+                    && record
+                        .rollback_receipts
+                        .iter()
+                        .all(|receipt| verify(&record.rollback_action, receipt))
+            });
+            if !start_valid || !pending_valid || !abort_valid || !completed_abort_valid {
+                return Err(MediaStreamProductRuntimeError::RecoveryReceiptsUnverified);
+            }
+            self.recovery_receipts_revalidated = true;
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    crate::DiagnosticPhase::Recovery,
+                    "revalidate_recovered_receipts",
+                    &error.to_string(),
+                );
+            }
         }
-        self.recovery_receipts_revalidated = true;
-        Ok(())
+        result
     }
 
     /// Atomically prepares against a candidate live Manifold authority. The
     /// original lifecycle remains untouched when candidate validation fails;
     /// no clonable/forked effect authority is exposed to callers.
+
     pub fn prepare_with_live_authority(
         &mut self,
         authority: Arc<RwLock<ManifoldPeerRuntimeHost>>,
@@ -1364,16 +1557,15 @@ impl MediaStreamSessionProductRuntime {
             }
         };
         let mut candidate = Self {
+            diagnostic_scope: self.diagnostic_scope.clone(),
             binding: self.binding.clone(),
             current_acceptance: self.current_acceptance.clone(),
             authority: match &self.authority {
-                MediaStreamAuthoritySource::Live { broker, .. } => {
-                    MediaStreamAuthoritySource::Live {
-                        host: authority,
-                        broker: broker.as_ref().map(Arc::clone),
-                        decision_id,
-                    }
-                }
+                MediaStreamAuthoritySource::Live { broker, .. } => MediaStreamAuthoritySource::Live {
+                    host: authority,
+                    broker: broker.as_ref().map(Arc::clone),
+                    decision_id,
+                },
                 #[cfg(any(test, feature = "test-support"))]
                 MediaStreamAuthoritySource::Test { .. } => {
                     return Err(MediaStreamProductRuntimeError::AuthorityProviderUnavailable)
@@ -1412,57 +1604,84 @@ impl MediaStreamSessionProductRuntime {
         Ok(action)
     }
 
+
     fn refresh_authority(
         &mut self,
         now_ms: u64,
         require_current: bool,
+        phase: crate::DiagnosticPhase,
     ) -> Result<(), MediaStreamProductRuntimeError> {
-        let current = match &self.authority {
-            MediaStreamAuthoritySource::Live {
-                host,
-                broker,
-                decision_id,
-            } => {
-                let host = host
-                    .read()
-                    .map_err(|_| MediaStreamProductRuntimeError::AuthorityProviderUnavailable)?;
-                if host.snapshot().provider_epoch_id.as_str() != self.authority_epoch_id {
-                    return Err(MediaStreamProductRuntimeError::AcceptedProviderEpochMismatch);
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
+            .as_ref()
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let mut raw_authority_error = None;
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            let current = match &self.authority {
+                MediaStreamAuthoritySource::Live {
+                    host,
+                    broker,
+                    decision_id,
+                } => {
+                    let host = host
+                        .read()
+                        .map_err(|_| MediaStreamProductRuntimeError::AuthorityProviderUnavailable)?;
+                    if host.snapshot().provider_epoch_id.as_str() != self.authority_epoch_id {
+                        return Err(MediaStreamProductRuntimeError::AcceptedProviderEpochMismatch);
+                    }
+                    if let Some(broker) = broker {
+                        let broker = broker.read().map_err(|_| {
+                            MediaStreamProductRuntimeError::AuthorityProviderUnavailable
+                        })?;
+                        host.validate_media_session_with_live_broker_runtime(
+                            &broker,
+                            decision_id,
+                            now_ms,
+                        )
+                        .map_err(|error| {
+                            raw_authority_error = Some(error.to_string());
+                            MediaStreamProductRuntimeError::AcceptedSessionNotCurrent
+                        })?
+                    } else {
+                        host.validate_media_session(decision_id, now_ms)
+                    }
                 }
-                if let Some(broker) = broker {
-                    let broker = broker.read().map_err(|_| {
-                        MediaStreamProductRuntimeError::AuthorityProviderUnavailable
-                    })?;
-                    host.validate_media_session_with_live_broker_runtime(
-                        &broker,
-                        decision_id,
-                        now_ms,
-                    )
-                    .map_err(|_| MediaStreamProductRuntimeError::AcceptedSessionNotCurrent)?
+                #[cfg(any(test, feature = "test-support"))]
+                MediaStreamAuthoritySource::Test { current } => {
+                    let mut current = current
+                        .read()
+                        .map_err(|_| MediaStreamProductRuntimeError::AuthorityProviderUnavailable)?
+                        .clone();
+                    current.validated_at_ms = now_ms;
+                    current
+                }
+            };
+            validate_current_acceptance(
+                &self.binding,
+                &current,
+                &self.authority_epoch_id,
+                now_ms,
+                require_current,
+                Some(&self.current_acceptance),
+            )?;
+            self.current_acceptance = current;
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                if let Some(raw) = raw_authority_error {
+                    self.observe_failure(phase, "validate_media_session_live_broker", &raw);
                 } else {
-                    host.validate_media_session(decision_id, now_ms)
+                    self.observe_failure(phase, "refresh_authority", &error.to_string());
                 }
             }
-            #[cfg(any(test, feature = "test-support"))]
-            MediaStreamAuthoritySource::Test { current } => {
-                let mut current = current
-                    .read()
-                    .map_err(|_| MediaStreamProductRuntimeError::AuthorityProviderUnavailable)?
-                    .clone();
-                current.validated_at_ms = now_ms;
-                current
-            }
-        };
-        validate_current_acceptance(
-            &self.binding,
-            &current,
-            &self.authority_epoch_id,
-            now_ms,
-            require_current,
-            Some(&self.current_acceptance),
-        )?;
-        self.current_acceptance = current;
-        Ok(())
+        }
+        result
     }
 
     /// Returns a pending platform action, if Android has not yet completed it.
@@ -1486,6 +1705,7 @@ impl MediaStreamSessionProductRuntime {
     }
 
     /// Prepares one exact platform action without claiming platform completion.
+
     pub fn prepare(
         &mut self,
         action_id: String,
@@ -1493,49 +1713,75 @@ impl MediaStreamSessionProductRuntime {
         client_authority: MediaStreamClientAuthorityBinding,
         now_ms: u64,
     ) -> Result<MediaStreamPlatformAction, MediaStreamProductRuntimeError> {
-        self.review_prepare(&action_id, operation, &client_authority, now_ms)?;
-        let accepted = self
-            .current_acceptance
-            .session
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
             .as_ref()
-            .ok_or(MediaStreamProductRuntimeError::AcceptedSessionMismatch)?;
-        let action = MediaStreamPlatformAction {
-            schema_id: MEDIA_STREAM_PLATFORM_ACTION_SCHEMA.to_owned(),
-            action_id,
-            authority_epoch_id: self.authority_epoch_id.clone(),
-            operation,
-            client_authority,
-            trusted_revoker_cleanup: None,
-            runtime_spec_id: self.binding.spec.runtime_spec_id.clone(),
-            runtime_spec_canonical_sha256: self.binding.runtime_spec_canonical_sha256.clone(),
-            manifold_descriptor_canonical_sha256: self
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            self.review_prepare(&action_id, operation, &client_authority, now_ms)?;
+            let accepted = self
                 .current_acceptance
                 .session
                 .as_ref()
-                .expect("validated current session")
-                .product_descriptor_canonical_sha256
-                .clone(),
-            manifold_decision_id: accepted.decision_id.as_str().to_owned(),
-            manifold_session_revision: accepted.session_authority_revision.get(),
-            media_acceptance_authority_revision: self
-                .current_acceptance
-                .acceptance_state_authority_revision
-                .get(),
-            expected_runtime_revision: self.runtime.state().runtime_revision,
-            owner_actions: ordered_owner_actions(&self.binding.spec.owner_selections, operation),
-        };
-        self.pending_owner_receipts.clear();
-        self.pending_uncertain_owner = None;
-        self.pending_abort_receipts.clear();
-        self.pending_abort_uncertain_owner = None;
-        self.abort_in_progress = false;
-        self.pending_action = Some(action.clone());
-        self.commit_recovery_journal()?;
-        Ok(action)
+                .ok_or(MediaStreamProductRuntimeError::AcceptedSessionMismatch)?;
+            let action = MediaStreamPlatformAction {
+                schema_id: MEDIA_STREAM_PLATFORM_ACTION_SCHEMA.to_owned(),
+                action_id,
+                authority_epoch_id: self.authority_epoch_id.clone(),
+                operation,
+                client_authority,
+                trusted_revoker_cleanup: None,
+                runtime_spec_id: self.binding.spec.runtime_spec_id.clone(),
+                runtime_spec_canonical_sha256: self.binding.runtime_spec_canonical_sha256.clone(),
+                manifold_descriptor_canonical_sha256: self
+                    .current_acceptance
+                    .session
+                    .as_ref()
+                    .expect("validated current session")
+                    .product_descriptor_canonical_sha256
+                    .clone(),
+                manifold_decision_id: accepted.decision_id.as_str().to_owned(),
+                manifold_session_revision: accepted.session_authority_revision.get(),
+                media_acceptance_authority_revision: self
+                    .current_acceptance
+                    .acceptance_state_authority_revision
+                    .get(),
+                expected_runtime_revision: self.runtime.state().runtime_revision,
+                owner_actions: ordered_owner_actions(&self.binding.spec.owner_selections, operation),
+            };
+            self.pending_owner_receipts.clear();
+            self.pending_uncertain_owner = None;
+            self.pending_abort_receipts.clear();
+            self.pending_abort_uncertain_owner = None;
+            self.abort_in_progress = false;
+            self.pending_action = Some(action.clone());
+            self.commit_recovery_journal()?;
+            Ok(action)
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    if operation == MediaStreamPlatformOperation::Stop {
+                        crate::DiagnosticPhase::Cleanup
+                    } else {
+                        crate::DiagnosticPhase::Primary
+                    },
+                    "prepare",
+                    &error.to_string(),
+                );
+            }
+        }
+        result
     }
 
     /// Deterministically checks that an accepted Runtime Host command can be
     /// paired with one platform action before any host authority mutates.
+
     pub fn review_prepare(
         &mut self,
         action_id: &str,
@@ -1543,94 +1789,127 @@ impl MediaStreamSessionProductRuntime {
         client_authority: &MediaStreamClientAuthorityBinding,
         now_ms: u64,
     ) -> Result<(), MediaStreamProductRuntimeError> {
-        if self.recovery_journal_poisoned {
-            return Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable);
-        }
-        if self.cleanup_only_after_restore {
-            return Err(match operation {
-                MediaStreamPlatformOperation::Start => {
-                    MediaStreamProductRuntimeError::RecoveryStartForbidden
-                }
-                MediaStreamPlatformOperation::Stop => {
-                    MediaStreamProductRuntimeError::RecoveryRequiresTargetedStop
-                }
-            });
-        }
-        self.refresh_authority(now_ms, operation == MediaStreamPlatformOperation::Start)?;
-        if action_id.trim().is_empty() {
-            return Err(MediaStreamProductRuntimeError::MissingActionId);
-        }
-        if self.applied_action_ids.contains(action_id)
-            || self.aborted_action_ids.contains(action_id)
-        {
-            return Err(MediaStreamProductRuntimeError::ReplayedAction);
-        }
-        if self.pending_action.is_some() {
-            return Err(MediaStreamProductRuntimeError::PendingActionExists);
-        }
-        if self.completed_start_abort.is_some() {
-            return Err(MediaStreamProductRuntimeError::RecoveryRequiresTargetedStop);
-        }
-        if client_authority.client_id.trim().is_empty()
-            || client_authority.lease_id.trim().is_empty()
-            || client_authority.product_id.trim().is_empty()
-            || client_authority.feature_lock_id.trim().is_empty()
-            || validate_sha256(&client_authority.feature_lock_fingerprint).is_err()
-            || client_authority.session_capability_id.trim().is_empty()
-            || client_authority
-                .session_admission_grant_id
-                .trim()
-                .is_empty()
-            || client_authority
-                .operation_admission_grant_id
-                .trim()
-                .is_empty()
-            || client_authority
-                .operation_admission_use_request_id
-                .trim()
-                .is_empty()
-        {
-            return Err(MediaStreamProductRuntimeError::MissingClientAuthority);
-        }
-        let accepted = self
-            .current_acceptance
-            .session
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
             .as_ref()
-            .ok_or(MediaStreamProductRuntimeError::AcceptedSessionMismatch)?;
-        if accepted.runtime_client_id.as_str() != client_authority.client_id
-            || accepted.runtime_lease_id.as_str() != client_authority.lease_id
-            || accepted.product_id.as_str() != client_authority.product_id
-            || accepted.feature_lock_id.as_str() != client_authority.feature_lock_id
-            || accepted.feature_lock_fingerprint != client_authority.feature_lock_fingerprint
-            || accepted.capability_id.as_str() != client_authority.session_capability_id
-            || accepted.admission_grant_id.as_str() != client_authority.session_admission_grant_id
-            || accepted.admission_grant_id.as_str() != client_authority.operation_admission_grant_id
-            || client_authority.operation_capability_id
-                != match operation {
-                    MediaStreamPlatformOperation::Start => "capability.command.media.session.start",
-                    MediaStreamPlatformOperation::Stop => "capability.command.media.session.stop",
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            if self.recovery_journal_poisoned {
+                return Err(MediaStreamProductRuntimeError::RecoveryJournalUnavailable);
+            }
+            if self.cleanup_only_after_restore {
+                return Err(match operation {
+                    MediaStreamPlatformOperation::Start => {
+                        MediaStreamProductRuntimeError::RecoveryStartForbidden
+                    }
+                    MediaStreamPlatformOperation::Stop => {
+                        MediaStreamProductRuntimeError::RecoveryRequiresTargetedStop
+                    }
+                });
+            }
+            self.refresh_authority(
+                now_ms,
+                operation == MediaStreamPlatformOperation::Start,
+                if operation == MediaStreamPlatformOperation::Start {
+                    crate::DiagnosticPhase::Primary
+                } else {
+                    crate::DiagnosticPhase::Cleanup
+                },
+            )?;
+            if action_id.trim().is_empty() {
+                return Err(MediaStreamProductRuntimeError::MissingActionId);
+            }
+            if self.applied_action_ids.contains(action_id)
+                || self.aborted_action_ids.contains(action_id)
+            {
+                return Err(MediaStreamProductRuntimeError::ReplayedAction);
+            }
+            if self.pending_action.is_some() {
+                return Err(MediaStreamProductRuntimeError::PendingActionExists);
+            }
+            if self.completed_start_abort.is_some() {
+                return Err(MediaStreamProductRuntimeError::RecoveryRequiresTargetedStop);
+            }
+            if client_authority.client_id.trim().is_empty()
+                || client_authority.lease_id.trim().is_empty()
+                || client_authority.product_id.trim().is_empty()
+                || client_authority.feature_lock_id.trim().is_empty()
+                || validate_sha256(&client_authority.feature_lock_fingerprint).is_err()
+                || client_authority.session_capability_id.trim().is_empty()
+                || client_authority
+                    .session_admission_grant_id
+                    .trim()
+                    .is_empty()
+                || client_authority
+                    .operation_admission_grant_id
+                    .trim()
+                    .is_empty()
+                || client_authority
+                    .operation_admission_use_request_id
+                    .trim()
+                    .is_empty()
+            {
+                return Err(MediaStreamProductRuntimeError::MissingClientAuthority);
+            }
+            let accepted = self
+                .current_acceptance
+                .session
+                .as_ref()
+                .ok_or(MediaStreamProductRuntimeError::AcceptedSessionMismatch)?;
+            if accepted.runtime_client_id.as_str() != client_authority.client_id
+                || accepted.runtime_lease_id.as_str() != client_authority.lease_id
+                || accepted.product_id.as_str() != client_authority.product_id
+                || accepted.feature_lock_id.as_str() != client_authority.feature_lock_id
+                || accepted.feature_lock_fingerprint != client_authority.feature_lock_fingerprint
+                || accepted.capability_id.as_str() != client_authority.session_capability_id
+                || accepted.admission_grant_id.as_str() != client_authority.session_admission_grant_id
+                || accepted.admission_grant_id.as_str() != client_authority.operation_admission_grant_id
+                || client_authority.operation_capability_id
+                    != match operation {
+                        MediaStreamPlatformOperation::Start => "capability.command.media.session.start",
+                        MediaStreamPlatformOperation::Stop => "capability.command.media.session.stop",
+                    }
+            {
+                return Err(MediaStreamProductRuntimeError::ClientAuthorityMismatch);
+            }
+            match (self.runtime.state().phase, operation) {
+                (MediaStreamRuntimePhase::Planned, MediaStreamPlatformOperation::Start) => {}
+                (MediaStreamRuntimePhase::Stopped, _) => {
+                    return Err(MediaStreamProductRuntimeError::TerminalRuntime)
                 }
-        {
-            return Err(MediaStreamProductRuntimeError::ClientAuthorityMismatch);
+                (_, MediaStreamPlatformOperation::Start) => {
+                    return Err(MediaStreamProductRuntimeError::InvalidOperationPhase)
+                }
+                (_, MediaStreamPlatformOperation::Stop)
+                    if self
+                        .active_client_authority
+                        .as_ref()
+                        .is_some_and(|active| same_session_holder(active, client_authority)) => {}
+                (_, MediaStreamPlatformOperation::Stop) => {
+                    return Err(MediaStreamProductRuntimeError::ClientAuthorityMismatch)
+                }
+            }
+            Ok(())
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    if operation == MediaStreamPlatformOperation::Stop {
+                        crate::DiagnosticPhase::Cleanup
+                    } else {
+                        crate::DiagnosticPhase::Primary
+                    },
+                    "review_prepare",
+                    &error.to_string(),
+                );
+            }
         }
-        match (self.runtime.state().phase, operation) {
-            (MediaStreamRuntimePhase::Planned, MediaStreamPlatformOperation::Start) => {}
-            (MediaStreamRuntimePhase::Stopped, _) => {
-                return Err(MediaStreamProductRuntimeError::TerminalRuntime)
-            }
-            (_, MediaStreamPlatformOperation::Start) => {
-                return Err(MediaStreamProductRuntimeError::InvalidOperationPhase)
-            }
-            (_, MediaStreamPlatformOperation::Stop)
-                if self
-                    .active_client_authority
-                    .as_ref()
-                    .is_some_and(|active| same_session_holder(active, client_authority)) => {}
-            (_, MediaStreamPlatformOperation::Stop) => {
-                return Err(MediaStreamProductRuntimeError::ClientAuthorityMismatch)
-            }
-        }
-        Ok(())
+        result
     }
 
     /// Records source-provider state through the source-only callback.
@@ -1696,84 +1975,163 @@ impl MediaStreamSessionProductRuntime {
         self.complete_owner(MediaStreamOwnerKind::Cleanup, provider, now_ms)
     }
 
+
     fn complete_owner<P: MediaStreamTrustedOwnerProvider>(
         &mut self,
         owner_kind: MediaStreamOwnerKind,
         provider: &mut P,
         now_ms: u64,
     ) -> Result<MediaStreamOwnerCompletionReceipt, MediaStreamProductRuntimeError> {
-        if self.abort_in_progress {
-            return Err(MediaStreamProductRuntimeError::AbortInProgress);
-        }
-        if self.pending_uncertain_owner.is_some() {
-            return Err(MediaStreamProductRuntimeError::UncertainOwnerAttemptPending);
-        }
-        let require_current = self
-            .pending_action
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
             .as_ref()
-            .is_some_and(|action| action.operation == MediaStreamPlatformOperation::Start);
-        self.refresh_authority(now_ms, require_current)?;
-        let action = self
-            .pending_action
-            .as_ref()
-            .ok_or(MediaStreamProductRuntimeError::NoPendingAction)?
-            .clone();
-        let sequence = self.pending_owner_receipts.len();
-        let expected = action
-            .owner_actions
-            .get(sequence)
-            .ok_or(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch)?
-            .clone();
-        if expected.selection.owner_kind != owner_kind {
-            return Err(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch);
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            if self.abort_in_progress {
+                return Err(MediaStreamProductRuntimeError::AbortInProgress);
+            }
+            if self.pending_uncertain_owner.is_some() {
+                return Err(MediaStreamProductRuntimeError::UncertainOwnerAttemptPending);
+            }
+            let require_current = self
+                .pending_action
+                .as_ref()
+                .is_some_and(|action| action.operation == MediaStreamPlatformOperation::Start);
+            self.refresh_authority(now_ms, require_current, self.owner_diagnostic_phase())?;
+            let action = self
+                .pending_action
+                .as_ref()
+                .ok_or(MediaStreamProductRuntimeError::NoPendingAction)?
+                .clone();
+            let sequence = self.pending_owner_receipts.len();
+            let expected = action
+                .owner_actions
+                .get(sequence)
+                .ok_or(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch)?
+                .clone();
+            if expected.selection.owner_kind != owner_kind {
+                return Err(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch);
+            }
+            if provider.owner_kind() != owner_kind {
+                return Err(MediaStreamProductRuntimeError::OwnerProviderMismatch);
+            }
+            self.pending_uncertain_owner = Some(expected.clone());
+            self.commit_recovery_journal()?;
+            provider.set_diagnostic_scope(self.diagnostic_scope.clone());
+            let readback = provider
+                .execute_and_readback(&action, &expected)
+                .map_err(|error| {
+                    self.observe_failure(
+                        if action.operation == MediaStreamPlatformOperation::Start {
+                            crate::DiagnosticPhase::Primary
+                        } else {
+                            crate::DiagnosticPhase::Cleanup
+                        },
+                        "owner_execute_and_readback",
+                        &error,
+                    );
+                    MediaStreamProductRuntimeError::OwnerProviderFailed
+                })?;
+            self.record_owner_readback(
+                &action,
+                &expected,
+                provider,
+                readback,
+                sequence,
+                self.owner_diagnostic_phase(),
+            )
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    self.owner_diagnostic_phase(),
+                    "complete_owner",
+                    &error.to_string(),
+                );
+            }
         }
-        if provider.owner_kind() != owner_kind {
-            return Err(MediaStreamProductRuntimeError::OwnerProviderMismatch);
-        }
-        self.pending_uncertain_owner = Some(expected.clone());
-        self.commit_recovery_journal()?;
-        let readback = provider
-            .execute_and_readback(&action, &expected)
-            .map_err(|_| MediaStreamProductRuntimeError::OwnerProviderFailed)?;
-        self.record_owner_readback(&action, &expected, provider, readback, sequence)
+        result
     }
 
     /// Completes an uncertain Stop owner only after its provider independently
     /// proves the original handle absent at a newer state revision. The next
     /// normal Stop owner remains blocked until this succeeds.
+
     pub fn complete_uncertain_stop_owner<P: MediaStreamTrustedOwnerProvider>(
         &mut self,
         provider: &mut P,
         now_ms: u64,
     ) -> Result<MediaStreamOwnerCompletionReceipt, MediaStreamProductRuntimeError> {
-        if self.abort_in_progress {
-            return Err(MediaStreamProductRuntimeError::AbortInProgress);
-        }
-        let action = self
-            .pending_action
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
             .as_ref()
-            .filter(|action| action.operation == MediaStreamPlatformOperation::Stop)
-            .ok_or(MediaStreamProductRuntimeError::InvalidOperationPhase)?
-            .clone();
-        let expected = self
-            .pending_uncertain_owner
-            .as_ref()
-            .ok_or(MediaStreamProductRuntimeError::NoUncertainOwnerAttempt)?
-            .clone();
-        let sequence = self.pending_owner_receipts.len();
-        if action.owner_actions.get(sequence) != Some(&expected) {
-            return Err(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch);
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            if self.abort_in_progress {
+                return Err(MediaStreamProductRuntimeError::AbortInProgress);
+            }
+            let action = self
+                .pending_action
+                .as_ref()
+                .filter(|action| action.operation == MediaStreamPlatformOperation::Stop)
+                .ok_or(MediaStreamProductRuntimeError::InvalidOperationPhase)?
+                .clone();
+            let expected = self
+                .pending_uncertain_owner
+                .as_ref()
+                .ok_or(MediaStreamProductRuntimeError::NoUncertainOwnerAttempt)?
+                .clone();
+            let sequence = self.pending_owner_receipts.len();
+            if action.owner_actions.get(sequence) != Some(&expected) {
+                return Err(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch);
+            }
+            if provider.owner_kind() != expected.selection.owner_kind {
+                return Err(MediaStreamProductRuntimeError::OwnerProviderMismatch);
+            }
+            self.refresh_authority(now_ms, false, crate::DiagnosticPhase::Compensation)?;
+            self.commit_recovery_journal()?;
+            provider.set_diagnostic_scope(self.diagnostic_scope.clone());
+            let readback = provider
+                .compensate_uncertain_attempt(&action, &expected)
+                .map_err(|error| {
+                    self.observe_failure(
+                        crate::DiagnosticPhase::Compensation,
+                        "uncertain_stop_compensate",
+                        &error,
+                    );
+                    MediaStreamProductRuntimeError::OwnerProviderFailed
+                })?;
+            self.record_owner_readback(
+                &action,
+                &expected,
+                provider,
+                readback,
+                sequence,
+                crate::DiagnosticPhase::Compensation,
+            )
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    crate::DiagnosticPhase::Compensation,
+                    "complete_uncertain_stop_owner",
+                    &error.to_string(),
+                );
+            }
         }
-        if provider.owner_kind() != expected.selection.owner_kind {
-            return Err(MediaStreamProductRuntimeError::OwnerProviderMismatch);
-        }
-        self.refresh_authority(now_ms, false)?;
-        self.commit_recovery_journal()?;
-        let readback = provider
-            .compensate_uncertain_attempt(&action, &expected)
-            .map_err(|_| MediaStreamProductRuntimeError::OwnerProviderFailed)?;
-        self.record_owner_readback(&action, &expected, provider, readback, sequence)
+        result
     }
+
 
     fn record_owner_readback<P: MediaStreamTrustedOwnerProvider>(
         &mut self,
@@ -1782,89 +2140,134 @@ impl MediaStreamSessionProductRuntime {
         provider: &P,
         readback: MediaStreamOwnerProviderReadback,
         sequence: usize,
+        phase: crate::DiagnosticPhase,
     ) -> Result<MediaStreamOwnerCompletionReceipt, MediaStreamProductRuntimeError> {
-        if readback.action_id != action.action_id
-            || readback.authority_epoch_id != action.authority_epoch_id
-            || readback.media_acceptance_authority_revision
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
+            .as_ref()
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            let mismatch = if readback.action_id != action.action_id {
+                Some("readback_action_id")
+            } else if readback.authority_epoch_id != action.authority_epoch_id {
+                Some("readback_authority_epoch")
+            } else if readback.media_acceptance_authority_revision
                 != action.media_acceptance_authority_revision
-            || readback.client_id != action.client_authority.client_id
-            || readback.lease_id != action.client_authority.lease_id
-            || readback.provider_kind != expected.selection.provider_kind
-            || readback.resource_id != expected.selection.resource_id
-            || readback.provider_handle_id.trim().is_empty()
-            || readback.provider_state_revision == 0
-            || readback.observed_state != expected_provider_state(expected.action_kind)
-            || readback.receipt_id.trim().is_empty()
-            || !provider.verify_readback(&action, &expected, &readback)
-            || self.pending_owner_receipts.iter().any(|receipt| {
+            {
+                Some("readback_acceptance_revision")
+            } else if readback.client_id != action.client_authority.client_id {
+                Some("readback_client_binding")
+            } else if readback.lease_id != action.client_authority.lease_id {
+                Some("readback_lease_binding")
+            } else if readback.provider_kind != expected.selection.provider_kind {
+                Some("readback_provider_kind")
+            } else if readback.resource_id != expected.selection.resource_id {
+                Some("readback_resource_binding")
+            } else if readback.provider_handle_id.trim().is_empty() {
+                Some("readback_handle_empty")
+            } else if readback.provider_state_revision == 0 {
+                Some("readback_state_revision_zero")
+            } else if readback.observed_state != expected_provider_state(expected.action_kind) {
+                Some("readback_observed_state")
+            } else if readback.receipt_id.trim().is_empty() {
+                Some("readback_receipt_empty")
+            } else if !provider.verify_readback(&action, &expected, &readback) {
+                Some("provider_verify_readback")
+            } else if self.pending_owner_receipts.iter().any(|receipt| {
                 receipt.receipt_id == readback.receipt_id
                     || receipt.provider_handle_id == readback.provider_handle_id
-            })
-        {
-            return Err(MediaStreamProductRuntimeError::OwnerReadbackMismatch);
-        }
-        match action.operation {
-            MediaStreamPlatformOperation::Start => {
-                if self
-                    .active_provider_handles
-                    .contains_key(&expected.selection)
-                {
-                    return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
-                }
+            }) {
+                Some("readback_receipt_or_handle_reused")
+            } else {
+                None
+            };
+            if let Some(boundary) = mismatch {
+                let bytes = serde_json::to_vec(&readback).unwrap_or_default();
+                self.observe_failure_context(
+                    phase,
+                    boundary,
+                    "media owner readback mismatch",
+                    &[crate::PrivateFailureChunk {
+                        name: "provider_readback",
+                        bytes: &bytes,
+                    }],
+                );
+                return Err(MediaStreamProductRuntimeError::OwnerReadbackMismatch);
             }
-            MediaStreamPlatformOperation::Stop => {
-                if let Some(record) = self.completed_start_abort.as_ref() {
-                    if action.trusted_revoker_cleanup.is_none()
-                        || !same_session_holder(
-                            &record.original_action.client_authority,
-                            &action.client_authority,
-                        )
-                    {
-                        return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
-                    }
-                    if record
-                        .rollback_receipts
-                        .iter()
-                        .find(|receipt| receipt.selection == expected.selection)
-                        .is_some_and(|receipt| {
-                            receipt.provider_handle_id != readback.provider_handle_id
-                                || receipt.provider_state_revision
-                                    >= readback.provider_state_revision
-                        })
-                    {
-                        return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
-                    }
-                    // Unentered owners still require the provider's actual
-                    // same-generation terminal readback above, never a missing
-                    // Start ticket or synthesized active handle.
-                } else {
-                    let Some((active_handle, active_revision)) =
-                        self.active_provider_handles.get(&expected.selection)
-                    else {
-                        return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
-                    };
-                    if active_handle != &readback.provider_handle_id
-                        || *active_revision >= readback.provider_state_revision
+            match action.operation {
+                MediaStreamPlatformOperation::Start => {
+                    if self
+                        .active_provider_handles
+                        .contains_key(&expected.selection)
                     {
                         return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
                     }
                 }
+                MediaStreamPlatformOperation::Stop => {
+                    if let Some(record) = self.completed_start_abort.as_ref() {
+                        if action.trusted_revoker_cleanup.is_none()
+                            || !same_session_holder(
+                                &record.original_action.client_authority,
+                                &action.client_authority,
+                            )
+                        {
+                            return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
+                        }
+                        if record
+                            .rollback_receipts
+                            .iter()
+                            .find(|receipt| receipt.selection == expected.selection)
+                            .is_some_and(|receipt| {
+                                receipt.provider_handle_id != readback.provider_handle_id
+                                    || receipt.provider_state_revision
+                                        >= readback.provider_state_revision
+                            })
+                        {
+                            return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
+                        }
+                        // Unentered owners still require the provider's actual
+                        // same-generation terminal readback above, never a missing
+                        // Start ticket or synthesized active handle.
+                    } else {
+                        let Some((active_handle, active_revision)) =
+                            self.active_provider_handles.get(&expected.selection)
+                        else {
+                            return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
+                        };
+                        if active_handle != &readback.provider_handle_id
+                            || *active_revision >= readback.provider_state_revision
+                        {
+                            return Err(MediaStreamProductRuntimeError::OwnerHandleLifecycleMismatch);
+                        }
+                    }
+                }
+            }
+            let receipt = MediaStreamOwnerCompletionReceipt {
+                selection: expected.selection.clone(),
+                action_kind: expected.action_kind,
+                receipt_id: readback.receipt_id,
+                completion_sequence: u32::try_from(sequence + 1)
+                    .map_err(|_| MediaStreamProductRuntimeError::OwnerReadbackMismatch)?,
+                provider_handle_id: readback.provider_handle_id,
+                provider_state_revision: readback.provider_state_revision,
+                observed_state: readback.observed_state,
+            };
+            self.pending_owner_receipts.push(receipt.clone());
+            self.pending_uncertain_owner = None;
+            self.commit_recovery_journal()?;
+            Ok(receipt)
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(phase, "record_owner_readback", &error.to_string());
             }
         }
-        let receipt = MediaStreamOwnerCompletionReceipt {
-            selection: expected.selection.clone(),
-            action_kind: expected.action_kind,
-            receipt_id: readback.receipt_id,
-            completion_sequence: u32::try_from(sequence + 1)
-                .map_err(|_| MediaStreamProductRuntimeError::OwnerReadbackMismatch)?,
-            provider_handle_id: readback.provider_handle_id,
-            provider_state_revision: readback.provider_state_revision,
-            observed_state: readback.observed_state,
-        };
-        self.pending_owner_receipts.push(receipt.clone());
-        self.pending_uncertain_owner = None;
-        self.commit_recovery_journal()?;
-        Ok(receipt)
+        result
     }
 
     /// Begins authority-independent rollback for a prepared Start action.
@@ -1872,29 +2275,51 @@ impl MediaStreamSessionProductRuntime {
     /// This transition deliberately does not query current session authority:
     /// revocation, provider rebind, or authority loss must never strand local
     /// resources that were already observed as started/armed.
+
     pub fn begin_partial_start_abort(
         &mut self,
     ) -> Result<MediaStreamPlatformAction, MediaStreamProductRuntimeError> {
-        let action = self
-            .pending_action
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
             .as_ref()
-            .ok_or(MediaStreamProductRuntimeError::NoPendingAction)?
-            .clone();
-        if action.operation != MediaStreamPlatformOperation::Start {
-            return Err(MediaStreamProductRuntimeError::AbortRequiresPendingStart);
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            let action = self
+                .pending_action
+                .as_ref()
+                .ok_or(MediaStreamProductRuntimeError::NoPendingAction)?
+                .clone();
+            if action.operation != MediaStreamPlatformOperation::Start {
+                return Err(MediaStreamProductRuntimeError::AbortRequiresPendingStart);
+            }
+            if self.abort_in_progress {
+                return Err(MediaStreamProductRuntimeError::AbortInProgress);
+            }
+            self.abort_in_progress = true;
+            self.pending_abort_receipts.clear();
+            self.pending_abort_uncertain_owner = None;
+            self.commit_recovery_journal()?;
+            Ok(partial_start_abort_action(
+                &action,
+                &self.pending_owner_receipts,
+                self.pending_uncertain_owner.as_ref(),
+            ))
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    crate::DiagnosticPhase::Compensation,
+                    "begin_partial_start_abort",
+                    &error.to_string(),
+                );
+            }
         }
-        if self.abort_in_progress {
-            return Err(MediaStreamProductRuntimeError::AbortInProgress);
-        }
-        self.abort_in_progress = true;
-        self.pending_abort_receipts.clear();
-        self.pending_abort_uncertain_owner = None;
-        self.commit_recovery_journal()?;
-        Ok(partial_start_abort_action(
-            &action,
-            &self.pending_owner_receipts,
-            self.pending_uncertain_owner.as_ref(),
-        ))
+        result
     }
 
     /// Returns the exact rollback action while partial-start cleanup is active.
@@ -1956,295 +2381,379 @@ impl MediaStreamSessionProductRuntime {
     /// Reverses the next observed partial-start owner in exact reverse order.
     /// The provider must return the same live handle at a strictly newer state
     /// revision, so retry/death recovery cannot silently substitute resources.
+
     pub fn complete_next_abort_owner<P: MediaStreamTrustedOwnerProvider>(
         &mut self,
         provider: &mut P,
     ) -> Result<MediaStreamOwnerCompletionReceipt, MediaStreamProductRuntimeError> {
-        if !self.abort_in_progress {
-            return Err(MediaStreamProductRuntimeError::AbortRequiresPendingStart);
-        }
-        let sequence = self.pending_abort_receipts.len();
-        let uncertain = self.pending_uncertain_owner.clone();
-        let uncertain_offset = usize::from(uncertain.is_some());
-        let completed_sequence = sequence.saturating_sub(uncertain_offset);
-        let started = if sequence < uncertain_offset {
-            None
-        } else {
-            let start_index = self
-                .pending_owner_receipts
-                .len()
-                .checked_sub(completed_sequence + 1)
-                .ok_or(MediaStreamProductRuntimeError::AbortCallbacksIncomplete)?;
-            Some(self.pending_owner_receipts[start_index].clone())
-        };
-        let action = partial_start_abort_action(
-            self.pending_action
-                .as_ref()
-                .expect("abort retains pending action"),
-            &self.pending_owner_receipts,
-            uncertain.as_ref(),
-        );
-        let expected = action
-            .owner_actions
-            .get(sequence)
-            .ok_or(MediaStreamProductRuntimeError::AbortCallbacksIncomplete)?;
-        if provider.owner_kind() != expected.selection.owner_kind
-            || started
-                .as_ref()
-                .is_some_and(|started| expected.selection != started.selection)
-        {
-            return Err(MediaStreamProductRuntimeError::OwnerProviderMismatch);
-        }
-        if self
-            .pending_abort_uncertain_owner
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
             .as_ref()
-            .is_some_and(|owner| owner != expected)
-        {
-            return Err(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch);
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            if !self.abort_in_progress {
+                return Err(MediaStreamProductRuntimeError::AbortRequiresPendingStart);
+            }
+            let sequence = self.pending_abort_receipts.len();
+            let uncertain = self.pending_uncertain_owner.clone();
+            let uncertain_offset = usize::from(uncertain.is_some());
+            let completed_sequence = sequence.saturating_sub(uncertain_offset);
+            let started = if sequence < uncertain_offset {
+                None
+            } else {
+                let start_index = self
+                    .pending_owner_receipts
+                    .len()
+                    .checked_sub(completed_sequence + 1)
+                    .ok_or(MediaStreamProductRuntimeError::AbortCallbacksIncomplete)?;
+                Some(self.pending_owner_receipts[start_index].clone())
+            };
+            let action = partial_start_abort_action(
+                self.pending_action
+                    .as_ref()
+                    .expect("abort retains pending action"),
+                &self.pending_owner_receipts,
+                uncertain.as_ref(),
+            );
+            let expected = action
+                .owner_actions
+                .get(sequence)
+                .ok_or(MediaStreamProductRuntimeError::AbortCallbacksIncomplete)?;
+            if provider.owner_kind() != expected.selection.owner_kind
+                || started
+                    .as_ref()
+                    .is_some_and(|started| expected.selection != started.selection)
+            {
+                return Err(MediaStreamProductRuntimeError::OwnerProviderMismatch);
+            }
+            if self
+                .pending_abort_uncertain_owner
+                .as_ref()
+                .is_some_and(|owner| owner != expected)
+            {
+                return Err(MediaStreamProductRuntimeError::OwnerCallbackOrderMismatch);
+            }
+            let retrying_uncertain = self.pending_abort_uncertain_owner.is_some();
+            if !retrying_uncertain {
+                self.pending_abort_uncertain_owner = Some(expected.clone());
+            }
+            self.commit_recovery_journal()?;
+            provider.set_diagnostic_scope(self.diagnostic_scope.clone());
+            let readback = if started.is_some() && !retrying_uncertain {
+                provider.execute_and_readback(&action, expected)
+            } else {
+                provider.compensate_uncertain_attempt(&action, expected)
+            }
+            .map_err(|error| {
+                self.observe_failure(
+                    crate::DiagnosticPhase::Compensation,
+                    "partial_start_abort_owner",
+                    &error,
+                );
+                MediaStreamProductRuntimeError::OwnerProviderFailed
+            })?;
+            if readback.action_id != action.action_id
+                || readback.authority_epoch_id != action.authority_epoch_id
+                || readback.media_acceptance_authority_revision
+                    != action.media_acceptance_authority_revision
+                || readback.client_id != action.client_authority.client_id
+                || readback.lease_id != action.client_authority.lease_id
+                || readback.provider_kind != expected.selection.provider_kind
+                || readback.resource_id != expected.selection.resource_id
+                || started.as_ref().is_some_and(|started| {
+                    readback.provider_handle_id != started.provider_handle_id
+                        || readback.provider_state_revision <= started.provider_state_revision
+                })
+                || readback.provider_handle_id.trim().is_empty()
+                || readback.provider_state_revision == 0
+                || readback.observed_state != expected_provider_state(expected.action_kind)
+                || readback.receipt_id.trim().is_empty()
+                || !provider.verify_readback(&action, expected, &readback)
+                || self.pending_abort_receipts.iter().any(|receipt| {
+                    receipt.receipt_id == readback.receipt_id || receipt.selection == expected.selection
+                })
+            {
+                let bytes = serde_json::to_vec(&readback).unwrap_or_default();
+                self.observe_failure_context(
+                    crate::DiagnosticPhase::Compensation,
+                    "abort_provider_readback_binding",
+                    "media owner readback mismatch",
+                    &[crate::PrivateFailureChunk {
+                        name: "provider_readback",
+                        bytes: &bytes,
+                    }],
+                );
+                return Err(MediaStreamProductRuntimeError::OwnerReadbackMismatch);
+            }
+            let receipt = MediaStreamOwnerCompletionReceipt {
+                selection: expected.selection.clone(),
+                action_kind: expected.action_kind,
+                receipt_id: readback.receipt_id,
+                completion_sequence: u32::try_from(sequence + 1)
+                    .map_err(|_| MediaStreamProductRuntimeError::OwnerReadbackMismatch)?,
+                provider_handle_id: readback.provider_handle_id,
+                provider_state_revision: readback.provider_state_revision,
+                observed_state: readback.observed_state,
+            };
+            self.pending_abort_receipts.push(receipt.clone());
+            self.pending_abort_uncertain_owner = None;
+            self.commit_recovery_journal()?;
+            Ok(receipt)
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    crate::DiagnosticPhase::Compensation,
+                    "complete_next_abort_owner",
+                    &error.to_string(),
+                );
+            }
         }
-        let retrying_uncertain = self.pending_abort_uncertain_owner.is_some();
-        if !retrying_uncertain {
-            self.pending_abort_uncertain_owner = Some(expected.clone());
-        }
-        self.commit_recovery_journal()?;
-        let readback = if started.is_some() && !retrying_uncertain {
-            provider.execute_and_readback(&action, expected)
-        } else {
-            provider.compensate_uncertain_attempt(&action, expected)
-        }
-        .map_err(|_| MediaStreamProductRuntimeError::OwnerProviderFailed)?;
-        if readback.action_id != action.action_id
-            || readback.authority_epoch_id != action.authority_epoch_id
-            || readback.media_acceptance_authority_revision
-                != action.media_acceptance_authority_revision
-            || readback.client_id != action.client_authority.client_id
-            || readback.lease_id != action.client_authority.lease_id
-            || readback.provider_kind != expected.selection.provider_kind
-            || readback.resource_id != expected.selection.resource_id
-            || started.as_ref().is_some_and(|started| {
-                readback.provider_handle_id != started.provider_handle_id
-                    || readback.provider_state_revision <= started.provider_state_revision
-            })
-            || readback.provider_handle_id.trim().is_empty()
-            || readback.provider_state_revision == 0
-            || readback.observed_state != expected_provider_state(expected.action_kind)
-            || readback.receipt_id.trim().is_empty()
-            || !provider.verify_readback(&action, expected, &readback)
-            || self.pending_abort_receipts.iter().any(|receipt| {
-                receipt.receipt_id == readback.receipt_id || receipt.selection == expected.selection
-            })
-        {
-            return Err(MediaStreamProductRuntimeError::OwnerReadbackMismatch);
-        }
-        let receipt = MediaStreamOwnerCompletionReceipt {
-            selection: expected.selection.clone(),
-            action_kind: expected.action_kind,
-            receipt_id: readback.receipt_id,
-            completion_sequence: u32::try_from(sequence + 1)
-                .map_err(|_| MediaStreamProductRuntimeError::OwnerReadbackMismatch)?,
-            provider_handle_id: readback.provider_handle_id,
-            provider_state_revision: readback.provider_state_revision,
-            observed_state: readback.observed_state,
-        };
-        self.pending_abort_receipts.push(receipt.clone());
-        self.pending_abort_uncertain_owner = None;
-        self.commit_recovery_journal()?;
-        Ok(receipt)
+        result
     }
 
     /// Releases a pending Start only after every observed side effect supplied
     /// an exact reverse-order cleanup readback.
+
     pub fn finalize_partial_start_abort(
         &mut self,
     ) -> Result<MediaStreamPlatformAbortReceipt, MediaStreamProductRuntimeError> {
-        if self.cleanup_only_after_restore && !self.recovery_receipts_revalidated {
-            return Err(MediaStreamProductRuntimeError::RecoveryReceiptsUnverified);
-        }
-        if !self.abort_in_progress {
-            return Err(MediaStreamProductRuntimeError::AbortRequiresPendingStart);
-        }
-        if self.pending_abort_uncertain_owner.is_some() {
-            return Err(MediaStreamProductRuntimeError::UncertainOwnerAttemptPending);
-        }
-        let uncertain_attempt_count = usize::from(self.pending_uncertain_owner.is_some());
-        let uncertain_attempts =
-            u32::try_from(uncertain_attempt_count).expect("at most one uncertain owner attempt");
-        if self.pending_abort_receipts.len()
-            != self.pending_owner_receipts.len() + uncertain_attempt_count
-        {
-            return Err(MediaStreamProductRuntimeError::AbortCallbacksIncomplete);
-        }
-        let action = self
-            .pending_action
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
             .as_ref()
-            .ok_or(MediaStreamProductRuntimeError::NoPendingAction)?
-            .clone();
-        let rollback_receipts = self.pending_abort_receipts.clone();
-        self.completed_start_abort = Some(MediaStreamCompletedStartAbort {
-            schema_id: "rusty.quest.media_stream.completed_start_abort.v1".to_owned(),
-            rollback_action: partial_start_abort_action(
-                &action,
-                &self.pending_owner_receipts,
-                self.pending_uncertain_owner.as_ref(),
-            ),
-            original_action: action.clone(),
-            started_receipts: self.pending_owner_receipts.clone(),
-            uncertain_owner: self.pending_uncertain_owner.clone(),
-            rollback_receipts: rollback_receipts.clone(),
-        });
-        self.aborted_action_ids.insert(action.action_id.clone());
-        self.pending_action = None;
-        self.pending_owner_receipts.clear();
-        self.pending_uncertain_owner = None;
-        self.pending_abort_receipts.clear();
-        self.pending_abort_uncertain_owner = None;
-        self.abort_in_progress = false;
-        self.commit_recovery_journal()?;
-        Ok(MediaStreamPlatformAbortReceipt {
-            schema_id: MEDIA_STREAM_PLATFORM_ABORT_SCHEMA.to_owned(),
-            abort_action_id: format!("{}.abort", action.action_id),
-            action_id: action.action_id,
-            authority_epoch_id: action.authority_epoch_id,
-            client_authority: action.client_authority,
-            rollback_receipts,
-            uncertain_attempts_compensated: uncertain_attempts,
-            cleanup_complete: true,
-            platform_effect_completed: false,
-            resulting_phase: self.runtime.state().phase,
-            resulting_runtime_revision: self.runtime.state().runtime_revision,
-        })
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            if self.cleanup_only_after_restore && !self.recovery_receipts_revalidated {
+                return Err(MediaStreamProductRuntimeError::RecoveryReceiptsUnverified);
+            }
+            if !self.abort_in_progress {
+                return Err(MediaStreamProductRuntimeError::AbortRequiresPendingStart);
+            }
+            if self.pending_abort_uncertain_owner.is_some() {
+                return Err(MediaStreamProductRuntimeError::UncertainOwnerAttemptPending);
+            }
+            let uncertain_attempt_count = usize::from(self.pending_uncertain_owner.is_some());
+            let uncertain_attempts =
+                u32::try_from(uncertain_attempt_count).expect("at most one uncertain owner attempt");
+            if self.pending_abort_receipts.len()
+                != self.pending_owner_receipts.len() + uncertain_attempt_count
+            {
+                return Err(MediaStreamProductRuntimeError::AbortCallbacksIncomplete);
+            }
+            let action = self
+                .pending_action
+                .as_ref()
+                .ok_or(MediaStreamProductRuntimeError::NoPendingAction)?
+                .clone();
+            let rollback_receipts = self.pending_abort_receipts.clone();
+            self.completed_start_abort = Some(MediaStreamCompletedStartAbort {
+                schema_id: "rusty.quest.media_stream.completed_start_abort.v1".to_owned(),
+                rollback_action: partial_start_abort_action(
+                    &action,
+                    &self.pending_owner_receipts,
+                    self.pending_uncertain_owner.as_ref(),
+                ),
+                original_action: action.clone(),
+                started_receipts: self.pending_owner_receipts.clone(),
+                uncertain_owner: self.pending_uncertain_owner.clone(),
+                rollback_receipts: rollback_receipts.clone(),
+            });
+            self.aborted_action_ids.insert(action.action_id.clone());
+            self.pending_action = None;
+            self.pending_owner_receipts.clear();
+            self.pending_uncertain_owner = None;
+            self.pending_abort_receipts.clear();
+            self.pending_abort_uncertain_owner = None;
+            self.abort_in_progress = false;
+            self.commit_recovery_journal()?;
+            Ok(MediaStreamPlatformAbortReceipt {
+                schema_id: MEDIA_STREAM_PLATFORM_ABORT_SCHEMA.to_owned(),
+                abort_action_id: format!("{}.abort", action.action_id),
+                action_id: action.action_id,
+                authority_epoch_id: action.authority_epoch_id,
+                client_authority: action.client_authority,
+                rollback_receipts,
+                uncertain_attempts_compensated: uncertain_attempts,
+                cleanup_complete: true,
+                platform_effect_completed: false,
+                resulting_phase: self.runtime.state().phase,
+                resulting_runtime_revision: self.runtime.state().runtime_revision,
+            })
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    crate::DiagnosticPhase::Compensation,
+                    "finalize_partial_start_abort",
+                    &error.to_string(),
+                );
+            }
+        }
+        result
     }
 
     /// Applies only the complete ordered set produced by owner-specific
     /// callbacks and only then advances lifecycle state.
+
     pub fn apply_recorded_owner_completions(
         &mut self,
         now_ms: u64,
     ) -> Result<MediaStreamPlatformApplicationReceipt, MediaStreamProductRuntimeError> {
-        if self.cleanup_only_after_restore {
-            if self
+        let diagnostic_operation = self.diagnostic_scope.current();
+        let previous_failure = diagnostic_operation
+            .as_ref()
+            .and_then(|operation| operation.last_failure())
+            .map(|value| value.sequence);
+        let result: Result<_, MediaStreamProductRuntimeError> = (|| {
+            if self.cleanup_only_after_restore {
+                if self
+                    .pending_action
+                    .as_ref()
+                    .is_some_and(|action| action.operation == MediaStreamPlatformOperation::Start)
+                {
+                    return Err(MediaStreamProductRuntimeError::RecoveryStartForbidden);
+                }
+                if !self.recovery_receipts_revalidated {
+                    return Err(MediaStreamProductRuntimeError::RecoveryReceiptsUnverified);
+                }
+            }
+            if self.abort_in_progress {
+                return Err(MediaStreamProductRuntimeError::AbortInProgress);
+            }
+            let require_current = self
                 .pending_action
                 .as_ref()
-                .is_some_and(|action| action.operation == MediaStreamPlatformOperation::Start)
-            {
-                return Err(MediaStreamProductRuntimeError::RecoveryStartForbidden);
+                .is_some_and(|action| action.operation == MediaStreamPlatformOperation::Start);
+            self.refresh_authority(now_ms, require_current, self.owner_diagnostic_phase())?;
+            let action = self
+                .pending_action
+                .as_ref()
+                .ok_or(MediaStreamProductRuntimeError::NoPendingAction)?;
+            if self.pending_owner_receipts.len() != action.owner_actions.len() {
+                return Err(MediaStreamProductRuntimeError::OwnerCallbacksIncomplete);
             }
-            if !self.recovery_receipts_revalidated {
-                return Err(MediaStreamProductRuntimeError::RecoveryReceiptsUnverified);
-            }
-        }
-        if self.abort_in_progress {
-            return Err(MediaStreamProductRuntimeError::AbortInProgress);
-        }
-        let require_current = self
-            .pending_action
-            .as_ref()
-            .is_some_and(|action| action.operation == MediaStreamPlatformOperation::Start);
-        self.refresh_authority(now_ms, require_current)?;
-        let action = self
-            .pending_action
-            .as_ref()
-            .ok_or(MediaStreamProductRuntimeError::NoPendingAction)?;
-        if self.pending_owner_receipts.len() != action.owner_actions.len() {
-            return Err(MediaStreamProductRuntimeError::OwnerCallbacksIncomplete);
-        }
-        validate_owner_completions(action, &self.pending_owner_receipts)?;
+            validate_owner_completions(action, &self.pending_owner_receipts)?;
 
-        let mut decisions = Vec::new();
-        match action.operation {
-            MediaStreamPlatformOperation::Start => {
-                let arm = self.runtime.execute(&MediaStreamRuntimeRequest {
-                    request_id: format!("{}.arm_receivers", action.action_id),
-                    expected_runtime_revision: action.expected_runtime_revision,
-                    action: MediaStreamRuntimeAction::ArmReceivers,
-                    evidence: MediaStreamRuntimeEvidence {
-                        receivers_armed: true,
-                        ..Default::default()
-                    },
-                });
-                if !arm.accepted || !arm.applied {
-                    return Err(MediaStreamProductRuntimeError::LifecycleRejected);
+            let mut decisions = Vec::new();
+            match action.operation {
+                MediaStreamPlatformOperation::Start => {
+                    let arm = self.runtime.execute(&MediaStreamRuntimeRequest {
+                        request_id: format!("{}.arm_receivers", action.action_id),
+                        expected_runtime_revision: action.expected_runtime_revision,
+                        action: MediaStreamRuntimeAction::ArmReceivers,
+                        evidence: MediaStreamRuntimeEvidence {
+                            receivers_armed: true,
+                            ..Default::default()
+                        },
+                    });
+                    if !arm.accepted || !arm.applied {
+                        return Err(MediaStreamProductRuntimeError::LifecycleRejected);
+                    }
+                    decisions.push(arm);
+                    let start = self.runtime.execute(&MediaStreamRuntimeRequest {
+                        request_id: format!("{}.start_sources", action.action_id),
+                        expected_runtime_revision: action.expected_runtime_revision + 1,
+                        action: MediaStreamRuntimeAction::StartSources,
+                        evidence: MediaStreamRuntimeEvidence {
+                            sources_started: true,
+                            ..Default::default()
+                        },
+                    });
+                    if !start.accepted || !start.applied {
+                        return Err(MediaStreamProductRuntimeError::LifecycleRejected);
+                    }
+                    decisions.push(start);
                 }
-                decisions.push(arm);
-                let start = self.runtime.execute(&MediaStreamRuntimeRequest {
-                    request_id: format!("{}.start_sources", action.action_id),
-                    expected_runtime_revision: action.expected_runtime_revision + 1,
-                    action: MediaStreamRuntimeAction::StartSources,
-                    evidence: MediaStreamRuntimeEvidence {
-                        sources_started: true,
-                        ..Default::default()
-                    },
-                });
-                if !start.accepted || !start.applied {
-                    return Err(MediaStreamProductRuntimeError::LifecycleRejected);
+                MediaStreamPlatformOperation::Stop => {
+                    let stop = self.runtime.execute(&MediaStreamRuntimeRequest {
+                        request_id: format!("{}.cleanup", action.action_id),
+                        expected_runtime_revision: action.expected_runtime_revision,
+                        action: MediaStreamRuntimeAction::Stop,
+                        evidence: MediaStreamRuntimeEvidence {
+                            cleanup_complete: true,
+                            ..Default::default()
+                        },
+                    });
+                    if !stop.accepted || !stop.applied {
+                        return Err(MediaStreamProductRuntimeError::LifecycleRejected);
+                    }
+                    decisions.push(stop);
                 }
-                decisions.push(start);
             }
-            MediaStreamPlatformOperation::Stop => {
-                let stop = self.runtime.execute(&MediaStreamRuntimeRequest {
-                    request_id: format!("{}.cleanup", action.action_id),
-                    expected_runtime_revision: action.expected_runtime_revision,
-                    action: MediaStreamRuntimeAction::Stop,
-                    evidence: MediaStreamRuntimeEvidence {
-                        cleanup_complete: true,
-                        ..Default::default()
-                    },
-                });
-                if !stop.accepted || !stop.applied {
-                    return Err(MediaStreamProductRuntimeError::LifecycleRejected);
-                }
-                decisions.push(stop);
-            }
-        }
 
-        let owner_receipt_ids = self
-            .pending_owner_receipts
-            .iter()
-            .map(|receipt| receipt.receipt_id.clone())
-            .collect();
-        let action_id = action.action_id.clone();
-        let applied_operation = action.operation;
-        let applied_client_authority = action.client_authority.clone();
-        self.applied_action_ids.insert(action_id.clone());
-        match applied_operation {
-            MediaStreamPlatformOperation::Start => {
-                self.active_start_action = Some(action.clone());
-                self.active_start_receipts = self.pending_owner_receipts.clone();
-                for receipt in &self.pending_owner_receipts {
-                    self.active_provider_handles.insert(
-                        receipt.selection.clone(),
-                        (
-                            receipt.provider_handle_id.clone(),
-                            receipt.provider_state_revision,
-                        ),
-                    );
+            let owner_receipt_ids = self
+                .pending_owner_receipts
+                .iter()
+                .map(|receipt| receipt.receipt_id.clone())
+                .collect();
+            let action_id = action.action_id.clone();
+            let applied_operation = action.operation;
+            let applied_client_authority = action.client_authority.clone();
+            self.applied_action_ids.insert(action_id.clone());
+            match applied_operation {
+                MediaStreamPlatformOperation::Start => {
+                    self.active_start_action = Some(action.clone());
+                    self.active_start_receipts = self.pending_owner_receipts.clone();
+                    for receipt in &self.pending_owner_receipts {
+                        self.active_provider_handles.insert(
+                            receipt.selection.clone(),
+                            (
+                                receipt.provider_handle_id.clone(),
+                                receipt.provider_state_revision,
+                            ),
+                        );
+                    }
+                    self.active_client_authority = Some(applied_client_authority);
                 }
-                self.active_client_authority = Some(applied_client_authority);
+                MediaStreamPlatformOperation::Stop => {
+                    self.active_provider_handles.clear();
+                    self.active_start_receipts.clear();
+                    self.active_start_action = None;
+                    self.active_client_authority = None;
+                }
             }
-            MediaStreamPlatformOperation::Stop => {
-                self.active_provider_handles.clear();
-                self.active_start_receipts.clear();
-                self.active_start_action = None;
-                self.active_client_authority = None;
+            self.pending_action = None;
+            self.pending_owner_receipts.clear();
+            self.commit_recovery_journal()?;
+            Ok(MediaStreamPlatformApplicationReceipt {
+                schema_id: MEDIA_STREAM_PLATFORM_APPLICATION_SCHEMA.to_owned(),
+                action_id,
+                authority_epoch_id: self.authority_epoch_id.clone(),
+                media_acceptance_authority_revision: self
+                    .current_acceptance
+                    .acceptance_state_authority_revision
+                    .get(),
+                platform_effect_completed: true,
+                resulting_runtime_revision: self.runtime.state().runtime_revision,
+                resulting_phase: self.runtime.state().phase,
+                lifecycle_decisions: decisions,
+                owner_receipt_ids,
+            })
+        })();
+        if let Err(error) = &result {
+            let latest = diagnostic_operation
+                .as_ref()
+                .and_then(|operation| operation.last_failure())
+                .map(|value| value.sequence);
+            if latest == previous_failure {
+                self.observe_failure(
+                    self.owner_diagnostic_phase(),
+                    "apply_recorded_owner_completions",
+                    &error.to_string(),
+                );
             }
         }
-        self.pending_action = None;
-        self.pending_owner_receipts.clear();
-        self.commit_recovery_journal()?;
-        Ok(MediaStreamPlatformApplicationReceipt {
-            schema_id: MEDIA_STREAM_PLATFORM_APPLICATION_SCHEMA.to_owned(),
-            action_id,
-            authority_epoch_id: self.authority_epoch_id.clone(),
-            media_acceptance_authority_revision: self
-                .current_acceptance
-                .acceptance_state_authority_revision
-                .get(),
-            platform_effect_completed: true,
-            resulting_runtime_revision: self.runtime.state().runtime_revision,
-            resulting_phase: self.runtime.state().phase,
-            lifecycle_decisions: decisions,
-            owner_receipt_ids,
-        })
+        result
     }
 }
 

@@ -290,7 +290,7 @@ final class EmbeddedDuplexPlatform {
             if(incomingPreparedStopSequence!=Long.MAX_VALUE)incomingPreparedStopSequence++;
         }
         EmbeddedDuplexPreparedStart held=preparedStart;
-        if(held!=null)try{held.requestStopOwned();EmbeddedDuplexNative.requestPreparedPeerStartStop(held.originalId());}catch(Exception retained){/* No outcome inferred. */}
+        if(held!=null)try{held.requestStopOwned();EmbeddedDuplexNative.requestPreparedPeerStartStop(held.originalId());}catch(Exception retained){EmbeddedDuplexOperationDiagnostics.observe("cleanup","prepared_start","incoming_desired_stop",retained);}
         synchronized(this){notifyAll();}
     }
     public boolean incomingPreparedStartStopRequested()throws Exception {
@@ -351,7 +351,7 @@ final class EmbeddedDuplexPlatform {
             requireProcessCallback();JSONObject value=EmbeddedDuplexProcessHost.preparedStartEligibility(this,trace);
             trace.guard=EmbeddedDuplexPreparationDiagnostic.Guard.CALLBACK_CLOSE;
             return trace.result(value);
-        }catch(Exception failure){return trace.result(null);}
+        }catch(Exception failure){EmbeddedDuplexOperationDiagnostics.observe("primary","preparation","eligibility_"+trace.guard.name().toLowerCase(java.util.Locale.ROOT),failure);return trace.result(null);}
     }
     public String abortPeerStartResources(String exactRequest)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
@@ -401,7 +401,7 @@ final class EmbeddedDuplexPlatform {
     public String peerStartResourceTargetJson()throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
             requireProcessCallback();return EmbeddedDuplexProcessHost.preparedStartTarget(this).toString();
-        }
+        }catch(Exception failure){EmbeddedDuplexOperationDiagnostics.observe("primary","prepared_start","resource_target",failure);throw failure;}
     }
     public String preparePeerStartResources(String exactRequest)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
@@ -411,7 +411,7 @@ final class EmbeddedDuplexPlatform {
             catch(Exception failure){preparedReservationFailure=failure;synchronized(this){notifyAll();}throw failure;}
             synchronized(this){if(preparedStart!=null)throw new IllegalStateException("actual prepared owner already retained");preparedStart=actual;preparedReservationFailure=null;notifyAll();}
             return actual.sender().toString();
-        }
+        }catch(Exception failure){EmbeddedDuplexOperationDiagnostics.observe("primary","prepared_start","sender_prepare",failure);throw failure;}
     }
     public String preparePeerStartDecoder(String executionJson)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
@@ -421,7 +421,7 @@ final class EmbeddedDuplexPlatform {
                 throw new IllegalStateException("closed prepared decoder execution differs");
             EmbeddedDuplexPreparedStart held=preparedStart;if(held==null)throw new IllegalStateException("actual prepared sender owner absent");
             held.requireRequest(execution.getJSONObject("request"));return held.decoder(execution.getJSONObject("decoder")).toString();
-        }
+        }catch(Exception failure){EmbeddedDuplexOperationDiagnostics.observe("primary","prepared_start","decoder_prepare",failure);throw failure;}
     }
     public String finalizePeerStartTransport(String exactRequest)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
@@ -429,7 +429,7 @@ final class EmbeddedDuplexPlatform {
             if(held==null)throw new IllegalStateException("actual prepared sender owner absent");
             held.requireRequest(new JSONObject(exactRequest));held.finalizeTransport();
             return held.status(held.id()).toString();
-        }
+        }catch(Exception failure){EmbeddedDuplexOperationDiagnostics.observe("primary","prepared_start","transport_finalize",failure);throw failure;}
     }
     public String abortPreparedPeerStartResources(String exactRequest)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
@@ -440,7 +440,7 @@ final class EmbeddedDuplexPlatform {
             // cleanup Original/actor/thread, closed delivery gate and SDK joins.
             // Its actual thirteen-field terminal readback is returned unchanged.
             return held.abort(new JSONObject(exactRequest)).toString();
-        }
+        }catch(Exception failure){EmbeddedDuplexOperationDiagnostics.observe("cleanup","prepared_start","abort_resources",failure);throw failure;}
     }
     public String preparedPeerStartStatusJson(String preparationId)throws Exception {
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()) {
@@ -507,11 +507,11 @@ final class EmbeddedDuplexPlatform {
             String operation=actual.row.getString("operation");
             if("reestablish_peer_roots".equals(operation))EmbeddedDuplexNative.requestPeerRootStop(actual.id());
             if("prepare_peer_start".equals(operation))EmbeddedDuplexNative.requestPreparedPeerStartStop(actual.id());
-        }catch(Exception retained){/* Actual Original remains uncertain; no success or cleanup inferred. */}
+        }catch(Exception retained){EmbeddedDuplexOperationDiagnostics.observe(actual,"cleanup","prepared_start","desired_stop_native",retained,new JSONObject());}
         String nativeId=null;
         try{nativeId=EmbeddedDuplexOriginals.nativeSetupRequestId(actual);}
-        catch(Exception retained){/* Missing proof never becomes another target. */}
-        if(nativeId!=null)try{EmbeddedDuplexNative.requestFreshSetupStop(nativeId);}catch(Throwable retained){/* Original retains actual uncertainty. */}
+        catch(Exception retained){EmbeddedDuplexOperationDiagnostics.observe(actual,"cleanup","fresh_setup","desired_stop_binding",retained,new JSONObject());}
+        if(nativeId!=null)try{EmbeddedDuplexNative.requestFreshSetupStop(nativeId);}catch(Throwable retained){EmbeddedDuplexOperationDiagnostics.observe(actual,"cleanup","fresh_setup","desired_stop_native",retained,new JSONObject());}
         for(java.util.Map.Entry<OwnerDispatchTcpEndpoint.ExchangeControl,OwnedExchange> entry:ownedExchanges.entrySet())
             if(entry.getValue().original==actual)entry.getKey().requestStop();
     }
@@ -548,7 +548,7 @@ final class EmbeddedDuplexPlatform {
     void requestIncomingFreshStop(){
         String actual;
         synchronized(this){incomingFreshDesiredStop=true;actual=incomingFreshRequestId;}
-        try{if(actual!=null)EmbeddedDuplexNative.requestFreshSetupStop(actual);}catch(Throwable retained){}
+        try{if(actual!=null)EmbeddedDuplexNative.requestFreshSetupStop(actual);}catch(Throwable retained){EmbeddedDuplexOperationDiagnostics.observe("cleanup","fresh_setup","incoming_desired_stop_native",retained);}
         finally{for(java.util.Map.Entry<OwnerDispatchTcpEndpoint.ExchangeControl,OwnedExchange> entry:ownedExchanges.entrySet()){
             OwnedExchange held=entry.getValue();
             if(held.original==null && actual!=null && actual.equals(held.nativeRequestId) && held.incomingSpan!=null)entry.getKey().requestStop();
@@ -842,7 +842,10 @@ final class EmbeddedDuplexPlatform {
         stage = OwnerStage.RECEIPT_VERIFICATION;
         observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
-        if (verified == null) throw new IllegalStateException("live provider evidence rejected");
+        if (verified == null) {
+            recordVerificationDiagnostic(current,compensate);
+            throw new IllegalStateException("live provider evidence rejected");
+        }
         if (gate != null) {
             stage = OwnerStage.INCOMING_ARM_VERIFICATION;
             observeLatestAttempt(attempt, stage, ticket, "IN_PROGRESS", null);
@@ -856,6 +859,7 @@ final class EmbeddedDuplexPlatform {
         observeLatestAttempt(attempt, stage, ticket, "SUCCEEDED", null);
         return result.toString();
         } catch (Exception failure) {
+            EmbeddedDuplexOperationDiagnostics.observe(compensate?"compensation":"primary","media_owner",stage.name().toLowerCase(java.util.Locale.ROOT),failure);
             observeLatestAttempt(attempt, stage, ticket, "FAILED", failure);
             // Retain the primary failure within this incarnation. Cleanup failures must not erase it.
             recordOwnerFailure(stage, ticket, failure);
@@ -870,6 +874,14 @@ final class EmbeddedDuplexPlatform {
     }
 
     // Diagnostic only; invoked by the catch before the original exception is rethrown.
+    private void recordVerificationDiagnostic(PackagedAndroidMediaOwnerRegistry current,boolean compensate){
+        io.github.mesmerprism.rustyquest.media.MediaVerificationDiagnostic diagnostic=current.takeVerificationDiagnostic();
+        if(diagnostic==null)return;
+        try{EmbeddedDuplexOperationDiagnostics.observe(EmbeddedDuplexOriginals.capture(),compensate?"compensation":"primary",
+            "media_verifier",diagnostic.boundary,diagnostic.failure,new JSONObject()
+                .put("expected_generation",diagnostic.expectedGeneration).put("observed_generation",diagnostic.observedGeneration)
+                .put("receipt_known",diagnostic.receiptKnown));}catch(Exception unavailable){/* Observation is optional. */}
+    }
     void recordOwnerFailure(OwnerStage stage, MediaOwnerAction ticket, Exception failure) {
         synchronized (this) {
             if (failedOwnerStage == OwnerStage.NONE) {
@@ -1056,7 +1068,10 @@ final class EmbeddedDuplexPlatform {
         diagnosticStage = stage;
         observeLatestAttempt(attempt, diagnosticStage, ticket, "IN_PROGRESS", null);
         String verified = current.verifyAndReadEvidence(ticketJson, readback);
-        if (verified == null) throw new IllegalStateException("retained cleanup live evidence rejected");
+        if (verified == null) {
+            recordVerificationDiagnostic(current,compensate);
+            throw new IllegalStateException("retained cleanup live evidence rejected");
+        }
         // Terminal eligibility remains receipt verification, never an incoming Arm effect.
         if (gate != null) {
             diagnosticStage = OwnerStage.INCOMING_ARM_VERIFICATION;
@@ -1069,6 +1084,7 @@ final class EmbeddedDuplexPlatform {
         observeLatestAttempt(attempt, diagnosticStage, ticket, "SUCCEEDED", null);
         return result;
         } catch (Exception failure) {
+            EmbeddedDuplexOperationDiagnostics.observe(compensate?"compensation":"cleanup","media_owner",diagnosticStage.name().toLowerCase(java.util.Locale.ROOT),failure);
             observeLatestAttempt(attempt, diagnosticStage, ticket, "FAILED", failure);
             recordOwnerFailure(stage, ticket, failure);
             throw failure;

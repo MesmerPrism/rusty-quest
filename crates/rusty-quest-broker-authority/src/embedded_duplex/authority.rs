@@ -712,6 +712,7 @@ impl QuestEmbeddedDuplexAuthority {
     ///
     /// # Errors
     /// Returns an error when validation, authority state, or a required live join fails.
+
     pub fn current_owner_projection(
         &self,
         grant_id: &DottedId,
@@ -719,16 +720,79 @@ impl QuestEmbeddedDuplexAuthority {
         executor_peer_id: &DottedId,
         now_ms: u64,
     ) -> Result<OwnerDispatchAuthorityProjection, String> {
-        let broker = read_broker(&self.broker)?;
-        let peer = read_peer(&self.peer)?;
-        projection_from_current(
-            &peer,
-            &broker,
+        self.current_owner_projection_observed(
             grant_id,
             authority_peer_id,
             executor_peer_id,
             now_ms,
+            None,
         )
+    }
+
+
+    fn current_owner_projection_observed(
+        &self,
+        grant_id: &DottedId,
+        authority_peer_id: &DottedId,
+        executor_peer_id: &DottedId,
+        now_ms: u64,
+        diagnostic: Option<(
+            &rusty_quest_media_stream::DiagnosticOperation,
+            rusty_quest_media_stream::DiagnosticPhase,
+        )>,
+    ) -> Result<OwnerDispatchAuthorityProjection, String> {
+        let mut failure = None;
+        let result = (|| {
+            let broker = read_broker(&self.broker)?;
+            let peer = read_peer(&self.peer)?;
+            projection_from_current(
+                &peer,
+                &broker,
+                grant_id,
+                authority_peer_id,
+                executor_peer_id,
+                now_ms,
+                diagnostic.is_some(),
+                &mut failure,
+            )
+        })();
+        // The copied context describes those exact guards. Java/private I/O happens
+        // only after both guards are dropped; no later authority read is substituted.
+        if let (Some((operation, phase)), Some(failure)) = (diagnostic, failure) {
+            use rusty_quest_media_stream::{
+                DiagnosticCleanupState, DiagnosticEffectState, DiagnosticLayer, DiagnosticPhase,
+                FailureInput, PrivateFailureChunk,
+            };
+            operation.record(
+                FailureInput::new(
+                    phase,
+                    DiagnosticLayer::Rust,
+                    "route_projection",
+                    failure.boundary,
+                    "authority",
+                    "unclassified",
+                )
+                .states(
+                    DiagnosticEffectState::NotEntered,
+                    if phase == DiagnosticPhase::Primary {
+                        DiagnosticCleanupState::NotRequested
+                    } else {
+                        DiagnosticCleanupState::Unknown
+                    },
+                )
+                .private_context(vec![
+                    PrivateFailureChunk {
+                        name: "error",
+                        bytes: failure.error.as_bytes(),
+                    },
+                    PrivateFailureChunk {
+                        name: "current_route_validation",
+                        bytes: &failure.context,
+                    },
+                ]),
+            );
+        }
+        result
     }
 
     /// Authorizes a platform cleanup against a retained terminal route using
@@ -1386,6 +1450,7 @@ pub struct QuestOwnerDispatchAuthorityVerifier {
 /// any remote transport or Java callback begins.
 #[derive(Clone)]
 pub struct QuestEmbeddedDuplexProjectionSource {
+    diagnostic_scope: rusty_quest_media_stream::DiagnosticScope,
     authority: QuestEmbeddedDuplexAuthority,
     route_grant_id: DottedId,
     authority_peer_id: DottedId,
@@ -1394,33 +1459,57 @@ pub struct QuestEmbeddedDuplexProjectionSource {
 impl QuestEmbeddedDuplexProjectionSource {
     /// Binds one directional route and coordinator peer.
     #[must_use]
+
     pub fn new(
         authority: QuestEmbeddedDuplexAuthority,
         route_grant_id: DottedId,
         authority_peer_id: DottedId,
     ) -> Self {
         Self {
+            diagnostic_scope: Default::default(),
             authority,
             route_grant_id,
             authority_peer_id,
         }
     }
+    /// Injects the actual calling operation without changing route authority.
+
+    pub fn with_diagnostic_scope(mut self, scope: rusty_quest_media_stream::DiagnosticScope) -> Self {
+        self.diagnostic_scope = scope;
+        self
+    }
+
 }
 
 impl CurrentOwnerProjectionSource for QuestEmbeddedDuplexProjectionSource {
+
     fn current_projection(
         &self,
         ticket: &AndroidMediaExecutionTicket,
         target_peer_id: &str,
-        _mode: AndroidMediaExecutionMode,
+        mode: AndroidMediaExecutionMode,
         now_ms: u64,
     ) -> Result<OwnerDispatchAuthorityProjection, String> {
         let target = DottedId::new(target_peer_id.to_owned()).map_err(|error| error.to_string())?;
-        let current = self.authority.current_owner_projection(
+        let diagnostic = self.diagnostic_scope.current();
+        let phase = if mode == AndroidMediaExecutionMode::CompensateUncertain {
+            rusty_quest_media_stream::DiagnosticPhase::Compensation
+        } else if ticket.operation == rusty_quest_media_stream::MediaStreamPlatformOperation::Stop {
+            rusty_quest_media_stream::DiagnosticPhase::Cleanup
+        } else {
+            rusty_quest_media_stream::DiagnosticPhase::Primary
+        };
+        let current = self.authority.current_owner_projection_observed(
             &self.route_grant_id,
             &self.authority_peer_id,
             &target,
             now_ms,
+            diagnostic
+                .as_ref()
+                .filter(|_| {
+                    ticket.operation == rusty_quest_media_stream::MediaStreamPlatformOperation::Start
+                })
+                .map(|operation| (operation, phase)),
         );
         let projection = match current {
             Ok(projection) => projection,
@@ -1445,6 +1534,66 @@ impl CurrentOwnerProjectionSource for QuestEmbeddedDuplexProjectionSource {
             || projection.authority_client_id != ticket.client_id
             || projection.authority_runtime_lease_id != ticket.lease_id
         {
+            if let Some(operation) = diagnostic {
+                use rusty_quest_media_stream::{
+                    DiagnosticCleanupState, DiagnosticEffectState, DiagnosticLayer, DiagnosticPhase,
+                    FailureInput, PrivateFailureChunk, SafeDiagnosticValue,
+                };
+                let raw = serde_json::to_vec(
+                    &serde_json::json!({"ticket":ticket,"projection":projection,"now_ms":now_ms}),
+                )
+                .unwrap_or_default();
+                operation.record(
+                    FailureInput::new(
+                        phase,
+                        DiagnosticLayer::Rust,
+                        "route_projection",
+                        "ticket_current_route_binding",
+                        "authority",
+                        "ticket_projection_mismatch",
+                    )
+                    .states(
+                        DiagnosticEffectState::NotEntered,
+                        if phase == DiagnosticPhase::Primary {
+                            DiagnosticCleanupState::NotRequested
+                        } else {
+                            DiagnosticCleanupState::Unknown
+                        },
+                    )
+                    .safe_detail(
+                        "epoch_matches",
+                        SafeDiagnosticValue::Boolean(
+                            projection.authority_provider_epoch_id == ticket.authority_epoch_id,
+                        ),
+                    )
+                    .safe_detail(
+                        "client_matches",
+                        SafeDiagnosticValue::Boolean(
+                            projection.authority_client_id == ticket.client_id,
+                        ),
+                    )
+                    .safe_detail(
+                        "lease_matches",
+                        SafeDiagnosticValue::Boolean(
+                            projection.authority_runtime_lease_id == ticket.lease_id,
+                        ),
+                    )
+                    .safe_detail(
+                        "runtime_spec_present",
+                        SafeDiagnosticValue::Boolean(!projection.platform_runtime_spec_id.is_empty()),
+                    )
+                    .private_context(vec![
+                        PrivateFailureChunk {
+                            name: "error",
+                            bytes: b"ticket is outside current route authority",
+                        },
+                        PrivateFailureChunk {
+                            name: "ticket_current_projection",
+                            bytes: &raw,
+                        },
+                    ]),
+                );
+            }
             return Err("ticket is outside current route authority".to_owned());
         }
         Ok(projection)
@@ -1549,6 +1698,9 @@ impl ProductActivationAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier 
     }
 }
 
+struct RouteProjectionFailure { boundary: &'static str, error: String, context: Vec<u8> }
+
+
 fn projection_from_current(
     peer: &ManifoldPeerRuntimeHost,
     broker: &ManifoldBrokerRuntime,
@@ -1556,46 +1708,81 @@ fn projection_from_current(
     authority_peer_id: &DottedId,
     executor_peer_id: &DottedId,
     now_ms: u64,
+    capture_failure: bool,
+    failure: &mut Option<RouteProjectionFailure>,
 ) -> Result<OwnerDispatchAuthorityProjection, String> {
-    let current = peer
-        .validate_pair_media_route_v2_with_live_broker_runtime(broker, grant_id, now_ms)
-        .map_err(host_error)?;
-    if !current.current {
-        return Err("pair route is not current".to_owned());
+    let validated =
+        peer.validate_pair_media_route_v2_with_live_broker_runtime(broker, grant_id, now_ms);
+    let mut boundary = "validate_current_route_live_broker";
+    let result = (|| {
+        let current = validated.as_ref().map_err(|error| error.to_string())?;
+        boundary = "current_route_lifecycle";
+        if !current.current {
+            return Err("pair route is not current".to_owned());
+        }
+        boundary = "current_route_evidence_digest";
+        let route_authority_evidence_sha256 = typed_sha256(&current)?;
+        boundary = "current_route_record";
+        let route = current
+            .route
+            .clone()
+            .ok_or_else(|| "current route omitted record".to_owned())?;
+        let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(route) = route else {
+            return Err("owner dispatch requires common-LAN route".to_owned());
+        };
+        boundary = "current_route_topology_peers";
+        let topology = &route.signed_topology_evidence;
+        let peers_match = (&topology.initiator_peer_id == authority_peer_id
+            || &topology.responder_peer_id == authority_peer_id)
+            && (&topology.initiator_peer_id == executor_peer_id
+                || &topology.responder_peer_id == executor_peer_id);
+        if !peers_match {
+            return Err("dispatch peers are outside signed topology".to_owned());
+        }
+        boundary = "current_route_projection_encode";
+        Ok(OwnerDispatchAuthorityProjection {
+            schema_id: QUEST_C1_OWNER_PROJECTION_SCHEMA.to_owned(),
+            authority_peer_id: authority_peer_id.to_string(),
+            executor_peer_id: executor_peer_id.to_string(),
+            peer_session_id: route.peer_session_id.to_string(),
+            route_grant_id: route.grant_id.to_string(),
+            route_authority_revision: peer.snapshot().pair_media_routes.authority_revision.get(),
+            authority_runtime_host_id: route.authority_host_id.to_string(),
+            authority_provider_epoch_id: route.authority_provider_epoch_id.to_string(),
+            platform_runtime_spec_id: route.platform_runtime_spec_id.to_string(),
+            authority_client_id: route.authority_client_id.to_string(),
+            authority_runtime_lease_id: route.authority_runtime_lease_id.to_string(),
+            signed_topology_sha256: typed_sha256(topology)?,
+            route_configuration_sha256: route.transport.route_configuration_sha256,
+            route_authority_evidence_sha256,
+            expires_at_ms: route.expires_at_ms,
+            authorization_kind: OwnerDispatchAuthorizationKind::CurrentRoute,
+        })
+    })();
+    if let (true, Err(error)) = (capture_failure, &result) {
+        // Serialize only the selected route and the exact validation result while
+        // the original read guards are still held. Never reread or snapshot a tree.
+        let selected = peer
+            .snapshot()
+            .pair_media_routes
+            .routes
+            .iter()
+            .find(|route| route.grant_id() == grant_id);
+        let context = serde_json::to_vec(&serde_json::json!({
+            "now_ms":now_ms,"grant_id":grant_id,"authority_peer_id":authority_peer_id,
+            "executor_peer_id":executor_peer_id,"selected_route":selected,
+            "current_validation":validated.as_ref().ok(),
+            "peer_route_revision":peer.snapshot().pair_media_routes.authority_revision,
+            "broker_authority_revision":broker.host_snapshot().authority_revision,
+        }))
+        .unwrap_or_default();
+        *failure = Some(RouteProjectionFailure {
+            boundary,
+            error: error.clone(),
+            context,
+        });
     }
-    let route_authority_evidence_sha256 = typed_sha256(&current)?;
-    let route = current
-        .route
-        .ok_or_else(|| "current route omitted record".to_owned())?;
-    let rusty_manifold_peer::ManifoldAcceptedPairMediaRouteV2::CommonLan(route) = route else {
-        return Err("owner dispatch requires common-LAN route".to_owned());
-    };
-    let topology = &route.signed_topology_evidence;
-    let peers_match = (&topology.initiator_peer_id == authority_peer_id
-        || &topology.responder_peer_id == authority_peer_id)
-        && (&topology.initiator_peer_id == executor_peer_id
-            || &topology.responder_peer_id == executor_peer_id);
-    if !peers_match {
-        return Err("dispatch peers are outside signed topology".to_owned());
-    }
-    Ok(OwnerDispatchAuthorityProjection {
-        schema_id: QUEST_C1_OWNER_PROJECTION_SCHEMA.to_owned(),
-        authority_peer_id: authority_peer_id.to_string(),
-        executor_peer_id: executor_peer_id.to_string(),
-        peer_session_id: route.peer_session_id.to_string(),
-        route_grant_id: route.grant_id.to_string(),
-        route_authority_revision: peer.snapshot().pair_media_routes.authority_revision.get(),
-        authority_runtime_host_id: route.authority_host_id.to_string(),
-        authority_provider_epoch_id: route.authority_provider_epoch_id.to_string(),
-        platform_runtime_spec_id: route.platform_runtime_spec_id.to_string(),
-        authority_client_id: route.authority_client_id.to_string(),
-        authority_runtime_lease_id: route.authority_runtime_lease_id.to_string(),
-        signed_topology_sha256: typed_sha256(topology)?,
-        route_configuration_sha256: route.transport.route_configuration_sha256,
-        route_authority_evidence_sha256,
-        expires_at_ms: route.expires_at_ms,
-        authorization_kind: OwnerDispatchAuthorizationKind::CurrentRoute,
-    })
+    result
 }
 
 fn cleanup_projection_from_retained(

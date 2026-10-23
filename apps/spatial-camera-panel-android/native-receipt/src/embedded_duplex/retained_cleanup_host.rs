@@ -1,5 +1,7 @@
 //! Fixed signed prepare/commit cleanup; original target and fresh requester are separate.
-use super::super::preparation_native_guard::{Guard as NativeGuard, FailureReason as NativeReason, Trace as NativeTrace};
+use super::super::preparation_native_guard::{
+    FailureReason as NativeReason, Guard as NativeGuard, Trace as NativeTrace,
+};
 use super::*;
 use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_quest_media_stream_android::*;
@@ -194,8 +196,9 @@ impl Cleanup {
         }
         for (id, terminal) in &replay.terminal {
             trace.mark(NativeGuard::CleanupResponseDecode, NativeReason::CallFailed);
-            let r: RetainedCleanupDispatchResponse = serde_json::from_slice(&terminal.response_bytes)
-                .map_err(|_| "fresh cleanup response decode")?;
+            let r: RetainedCleanupDispatchResponse =
+                serde_json::from_slice(&terminal.response_bytes)
+                    .map_err(|_| "fresh cleanup response decode")?;
             trace.mark(
                 NativeGuard::CleanupResponseIdentity,
                 NativeReason::PredicateRejected,
@@ -795,6 +798,12 @@ impl Executor {
     }
 }
 impl AndroidMediaOwnerExecutor for Executor {
+    fn set_diagnostic_scope(&mut self, scope: rusty_quest_media_stream::DiagnosticScope) {
+        self.ordinary.set_diagnostic_scope(scope);
+    }
+    fn last_failure_diagnostic(&self) -> Option<rusty_quest_media_stream::FailureObservation> {
+        self.ordinary.last_failure_diagnostic()
+    }
     fn executor_generation(&self) -> u64 {
         self.cleanup.generation
     }
@@ -1089,6 +1098,78 @@ impl AndroidMediaOwnerExecutor for Executor {
                 .insert(ticket.capability.clone(), readback.clone());
             Ok(readback)
         })();
+        if let (Err(error), Some(operation)) = (
+            &result,
+            super::super::operation_diagnostics::scope().current(),
+        ) {
+            let ticket_json = serde_json::to_vec(ticket).unwrap_or_default();
+            let pending = self
+                .pending
+                .values()
+                .find(|pending| pending.request.source_ticket.capability == ticket.capability);
+            let request = pending
+                .and_then(|pending| serde_json::to_vec(&pending.request).ok())
+                .unwrap_or_default();
+            let prepared = pending
+                .and_then(|pending| serde_json::to_vec(&pending.prepared).ok())
+                .unwrap_or_default();
+            let commit = pending
+                .and_then(|pending| serde_json::to_vec(&pending.commit).ok())
+                .unwrap_or_default();
+            let response = pending
+                .and_then(|pending| pending.response.as_deref())
+                .unwrap_or(&[]);
+            operation.record(
+                rusty_quest_media_stream::FailureInput::new(
+                    if mode == AndroidMediaExecutionMode::CompensateUncertain {
+                        rusty_quest_media_stream::DiagnosticPhase::Compensation
+                    } else if ticket.operation == MediaStreamPlatformOperation::Stop {
+                        rusty_quest_media_stream::DiagnosticPhase::Cleanup
+                    } else {
+                        rusty_quest_media_stream::DiagnosticPhase::Primary
+                    },
+                    rusty_quest_media_stream::DiagnosticLayer::Rust,
+                    "retained_cleanup_executor",
+                    failure_stage.code(),
+                    "retained_cleanup",
+                    "unclassified",
+                )
+                .states(
+                    rusty_quest_media_stream::DiagnosticEffectState::Unknown,
+                    rusty_quest_media_stream::DiagnosticCleanupState::Pending,
+                )
+                .private_context(vec![
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "error",
+                        bytes: error.as_bytes(),
+                    },
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "ticket",
+                        bytes: &ticket_json,
+                    },
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "cleanup_request",
+                        bytes: &request,
+                    },
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "cleanup_prepared",
+                        bytes: &prepared,
+                    },
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "cleanup_commit",
+                        bytes: &commit,
+                    },
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "cleanup_response",
+                        bytes: response,
+                    },
+                    rusty_quest_media_stream::PrivateFailureChunk {
+                        name: "enrolled_target_public_key",
+                        bytes: &self.cleanup.remote_key,
+                    },
+                ]),
+            );
+        }
         owner_failure::observe(result, &self.cleanup.failure, failure_stage)
     }
     fn verify(

@@ -1,6 +1,8 @@
 //! Fixed installed-app operations. External callers select an enum word only;
 //! all authority identity, revisions, time and randomness remain native-owned.
-use super::super::preparation_native_guard::{Guard as NativeGuard, FailureReason as NativeReason, Trace as NativeTrace};
+use super::super::preparation_native_guard::{
+    FailureReason as NativeReason, Guard as NativeGuard, Trace as NativeTrace,
+};
 use super::*;
 use rusty_quest_broker_authority::QuestConcurrentPeerCommand;
 use rusty_quest_broker_authority::{
@@ -1245,6 +1247,12 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
     // Errors after an admitted mutation retain every native credential and
     // report Pending. Status polling cannot turn uncertainty into cleanup.
     if word != 5 {
+        if let Err(error) = &operation {
+            super::super::operation_diagnostics::failure(
+                "peer_lifecycle_operation",
+                error.as_bytes(),
+            );
+        }
         state.last_failure = operation.err();
         if state.last_failure.is_none() {
             state.last_failure_action = None;
@@ -1367,7 +1375,27 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _: JClass<'_>,
     word: jni::sys::jint,
 ) -> jstring {
+    let _diagnostic_scope = super::super::operation_diagnostics::fallback(
+        &mut env,
+        match word {
+            1 => "start",
+            2 => "renew_authority",
+            3 => "peer_stop",
+            4 => "peer_revoke",
+            6 => "whole_app_close",
+            _ => "peer_status",
+        },
+    );
+    let _diagnostic_phase =
+        super::super::operation_diagnostics::phase(if matches!(word, 3 | 4 | 6) {
+            rusty_quest_media_stream::DiagnosticPhase::Cleanup
+        } else {
+            rusty_quest_media_stream::DiagnosticPhase::Primary
+        });
     let result = operate(&mut env, word);
+    if let Err(error) = &result {
+        super::super::operation_diagnostics::failure("peer_lifecycle_entry", error.as_bytes());
+    }
     if env.exception_check().unwrap_or(true) {
         let _ = env.exception_clear();
     }

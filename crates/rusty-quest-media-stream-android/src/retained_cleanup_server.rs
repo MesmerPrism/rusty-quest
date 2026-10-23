@@ -150,6 +150,7 @@ pub fn verify_retained_cleanup_response(
 /// No caller ticket enters the registry until this gate has authenticated it
 /// against independent target state and durably reserved its replay identity.
 pub struct RetainedCleanupDispatchServer<A, R, S, C, P> {
+    diagnostic_scope: rusty_quest_media_stream::DiagnosticScope,
     source: A,
     registry: R,
     signer: S,
@@ -172,6 +173,7 @@ where
     ///
     /// # Errors
     /// Returns an error if target identity or replay state is invalid.
+
     pub fn restore(
         target_peer_id: String,
         executor_signer_key_id: String,
@@ -190,6 +192,7 @@ where
         }
         replay.validate().map_err(str::to_owned)?;
         Ok(Self {
+            diagnostic_scope: Default::default(),
             source,
             registry,
             signer,
@@ -199,6 +202,13 @@ where
             target_peer_id,
             executor_signer_key_id,
         })
+    }
+
+    /// Injects the operation scope independently of replay/cleanup authority.
+
+    pub fn with_diagnostic_scope(mut self, scope: rusty_quest_media_stream::DiagnosticScope) -> Self {
+        self.diagnostic_scope = scope;
+        self
     }
 
     /// Exact replay state for the embedding app's atomic journal/readback.
@@ -211,6 +221,7 @@ where
     ///
     /// # Errors
     /// Returns an error for invalid authority, persistence, or signing.
+
     pub fn handle(&mut self, request: &RetainedCleanupDispatchRequest) -> Result<Vec<u8>, String> {
         let request_sha256 = retained_cleanup_request_sha256(request).map_err(str::to_owned)?;
         match self
@@ -252,23 +263,54 @@ where
             &live.expected_target,
             request.cleanup.mode,
         );
+        let diagnostic = self.diagnostic_scope.current();
         let (status, effect, failure) = match result {
-            Ok(effect)
-                if validate_effect(&live.expected_target, request.cleanup.mode, &effect)
-                    .is_ok() =>
-            {
-                (OwnerDispatchStatus::Completed, Some(effect), None)
+            Ok(effect) => match validate_effect(&live.expected_target, request.cleanup.mode, &effect) {
+                Ok(()) => (OwnerDispatchStatus::Completed, Some(effect), None),
+                Err(error) => {
+                    let frame = serde_json::to_vec(request).unwrap_or_default();
+                    let bytes = serde_json::to_vec(&effect).unwrap_or_default();
+                    crate::owner_diagnostics::observe_error_with_context(
+                        diagnostic.as_ref(),
+                        &live.expected_target,
+                        request.cleanup.mode,
+                        "cleanup_target_effect_readback",
+                        "readback",
+                        &error,
+                        Some(&frame),
+                        None,
+                        Some(&live.signer_key),
+                        &[rusty_quest_media_stream::PrivateFailureChunk {
+                            name: "target_owner_effect",
+                            bytes: &bytes,
+                        }],
+                    );
+                    (
+                        OwnerDispatchStatus::Uncertain,
+                        None,
+                        Some("platform_evidence_invalid".into()),
+                    )
+                }
+            },
+            Err(error) => {
+                let frame = serde_json::to_vec(request).unwrap_or_default();
+                crate::owner_diagnostics::observe_error(
+                    diagnostic.as_ref(),
+                    &live.expected_target,
+                    request.cleanup.mode,
+                    "cleanup_target_registry_execute",
+                    "platform",
+                    &error,
+                    Some(&frame),
+                    None,
+                    Some(&live.signer_key),
+                );
+                (
+                    OwnerDispatchStatus::Uncertain,
+                    None,
+                    Some("platform_effect_uncertain".into()),
+                )
             }
-            Ok(_) => (
-                OwnerDispatchStatus::Uncertain,
-                None,
-                Some("platform_evidence_invalid".into()),
-            ),
-            Err(_) => (
-                OwnerDispatchStatus::Uncertain,
-                None,
-                Some("platform_effect_uncertain".into()),
-            ),
         };
         let response =
             self.signed_response(request, request_sha256.clone(), status, effect, failure)?;

@@ -17,6 +17,8 @@ mod java_bridge;
 mod owner_diagnostic_read;
 #[cfg(any(target_os = "android", test))]
 mod owner_failure;
+#[cfg(any(target_os = "android", test))]
+mod operation_diagnostics;
 mod owner_latest_attempt_read;
 mod owner_transport_attempt_read;
 pub(crate) mod packaged_config;

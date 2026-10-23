@@ -4,12 +4,14 @@
 //! media streaming. It does not open sockets, start encoders, run ADB, call
 //! hidden Android APIs, or carry frame payload bytes.
 
+mod diagnostics;
 mod failure_recovery;
 mod model;
 mod product_runtime;
 mod runtime;
 mod validation;
 
+pub use diagnostics::*;
 pub use failure_recovery::*;
 pub use model::*;
 pub use product_runtime::*;
@@ -1113,6 +1115,115 @@ mod tests {
             ),
             Err(MediaStreamProductRuntimeError::ReplayedAction)
         ));
+    }
+
+    #[test]
+
+    fn diagnostics_keep_provider_failure_and_failed_compensation_without_changing_unknown_state() {
+        let mut runtime = MediaStreamSessionProductRuntime::new_for_test(
+            product_binding(),
+            product_acceptance("epoch.diag", "diag"),
+            "epoch.diag".into(),
+        )
+        .unwrap();
+        let collector = DiagnosticCollector::default();
+        let operation = collector.operation("start", Default::default());
+        let scope = DiagnosticScope::default();
+        runtime.set_diagnostic_scope(scope.clone());
+        let _scope = scope.enter(operation.clone());
+        let action = runtime
+            .prepare(
+                "action.diag".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                2000,
+            )
+            .unwrap();
+        let first = &action.owner_actions[0];
+        let mut provider = UncertainTestOwnerProvider {
+            owner_kind: first.selection.owner_kind,
+            mode: UncertainAttemptMode::SideEffectThenError,
+            attempted_readback: readback_for(&action, first, 0),
+            compensation_readback: None,
+        };
+        assert!(matches!(
+            complete_owner_with(&mut runtime, first.selection.owner_kind, &mut provider),
+            Err(MediaStreamProductRuntimeError::OwnerProviderFailed)
+        ));
+        let before_abort = operation.snapshot().unwrap().primary;
+        assert_eq!(before_abort.boundary, "owner_execute_and_readback");
+        runtime.begin_partial_start_abort().unwrap();
+        assert!(matches!(
+            runtime.complete_next_abort_owner(&mut provider),
+            Err(MediaStreamProductRuntimeError::OwnerProviderFailed)
+        ));
+        let observed = operation.snapshot().unwrap();
+        assert_eq!(observed.primary, before_abort);
+        assert_eq!(
+            observed.secondary.last().unwrap().boundary,
+            "partial_start_abort_owner"
+        );
+        assert_eq!(
+            observed.secondary.last().unwrap().phase,
+            DiagnosticPhase::Compensation
+        );
+        assert!(runtime.has_retained_start_abort());
+        assert_eq!(
+            runtime.runtime().state().phase,
+            MediaStreamRuntimePhase::Planned
+        );
+        assert!(!serde_json::to_string(&observed)
+            .unwrap()
+            .contains("side effect occurred"));
+    }
+
+    #[test]
+
+    fn diagnostics_identify_production_readback_field_and_preserve_recovery_schema() {
+        let mut runtime = MediaStreamSessionProductRuntime::new_for_test(
+            product_binding(),
+            product_acceptance("epoch.diag.readback", "diag-readback"),
+            "epoch.diag.readback".into(),
+        )
+        .unwrap();
+        let collector = DiagnosticCollector::default();
+        let operation = collector.operation("start", Default::default());
+        let scope = DiagnosticScope::default();
+        runtime.set_diagnostic_scope(scope.clone());
+        let _scope = scope.enter(operation.clone());
+        let action = runtime
+            .prepare(
+                "action.diag.readback".into(),
+                MediaStreamPlatformOperation::Start,
+                client_authority(MediaStreamPlatformOperation::Start),
+                2000,
+            )
+            .unwrap();
+        assert!(
+            operation.snapshot().is_none(),
+            "successful prepare creates no failure"
+        );
+        let first = &action.owner_actions[0];
+        let mut bad = readback_for(&action, first, 0);
+        bad.receipt_id.clear();
+        let mut provider = TestOwnerProvider {
+            owner_kind: first.selection.owner_kind,
+            readback: bad,
+            verify: true,
+        };
+        assert!(matches!(
+            complete_owner_with(&mut runtime, first.selection.owner_kind, &mut provider),
+            Err(MediaStreamProductRuntimeError::OwnerReadbackMismatch)
+        ));
+        let failure = operation.snapshot().unwrap().primary;
+        assert_eq!(failure.boundary, "readback_receipt_empty");
+        assert_eq!(failure.effect_state, DiagnosticEffectState::Unknown);
+        let retained = runtime.recovery_snapshot().unwrap();
+        assert!(retained.pending_uncertain_owner.is_some());
+        assert!(retained.pending_owner_receipts.is_empty());
+        assert!(!serde_json::to_string(&retained)
+            .unwrap()
+            .contains("failure_observation"));
     }
 
     #[test]

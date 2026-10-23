@@ -1651,6 +1651,7 @@ final class EmbeddedDuplexProcessHost {
             }
         }).thenCompose(next->next);
         return bootstrap.handle((initialized, failure) -> {
+            if(failure!=null)EmbeddedDuplexOperationDiagnostics.observe("primary","bootstrap",trace.failure()==null?"initialization":trace.failure().name().toLowerCase(java.util.Locale.ROOT),failure);
             Phase current = phase.get();
             String configSha = runtimeConfigSha256;
             if (current == Phase.NEW) {
@@ -1659,13 +1660,15 @@ final class EmbeddedDuplexProcessHost {
                     return CompletableFuture.completedFuture(
                             terminalDiagnosticResult(challenge, "bootstrap_unavailable_closed",
                                     enrollmentSha.get(), configSha, trace.failure()));
-                } catch (Exception cleanup) { return EmbeddedDuplexProcessHost.<String>failed(cleanup); }
+                } catch (Exception cleanup) { EmbeddedDuplexOperationDiagnostics.observe("cleanup","bootstrap","detach_uninitialized_display",cleanup);return EmbeddedDuplexProcessHost.<String>failed(cleanup); }
             }
             if (current != Phase.READY && current != Phase.FAILED) {
                 return EmbeddedDuplexProcessHost.<String>failed(
                         new IllegalStateException("local diagnostic cleanup state unavailable"));
             }
-            return closeNoMediaAndDetach(expectedGeneration).thenApply(closed ->
+            return closeNoMediaAndDetach(expectedGeneration).whenComplete((closed,cleanup)->{
+                if(cleanup!=null)EmbeddedDuplexOperationDiagnostics.observe("cleanup","bootstrap","close_no_media_detach",cleanup);
+            }).thenApply(closed ->
                     terminalDiagnosticResult(challenge,
                             failure == null ? "bootstrap_closed" : "bootstrap_failed_closed",
                             enrollmentSha.get(), configSha,

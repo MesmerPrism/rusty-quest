@@ -8,6 +8,14 @@ import java.util.concurrent.Semaphore;
 
 /** Executes only providers declared by the exact packaged product binding. */
 public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwnerRegistry, AutoCloseable {
+    private final ThreadLocal<MediaVerificationDiagnostic> verificationFailure=new ThreadLocal<>();
+    /** Same-thread read after a null result; no provider or readback consumption. */
+    public MediaVerificationDiagnostic takeVerificationDiagnostic(){
+        MediaVerificationDiagnostic value=verificationFailure.get();verificationFailure.remove();return value;
+    }
+    private String verificationRejected(String boundary,long observed,boolean known,Throwable failure){
+        verificationFailure.set(new MediaVerificationDiagnostic(boundary,generation,observed,known,failure));return null;
+    }
     private static final int MAX_IN_FLIGHT_EXECUTIONS = 256;
     private final long generation;
     private final MediaProductBinding binding;
@@ -80,36 +88,52 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
     }
 
     @Override public String verifyAndReadEvidence(String ticketJson, String readbackJson) {
+        verificationFailure.remove();
+        String diagnosticBoundary="readback_bounds";
         if (readbackJson == null || readbackJson.length() > 64 * 1024
                 || readbackJson.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 64 * 1024) {
-            return null;
+            return verificationRejected(diagnosticBoundary,-1,false,null);
         }
         try {
+            diagnosticBoundary="ticket_parse";
             MediaOwnerAction action = MediaOwnerAction.parse(ticketJson);
+            diagnosticBoundary="readback_parse";
             JSONObject readback = new JSONObject(readbackJson);
-            if (!MediaProviderReadback.SCHEMA.equals(readback.optString("$schema", ""))
-                    || action.executorGeneration() != generation || !action.matches(readback)) return null;
+            if (!MediaProviderReadback.SCHEMA.equals(readback.optString("$schema", "")))
+                return verificationRejected("readback_schema",action.executorGeneration(),false,null);
+            if(action.executorGeneration()!=generation)return verificationRejected("executor_generation",action.executorGeneration(),false,null);
+            if(!action.matches(readback))
+                return verificationRejected("readback_binding",action.executorGeneration(),false,null);
             String receiptId = readback.optString("receipt_id", "");
             String issued = issuedReceipts.get(receiptId);
             if (issued == null || !MessageDigest.isEqual(
                     issued.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                    readbackJson.getBytes(java.nio.charset.StandardCharsets.UTF_8))) return null;
+                    readbackJson.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                return verificationRejected("issued_receipt_binding",action.executorGeneration(),issued!=null,null);
             MediaOwnerProvider provider = binding.provider(action);
-            if (provider == null) return null;
+            if (provider == null)return verificationRejected("provider_binding",action.executorGeneration(),true,null);
             // Provider snapshot is queried without holding registry state.
+            diagnosticBoundary="provider_snapshot";
             MediaRuntimeSnapshot snapshot = provider.snapshot();
+            diagnosticBoundary="cancellation_generation";
             cancellation.requireCurrent(generation);
             boolean current = snapshot.generation() == generation
                     && snapshot.revision() == readback.optLong("provider_state_revision", -1L)
                     && snapshot.state().equals(readback.optString("observed_state", ""))
                     && !"unbound".equals(snapshot.providerHandleId())
                     && snapshot.providerHandleId().equals(readback.optString("provider_handle_id", ""));
-            if (!current) return null;
+            if (!current){
+                String boundary=snapshot.generation()!=generation?"snapshot_generation"
+                    :snapshot.revision()!=readback.optLong("provider_state_revision",-1L)?"snapshot_revision"
+                    :!snapshot.state().equals(readback.optString("observed_state",""))?"snapshot_state":"snapshot_handle";
+                return verificationRejected(boundary,snapshot.generation(),true,null);
+            }
             boolean stopping = "stop".equals(action.actionKind())
                     || "cleanup".equals(action.actionKind())
                     || "stopped".equals(snapshot.state())
                     || "cleaned".equals(snapshot.state());
-            if (stopping && !snapshot.terminal()) return null;
+            if (stopping && !snapshot.terminal())return verificationRejected("cleanup_terminal",snapshot.generation(),true,null);
+            diagnosticBoundary="evidence_encode";
             JSONObject evidence = new JSONObject();
             evidence.put("$schema", "rusty.quest.android.media.verified_owner_effect.v1");
             evidence.put("receipt_id", receiptId);
@@ -122,12 +146,12 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
             evidence.put("detail_sha256", sha256(snapshot.detail()));
             // One caller wins consumption. A remote dispatcher caches this exact
             // evidence with its signed response; a retry must not re-execute it.
-            if (!issuedReceipts.remove(receiptId, issued)) return null;
+            if (!issuedReceipts.remove(receiptId, issued))return verificationRejected("receipt_consumption",snapshot.generation(),true,null);
             if (executions.remove(action.executionKey(false)) != null) executionSlots.release();
             if (executions.remove(action.executionKey(true)) != null) executionSlots.release();
             return evidence.toString();
         } catch (Exception invalid) {
-            return null;
+            return verificationRejected(diagnosticBoundary,-1,false,invalid);
         }
     }
 

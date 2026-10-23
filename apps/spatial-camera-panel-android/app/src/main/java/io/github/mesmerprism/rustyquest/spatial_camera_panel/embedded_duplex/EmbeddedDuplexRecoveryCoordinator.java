@@ -13,6 +13,7 @@ final class EmbeddedDuplexRecoveryCoordinator {
     }
 
     private final Store store;
+    private Throwable lastCheckFailure;
 
     EmbeddedDuplexRecoveryCoordinator(Context context) throws Exception {
         EmbeddedDuplexStartJournal checkpoint = new EmbeddedDuplexStartJournal(context);
@@ -33,6 +34,7 @@ final class EmbeddedDuplexRecoveryCoordinator {
 
     /** Any incomplete pair, malformed record or retained transaction blocks fresh authority. */
     synchronized boolean freshBootstrapAllowed() {
+        lastCheckFailure=null;
         try {
             String checkpoint = store.readCheckpoint();
             String evidence = store.readEvidence();
@@ -46,13 +48,15 @@ final class EmbeddedDuplexRecoveryCoordinator {
             }
             return false;
         } catch (Exception damagedOrUncertain) {
+            lastCheckFailure=damagedOrUncertain;
+            EmbeddedDuplexOperationDiagnostics.observe("recovery","recovery_store","fresh_bootstrap_records",damagedOrUncertain);
             return false;
         }
     }
 
     synchronized void requireFreshBootstrap() {
         if (!freshBootstrapAllowed()) {
-            throw new IllegalStateException("retained duplex transaction requires recovery");
+            throw new IllegalStateException("retained duplex transaction requires recovery",lastCheckFailure);
         }
     }
 

@@ -13,6 +13,7 @@ internal object EmbeddedDuplexOperatorContract {
   const val METHOD_CONFIRM = "confirm"
   const val METHOD_RUNTIME_STATUS = "runtime_status"
   const val METHOD_PREPARATION_DIAGNOSTIC = "prepared_peer_start_diagnostic"
+  const val METHOD_OPERATION_DIAGNOSTICS = "operation_diagnostics"
   const val METHOD_OWNER_FAILURE_DIAGNOSTIC = "owner_failure_diagnostic"
   const val METHOD_OWN_CAPTURE_DIAGNOSTIC = "own_capture_diagnostic"
   const val METHOD_STREAM_DROPOUT_DIAGNOSTIC = "stream_dropout_diagnostic"
@@ -60,6 +61,7 @@ internal object EmbeddedDuplexOperatorContract {
     require(id is String && id.matches(Regex("[0-9a-f]{32}"))) { "preparation-diagnostic-original-invalid" }
     return id
   }
+  internal fun operationDiagnosticOriginal(fields: Map<String, Any?>): String? = preparationDiagnosticOriginal(fields)
 
   fun parseCall(method: String, argument: String?, extras: Bundle?): Request {
     val fields = extras?.keySet()?.associateWith { extras.get(it) } ?: emptyMap()
