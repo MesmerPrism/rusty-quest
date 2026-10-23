@@ -168,6 +168,11 @@ test('unresolved read is finite and never invokes mutation callbacks',async()=>{
   const f=await fixture({setup:({callbacks})=>callbacks.readStatus=()=>new Promise(()=>{})});
   await assert.rejects(f.owner.observe(context('guard')),/deadline|unknown/i);assert(!f.calls.some(c=>c[0]==='stop'));
 });
+test('a finite multi-call status read can complete beyond two seconds without granting mutation authority',async()=>{
+  const f=await fixture({setup:({callbacks})=>{const read=callbacks.readStatus;callbacks.readStatus=async c=>{await new Promise(r=>setTimeout(r,2200));return read(c);};}});
+  const receipt=await f.owner.observe(context('guard'));assert.equal(receipt.status,'ready');
+  assert(!f.calls.some(c=>c[0]==='stop'));
+});
 test('retirement requires actual typed stop and terminal proof; observer never stops',async()=>{
   const f=await fixture();await f.owner.observe(context('release_guard'));assert(!f.calls.some(c=>c[0]==='stop'));
   const r=await f.owner.retireOriginal(context('retire_original_actor'));assert.equal(r.status,'retired');assert.equal(r.scope,'original_actor_retirement');

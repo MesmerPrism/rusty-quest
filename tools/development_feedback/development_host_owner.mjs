@@ -82,7 +82,7 @@ export async function createDevelopmentHostOwner({identity,geometry,baseline,cal
     if(++callbackCount>128)fail('Finite callback budget exhausted');
     await persist(`${name}-intent`,{context});
     try{
-      const envelope=await bounded(()=>cb[name](clone(context)),name==='stopOriginal'?7000:2000);
+      const envelope=await bounded(()=>cb[name](clone(context)),name==='stopOriginal'?7000:name==='readStatus'?3500:2000);
       if(!envelope||!isAbsolute(envelope.evidence_ref??'')||!/^[0-9a-f]{64}$/.test(envelope.evidence_sha256??''))fail('Actual raw callback evidence required');
       fresh(envelope.observed_at_utc);
       const metadata=await stat(envelope.evidence_ref);if(!metadata.isFile()||metadata.size>1024*1024)fail('Finite callback evidence file required');
