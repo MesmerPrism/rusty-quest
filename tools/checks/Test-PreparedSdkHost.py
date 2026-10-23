@@ -90,7 +90,7 @@ path="lib.rs"
     lib+=f'#[path={json.dumps((native.parent/"prepared_renderer_gate.rs").as_posix())}] mod prepared_renderer_gate;\n'
     lib+='mod embedded_duplex { pub(crate) use crate::{preparation_native_guard,pair_lifetime_policy}; pub(crate) use crate::prepared::renderer_identity as prepared_renderer_identity; }\n'
     renderer=(native.parent/'prepared_peer_renderer.rs').read_text()
-    registry='\n'.join(item(renderer,name) for name in ['struct Registration','fn release_source(','pub(super) fn begin(','pub(super) fn terminal_for('])
+    registry='\n'.join(item(renderer,name) for name in ['struct Registration','fn release_source(','pub(super) fn begin(','pub(super) fn terminal_for(','pub(super) fn abort('])
     lib+=fixture.read_text().replace('PRODUCTION_ITEMS',extracted).replace('PRODUCTION_RENDERER',registry).replace('PRODUCTION_LIFETIME',item((native/'peer_lifecycle.rs').read_text(),'pub(super) fn prepared_terminal_lifetime(')).replace('JAVA_EXE',json.dumps(pathlib.Path(shutil.which('java')).as_posix())).replace('JAVA_POLICY_CP',json.dumps(java_cp))
     (out/'lib.rs').write_text(lib,encoding='utf-8')
     argv=['cargo','test','--offline','--manifest-path',str(out/'Cargo.toml'),'--target-dir',str(out/'cargo')]

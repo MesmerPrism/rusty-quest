@@ -8,6 +8,7 @@ internal object PreparedSecondLifetimeHost {
   @JvmStatic fun main(args:Array<String>){
     val f=Fixture();val first="1".repeat(32);val second="2".repeat(32)
     f.dormant(first);f.arm(1);f.stop(2);check(f.receiver.snapshot().terminal())
+    f.requireRendererTerminal(first)
     if(args.singleOrNull()=="baseline") { f.dormant(second);error("old source unexpectedly rolled over without archived ownership") }
     val old=f.receiver.routeGeneration()
     check(runCatching { f.dormant(second) }.isFailure) // Stop alone never releases metadata.
@@ -18,9 +19,20 @@ internal object PreparedSecondLifetimeHost {
     val pending=Fixture();pending.dormant(first);pending.arm(1)
     check(runCatching { pending.archive(first) }.isFailure)
     OwnPackedPoolNative.retirementAllowed=false;check(runCatching { pending.stop(2) }.isFailure)
+    check(pending.abortIds.isEmpty())
     check(runCatching { pending.archive(first) }.isFailure)
     OwnPackedPoolNative.retirementAllowed=true;pending.stop(3);pending.archive(first);pending.dormant(second)
-    println("PASS whole Receiver/Display/routing dormant prepare -> ordinary Stop -> exact archived metadata -> second dormant prepare; Stop-only, foreign, current and Pending refusals")
+    val failedAbort=Fixture();failedAbort.dormant(first);failedAbort.arm(1)
+    failedAbort.abortFails=true;check(runCatching { failedAbort.stop(2) }.isFailure)
+    check(failedAbort.abortIds==listOf(first));check(!failedAbort.rendererReleased)
+    check(runCatching { failedAbort.display.abortDormantPeerRenderer(second) }.isFailure)
+    check(failedAbort.abortIds==listOf(first)) // Foreign ID never reaches the native owner.
+    failedAbort.abortFails=false;failedAbort.stop(3);failedAbort.requireRendererTerminal(first)
+    check(failedAbort.abortIds==listOf(first,first));failedAbort.archive(first);failedAbort.dormant(second)
+    val superseded=Fixture();superseded.dormant(first);superseded.arm(1)
+    superseded.routing.beginProjectionSourceRequest(SpatialVideoSource.Disabled,null)
+    check(runCatching { superseded.stop(2) }.isFailure);check(superseded.abortIds.isEmpty())
+    println("PASS whole Receiver/Display/routing prepare -> entered receiver -> terminal Peer teardown -> exact renderer release -> archive -> second prepare; native/routing failure, same-ID cleanup retry, foreign/current/Pending refusals; Android/native/media leaves modeled")
   }
 
   private fun retire(routing: SpatialVideoSourceRoutingCoordinator, generation: Long) {
@@ -28,6 +40,12 @@ internal object PreparedSecondLifetimeHost {
   }
 
   private class Fixture {
+    val abortIds=mutableListOf<String>()
+    var rendererId:String?=null
+    var rendererReleased=false
+    var abortFails=false
+    var receiverStopped=false
+    var readerReleased=false
     val nativeCalls = mutableListOf<SpatialVideoSourceNativeRequest>()
     val adapter = object : SpatialVideoSourceExecutionAdapter {
       override fun producerState() = SpatialProjectionProducerState.NoProducerOwned
@@ -54,7 +72,17 @@ internal object PreparedSecondLifetimeHost {
       display = EmbeddedDuplexDisplayCoordinator(routing, { it(); true }, { true },
           { SpatialVideoSourceCarrierContext(11, 12) }, { true }, { true },
           { words(it, SpatialVideoSourceResult.Effective, SpatialVideoSourceStage.requiredFor(SpatialVideoSource.Peer)) },
-          { longArrayOf() }, { error("unexpected Own restart") }, prepareRenderer={id,route->ready(id,route)}, readPreparedRenderer={ error("unexpected pending read") })
+          { longArrayOf() }, { error("unexpected Own restart") }, prepareRenderer={id,route->
+            check(rendererId==null||rendererReleased);rendererId=id;rendererReleased=false
+            receiverStopped=false;readerReleased=false;ready(id,route)
+          }, readPreparedRenderer={ error("unexpected pending read") }, abortPreparedRenderer={id->
+            check(id==rendererId);abortIds+=id
+            check(routing.snapshot().requested==SpatialVideoSource.Disabled) // Real routing teardown first.
+            check(receiverStopped&&readerReleased) // Real receiver/reader terminal callbacks first.
+            check(!abortFails){"modeled renderer abort failure"}
+            rendererReleased=true
+            org.json.JSONObject(ready(id,1)).put("state","released").put("peer_reservation_released",true).toString()
+          })
       slot.attach(display)
       receiver = EmbeddedDuplexReceiver(17, slot, "127.0.0.1", 7777, 64, 64, 30,
           PackedStereoMediaReceiver.Bounds(65536, 65536, 64, 64, 2, 3000, 4000, 100, 15000, 10000, 8, 250),
@@ -63,7 +91,7 @@ internal object PreparedSecondLifetimeHost {
               override fun routeGeneration() = route
               override fun decoderToken() = 42L
               override fun readerGeneration() = 43L
-              override fun release() = true
+              override fun release():Boolean {readerReleased=true;return true}
             }
             override fun create(p: EmbeddedDuplexReceiver.ProjectionResource, host: String, port: Int, gen: Long,
                 bounds: PackedStereoMediaReceiver.Bounds, listener: PackedStereoMediaReceiver.FrameLifecycleListener): EmbeddedDuplexReceiver.ReceiverRuntime {
@@ -71,6 +99,7 @@ internal object PreparedSecondLifetimeHost {
                 var revision = 0L; var state = "prepared"
                 override fun execute(a: MediaOwnerAction, c: CancellationHandle): MediaProviderReadback {
                   state = if (a.actionKind() == "stop") "stopped" else "receiver_armed"
+                  receiverStopped=state=="stopped"
                   return MediaProviderReadback(a, "modeled.receiver", ++revision, state, "receipt.$revision")
                 }
                 override fun compensate(a: MediaOwnerAction, c: CancellationHandle) = execute(a, c)
@@ -89,7 +118,11 @@ internal object PreparedSecondLifetimeHost {
           })
     }
     fun dormant(id:String)=receiver.prepareDormantDecoder(id,org.json.JSONObject(),java.util.function.BooleanSupplier{false})
-    fun archive(id:String){receiver.javaClass.getDeclaredMethod("retireArchivedPreparedMetadata",String::class.java).invoke(receiver,id)}
+    fun requireRendererTerminal(id:String){
+      check(rendererId==id)
+      check(rendererReleased){"actual Peer Own-reuse reservation remains active"}
+    }
+    fun archive(id:String){requireRendererTerminal(id);receiver.javaClass.getDeclaredMethod("retireArchivedPreparedMetadata",String::class.java).invoke(receiver,id)}
     fun arm(seq: Int) = receiver.execute(action("arm_receiver", "start", seq), CancellationHandle(17))
     fun stop(seq: Int) = receiver.execute(action("stop", "stop", seq), CancellationHandle(17))
     fun words(route: Long, result: SpatialVideoSourceResult, stages: Long) = SpatialVideoSourceNativeReadback(

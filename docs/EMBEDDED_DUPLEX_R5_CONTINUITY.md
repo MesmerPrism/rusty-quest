@@ -1059,7 +1059,14 @@ locks across Java; v1 SDK status and v1/v2 diagnostic meanings remain unchanged.
 
 After an earned terminal Stop, exact renderer registration and SDK metadata move
 only through the existing durable lifetime archive and Original consumer/join
-guards. Ordinary Stop alone does not clear reservation IDs. A different signed
+guards. After the receiver/reader terminal join and exact Peer source/routing
+retirement, ordinary Stop releases the held preparation's renderer reservation
+through the existing exact-ID abort callback. Own reuse releases only its Peer
+reservation and source hold; independent Own resources remain live. A failed
+callback retains that preparation ID for cleanup retry, without repeating the
+completed routing retirement. Partial or superseded Peer teardown never enters
+the callback. This release does not clear SDK metadata or bypass its archive,
+Original consumer, or joined-call guards. A different signed
 successor frame may await its counterpart's explicit local preparation behind
 an independently proven old terminal scope; it creates no SDK owner or Original.
 A later Stop sequence or whole Close cancels that wait, and archived remote IDs

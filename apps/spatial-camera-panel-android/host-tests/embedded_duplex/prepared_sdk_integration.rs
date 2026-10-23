@@ -465,6 +465,9 @@ mod renderer {
     fn read_reuse(_: &str) -> Result<Option<Value>, String> {
         Ok(Some(json!({"host_physical_readback_modeled":true})))
     }
+    fn read(id: &str) -> Result<Value, String> {
+        read_reuse(id)?.ok_or_else(|| "modeled physical readback absent".into())
+    }
     fn view(_: &Job, _: &Registration) -> Value {
         json!({"host_physical_readback_modeled":true})
     }
@@ -1053,7 +1056,6 @@ mod prepared {
                         let a = held(h).unwrap();
                         a.local_start_consumed.store(true, Ordering::SeqCst);
                         a.stop.store(true, Ordering::SeqCst);
-                        renderer::model_stopped(&a.request.preparation_id);
                         *h.peer_lifecycle.lock().unwrap() = Some(Lifetime {
                             termination_action: Some("stop"),
                             route_cleanup: Some(json!({})),
@@ -1062,6 +1064,21 @@ mod prepared {
                             terminal_stop_projection: Some(json!({"status":"terminal"})),
                         });
                         process().lock().unwrap().host_leases = 1;
+                        if cold {
+                            renderer::model_stopped(&a.request.preparation_id);
+                        } else {
+                            // Earned seven-owner Stop does not itself release the separate
+                            // renderer reservation. Keep the exact production archive guard.
+                            assert_eq!(archive_prior(h, None).unwrap_err(),
+                                "actual Peer Own-reuse reservation remains active");
+                            assert!(process().lock().unwrap().prepared_peer_start.is_some());
+                            assert!(renderer::abort(&"f".repeat(32)).is_err());
+                            assert!(renderer::terminal_for(&a.request.preparation_id).is_err());
+                            // The display's post-teardown callback uses this existing exact-ID
+                            // native abort; Android/GPU readback is still a modeled leaf here.
+                            renderer::abort(&a.request.preparation_id).unwrap();
+                            renderer::terminal_for(&a.request.preparation_id).unwrap();
+                        }
                         archive_prior(h, None).unwrap();
                         assert!(renderer::closed(&a.request.preparation_id));
                         assert_eq!(

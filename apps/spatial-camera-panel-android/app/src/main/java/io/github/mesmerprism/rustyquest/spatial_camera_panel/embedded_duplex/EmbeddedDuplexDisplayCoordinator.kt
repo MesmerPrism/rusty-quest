@@ -225,6 +225,11 @@ internal class EmbeddedDuplexDisplayCoordinator(
       // Removal is source-only. Incoming decoder and submitted GPU fences own terminal proof.
       ownedPeerGeneration = 0L; ownedDecoderToken = 0L; ownedReaderGeneration = 0L
       retirementGeneration = 0L
+      // Exact source/routing teardown is earned. Retire only this preparation's
+      // renderer reservation; the independent Own graph remains live. Keep its
+      // ID on callback failure so cleanup retries the same reservation without
+      // repeating the already-completed routing retirement.
+      preparedRendererId?.let { abortDormantPeerRenderer(it) }
       return@serialized Unit
     }
     if (ownedPeerGeneration != 0L) {
@@ -245,6 +250,7 @@ internal class EmbeddedDuplexDisplayCoordinator(
       ownedPeerGeneration = 0L
       retirementGeneration = 0L
     }
+    preparedRendererId?.let { abortDormantPeerRenderer(it) }
     Unit
   }
 

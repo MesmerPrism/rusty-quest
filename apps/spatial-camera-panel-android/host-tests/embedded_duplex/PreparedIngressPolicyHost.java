@@ -16,6 +16,7 @@ public final class PreparedIngressPolicyHost {
  }
  static final class EmbeddedDuplexProcessHost{static Object application(){return null;}static JSONObject freshClosureIdentity(Object ignored){return new JSONObject();}static boolean originalExchangesJoined(EmbeddedDuplexOriginals.Record r){return exchangesJoined;}static boolean exchangesJoined=true;static void requireCurrentOriginalStopActor(EmbeddedDuplexOriginals.Record r){if(r!=EmbeddedDuplexOriginals.current)throw new IllegalStateException();}}
  static final class EmbeddedDuplexNative{static void requestPreparedPeerStartStop(String id){}}
+ static final class EmbeddedDuplexOperationDiagnostics{static void observe(String phase,String boundary,String operation,Throwable failure){/* Diagnostic storage is a modeled leaf. */}}
  static final class Resources{boolean terminal=true;boolean productResourcesTerminal(){return terminal;}void retireArchivedPreparedMetadata(String id){if(!terminal)throw new IllegalStateException();}}
  static final class EmbeddedDuplexPreparedStart{
   final Resources resources=new Resources();final EmbeddedDuplexOriginals.Record original=new EmbeddedDuplexOriginals.Record();
