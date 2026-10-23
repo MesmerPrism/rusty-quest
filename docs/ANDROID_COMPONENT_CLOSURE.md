@@ -155,3 +155,14 @@ and Kotlin APIs, Java/Kotlin signature mismatch, source add/change, unchanged
 configuration-cache reuse, unexpected dependency/finalizer refusal and stale
 source rejection. The `graph` scenario isolates the latter affected controls.
 No native task, APK packaging or device operation is part of this fixture.
+
+`Test-AndroidComponentMediaAarGraph.py` uses the complete media library Gradle
+script with a small host Java payload to exercise its actual Java/Jar/Zip AAR
+chain through the unchanged task classifier. A custom AAR archive must declare
+`archiveExtension = "aar"`; an explicit `.aar` filename alone leaves a `Zip`
+task's extension metadata as `zip`. The fixture checks the unchanged output
+filename and archive entry payloads, and refuses extra ZIP, APK and native
+finalizer tasks before execution. It accepts explicit Gradle/Java/android.jar
+paths and fresh output and optional reusable fixture Gradle-home paths under
+`target/`. This checks managed task metadata and graph behavior, not an Android
+app build or media runtime.
