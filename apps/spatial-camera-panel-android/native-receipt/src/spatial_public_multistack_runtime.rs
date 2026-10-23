@@ -137,6 +137,11 @@ pub(crate) fn current_spatial_public_strength_cycle_speed_hz() -> f32 {
 }
 
 fn advance_spatial_public_strength_cycle_phase(elapsed_seconds: f32) -> f32 {
+    // Activate on this render owner before taking the resident phase clock lock.
+    #[cfg(target_os = "android")]
+    crate::strength_cycle_hotload::refresh(
+        android_system_property("debug.rustyquest.strength_phase_hotload.enabled").as_deref() == Some("true"),
+    );
     let rate_hz = current_spatial_public_strength_cycle_speed_hz();
     let mut state = strength_cycle_phase_lock()
         .lock()
@@ -165,9 +170,10 @@ fn advance_strength_cycle_phase(
     }
     let now = requested_now;
     if let Some(previous) = state.last_elapsed_seconds {
-        state.phase_turns = (state.phase_turns
-            + (now - previous) * normalize_strength_cycle_speed_hz(rate_hz))
-        .rem_euclid(1.0);
+        state.phase_turns = crate::strength_cycle_step::step(
+            state.phase_turns,
+            (now - previous) * normalize_strength_cycle_speed_hz(rate_hz),
+        );
     }
     state.last_elapsed_seconds = Some(now);
     state.phase_turns

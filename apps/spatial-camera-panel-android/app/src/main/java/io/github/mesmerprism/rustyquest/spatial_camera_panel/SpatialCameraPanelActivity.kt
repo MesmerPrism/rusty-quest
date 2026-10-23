@@ -2510,6 +2510,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (productPolicy.cameraPanelRoutesEnabled) {
       nativeInteropCoordinator.loadReceiptLibrary()
       if (nativeInteropCoordinator.receiptLibraryLoaded) {
+        // Independent optional developer feature; native verifies the app flags.
+        runCatching { nativeConfigureStrengthPhaseHotload(applicationContext) }
         nativeSetMarkerFilePersistenceEnabled(
             activityReadOptionalBooleanSystemProperty(NATIVE_MARKER_FILE_ENABLED_PROPERTY) == true
         )
@@ -5118,6 +5120,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       openXrGetInstanceProcAddrHandle: Long,
       surfaceValid: Boolean,
   ): Long
+
+  private external fun nativeConfigureStrengthPhaseHotload(context: android.content.Context)
 
   private external fun nativeSetMarkerFilePersistenceEnabled(enabled: Boolean)
 
