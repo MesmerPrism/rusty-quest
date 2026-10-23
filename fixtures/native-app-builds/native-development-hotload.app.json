@@ -1,0 +1,86 @@
+{
+  "schema": "rusty.quest.native_app_build.v1",
+  "app_id": "native_development_hotload",
+  "owner_repo": "rusty-quest",
+  "package_policy": "app-specific-package",
+  "package_name": "io.github.mesmerprism.rustyquest.native_renderer.development_hotload",
+  "requested_features": [
+    "quest.native.openxr_vulkan_base",
+    "input.controllers_and_hands_optional",
+    "input.tracked_hand_pointer",
+    "renderer.native_scene",
+    "ui.native_mesh_panel",
+    "native.development_feedback"
+  ],
+  "denied_features": [
+    "renderer.private_particles",
+    "private_layer",
+    "camera.hwb",
+    "display_composite",
+    "environment_depth",
+    "hand_mesh_visual",
+    "hand_mesh_live_input",
+    "video_projection",
+    "makepad_runtime",
+    "manifold.embedded_broker"
+  ],
+  "payloads": [],
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.render.mode": "native-worldspace-integration",
+      "debug.rustyquest.native_renderer.camera.output": "disabled",
+      "debug.rustyquest.native_renderer.private_layer.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.input.source": "disabled",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "false"
+    }
+  },
+  "permission_allowlist": [],
+  "declared_manifest": {
+    "permissions": [
+      "com.oculus.permission.HAND_TRACKING",
+      "org.khronos.openxr.permission.OPENXR",
+      "org.khronos.openxr.permission.OPENXR_SYSTEM"
+    ],
+    "uses_features": [
+      "oculus.software.handtracking",
+      "android.hardware.vr.headtracking",
+      "android.opengl.gles.3.1"
+    ],
+    "activities": [
+      "android.app.NativeActivity"
+    ],
+    "services": []
+  },
+  "expected_render_mode": "native-worldspace-integration",
+  "settings_assertions": {
+    "required_values": {
+      "native_renderer.render.mode": "native-worldspace-integration",
+      "native_renderer.camera.output": "disabled"
+    },
+    "required_disabled_modules": [],
+    "required_modules": [
+      "core/openxr-vulkan",
+      "input/controllers-and-hands",
+      "input/tracked-hand-pointer",
+      "renderer/native-scene",
+      "ui/native-mesh-panel",
+      "development/native-feedback"
+    ],
+    "forbidden_modules": [
+      "camera/hwb",
+      "private-layer",
+      "particles/private/renderer"
+    ]
+  },
+  "expected_markers": {
+    "required": [
+      "renderMode=native-worldspace-integration"
+    ],
+    "forbidden": [
+      "privateParticlePayloadLinked=true"
+    ]
+  },
+  "validation_tier": "quick"
+}

@@ -1,8 +1,12 @@
 //! NativeActivity lifecycle and input queue pumping.
 
-use std::time::Duration;
+use std::{cell::Cell, time::Duration};
 
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
+
+thread_local! {
+    static DESTROY_OBSERVED: Cell<bool> = const { Cell::new(false) };
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ActivityPumpStats {
@@ -17,6 +21,11 @@ pub(crate) fn pump_activity_events(
     running: &mut bool,
 ) -> ActivityPumpStats {
     let mut stats = ActivityPumpStats::default();
+
+    if DESTROY_OBSERVED.with(Cell::get) {
+        *running = false;
+        return stats;
+    }
 
     app.poll_events(Some(timeout), |event| {
         if let PollEvent::Main(main_event) = event {
@@ -43,6 +52,7 @@ pub(crate) fn pump_activity_events(
                 MainEvent::Pause => crate::marker("activity-lifecycle", "event=pause"),
                 MainEvent::Resume { .. } => crate::marker("activity-lifecycle", "event=resume"),
                 MainEvent::Destroy => {
+                    DESTROY_OBSERVED.with(|observed| observed.set(true));
                     crate::marker("activity-lifecycle", "event=destroy");
                     *running = false;
                 }

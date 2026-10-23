@@ -1,0 +1,49 @@
+#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0) readonly buffer Positions {vec4 p[];} skin;
+layout(set=0,binding=1) readonly buffer Triangles {uvec4 t[];} mesh;
+layout(set=0,binding=2) readonly buffer Grafts {
+    vec4 source_palm_position_scale;
+    vec4 source_palm_orientation_xyzw;
+    vec4 target_position_scale[5];
+    vec4 target_orientation_xyzw[5];
+} graft;
+struct Vertex {vec4 position;vec4 normal;};
+layout(set=0,binding=3) writeonly buffer Output {Vertex vertices[];} output_vertices;
+layout(push_constant) uniform Push {uvec4 counts;uvec4 enabled;} pc;
+vec4 normalized_quat(vec4 q){return q*inversesqrt(max(dot(q,q),1e-12));}
+vec4 inverse_quat(vec4 q){q=normalized_quat(q);return vec4(-q.xyz,q.w);}
+vec3 rotate(vec4 q,vec3 p){q=normalized_quat(q);vec3 uv=cross(q.xyz,p);return p+2.0*q.w*uv+2.0*cross(q.xyz,uv);}
+bool finite3(vec3 p){return !any(isnan(p))&&!any(isinf(p));}
+void main(){
+    uint corners=pc.counts.x*3u;
+    uint invocation=gl_GlobalInvocationID.x;
+    if(invocation>=corners*6u)return;
+    uint copy=invocation/corners,corner=invocation%corners;
+    uint out_index=copy==0u?pc.counts.y+corner:pc.counts.z+(copy-1u)*corners+corner;
+    // Tokens originate in this pack dispatch. Generation0 is inactive/invalid.
+    // Treat the W lanes as integer bits, never floating-point magnitudes.
+    Vertex result;result.position=vec4(0);result.normal=vec4(0,0,0,uintBitsToFloat(pc.enabled.z));
+    if(pc.counts.w!=0u && (copy==0u?pc.enabled.x!=0u:pc.enabled.y!=0u)){
+        uvec3 tri=mesh.t[corner/3u].xyz;
+        vec3 a=skin.p[tri.x].xyz,b=skin.p[tri.y].xyz,c=skin.p[tri.z].xyz;
+        vec3 p=skin.p[tri[corner%3u]].xyz;
+        vec3 n=cross(b-a,c-a);
+        float normal_length=length(n);
+        if(finite3(p)&&finite3(n)&&normal_length>1e-12){
+            n/=normal_length;
+            if(copy!=0u){
+                uint target=copy-1u;
+                vec4 anchor=graft.target_position_scale[target];
+                vec3 local=rotate(inverse_quat(graft.source_palm_orientation_xyzw),p-graft.source_palm_position_scale.xyz);
+                p=anchor.xyz+rotate(graft.target_orientation_xyzw[target],local*anchor.w);
+                n=normalize(rotate(graft.target_orientation_xyzw[target],rotate(inverse_quat(graft.source_palm_orientation_xyzw),n)));
+            }
+            if(finite3(p)&&finite3(n)){
+                result.position=vec4(p,uintBitsToFloat(pc.enabled.w));
+                result.normal=vec4(n,uintBitsToFloat(pc.enabled.z));
+            }
+        }
+    }
+    output_vertices.vertices[out_index]=result;
+}

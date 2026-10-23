@@ -1,5 +1,7 @@
 #version 450
 
+layout(constant_id = 100) const bool SCENE_DEPTH_ENABLED = false;
+
 layout(location = 0) flat in uint v_component;
 layout(location = 1) in float v_depth;
 layout(location = 2) flat in float v_normal_z;
@@ -43,5 +45,6 @@ void main() {
     rgb = mix(rgb, wire_color, wire_alpha);
     alpha = max(alpha, wire_alpha * clamp(alpha + 0.18, 0.05, 1.0));
     rgb = clamp(rgb, vec3(0.0), vec3(1.0));
+    if (SCENE_DEPTH_ENABLED) { alpha = 1.0; }
     out_color = vec4(rgb * alpha, alpha);
 }

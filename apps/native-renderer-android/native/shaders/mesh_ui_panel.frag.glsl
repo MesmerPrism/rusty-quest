@@ -1,0 +1,9 @@
+#version 450
+layout(set=0,binding=0) uniform sampler2D panel;
+layout(location=0) in vec2 uv;
+layout(location=0) out vec4 color;
+void main() {
+    color=texture(panel,uv);
+    // Android opaque backing makes this a proper depth-writing world surface.
+    if(color.a < .5) discard;
+}

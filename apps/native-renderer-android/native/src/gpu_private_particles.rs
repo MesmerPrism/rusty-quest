@@ -89,6 +89,10 @@ include!(concat!(
     "/private_particle_payload_config.rs"
 ));
 
+pub(crate) const fn payload_linked() -> bool {
+    PRIVATE_PARTICLE_PAYLOAD_LINKED
+}
+
 const PARTICLE_COMPUTE_LOCAL_SIZE: u32 = 64;
 const PARTICLE_SORT_LOCAL_SIZE: u32 = 128;
 const PARTICLE_SORT_ROW_BYTES: vk::DeviceSize = 16;
@@ -1698,6 +1702,7 @@ pub(crate) struct GpuPrivateParticleRenderer {
     graphics_pipeline_additive: vk::Pipeline,
     graphics_pipeline_alpha_over: vk::Pipeline,
     projection_render_pass: vk::RenderPass,
+    scene_depth_enabled: bool,
     offscreen: Option<PrivateParticleOffscreenResources>,
     position_buffer: OwnedBuffer,
     normal_buffer: OwnedBuffer,
@@ -1753,6 +1758,7 @@ impl GpuPrivateParticleRenderer {
         device: &ash::Device,
         memory_properties: &vk::PhysicalDeviceMemoryProperties,
         render_pass: vk::RenderPass,
+        scene_depth_enabled: bool,
         queue: vk::Queue,
         command_pool: vk::CommandPool,
         breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
@@ -2353,6 +2359,7 @@ impl GpuPrivateParticleRenderer {
             device,
             render_pass,
             pipeline_layout,
+            scene_depth_enabled,
             PrivateParticleTransparencyBlendMode::Additive,
         ) {
             Ok(pipeline) => pipeline,
@@ -2388,6 +2395,7 @@ impl GpuPrivateParticleRenderer {
             device,
             render_pass,
             pipeline_layout,
+            scene_depth_enabled,
             PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver,
         ) {
             Ok(pipeline) => pipeline,
@@ -2538,6 +2546,7 @@ impl GpuPrivateParticleRenderer {
             graphics_pipeline_additive,
             graphics_pipeline_alpha_over,
             projection_render_pass: render_pass,
+            scene_depth_enabled,
             offscreen: None,
             position_buffer,
             normal_buffer,
@@ -2905,8 +2914,13 @@ impl GpuPrivateParticleRenderer {
         world_anchor_scale_parameter_source: &'static str,
         world_anchor_forward_axis: [f32; 4],
         frame_count: u64,
+        mesh_ui_animation: Option<(u64, bool, f32)>,
     ) -> GpuPrivateParticleFrameStats {
-        let runtime_settings = self.runtime_settings(frame_count);
+        let mut runtime_settings = self.runtime_settings(frame_count);
+        if let Some((_, _, scale_factor)) = mesh_ui_animation {
+            runtime_settings.visual_scale *= scale_factor.clamp(0.5, 1.5);
+            runtime_settings.visual_parameter_source = "native-mesh-ui";
+        }
         let mut world_center_scale = world_center_scale;
         let mut world_anchor_scale_parameter_source = world_anchor_scale_parameter_source;
         if let Some(radius_m) = crate::experiment_session_runtime::active_radius_m_for_progress(
@@ -2969,17 +2983,22 @@ impl GpuPrivateParticleRenderer {
         if phase_reset {
             self.last_phase_reset_revision = self.pending_phase_reset_revision;
         }
-        let push = private_particle_push(
+        let mut push = private_particle_push(
             self.particle_count,
             draw_count,
             self.tracer_max_count,
             runtime_settings,
             eye_projections.compute_basis,
             world_center_scale,
-            frame_count,
+            mesh_ui_animation
+                .map(|value| value.0)
+                .unwrap_or(frame_count),
             phase_reset,
             Some(world_anchor_forward_axis),
         );
+        if mesh_ui_animation.is_some_and(|(_, animation, _)| !animation) {
+            push.params1[1] = 0.0;
+        }
         let detailed_diagnostics = BUILD_DIAGNOSTICS_LEVEL.detailed_readback_enabled();
         if detailed_diagnostics {
             device.cmd_fill_buffer(
@@ -3894,6 +3913,11 @@ impl GpuPrivateParticleRenderer {
         full_extent: vk::Extent2D,
         swapchain_image_count: usize,
     ) -> Result<(), String> {
+        // Color-only downsampled targets cannot test against the scene Z buffer.
+        // Keep the full-resolution path in the opt-in world renderer.
+        if self.scene_depth_enabled {
+            return Ok(());
+        }
         if self.offscreen.as_ref().is_some_and(|resources| {
             resources.matches(color_format, full_extent, swapchain_image_count)
         }) {
@@ -4673,6 +4697,7 @@ unsafe fn create_graphics_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    scene_depth_enabled: bool,
     blend_mode: PrivateParticleTransparencyBlendMode,
 ) -> Result<vk::Pipeline, String> {
     let vertex_words = spirv_words(include_bytes!(concat!(
@@ -4703,11 +4728,20 @@ unsafe fn create_graphics_pipeline(
     };
 
     let entry = CString::new("main").expect("static shader entry point is valid");
+    let specialization_entries = [vk::SpecializationMapEntry::default()
+        .constant_id(crate::native_scene_depth::SPECIALIZATION_ID)
+        .offset(0)
+        .size(4)];
+    let specialization_data = u32::from(scene_depth_enabled).to_ne_bytes();
+    let specialization = vk::SpecializationInfo::default()
+        .map_entries(&specialization_entries)
+        .data(&specialization_data);
     let stages = [
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::VERTEX)
             .module(vertex_module)
-            .name(&entry),
+            .name(&entry)
+            .specialization_info(&specialization),
         vk::PipelineShaderStageCreateInfo::default()
             .stage(vk::ShaderStageFlags::FRAGMENT)
             .module(fragment_module)
@@ -4730,9 +4764,13 @@ unsafe fn create_graphics_pipeline(
     let color_blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
     let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
-        .depth_test_enable(false)
+        .depth_test_enable(scene_depth_enabled)
         .depth_write_enable(false)
-        .depth_compare_op(vk::CompareOp::ALWAYS)
+        .depth_compare_op(if scene_depth_enabled {
+            vk::CompareOp::LESS_OR_EQUAL
+        } else {
+            vk::CompareOp::ALWAYS
+        })
         .stencil_test_enable(false);
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
@@ -5198,6 +5236,7 @@ impl PrivateParticleOffscreenResources {
             device,
             resources.render_pass,
             particle_pipeline_layout,
+            false,
             PrivateParticleTransparencyBlendMode::Additive,
         ) {
             Ok(pipeline) => pipeline,
@@ -5210,6 +5249,7 @@ impl PrivateParticleOffscreenResources {
             device,
             resources.render_pass,
             particle_pipeline_layout,
+            false,
             PrivateParticleTransparencyBlendMode::PremultipliedAlphaOver,
         ) {
             Ok(pipeline) => pipeline,

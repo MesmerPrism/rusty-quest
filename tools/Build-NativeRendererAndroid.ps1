@@ -433,6 +433,12 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         }
         $appBuildEnvByName[$name] = if ($null -ne $entry.PSObject.Properties["value"]) { [string]$entry.value } else { "" }
     }
+    $nativeFeedbackFlag = 'RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED'
+    $nativeFeedbackSelected = @($appBuildLockObject.selected_feature_ids) -ccontains 'native.development_feedback'
+    if ($appBuildEnvByName.ContainsKey($nativeFeedbackFlag) -ne $nativeFeedbackSelected -or
+        ($nativeFeedbackSelected -and [string]$appBuildEnvByName[$nativeFeedbackFlag] -cne 'true')) {
+        throw 'Native development feedback must match its explicit selected feature and build input.'
+    }
     $breathExpectedBindingEnvName = "RUSTY_QUEST_NATIVE_RENDERER_BREATH_COMPOSITION_EXPECTED_BINDING_SHA256"
     $breathActivation = $appBuildLockObject.PSObject.Properties["breath_composition_activation"]
     if ($null -ne $breathActivation -and $null -ne $breathActivation.Value) {

@@ -1,0 +1,19 @@
+{
+  "schema": "rusty.quest.spatial_submission_observer.selection.v1",
+  "default_enabled": false,
+  "build_variant": "debug",
+  "builder_switch": "SubmissionObserver",
+  "gradle_selection": "workloadSubmissionObserver",
+  "module": "android/openxr-submission-observer",
+  "staged_module": "local-source/submission-observer",
+  "jni_library": "librq_xr_submission_observer_probe.so",
+  "readback_library": "libXR_APILAYER_MESMERPRISM_submission_observer.so",
+  "lookup": "RTLD_NOLOAD plus exact module symbol",
+  "requested_extensions": [],
+  "required_permissions": [],
+  "new_xr_owners": 0,
+  "recording_authority": false,
+  "gpu_completion_proof": false,
+  "sdk_pixel_proof": false,
+  "headset_interception_qualified": false
+}

@@ -12,6 +12,15 @@ const PLAN_JSON: &str =
     include_str!("../../../../fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json");
 const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
 
+#[path = "../../../../crates/rusty-quest-development-feedback-native/src/lib.rs"]
+mod development_feedback_core;
+pub(crate) use development_feedback_core::{abi, digest, loader, runtime};
+mod development_feedback_contract;
+mod development_feedback_shader;
+mod native_development_feedback;
+#[cfg(all(target_os = "android", native_development_feedback))]
+mod gpu_development_feedback_scene;
+
 mod bounded_breath_phase_integrator;
 mod breath_calibration_controller_action;
 mod breath_capture;
@@ -60,6 +69,8 @@ mod gpu_hand_mesh_visual;
 #[cfg(target_os = "android")]
 mod gpu_mesh_replay;
 #[cfg(target_os = "android")]
+mod gpu_mesh_ui_panel;
+#[cfg(target_os = "android")]
 mod gpu_private_particles;
 #[cfg(target_os = "android")]
 mod gpu_sdf_field;
@@ -82,6 +93,7 @@ mod lsl_transport_bridge;
 mod manifold_breath_bridge;
 mod manifold_pose_publisher;
 mod manifold_scalar_driver_bridge;
+mod native_alternate_input;
 mod native_app_settings;
 #[cfg(target_os = "android")]
 mod native_camera;
@@ -92,6 +104,10 @@ mod native_camera_profiles;
 #[cfg(target_os = "android")]
 mod native_camera_reader_selection;
 mod native_controller_breath_state;
+#[cfg(any(test, target_os = "android"))]
+mod native_mesh_ui;
+#[cfg(any(test, target_os = "android"))]
+mod native_pointer_visual;
 mod native_renderer_camera_options;
 mod native_renderer_diagnostics_contract;
 mod native_renderer_display_composite_options;
@@ -119,6 +135,8 @@ mod native_renderer_stimulus_volume_options;
 mod native_renderer_timing;
 mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
+#[cfg(any(test, target_os = "android"))]
+mod native_scene_depth;
 mod openxr_controller_breath_adapter;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
@@ -299,8 +317,13 @@ fn runtime_permissions_for_route(
         && runtime_options.camera_output_mode.camera_import_enabled()
     {
         permissions.push("android.permission.CAMERA");
+        permissions.push("horizonos.permission.HEADSET_CAMERA");
     }
-    if hand_adapter_effect_request(runtime_options).any() {
+    if hand_adapter_effect_request(runtime_options).any()
+        || native_alternate_input::tracked_pointer_enabled_for_mode(
+            runtime_options.render_mode.marker_value(),
+        )
+    {
         permissions.push("com.oculus.permission.HAND_TRACKING");
     }
     permissions.sort_unstable();
@@ -312,15 +335,16 @@ fn runtime_permissions_for_route(
 fn particle_adapter_effect_request(
     runtime_options: &native_renderer_options::NativeRendererRuntimeOptions,
 ) -> particle_adapter_consumer::ParticleAdapterEffectRequest {
-    particle_adapter_consumer::ParticleAdapterEffectRequest {
-        environment_depth_particles: runtime_options
+    particle_adapter_consumer::ParticleAdapterEffectRequest::from_selection(
+        runtime_options
             .environment_depth_settings
             .mode_draws_particles(),
-        hand_anchor_particles: runtime_options.hand_anchor_particle_settings.enabled,
-        private_particles: runtime_options
+        runtime_options.hand_anchor_particle_settings.enabled,
+        runtime_options
             .render_mode
             .requests_private_particle_recenter_input(),
-    }
+        gpu_private_particles::payload_linked(),
+    )
 }
 
 #[cfg(target_os = "android")]
@@ -531,7 +555,11 @@ fn android_main(app: android_activity::AndroidApp) {
         keep_activity_alive_after_error(app);
         return;
     }
-    let xr_vulkan_readiness = xr_vulkan::probe(&app, simultaneous_hands_controllers_decision);
+    let xr_vulkan_readiness = xr_vulkan::probe(
+        &app,
+        runtime_options.render_mode,
+        simultaneous_hands_controllers_decision,
+    );
     if simultaneous_hands_controllers_decision.is_selected()
         && !xr_vulkan_readiness.simultaneous_hands_controllers_probe_ready
     {
