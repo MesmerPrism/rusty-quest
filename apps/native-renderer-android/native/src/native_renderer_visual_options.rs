@@ -16,6 +16,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeRendererRenderMode {
     CustomStereoProjection,
+    NativeWorldspaceIntegration,
     NativePassthroughStyleOnly,
     NativePassthroughMediaOnly,
     NativePassthroughGraftOnly,
@@ -34,6 +35,7 @@ impl NativeRendererRenderMode {
             .trim()
             .to_ascii_lowercase();
         match normalized.as_str() {
+            "native-worldspace-integration" => Self::NativeWorldspaceIntegration,
             "native-passthrough-style-only"
             | "passthrough-style-only"
             | "meta-passthrough-style-only"
@@ -74,6 +76,7 @@ impl NativeRendererRenderMode {
     pub(crate) fn marker_value(self) -> &'static str {
         match self {
             Self::CustomStereoProjection => "custom-stereo-projection",
+            Self::NativeWorldspaceIntegration => "native-worldspace-integration",
             Self::NativePassthroughStyleOnly => "native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "native-passthrough-graft-only",
@@ -87,8 +90,15 @@ impl NativeRendererRenderMode {
         }
     }
 
+    pub(crate) fn uses_scene_depth(self) -> bool {
+        matches!(self, Self::NativeWorldspaceIntegration)
+    }
+
     pub(crate) fn uses_custom_stereo_projection(self) -> bool {
-        matches!(self, Self::CustomStereoProjection)
+        matches!(
+            self,
+            Self::CustomStereoProjection | Self::NativeWorldspaceIntegration
+        )
     }
 
     pub(crate) fn uses_native_passthrough(self) -> bool {
@@ -127,7 +137,10 @@ impl NativeRendererRenderMode {
     }
 
     pub(crate) fn requests_private_particle_recenter_input(self) -> bool {
-        matches!(self, Self::SolidBlackPrivateParticles)
+        matches!(
+            self,
+            Self::SolidBlackPrivateParticles | Self::NativeWorldspaceIntegration
+        )
     }
 
     pub(crate) fn forces_graft_copies(self) -> bool {
@@ -143,7 +156,7 @@ impl NativeRendererRenderMode {
 
     pub(crate) fn camera_runtime_mode(self) -> &'static str {
         match self {
-            Self::CustomStereoProjection => "camera2-hwb",
+            Self::CustomStereoProjection | Self::NativeWorldspaceIntegration => "camera2-hwb",
             Self::NativePassthroughStyleOnly => "skipped-native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "skipped-native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "skipped-native-passthrough",
@@ -159,7 +172,9 @@ impl NativeRendererRenderMode {
 
     pub(crate) fn disabled_camera_projection_path(self) -> &'static str {
         match self {
-            Self::CustomStereoProjection => "metadata-target-direct-hwb-fallback",
+            Self::CustomStereoProjection | Self::NativeWorldspaceIntegration => {
+                "metadata-target-direct-hwb-fallback"
+            }
             Self::NativePassthroughStyleOnly => "disabled-native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "disabled-native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "disabled-native-passthrough-graft-only",

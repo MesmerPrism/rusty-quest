@@ -124,6 +124,7 @@ impl Default for LiveHandCompactStats {
 pub(crate) struct LiveHandCompactFrameSet {
     pub(crate) left: Option<RecordedHandSkinningFrame>,
     pub(crate) right: Option<RecordedHandSkinningFrame>,
+    pub(crate) ui_pointer: Option<crate::native_alternate_input::HandPointerSample>,
 }
 
 impl LiveHandCompactFrameSet {
@@ -350,9 +351,37 @@ impl LiveHandCompactInput {
             LiveHandCompactFrameSet {
                 left: left_frame,
                 right: right_frame,
+                ui_pointer: right
+                    .as_ref()
+                    .and_then(|joints| hand_ui_pointer(joints, right_result.aim.as_ref(), true))
+                    .or_else(|| {
+                        left.as_ref().and_then(|joints| {
+                            hand_ui_pointer(joints, left_result.aim.as_ref(), false)
+                        })
+                    }),
             },
             stats,
         )
+    }
+
+    /// Runtime aim when available, otherwise four tracked positions. No rig prerequisite.
+    /// Uses the same session-owned trackers/reference space/time as the visual path.
+    pub(crate) fn locate_ui_pointer(
+        &self,
+        reference_space: &xr::Space,
+        time: xr::Time,
+    ) -> Option<crate::native_alternate_input::HandPointerSample> {
+        let right = locate_hand_result(reference_space, self.right_tracker.as_ref(), time);
+        right
+            .locations
+            .as_ref()
+            .and_then(|joints| hand_ui_pointer(joints, right.aim.as_ref(), true))
+            .or_else(|| {
+                let left = locate_hand_result(reference_space, self.left_tracker.as_ref(), time);
+                left.locations
+                    .as_ref()
+                    .and_then(|joints| hand_ui_pointer(joints, left.aim.as_ref(), false))
+            })
     }
 
     fn tracker_ready(&self) -> bool {
@@ -386,7 +415,50 @@ fn compact_frame_from_locations(
     })
 }
 
+fn hand_ui_pointer(
+    locations: &xr::HandJointLocations,
+    aim: Option<&xr::sys::HandTrackingAimStateFB>,
+    right: bool,
+) -> Option<crate::native_alternate_input::HandPointerSample> {
+    let point = |joint: xr::HandJoint| {
+        let location = &locations[joint];
+        if !location.location_flags.contains(
+            xr::SpaceLocationFlags::POSITION_VALID | xr::SpaceLocationFlags::POSITION_TRACKED,
+        ) {
+            return None;
+        }
+        let p = location.pose.position;
+        Some([p.x, p.y, p.z])
+    };
+    if let Some(aim) = aim {
+        // Active hand + tracked wrist prevent a stale ray after tracking loss.
+        // Worldspace requests API 1.1.53 for corrected Meta aim flags and pose.
+        point(xr::HandJoint::WRIST)?;
+        let p = aim.aim_pose.position;
+        let q = aim.aim_pose.orientation;
+        return crate::native_alternate_input::runtime_aim_pointer(
+            [p.x, p.y, p.z],
+            [q.x, q.y, q.z, q.w],
+            right,
+            aim.status
+                .contains(xr::HandTrackingAimFlagsFB::VALID | xr::HandTrackingAimFlagsFB::COMPUTED),
+            aim.status
+                .contains(xr::HandTrackingAimFlagsFB::SYSTEM_GESTURE),
+            aim.status
+                .contains(xr::HandTrackingAimFlagsFB::INDEX_PINCHING),
+        );
+    }
+    crate::native_alternate_input::joint_pointer(
+        point(xr::HandJoint::WRIST)?,
+        point(xr::HandJoint::INDEX_PROXIMAL)?,
+        point(xr::HandJoint::THUMB_TIP)?,
+        point(xr::HandJoint::INDEX_TIP)?,
+        right,
+    )
+}
+
 struct LocateHandResult {
+    aim: Option<xr::sys::HandTrackingAimStateFB>,
     locations: Option<xr::HandJointLocations>,
     status: String,
 }
@@ -400,19 +472,74 @@ fn locate_hand_result(
         return LocateHandResult {
             locations: None,
             status: "tracker-not-created".to_string(),
+            aim: None,
         };
     };
-    match reference_space.locate_hand_joints(tracker, time) {
+    // The owner creates both trackers and reference_space from the same session.
+    // Keep output storage alive until the synchronous locate returns; no chain escapes.
+    let aim_enabled = reference_space
+        .instance()
+        .exts()
+        .fb_hand_tracking_aim
+        .is_some();
+    let mut aim = xr::sys::HandTrackingAimStateFB {
+        ty: xr::sys::HandTrackingAimStateFB::TYPE,
+        next: std::ptr::null_mut(),
+        status: xr::HandTrackingAimFlagsFB::EMPTY,
+        aim_pose: xr::Posef::IDENTITY,
+        pinch_strength_index: 0.0,
+        pinch_strength_middle: 0.0,
+        pinch_strength_ring: 0.0,
+        pinch_strength_little: 0.0,
+    };
+    let result = if aim_enabled {
+        let mut joints = [xr::HandJointLocation::default(); xr::HAND_JOINT_COUNT];
+        let info = xr::sys::HandJointsLocateInfoEXT {
+            ty: xr::sys::HandJointsLocateInfoEXT::TYPE,
+            next: std::ptr::null(),
+            base_space: reference_space.as_raw(),
+            time,
+        };
+        let mut locations = xr::sys::HandJointLocationsEXT {
+            ty: xr::sys::HandJointLocationsEXT::TYPE,
+            next: (&mut aim as *mut xr::sys::HandTrackingAimStateFB).cast(),
+            is_active: false.into(),
+            joint_count: xr::HAND_JOINT_COUNT as u32,
+            joint_locations: joints.as_mut_ptr(),
+        };
+        let fp = reference_space
+            .instance()
+            .exts()
+            .ext_hand_tracking
+            .as_ref()
+            .expect("session hand trackers require XR_EXT_hand_tracking");
+        let status = unsafe { (fp.locate_hand_joints)(tracker.as_raw(), &info, &mut locations) };
+        if status.into_raw() < 0 {
+            Err(status)
+        } else {
+            Ok(if bool::from(locations.is_active) {
+                Some(joints)
+            } else {
+                None
+            })
+        }
+    } else {
+        reference_space.locate_hand_joints(tracker, time)
+    };
+    match result {
         Ok(Some(locations)) => LocateHandResult {
             locations: Some(locations),
+            aim: aim_enabled.then_some(aim),
             status: "active".to_string(),
         },
         Ok(None) => LocateHandResult {
             locations: None,
+            aim: None,
             status: "inactive".to_string(),
         },
         Err(error) => LocateHandResult {
             locations: None,
+            aim: None,
             status: format!("locate-error-{error:?}"),
         },
     }

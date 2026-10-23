@@ -1,0 +1,24 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "native.development_feedback",
+  "module_path": "development/native-feedback",
+  "module_kind": "developer-code-replacement",
+  "settings_surface": { "authority": "rusty.quest.native_app_settings.v1", "adapter": "runtime_profile" },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicit trusted-development CPU code replacement with retained state and a public procedural Vulkan scene.",
+  "provides": ["development.native_cpu_hotload", "development.native_shader_hotload", "development.procedural_scene"],
+  "depends_on": ["ui.native_mesh_panel"],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": { "permissions": [], "uses_features": [], "activities": [], "services": [], "queries": [] },
+  "runtime_profile": { "set": {}, "clear_families": [], "expected_render_modes": ["native-worldspace-integration"] },
+  "build_inputs": {
+    "env": [{ "name": "RUSTY_QUEST_NATIVE_RENDERER_DEVELOPMENT_FEEDBACK_ENABLED", "value": "true" }],
+    "assets": [],
+    "shaders": ["apps/native-renderer-android/native/shaders/development_feedback_scene.vert.glsl", "apps/native-renderer-android/native/shaders/development_feedback_scene.frag.glsl"]
+  },
+  "markers": { "required": [], "forbidden": [] },
+  "validation": { "quick": [], "standard": [], "device": [] },
+  "public_private_boundary": "Only deterministic public geometry and development contracts; no camera, clinical, scientific, bilateral or private particle payload."
+}

@@ -1,0 +1,61 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.private_particles.composable",
+  "module_path": "particles/private/composable-renderer",
+  "module_kind": "particle-renderer",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Native resident particle payload renderer admitted only into the explicit shared world scene route.",
+  "provides": [
+    "render.private_particle_billboards",
+    "render.private_particle_payload_slot"
+  ],
+  "depends_on": [
+    "renderer.native_scene",
+    "particles.private.payload_slot",
+    "particles.private.ordering.gpu_index_remap",
+    "particles.private.mask.r8_texture"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "native-worldspace-integration"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/private_particles.vert.glsl",
+      "apps/native-renderer-android/native/shaders/private_particles.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Only reusable platform resources, interfaces and markers are public; downstream algorithms and payloads remain app-owned."
+}

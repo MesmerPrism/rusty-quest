@@ -290,6 +290,26 @@ impl SimultaneousHandsControllersLifecycle {
         supported.then_some(()).ok_or("system-unsupported")
     }
 
+    pub(crate) fn generation_for_resume(
+        &self,
+        same_platform_session: bool,
+        allocate_generation: impl FnOnce() -> u64,
+    ) -> Result<Option<u64>, &'static str> {
+        // An unselected adapter never owns a session generation. In particular,
+        // repeated create/READY callbacks must remain inert instead of requiring
+        // a generation that begin_session deliberately never created.
+        if !self.selected {
+            return Ok(None);
+        }
+        if same_platform_session {
+            self.session_generation
+                .map(Some)
+                .ok_or("current session generation is missing")
+        } else {
+            Ok(Some(allocate_generation()))
+        }
+    }
+
     pub(crate) fn begin_session(&mut self, generation: u64) -> Option<LifecycleCommand> {
         if !self.selected
             || !self.extension_available
@@ -477,6 +497,47 @@ mod tests {
 
     const A: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     const B: &str = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+
+    #[test]
+    fn unselected_create_and_ready_callbacks_never_require_or_allocate_a_generation() {
+        let lifecycle = SimultaneousHandsControllersLifecycle::new(resolve_activation(
+            SimultaneousHandsControllersSettings::test(false, None, None),
+            false,
+        ));
+        for same_platform_session in [false, true, true] {
+            assert_eq!(
+                lifecycle.generation_for_resume(same_platform_session, || {
+                    panic!("unselected adapter must not allocate a session generation")
+                }),
+                Ok(None)
+            );
+            assert_eq!(lifecycle.session_generation(), None);
+        }
+    }
+
+    #[test]
+    fn selected_ready_callback_reuses_generation_and_missing_generation_still_rejects() {
+        let mut lifecycle = platform_ready();
+        assert_eq!(
+            lifecycle.generation_for_resume(true, || panic!("same session must not allocate")),
+            Err("current session generation is missing")
+        );
+        let generation = lifecycle
+            .generation_for_resume(false, || 23)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            lifecycle.begin_session(generation),
+            Some(LifecycleCommand::Resume {
+                session_generation: 23
+            })
+        );
+        assert_eq!(
+            lifecycle.generation_for_resume(true, || panic!("same session must not allocate")),
+            Ok(Some(23))
+        );
+        assert_eq!(lifecycle.begin_session(23), None);
+    }
 
     fn selected() -> ActivationDecision {
         resolve_activation(

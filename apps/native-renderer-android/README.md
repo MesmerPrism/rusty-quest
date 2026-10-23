@@ -13,6 +13,26 @@ passthrough composition, a solid-color XR background, resident GPU-skinned hand
 meshes, public blur processing, SDF hooks, or detailed timing markers without a
 Makepad runtime in the app.
 
+For representative development iteration, resolve
+[`native-development-hotload.app.json`](../../fixtures/native-app-builds/native-development-hotload.app.json).
+It selects its own `development_hotload` Android package and the explicit
+developer feature, with a visible Android mesh panel, procedural checker cube
+and 64 particles. Camera, scientific/private particle payloads and bilateral
+streaming are excluded by that app's lock. The existing app defaults remain
+unchanged. The native panel keeps Android widgets, text and focus behavior.
+Its compute button uses the same typed handler as the app-private operator.
+
+See [the common two-host scenarios](../../docs/REPRESENTATIVE_HOTLOAD_HOSTS.md)
+and [the native integration guide](../../docs/NATIVE_WORLDSPACE_INTEGRATION.md)
+for build/launch, fresh session discovery, CPU generation staging and shader
+replacement. CPU modules retain counter/buffer state in the current render
+owner; all opened images stay loaded until process exit, bounded to 64 attempts,
+4 MiB per image and 64 MiB staged. Shader replacement admits only the exact
+descriptor-free scene interface, bounds retirement waits to one second, and
+preserves the prior pipeline on refusal (32 attempts, 256 KiB per stage,
+16 MiB staged). A new Activity/render owner gets a fresh session. Source/host
+checks do not establish headset pixels, tracking, IME behavior or GPU reload.
+
 Its embedded broker routes accepted sockets through the same
 `crates/rusty-quest-broker-transport` RFC6455 core as the standalone Connection
 Hub. `EmbeddedManifoldBrokerServer` remains the placement adapter; bounded
