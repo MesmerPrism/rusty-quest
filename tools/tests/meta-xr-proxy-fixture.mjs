@@ -34,7 +34,9 @@ lines.on('line',line=>{
     if(name==='openxr_set_controller_input' || name==='openxr_set_controller_pose'){released=false;result=wrap({success:true,auto_release:a.auto_release});}
     if(name==='openxr_set_controller_pose')poseSet=true;
     if(name==='openxr_get_controller_pose') result=wrap({simulated:scenario==='occupied-controller'||!released,is_active:true,flags:{position_valid:true,orientation_valid:true}});
-    if(name==='openxr_hand_gesture'){released=false;pinch=a.gesture==='pinch';if(a.gesture==='open')opens++;result=wrap({success:true,auto_release:a.auto_release,edge_produced:true,generation:++generation,wrist_orientation:[0,0,0,1]});}
+    if(name==='openxr_hand_gesture'){released=false;pinch=a.gesture==='pinch';if(a.gesture==='open')opens++;result=wrap({success:true,auto_release:a.auto_release,edge_produced:true,generation:++generation,wrist_orientation:[0,0,0,1]});
+      if(scenario==='hand-target-vendor-aim'&&a.gesture==='aim')result=wrap({success:true,hand:a.hand,gesture:'aim',base_space:a.base_space,wrist_position:a.wrist_position,wrist_orientation:[0,0,0,1],aim_ray:{origin:[0,1,-.3],direction:[0,0,-1],base_space:'stage'},result:'completed'});
+    }
     if(name==='openxr_get_hand_state') {
       const handState={synthetic_hand_override:scenario==='occupied-hand'||!released,delivered_generation:scenario==='undelivered'?0:generation,pinch:{index_pinching:pinch}};
       if(scenario.startsWith('hand-target'))Object.assign(handState,{synthetic_hand_override:scenario==='hand-target-occupied'||!released,

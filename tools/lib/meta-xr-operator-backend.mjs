@@ -400,7 +400,10 @@ export async function runOperatorHandTarget({capsule,owner,evidenceDirectory,tim
   async function mutate(args,compensation=false){
     await guard(compensation);await session(!compensation);
     const r=await proxy.tool('openxr_hand_gesture',{session_handle,hand,base_space:'stage',...args},compensation,()=>{attempted=true;result.release_state='pending';});
-    if(r.success!==true||!Number.isSafeInteger(r.generation))fail('Hand mutation acknowledgement missing');return r;
+    // Vendor aim completes with pose/ray but no ACK generation. Its later
+    // delivered hand sample must still advance beyond the preceding open.
+    const completedAim=args.gesture==='aim'&&r.generation===undefined&&r.result==='completed';
+    if(r.success!==true||(!completedAim&&!Number.isSafeInteger(r.generation)))fail('Hand mutation acknowledgement missing');return r;
   }
   async function delivered(label,pinching,minGeneration,focused=true){
     for(let i=0;i<6;i++){
@@ -442,7 +445,7 @@ export async function runOperatorHandTarget({capsule,owner,evidenceDirectory,tim
     let response=await mutate({gesture:'open',wrist_position:wrist,transition_seconds:.1,auto_release:false});
     await delivered('open-delivered',false,response.generation);
     response=await mutate({gesture:'aim',target:targetStage,wrist_position:wrist});orientation=response.wrist_orientation??response.wrist_pose?.orientation;vector(orientation,4);
-    const aim=await delivered('aim-delivered',false,Math.max(lastGeneration+1,response.generation)),ray=aim.aim_ray;
+    const aim=await delivered('aim-delivered',false,Math.max(lastGeneration+1,response.generation??0)),ray=aim.aim_ray;
     if(ray?.base_space!=='stage')fail('Stage delivered aim required');vector(ray.origin,3);vector(ray.direction,3);
     const length=Math.hypot(...ray.direction);if(length<.9||length>1.1)fail('Valid delivered ray direction required');
     const dir=ray.direction.map(v=>v/length),to=targetStage.map((v,i)=>v-ray.origin[i]),along=to.reduce((s,v,i)=>s+v*dir[i],0),miss=Math.hypot(...to.map((v,i)=>v-along*dir[i]));

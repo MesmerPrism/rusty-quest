@@ -96,6 +96,11 @@ test(`${scenario} produces no pinch and keeps failures explicit`,async()=>{
   const a=await attempt(scenario);assert.equal(a.result.completed,false);
   assert(!a.calls.some(x=>x.name==='openxr_hand_gesture'&&x.arguments.gesture==='pinch'));
 });
+test('vendor completed aim omits ACK generation; fresh delivered generation and ray remain required',async()=>{
+  const a=await attempt('hand-target-vendor-aim');assert.equal(a.result.completed,true);
+  assert.equal(a.result.dispatch_state,'delivered');assert.equal(a.retired,1);
+  assert.equal(a.calls.filter(x=>x.name==='openxr_hand_gesture'&&x.arguments.gesture==='pinch').length,1);
+});
 test('changed geometry stops new effects; compensation targets original actor',async()=>{
   const a=await attempt('hand-target',{change:r=>{if(r.phase==='guard')r.geometry.layout_revision++;}});
   assert.equal(a.result.completed,false);assert(!a.calls.some(x=>x.name==='openxr_hand_gesture'));
