@@ -28,5 +28,35 @@ $cache.lease_until=$now.AddMinutes(-1).ToString('o');Deny {Assert-SpatialOperato
 $leaseArguments.BuildLeaseId='foreign';Deny {Assert-SpatialOperatorBuildLease @leaseArguments} 'unowned-build';$leaseArguments.BuildLeaseId='build'
 $cache.resource=$cache.resource.Replace('\','/');Check ((Assert-SpatialOperatorBuildLease @leaseArguments).id-ceq'build') 'cache-path-spelling'
 $build.resource='apk-build:rusty-quest';Check ((Assert-SpatialOperatorBuildLease @leaseArguments).id-ceq'build') 'legacy-resource';$build.resource='apk-build:rusty-quest-sdk-hotload'
+# Exercise the canonical builder's actual JSON boundary without running a build.
+# Agent Board emits ISO UTC strings; PowerShell 7.6 otherwise converts them to DateTime.
+$tokens=$null;$parseErrors=$null
+$builderAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Build-SpatialWorldspaceHotload.ps1'),[ref]$tokens,[ref]$parseErrors)
+$boardAssignments=@($builderAst.FindAll({param($node) $node-is[Management.Automation.Language.AssignmentStatementAst]-and$node.Left.Extent.Text-ceq'$board'},$true))
+Check ($parseErrors.Count-eq0-and$boardAssignments.Count-eq1) 'canonical-board-json-boundary'
+$boardDecoder=[scriptblock]::Create($boardAssignments[0].Right.Extent.Text)
+function Read-TestBoard($value){$boardJson=@($value|ConvertTo-Json -Depth 5);& $boardDecoder}
+$originalCulture=[Threading.Thread]::CurrentThread.CurrentCulture
+try{
+    [Threading.Thread]::CurrentThread.CurrentCulture=[Globalization.CultureInfo]::GetCultureInfo('de-DE')
+    $build.lease_until=$now.AddMinutes(10).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)
+    $cache.lease_until=$build.lease_until
+    $wireBoard=[pscustomobject]@{active_leases=@($build,$cache)}
+    $autoTyped=($wireBoard|ConvertTo-Json -Depth 5)|ConvertFrom-Json
+    Check ($autoTyped.active_leases[0].lease_until-is[DateTime]) 'live-shape-reproduces-auto-date'
+    $leaseArguments.Board=Read-TestBoard $wireBoard
+    Check ($leaseArguments.Board.active_leases[0].lease_until-is[string]) 'canonical-boundary-preserves-iso-date'
+    Check ((Assert-SpatialOperatorBuildLease @leaseArguments).id-ceq'build') 'live-json-active-lease'
+    $build.lease_until=$now.AddMinutes(-1).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)
+    $leaseArguments.Board=Read-TestBoard $wireBoard
+    Deny {Assert-SpatialOperatorBuildLease @leaseArguments} 'live-json-expired-build'
+    $build.lease_until=$cache.lease_until;$cache.lease_until=$now.AddMinutes(-1).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ',[Globalization.CultureInfo]::InvariantCulture)
+    $leaseArguments.Board=Read-TestBoard $wireBoard
+    Deny {Assert-SpatialOperatorBuildLease @leaseArguments} 'live-json-expired-cache'
+    $cache.lease_until=$build.lease_until;$cache.owner='foreign'
+    $leaseArguments.Board=Read-TestBoard $wireBoard
+    Deny {Assert-SpatialOperatorBuildLease @leaseArguments} 'live-json-foreign-cache-owner'
+    $cache.owner='actor';$leaseArguments.Board=$wireBoard
+}finally{[Threading.Thread]::CurrentThread.CurrentCulture=$originalCulture}
 $leaseArguments.OutputRoot=$leaseArguments.IntermediateRoot;Deny {Assert-SpatialOperatorBuildLease @leaseArguments} 'overlapping-build-roots'
 Write-Output "Spatial Operator checks passed: $count"

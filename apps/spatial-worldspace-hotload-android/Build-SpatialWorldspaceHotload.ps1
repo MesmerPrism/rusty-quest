@@ -319,7 +319,7 @@ if([string]::IsNullOrWhiteSpace($AgentBoardScript) -or [string]::IsNullOrWhiteSp
 }
 $boardJson=@(& pwsh -NoProfile -File $AgentBoardScript status --json)
 if($LASTEXITCODE -ne 0){throw 'Agent Board status failed.'}
-$board=($boardJson -join "`n")|ConvertFrom-Json
+$board=($boardJson -join "`n")|ConvertFrom-Json -DateKind String
 $lease=@(Assert-SpatialOperatorBuildLease -Board $board -BuildLeaseId $BuildLeaseId -CacheLeaseId $BuildCacheLeaseId -GradleUserHome $GradleUserHome -IntermediateRoot $intermediateBase -OutputRoot $outputBase -SourceRoot $repoRoot)
 if(Test-Path -LiteralPath $output){throw 'Content address already exists; validate/reuse it or change inputs. Output replacement is deliberately unsupported.'}
 if(Test-Path -LiteralPath $cache){throw 'Existing staging address may contain incomplete build state; inspect it, or change inputs. No automatic deletion.'}
