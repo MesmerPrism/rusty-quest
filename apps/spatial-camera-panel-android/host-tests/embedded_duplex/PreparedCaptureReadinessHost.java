@@ -4,6 +4,8 @@ import java.io.*;import java.net.*;import java.util.*;import java.util.concurren
 /** Exact production Pipeline/Runtime methods and whole actual OwnerSet.
  * Android camera/codec/compositor/worker, LAN connection and Stop joins are modeled leaves. */
 public final class PreparedCaptureReadinessHost {
+ static Runnable stoppedCallback=()->{};
+ public static void runWithStopHook(Runnable hook)throws Exception{stoppedCallback=hook;try{fullPathAndTwoLifetimes();}finally{stoppedCallback=()->{};}}
  static int checks;static void check(boolean v,String m){if(!v)throw new AssertionError(m);checks++;}
  interface Effect{void run()throws Exception;}static void refuse(Effect f)throws Exception{try{f.run();}catch(IllegalStateException expected){checks++;return;}throw new AssertionError("expected readiness refusal");}
  static MediaOwnerAction action(String owner,int seq)throws Exception{return MediaOwnerAction.parse(new JSONObject().put("$schema",MediaOwnerAction.SCHEMA).put("capability","host-only").put("executor_generation",1).put("action_id","host."+seq).put("authority_epoch_id","host.epoch").put("media_acceptance_authority_revision",1).put("expected_runtime_revision",1).put("client_id","host.client").put("lease_id","host.lease").put("sequence",seq).put("operation","start").put("owner_kind",owner).put("action_kind",owner.equals("cleanup")?"arm_cleanup":"start").put("owner_id","host."+owner).put("provider_kind","host."+owner).put("resource_id","host.resource").toString());}
@@ -56,6 +58,7 @@ public final class PreparedCaptureReadinessHost {
     startOwners(p,owners);p.runtime.sharedCapture.fresh=false;check(!p.runtime.sourceFresh(),"stale actual capture revokes freshness");p.runtime.sharedCapture.fresh=true;
     // Whole owner reverse callbacks preserve terminal checks and rollover.
     CancellationHandle c=new CancellationHandle(1);for(String kind:new String[]{"source","processor","codec","socket","route","cleanup"})owners.provider(kind).compensate(action(kind,20+life),c);
+    stoppedCallback.run(); // Host-only schedule: actual callback cancellation before successor preparation.
     check(!p.runtime.sourceFresh(),"Stop cannot retain fresh authority");if(life==0)owners.prepareNextSdkIncarnation();
    }
   }System.out.println("PASS whole source prepare/finalize/route/socket/codec/processor/Start/Stop/two-lifetime path");

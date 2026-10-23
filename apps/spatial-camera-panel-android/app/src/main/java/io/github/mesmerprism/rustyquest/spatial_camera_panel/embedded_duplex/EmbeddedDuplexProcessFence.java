@@ -1,6 +1,10 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 
 import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
+import android.system.Os;
+import android.system.OsConstants;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
@@ -19,6 +23,8 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     interface DirectorySync { void sync() throws Exception; }
     private final File directory;
     private boolean persistenceFailed;
+    private final FileDescriptor descriptor;
+    private final FileOutputStream descriptorOwner;
     private final FileChannel channel;
     private final FileLock lock;
     private final DirectorySync directorySync;
@@ -63,10 +69,18 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 || Files.isSymbolicLink(file.toPath())) {
             throw new IllegalStateException("process fence path invalid");
         }
-        FileChannel channel = FileChannel.open(file.toPath(), StandardOpenOption.READ,
-                StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+        // One no-follow, no-create descriptor for both the lock and all record I/O.
+        // FileChannel data operations close this lifetime descriptor on interrupt.
+        FileDescriptor descriptor = Os.open(file.getAbsolutePath(),
+                OsConstants.O_RDWR | OsConstants.O_CLOEXEC | OsConstants.O_NOFOLLOW, 0);
+        FileOutputStream descriptorOwner = null;
         FileLock lock = null;
         try {
+            if (!OsConstants.S_ISREG(Os.fstat(descriptor).st_mode)) {
+                throw new IllegalStateException("process fence opened file is not regular");
+            }
+            descriptorOwner = new FileOutputStream(descriptor);
+            FileChannel channel = descriptorOwner.getChannel();
             try { lock = channel.tryLock(); }
             catch (OverlappingFileLockException competing) {
                 throw new IllegalStateException("embedded process writer already held", competing);
@@ -92,11 +106,9 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 sync.sync();
             } else {
                 if (!witnessed) throw new IllegalStateException("process fence initialization witness missing");
-                long size = channel.size();
+                long size = Os.fstat(descriptor).st_size;
                 if (size <= 0 || size > 512) throw new IllegalStateException("process fence record missing or corrupt");
-                ByteBuffer bytes = ByteBuffer.allocate((int) size);
-                while (bytes.hasRemaining()) if (channel.read(bytes) < 0) throw new IllegalStateException("process fence truncated");
-                String record = new String(bytes.array(), StandardCharsets.US_ASCII);
+                String record = new String(readRecord(descriptor, (int) size, "process fence truncated"), StandardCharsets.US_ASCII);
                 String[] fields = record.split("\\n", -1);
                 if (fields.length != 8 || !"rusty.quest.embedded_duplex.app_process_fence.v1".equals(fields[0])
                         || !fields[1].matches("[1-9][0-9]{0,18}")
@@ -125,7 +137,8 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                     }
                 }
             }
-            EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, channel, lock,
+            EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, descriptor,
+                    descriptorOwner, channel, lock,
                     sync, Math.addExact(priorGeneration, 1), pending, checkpointHash, evidenceHash);
             result.predecessorRecord = predecessorRecord;
             result.incarnation=incarnation;
@@ -134,15 +147,19 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             if(localTerminationCleared)EmbeddedDuplexProcessIncarnation.commitClear(directory,binding,result.serializedRecord(),sync);
             return result;
         } catch (Throwable failure) {
-            if (lock != null) lock.release();
-            channel.close();
+            try { if (lock != null) lock.release(); }
+            catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
+            try { if (descriptorOwner != null) descriptorOwner.close(); else Os.close(descriptor); }
+            catch (Throwable cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
         }
     }
 
-    private EmbeddedDuplexProcessFence(File directory, FileChannel channel, FileLock lock, DirectorySync sync,
+    private EmbeddedDuplexProcessFence(File directory, FileDescriptor descriptor,
+            FileOutputStream descriptorOwner, FileChannel channel, FileLock lock, DirectorySync sync,
             long generation, boolean pending, String checkpoint, String evidence) {
         this.directory = directory;
+        this.descriptor = descriptor; this.descriptorOwner = descriptorOwner;
         this.channel = channel; this.lock = lock; this.directorySync = sync;
         this.generation = generation; this.nonce = UUID.randomUUID().toString();
         this.pending = pending; this.recoveryOnly = pending;
@@ -268,18 +285,15 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         recoveryOnly=false;
         return receipt.toString();
     }
-    /** Called only by the captured native owner; reads the already held channel.
+    /** Called only by the captured native owner; reads the already held descriptor.
      * Opening/closing another descriptor for Java's fcntl inode could release it. */
     public synchronized String nativeAdmissionRecord() throws Exception {
         requireFresh();
         if (!pending) throw new IllegalStateException("native admission requires durable pending marker");
         try {
-            long size = channel.size();
+            long size = Os.fstat(descriptor).st_size;
             if (size <= 0 || size > 512) throw new IllegalStateException("native app record bounds");
-            ByteBuffer bytes = ByteBuffer.allocate((int) size);
-            channel.position(0);
-            while (bytes.hasRemaining()) if (channel.read(bytes) < 0) throw new IllegalStateException("native app record truncated");
-            String record = new String(bytes.array(), StandardCharsets.US_ASCII);
+            String record = new String(readRecord(descriptor, (int) size, "native app record truncated"), StandardCharsets.US_ASCII);
             if (!record.equals(serializedRecord())) throw new IllegalStateException("native app record changed");
             return record;
         } catch (Exception failure) { persistenceFailed = true; throw failure; }
@@ -294,15 +308,28 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 + checkpointDigest + "\n" + evidenceDigest + "\n";
         return body + digest(body) + "\n";
     }
+    private static byte[] readRecord(FileDescriptor descriptor, int size, String truncated) throws Exception {
+        byte[] bytes = new byte[size];
+        int offset = 0;
+        while (offset < size) {
+            int count = Os.pread(descriptor, bytes, offset, size - offset, offset);
+            if (count <= 0) throw new IllegalStateException(truncated);
+            offset += count;
+        }
+        return bytes;
+    }
     private void persist() throws Exception {
         requireLive(generation);
         try {
         byte[] bytes = serializedRecord().getBytes(StandardCharsets.US_ASCII);
-        channel.position(0);
-        ByteBuffer buffer = ByteBuffer.wrap(bytes);
-        while (buffer.hasRemaining()) channel.write(buffer);
-        channel.truncate(bytes.length);
-        channel.force(true);
+        int offset = 0;
+        while (offset < bytes.length) {
+            int count = Os.pwrite(descriptor, bytes, offset, bytes.length - offset, offset);
+            if (count <= 0) throw new IllegalStateException("process fence write incomplete");
+            offset += count;
+        }
+        Os.ftruncate(descriptor, bytes.length);
+        Os.fsync(descriptor);
         directorySync.sync();
         // The primary remains write-ahead. No caller can enter an effect until
         // the exact companion also commits; a crash in between stays unknown.
@@ -319,6 +346,6 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     }
     /** Release is resource management only; pending remains durable. */
     public synchronized void close() throws Exception {
-        try { if (lock.isValid()) lock.release(); } finally { channel.close(); }
+        try { if (lock.isValid()) lock.release(); } finally { descriptorOwner.close(); }
     }
 }

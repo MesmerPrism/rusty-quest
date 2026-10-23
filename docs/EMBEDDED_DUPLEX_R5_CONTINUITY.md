@@ -249,7 +249,7 @@ private inode with a retained `flock` descriptor. These locks have separate
 owners and must not share an inode: reopening Java's lock file in native code
 would change the Java lock's process semantics.
 
-Native admission reads the live app-held channel. Its opaque capability binds
+Native admission reads the live app-held descriptor. Its opaque capability binds
 the app generation and exact admission-record digest to a monotonically
 allocated native executor generation. Runtime callbacks check that capability
 before and after external work. Enrollment primitives remain available before
@@ -1195,4 +1195,33 @@ API check through the finalization command above.
 ```powershell
 python tools/checks/Test-PreparedCaptureReadinessHost.py `
   --output target/prepared-capture-readiness-host --json-jar <host-json.jar>
+```
+
+### Callback cancellation and the app writer descriptor
+
+Cancelling an owned callback may interrupt its worker. `FileChannel` data I/O
+can then close the lifetime channel and invalidate its writer lock even though
+the durable record has not changed. App-fence record I/O therefore uses the same
+single descriptor through Android's public `Os` calls. Acquisition retains
+atomic `O_NOFOLLOW` and opens without create or truncate; the channel view is
+used only for writer exclusion and liveness. No second descriptor is opened for
+the locked inode, no worker interrupt is cleared, and no new I/O thread is
+introduced. Bounded reads still compare the exact serialized record; writes
+still truncate, fsync and sync the directory/companion in the existing order.
+Malformed records, invalid locks, explicit closure and persistence failures
+retain their fail-closed behavior. This change certifies no media cleanup.
+
+The focused test compiles the whole fence and archive owners, checks actual
+host cancellation before and inside an admission read, and verifies subsequent
+callback/recovery reads retain the same writer lock and exact record. Android
+`Os` calls are explicitly modeled with one real classic-I/O descriptor on the
+host. Real Android API compilation is separate; neither test establishes the
+interrupt source on a headset. The existing archive/counter family remains a
+separate regression.
+
+```powershell
+python tools/checks/Test-ProcessFenceInterruptHost.py `
+  --output target/process-fence-interrupt-host --json-jar <host-json.jar> `
+  --prepared-classes <prepared-capture-readiness-host/classes> `
+  --android-jar <selected-android.jar>
 ```

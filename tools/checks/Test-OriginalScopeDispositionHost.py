@@ -46,6 +46,8 @@ class OriginalCounters{
  files=[str(java/n) for n in ('EmbeddedDuplexProcessFence.java','EmbeddedDuplexProcessIncarnation.java','EmbeddedDuplexAbandonment.java','EmbeddedDuplexAbandonmentRequest.java','EmbeddedDuplexHistoricalAbandonment.java','EmbeddedDuplexKnownBirthAbandonment.java')]
  extra=java/'EmbeddedDuplexOriginalScopeDisposition.java'
  if extra.exists():files.append(str(extra))
+ # Explicit host Android-Os leaves; real same-descriptor classic I/O and lock.
+ files += list(map(str,(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/android-system-host/android/system').glob('*.java')))
  files += [str(generated),str(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/EmbeddedDuplexOriginalScopeHostTest.java')]
  files += [str(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex'/n) for n in ('EmbeddedDuplexKnownBirthAbandonmentHostTest.java','EmbeddedDuplexHistoricalAbandonmentHostTest.java')]
  def run(name,argv):
