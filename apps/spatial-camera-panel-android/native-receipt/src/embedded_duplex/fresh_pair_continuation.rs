@@ -218,7 +218,11 @@ fn observe(host: &Host, id: &str) -> Result<Observation, String> {
     let a = attempt.filter(|a| a.id == id);
     let prime_return = super::preparation::actual_prime_return(host, &r)?;
     let native = peer_lifecycle::fresh_setup_eligibility(host)?;
-    let java = host.callbacks.fresh_setup_physical_eligibility()?;
+    let physical_phase = a
+        .as_ref()
+        .map(|a| a.phase_id.as_str())
+        .unwrap_or(r.id.as_str());
+    let java = physical_observation(host, id, physical_phase, IncomingPhysicalScope::Registered)?;
     let eligibility = validate_physical(host, native, java)?;
     let now = host.clock.now_ms()?;
     let local = serde_json::from_value(json!(host.local_peer_id)).map_err(safe_decode)?;
@@ -767,7 +771,12 @@ fn adopt(
     let ack = archive_fenced_phase(host, ticket)?;
     phase(host, id)?;
     let native = peer_lifecycle::fresh_setup_eligibility(host)?;
-    let java = host.callbacks.fresh_setup_physical_eligibility()?;
+    let java = physical_observation(
+        host,
+        id,
+        &ticket.phase_request_id,
+        IncomingPhysicalScope::Registered,
+    )?;
     let eligibility = validate_physical(host, native, java)?;
     let operation = digest(
         "rusty.quest.fresh_setup.native_operation.v2",

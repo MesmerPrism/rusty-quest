@@ -1027,6 +1027,19 @@ argument/exception propagation, detach/drain, replacement and cleanup retry.
 These host checks preserve the throwing defaults for genuinely unavailable
 implementations and grant no media or cleanup authority.
 
+Incoming fresh-setup physical observations use fixed callbacks for the exact
+authenticated endpoint request: initial admission, a registered current phase,
+or preparation preflight with its actual predecessor. Initial and preparation
+preflight reads register no task, adopt no phase and archive nothing. Registered
+reads require that endpoint's current request span in the exact unfenced phase.
+An incoming callback refuses an operator ThreadLocal; the unchanged no-argument
+operator callback still derives its binding from the actual operator. Native
+checks the exact incoming binding before applying the existing physical/SDK
+validator. Both initial reads, signing, application, continuation and successor
+preparation retain these scopes. Producer-to-validator host controls cover this
+boundary with modeled Android, endpoint and SDK leaves; they do not prove an
+authenticated network exchange or runtime authority.
+
 
 ## Retained operator originals and fresh-owner retirement
 

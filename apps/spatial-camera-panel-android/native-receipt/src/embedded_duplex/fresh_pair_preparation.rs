@@ -186,11 +186,11 @@ pub(super) fn join_actual_prime_return(host: &Host, id: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn eligibility(host: &Host) -> Result<Value, String> {
+fn eligibility(host: &Host, id: &str, phase_id: &str) -> Result<Value, String> {
     validate_physical(
         host,
         peer_lifecycle::fresh_setup_eligibility(host)?,
-        host.callbacks.fresh_setup_physical_eligibility()?,
+        physical_observation(host, id, phase_id, IncomingPhysicalScope::Registered)?,
     )
 }
 fn view(
@@ -248,7 +248,7 @@ fn view(
         json!({"$schema":"rusty.quest.embedded_duplex.fresh_prime_guard.v1","native_request_id":id,
             "prime_origin":r.prime_origin,"prime_pending":r.prime_pending,"prime_progress":r.prime_progress,"prime_joined":r.prime_joined})
     };
-    let eligible = eligibility(host)?;
+    let eligible = eligibility(host, id, phase_id)?;
     let operation = fresh_pair_setup_digest(
         "rusty.quest.fresh_setup.phase_prepare_operation.v1",
         &json!({"native_request_id":id,"phase_request_id":phase_id,"session_id":session,"nonce_a":nonce,
@@ -276,10 +276,22 @@ fn reserve_receiver(
 ) -> Result<(), String> {
     // Only a verified, role/route-bound new effect enters this function. The
     // readonly phase query never calls it.
-    let native = peer_lifecycle::fresh_setup_eligibility(host)?;
-    let java = host.callbacks.fresh_setup_physical_eligibility()?;
-    validate_physical(host, native, java)?;
     let old = state(host)?.fresh.reservation.clone();
+    let prior = if old.is_some() {
+        Some(active_phase(host, id)?)
+    } else {
+        None
+    };
+    let native = peer_lifecycle::fresh_setup_eligibility(host)?;
+    let java = physical_observation(
+        host,
+        id,
+        phase_id,
+        IncomingPhysicalScope::Preparation {
+            prior: prior.as_deref(),
+        },
+    )?;
+    validate_physical(host, native, java)?;
     let first_source = if old.is_none() {
         let raw = host.authority.snapshot_json()?;
         let snapshot: ManifoldPeerRuntimeHostSnapshot =
@@ -485,7 +497,7 @@ fn sign(
         &local.native_eligibility_sha256,
         local.observed_at_ms,
     )?;
-    if actual != *local || eligibility(host)? != a.eligibility {
+    if actual != *local || eligibility(host, id, &a.phase_id)? != a.eligibility {
         return Err("preparation actual source or physical prerequisite changed".into());
     }
     let sha = fresh_pair_setup_digest(
@@ -914,7 +926,7 @@ fn activate(host: &Host, id: &str) -> Result<ManifoldFreshPairSetupPeerView, Str
         return Err("actual preparation activation preimages changed".into());
     }
     let ack = archive_previous(host, id)?;
-    let eligible = eligibility(host)?;
+    let eligible = eligibility(host, id, &a.phase_id)?;
     let operation = fresh_pair_setup_digest(
         "rusty.quest.fresh_setup.prepared_operation.v1",
         &json!({"native_request_id":id,"phase_request_id":a.phase_id,"preparation_request":a.request,"local_receipt":a.local_receipt,"remote_receipt":a.remote_receipt,"source_only_views":[a.view,a.peer_preparation_view]}),

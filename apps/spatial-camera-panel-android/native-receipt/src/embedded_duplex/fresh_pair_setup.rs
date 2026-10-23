@@ -530,6 +530,41 @@ fn authenticated_context_time(host: &Host, id: &str, issued: u64) -> Result<u64,
         || phase(host, id).map(|_| ()),
     )
 }
+enum IncomingPhysicalScope<'a> {
+    Initial,
+    Registered,
+    Preparation { prior: Option<&'a str> },
+}
+// The frame handler authenticates request/phase/route before this observation.
+// Each Java route proves its real endpoint span; initial observation adopts nothing.
+fn physical_observation(
+    host: &Host,
+    id: &str,
+    phase_id: &str,
+    scope: IncomingPhysicalScope<'_>,
+) -> Result<Value, String> {
+    if host.local_peer_id < host.remote_peer_id {
+        return host.callbacks.fresh_setup_physical_eligibility();
+    }
+    let value = match scope {
+        IncomingPhysicalScope::Initial => {
+            host.callbacks.fresh_setup_initial_physical(id, phase_id)?
+        }
+        IncomingPhysicalScope::Registered => host
+            .callbacks
+            .fresh_setup_registered_physical(id, phase_id)?,
+        IncomingPhysicalScope::Preparation { prior } => host
+            .callbacks
+            .fresh_setup_preparation_physical(id, prior, phase_id)?,
+    };
+    if value.get("original_binding")
+        != Some(&json!({"kind":"incoming_fresh_setup","native_request_id":id}))
+    {
+        return Err("actual incoming physical binding differs".into());
+    }
+    Ok(value)
+}
+
 fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), String> {
     host.capability.require_live()?;
     let prepared = {
@@ -541,7 +576,7 @@ fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), Stri
     // Preliminary reads have no Manifold/signature effect. They establish the
     // actual operator binding before taking a reservation which may need retirement.
     let local = peer_lifecycle::fresh_setup_eligibility(host)?;
-    let physical = host.callbacks.fresh_setup_physical_eligibility()?;
+    let physical = physical_observation(host, id, id, IncomingPhysicalScope::Initial)?;
     let original_binding = if host.local_peer_id < host.remote_peer_id {
         let binding = physical
             .get("original_binding")
@@ -623,7 +658,7 @@ fn begin(host: &Host, id: &str, session: &str, nonce_a: &str) -> Result<(), Stri
         // Re-read after the exclusive process reservation. Before dispatch, a
         // failed prerequisite can release ONLY this effect-free reservation.
         let local = peer_lifecycle::fresh_setup_eligibility(host)?;
-        let physical = host.callbacks.fresh_setup_physical_eligibility()?;
+        let physical = physical_observation(host, id, id, IncomingPhysicalScope::Registered)?;
         if host.local_peer_id < host.remote_peer_id
             && physical.get("original_binding") != Some(&original_binding)
         {
@@ -890,7 +925,12 @@ fn sign_setup(
     let current_physical = validate_physical(
         host,
         peer_lifecycle::fresh_setup_eligibility(host)?,
-        host.callbacks.fresh_setup_physical_eligibility()?,
+        physical_observation(
+            host,
+            token.request,
+            &a.phase_id,
+            IncomingPhysicalScope::Registered,
+        )?,
     )?;
     if current_physical != a.eligibility {
         return Err("fresh physical prerequisite changed before signing".into());
@@ -944,7 +984,7 @@ fn apply_setup(
     let current_physical = validate_physical(
         host,
         peer_lifecycle::fresh_setup_eligibility(host)?,
-        host.callbacks.fresh_setup_physical_eligibility()?,
+        physical_observation(host, id, &a.phase_id, IncomingPhysicalScope::Registered)?,
     )?;
     if current_physical != a.eligibility {
         return Err("fresh physical prerequisite changed before apply".into());
@@ -1776,7 +1816,7 @@ fn stage_completed_successor(host: &Host, id: &str, session: &str) -> Result<boo
         host.callbacks
             .assert_incoming_fresh_setup_initial_allowed(id, id)?;
     }
-    let physical = host.callbacks.fresh_setup_physical_eligibility()?;
+    let physical = physical_observation(host, id, id, IncomingPhysicalScope::Initial)?;
     validate_physical(
         host,
         peer_lifecycle::fresh_setup_eligibility(host)?,

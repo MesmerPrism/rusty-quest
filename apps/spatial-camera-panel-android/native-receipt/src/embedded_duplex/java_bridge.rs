@@ -611,6 +611,104 @@ impl JavaOwnerCallbacks {
         serde_json::from_str(&text).map_err(|_| "fresh setup physical observation JSON".into())
     }
 
+    pub(crate) fn fresh_setup_initial_physical(
+        &self,
+        native: &str,
+        phase: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.incoming_physical(
+            "freshSetupInitialPhysicalEligibilityJson",
+            native,
+            phase,
+            None,
+        )
+    }
+    pub(crate) fn fresh_setup_registered_physical(
+        &self,
+        native: &str,
+        phase: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.incoming_physical(
+            "freshSetupPhysicalEligibilityForIncomingJson",
+            native,
+            phase,
+            None,
+        )
+    }
+    pub(crate) fn fresh_setup_preparation_physical(
+        &self,
+        native: &str,
+        prior: Option<&str>,
+        phase: &str,
+    ) -> Result<serde_json::Value, String> {
+        self.incoming_physical(
+            "freshSetupPreparationPhysicalEligibilityJson",
+            native,
+            phase,
+            Some(prior),
+        )
+    }
+    // Called only by the three fixed typed wrappers above; no caller-selected method or JSON assertion.
+    fn incoming_physical(
+        &self,
+        method: &'static str,
+        native: &str,
+        phase: &str,
+        preparation: Option<Option<&str>>,
+    ) -> Result<serde_json::Value, String> {
+        let mut env = self.attached()?;
+        let n = env
+            .new_string(native)
+            .map_err(|_| "incoming physical native identity")?;
+        let p = env
+            .new_string(phase)
+            .map_err(|_| "incoming physical phase identity")?;
+        let n = JObject::from(n);
+        let p = JObject::from(p);
+        let prior = preparation
+            .flatten()
+            .map(|v| env.new_string(v))
+            .transpose()
+            .map_err(|_| "incoming physical prior identity")?
+            .map(JObject::from)
+            .unwrap_or_else(|| JObject::null());
+        self.capability.require_live()?;
+        let call = if preparation.is_some() {
+            env.call_method(
+                self.callback.as_obj(),
+                method,
+                "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                &[
+                    JValue::Object(&n),
+                    JValue::Object(&prior),
+                    JValue::Object(&p),
+                ],
+            )
+        } else {
+            env.call_method(
+                self.callback.as_obj(),
+                method,
+                "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                &[JValue::Object(&n), JValue::Object(&p)],
+            )
+        };
+        let object = self
+            .checked_call(&mut env, call, "java_bridge.incoming_physical")?
+            .l()
+            .map_err(|_| "incoming physical result type")?;
+        if object.is_null() {
+            return Err("incoming physical observation absent".into());
+        }
+        let text: String = env
+            .get_string(&JString::from(object))
+            .map_err(|_| "incoming physical encoding")?
+            .into();
+        if text.len() > 128 * 1024 {
+            return Err("incoming physical bounds".into());
+        }
+        serde_json::from_str(&text).map_err(|_| "incoming physical JSON".into())
+    }
+
     pub(crate) fn sign_pair_ceremony(&self, bytes: &[u8]) -> Result<[u8; 64], String> {
         self.sign_callback(bytes, "signPairCeremonyBytes")
     }

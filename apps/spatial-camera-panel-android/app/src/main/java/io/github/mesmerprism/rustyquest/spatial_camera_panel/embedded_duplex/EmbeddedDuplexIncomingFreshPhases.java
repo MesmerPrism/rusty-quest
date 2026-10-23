@@ -168,6 +168,26 @@ final class EmbeddedDuplexIncomingFreshPhases {
             throw new IllegalStateException("actual registered incoming phase context absent");
         return new JSONObject().put("kind","incoming_fresh_setup").put("native_request_id",n);
     }
+    /** Read-only preflight for the already authenticated preparation frame.
+     * No new span joins the old group and no phase is fenced/adopted here. */
+    synchronized JSONObject preparationObservationBinding(OwnerDispatchTcpEndpoint actualEndpoint,String n,String prior,String phase)throws Exception{
+        id(n);id(phase);if(prior!=null)id(prior);
+        OwnerDispatchTcpEndpoint.RequestSpan span=OwnerDispatchTcpEndpoint.currentRequestSpan();
+        if(actualEndpoint==null || !actualEndpoint.ownsRequestSpan(span) || (endpoint!=null && endpoint!=actualEndpoint))
+            throw new IllegalStateException("actual preparation observation RequestSpan absent");
+        if(prior==null){
+            if(phase.equals(n)||nativeId!=null||!groups.isEmpty())
+                throw new IllegalStateException("first preparation observation requires empty incoming custody");
+        }else{
+            if(prior.equals(phase)||!n.equals(nativeId)||!prior.equals(currentPhase))
+                throw new IllegalStateException("preparation observation predecessor differs");
+            Group old=groups.get(prior),next=groups.get(phase);
+            if(old==null||!old.terminal()||(pendingPhase!=null&&!phase.equals(pendingPhase))
+                ||(next==null&&groups.size()>=2)||(next!=null&&(next.fenced||!prior.equals(next.priorId))))
+                throw new IllegalStateException("preparation observation old tasks or successor differ");
+        }
+        return new JSONObject().put("kind","incoming_fresh_setup").put("native_request_id",n);
+    }
     synchronized boolean admissionFor(String n){
         if(nativeId==null)return groups.isEmpty();
         if(nativeId.equals(n))return allTerminal(n);

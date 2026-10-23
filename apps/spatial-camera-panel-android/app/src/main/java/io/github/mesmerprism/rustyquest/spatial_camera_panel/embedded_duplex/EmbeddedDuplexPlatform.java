@@ -181,6 +181,42 @@ final class EmbeddedDuplexPlatform {
             requireProcessCallback();return EmbeddedDuplexProcessHost.freshPhysical(this,null,false).toString();
         }
     }
+    private void requireIncomingPhysicalObservation()throws Exception{
+        requireProcessCallback();EmbeddedDuplexProcessHost.requireIncomingFreshActor(this);
+        if(EmbeddedDuplexOriginals.capture()!=null || incomingFreshDesiredStop)
+            throw new IllegalStateException("incoming physical observation has operator or desired Stop");
+    }
+    /** Native calls this only after authenticating the exact new initial frame. */
+    public String freshSetupInitialPhysicalEligibilityJson(String nativeId,String phaseId)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireIncomingPhysicalObservation();assertIncomingFreshSetupInitialAllowed(nativeId,phaseId);
+            JSONObject binding=new JSONObject().put("kind","incoming_fresh_setup").put("native_request_id",nativeId);
+            return EmbeddedDuplexProcessHost.freshPhysical(this,binding,false).toString();
+        }
+    }
+    /** Existing registered current/pending phase and exact endpoint task only. */
+    public String freshSetupPhysicalEligibilityForIncomingJson(String nativeId,String phaseId)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireIncomingPhysicalObservation();
+            incomingPhases.assertNotArchivedOrFenced(nativeId,phaseId);
+            JSONObject binding=incomingPhases.currentBinding(nativeId,phaseId);
+            if(new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application())
+                    .archivedIncoming(nativeId,phaseId,EmbeddedDuplexProcessHost.freshClosureIdentity(this)))
+                throw new IllegalStateException("archived incoming physical observation refused");
+            return EmbeddedDuplexProcessHost.freshPhysical(this,binding,false).toString();
+        }
+    }
+    /** Authenticated new preparation preflight; performs no registration/adoption. */
+    public String freshSetupPreparationPhysicalEligibilityJson(String nativeId,String priorPhaseId,String phaseId)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireIncomingPhysicalObservation();
+            JSONObject binding=incomingPhases.preparationObservationBinding(endpoint,nativeId,priorPhaseId,phaseId);
+            if(new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application())
+                    .archivedIncoming(nativeId,phaseId,EmbeddedDuplexProcessHost.freshClosureIdentity(this)))
+                throw new IllegalStateException("archived incoming preparation observation refused");
+            return EmbeddedDuplexProcessHost.freshPhysical(this,binding,false).toString();
+        }
+    }
     public String freshSetupPhysicalRetirementJson(String originalBindingJson)throws Exception{
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
             requireProcessCallback();return EmbeddedDuplexProcessHost.freshPhysical(this,new JSONObject(originalBindingJson),true).toString();
