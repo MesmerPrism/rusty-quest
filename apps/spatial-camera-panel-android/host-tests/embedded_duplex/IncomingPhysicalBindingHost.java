@@ -91,7 +91,52 @@ public class IncomingPhysicalBindingHost {
   linked.incomingPhases.bind(linked.endpoint,"ceremony.linked","ceremony.linked","phase.next","linked_fence");
   binding(new JSONObject(linked.freshSetupPhysicalEligibilityForIncomingJson("ceremony.linked","phase.next")),"ceremony.linked");
   refused(()->linked.freshSetupPhysicalEligibilityForIncomingJson("ceremony.linked","ceremony.linked"));groups++;
-  need(groups==10);System.out.println("10 production incoming binding groups passed; Android/SDK/network leaves modeled");
+  need(groups==10);
+  // The real first peer Stop must remain latched for its old lifetime, but
+  // must not poison the independent completed-successor initial observation.
+  EmbeddedDuplexPlatform cycle=fresh();
+  OwnerDispatchTcpEndpoint.RequestSpan oldTask=OwnerDispatchTcpEndpoint.CURRENT.get();
+  cycle.bindIncomingFreshSetupPhase("ceremony.cycle.first",null,"ceremony.cycle.first","initial");
+  oldTask.done=true;
+  cycle.requestIncomingFreshStop(false);
+  OwnerDispatchTcpEndpoint.CURRENT.set(new OwnerDispatchTcpEndpoint.RequestSpan(cycle.endpoint));
+  cycle.stageIncomingCompletedFreshSetupSuccessor("ceremony.cycle.first","ceremony.cycle.second");
+  cycle.assertIncomingFreshSetupInitialAllowed("ceremony.cycle.second","ceremony.cycle.second");
+  binding(new JSONObject(cycle.freshSetupInitialPhysicalEligibilityJson("ceremony.cycle.second","ceremony.cycle.second")),"ceremony.cycle.second");
+  need(cycle.incomingFreshDesiredStop&&cycle.incomingFreshRequestId.equals("ceremony.cycle.first"));
+  refused(()->cycle.bindIncomingFreshSetupPhase("ceremony.cycle.second",null,"ceremony.cycle.second","initial"));
+  JSONObject archiveBody=new JSONObject().put("native_request_id","ceremony.cycle.first").put("phase_request_id","ceremony.cycle.first").put("phase_status","completed");
+  cycle.incomingPhases.archived(archiveBody,new JSONObject().put("body_sha256","sha256:"+"a".repeat(64)));
+  cycle.bindIncomingFreshSetupPhase("ceremony.cycle.second",null,"ceremony.cycle.second","initial");
+  need(!cycle.incomingFreshDesiredStop&&cycle.incomingFreshRequestId.equals("ceremony.cycle.second"));
+  binding(new JSONObject(cycle.freshSetupPhysicalEligibilityForIncomingJson("ceremony.cycle.second","ceremony.cycle.second")),"ceremony.cycle.second");
+  stoppedSuccessorNegatives();
+  System.out.println("10 production incoming binding groups and stopped successor passed; Android/SDK/network leaves modeled");
+ }
+ static final class Cycle{
+  final EmbeddedDuplexPlatform p=fresh();final OwnerDispatchTcpEndpoint.RequestSpan old=OwnerDispatchTcpEndpoint.CURRENT.get();
+  Cycle()throws Exception{p.bindIncomingFreshSetupPhase("ceremony.old",null,"ceremony.old","initial");}
+  void stopped()throws Exception{old.done=true;p.requestIncomingFreshStop(false);OwnerDispatchTcpEndpoint.CURRENT.set(new OwnerDispatchTcpEndpoint.RequestSpan(p.endpoint));}
+  void stage()throws Exception{p.stageIncomingCompletedFreshSetupSuccessor("ceremony.old","ceremony.next");}
+  void archive()throws Exception{p.incomingPhases.archived(new JSONObject().put("native_request_id","ceremony.old").put("phase_request_id","ceremony.old").put("phase_status","completed"),new JSONObject().put("body_sha256","sha256:"+"a".repeat(64)));}
+  void bind()throws Exception{p.bindIncomingFreshSetupPhase("ceremony.next",null,"ceremony.next","initial");}
+ }
+ static void stoppedSuccessorNegatives()throws Exception{
+  Cycle busy=new Cycle();busy.p.requestIncomingFreshStop(false);OwnerDispatchTcpEndpoint.CURRENT.set(new OwnerDispatchTcpEndpoint.RequestSpan(busy.p.endpoint));refused(busy::stage);
+  Cycle same=new Cycle();same.stopped();refused(()->same.p.stageIncomingCompletedFreshSetupSuccessor("ceremony.old","ceremony.old"));
+  refused(()->same.p.stageIncomingCompletedFreshSetupSuccessor("ceremony.foreign","ceremony.next"));
+  OwnerDispatchTcpEndpoint.CURRENT.set(new OwnerDispatchTcpEndpoint.RequestSpan(new OwnerDispatchTcpEndpoint()));refused(same::stage);
+  Cycle race=new Cycle();race.stopped();race.stage();race.p.requestIncomingFreshStop(false);race.archive();refused(race::bind);
+  refused(()->race.p.assertIncomingFreshSetupInitialAllowed("ceremony.next","ceremony.next"));need(race.p.incomingFreshDesiredStop&&race.p.incomingFreshRequestId.equals("ceremony.old"));
+  Cycle whole=new Cycle();whole.stopped();whole.p.requestIncomingFreshStop(true);refused(whole::stage);
+  Cycle noArchive=new Cycle();noArchive.stopped();noArchive.stage();refused(noArchive::bind);need(noArchive.p.incomingFreshDesiredStop);
+  Cycle unknown=new Cycle();unknown.stopped();unknown.stage();refused(()->unknown.p.incomingPhases.archived(new JSONObject().put("native_request_id","ceremony.old").put("phase_request_id","ceremony.old").put("phase_status","fenced_unknown"),new JSONObject()));refused(unknown::bind);
+  Cycle duplicate=new Cycle();duplicate.stopped();duplicate.stage();duplicate.stage();refused(()->duplicate.p.stageIncomingCompletedFreshSetupSuccessor("ceremony.old","ceremony.other"));
+  refused(()->duplicate.p.bindIncomingFreshSetupPhase("ceremony.next",null,"phase.foreign","initial"));
+  OwnerDispatchTcpEndpoint.CURRENT.set(new OwnerDispatchTcpEndpoint.RequestSpan(duplicate.p.endpoint));refused(duplicate::bind);
+  Cycle overflow=new Cycle();overflow.stopped();overflow.p.incomingFreshStopSequence=Long.MAX_VALUE;refused(overflow::stage);
+  Cycle observed=new Cycle();observed.stopped();observed.stage();OwnStereoCaptureRuntime.onObservation=()->observed.p.requestIncomingFreshStop(false);
+  refused(()->observed.p.freshSetupInitialPhysicalEligibilityJson("ceremony.next","ceremony.next"));OwnStereoCaptureRuntime.onObservation=null;refused(observed::bind);
  }
  public static void main(String[] args)throws Exception{
   if(args.length==0){suite();return;}
@@ -107,10 +152,15 @@ class OwnerDispatchTcpEndpoint {
  static final ThreadLocal<RequestSpan> CURRENT=new ThreadLocal<>();
  static class RequestSpan {final OwnerDispatchTcpEndpoint owner;boolean done;RequestSpan(OwnerDispatchTcpEndpoint p){owner=p;}boolean terminal(){return done;}}
  static RequestSpan currentRequestSpan(){return CURRENT.get();}boolean ownsRequestSpan(RequestSpan span){return span!=null && span.owner==this && !span.done;}
+ static class ExchangeControl{void requestStop(){}}
 }
 class EmbeddedDuplexPlatform {
  final OwnerDispatchTcpEndpoint endpoint=new OwnerDispatchTcpEndpoint();
- final EmbeddedDuplexIncomingFreshPhases incomingPhases=new EmbeddedDuplexIncomingFreshPhases();boolean incomingFreshDesiredStop;
+ final EmbeddedDuplexIncomingFreshPhases incomingPhases=new EmbeddedDuplexIncomingFreshPhases();boolean incomingFreshDesiredStop;String incomingFreshRequestId;
+ long incomingFreshStopSequence;boolean incomingFreshWholeStop;
+ PRODUCTION_EPOCH_FIELDS
+ static class OwnedExchange{EmbeddedDuplexOriginals.Record original;String nativeRequestId;OwnerDispatchTcpEndpoint.RequestSpan incomingSpan;}
+ final java.util.Map<OwnerDispatchTcpEndpoint.ExchangeControl,OwnedExchange> ownedExchanges=new java.util.HashMap<>();
  EmbeddedDuplexPreparedStart preparedStart=new EmbeddedDuplexPreparedStart();
  EmbeddedDuplexProcessFence.CallbackLease enterProcessCallback(){return new EmbeddedDuplexProcessFence.CallbackLease();}void requireProcessCallback(){}
  boolean freshPeerEffectsNeverEntered(){return true;}boolean freshPeerControlQuiescent(){return true;}boolean actualControlTerminal(){return true;}boolean incomingFreshTaskJoined(String id){return true;}
@@ -131,6 +181,8 @@ class EmbeddedDuplexOriginals {
  int unresolvedForRetirement(JSONObject b){return 0;}int unresolvedExceptCurrent(){return 0;}void requireTerminalUnknown(String id){}
 }
 class EmbeddedDuplexProcessFence {boolean live=true;long generation(){return 7;}void requireLive(long g){if(!live||g!=7)throw new IllegalStateException("modeled fence retired");}static class CallbackLease implements AutoCloseable{public void close(){}}}
+class EmbeddedDuplexNative{static void requestFreshSetupStop(String id){}}
+class EmbeddedDuplexOperationDiagnostics{static void observe(String phase,String component,String boundary,Throwable error){}}
 class EmbeddedDuplexPreparedStart {
  JSONObject request,sender,decoder,abortReceipt;String requestSha="sha256:"+"c".repeat(64);boolean abortEntered,decoderEntered=true;Resources resources=new Resources();
  EmbeddedDuplexPreparedStart(){try{request=new JSONObject().put("resource_target_sha256","sha256:"+"d".repeat(64));sender=new JSONObject();decoder=new JSONObject();}catch(Exception e){throw new AssertionError(e);}}
@@ -138,7 +190,7 @@ class EmbeddedDuplexPreparedStart {
  PRODUCTION_STATUS
 }
 class Resources{boolean productResourcesTerminal(){return true;}boolean preparedDeliveryOpened(){return false;}boolean preparedSenderClosed(){return true;}boolean preparedDecoderClosed(){return true;}}
-class OwnStereoCaptureRuntime{static OwnStereoCaptureRuntime currentForApplication(){return new OwnStereoCaptureRuntime();}JSONObject physicalRetirementObservation()throws Exception{return new JSONObject().put("state","live_independent");}}
+class OwnStereoCaptureRuntime{static Runnable onObservation;static OwnStereoCaptureRuntime currentForApplication(){return new OwnStereoCaptureRuntime();}JSONObject physicalRetirementObservation()throws Exception{if(onObservation!=null)onObservation.run();return new JSONObject().put("state","live_independent");}}
 class EmbeddedDuplexRendererRetirement{static boolean currentTerminal(){return true;}static boolean currentFreshEligible(String s){return true;}}
 class EmbeddedDuplexFreshPhaseArchive{static boolean archived;EmbeddedDuplexFreshPhaseArchive(Object context){}boolean archivedIncoming(String n,String phase,JSONObject actor){return archived;}}
 PRODUCTION_CANONICAL

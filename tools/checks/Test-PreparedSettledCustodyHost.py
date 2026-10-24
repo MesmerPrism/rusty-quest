@@ -34,11 +34,11 @@ public class Bundle {private final java.util.Map<String,Object> data=new java.ut
     # open/fsync are modeled here; explicit fault injection tests fail-before-compaction.
     os_source = write('Os.java', '''package android.system;
 import java.io.*;import java.util.*;import java.nio.file.*;
-public class Os {static Map<FileDescriptor,String> paths=new IdentityHashMap<>();public static boolean failSettled;
+public class Os {static Map<FileDescriptor,String> paths=new IdentityHashMap<>();public static boolean failSettled,failPhase;
  public static void chmod(String p,int m){} public static FileDescriptor open(String p,int f,int m)throws Exception{
   if(!Files.exists(Path.of(p),LinkOption.NOFOLLOW_LINKS))throw new FileNotFoundException(p);
   FileDescriptor d=new FileDescriptor();paths.put(d,p);return d;}
- public static void fsync(FileDescriptor d)throws Exception{if(failSettled&&paths.get(d).endsWith(".settled.json"))throw new IOException("modeled settled fsync failure");}
+ public static void fsync(FileDescriptor d)throws Exception{if(failSettled&&paths.get(d).endsWith(".settled.json"))throw new IOException("modeled settled fsync failure");if(failPhase&&paths.get(d).contains("fresh-phase"))throw new IOException("modeled phase fsync failure");}
  public static void close(FileDescriptor d){paths.remove(d);}}
 ''')
     names = ['EmbeddedDuplexOriginals', 'EmbeddedDuplexCanonicalJson', 'EmbeddedDuplexNativeOperationFailure',

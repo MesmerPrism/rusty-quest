@@ -140,22 +140,22 @@ impl JavaOwnerCallbacks {
             .v()
             .map_err(|_| "incoming fresh phase binding result".to_owned())
     }
-    pub(crate) fn assert_incoming_fresh_setup_initial_allowed(
+    pub(crate) fn stage_incoming_completed_fresh_setup_successor(
         &self,
-        native_id: &str,
-        phase: &str,
+        old_id: &str,
+        new_id: &str,
     ) -> Result<(), String> {
         self.capability.require_live()?;
         let mut env = self.attached()?;
         let native = env
-            .new_string(native_id)
+            .new_string(old_id)
             .map_err(|_| "incoming admission Native identity")?;
         let phase = env
-            .new_string(phase)
+            .new_string(new_id)
             .map_err(|_| "incoming admission phase identity")?;
         let call = env.call_method(
             self.callback.as_obj(),
-            "assertIncomingFreshSetupInitialAllowed",
+            "stageIncomingCompletedFreshSetupSuccessor",
             "(Ljava/lang/String;Ljava/lang/String;)V",
             &[
                 JValue::Object(&JObject::from(native)),

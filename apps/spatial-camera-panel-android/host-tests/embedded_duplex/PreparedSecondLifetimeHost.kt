@@ -39,7 +39,8 @@ internal object PreparedSecondLifetimeHost {
     routing.javaClass.getDeclaredMethod("retireEmbeddedConcurrentProjectionPeerRequest", java.lang.Long.TYPE).invoke(routing, generation)
   }
 
-  private class Fixture {
+  internal class Fixture {
+    var rendererIdentity:org.json.JSONObject?=null
     val abortIds=mutableListOf<String>()
     var rendererId:String?=null
     var rendererReleased=false
@@ -74,14 +75,14 @@ internal object PreparedSecondLifetimeHost {
           { words(it, SpatialVideoSourceResult.Effective, SpatialVideoSourceStage.requiredFor(SpatialVideoSource.Peer)) },
           { longArrayOf() }, { error("unexpected Own restart") }, prepareRenderer={id,route->
             check(rendererId==null||rendererReleased);rendererId=id;rendererReleased=false
-            receiverStopped=false;readerReleased=false;ready(id,route)
+            receiverStopped=false;readerReleased=false;ready(id,route,rendererIdentity)
           }, readPreparedRenderer={ error("unexpected pending read") }, abortPreparedRenderer={id->
             check(id==rendererId);abortIds+=id
             check(routing.snapshot().requested==SpatialVideoSource.Disabled) // Real routing teardown first.
             check(receiverStopped&&readerReleased) // Real receiver/reader terminal callbacks first.
             check(!abortFails){"modeled renderer abort failure"}
             rendererReleased=true
-            org.json.JSONObject(ready(id,1)).put("state","released").put("peer_reservation_released",true).toString()
+            org.json.JSONObject(ready(id,1,rendererIdentity)).put("state","released").put("peer_reservation_released",true).toString()
           })
       slot.attach(display)
       receiver = EmbeddedDuplexReceiver(17, slot, "127.0.0.1", 7777, 64, 64, 30,
@@ -128,7 +129,7 @@ internal object PreparedSecondLifetimeHost {
     fun words(route: Long, result: SpatialVideoSourceResult, stages: Long) = SpatialVideoSourceNativeReadback(
         route, SpatialVideoSource.Peer, 42, 43, 11, 12, 1, 1, 1000, stages, result, SpatialVideoSourceReason.None, false, 0, 0)
   }
-  private fun ready(id:String,route:Long):String {
+  internal fun ready(id:String,route:Long,identity:org.json.JSONObject?=null):String {
     val v=org.json.JSONObject().put("${'$'}schema","rusty.quest.spatial.prepared_peer_renderer_own_reuse.v2").put("preparation_id",id)
     for(key in arrayOf("app_process_generation","native_executor_generation","launch_challenge","surface_generation","layer_switch_count","own_claim_generation","own_process_generation","own_source_generation","own_construction_attempts"))v.put(key,1)
     for(key in arrayOf("app_record_sha256","config_sha256"))v.put(key,"a".repeat(64))
@@ -137,6 +138,7 @@ internal object PreparedSecondLifetimeHost {
     for(key in arrayOf("peer_gpu_worker_created","peer_reservation_released","own_resources_retired"))v.put(key,false)
     for(key in arrayOf("source_hold_acquired","source_hold_released","prepare_calls_joined"))v.put(key,true)
     for(key in arrayOf("peer_frame_import_count","peer_present_count"))v.put(key,0)
+    if(identity!=null)for(key in arrayOf("app_process_generation","app_record_sha256","native_executor_generation","config_sha256","request_sha256","resource_target_sha256"))v.put(key,identity.get(key))
     return v.toString()
   }
   private fun action(kind: String, operation: String, sequence: Int) = MediaOwnerAction.parse(

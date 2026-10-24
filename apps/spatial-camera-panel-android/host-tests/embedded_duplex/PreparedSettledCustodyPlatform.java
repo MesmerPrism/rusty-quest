@@ -63,22 +63,27 @@ class EmbeddedDuplexFreshPhaseArchive {
 class EmbeddedDuplexIncomingFreshPhases {static void id(String id){if(!id.matches("[0-9a-f]{32}"))throw new IllegalArgumentException();}}
 
 class EmbeddedDuplexResources {
+    interface LifecycleHooks {
+        JSONObject prepare(String id)throws Exception;JSONObject renderer(String id,boolean released);
+        boolean opened();boolean terminal();void retire(String id);
+    }
+    static LifecycleHooks lifecycle;
     boolean terminal,retired,opened;String rendererId;
     JSONObject preparationTarget(String config){return new JSONObject().put("own_capture_selected",true);}
     String preparationTargetSha256(String config){return "sha256:"+"c".repeat(64);}
     long generation(){return 73;}
     JSONObject prepareSender(BooleanSupplier stop){return new JSONObject().put("modeled_format",true);}
-    boolean preparedSenderClosed(){return !opened;}boolean preparedDecoderClosed(){return !opened;}
+    boolean preparedSenderClosed(){return !preparedDeliveryOpened();}boolean preparedDecoderClosed(){return !preparedDeliveryOpened();}
     String preparedSenderHandle(){return "modeled.sender";}String preparedDecoderHandle(){return "modeled.decoder";}
-    boolean preparedSenderOwned(){return !terminal;}boolean preparedDecoderOwned(){return !terminal;}
+    boolean preparedSenderOwned(){return !productResourcesTerminal();}boolean preparedDecoderOwned(){return !productResourcesTerminal();}
     boolean preparedTransportConnected(){return true;}
     void finalizePreparedTransport(){}
-    boolean preparedDeliveryOpened(){return opened;}long preparedPeerDeliveryCount(){return opened?1:0;}
-    boolean productResourcesTerminal(){return terminal;}
-    JSONObject prepareDecoder(String id,JSONObject format,BooleanSupplier stop){rendererId=id;return renderer(false);}
+    boolean preparedDeliveryOpened(){return lifecycle==null?opened:lifecycle.opened();}long preparedPeerDeliveryCount(){return preparedDeliveryOpened()?1:0;}
+    boolean productResourcesTerminal(){return lifecycle==null?terminal:lifecycle.terminal();}
+    JSONObject prepareDecoder(String id,JSONObject format,BooleanSupplier stop)throws Exception{rendererId=id;return lifecycle==null?renderer(false):lifecycle.prepare(id);}
     JSONObject abortPreparedResources(String id){if(!id.equals(rendererId))throw new IllegalStateException();terminal=true;return renderer(true);}
     void requestPreparedStop(){}
     JSONObject preparedTerminalOwners(){return new JSONObject();}
-    void retireArchivedPreparedMetadata(String id){if(!terminal||!id.equals(rendererId))throw new IllegalStateException();retired=true;}
-    JSONObject renderer(boolean released){return PreparedSettledCustodyHost.renderer(rendererId,released);}
+    void retireArchivedPreparedMetadata(String id){if(!productResourcesTerminal()||!id.equals(rendererId))throw new IllegalStateException();if(lifecycle!=null)lifecycle.retire(id);retired=true;}
+    JSONObject renderer(boolean released){return lifecycle==null?PreparedSettledCustodyHost.renderer(rendererId,released):lifecycle.renderer(rendererId,released);}
 }

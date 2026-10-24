@@ -1401,3 +1401,38 @@ ordinary ACK/compaction path without claiming native settled custody. Publicatio
 requires an actual native actor; prepared SDK success always requires that proof
 and refuses missing or malformed native identity. All successful compactions
 still require the actual worker, callback, command-stage and outbound joins.
+
+
+## Incoming fresh-setup Stop epochs across completed lifetimes
+
+An incoming desired Stop belongs to its actual setup lifetime. A completed,
+independent successor stages only after Native selects the exact completed old
+request and a different new request. The Java staging permit is bound to those
+IDs, the current verified endpoint request span and the observed Stop sequence.
+Old handlers must be terminal. Staging does not reset Stop, join a new phase,
+retire a resource or grant authority.
+
+The initial-only physical read may use that exact permit while old metadata is
+archived. The existing durable completed-phase archive and joined-task checks
+still run before the initial bind replaces the old group. That bind alone retires
+the old Stop latch. A concurrent Stop changes the sequence and refuses the bind;
+a whole-app Stop remains fenced. Registered and outbound calls consequently use
+the new lifetime only after this earned handoff. Failed archives, old UNKNOWN
+phases, live tasks, changed IDs or request spans never acquire this permission.
+No mutex spans JNI, network exchange, filesystem persistence or a wait.
+
+`Test-IncomingPhysicalBindingHost.py` exercises the exact callback bodies, whole
+incoming phase owner, completed-successor Native function, preserved physical
+guards and the JavaBridge method/descriptor against real Android/JNI APIs.
+`Test-FreshPairLifecycleHost.py` additionally connects real Original/Future/ACK
+custody, prepared SDK holder/archive, incoming phase archive, Receiver, Display
+and routing owners in one JVM: first setup, SDK, Start, ordinary Stop, distinct
+SDK, fresh Pair handoff and second Start. The SDK resource callbacks drive the
+real receiver owners; they do not manufacture terminal fields. Failed Stop,
+concurrent Stop and phase fsync failure variants refuse later lifetimes. Android
+fence/directory operations, JNI setup and authority receipts, codec/renderer
+resources and network I/O are declared primitive models. The Native function
+and JavaBridge API checks are separate from that JVM scenario: no real
+cross-language JNI execution, Manifold signing, headset media or pixels are
+claimed. The earlier two-lifetime baseline retained a still-current Pair; it
+never established this expired-Pair successor path.

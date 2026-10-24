@@ -1837,10 +1837,11 @@ fn stage_completed_successor(host: &Host, id: &str, session: &str) -> Result<boo
         .fresh
         .active
         .as_ref()
-        .is_some_and(|a| a.completed);
-    if !completed {
+        .filter(|a| a.completed)
+        .map(|a| a.id.clone());
+    let Some(old_id) = completed else {
         return Ok(false);
-    }
+    };
     if state(host)?
         .fresh
         .active
@@ -1851,7 +1852,7 @@ fn stage_completed_successor(host: &Host, id: &str, session: &str) -> Result<boo
     }
     if host.local_peer_id > host.remote_peer_id {
         host.callbacks
-            .assert_incoming_fresh_setup_initial_allowed(id, id)?;
+            .stage_incoming_completed_fresh_setup_successor(&old_id, id)?;
     }
     let physical = physical_observation(host, id, id, IncomingPhysicalScope::Initial)?;
     validate_physical(
@@ -1902,7 +1903,7 @@ fn stage_completed_successor(host: &Host, id: &str, session: &str) -> Result<boo
             .fresh
             .active
             .as_ref()
-            .filter(|a| a.completed)
+            .filter(|a| a.completed && a.id == old_id)
             .ok_or("completed Native phase changed")?;
         if !s.fresh.reservation.as_ref().is_some_and(|r| r.id == old.id) {
             return Err("completed reservation original missing".into());

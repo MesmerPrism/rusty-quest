@@ -189,9 +189,12 @@ final class EmbeddedDuplexPlatform {
     /** Native calls this only after authenticating the exact new initial frame. */
     public String freshSetupInitialPhysicalEligibilityJson(String nativeId,String phaseId)throws Exception{
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
-            requireIncomingPhysicalObservation();assertIncomingFreshSetupInitialAllowed(nativeId,phaseId);
+            requireProcessCallback();EmbeddedDuplexProcessHost.requireIncomingFreshActor(this);
+            if(EmbeddedDuplexOriginals.capture()!=null)throw new IllegalStateException("incoming initial observation has operator");
+            assertIncomingFreshSetupInitialAllowed(nativeId,phaseId);
             JSONObject binding=new JSONObject().put("kind","incoming_fresh_setup").put("native_request_id",nativeId);
-            return EmbeddedDuplexProcessHost.freshPhysical(this,binding,false).toString();
+            String result=EmbeddedDuplexProcessHost.freshPhysical(this,binding,false).toString();
+            assertIncomingFreshSetupInitialAllowed(nativeId,phaseId);return result;
         }
     }
     /** Existing registered current/pending phase and exact endpoint task only. */
@@ -518,13 +521,50 @@ final class EmbeddedDuplexPlatform {
     private volatile String incomingFreshRequestId;
     private volatile boolean incomingFreshDesiredStop;
     private final EmbeddedDuplexIncomingFreshPhases incomingPhases=new EmbeddedDuplexIncomingFreshPhases();
+    private long incomingFreshStopSequence;
+    private boolean incomingFreshWholeStop;
+    private static final class IncomingFreshSuccessor {
+        final String oldId,newId;final long stopSequence;final OwnerDispatchTcpEndpoint.RequestSpan span;
+        IncomingFreshSuccessor(String oldId,String newId,long sequence,OwnerDispatchTcpEndpoint.RequestSpan span){
+            this.oldId=oldId;this.newId=newId;stopSequence=sequence;this.span=span;
+        }
+    }
+    private IncomingFreshSuccessor incomingFreshSuccessor;
+    /** Native's actual completed-prior gate stages this exact new request.
+     * No phase joins, Stop reset, archive or external effect occurs here. */
+    public void stageIncomingCompletedFreshSetupSuccessor(String oldId,String newId)throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();EmbeddedDuplexProcessHost.requireIncomingFreshActor(this);
+            EmbeddedDuplexIncomingFreshPhases.id(oldId);EmbeddedDuplexIncomingFreshPhases.id(newId);
+            OwnerDispatchTcpEndpoint.RequestSpan span=OwnerDispatchTcpEndpoint.currentRequestSpan();
+            synchronized(this){
+                if(EmbeddedDuplexOriginals.capture()!=null || endpoint==null || !endpoint.ownsRequestSpan(span)
+                        ||oldId.equals(newId)||!oldId.equals(incomingFreshRequestId)||!oldId.equals(incomingPhases.currentNativeId())
+                        ||!incomingPhases.allTerminal(oldId)||incomingFreshWholeStop||incomingFreshStopSequence==Long.MAX_VALUE)
+                    throw new IllegalStateException("actual completed incoming successor boundary differs");
+                if(incomingFreshSuccessor!=null){
+                    if(!initialSuccessorAllowed(newId,newId,span))throw new IllegalStateException("incoming successor staging already retained");
+                }else incomingFreshSuccessor=new IncomingFreshSuccessor(oldId,newId,incomingFreshStopSequence,span);
+            }
+        }
+    }
+    private boolean initialSuccessorAllowed(String nativeId,String phaseId,OwnerDispatchTcpEndpoint.RequestSpan span){
+        IncomingFreshSuccessor held=incomingFreshSuccessor;
+        return held!=null&&held.span==span&&endpoint!=null&&endpoint.ownsRequestSpan(span)&&nativeId.equals(phaseId)
+            &&held.newId.equals(nativeId)&&held.oldId.equals(incomingFreshRequestId)&&held.oldId.equals(incomingPhases.currentNativeId())
+            &&incomingPhases.allTerminal(held.oldId)&&!incomingFreshWholeStop&&held.stopSequence==incomingFreshStopSequence
+            &&incomingFreshStopSequence!=Long.MAX_VALUE;
+    }
     public void assertIncomingFreshSetupInitialAllowed(String nativeId,String phaseId)throws Exception{
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
             requireProcessCallback();EmbeddedDuplexProcessHost.requireIncomingFreshActor(this);
             EmbeddedDuplexIncomingFreshPhases.id(nativeId);EmbeddedDuplexIncomingFreshPhases.id(phaseId);
             OwnerDispatchTcpEndpoint.RequestSpan actual=OwnerDispatchTcpEndpoint.currentRequestSpan();
             if(endpoint==null || !endpoint.ownsRequestSpan(actual))throw new IllegalStateException("actual verified initial request span absent");
-            if(!nativeId.equals(phaseId) || incomingFreshDesiredStop)throw new IllegalStateException("actual initial phase/Stop differs");
+            synchronized(this){
+                if(!nativeId.equals(phaseId) || incomingFreshDesiredStop&&!initialSuccessorAllowed(nativeId,phaseId,actual))
+                    throw new IllegalStateException("actual initial phase/Stop differs");
+            }
             if(new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application())
                     .archivedIncoming(nativeId,phaseId,EmbeddedDuplexProcessHost.freshClosureIdentity(this)))
                 throw new IllegalStateException("actual archived incoming initial cannot mutate history");
@@ -535,19 +575,27 @@ final class EmbeddedDuplexPlatform {
     public void bindIncomingFreshSetupPhase(String nativeId,String priorPhaseId,String phaseId,String purpose)throws Exception{
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
             requireProcessCallback();EmbeddedDuplexProcessHost.requireIncomingFreshActor(this);
-            if(incomingFreshDesiredStop)throw new IllegalStateException("actual incoming fresh desired Stop");
             if("initial".equals(purpose) && new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application())
                     .archivedIncoming(nativeId,phaseId,EmbeddedDuplexProcessHost.freshClosureIdentity(this)))
                 throw new IllegalStateException("actual archived incoming initial phase cannot replay");
             if("initial_preparation".equals(purpose) && new EmbeddedDuplexFreshPhaseArchive(EmbeddedDuplexProcessHost.application())
                     .archivedIncoming(nativeId,nativeId,EmbeddedDuplexProcessHost.freshClosureIdentity(this)))
                 throw new IllegalStateException("archived first preparation root cannot replay");
-            incomingPhases.bind(endpoint,nativeId,priorPhaseId,phaseId,purpose);incomingFreshRequestId=nativeId;
+            synchronized(this){
+                boolean successor="initial".equals(purpose)&&incomingFreshRequestId!=null&&!nativeId.equals(incomingFreshRequestId);
+                if(successor?!initialSuccessorAllowed(nativeId,phaseId,OwnerDispatchTcpEndpoint.currentRequestSpan()):incomingFreshDesiredStop)
+                    throw new IllegalStateException("actual incoming fresh desired Stop or successor changed");
+                // Existing owner still requires terminal old tasks and their
+                // durable completed archive before replacing the old group.
+                incomingPhases.bind(endpoint,nativeId,priorPhaseId,phaseId,purpose);incomingFreshRequestId=nativeId;
+                if(successor){incomingFreshDesiredStop=false;incomingFreshSuccessor=null;}
+            }
         }
     }
-    void requestIncomingFreshStop(){
+    void requestIncomingFreshStop(boolean whole){
         String actual;
-        synchronized(this){incomingFreshDesiredStop=true;actual=incomingFreshRequestId;}
+        synchronized(this){incomingFreshDesiredStop=true;incomingFreshWholeStop|=whole;
+            if(incomingFreshStopSequence!=Long.MAX_VALUE)incomingFreshStopSequence++;actual=incomingFreshRequestId;}
         try{if(actual!=null)EmbeddedDuplexNative.requestFreshSetupStop(actual);}catch(Throwable retained){EmbeddedDuplexOperationDiagnostics.observe("cleanup","fresh_setup","incoming_desired_stop_native",retained);}
         finally{for(java.util.Map.Entry<OwnerDispatchTcpEndpoint.ExchangeControl,OwnedExchange> entry:ownedExchanges.entrySet()){
             OwnedExchange held=entry.getValue();
