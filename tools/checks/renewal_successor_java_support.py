@@ -205,7 +205,32 @@ public class OwnStereoCaptureRuntime {
     kt.append(write('EmbeddedDuplexOperatorResponses.kt', package + 'import android.os.Bundle\nobject EmbeddedDuplexOperatorResponses {\n'
                     + item(responses, 'private fun Bundle.header(') + '\n'
                     + item(responses, '@JvmStatic fun pairBundle(') + '\n}\n'))
-    sources = [*production, fixture_java, *kt[1:], j / 'EmbeddedDuplexProcessHost.java', j / 'EmbeddedDuplexPlatform.java',
+    qualification_source = j / 'ConcurrentStereoQualification.kt'
+    qualification = qualification_source.read_text(encoding='utf-8')
+    # Exact production lifecycle + receipt bodies; ARM/native snapshot is a
+    # declared model here, not an installed qualification/Pixel observation.
+    kt.append(write('RenewalLifecycleBoundary.kt', package + '''
+import org.json.JSONObject
+import org.json.JSONArray
+object RenewalLifecycleBoundary {
+ private var challenge:String?=null;private var processEpoch:String?=null
+ private var runtimeConfig:String?=null;private var featureLock:String?=null;private var installedApk:String?=null
+ private var arm=1L;private var nativeProcess=1L
+ private object StereoBankControls {
+  fun challengeWords(value:String)=longArrayOf(0L,0L)
+  fun concurrentQualification()=LongArray(160).also { it[2]=nativeProcess;it[5]=arm;it[6]=1L }
+ }
+ @JvmStatic fun validate(raw:String,actor:JSONObject):JSONObject {
+  challenge="0".repeat(32);processEpoch="fixture.arm";runtimeConfig=actor.getString("config_sha256")
+  featureLock="c".repeat(64);installedApk="d".repeat(64);nativeProcess=actor.getLong("native_executor_generation")
+  val wrapped=lifecycle("peer_status",challenge!!,processEpoch!!,runtimeConfig!!,featureLock!!,installedApk!!,raw)
+  EmbeddedDuplexFreshLifecycle.require(JSONObject(raw))
+  return JSONObject().put("validated",true).put("native_utf8_bytes",raw.toByteArray(Charsets.UTF_8).size)
+    .put("native_utf16_characters",raw.length).put("wrapped_utf8_bytes",wrapped.toByteArray(Charsets.UTF_8).size)
+    .put("scope","exact production lifecycle/receipt bodies; modeled ARM/snapshot, no JNI or pixels")
+ }
+''' + item(qualification,'@JvmStatic fun lifecycle(') + '\n' + item(qualification,'private fun receipt(') + '\n}\n'))
+    sources = [*production, fixture_java, *kt[1:], qualification_source, j / 'EmbeddedDuplexProcessHost.java', j / 'EmbeddedDuplexPlatform.java',
                j / 'EmbeddedDuplexProcessFence.java', j / 'EmbeddedDuplexFreshHandoffStore.java', j / 'EmbeddedDuplexOperatorResponses.kt', fixtures / 'PreparedSettledCustodyPlatform.java', owner_test, boundary_owner, Path(__file__)]
     before = [pin(path) for path in sources]
     cp = os.pathsep.join([str(classes), str(support), json_jar, *libs, *compilers])

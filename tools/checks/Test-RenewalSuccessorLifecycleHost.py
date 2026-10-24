@@ -68,17 +68,26 @@ def jni_leaves(text):
             elif name == 'current_executor_generation':
                 replacement = 'self.capability.require_live()?;Ok(self.capability.generation)'
             elif name == 'persist_replay':
-                replacement = 'self.capability.require_live()?;super::runtime_host::fixture::persist(self.peer,method,&snapshot_json)'
+                original=body[brace+1:stop-1]
+                prefix=original[:original.index('let mut env =')]
+                replacement = prefix+'self.capability.require_live()?;super::runtime_host::fixture::persist(self.peer,method,&snapshot_json)'
             elif name == 'current_operator_original_id':
                 replacement = 'super::runtime_host::fixture::original(self.peer)'
             elif name == 'sign_callback':
-                replacement = '''use ed25519_dalek::Signer;if message.is_empty()||message.len()>MAX_AUTHORITY_SIGNING_BYTES{return Err("fixture signing bounds".into())}Ok(ed25519_dalek::SigningKey::from_bytes(&[41+self.peer as u8;32]).sign(message).to_bytes())'''
+                original=body[brace+1:stop-1]
+                # Keep the actual production pre-JNI guard/error byte-for-byte.
+                guard=original[:original.index('let mut env =')]
+                replacement = '''super::runtime_host::fixture::signing_boundary(self.peer,method,message,MAX_AUTHORITY_SIGNING_BYTES);'''+guard+'''use ed25519_dalek::Signer;Ok(ed25519_dalek::SigningKey::from_bytes(&[41+self.peer as u8;32]).sign(message).to_bytes())'''
             elif name == 'fresh_closure_callback':
-                replacement = '''if method=="persistManifoldFreshHistoryArchive"{super::runtime_host::fixture::history_ack(self.peer,input)}else{super::runtime_host::fixture::java(self.peer,method,serde_json::json!({"input":input}))}'''
+                original=body[brace+1:stop-1]
+                prefix=original[:original.index('let mut env =')]
+                replacement = prefix+'''let value=if method=="persistManifoldFreshHistoryArchive"{super::runtime_host::fixture::history_ack(self.peer,input)?}else{super::runtime_host::fixture::java(self.peer,method,serde_json::json!({"input":input}))?};let text=serde_json::to_string(&value).map_err(|_|"fresh closure callback result JSON")?;if text.len()>128*1024{return Err("fresh closure callback result bounds".into())}Ok(value)'''
             elif name == 'prepared_readonly_callback':
                 replacement = 'super::runtime_host::fixture::java(self.peer,method,serde_json::json!({}))'
             elif name == 'exchange':
-                replacement = '''if request_frame.is_empty()||request_frame.len()>MAX_OWNER_FRAME_BYTES||max_response_bytes==0||max_response_bytes>MAX_OWNER_FRAME_BYTES{return Err("java_bridge.exchange_input_bounds".into())}let result=super::runtime_host::fixture::exchange(self.peer,request_frame)?;if result.len()>max_response_bytes{return Err("fixture response bounds".into())}Ok(result)'''
+                original=body[brace+1:stop-1]
+                prefix=original[:original.index('let mut env =')]
+                replacement = prefix+'''let bytes=super::runtime_host::fixture::exchange(self.peer,request_frame)?;if bytes.is_empty() || bytes.len()>max_response_bytes{return Err("java_bridge.exchange_output_bounds".to_owned())}Ok(bytes)'''
             elif name == 'owner_failure_diagnostic':
                 replacement = 'Err("modeled platform diagnostic unavailable".into())'
             elif name == 'owner_transport_attempt_read':
@@ -99,7 +108,9 @@ def jni_leaves(text):
                 check=original[:original.index('let mut env =')] if 'let mut env =' in original else 'self.capability.require_live()?;'
                 replacement = check+'Ok(())'
             elif name == 'execute_json_callback':
-                replacement = 'super::runtime_host::fixture::execute(self.peer,ticket,compensate)'
+                original=body[brace+1:stop-1]
+                prefix=original[:original.index('let mut env =')]
+                replacement = prefix+'super::runtime_host::fixture::execute(self.peer,ticket,compensate)'
             elif name == 'activate':
                 replacement = '''Ok(ProductActivationReadback{schema_id:"rusty.quest.android.media.product_activation_readback.v1".into(),activation_id:activation_id.into(),route_grant_id:authority.route_grant_id.clone(),resulting_state_revision:1,activated:true})'''
             elif name in ['load_cleanup_preparations','load_retained_cleanup_replay','persist_cleanup_preparations','commit','sign','sign_validated_common_lan','sign_validated_fresh_pair_setup','sign_validated_fresh_phase_prepare','sign_fresh_setup_frame','sign_pair_ceremony','sign_prepared_start_frame','finalize_prepared_transport','prepare_sender','verify_sender','prepare_decoder','verify_decoder','prepared_registry_status','archive_completed_prepared_start','archive_completed_peer_lifetime','archive_fresh_setup_phase','execute_and_verify','execute_and_verify_java','prepared_start_eligibility','peer_start_resource_target','fresh_setup_initial_physical','fresh_setup_registered_physical','fresh_setup_preparation_physical','persist_manifold_fresh_history_archive','complete_fresh_setup_continuation_handoff','complete_incoming_fresh_setup_handoff']:
@@ -131,9 +142,18 @@ def source_item(text, signature):
 
 
 def connected_scenario(root,out,executable,args,expected_red):
+    scenario_started=time.monotonic()
     helper_path=root/'tools/checks/renewal_successor_java_support.py'
     spec=importlib.util.spec_from_file_location('renewal_java_owner',helper_path)
     helper=importlib.util.module_from_spec(spec);spec.loader.exec_module(helper)
+    consumer=None
+    if args.projection_consumer:
+        consumer_path=pathlib.Path(args.projection_consumer).resolve()
+        consumer_spec=importlib.util.spec_from_file_location('actual_renewal_consumer',consumer_path)
+        consumer=importlib.util.module_from_spec(consumer_spec);consumer_spec.loader.exec_module(consumer)
+        (out/'ACTUAL_PROJECTION_CONSUMER.json').write_text(json.dumps({'path':str(consumer_path),
+            'bytes':consumer_path.stat().st_size,'sha256':hashlib.sha256(consumer_path.read_bytes()).hexdigest()},indent=2)+'\n')
+
     if args.java_build:
         selected=pathlib.Path(args.java_build).resolve();selected.relative_to(root/'target')
         built=json.loads(selected.read_text())
@@ -217,6 +237,28 @@ def connected_scenario(root,out,executable,args,expected_red):
         result=peers[peer].call('operation_ack',{'original_id':original,'consumer_sha256':hashlib.sha256(encoded).hexdigest()})
         assert result['retention']=='compacted'and result['effect_state']=='settled',result
         return result
+    def qualify_exports(peer,value,original):
+        if consumer is None:raise ValueError('Actual selected Python projection consumer required')
+        expanded=consumer.expand_receipt(value)
+        proofs=[]
+        for wire in value.get('renewal_receipts',[]):
+            restored=consumer.expand_renewal(wire)
+            actual=require(commands([(peer,'projection_roundtrip',original,{'wire':wire})]))[peer]
+            assert actual['full_retained_equal']is True and restored==actual['full'],actual
+            proofs.append(actual)
+            if wire.get('$schema')=='rusty.quest.concurrent.authority_renewal_projection.v1':
+                import copy
+                for kind in ['hash','reference','version']:
+                    wrong=copy.deepcopy(wire)
+                    if kind=='hash':wrong['receipt_sha256']='sha256:'+'0'*64
+                    elif kind=='reference':wrong['receipt']['continuation_checkpoint']['baseline']={'$schema':'rusty.quest.concurrent.media_authority_reference.v99'}
+                    else:wrong['$schema']='rusty.quest.concurrent.authority_renewal_projection.v99'
+                    try:consumer.expand_renewal(wrong)
+                    except (ValueError,KeyError,TypeError):pass
+                    else:raise AssertionError('Actual consumer accepted malformed '+kind)
+                    refused=commands([(peer,'projection_roundtrip',original,{'wire':wrong})])[peer]
+                    assert 'error'in refused,refused
+        return {'expanded':expanded,'actual_full_roundtrips':proofs}
     stages=[]
     try:
         ready=event(time.monotonic()+20);assert ready['kind']=='ready',ready
@@ -264,67 +306,145 @@ def connected_scenario(root,out,executable,args,expected_red):
             controls=require(commands([('W','controls',stops['W'],{'session':pair['session_id']})]))['W']
             assert controls['pair']['actual_state_preserved']and controls['lifetime']['actual_state_preserved'],controls
             (out/'NEGATIVE_CONTROLS.json').write_text(json.dumps(controls,indent=2)+'\n')
-        second={p:begin(p,'prepare_peer_start',9+i)for i,p in enumerate(peers)}
-        prepared=require(commands([(p,'sdk',second[p],{})for p in peers]));stages.append('actual_second_sdk_and_archive')
-        for p in peers:
-            assert prepared[p]['state']=='ready'and prepared[p]['preparation_id']!=sdk[p]['preparation_id'],prepared[p]
-            complete(p,second[p],'prepare_peer_start',prepared[p],sdk=True);ack(p,second[p],prepared[p],'second-sdk')
-        retained=renewal_states['W']['actual_pair_state']['renewal']['result']
-        expiry=max(renewed['authority_projection']['expires_at_ms'],
-                   retained['local_session_renewal']['expires_at_ms'],
-                   retained['remote_session_renewal']['expires_at_ms'])
-        require(commands([('Q','advance',second['Q'],{'wall_ms':expiry+1})]))
-        before_successor=require(commands([(p,'snapshot',second[p],{})for p in peers]))
-        next_pair=begin('Q','pair_session',11)
-        successor=commands([('Q','pair',next_pair,{})])['Q']
-        if expected_red:
-            assert 'fresh setup cannot replace a retained renewal' in str(successor),successor
-            return {'reproduced_retained_renewal':True,'stages':stages,'successor':successor,'trace':trace}
-        if mode in ['archive-refusal','state-drift','concurrent-stop']:
-            assert 'error'in successor,successor
-            after=require(commands([('W','snapshot',second['W'],{})]))['W']
-            prior=before_successor['W']['actual_pair_state'];current=after['actual_pair_state']
-            assert current['renewal']['id']==prior['renewal']['id']and current['renewal']['replies']==prior['renewal']['replies']
-            assert current['renewal_ledger']==prior['renewal_ledger']and current['fresh']['history']==prior['fresh']['history']
-            if mode=='concurrent-stop':assert 'Stop'in successor['error'],successor
-            (out/'REFUSAL_STATE.json').write_text(json.dumps({'before':before_successor['W'],'after':after},indent=2)+'\n')
-            return {'passed':True,'expected_refusal':mode,'stages':stages,'successor':successor,'trace':trace,
-                    'limit':'No successor completion/ACK or second Start; partial durable custody is preserved, never rolled back'}
-        assert 'error'not in successor,successor
-        assert successor['session_id']!=pair['session_id'],'Fresh successor reused still-current prior Pair'
-        complete('Q',next_pair,'pair_session',successor);ack('Q',next_pair,successor,'successor-pair')
-        after_successor=require(commands([(p,'snapshot',next_pair if p=='Q'else second[p],{})for p in peers]))
-        (out/'AFTER_SUCCESSOR_ACTUAL_STATE.json').write_text(json.dumps(after_successor,indent=2)+'\n')
-        assert after_successor['W']['actual_pair_state']['renewal']==renewal_states['Q']['actual_pair_state']['renewal']
-        assert after_successor['W']['actual_pair_state']['renewal_ledger']['ongoing_next']==renewal_states['W']['actual_pair_state']['renewal_ledger']['ongoing_next']+1
-        archives=[json.loads(row['payload']['input'])for row in trace if row.get('kind')=='callback'
-                  and row.get('peer')=='W'and row.get('method')=='archiveFreshSetupPhase']
-        assert len(archives)==1,archives
-        transferred=archives[0]['phase_state']['completed_renewal_custody']
-        assert transferred['renewal_state']==renewal_states['W']['actual_pair_state']['renewal']
-        assert transferred['provider_join']['terminal_lifetime']==dict(kind='normal_peer_stop',original_id=stops['W'],receipt=stopped['W'])
-        replay=require(commands([('Q','replay_renewal',next_pair,{})]))['Q']
-        assert 'rejected'in replay,replay
-        stages.append('actual_expired_pair_successor')
-        second_starts={p:begin(p,'start',12+i)for i,p in enumerate(peers)}
-        active=require(commands([(p,'start',second_starts[p],{})for p in peers]));stages.append('actual_second_start')
-        for p in peers:
-            assert active[p]['status']=='active',active[p]
-            complete(p,second_starts[p],'start',active[p])
-        final_stops={p:begin(p,'peer_stop',14+i)for i,p in enumerate(peers)}
-        terminal=require(commands([(p,'stop',final_stops[p],{})for p in peers]));stages.append('actual_second_normal_stop')
-        for p in peers:
-            assert terminal[p]['status']=='terminal'and len(terminal[p]['media_stop_effect_receipt']['owner_receipt_ids'])==7,terminal[p]
-            complete(p,final_stops[p],'peer_stop',terminal[p]);ack(p,final_stops[p],terminal[p],'second-stop')
-            ack(p,second_starts[p],active[p],'second-start-after-stop')
+        for lifetime in range(2,4):
+            cycle_trace=len(trace)
+            base=9+(lifetime-2)*8
+            second={p:begin(p,'prepare_peer_start',base+i)for i,p in enumerate(peers)}
+            prepared=require(commands([(p,'sdk',second[p],{})for p in peers]));stages.append(f'actual_lifetime_{lifetime}_sdk_and_archive')
+            for p in peers:
+                assert prepared[p]['state']=='ready'and prepared[p]['preparation_id']!=sdk[p]['preparation_id'],prepared[p]
+                complete(p,second[p],'prepare_peer_start',prepared[p],sdk=True);ack(p,second[p],prepared[p],'second-sdk')
+            retained=renewal_states['W']['actual_pair_state']['renewal']['result']
+            expiry=max(renewed['authority_projection']['expires_at_ms'],
+                       retained['local_session_renewal']['expires_at_ms'],
+                       retained['remote_session_renewal']['expires_at_ms'])
+            require(commands([('Q','advance',second['Q'],{'wall_ms':expiry+1})]))
+            before_successor=require(commands([(p,'snapshot',second[p],{})for p in peers]))
+            next_pair=begin('Q','pair_session',base+2)
+            successor=commands([('Q','pair',next_pair,{})])['Q']
+            if expected_red:
+                assert 'fresh setup cannot replace a retained renewal' in str(successor),successor
+                return {'reproduced_retained_renewal':True,'stages':stages,'successor':successor,'trace':trace}
+            if mode in ['archive-refusal','state-drift','concurrent-stop']:
+                assert 'error'in successor,successor
+                after=require(commands([('W','snapshot',second['W'],{})]))['W']
+                prior=before_successor['W']['actual_pair_state'];current=after['actual_pair_state']
+                assert current['renewal']['id']==prior['renewal']['id']and current['renewal']['replies']==prior['renewal']['replies']
+                assert current['renewal_ledger']==prior['renewal_ledger']and current['fresh']['history']==prior['fresh']['history']
+                if mode=='concurrent-stop':assert 'Stop'in successor['error'],successor
+                (out/'REFUSAL_STATE.json').write_text(json.dumps({'before':before_successor['W'],'after':after},indent=2)+'\n')
+                return {'passed':True,'expected_refusal':mode,'stages':stages,'successor':successor,'trace':trace,
+                        'limit':'No successor completion/ACK or second Start; partial durable custody is preserved, never rolled back'}
+            assert 'error'not in successor,successor
+            assert successor['session_id']!=pair['session_id'],'Fresh successor reused still-current prior Pair'
+            complete('Q',next_pair,'pair_session',successor);ack('Q',next_pair,successor,'successor-pair')
+            after_successor=require(commands([(p,'snapshot',next_pair if p=='Q'else second[p],{})for p in peers]))
+            (out/f'LIFETIME_{lifetime}_AFTER_SUCCESSOR_ACTUAL_STATE.json').write_text(json.dumps(after_successor,indent=2)+'\n')
+            assert after_successor['W']['actual_pair_state']['renewal']==renewal_states['Q']['actual_pair_state']['renewal']
+            assert after_successor['W']['actual_pair_state']['renewal_ledger']['ongoing_next']==renewal_states['W']['actual_pair_state']['renewal_ledger']['ongoing_next']+1
+            archives=[json.loads(row['payload']['input'])for row in trace[cycle_trace:] if row.get('kind')=='callback'
+                      and row.get('peer')=='W'and row.get('method')=='archiveFreshSetupPhase']
+            assert len(archives)==1,archives
+            transferred=archives[0]['phase_state']['completed_renewal_custody']
+            assert transferred['renewal_state']==renewal_states['W']['actual_pair_state']['renewal']
+            assert transferred['provider_join']['terminal_lifetime']==dict(kind='normal_peer_stop',original_id=stops['W'],receipt=stopped['W'])
+            replay=require(commands([('Q','replay_renewal',next_pair,{})]))['Q']
+            assert 'rejected'in replay,replay
+            stages.append(f'actual_lifetime_{lifetime}_expired_pair_successor')
+            second_starts={p:begin(p,'start',base+3+i)for i,p in enumerate(peers)}
+            active=require(commands([(p,'start',second_starts[p],{})for p in peers]));stages.append(f'actual_lifetime_{lifetime}_start')
+            for p in peers:
+                assert active[p]['status']=='active',active[p]
+                complete(p,second_starts[p],'start',active[p])
+            # The same actual owners retain all first-lifetime/archive history.
+            # This step was missing from the previous connected scenario.
+            require(commands([('Q','advance',second_starts['Q'],{'wall_ms':expiry+1001})]))
+            second_renewal=begin('Q','renew_authority',base+7)
+            second_renewed=require(commands([('Q','renew',second_renewal,{})]))['Q']
+            statuses=commands([(p,'status',second_starts[p],{})for p in peers])
+            (out/f'LIFETIME_{lifetime}_RENEWAL_ACTUAL_STATE.json').write_text(json.dumps(
+                {'returned':second_renewed,'statuses':statuses},indent=2)+'\n')
+            boundaries={p:peers[p].call('lifecycle_boundary',{'receipt':statuses[p]}) for p in peers if 'error'not in statuses[p]}
+            (out/f'LIFETIME_{lifetime}_LIFECYCLE_BOUNDARIES.json').write_text(json.dumps(boundaries,indent=2)+'\n')
+            assert second_renewed['status']=='active' and second_renewed['renewal_pending']is False,second_renewed
+            assert second_renewed['current_lifetime_renewal_count']==1,second_renewed
+            require(statuses)
+            for p in peers:
+                assert boundaries[p]['validated']is True,boundaries[p]
+                assert statuses[p]['status']=='active' and statuses[p]['renewal_pending']is False,statuses[p]
+            stages.append(f'actual_lifetime_{lifetime}_coupled_renewal_and_lifecycle_boundary')
+            proof=qualify_exports('Q',second_renewed,second_renewal)
+            (out/f'LIFETIME_{lifetime}_RENEWAL_CONSUMER.json').write_text(json.dumps(proof,indent=2)+'\n')
+            complete('Q',second_renewal,'renew_authority',second_renewed)
+            (out/f'LIFETIME_{lifetime}_FIRST_RENEWAL.json').write_text(json.dumps(second_renewed,indent=2)+'\n')
+            additional=[]
+            for within in range(2,args.same_lifetime_renewals+1) if lifetime==2 else []:
+                require(commands([('Q','advance',second_starts['Q'],{'wall_ms':expiry+within*1000+1})]))
+                extra=begin('Q','renew_authority',100+within)
+                extra_result=require(commands([('Q','renew',extra,{})]))['Q']
+                assert extra_result['status']=='active' and extra_result['renewal_pending']is False,extra_result
+                assert extra_result['current_lifetime_renewal_count']==within,extra_result
+                per_renew_status=require(commands([(p,'status',second_starts[p],{})for p in peers]))
+                per_renew_java={p:peers[p].call('lifecycle_boundary',{'receipt':per_renew_status[p]})for p in peers}
+                for p in peers:
+                    assert per_renew_java[p].get('validated')is True,per_renew_java[p]
+                    qualify_exports(p,per_renew_status[p],second_starts[p])
+                (out/f'LIFETIME_{lifetime}_RENEWAL_{within}_STATUS.json').write_text(json.dumps({
+                    'actual_native_status':per_renew_status,'actual_Java_boundary':per_renew_java},indent=2)+'\n')
+                extra_proof=qualify_exports('Q',extra_result,extra)
+                (out/f'LIFETIME_{lifetime}_RENEWAL_{within}_CONSUMER.json').write_text(json.dumps(extra_proof,indent=2)+'\n')
+                complete('Q',extra,'renew_authority',extra_result)
+                additional.append((extra,extra_result))
+                second_renewed=extra_result
+            renewal_states=require(commands([(p,'snapshot',second_starts[p],{})for p in peers]))
+            duplicate=require(commands([('Q','replay_renewal',second_renewal,{})]))['Q']
+            assert duplicate.get('exact_reply')is True,duplicate
+            assert renewal_states==require(commands([(p,'snapshot',second_starts[p],{})for p in peers]))
+            capture_status=require(commands([(p,'status',second_starts[p],{})for p in peers]))
+            capture_boundary={}
+            for p in peers:
+                value=capture_status[p]
+                assert value['status']=='active'and value['renewal_pending']is False,value
+                assert value['authority_projection']['expires_at_ms']>value['observed_at_ms'],value
+                qualify_exports(p,value,second_starts[p])
+                capture_boundary[p]=peers[p].call('lifecycle_boundary',{'receipt':value})
+                assert capture_boundary[p].get('validated')is True,capture_boundary[p]
+            (out/f'LIFETIME_{lifetime}_CAPTURE_BOUNDARY.json').write_text(json.dumps({
+                'actual_statuses':capture_status,'actual_Java_validation':capture_boundary,
+                'scope':'Host-only capture admission observations; no frames, GPU counters or pixel acceptance'},indent=2)+'\n')
+            final_stops={p:begin(p,'peer_stop',base+5+i)for i,p in enumerate(peers)}
+            terminal=require(commands([(p,'stop',final_stops[p],{})for p in peers]));stages.append(f'actual_lifetime_{lifetime}_normal_stop')
+            for p in peers:
+                assert terminal[p]['status']=='terminal'and terminal[p]['termination_action']=='stop'and terminal[p]['renewal_pending']is False,terminal[p]
+                assert len(terminal[p]['media_stop_effect_receipt']['owner_receipt_ids'])==7 and terminal[p]['peer_physical_cleanup']=='terminal',terminal[p]
+                qualify_exports(p,terminal[p],final_stops[p])
+                complete(p,final_stops[p],'peer_stop',terminal[p]);ack(p,final_stops[p],terminal[p],'second-stop')
+                ack(p,second_starts[p],active[p],'second-start-after-stop')
+            ack('Q',second_renewal,json.loads((out/f'LIFETIME_{lifetime}_FIRST_RENEWAL.json').read_text()),f'lifetime-{lifetime}-renewal-after-stop')
+            for extra,extra_result in additional:ack('Q',extra,extra_result,f'lifetime-{lifetime}-extra-{extra}-renewal-after-stop')
+            stages.append(f'actual_lifetime_{lifetime}_deferred_renewal_ack')
+            sizes=[{k:v for k,v in row.items()if k not in ['message_hex','raw']}for row in trace[cycle_trace:]
+                   if row.get('kind')in ['signing_boundary','frame_boundary','frame_return','native_return_boundary']]
+            (out/f'LIFETIME_{lifetime}_COMPONENT_SIZES.json').write_text(json.dumps(sizes,indent=2)+'\n')
+            sdk,starts,stops,stopped,renewed,pair=prepared,second_starts,final_stops,terminal,second_renewed,successor
+        views=require(commands([('W','view_controls',stops['W'],{})]))['W']
+        (out/'ACTUAL_VIEW_GATE_CONTROLS.json').write_text(json.dumps(views,indent=2)+'\n')
+        assert views['actual_state_preserved']is True,views
         return {'passed':True,'stages':stages,'trace':trace}
     finally:
+        forced=False
         if native.poll()is None:
             native.stdin.close()
             try:native.wait(timeout=5)
-            except subprocess.TimeoutExpired:native.kill();native.wait(timeout=5)
-        reader.join(timeout=5);raw.close();stderr.close()
+            except subprocess.TimeoutExpired:forced=True;native.kill();native.wait(timeout=5)
+        reader.join(timeout=5)
+        (out/'NATIVE_CLOSED.json').write_text(json.dumps({'exit':native.returncode,'reaped':native.returncode is not None,
+            'stdout_eof':not reader.is_alive(),'forced_client_termination':forced},indent=2)+'\n')
+        raw.close();stderr.close()
         for peer in peers.values():peer.close()
+        (out/'SCENARIO_TIMING.json').write_text(json.dumps({'elapsed_seconds':time.monotonic()-scenario_started,
+            'requested_total_lifetimes':3,'requested_middle_lifetime_renewals':args.same_lifetime_renewals},indent=2)+'\n')
+        (out/'STAGES.json').write_text(json.dumps(stages,indent=2)+'\n')
         (out/'TRACE.json').write_text(json.dumps(trace,indent=2)+'\n')
 
 
@@ -338,6 +458,8 @@ def main():
     p.add_argument('--support-classes')
     p.add_argument('--json-jar')
     p.add_argument('--java-build')
+    p.add_argument('--same-lifetime-renewals',type=int,choices=range(2,19),default=2)
+    p.add_argument('--projection-consumer',help='Exact current host owner retained_renewal_projection.py, pure API only')
     a = p.parse_args()
     root = pathlib.Path(__file__).resolve().parents[2]
     out = pathlib.Path(a.output).resolve()
@@ -451,8 +573,11 @@ pub(super) fn fallback(_: &mut jni::JNIEnv<'_>,_:&str) {}
     for owner,filename in [('pair_renewal','renewal_successor_pair_controls.rs'),('peer_lifecycle','renewal_successor_lifetime_controls.rs')]:
         path=generated/(owner+'.rs')
         put(path,path.read_text()+'\npub(crate) mod fixture_controls{\n'+(tests/filename).read_text().replace('//!','//')+'\n}\n')
+    path=generated/'fresh_pair_setup.rs'
+    put(path,path.read_text()+'\npub(crate) mod fixture_view_controls {\n'+(tests/'renewal_successor_view_controls.rs').read_text().replace('//!','//')+'\n}\n')
     path=generated/'pair_ceremony.rs'
-    put(path,path.read_text()+'''\npub(super) fn fixture_archive_plan(host:&Host,session:&str)->Result<Option<Value>,String>{pair_renewal::completed_for_archive(host,session)}
+    put(path,path.read_text()+'''\npub(super) fn fixture_view_controls(host:&Host,frames:&[(Vec<u8>,Vec<u8>)])->Result<Value,String>{fresh_pair_setup::fixture_view_controls::run(host,frames)}
+pub(super) fn fixture_archive_plan(host:&Host,session:&str)->Result<Option<Value>,String>{pair_renewal::completed_for_archive(host,session)}
 pub(super) fn fixture_archive_controls(host:&Host,session:&str)->Result<Value,String>{pair_renewal::fixture_controls::run(host,session)}
 pub(super) fn fixture_archive_drift(host:&Host)->Result<Value,String>{pair_renewal::fixture_controls::drift(host)}
 ''')
@@ -573,7 +698,7 @@ libc="0.2"
             'source_pins':[ref(f) for f in source.glob('*.rs')],
             'scope':__doc__,'configured_lifecycle_executed':False}
     report['fixture_sources']=[ref(path)for path in [pathlib.Path(__file__).resolve(),fixture,
-        tests/'renewal_successor_pair_controls.rs',tests/'renewal_successor_lifetime_controls.rs',
+        tests/'renewal_successor_pair_controls.rs',tests/'renewal_successor_lifetime_controls.rs',tests/'renewal_successor_view_controls.rs',
         tests/'RenewalSuccessorLifecycleHost.kt',root/'tools/checks/renewal_successor_java_support.py',
         root/'docs/EMBEDDED_DUPLEX_R5_CONTINUITY.md',
         root/'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex/EmbeddedDuplexDisplayCoordinator.kt',

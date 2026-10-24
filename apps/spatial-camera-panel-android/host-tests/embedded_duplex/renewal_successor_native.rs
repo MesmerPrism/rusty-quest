@@ -27,6 +27,11 @@ static NEXT:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
 static RETURNS:OnceLock<Mutex<BTreeMap<u64,mpsc::Sender<Value>>>>=OnceLock::new();
 static FRAMES:OnceLock<Mutex<Vec<(usize,Vec<u8>,Vec<u8>)>>>=OnceLock::new();
 fn emit(value:&Value){let _hold=OUTPUT.lock().unwrap();println!("{value}");std::io::stdout().flush().unwrap();}
+pub(crate) fn signing_boundary(peer:usize,method:&str,message:&[u8],limit:usize){
+    emit(&json!({"kind":"signing_boundary","peer":if peer==0{"Q"}else{"W"},
+        "method":method,"bytes":message.len(),"limit":limit,"message_hex":hex(message),
+        "input_within_production_bounds":!message.is_empty()&&message.len()<=limit}));
+}
 pub(crate) fn java(peer:usize,method:&str,payload:Value)->Result<Value,String>{
     let id=NEXT.fetch_add(1,Ordering::SeqCst);let(tx,rx)=mpsc::channel();
     RETURNS.get_or_init(Default::default).lock().map_err(|_|"fixture reply map")?.insert(id,tx);
@@ -84,6 +89,7 @@ pub(crate) fn history_ack(peer:usize,raw:&str)->Result<Value,String>{
 }
 
 pub(crate) fn exchange(peer:usize,frame:&[u8])->Result<Vec<u8>,String>{
+    emit(&json!({"kind":"frame_boundary","peer":if peer==0{"Q"}else{"W"},"request_bytes":frame.len()}));
     let result=on(1-peer,||{
         if frame.starts_with(prepared_start::MAGIC){return prepared_start::handle_frame(frame)}
         let fresh=pair_ceremony::is_fresh_frame(frame);
@@ -99,6 +105,7 @@ pub(crate) fn exchange(peer:usize,frame:&[u8])->Result<Vec<u8>,String>{
             Checkout::take(host.activation_server.clone())?.get().handle_frame(frame)
         }else{Checkout::take(host.server.clone())?.get().handle_frame(frame)}
     });
+    emit(&json!({"kind":"frame_return","peer":if peer==0{"Q"}else{"W"},"response_bytes":result.as_ref().ok().map(Vec::len),"error":result.as_ref().err()}));
     if let Ok(response)=&result{FRAMES.get_or_init(Default::default).lock().map_err(|_|"fixture frame log")?.push((peer,frame.to_vec(),response.clone()));}
     result
 }
@@ -284,6 +291,27 @@ pub(crate) fn run()->Result<(),String>{
                             let prior={FRAMES.get_or_init(Default::default).lock().map_err(|_|"fixture frame log")?.iter().rev().find(|(from,request,_)|*from==peer&&String::from_utf8_lossy(request).contains("renew_finish_b")).cloned().ok_or("actual renewal frame absent")?};
                             return match exchange(peer,&prior.1){Ok(reply)=>Ok(json!({"exact_reply":reply==prior.2,"request_sha256":rusty_quest_broker_authority::packaged_json_sha256(&String::from_utf8_lossy(&prior.1)),"response_bytes":reply.len()})),Err(error)=>Ok(json!({"rejected":error}))}
                         }
+                        if operation=="view_controls"{
+                            let frames=FRAMES.get_or_init(Default::default).lock().map_err(|_|"fixture actual frames busy")?.iter()
+                                .filter(|(from,frame,_)|*from==0&&frame.starts_with(b"RQFS2")&&serde_json::from_slice::<Value>(&frame[5..]).ok().and_then(|v|v.pointer("/body/kind").and_then(Value::as_str).map(str::to_owned)).as_deref()==Some("view"))
+                                .map(|(_,request,response)|(request.clone(),response.clone())).collect::<Vec<_>>();
+                            let h=host()?;return pair_ceremony::fixture_view_controls(&h,&frames)
+                        }
+                        if operation=="projection_roundtrip"{
+                            let wire=input.get("wire").ok_or("fixture actual exported receipt absent")?;
+                            let full=super::renewal_projection::expand(wire)?;
+                            let h=host()?;
+                            let local=h.peer_lifecycle.lock().map_err(|_|"fixture actual lifecycle busy")?;
+                            let actual=serde_json::to_value(local.as_ref().ok_or("fixture lifecycle absent")?).map_err(safe_decode)?;
+                            let retained=actual["renewals"].as_array().ok_or("actual full renewals absent")?.iter()
+                                .find(|v|v.get("request_id")==full.get("request_id")).ok_or("actual full receipt not retained")?;
+                            if retained!=&full{return Err("decoded receipt differs from actual full retained authority".into())}
+                            let projected=super::renewal_projection::project(&full)?;
+                            if &projected!=wire{return Err("actual export does not round-trip canonically".into())}
+                            return Ok(json!({"full":full,"export":projected,"full_retained_equal":true,
+                                "full_utf8_bytes":serde_json::to_vec(retained).map_err(safe_decode)?.len(),
+                                "export_utf8_bytes":serde_json::to_vec(wire).map_err(safe_decode)?.len()}))
+                        }
                         if operation=="snapshot"{
                             let h={process().lock().map_err(|_|"fixture observed process busy")?.host.clone().ok_or("fixture observed Host absent")?};
                             h.capability.require_live()?;
@@ -306,7 +334,10 @@ pub(crate) fn run()->Result<(),String>{
                                 peer_lifecycle::operate(&mut env,match operation{"start"=>1,"renew"=>2,"stop"=>3,_=>5})?
                             },
                             _=>return Err("unsupported fixture command".into())
-                        };serde_json::from_str(&raw).map_err(safe_decode)
+                        };
+                        emit(&json!({"kind":"native_return_boundary","peer":input["peer"],"operation":operation,
+                            "utf8_bytes":raw.len(),"utf16_characters":raw.encode_utf16().count(),"raw":raw}));
+                        serde_json::from_str(&raw).map_err(safe_decode)
                     })();
                     emit(&json!({"kind":"result","id":input["id"],"peer":input["peer"],"result":match result{Ok(v)=>v,Err(e)=>{
                         let owner={process().lock().ok().and_then(|p|p.host.clone())};

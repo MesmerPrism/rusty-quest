@@ -53,6 +53,8 @@ mod operation_failure;
 mod pair_ceremony;
 #[path = "peer_lifecycle.rs"]
 mod peer_lifecycle;
+#[path = "renewal_projection.rs"]
+mod renewal_projection;
 #[path = "peer_roots.rs"]
 mod peer_roots;
 #[path = "preparation_diagnostic.rs"]

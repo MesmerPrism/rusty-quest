@@ -200,6 +200,10 @@ internal object RenewalSuccessorLifecycleHost {
         prepared(payload).holder.requireNativeStatus(receipt, true)
         complete(operation(payload), receipt)
       }
+      "lifecycle_boundary" -> {
+        keys(payload, "receipt")
+        RenewalLifecycleBoundary.validate(payload.getJSONObject("receipt").toString(), actor)
+      }
       "operation_complete" -> {
         keys(payload, "original_id", "receipt", "wrapper_action")
         val operation = operation(payload)

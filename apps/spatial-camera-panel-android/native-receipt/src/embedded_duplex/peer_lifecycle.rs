@@ -407,6 +407,10 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         && current.is_some();
     let (owner_diagnostic, owner_diagnostic_status) =
         owner_failure::diagnostic(host.callbacks.owner_failure_diagnostic());
+    let renewal_exports = state.renewals[state.renewals.len().saturating_sub(2)..]
+        .iter()
+        .map(super::renewal_projection::project)
+        .collect::<Result<Vec<_>, _>>()?;
     let mut value = json!({"$schema":"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1",
         "action":action,"config_sha256":host.config_sha256,
         "native_executor_generation":host.capability.generation,"app_process_generation":host.capability.binding.generation,
@@ -423,7 +427,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         "owner_transport_attempt":host.callbacks.owner_transport_attempt_read(),
         "authority_clock_read":state.authority_clock_read,
         "native_owner_dispatch_failure":*host.owner_dispatch_failure.lock().map_err(|_| "owner diagnostic state unavailable")?,
-        "activation":state.activation,"renewal_receipts":&state.renewals[state.renewals.len().saturating_sub(2)..],
+        "activation":state.activation,"renewal_receipts":renewal_exports,
         "renewal_total_completed":state.renewals.len(),
         "renewal_first_request_id":state.renewals.first().and_then(|receipt|receipt.get("request_id")),
         "renewal_last_request_id":state.renewals.last().and_then(|receipt|receipt.get("request_id")),
@@ -476,6 +480,12 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
                     json!(latest.get("owner_history_epochs"));
                 value["continuation"]["continuation_checkpoint"] =
                     json!(latest.get("continuation_checkpoint"));
+                if super::renewal_projection::is_projected(&super::renewal_projection::project(latest)?) {
+                    value["continuation"]["$schema"] =
+                        json!("rusty.quest.embedded_duplex.ongoing_media_projection.v3");
+                    value["continuation"]["continuation_checkpoint"] =
+                        super::renewal_projection::checkpoint_reference(latest)?;
+                }
                 value["continuation"]["generic_history_checkpointing_complete"] = json!(true);
                 value["continuation"]["partial_implementation"] = json!(false);
             }

@@ -1319,6 +1319,72 @@ pub(super) fn handle_frame(host: &Host, input: &[u8]) -> Result<Vec<u8>, String>
     }
     result
 }
+// A view precedes the two-view, content-addressed Manifold transaction. Its
+// native ceremony ID must never be queried as a transaction/absence key.
+// Instead join the signed sender view to the actual selected pair's current
+// invalidation floor. Exact active retries are handled before this gate;
+// unresolved/fenced phases and durable predecessor custody retain their own
+// guards. The eventual signed request still validates the complete preimage.
+fn require_current_view_floor(host: &Host, value: &Value) -> Result<(), String> {
+    let remote: ManifoldFreshPairSetupPeerView =
+        serde_json::from_value(value.clone()).map_err(safe_decode)?;
+    if remote.schema_id.as_str() != "rusty.manifold.peer.fresh_pair_setup_peer_view.v2"
+        || remote.local_peer_id.as_str() != host.remote_peer_id
+    {
+        return Err("fresh incoming view selected peer differs".into());
+    }
+    let snapshot: rusty_manifold_peer_runtime_host::ManifoldPeerRuntimeHostSnapshot =
+        serde_json::from_str(&host.authority.snapshot_json()?).map_err(safe_decode)?;
+    if !snapshot
+        .trust_policy
+        .fresh_setup_local_peer_id
+        .as_ref()
+        .is_some_and(|id| id.as_str() == host.local_peer_id)
+    {
+        return Err("fresh incoming view actual owner differs".into());
+    }
+    let pair = peers(host)?;
+    let floors = snapshot
+        .reciprocal_ed25519
+        .fresh_setup_fences
+        .iter()
+        .filter(|floor| floor.peer_ids == pair)
+        .collect::<Vec<_>>();
+    if floors.len() > 1 {
+        return Err("fresh incoming view actual pair floor ambiguous".into());
+    }
+    match (floors.first().copied(), remote.prior_fence.as_ref()) {
+        (Some(actual), Some(observed))
+            if observed.schema_id == actual.schema_id
+                && observed.peer_ids == pair
+                && remote.prior_setup_epoch == actual.setup_epoch
+                && observed.setup_epoch == actual.setup_epoch
+                && observed.setup_request_id == actual.setup_request_id
+                && observed.context_sha256 == actual.context_sha256 =>
+        {
+            Ok(())
+        }
+        (None, None) if remote.prior_setup_epoch == 0 => {
+            let setup = snapshot
+                .fresh_pair_setup
+                .as_ref()
+                .ok_or("fresh incoming view actual setup state absent")?;
+            // Positive actual empty-setup history, not a missing-receipt or
+            // archive-lookup absence grant. Preparation-only archives may exist.
+            if !setup.receipts.is_empty()
+                || setup
+                    .archive
+                    .as_ref()
+                    .is_some_and(|cursor| cursor.setup_receipts != 0)
+            {
+                return Err("fresh incoming view actual setup history is not pristine".into());
+            }
+            Ok(())
+        }
+        _ => Err("fresh incoming view current pair floor differs".into()),
+    }
+}
+
 fn handle_frame_inner(host: &Host, input: &[u8]) -> Result<Vec<u8>, String> {
     let b = decode(host, input)?;
     let id = b.request_id.as_str();
@@ -1358,14 +1424,7 @@ fn handle_frame_inner(host: &Host, input: &[u8]) -> Result<Vec<u8>, String> {
                     return Err("fresh original unresolved".into());
                 }
                 drop(s);
-                let transaction = serde_json::from_value(json!(id)).map_err(safe_decode)?;
-                if host
-                    .authority
-                    .current_fresh_pair_setup_receipt(&transaction)?
-                    .is_some()
-                {
-                    return Err("fresh historical request replay".into());
-                }
+                require_current_view_floor(host, &b.payload["view"])?;
                 stage_completed_successor(host, id, session)?;
                 archive_prior_completed(host).map_err(|error| {
                     record_failure(host, id, &error);

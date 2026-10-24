@@ -558,6 +558,7 @@ fn run_round(host: &Host, id: &str, phase: &str, session: &str) -> Result<(), St
             .cloned()
             .filter(|v| !v.is_null())
             .ok_or("remote actual provider renewal absent")?;
+        let provider = super::super::renewal_projection::expand(&provider)?;
         let current = state(host)?;
         let result = json!({"$schema":"rusty.quest.embedded_duplex.pair_renewal_result.v1","session_id":session,
             "renewal_id":id,"local_session_renewal":current.renewal.session_round.local_receipt,
@@ -707,8 +708,9 @@ pub(super) fn completed_for_archive(host: &Host, session: &str) -> Result<Option
     };
     super::super::peer_lifecycle::fresh_setup_eligibility(host)?;
     let (_guard,joined) = super::super::peer_lifecycle::completed_renewal_archive_guard(host,&local)?;
+    let projected_provider = super::super::renewal_projection::project(&joined["provider_renewal"])?;
     if !snapshot["replies"].as_array().is_some_and(|replies| replies.iter().any(|r|
-        r[0] == "session.renew_finish_b" && r[3]["receipt"] == local && r[3]["provider_renewal"] == joined["provider_renewal"])) {
+        r[0] == "session.renew_finish_b" && r[3]["receipt"] == local && r[3]["provider_renewal"] == projected_provider)) {
         return Err("renewal archive final reply/provider join differs".into());
     }
     Ok(Some(json!({"renewal_state":snapshot,"provider_join":joined})))
@@ -978,7 +980,7 @@ pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, Str
                 let provider =
                     super::super::peer_lifecycle::renew_after_signed_pair(host, &receipt)?;
                 state(host)?.renewal.result = Some(pair_proof);
-                provider
+                super::super::renewal_projection::project(&provider)?
             } else {
                 Value::Null
             };
