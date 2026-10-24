@@ -461,6 +461,10 @@ public final class PackedStereoMediaSourceRuntime {
         volatile PackedStereoCaptureOwner sharedCapture;
         volatile long captureConsumerGeneration;
         volatile PackedStereoEncoderWorker encoderWorker;
+        private final PipelineWaitObservation drainWaits = new PipelineWaitObservation("encoder_output",
+                () -> SystemClock.elapsedRealtimeNanos(),
+                "encoder_drain", "encoder_dequeue_output");
+        private volatile PipelineWaitObservation encoderWaits, packetWaits;
         // Sole source-thread ownership; retain the exact acquired index if its
         // release throws. No successor dequeue or EOS may guess it released.
         int pendingEncoderOutput = -1;
@@ -589,6 +593,7 @@ public final class PackedStereoMediaSourceRuntime {
                             public void onFailure(Throwable error) { onCompositorFailure(error); }
                         });
                 encoderWorker.awaitStarted();
+                encoderWaits = encoderWorker.waitObservation();
                 sharedCapture.attachEncoder(captureConsumerGeneration, encoderWorker);
             }
             state = "processor_started";
@@ -806,7 +811,7 @@ public final class PackedStereoMediaSourceRuntime {
                             releaseEncoderOutput(codec, pendingEncoderOutput);
                         } else {
                             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-                            int status = codec.dequeueOutputBuffer(info, ENCODER_DRAIN_TIMEOUT_US);
+                            int status = observedDequeue(codec, info);
                             if (status >= 0) releaseEncoderOutput(codec, status);
                         }
                     }
@@ -842,12 +847,27 @@ public final class PackedStereoMediaSourceRuntime {
             }
         }
 
+        private int observedDequeue(MediaCodec codec, MediaCodec.BufferInfo info) {
+            long operation = drainWaits.begin(1, captureConsumerGeneration, 0, 0, PipelineWaitObservation.WORK);
+            boolean success = false;
+            try {
+                int result = codec.dequeueOutputBuffer(info, ENCODER_DRAIN_TIMEOUT_US);
+                if (result >= 0) drainWaits.identity(1, operation, 0, drainWaits.ptsNs(info.presentationTimeUs));
+                success = true; return result;
+            }
+            finally { drainWaits.end(1, operation, success); }
+        }
         void drainEncoder(boolean eos) throws Exception {
+            long operation = drainWaits.begin(0, captureConsumerGeneration, 0, 0, PipelineWaitObservation.WORK);
+            boolean success = false;
+            try {
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             int emptyPolls = 0;
             while (!stopRequested || eos) {
+                drainWaits.identity(0, operation, 0, 0);
+                drainWaits.phase(0, operation, PipelineWaitObservation.WORK);
                 sourceLoopOperation = PackedSourceFailureCode.Operation.ENCODER_DEQUEUE;
-                int status = encoder.dequeueOutputBuffer(info, ENCODER_DRAIN_TIMEOUT_US);
+                int status = observedDequeue(encoder, info);
                 if (status == MediaCodec.INFO_TRY_AGAIN_LATER) {
                     if (!eos || emptyPolls++ > 50) {
                         break;
@@ -864,6 +884,7 @@ public final class PackedStereoMediaSourceRuntime {
                 Throwable processingFailure = null;
                 PackedSourceFailureCode.Operation processingOperation = sourceLoopOperation;
                 try {
+                    drainWaits.phase(0, operation, PipelineWaitObservation.GET_OUTPUT);
                     ByteBuffer buffer = encoder.getOutputBuffer(status);
                     if (buffer != null && info.size > 0) {
                         byte[] payload = new byte[info.size];
@@ -877,6 +898,8 @@ public final class PackedStereoMediaSourceRuntime {
                         if (pair == null) {
                             encodedPacketsWithoutPair++;
                         } else {
+                            drainWaits.identity(0, operation, codecConfig ? 0 : pair.pairId,
+                                    drainWaits.ptsNs(info.presentationTimeUs));
                             sourceLoopOperation = PackedSourceFailureCode.Operation.PAIR_VALIDATE;
                             pair.validate(codecConfig, layout.maxPairDeltaNs);
                             if (!codecConfig) {
@@ -890,6 +913,7 @@ public final class PackedStereoMediaSourceRuntime {
                                 cachedCodecConfigFlags = info.flags;
                             }
                             sourceLoopOperation = PackedSourceFailureCode.Operation.PACKET_OFFER;
+                            drainWaits.phase(0, operation, PipelineWaitObservation.PACKET_OFFER);
                             writePacket(
                                     info.presentationTimeUs,
                                     info.flags,
@@ -909,6 +933,7 @@ public final class PackedStereoMediaSourceRuntime {
                 } finally {
                     try {
                         sourceLoopOperation = PackedSourceFailureCode.Operation.ENCODER_RELEASE;
+                        drainWaits.phase(0, operation, PipelineWaitObservation.RELEASE_OUTPUT);
                         releaseEncoderOutput(encoder, status);
                     } catch (Throwable releaseFailure) {
                         if (processingFailure == null) throw releaseFailure;
@@ -924,6 +949,8 @@ public final class PackedStereoMediaSourceRuntime {
                     break;
                 }
             }
+            success = true;
+            } finally { drainWaits.end(0, operation, success); }
         }
 
         private static String bufferHex(ByteBuffer actual)throws Exception {
@@ -995,7 +1022,8 @@ public final class PackedStereoMediaSourceRuntime {
                     replayCodecConfig(clientOutput);
                     handshakeStage = "PUMP_PUBLICATION";
                     BoundedPacketPump pump = new BoundedPacketPump(
-                            clientOutput, 48, "rusty-packed-source-socket-pump");
+                            clientOutput, 48, "rusty-packed-source-socket-pump", () -> SystemClock.elapsedRealtimeNanos());
+                    packetWaits = pump.waitObservation();
                     synchronized (outputLock) {
                         if (stopRequested || socket != client) {
                             retiredConnection = new DetachedConnection(pump,clientOutput,client);
@@ -1177,7 +1205,8 @@ public final class PackedStereoMediaSourceRuntime {
                 ByteArrayOutputStream packet = new ByteArrayOutputStream(
                         32 + PackedStereoStreamMetadata.PAIR_EXTENSION_BYTES + payload.length);
                 writePacketTo(packet, ptsUs, flags, pair, payload, sourceElapsedNs, sourceUnixNs);
-                if (!pump.offer(packet.toByteArray())) {
+                if (!pump.offer(packet.toByteArray(), generation, codecConfig ? 0 : pair.pairId,
+                        pump.waitObservation().ptsNs(ptsUs))) {
                     throw new IOException("bounded packet pump full");
                 }
             } catch (Throwable failure) {
@@ -1472,7 +1501,15 @@ public final class PackedStereoMediaSourceRuntime {
             if (sharedCapture != null) {
                 // Telemetry is never a prerequisite for the owner readback.
                 try {
-                    json.put("own_capture_stage_diagnostic", sharedCapture.captureDiagnosticSnapshot());
+                    JSONObject own = sharedCapture.captureDiagnosticSnapshot();
+                    JSONObject pipeline = own.getJSONObject("pipeline_waits");
+                    pipeline.put("capture_consumer_generation", captureConsumerGeneration)
+                            .put("connection_generation", connectionGeneration);
+                    drainWaits.append(pipeline, "drain");
+                    PipelineWaitObservation currentEncoder = encoderWaits, currentPackets = packetWaits;
+                    if (currentEncoder != null) currentEncoder.append(pipeline, "encoder");
+                    if (currentPackets != null) currentPackets.append(pipeline, "packet_writer");
+                    json.put("own_capture_stage_diagnostic", own);
                 } catch (Exception ignored) { /* The existing source status remains authoritative. */ }
             }
             if (leftCamera != null) {

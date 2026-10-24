@@ -31,6 +31,10 @@ public final class PackedStereoEncoderWorker implements PackedStereoCaptureOwner
     private volatile Throwable failure;
     private volatile GlState quarantinedGl;
     private volatile PackedStereoEncoderInput quarantinedInput;
+    private final PipelineWaitObservation waits = new PipelineWaitObservation("encoder_input",
+            () -> android.os.SystemClock.elapsedRealtimeNanos(),
+            "encoder_input_cycle", "encoder_make_current", "encoder_egl_swap");
+    PipelineWaitObservation waitObservation() { return waits; }
 
     public PackedStereoEncoderWorker(long generation, Surface surface, Listener listener) throws Exception {
         if (generation <= 0 || surface == null || listener == null)
@@ -58,23 +62,33 @@ public final class PackedStereoEncoderWorker implements PackedStereoCaptureOwner
         PackedStereoEncoderInput input = null;
         boolean imported = false;
         try {
-            gl = new GlState();
+            gl = new GlState(waits, generation);
             gl.initialize(surface);
             ready.countDown();
             while (!stopRequested) {
                 input = mailbox.take();
                 if (input == null) break;
                 if (stopRequested) { input.releaseUnsubmitted(); input = null; break; }
+                long operation = waits.begin(0, generation, 0, 0, PipelineWaitObservation.IMPORT);
+                waits.inputIdentity(0, operation, input);
+                boolean success = false;
+                try {
                 // Import registers pool-owned GPU retention BEFORE any possible sampling.
                 imported = true;
                 PackedStereoEncoderInput.Imported image = input.importOnCurrentContext();
                 PackedStereoPoolExecutor.PairIdentity pair = input.pair();
+                waits.identity(0, operation, pair.pairId, pair.packedPtsNs);
+                waits.phase(0, operation, PipelineWaitObservation.PAIR_REGISTER);
                 listener.onPairSubmitting(pair, pair.packedPtsNs / 1000L);
-                gl.draw(image, pair.packedPtsNs);
+                waits.phase(0, operation, PipelineWaitObservation.DRAW);
+                gl.draw(image, pair);
+                waits.phase(0, operation, PipelineWaitObservation.FENCE);
                 input.finishAfterSubmission();
                 // Do not take another input until actual fence retirement and same-context import teardown.
                 while (!input.pollRetired()) pause();
                 imported = false; input = null;
+                success = true;
+                } finally { waits.end(0, operation, success); }
             }
         } catch (Throwable error) {
             failure = error;
@@ -110,13 +124,16 @@ public final class PackedStereoEncoderWorker implements PackedStereoCaptureOwner
     }
 
     private static final class GlState {
+        final PipelineWaitObservation waits;
+        final long generation;
         final EGLDisplay display;
         EGLContext context = EGL14.EGL_NO_CONTEXT;
         EGLSurface window = EGL14.EGL_NO_SURFACE;
         int program;
         final FloatBuffer vertices = ByteBuffer.allocateDirect(16 * 4).order(ByteOrder.nativeOrder())
                 .asFloatBuffer().put(new float[] {-1,-1,0,0, 1,-1,1,0, -1,1,0,1, 1,1,1,1});
-        GlState() {
+        GlState(PipelineWaitObservation waits, long generation) {
+            this.waits = waits; this.generation = generation;
             display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
             require(display != EGL14.EGL_NO_DISPLAY, "encoder EGL display");
         }
@@ -150,8 +167,12 @@ public final class PackedStereoEncoderWorker implements PackedStereoCaptureOwner
                     require(linked[0] != 0, "encoder GL link");
                 } finally { GLES20.glDeleteShader(vertex); if (fragment != 0) GLES20.glDeleteShader(fragment); }
         }
-        void draw(PackedStereoEncoderInput.Imported image, long ptsNs) {
-            require(EGL14.eglMakeCurrent(display, window, window, context), "encoder EGL current");
+        void draw(PackedStereoEncoderInput.Imported image, PackedStereoPoolExecutor.PairIdentity pair) {
+            long ptsNs = pair.packedPtsNs;
+            long operation = waits.begin(1, generation, pair.pairId, ptsNs, PipelineWaitObservation.WORK);
+            boolean success = false;
+            try { require(EGL14.eglMakeCurrent(display, window, window, context), "encoder EGL current"); success = true; }
+            finally { waits.end(1, operation, success); }
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
             GLES20.glViewport(0, 0, image.width, image.height);
             GLES20.glDisable(GLES20.GL_BLEND);
@@ -166,7 +187,10 @@ public final class PackedStereoEncoderWorker implements PackedStereoCaptureOwner
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
             require(GLES20.glGetError() == GLES20.GL_NO_ERROR, "encoder packed sampling");
             require(EGLExt.eglPresentationTimeANDROID(display, window, ptsNs), "encoder PTS");
-            require(EGL14.eglSwapBuffers(display, window), "encoder surface submission");
+            operation = waits.begin(2, generation, pair.pairId, ptsNs, PipelineWaitObservation.WORK);
+            success = false;
+            try { require(EGL14.eglSwapBuffers(display, window), "encoder surface submission"); success = true; }
+            finally { waits.end(2, operation, success); }
         }
         static int shader(int type, String source) {
             int shader = GLES20.glCreateShader(type);

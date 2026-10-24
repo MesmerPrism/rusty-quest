@@ -89,6 +89,72 @@ sensor timestamps survive encoding and decoding; an allocation handle alone
 is not a frame identity. Whole-capture shutdown keeps the capture context
 alive until actual camera closure and all retained consumers retire.
 
+### Packed pipeline wait diagnostics
+
+The existing debug Own-capture observation can include
+`own_capture_stage.pipeline_waits` (`rusty.quest.media.pipeline_waits.v1`).
+This is a bounded timing observation, with `qualification_claimed=false`.
+It does not change capture, media ownership, cleanup, the existing native
+freshness measurements, camera rate, trace tables or percentile definitions.
+The existing Own wrapper still refuses an entire body exceeding 32768 bytes.
+The stream-dropout/native diagnostic route and its caps are unchanged.
+
+The fixed stages observe capture render iterations, capture makeCurrent,
+the complete pool.pollReady call, encoder offer, encoder input cycles and
+makeCurrent/EGLswap, output draining/dequeue, and packet write/flush.
+Entry precedes the relevant existing lock or platform call; finally records
+completion or failure without replacing the media result. No recorder lock
+spans a media operation, callback, clock provider, wait or JSON formatting.
+Snapshots copy primitives under their owning recorder lock, then read the
+Android elapsed clock and format outside it. Different owners are sampled
+sequentially; this is not an atomic cross-stage or native-clock join.
+
+One shared `columns` array describes every fixed `rows` table. `stages`
+identifies each row. Row values are canonical lowercase base36 strings with
+`row_encoding=nonnegative_i64_base36`; all represented values are exact
+integers between 0 and 9223372036854775807. A decoder must require strings
+matching `0|[1-9a-z][0-9a-z]*`, parse radix 36, and reject values above the
+signed 64-bit maximum. JSON numbers, booleans, floating-point values, signs,
+leading zeroes and uppercase text are unsupported row values. Root flags
+remain JSON booleans, and sample/header times remain JSON integers.
+
+Each row exports complete entered/completed/error counts and a count of
+completed operations strictly greater than 500000000 ns, plus maximum
+duration and its exact original entry/exit, pair, PTS and generation.
+Consequently a later 600 ms operation still increments the count when an
+earlier 1 s operation remains the maximum. `entry_ns>0` means the copied
+operation was in flight; its sequence is the `entered` count. An open age
+may be derived as that owner's `sample_ns-entry_ns`, with the copy-then-clock
+sampling limit above. Phase values are work 1, intentional idle 2, import 3,
+draw 4, fence 5, get-output 6, packet-offer 7, release-output 8 and pair-registration 9.
+`worst_exit_phase` is the phase at the end of that complete operation, not
+an attribution of all elapsed time to that phase. Idle time is diagnostic
+and does not redefine a camera stall or qualify media.
+
+Pair/PTS/generation zero means unknown or not applicable, never a previous
+frame substituted as the current frame. Known identities come from the
+actual encoder input, returned codec pair or queued packet. A dequeue
+waiting for a buffer has no output identity. The encoder/capture consumer
+generation and connection generation remain separate; the enclosing Own
+capture instance identifies capture lifetime. Counter overflow, invalid
+identity/PTS conversion or clock failure marks that observer unavailable;
+media execution continues with its original result. Recorder storage and
+the number of rows are fixed. Only recorder data, without worker/resource
+references, is retained for the latest stopped encoder and packet writer.
+
+The outer pool.pollReady interval includes nativePoll, native source
+publication and encoder-lease delivery. Nested encoder-offer timing can
+separate that callback portion; the remaining native/publication subleaves
+are not individually timed. These observations cannot establish a camera
+HAL cause or replace camera/device performance evidence.
+
+`tools/checks/Test-PipelineWaitObservationHost.ps1` runs exact production
+method schedules with blocked platform leaves, observer/JSON concurrency,
+lossless integer/refusal controls, actual writer controls, full API34 media
+typechecking, and actual maximum-width capture/compositor serializers
+through the unchanged Own wrapper builder. It performs no APK build or
+device execution. Passes prove the bounded host observer behavior only.
+
 Run the bounded host and source checks before Android compilation:
 
 ```powershell

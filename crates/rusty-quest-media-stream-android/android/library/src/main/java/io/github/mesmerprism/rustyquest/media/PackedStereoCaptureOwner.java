@@ -37,6 +37,8 @@ public final class PackedStereoCaptureOwner {
     private final int frameRate;
     private final PackedStereoPoolExecutor poolExecutor;
     private final long captureInstance = NEXT_CAPTURE_INSTANCE.incrementAndGet();
+    private final PipelineWaitObservation waits = new PipelineWaitObservation("capture",
+            () -> android.os.SystemClock.elapsedRealtimeNanos(), "encoder_offer");
     private final CaptureFrameTrace leftFrameTrace = new CaptureFrameTrace();
     private final CaptureFrameTrace rightFrameTrace = new CaptureFrameTrace();
     /** Observation-only epoch boundary; never changes camera requests or media state. */
@@ -359,11 +361,20 @@ public final class PackedStereoCaptureOwner {
     /** Native producer readiness transfers a SECOND content lease here. */
     public void offerEncoderFrame(PackedStereoEncoderInput frame) {
         if (frame == null) throw new NullPointerException("frame");
+        long operation = waits.begin(0, 0, 0, 0, PipelineWaitObservation.WORK);
+        boolean success = false;
+        try {
         EncoderConsumer target;
-        synchronized (subscriptionLock) { target = stopRequested ? null : encoderConsumer; }
+        synchronized (subscriptionLock) {
+            target = stopRequested ? null : encoderConsumer;
+            waits.generation(0, operation, encoderGeneration);
+        }
+        waits.inputIdentity(0, operation, frame);
         // The detached consumer must fence late offers itself. No platform callback under the lock.
         if (target == null) frame.releaseUnsubmitted();
         else target.offer(frame);
+        success = true;
+        } finally { waits.end(0, operation, success); }
     }
 
     public boolean fresh() {
@@ -476,6 +487,10 @@ public final class PackedStereoCaptureOwner {
                 .put("left_camera_metadata", leftCameraMetadata.snapshot(sampleNs))
                 .put("right_camera_metadata", rightCameraMetadata.snapshot(sampleNs));
         if (current != null) result.put("compositor", current.captureDiagnosticSnapshot(sampleNs));
+        JSONObject pipeline = PipelineWaitObservation.group();
+        waits.append(pipeline, "capture");
+        if (current != null) current.appendWaitSnapshot(pipeline);
+        result.put("pipeline_waits", pipeline);
         return result;
     }
 

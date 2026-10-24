@@ -229,6 +229,22 @@ final class PackedStereoGlCompositor implements Closeable {
     private int rightPending;
     private SyntheticRequest syntheticRequest;
     private PackedStereoPoolExecutor.Pool activePool;
+    private final PipelineWaitObservation waits = new PipelineWaitObservation("capture_compositor",
+            () -> SystemClock.elapsedRealtimeNanos(),
+            "capture_iteration", "capture_make_current", "capture_pool_poll_ready");
+    void appendWaitSnapshot(JSONObject group) throws Exception { waits.append(group, "compositor"); }
+    private void observedMakeCurrent(GlState gl) {
+        long operation = waits.begin(1, 0, 0, 0, PipelineWaitObservation.WORK);
+        boolean success = false;
+        try { gl.makePbufferCurrent(); success = true; }
+        finally { waits.end(1, operation, success); }
+    }
+    private void observedPollReady(PackedStereoPoolExecutor.Pool pool) throws Exception {
+        long operation = waits.begin(2, 0, 0, 0, PipelineWaitObservation.WORK);
+        boolean success = false;
+        try { pool.pollReady(); success = true; }
+        finally { waits.end(2, operation, success); }
+    }
 
     PackedStereoGlCompositor(
             PackedStereoStreamMetadata.Layout layout,
@@ -490,6 +506,9 @@ final class PackedStereoGlCompositor implements Closeable {
 
         try {
             while (!stopRequested) {
+                long iteration = waits.begin(0, 0, 0, 0, PipelineWaitObservation.WORK);
+                boolean iterationSuccess = false;
+                try {
                 int consumeLeft;
                 int consumeRight;
                 long leftTraceEpoch = -1L, rightTraceEpoch = -1L;
@@ -499,9 +518,11 @@ final class PackedStereoGlCompositor implements Closeable {
                             && leftPending == 0
                             && rightPending == 0
                             && syntheticRequest == null) {
+                        waits.phase(0, iteration, PipelineWaitObservation.IDLE);
                         signal.wait(50L);
                         if (pool != null) break; // producer/consumer fence progress without camera callbacks
                     }
+                    waits.phase(0, iteration, PipelineWaitObservation.WORK);
                     consumeLeft = leftPending;
                     consumeRight = rightPending;
                     long handoffNs = SystemClock.elapsedRealtimeNanos();
@@ -513,9 +534,11 @@ final class PackedStereoGlCompositor implements Closeable {
                     syntheticRequest = null;
                 }
                 if (stopRequested) {
+                    iterationSuccess = true;
                     break;
                 }
-                if (pool != null) { gl.makePbufferCurrent(); pool.pollReady(); }
+                waits.phase(0, iteration, PipelineWaitObservation.WORK);
+                if (pool != null) { observedMakeCurrent(gl); observedPollReady(pool); }
                 if (request != null) {
                     renderSynthetic(gl, request);
                 }
@@ -527,6 +550,8 @@ final class PackedStereoGlCompositor implements Closeable {
                     rightSurfaceFrames += consumeRight;
                     consumeCameraFrame(gl, gl.rightInput, rightCorrelation, PackedStereoFramePairer.RIGHT, rightTraceEpoch);
                 }
+                iterationSuccess = true;
+                } finally { waits.end(0, iteration, iterationSuccess); }
             }
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
@@ -549,7 +574,7 @@ final class PackedStereoGlCompositor implements Closeable {
             InputState input,
             CaptureCorrelation correlation,
             String eye, long traceEpoch) throws Exception {
-        gl.makePbufferCurrent();
+        observedMakeCurrent(gl);
         long updateEntryNs = SystemClock.elapsedRealtimeNanos();
         input.surfaceTexture.updateTexImage();
         long updateExitNs = SystemClock.elapsedRealtimeNanos();
