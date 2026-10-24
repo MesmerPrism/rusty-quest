@@ -1,4 +1,8 @@
 [workspace]
+exclude = [
+    "crates/rusty-quest-peer-wire",
+    "examples/duplex-control-lab",
+]
 members = [
     "crates/rusty-quest-broker-product",
     "crates/rusty-quest-broker-authority",
