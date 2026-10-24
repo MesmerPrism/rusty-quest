@@ -276,6 +276,10 @@ def connected_scenario(root,out,executable,args,expected_red):
         complete('Q',first_pair,'pair_session',pair);ack('Q',first_pair,pair,'first-pair')
         starts={p:begin(p,'start',4+i)for i,p in enumerate(peers)}
         started=require(commands([(p,'start',starts[p],{})for p in peers]));stages.append('actual_first_start')
+        if args.freshness_hooks:
+            duplicate_start=require(commands([('Q','start',starts['Q'],{})]))['Q']
+            assert duplicate_start['start_mutation']==started['Q']['start_mutation']
+            assert duplicate_start['activation']==started['Q']['activation']
         for p in peers:
             assert started[p]['status']=='active',started[p]
             complete(p,starts[p],'start',started[p])
@@ -430,6 +434,22 @@ def connected_scenario(root,out,executable,args,expected_red):
         views=require(commands([('W','view_controls',stops['W'],{})]))['W']
         (out/'ACTUAL_VIEW_GATE_CONTROLS.json').write_text(json.dumps(views,indent=2)+'\n')
         assert views['actual_state_preserved']is True,views
+        if args.freshness_hooks:
+            hooks=[row for row in trace if row.get('kind')=='freshness_hook']
+            for peer in peers:
+                completed=[row for row in hooks if row['peer']==peer and row['hook']=='completed_start']
+                assert [row['sequence'] for row in completed]==([1,1,2,3]if peer=='Q'else[1,2,3]),completed
+                actual_returns=[json.loads(row['raw'])for row in trace if row.get('kind')=='native_return_boundary'and row['peer']==peer and row['operation']=='start']
+                for hook,value in zip(completed,actual_returns):
+                    assert hook['action']==value['start_mutation']['mutation']['platform_action']['action_id'],(hook,value)
+                    assert hook['activation']==value['activation']['activation']['activation_id'],(hook,value)
+                    assert hook['original']in [f'{n:032x}'for n in ([4,12,20]if peer=='Q'else[5,13,21])],hook
+                    assert 'start_observation_original_id'not in json.dumps(value)
+                for hook in [row for row in hooks if row['peer']==peer and row['hook']=='stopped']:
+                    assert any(row['peer']==peer and row['hook']=='stop_requested'and row['sequence']==hook['sequence']for row in hooks),hook
+                assert len([row for row in hooks if row['peer']==peer and row['hook']=='stopped'])>=3
+            (out/'FRESHNESS_OWNER_HOOKS.json').write_text(json.dumps({'passed':True,'hooks':hooks,
+                'scope':'Actual owner callsites and tuple, telemetry leaf spy; GPU accounting tested separately'},indent=2)+'\n')
         return {'passed':True,'stages':stages,'trace':trace}
     finally:
         forced=False
@@ -459,6 +479,7 @@ def main():
     p.add_argument('--json-jar')
     p.add_argument('--java-build')
     p.add_argument('--same-lifetime-renewals',type=int,choices=range(2,19),default=2)
+    p.add_argument('--freshness-hooks',action='store_true',help='Model telemetry leaf and check actual Start/Stop hook tuples')
     p.add_argument('--projection-consumer',help='Exact current host owner retained_renewal_projection.py, pure API only')
     a = p.parse_args()
     root = pathlib.Path(__file__).resolve().parents[2]
@@ -661,6 +682,20 @@ mod fixture_config;
 fn main(){if let Err(error)=embedded_duplex::runtime_host::fixture::run(){panic!("{error}")}}
 '''
     put(out / 'main.rs', app_stubs)
+    if a.freshness_hooks:
+        spy=r'''
+mod spatial_stereo_qualification {
+ static SEQUENCES:std::sync::Mutex<[u64;2]>=std::sync::Mutex::new([0;2]);
+ fn peer()->(usize,&'static str){let n=crate::embedded_duplex::runtime_host::fixture::active();(n,if n==0{"Q"}else{"W"})}
+ pub fn completed_media_start(s:Option<u64>,o:Option<&str>,a:Option<&str>,i:Option<&str>){
+  let (n,p)=peer();SEQUENCES.lock().unwrap()[n]=s.unwrap_or(0);
+  println!("{}",serde_json::json!({"kind":"freshness_hook","peer":p,"hook":"completed_start","sequence":s,"original":o,"action":a,"activation":i}));
+ }
+ pub fn media_stop_requested(){let(n,p)=peer();println!("{}",serde_json::json!({"kind":"freshness_hook","peer":p,"hook":"stop_requested","sequence":SEQUENCES.lock().unwrap()[n]}));}
+ pub fn media_stopped(){let(n,p)=peer();println!("{}",serde_json::json!({"kind":"freshness_hook","peer":p,"hook":"stopped","sequence":SEQUENCES.lock().unwrap()[n]}));}
+}
+'''
+        put(out / 'main.rs',app_stubs+spy)
     deps = ['rusty-quest-broker-authority','rusty-quest-media-stream-android',
             'rusty-quest-media-stream','rusty-quest-feature-activation','rusty-quest-broker-admission',
             'rusty-quest-broker-contracts']

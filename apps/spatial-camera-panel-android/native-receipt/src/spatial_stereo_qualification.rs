@@ -1,5 +1,5 @@
 //! Bounded app-owned source-set observations. No flag or submit call is pixel proof.
-use crate::spatial_stereo_dropouts::{Key as ProgressKey, Progress};
+use crate::spatial_stereo_dropouts::{Freshness, Key as ProgressKey, Progress};
 use crate::stereo_input_set::StereoFrameIdentity;
 use std::sync::Mutex;
 pub(crate) const WORD_COUNT: usize = 160;
@@ -93,6 +93,8 @@ struct State {
     sdk_session: u64,
     readback_requested: bool,
     dropout_progress: [Progress; 3],
+    freshness: Freshness,
+    pending_lifetime: Option<u64>,
 }
 impl State {
     const fn empty() -> Self {
@@ -145,6 +147,8 @@ impl State {
             sdk_session: 0,
             readback_requested: false,
             dropout_progress: [Progress::empty(); 3],
+            freshness: Freshness::empty(),
+            pending_lifetime: None,
         }
     }
     fn arm(&mut self, process: u64, challenge: [u64; 2], now: u64) -> u64 {
@@ -158,7 +162,10 @@ impl State {
             self.sdk_session,
             self.cleanup,
         );
+        let mut freshness = std::mem::replace(&mut self.freshness, Freshness::empty());
+        freshness.reject(true); // An ARM replacement cannot erase an earned lifetime.
         *self = Self::empty();
+        self.freshness = freshness;
         self.generation = generation;
         self.process = process;
         self.foreign_enabled = foreign;
@@ -182,6 +189,9 @@ impl State {
         generation
     }
     fn record(&mut self, fact: FrameFact, now: u64) {
+        self.record_timed(fact, now, Some(now));
+    }
+    fn record_timed(&mut self, fact: FrameFact, now: u64, event_now: Option<u64>) {
         if fact.primary_prefix != 0
             && (fact.final_abi_version != 2
                 || fact.primary_prefix != 6
@@ -194,6 +204,7 @@ impl State {
                     .zip(fact.sources[1])
                     .is_none_or(|(a, b)| a.processing_codes != b.processing_codes))
         {
+            self.freshness.reject(false);
             return;
         }
         if !self.armed
@@ -203,6 +214,7 @@ impl State {
             || now < self.armed_at
             || now < self.last_recorded
         {
+            self.freshness.reject(false);
             return;
         }
         if fact.sources.iter().flatten().any(|source| {
@@ -210,6 +222,7 @@ impl State {
                 || source.observed_at_ns > now
                 || ![1, 3, 4, 6].contains(&source.prefix)
         }) {
+            self.freshness.reject(false);
             return;
         }
         self.dropout_progress[0].demand(self.carrier_live, now);
@@ -229,9 +242,14 @@ impl State {
         };
         self.last_recorded = now;
         self.recorded = self.recorded.saturating_add(1);
+        self.freshness.record_context(frame_epoch(fact), fact.revision, fact.demanded.map(|v|v>0), event_now);
+        self.pending_lifetime = self.freshness.active_stamp();
         self.pending = Some(fact);
     }
     fn retire(&mut self, ordinal: u64, surface: u64, now: u64) {
+        self.retire_timed(ordinal, surface, now, Some(now));
+    }
+    fn retire_timed(&mut self, ordinal: u64, surface: u64, now: u64, event_now: Option<u64>) {
         let Some(fact) = self.pending else { return };
         if fact.ordinal != ordinal
             || fact.surface != surface
@@ -244,6 +262,13 @@ impl State {
             self.pending = None;
             return;
         }
+        self.freshness.retired(self.pending_lifetime, frame_epoch(fact),
+            [fact.surface,fact.ordinal,fact.sources[0].map_or(0,|s|s.identity.pair_sequence),fact.sources[1].map_or(0,|s|s.identity.pair_sequence)],
+            [true,fact.final_draw&&fact.sources[0].is_some_and(|s|self.origins[0].last_identity!=Some(s.identity)),
+                fact.final_draw&&fact.sources[1].is_some_and(|s|self.origins[1].last_identity!=Some(s.identity)),
+                fact.final_draw&&fact.sources.iter().all(Option::is_some)],
+            fact.sources.map(|s|s.map(|s|s.observed_at_ns)),event_now);
+        self.pending_lifetime=None;
         self.pending = None;
         self.first_gpu = if self.gpu == 0 { now } else { self.first_gpu };
         self.dropout_progress[0].advance(
@@ -413,6 +438,55 @@ impl State {
             "sample_contract":"diagnostic-input-layer-same-submission-row0-Own-Peer-signal-mask-packing-output-marker-unorm-v1",
             "sample_uv_contract":"signal-blue255=bank-eye0-packed-uv0.25,0.5;blue0=mono-uv0.5,0.5",
             "scope":"camera-input-layer-not-final-stack-or-photons"}).to_string()
+    }
+    fn legacy_dropout_report(&self, now:u64)->serde_json::Value {
+        serde_json::json!({"schema":"rusty.quest.stereo.dropout_observation.v1",
+        "process_generation":self.process,"arm_generation":self.generation,"clock":"CLOCK_MONOTONIC",
+        "sample_ns":now,"bound_ns":crate::spatial_stereo_dropouts::BOUND_NS,
+        "series_order":["gpu_retirement","own_distinct_adoption","peer_distinct_adoption"],
+        "counter_columns":crate::spatial_stereo_dropouts::COUNTER_COLUMNS.as_slice(),
+        "bin_upper_ns":[500_000_000u64,1_000_000_000,2_000_000_000],
+        "sample_columns":["previous_ns","current_ns","gap_ns","previous_epoch","previous_sequence","epoch","sequence"],
+        "sample_retention":"first_two_and_latest_two; counters_complete",
+        "gap_scope":"within_demand_and_source_epoch; closed_once_on_progress; open_and_censored_separate; no_first_wait_gap",
+        "origin_demand_context_observed":self.recorded>0,
+        "camera_frame_join":"unavailable","qualification_claimed":false,
+        "series":self.dropout_progress.iter().map(|series|series.compact_snapshot(now)).collect::<Vec<_>>()})
+    }
+    fn dropout_json(&mut self,entry:u64,now:u64,exit:u64)->Option<String> {
+        fn signed(value:&serde_json::Value)->bool {
+            match value {
+                serde_json::Value::Number(number)=>number.as_i64().is_some(),
+                serde_json::Value::Array(values)=>values.iter().all(signed),
+                serde_json::Value::Object(values)=>values.values().all(signed),
+                _=>true,
+            }
+        }
+        let report=self.dropout_report(entry,now,exit);
+        if !signed(&report){return None;}
+        let exact=report.to_string();
+        if exact.len()>16384 {None}else{Some(exact)}
+    }
+    fn dropout_report(&mut self,entry:u64,now:u64,exit:u64)->serde_json::Value {
+        self.freshness.observe_clock(Some(now));
+        if entry>now||now>exit||exit>i64::MAX as u64 {self.freshness.clock_valid=false;}
+        let words=self.words(Some(now),true,true,true);
+        let indices=[16usize,51,55,56,25,26,27];
+        let watermark_valid=indices.iter().all(|i|words[*i]>=0);
+        let overflowed=self.freshness.overflowed()||!watermark_valid;
+        serde_json::json!({"schema":"rusty.quest.stereo.dropout_observation.v2",
+            "process_generation":self.process.min(i64::MAX as u64),"arm_generation":self.generation.min(i64::MAX as u64),
+            "challenge_words":self.challenge.map(|v|v as i64),"clock":"CLOCK_MONOTONIC",
+            "atomicity":"single_native_telemetry_mutex","bound_ns":crate::spatial_stereo_dropouts::BOUND_NS,
+            "sample_entry_ns":entry.min(i64::MAX as u64),"sample_ns":now.min(i64::MAX as u64),"sample_exit_ns":exit.min(i64::MAX as u64),
+            "sample_sequence":self.freshness.sample_sequence,"counters_complete":!overflowed,
+            "overflowed":overflowed,"clock_valid":self.freshness.clock_valid,
+            "state_valid":self.freshness.state_valid&&self.process<=i64::MAX as u64&&self.generation<=i64::MAX as u64,
+            "lifetime":self.freshness.lifetime(),
+            "native160_watermark":{"gpu_retired_count":words[16].max(0),"both_origin_retired_count":words[51].max(0),
+                "own_distinct_count":words[55].max(0),"peer_distinct_count":words[56].max(0),
+                "last_retired_ordinal":words[25].max(0),"last_retired_surface":words[26].max(0),"config_revision":words[27].max(0)},
+            "legacy_v1":self.legacy_dropout_report(now),"series":self.freshness.snapshot(now)})
     }
     fn words(
         &self,
@@ -588,6 +662,18 @@ impl State {
         w
     }
 }
+fn frame_epoch(fact:FrameFact)->[u64;5] {
+    [fact.surface,fact.sources[0].map_or(0,|s|s.identity.epoch.process_generation),
+        fact.sources[0].map_or(0,|s|s.identity.epoch.source_generation),
+        fact.sources[1].map_or(0,|s|s.identity.epoch.process_generation),
+        fact.sources[1].map_or(0,|s|s.identity.epoch.source_generation)]
+}
+/// Observers run in owner -> telemetry order and never change an owner's result.
+pub(crate) fn completed_media_start(sequence:Option<u64>,original:Option<&str>,action:Option<&str>,activation:Option<&str>) {
+    if let Ok(mut s)=STATE.lock(){let now=now_ns();s.freshness.completed_start(sequence.unwrap_or(0),original,action,activation,now);}
+}
+pub(crate) fn media_stop_requested(){if let Ok(mut s)=STATE.lock(){let now=now_ns();s.freshness.stop(now);}}
+pub(crate) fn media_stopped(){if let Ok(mut s)=STATE.lock(){s.freshness.stopped();}}
 static STATE: Mutex<State> = Mutex::new(State::empty());
 #[cfg(target_os = "android")]
 fn now_ns() -> Option<u64> {
@@ -614,11 +700,17 @@ pub(crate) fn arm_generation() -> u64 {
         .lock()
         .map_or(0, |s| if s.armed { s.generation } else { 0 })
 }
+fn unavailable_event_clock() {
+    if let Ok(mut s)=STATE.lock(){s.freshness.observe_clock(None);s.freshness.reject(true);}
+}
 pub(crate) fn record_frame(frame: FrameFact) {
     if let Some(now) = now_ns() {
         if let Ok(mut s) = STATE.lock() {
-            s.record(frame, now);
+            let event_now=now_ns();
+            s.record_timed(frame, now, event_now);
         }
+    } else {
+        unavailable_event_clock();
     }
 }
 pub(crate) fn observe_final_draw(geometry_sampled: bool) {
@@ -639,20 +731,26 @@ pub(crate) fn observe_submission_entry() {
 pub(crate) fn gpu_retired(ordinal: u64, surface: u64) {
     if let Some(now) = now_ns() {
         if let Ok(mut s) = STATE.lock() {
-            s.retire(ordinal, surface, now);
+            let event_now=now_ns();
+            s.retire_timed(ordinal, surface, now, event_now);
         }
+    } else {
+        unavailable_event_clock();
     }
 }
 pub(crate) fn peer_removed(epoch: crate::stereo_input_set::SourceEpoch) {
     if let Some(now) = now_ns() {
         if let Ok(mut s) = STATE.lock() {
             if s.armed && epoch.process_generation == s.process {
+                s.freshness.reject(true);
                 s.peer_removed_at = now;
                 s.peer_removed_count = s.peer_removed_count.saturating_add(1);
                 s.origins[1].removed_at = now;
                 s.origins[1].removals = s.origins[1].removals.saturating_add(1);
             }
         }
+    } else {
+        unavailable_event_clock();
     }
 }
 pub(crate) fn physical_cleanup_terminal() -> bool {
@@ -672,6 +770,8 @@ pub(crate) fn carrier_live() {
                 s.pending_since = now;
             }
         }
+    } else {
+        unavailable_event_clock();
     }
 }
 pub(crate) fn carrier_device(foreign_enabled: bool, capability_mask: u64, sdk_session: u64) {
@@ -683,12 +783,13 @@ pub(crate) fn carrier_device(foreign_enabled: bool, capability_mask: u64, sdk_se
 }
 pub(crate) fn carrier_cleanup(terminal: bool) {
     if let Ok(mut s) = STATE.lock() {
+        s.freshness.reject(true);
         s.carrier_live = false;
         if let Some(now) = now_ns() {
             for series in &mut s.dropout_progress {
                 series.demand(false, now);
             }
-        }
+        } else {s.freshness.observe_clock(None);}
         if !terminal || s.cleanup == 3 {
             s.cleanup = 3;
         } else {
@@ -827,7 +928,8 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             for series in &mut s.dropout_progress {
                 series.demand(false, now);
             }
-        }
+        } else {s.freshness.observe_clock(None);}
+        s.freshness.reject(true);
         s.armed = false;
         1
     })
@@ -844,11 +946,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     lo: jni::sys::jlong,
     generation: jni::sys::jlong,
 ) -> jni::sys::jstring {
-    let (Ok(process), Some(now)) = (crate::own_packed_pool_jni::process_generation(), now_ns())
+    let (Ok(process), Some(entry)) = (crate::own_packed_pool_jni::process_generation(), now_ns())
     else {
         return std::ptr::null_mut();
     };
-    let Ok(s) = STATE.lock() else {
+    let Ok(mut s) = STATE.lock() else {
         return std::ptr::null_mut();
     };
     if !s.armed
@@ -858,23 +960,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     {
         return std::ptr::null_mut();
     }
-    let report = serde_json::json!({"schema":"rusty.quest.stereo.dropout_observation.v1",
-        "process_generation":s.process,"arm_generation":s.generation,"clock":"CLOCK_MONOTONIC",
-        "sample_ns":now,"bound_ns":crate::spatial_stereo_dropouts::BOUND_NS,
-        "series_order":["gpu_retirement","own_distinct_adoption","peer_distinct_adoption"],
-        "counter_columns":crate::spatial_stereo_dropouts::COUNTER_COLUMNS.as_slice(),
-        "bin_upper_ns":[500_000_000u64,1_000_000_000,2_000_000_000],
-        "sample_columns":["previous_ns","current_ns","gap_ns","previous_epoch","previous_sequence","epoch","sequence"],
-        "sample_retention":"first_two_and_latest_two; counters_complete",
-        "gap_scope":"within_demand_and_source_epoch; closed_once_on_progress; open_and_censored_separate; no_first_wait_gap",
-        "origin_demand_context_observed":s.recorded>0,
-        "camera_frame_join":"unavailable","qualification_claimed":false,
-        "series":s.dropout_progress.iter().map(|series|series.compact_snapshot(now)).collect::<Vec<_>>()});
+    let Some(now) = now_ns() else {return std::ptr::null_mut();};
+    let Some(exit) = now_ns() else {return std::ptr::null_mut();};
+    let exact = s.dropout_json(entry, now, exit);
     drop(s);
-    let exact = report.to_string();
-    if exact.len() > 6144 {
-        return std::ptr::null_mut();
-    }
+    let Some(exact)=exact else {return std::ptr::null_mut();};
     env.new_string(exact)
         .map_or(std::ptr::null_mut(), |value| value.into_raw())
 }
@@ -922,6 +1012,132 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 mod tests {
     use super::*;
     use crate::stereo_input_set::SourceEpoch;
+    #[test]
+    fn finite_serializer_refuses_unsafe_legacy_integer_without_changing_legacy() {
+        let mut s=State::empty();s.arm(7,[1,2],1);s.process=u64::MAX;
+        assert_eq!(s.words(Some(10),true,true,true)[2],-1);
+        assert!(s.dropout_json(8,9,10).is_none());
+    }
+    #[test]
+    fn finite_actual_clean_pair_is_available_for_host_comparator_interop() {
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);
+        s.freshness.completed_start(1,Some("00000000000000000000000000000001"),Some("platform.actual.action.1"),Some("activation.actual.1"),Some(10));
+        let mut first=frame(generation,1,Some(source(2,1)));for source in first.sources.iter_mut().flatten(){source.observed_at_ns=20;}
+        s.record(first,20);s.retire(1,8,30);let a=s.dropout_report(40,50,60);
+        let mut rpc_before=frame(generation,2,Some(source(2,2)));for source in rpc_before.sources.iter_mut().flatten(){source.observed_at_ns=62;}
+        s.record(rpc_before,62);s.retire(2,8,65);let fa=s.words(Some(70),true,true,true);
+        let mut second=frame(generation,3,Some(source(2,3)));for source in second.sources.iter_mut().flatten(){source.observed_at_ns=80;}
+        s.record(second,80);s.retire(3,8,90);let fb=s.words(Some(100),true,true,true);
+        let mut rpc_after=frame(generation,4,Some(source(2,4)));for source in rpc_after.sources.iter_mut().flatten(){source.observed_at_ns=102;}
+        s.record(rpc_after,102);s.retire(4,8,105);let b=s.dropout_report(110,120,130);
+        assert_eq!(a["native160_watermark"]["gpu_retired_count"],1);assert_eq!(b["native160_watermark"]["gpu_retired_count"],4);
+        assert_eq!((fa[16],fb[16]),(2,3));
+        assert_eq!(a["state_valid"],true);assert_eq!(b["state_valid"],true);
+        println!("FINITE_CLEAN_NATIVE_PAIR {}",serde_json::json!({"D_A":a,"FRAME_A":fa.as_slice(),"FRAME_B":fb.as_slice(),"D_B":b}));
+    }
+    #[test]
+    fn finite_actual_maximum_serializer_fits_complete_bridge_body() {
+        let mut s=State::empty();s.arm(7,[u64::MAX,u64::MAX],1);
+        let (f,old)=crate::spatial_stereo_dropouts::finite_tests::maximum_fixture();s.freshness=f;s.dropout_progress=old;
+        s.process=i64::MAX as u64;s.generation=i64::MAX as u64;s.gpu=i64::MAX as u64;s.both=i64::MAX as u64;
+        s.origins[0].distinct=i64::MAX as u64;s.origins[1].distinct=i64::MAX as u64;
+        let mut last=frame(s.generation,1,Some(source(2,1)));last.ordinal=i64::MAX as u64;last.surface=i64::MAX as u64;last.revision=i64::MAX as u64;s.last=Some(last);
+        let raw=s.dropout_json(i64::MAX as u64,i64::MAX as u64,i64::MAX as u64).unwrap();
+        assert!(raw.len()<=16384,"maximum production JSON bytes={}",raw.len());
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&raw).unwrap()["overflowed"],true);
+        println!("FINITE_MAX_NATIVE_JSON {}",raw);
+    }
+    fn start_v2(s: &mut State, sequence:u64, now:u64) {
+        s.freshness.completed_start(sequence,Some("original"),Some("action"),Some("activation"),Some(now));
+    }
+    #[test]
+    #[cfg(not(target_os="android"))]
+    fn finite_actual_record_and_retire_wrappers_latch_missing_initial_clock() {
+        // The host clock leaf is intentionally unavailable. Exercise the real
+        // wrappers, including the first pre-lock legacy clock read.
+        for retirement in [false,true] {
+            let mut local=State::empty();let generation=local.arm(7,[1,2],1);start_v2(&mut local,1,10);
+            let previous={let mut state=STATE.lock().unwrap();std::mem::replace(&mut *state,local)};
+            if retirement {gpu_retired(1,8);}else{record_frame(frame(generation,1,Some(source(2,1))));}
+            let (clock,state_valid)={let mut state=STATE.lock().unwrap();let flags=(state.freshness.clock_valid,state.freshness.state_valid);*state=previous;flags};
+            assert!(!clock);assert!(!state_valid);
+        }
+    }
+    #[test]
+    fn finite_pending_stamp_rejects_pre_start_retirement_without_changing_native160() {
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);
+        s.record(frame(generation,1,Some(source(2,1))),20);
+        start_v2(&mut s,1,25);s.retire(1,8,30);
+        assert_eq!(s.words(Some(30),true,true,true)[16],1);
+        assert!(!s.freshness.state_valid);
+        assert_eq!(s.freshness.snapshot(30)[0]["progress_count"],0);
+        s.record(frame(generation,2,Some(source(2,2))),40);s.retire(2,8,50);
+        assert!(!s.freshness.state_valid);
+        assert_eq!(s.freshness.snapshot(50)[0]["rejected_observation_count"],1);
+    }
+    #[test]
+    fn finite_under_lock_event_time_follows_snapshot_not_pre_lock_time() {
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);start_v2(&mut s,1,10);
+        s.freshness.observe_clock(Some(100));
+        s.record_timed(frame(generation,1,Some(source(2,1))),20,Some(110));
+        s.retire_timed(1,8,30,Some(120));
+        assert_eq!(s.freshness.snapshot(130)[0]["last_progress_ns"],120);
+        assert_eq!(s.words(Some(130),true,true,true)[15],30);
+        assert!(s.freshness.clock_valid);
+        s.freshness.observe_clock(Some(140));
+        s.record_timed(frame(generation,2,Some(source(2,2))),40,Some(50));
+        s.retire_timed(2,8,50,Some(150));
+        assert!(!s.freshness.clock_valid);
+    }
+    #[test]
+    fn finite_four_event_series_exactly_match_legacy_watermarks_and_held_sources() {
+        let mut s=State::empty();let generation=s.arm(7,[u64::MAX,2],1);start_v2(&mut s,1,10);
+        for n in 1..=3 {let mut f=frame(generation,n,Some(source(2,1)));f.sources[0]=Some(source(1,1));s.record(f,n*20);s.retire(n,8,n*20+10);}
+        let report=s.dropout_report(70,80,90);
+        assert_eq!(report["series"][0]["progress_count"],3);
+        assert_eq!(report["series"][1]["progress_count"],1);
+        assert_eq!(report["series"][2]["progress_count"],1);
+        assert_eq!(report["series"][3]["progress_count"],3);
+        assert_eq!(report["native160_watermark"]["both_origin_retired_count"],3);
+        assert_eq!(report["challenge_words"][0],-1);
+        assert_eq!(report["series"][1]["source_age_observation_count"],1);
+        assert_eq!(report["series"][3]["source_age_observation_count"],3);
+        assert_eq!(report["legacy_v1"],s.legacy_dropout_report(80));
+        assert_eq!(report.as_object().unwrap().len(),19);
+        assert_eq!(report["series"][0].as_object().unwrap().len(),25);
+        assert!(report.to_string().len()<=16384);
+    }
+    #[test]
+    fn finite_new_lifetime_is_clean_while_old_arm_maxima_and_stopped_time_remain() {
+        let mut s=State::empty();s.carrier_live=true;let generation=s.arm(7,[1,2],1);start_v2(&mut s,1,10);
+        for (n,now) in [(1,20),(2,1_000_000_020)] {
+            let mut f=frame(generation,n,Some(source(2,n)));for source in f.sources.iter_mut().flatten(){source.observed_at_ns=now;}
+            s.record(f,now);s.retire(n,8,now+10);
+        }
+        assert_eq!(s.freshness.snapshot(1_000_000_030)[0]["gap_over_bound_count"],1);
+        s.freshness.stop(Some(1_000_000_040));s.freshness.stopped();
+        s.freshness.completed_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(8_000_000_000));
+        for (n,now) in [(3,8_000_000_010),(4,8_020_000_010)] {
+            let mut f=frame(generation,n,Some(source(2,n)));for source in f.sources.iter_mut().flatten(){source.observed_at_ns=now;}
+            s.record(f,now);s.retire(n,8,now+10);
+        }
+        let report=s.dropout_report(8_020_000_030,8_020_000_040,8_020_000_050);
+        assert!(s.words(Some(8_020_000_040),true,true,true)[17]>500_000_000);
+        assert_eq!(report["lifetime"]["sequence"],2);assert_eq!(report["state_valid"],true);
+        for row in report["series"].as_array().unwrap(){
+            assert_eq!(row["progress_count"],2);assert_eq!(row["gap_over_bound_count"],0);
+            assert_eq!(row["first_wait_over_bound_count"],0);assert_eq!(row["source_age_over_bound_count"],0);
+        }
+        assert_eq!(report["native160_watermark"]["gpu_retired_count"],4);
+    }
+    #[test]
+    fn finite_native160_and_v1_outputs_equal_with_observer_active_or_unavailable() {
+        let mut old=State::empty();let mut new=State::empty();
+        old.arm(7,[1,2],1);new.arm(7,[1,2],1);start_v2(&mut new,1,10);
+        for n in 1..=12 {let f=frame(1,n,Some(source(2,n)));old.record(f,n*600_000_000);new.record(f,n*600_000_000);old.retire(n,8,n*600_000_000+1);new.retire(n,8,n*600_000_000+1);}
+        assert_eq!(old.words(Some(8_000_000_000),true,true,true),new.words(Some(8_000_000_000),true,true,true));
+        assert_eq!(old.legacy_dropout_report(8_000_000_000),new.legacy_dropout_report(8_000_000_000));
+    }
     #[test]
     fn mask_challenge_json_preserves_signed_jni_words_and_all_nonce_bits() {
         // Challenges are two raw JNI long bit words, not nonnegative counters.

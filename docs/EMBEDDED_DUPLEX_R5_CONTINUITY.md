@@ -1,5 +1,57 @@
 # Embedded duplex finite authority and native fencing
 
+## Finite freshness observation
+
+The existing debug-only `stream_dropout_diagnostic` route exports wrapper v2
+and Native `rusty.quest.stereo.dropout_observation.v2`. Its method registry and
+JNI descriptor are unchanged. This remains observation only:
+`qualification_claimed=false`. Native160 and the complete ARM-cumulative v1
+diagnostic are retained with their original meanings in `legacy_v1`.
+
+The Native lifecycle owner supplies the actual first owning Start Original,
+platform action, completed activation and checked retired-lifetime sequence.
+Only actual completed activation initializes a lifetime. Duplicate completion,
+polling and capture boundaries do not reset it. Stop marks the lifetime stopping
+before effects; observer failures never alter media results or replay authority.
+New lifetime statistics do not erase old ARM maxima or stopped history.
+
+Four complete series follow the existing actual GPU, distinct full-identity
+Own/Peer adoption and both-origin retirement predicates. All remain required.
+The bound is exactly 500000000 ns; only a strictly greater interval fails.
+Initial wait, every closed violation, current open gap, distinct source ages and
+every both-origin retirement's worse source age remain visible. Missing images
+do not pause demand or erase known epochs. A first known source binds once;
+later epoch/configuration/surface/demand changes are sticky censored evidence.
+
+Each accepted pending frame receives its current completed-lifetime stamp under
+the telemetry mutex. A pre-Start or older pending frame retiring in a new active
+lifetime makes its evidence unavailable and earns no new-life credit. New v2
+event times are read under that same mutex, independently of unchanged legacy
+event times. Missing/regressed clocks, rejected events and exhausted counters
+cannot later be repaired by a read or healthy progress. Locks flow only from
+lifecycle owner to telemetry, without owner callbacks under telemetry.
+
+The atomic report includes actual Start lineage, sample entry/current/exit
+times, event revision and the seven Native160 watermarks. Capture consumers must
+check both the selected window and all current-lifetime failures, including a
+startup failure completed before capture. Sample rings are examples, never a
+completeness proof. Native/Kotlin JSON is capped at 16384 bytes and the existing
+wrapper at 32768 bytes. Oversized or signed-64-unsafe JSON is refused, never
+clipped or reinterpreted.
+
+`tools/checks/Test-FiniteFreshnessHost.py --output <new-output> --json-jar
+<host-json.jar> --kotlin-cache <Gradle-modules-cache>` compiles production Rust
+accounting/serialization and the exact lifecycle tuple and Java/Kotlin bridge
+bodies. Whole Java source/receiver stage serializers supply maximum-width
+fixtures. OS/JNI clocks, callback transport, Android resource lifecycle and the
+closed maximum qualification input are declared models. The connected
+`Test-RenewalSuccessorLifecycleHost.py --freshness-hooks` option additionally
+checks actual Start/Stop callsites across completed lifetimes and a duplicate
+Start against real Native owners and persistent JVM owners, with the telemetry
+leaf explicitly modeled. Together these are source and contract controls;
+they establish no Android JNI, camera/GPU execution, bilateral video, photon
+latency or physical cleanup acceptance.
+
 ## Retained preparation admission diagnostic
 
 The fixed debug-only `prepared_peer_start_diagnostic` operator call accepts a

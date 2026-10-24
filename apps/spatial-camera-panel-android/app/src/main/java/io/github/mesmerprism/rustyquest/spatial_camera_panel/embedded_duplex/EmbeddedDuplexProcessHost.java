@@ -600,7 +600,7 @@ final class EmbeddedDuplexProcessHost {
                         EmbeddedDuplexDropoutLineage.requireCurrent(javaObservation, epoch,
                                 processFence.generation(), qualification.getLong("arm_generation"));
                         JSONObject report = new JSONObject()
-                                .put("schema", "rusty.quest.embedded_duplex.stream_dropout_diagnostic.v1")
+                                .put("schema", "rusty.quest.embedded_duplex.stream_dropout_diagnostic.v2")
                                 .put("qualification_claimed", false)
                                 .put("challenge", challenge).put("process_epoch_id", epoch)
                                 .put("app_generation", processFence.generation())

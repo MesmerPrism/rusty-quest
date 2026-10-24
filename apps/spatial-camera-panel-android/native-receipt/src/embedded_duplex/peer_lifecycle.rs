@@ -20,6 +20,9 @@ pub(super) struct State {
     last_failure_cause: Option<Value>,
     pub(super) client: Option<String>,
     activation_id: Option<String>,
+    // Observation-only: the Original actually owning the first Start attempt.
+    #[serde(skip)]
+    start_observation_original_id: Option<String>,
     start_mutation: Option<Value>,
     activation: Option<Value>,
     stop_mutation: Option<Value>,
@@ -549,6 +552,9 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
         // current pair/root admission. A received opposite-direction Start is
         // allowed; only this exact local preparation can be consumed once.
         prepared_start::require_ready(host, true)?;
+        if state.start_observation_original_id.is_none() {
+            state.start_observation_original_id = Some(host.callbacks.current_operator_original_id().unwrap_or_default());
+        }
         let mutation = apply_media(host, QuestConcurrentPeerCommand::Start)?;
         state.client = Some(
             mutation
@@ -618,8 +624,20 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
         let value = json_value(&acknowledged)?;
         state.activation = Some(value);
     }
+    observe_completed_start(state);
     projection(host)?;
     Ok(())
+}
+
+// No observer result participates in admission, media completion or replay.
+fn observe_completed_start(state: &State) {
+    if state.activation.as_ref().and_then(|v|v.pointer("/activation/status")).and_then(Value::as_str) == Some("completed") {
+        crate::spatial_stereo_qualification::completed_media_start(
+            state.retired_lifetimes.total.checked_add(1),
+            state.start_observation_original_id.as_deref(),
+            state.start_mutation.as_ref().and_then(|v|v.pointer("/mutation/platform_action/action_id")).and_then(Value::as_str),
+            state.activation.as_ref().and_then(|v|v.pointer("/activation/activation_id")).and_then(Value::as_str));
+    }
 }
 
 fn require_renewable_media(state: &State) -> Result<(), String> {
@@ -844,6 +862,7 @@ fn renew(host: &Host, state: &mut State) -> Result<(), String> {
 }
 
 fn stop(host: &Host, state: &mut State, revoke: bool) -> Result<(), String> {
+    crate::spatial_stereo_qualification::media_stop_requested();
     if state.client.is_none() {
         return Err("Peer Start target absent; no terminal media claim".into());
     }
@@ -1028,6 +1047,7 @@ fn stop(host: &Host, state: &mut State, revoke: bool) -> Result<(), String> {
             })?;
         state.route_cleanup = Some(serde_json::to_value(route).map_err(safe_decode)?);
     }
+    crate::spatial_stereo_qualification::media_stopped();
     Ok(())
 }
 

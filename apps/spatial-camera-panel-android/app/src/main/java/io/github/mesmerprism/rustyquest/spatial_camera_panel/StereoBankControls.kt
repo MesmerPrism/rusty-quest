@@ -55,7 +55,7 @@ object StereoBankControls {
         require(armGeneration > 0)
         val words = challengeWords(challenge)
         val report = requireNotNull(nativeReadConcurrentStereoDropouts(words[0], words[1], armGeneration))
-        require(report.toByteArray(Charsets.UTF_8).size <= 6144)
+        require(report.toByteArray(Charsets.UTF_8).size <= 16384)
         return report
     }
     fun requestConcurrentQualificationReadback(challenge: String, armGeneration: Long): Boolean {

@@ -460,3 +460,303 @@ mod tests {
         assert!(s.snapshot(2_000_000_000)["current_source_age_ns"].is_null());
     }
 }
+
+// v2 is deliberately independent of the ARM-cumulative v1 diagnostics above.
+// Every count is complete, fixed-memory and signed-64-safe for Android JSON.
+const MAX_COUNTER: u64 = i64::MAX as u64;
+const SERIES_NAMES: [&str; 4] = ["gpu_retirement", "own_distinct_adoption", "peer_distinct_adoption", "both_origin_retirement"];
+fn increment(value: &mut u64, overflowed: &mut bool) {
+    if *value >= MAX_COUNTER { *overflowed = true; } else { *value += 1; }
+}
+#[derive(Clone, Copy)]
+struct FiniteSeries {
+    required_since_ns: u64,
+    continuity_generation: u64,
+    epoch_key: [u64; 5],
+    first_progress_ns: Option<u64>,
+    last_progress_ns: Option<u64>,
+    last_key: [u64; 4],
+    progress_count: u64,
+    closed_gap_count: u64,
+    gap_over_bound_count: u64,
+    first_wait_over_bound_count: u64,
+    source_age_observation_count: u64,
+    source_age_over_bound_count: u64,
+    max_closed_gap_ns: u64,
+    max_adopted_source_age_ns: u64,
+    source_epoch_change_count: u64,
+    demand_transition_count: u64,
+    censored_interval_count: u64,
+    rejected_observation_count: u64,
+    last_source_observed_ns: Option<u64>,
+    overflowed: bool,
+}
+impl FiniteSeries {
+    const fn empty() -> Self { Self {
+        required_since_ns:0, continuity_generation:1, epoch_key:[0;5], first_progress_ns:None,
+        last_progress_ns:None,last_key:[0;4],progress_count:0,closed_gap_count:0,gap_over_bound_count:0,
+        first_wait_over_bound_count:0,source_age_observation_count:0,source_age_over_bound_count:0,
+        max_closed_gap_ns:0,max_adopted_source_age_ns:0,source_epoch_change_count:0,demand_transition_count:0,
+        censored_interval_count:0,rejected_observation_count:0,last_source_observed_ns:None,overflowed:false,
+    } }
+    fn reject(&mut self) {increment(&mut self.rejected_observation_count,&mut self.overflowed);}
+    fn advance(&mut self, key:[u64;4], now:u64, source_observed:Option<u64>, origin:usize) -> bool {
+        let previous=self.last_key;
+        let valid_key = key[0]>0 && key[1]>0 && match origin {1=>key[2]>0,2=>key[3]>0,3=>key[2]>0&&key[3]>0,_=>true};
+        let regressed=self.last_progress_ns.is_some() && (key[0]!=previous[0] || key[1]<=previous[1]
+            || (origin==1 && key[2]<=previous[2]) || (origin==2 && key[3]<=previous[3]));
+        if !valid_key || regressed || now<self.required_since_ns || self.last_progress_ns.is_some_and(|v|now<v)
+            || (origin!=0 && source_observed.is_none_or(|v|v>now)) {
+            self.reject();return false;
+        }
+        if let Some(previous)=self.last_progress_ns {
+            let gap=now-previous;increment(&mut self.closed_gap_count,&mut self.overflowed);
+            self.max_closed_gap_ns=self.max_closed_gap_ns.max(gap);
+            if gap>BOUND_NS {increment(&mut self.gap_over_bound_count,&mut self.overflowed);}
+        } else {
+            self.first_progress_ns=Some(now);
+            if now-self.required_since_ns>BOUND_NS {increment(&mut self.first_wait_over_bound_count,&mut self.overflowed);}
+        }
+        if origin!=0 {if let Some(observed)=source_observed {
+            let age=now-observed;increment(&mut self.source_age_observation_count,&mut self.overflowed);
+            self.max_adopted_source_age_ns=self.max_adopted_source_age_ns.max(age);
+            if age>BOUND_NS {increment(&mut self.source_age_over_bound_count,&mut self.overflowed);}
+            self.last_source_observed_ns=Some(observed);
+        }}
+        self.last_progress_ns=Some(now);self.last_key=key;increment(&mut self.progress_count,&mut self.overflowed);true
+    }
+    fn snapshot(&self, origin:usize, now:u64) -> Value {
+        json!({"name":SERIES_NAMES[origin],"required":true,"required_since_ns":self.required_since_ns,
+            "continuity_generation":self.continuity_generation,"epoch_key":self.epoch_key,
+            "first_progress_ns":self.first_progress_ns,"last_progress_ns":self.last_progress_ns,"last_key":self.last_key,
+            "progress_count":self.progress_count,"closed_gap_count":self.closed_gap_count,"gap_over_bound_count":self.gap_over_bound_count,
+            "first_wait_over_bound_count":self.first_wait_over_bound_count,"source_age_applicable":origin!=0,
+            "source_age_observation_count":self.source_age_observation_count,"source_age_over_bound_count":self.source_age_over_bound_count,
+            "max_closed_gap_ns":self.max_closed_gap_ns,"max_adopted_source_age_ns":self.max_adopted_source_age_ns,
+            "source_epoch_change_count":self.source_epoch_change_count,"demand_transition_count":self.demand_transition_count,
+            "censored_interval_count":self.censored_interval_count,"rejected_observation_count":self.rejected_observation_count,
+            "waiting_first_progress":self.last_progress_ns.is_none(),
+            "open_gap_ns":now.checked_sub(self.last_progress_ns.unwrap_or(self.required_since_ns)),
+            "current_source_age_ns":self.last_source_observed_ns.and_then(|v|now.checked_sub(v)),"overflowed":self.overflowed})
+    }
+}
+fn bounded_id(value:Option<&str>)->Option<String> {
+    value.filter(|v|!v.is_empty()&&v.len()<=256&&v.is_ascii()&&!v.bytes().any(|b|b<32)).map(str::to_owned)
+}
+pub(crate) struct Freshness {
+    pub(crate) sequence:u64,
+    start_original_id:Option<String>,start_platform_action_id:Option<String>,activation_id:Option<String>,
+    started_ns:Option<u64>, pub(crate) phase:&'static str, stop_requested_ns:Option<u64>,
+    series:[FiniteSeries;4], context:Option<([u64;5],u64,[bool;2])>,last_clock:u64,
+    pub(crate) sample_sequence:u64,pub(crate) state_valid:bool,pub(crate) clock_valid:bool, counter_overflowed:bool,
+}
+impl Freshness {
+    pub(crate) const fn empty()->Self {Self {sequence:0,start_original_id:None,start_platform_action_id:None,activation_id:None,
+        started_ns:None,phase:"starting",stop_requested_ns:None,series:[FiniteSeries::empty();4],context:None,last_clock:0,
+        sample_sequence:0,state_valid:false,clock_valid:true,counter_overflowed:false}}
+    pub(crate) fn observe_clock(&mut self,now:Option<u64>)->Option<u64> {
+        match now {Some(now) if now>=self.last_clock&&now<=MAX_COUNTER=>{self.last_clock=now;Some(now)},_=>{self.clock_valid=false;None}}
+    }
+    fn revision(&mut self){increment(&mut self.sample_sequence,&mut self.counter_overflowed);}
+    pub(crate) fn completed_start(&mut self,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>,now:Option<u64>) {
+        let (original,action,activation)=(bounded_id(original),bounded_id(action),bounded_id(activation));
+        if sequence==self.sequence && original==self.start_original_id && action==self.start_platform_action_id && activation==self.activation_id {
+            return; // Exact completed replay never resets active, failed or stopped history.
+        }
+        let Some(now)=self.observe_clock(now) else {self.state_valid=false;return};
+        if sequence<=self.sequence||sequence>MAX_COUNTER||original.is_none()||action.is_none()||activation.is_none()
+            || (self.sequence!=0&&(original==self.start_original_id||action==self.start_platform_action_id||activation==self.activation_id)) {self.state_valid=false;return;}
+        self.sequence=sequence;self.start_original_id=original;self.start_platform_action_id=action;self.activation_id=activation;
+        self.started_ns=Some(now);self.phase="active";self.stop_requested_ns=None;self.series=[FiniteSeries::empty();4];
+        for series in &mut self.series {series.required_since_ns=now;}
+        self.context=None;self.state_valid=true;self.clock_valid=true;self.revision();
+    }
+    pub(crate) fn active_stamp(&self)->Option<u64>{if self.phase=="active"&&self.started_ns.is_some(){Some(self.sequence)}else{None}}
+    pub(crate) fn reject(&mut self,censored:bool){
+        if self.started_ns.is_none(){return;}
+        self.state_valid=false;self.revision();
+        for row in &mut self.series {row.reject();if censored{increment(&mut row.censored_interval_count,&mut row.overflowed);}}
+    }
+    pub(crate) fn stop(&mut self,now:Option<u64>){
+        if self.started_ns.is_none()||self.stop_requested_ns.is_some(){return;}
+        self.stop_requested_ns=self.observe_clock(now);self.phase="stopping";self.revision();
+    }
+    pub(crate) fn stopped(&mut self){if self.phase=="stopping"{self.phase="stopped";self.revision();}}
+    pub(crate) fn record_context(&mut self,epoch:[u64;5],config:u64,demand:[bool;2],now:Option<u64>){
+        if self.active_stamp().is_none(){return;}
+        if self.observe_clock(now).is_none(){self.reject(true);return;}
+        if epoch.iter().any(|v|*v>MAX_COUNTER)||config>MAX_COUNTER{self.reject(true);return;}
+        // An absent image does not erase its known epoch. A first real source
+        // binds that unknown coordinate once; its original first-wait remains.
+        let mut epoch=epoch;
+        if let Some((previous,_,_))=self.context {
+            for index in 1..5 {if epoch[index]==0 {epoch[index]=previous[index];}}
+        }
+        let (changed,demand_changed)=self.context.map_or((false,!demand.iter().all(|v|*v)),|(e,c,d)|
+            ((0..5).any(|i|e[i]!=0&&e[i]!=epoch[i])||c!=config,d!=demand));
+        if changed||demand_changed {
+            self.state_valid=false;
+            for row in &mut self.series {
+                increment(&mut row.continuity_generation,&mut row.overflowed);
+                increment(&mut row.censored_interval_count,&mut row.overflowed);
+                if changed{increment(&mut row.source_epoch_change_count,&mut row.overflowed);}
+                if demand_changed{increment(&mut row.demand_transition_count,&mut row.overflowed);}
+            }
+        }
+        self.context=Some((epoch,config,demand));
+        for (i,row) in self.series.iter_mut().enumerate(){row.epoch_key=match i {0=>[epoch[0],0,0,0,0],1=>[epoch[0],epoch[1],epoch[2],0,0],2=>[epoch[0],0,0,epoch[3],epoch[4]],_=>epoch};}
+        self.revision();
+    }
+    pub(crate) fn retired(&mut self,stamp:Option<u64>,epoch:[u64;5],key:[u64;4],events:[bool;4],observed:[Option<u64>;2],now:Option<u64>){
+        if self.active_stamp().is_none(){return;}
+        if stamp!=self.active_stamp(){self.reject(true);return;}
+        let Some(now)=self.observe_clock(now) else {self.reject(true);return;};
+        if key.iter().chain(epoch.iter()).any(|v|*v>MAX_COUNTER){self.reject(true);return;}
+        for i in 0..4 {if events[i] {
+            let source=match i {1=>observed[0],2=>observed[1],3=>observed[0].zip(observed[1]).map(|(a,b)|a.min(b)),_=>None};
+            let row_key=match i {0=>[key[0],key[1],0,0],1=>[key[0],key[1],key[2],0],2=>[key[0],key[1],0,key[3]],_=>key};
+            if !self.series[i].advance(row_key,now,source,i){self.state_valid=false;}
+        }}
+        self.revision();
+    }
+    pub(crate) fn overflowed(&self)->bool{self.counter_overflowed||self.series.iter().any(|s|s.overflowed)}
+    pub(crate) fn lifetime(&self)->Value{json!({"sequence":self.sequence,"start_original_id":self.start_original_id,
+        "start_platform_action_id":self.start_platform_action_id,"activation_id":self.activation_id,"started_ns":self.started_ns,
+        "phase":self.phase,"stop_requested_ns":self.stop_requested_ns})}
+    pub(crate) fn snapshot(&self,now:u64)->Value{Value::Array(self.series.iter().enumerate().map(|(i,s)|s.snapshot(i,now)).collect())}
+}
+
+#[cfg(test)]
+pub(crate) mod finite_tests {
+    use super::*;
+    fn life() -> Freshness {
+        let mut f = Freshness::empty();
+        f.completed_start(1, Some("original.1"), Some("action.1"), Some("activation.1"), Some(10));
+        f
+    }
+    fn event(f: &mut Freshness, ordinal: u64, now: u64, observed: u64) {
+        f.record_context([8,7,1,7,2], 3, [true,true], Some(now));
+        f.retired(Some(1), [8,7,1,7,2], [8,ordinal,ordinal,ordinal], [true,true,true,true], [Some(observed),Some(observed)], Some(now));
+    }
+    pub(crate) fn maximum_fixture() -> (Freshness,[Progress;3]) {
+        let mut f=life();let max=i64::MAX as u64;
+        f.start_original_id=Some("\"".repeat(256));f.start_platform_action_id=Some("\\".repeat(256));f.activation_id=Some("x".repeat(256));
+        f.sequence=max;f.started_ns=Some(max);f.stop_requested_ns=Some(max);f.sample_sequence=max;
+        for row in &mut f.series {
+            row.required_since_ns=max;row.continuity_generation=max;row.epoch_key=[max;5];row.first_progress_ns=Some(max);
+            row.last_progress_ns=Some(max);row.last_key=[max;4];row.progress_count=max;row.closed_gap_count=max;
+            row.gap_over_bound_count=max;row.first_wait_over_bound_count=max;row.source_age_observation_count=max;
+            row.source_age_over_bound_count=max;row.max_closed_gap_ns=max;row.max_adopted_source_age_ns=max;
+            row.source_epoch_change_count=max;row.demand_transition_count=max;row.censored_interval_count=max;
+            row.rejected_observation_count=max;row.last_source_observed_ns=Some(0);row.overflowed=true;
+        }
+        let mut old=Progress::empty();old.demand(true,1);old.advance(Key {epoch:7,sequence:1},2);
+        old.progress = max;
+        old.gaps = max;
+        old.over_bound = max;
+        old.over_bound_ns = max;
+        old.max_gap = max;
+        old.bins = [max; 4];
+        old.demanded_ns = max;
+        old.epochs = max;
+        old.epoch_censored = max;
+        old.pauses = max;
+        old.censored = max;
+        old.rejected = max;
+        old.first_waits = max;
+        old.runs = max;
+        old.recoveries = max;
+        old.censored_runs = max;
+        old.run_length = max;
+        old.max_run_length = max;
+        old.max_first_wait = max;
+        old.censored_first_waits = max;
+        old.samples = [[max; 7]; SAMPLES];
+        old.age_observations = max;
+        old.age_over_bound = max;
+        old.max_age = max;
+        old.age_bins = [max; 4];
+        old.last_source_observed = Some(0);
+        old.sample_count=SAMPLES;old.demanded=true;old.observed_at=max;old.last_at=1;old.over_bound=max-1;
+        (f,[old;3])
+    }
+    #[test]
+    fn finite_complete_counts_retain_smaller_and_separated_incidents() {
+        let mut f=life(); event(&mut f,1,20,20);
+        for (n,t) in [1_000_000_020,1_010_000_020,1_610_000_020,1_620_000_020,2_220_000_020,2_820_000_020,3_420_000_020,4_020_000_020].into_iter().enumerate(){event(&mut f,n as u64+2,t,t);}
+        let rows=f.snapshot(4_020_000_020);
+        for row in rows.as_array().unwrap(){assert_eq!(row["gap_over_bound_count"],6);assert_eq!(row["max_closed_gap_ns"],1_000_000_000u64);assert_eq!(row["closed_gap_count"],8);}
+    }
+    #[test]
+    fn startup_and_boundaries_and_held_sources_remain_visible() {
+        let mut f=life(); event(&mut f,1,750_000_010,10);
+        let rows=f.snapshot(1_350_000_011);
+        assert_eq!(rows[0]["first_wait_over_bound_count"],1);
+        assert_eq!(rows[0]["open_gap_ns"],600_000_001u64);
+        assert_eq!(rows[1]["current_source_age_ns"],1_350_000_001u64);
+        assert_eq!(rows[3]["source_age_over_bound_count"],1);
+        assert!(rows[0]["current_source_age_ns"].is_null());
+        let mut exact=life(); event(&mut exact,1,500_000_010,10);event(&mut exact,2,1_000_000_010,500_000_010);
+        assert_eq!(exact.snapshot(1_000_000_010)[3]["gap_over_bound_count"],0);
+        assert_eq!(exact.snapshot(1_000_000_010)[3]["first_wait_over_bound_count"],0);
+    }
+    #[test]
+    fn missing_both_and_fast_gpu_with_late_sources_are_not_progress() {
+        let mut f=life();
+        f.record_context([8,7,1,7,2],3,[true,true],Some(20));
+        f.retired(Some(1),[8,7,1,7,2],[8,1,1,0],[true,true,false,false],[Some(10),None],Some(20));
+        assert_eq!(f.snapshot(800_000_010)[3]["waiting_first_progress"],true);
+        assert_eq!(f.snapshot(800_000_010)[3]["open_gap_ns"],800_000_000u64);
+        for n in 2..12 {event(&mut f,n,1_000_000_000+n*20_000_000,100);}
+        assert_eq!(f.snapshot(1_240_000_000)[1]["source_age_over_bound_count"],10);
+    }
+    #[test]
+    fn initial_unknown_source_binds_without_erasing_startup_wait_or_known_epochs() {
+        let mut f=life();f.record_context([8,7,1,0,0],3,[true,true],Some(20));
+        f.retired(Some(1),[8,7,1,0,0],[8,1,1,0],[true,true,false,false],[Some(20),None],Some(20));
+        f.record_context([8,7,1,7,2],3,[true,true],Some(30));
+        f.retired(Some(1),[8,7,1,7,2],[8,2,2,1],[true,true,true,true],[Some(30);2],Some(30));
+        assert!(f.state_valid);assert_eq!(f.snapshot(30)[3]["first_progress_ns"],30);
+        assert_eq!(f.snapshot(30)[3]["required_since_ns"],10);
+        f.record_context([8,7,1,0,0],3,[true,true],Some(40));
+        assert!(f.state_valid);assert_eq!(f.snapshot(40)[3]["epoch_key"],json!([8,7,1,7,2]));
+        f.record_context([8,7,1,7,3],3,[true,true],Some(50));
+        f.record_context([8,7,1,7,2],3,[true,true],Some(60));
+        assert!(!f.state_valid);assert_eq!(f.snapshot(60)[3]["source_epoch_change_count"],2);
+    }
+    #[test]
+    fn transitions_rejections_clock_and_overflow_are_sticky() {
+        let mut f=life();event(&mut f,1,20,20);
+        f.record_context([9,7,1,7,2],4,[false,true],Some(30));
+        f.record_context([8,7,1,7,2],3,[true,true],Some(40));
+        event(&mut f,2,50,50);
+        let rows=f.snapshot(60);
+        assert_eq!(rows[0]["source_epoch_change_count"],2);
+        assert_eq!(rows[0]["demand_transition_count"],2);
+        assert_eq!(rows[0]["censored_interval_count"],2);
+        assert!(!f.state_valid);
+        f.observe_clock(Some(1));f.observe_clock(Some(100));assert!(!f.clock_valid);
+        let mut overflow=life();overflow.series[0].progress_count=i64::MAX as u64;
+        event(&mut overflow,1,20,20);assert!(overflow.overflowed());assert_eq!(overflow.series[0].progress_count,i64::MAX as u64);
+    }
+    #[test]
+    fn a_higher_sequence_cannot_relabel_the_same_actual_start() {
+        let mut f=life();f.stop(Some(20));
+        f.completed_start(2,Some("original.1"),Some("action.1"),Some("activation.1"),Some(30));
+        assert_eq!(f.sequence,1);assert!(!f.state_valid);assert_eq!(f.phase,"stopping");
+        f.completed_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(40));
+        assert_eq!(f.sequence,2);assert!(f.state_valid);
+    }
+    #[test]
+    fn old_pending_and_duplicate_start_cannot_repair_lifetime() {
+        let mut f=life();
+        f.retired(None,[8,7,1,7,2],[8,1,1,1],[true;4],[Some(20);2],Some(20));
+        event(&mut f,2,30,30);assert!(!f.state_valid);
+        assert_eq!(f.snapshot(30)[0]["rejected_observation_count"],1);
+        f.completed_start(1,Some("original.1"),Some("action.1"),Some("activation.1"),Some(40));assert!(!f.state_valid);
+        f.stop(Some(50));f.completed_start(1,Some("original.1"),Some("action.1"),Some("activation.1"),Some(60));assert_eq!(f.phase,"stopping");
+        f.completed_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(70));
+        assert_eq!(f.sequence,2);assert!(f.state_valid);assert_eq!(f.snapshot(70)[0]["progress_count"],0);
+        f.completed_start(3,None,None,None,Some(80));assert_eq!(f.sequence,2);assert!(!f.state_valid);
+    }
+}
