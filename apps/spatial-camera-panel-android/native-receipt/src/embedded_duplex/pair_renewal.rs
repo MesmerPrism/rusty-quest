@@ -664,6 +664,81 @@ pub(super) fn finish_cycle(host: &Host, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+// A completed responder must retain its exact final retry until an earned
+// lifetime boundary transfers it. This is historical custody, not renewed
+// authority: no current-time test can replace its actual provider/Stop joins.
+pub(super) fn completed_for_archive(host: &Host, session: &str) -> Result<Option<Value>, String> {
+    let (snapshot,local) = {
+        let s = state(host)?;
+        let r = &s.renewal;
+        let snapshot = serde_json::to_value(r).map_err(safe_decode)?;
+        if snapshot == serde_json::to_value(RenewalState::default()).map_err(safe_decode)? {
+            return Ok(None);
+        }
+        let id = r.id.as_deref().ok_or("renewal archive cycle absent")?;
+        s.renewal_ledger.require_completable(id)?;
+        let local = r.session_round.local_receipt.as_ref().ok_or("renewal archive local session receipt absent")?;
+        let remote = r.session_round.remote_receipt.as_ref().ok_or("renewal archive remote session receipt absent")?;
+        if r.initiator || r.last_failure.is_some() || r.session.as_deref() != Some(session)
+            || s.session_id.as_deref() != Some(session) || s.stage != Stage::Completed
+            || r.credential.local_receipt.is_none() || r.credential.remote_receipt.is_none()
+            || r.result.as_ref() != Some(&json!({"session_id":session,"renewal_id":id,
+                "local_session_renewal":local,"remote_session_renewal":remote}))
+            || local.get("applied").and_then(Value::as_bool) != Some(true)
+            || remote.get("applied").and_then(Value::as_bool) != Some(true)
+            || local.get("session_id").and_then(Value::as_str) != Some(session)
+            || remote.get("session_id").and_then(Value::as_str) != Some(session)
+            || local.get("decision_id").and_then(Value::as_str) != r.original_decision.as_deref()
+            || remote.get("decision_id").and_then(Value::as_str) != r.peer_decision.as_deref()
+            || local.get("expires_at_ms") != remote.get("expires_at_ms")
+            || r.replies.len() != 8
+        { return Err("renewal archive requires exact completed responder custody".into()); }
+        for phase in [CREDENTIAL,SESSION] {
+            for (request,response) in [("renew_hello","renew_hello_ack"),("renew_sign_a","renew_signed_a"),
+                ("renew_prepare_b","renew_prepared_b"),("renew_finish_b","renew_finished_b")] {
+                let key = format!("{phase}.{request}");
+                if r.replies.iter().filter(|(k,_,kind,p)| k == &key && *kind == response
+                    && p.get("phase").and_then(Value::as_str) == Some(phase)).count() != 1 {
+                    return Err("renewal archive exact reply custody incomplete".into());
+                }
+            }
+        }
+        (snapshot,local.clone())
+    };
+    super::super::peer_lifecycle::fresh_setup_eligibility(host)?;
+    let (_guard,joined) = super::super::peer_lifecycle::completed_renewal_archive_guard(host,&local)?;
+    if !snapshot["replies"].as_array().is_some_and(|replies| replies.iter().any(|r|
+        r[0] == "session.renew_finish_b" && r[3]["receipt"] == local && r[3]["provider_renewal"] == joined["provider_renewal"])) {
+        return Err("renewal archive final reply/provider join differs".into());
+    }
+    Ok(Some(json!({"renewal_state":snapshot,"provider_join":joined})))
+}
+
+pub(super) fn archived_lifetime_guard<'a>(host:&'a Host, expected:Option<&Value>)
+    -> Result<Option<std::sync::MutexGuard<'a,Option<super::super::peer_lifecycle::State>>>,String> {
+    let Some(expected) = expected else { return Ok(None) };
+    super::super::peer_lifecycle::fresh_setup_eligibility(host)?;
+    let (guard,joined)=super::super::peer_lifecycle::completed_renewal_archive_guard(host,
+        &expected["renewal_state"]["session_round"]["local_receipt"])?;
+    if joined != expected["provider_join"] { return Err("renewal archive lifetime changed during custody".into()); }
+    Ok(Some(guard))
+}
+
+pub(super) fn finish_archived(current:&mut PairState, expected:Option<&Value>) -> Result<(),String> {
+    let actual=serde_json::to_value(&current.renewal).map_err(safe_decode)?;
+    let Some(expected)=expected else {
+        if actual != serde_json::to_value(RenewalState::default()).map_err(safe_decode)? {
+            return Err("renewal appeared during phase custody".into());
+        }
+        return Ok(());
+    };
+    if actual != expected["renewal_state"] { return Err("renewal changed during phase custody".into()); }
+    let id=current.renewal.id.as_deref().ok_or("archived renewal identity absent")?;
+    current.renewal_ledger.complete(id)?;
+    current.renewal=RenewalState::default();
+    Ok(())
+}
+
 pub(super) fn status(host: &Host) -> Result<Value, String> {
     let current = state(host)?;
     Ok(

@@ -249,6 +249,8 @@ internal class EmbeddedDuplexDisplayCoordinator(
       awaitSource(retirementGeneration, SpatialVideoSource.Disabled)
       ownedPeerGeneration = 0L
       retirementGeneration = 0L
+      ownedDecoderToken = 0L
+      ownedReaderGeneration = 0L
     }
     preparedRendererId?.let { abortDormantPeerRenderer(it) }
     Unit

@@ -1436,3 +1436,62 @@ and JavaBridge API checks are separate from that JVM scenario: no real
 cross-language JNI execution, Manifold signing, headset media or pixels are
 claimed. The earlier two-lifetime baseline retained a still-current Pair; it
 never established this expired-Pair successor path.
+
+## Completed responder renewal custody at a fresh successor
+
+A responder retains its final eight exact renewal request/reply pairs so the
+initiator can retry the final response without reapplying provider effects.
+An earned normal Stop does not make that retained reply history disappear.
+Before replacing a completed fresh phase, Native now copies a completed
+responder renewal into that phase's existing private archive body. It joins the
+exact local signed session renewal to the actual provider renewal receipt and
+immutable terminal Stop Original. Pending, failed, foreign, incomplete and
+initiator-owned renewal state does not qualify. Historical proof is checked as
+stopped custody, without pretending that its expired authority is current.
+
+The reply cache remains live until the actual Java phase archive ACK and the
+separate signed Manifold history custody/compaction both complete. Native then
+rechecks the exact phase, renewal and stopped-provider metadata before advancing
+the existing bounded cycle ledger and releasing the copied renewal state. Final
+local metadata locks span no Java callback, authority call, network operation or
+wait. A rejected final comparison retains local state even if external custody
+has already committed; it does not claim rollback or successful recovery. The
+existing fresh admission still requires actual idle renewal state, and desired
+Stop, unresolved originals, physical eligibility and signed owner guards remain
+in force.
+
+The connected focused runner exercises two actual Native role states and two
+persistent JVM owner instances:
+
+```text
+python -B tools/checks/Test-RenewalSuccessorLifecycleHost.py --output target/renewal-successor --manifold-root <selected-Manifold-root> --scenario corrected --input-spec <retained-host-input-spec.json> --support-classes <retained-host-classes> --json-jar <host-json.jar>
+```
+
+Its production trace connects initial prepared SDK and checked Original ACKs,
+fresh Pair, both seven-owner Starts, genuine coupled renewal, exact final-reply
+retry, both normal Stops, deferred Start/renewal ACKs, distinct SDK/archive,
+expired signed Pair refresh, second Start and second Stop. Actual Native
+operation returns feed the whole Java Original, prepared-holder and archive
+owners; no terminal Stop or cleared renewal flag is supplied by the driver.
+The successor must have a different session identity. Controls additionally
+exercise archive failure, changed retained metadata after archive, an actual
+Native desired-Stop request during the archive callback, stale reply refusal,
+ledger exhaustion and fail-closed incomplete/foreign custody. Explicit metadata
+fault injections restore and compare the exact live test state.
+
+The test boundary models OS process/fence/time, keystore storage, transport,
+codec/camera/GPU resources and JNI calls. It retains real Ed25519 verification,
+Broker/Manifold authority, dispatch, cleanup, lifecycle and history algorithms.
+The Manifold archive sink models storage/signing while the real owner verifies
+the typed custody ACK and compacts history. The selected test media source is
+display capture with the app's typed Spatial SDK sink; Own is not constructed.
+Java incoming RequestSpan/bind scheduling remains an explicit model, separately
+covered by the maintained incoming-epoch tests. This is not Android JNI,
+headset, packed-camera, pixel, timing-quality or installed-app evidence.
+
+That cold test path also exposed stale decoder/reader identity metadata after
+earned Disabled-source retirement. The cold Display owner now clears those two
+identities at the same completed teardown join as its existing generation
+reset. A failed/superseded source join retains them; renderer-ID retry and the
+archive's terminal guard remain unchanged. This cold-path defect is not an
+attribution of a separately selected live-Own device failure.

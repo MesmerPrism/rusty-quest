@@ -1599,6 +1599,43 @@ pub(super) fn require_owned_renewal_route(host: &Host) -> Result<(), String> {
 }
 
 /// Actual immutable normal-Stop outcome retained by the native lifetime owner.
+/// Hold this local metadata slot only during the final in-memory phase handoff.
+/// No Java, authority call, network operation or wait runs under the returned guard.
+pub(super) fn completed_renewal_archive_guard<'a>(
+    host: &'a Host,
+    proof: &Value,
+) -> Result<(std::sync::MutexGuard<'a, Option<State>>, Value), String> {
+    let slot = host.peer_lifecycle.try_lock().map_err(|_| "renewal archive lifetime busy")?;
+    let s = slot.as_ref().ok_or("renewal archive lifetime checked out")?;
+    if s.renewal_pending || s.whole_close_requested || s.last_failure.is_some()
+        || s.termination_action != Some("stop") || s.route_cleanup.is_none()
+        || media_stop_effect(s).is_none_or(Value::is_null)
+    {
+        return Err("renewal archive requires earned normal Stop without pending effects".into());
+    }
+    let original = s.terminal_stop_original_id.as_ref().ok_or("renewal archive Stop Original absent")?;
+    let terminal = s.terminal_stop_projection.as_ref().ok_or("renewal archive terminal projection absent")?;
+    let index = s.renewed_session_proofs.iter().position(|r| r == proof)
+        .ok_or("renewal archive actual local provider proof absent")?;
+    let joined = s.renewals.get(index).ok_or("renewal archive provider receipt absent")?;
+    if index + 1 != s.renewed_session_proofs.len() || s.renewed_session_proofs.len() != s.renewals.len()
+        || joined.get("accepted_pair") != Some(proof)
+        || terminal.get("status").and_then(Value::as_str) != Some("terminal")
+        || terminal.get("termination_action").and_then(Value::as_str) != Some("stop")
+        || terminal.get("renewal_pending").and_then(Value::as_bool) != Some(false)
+        || terminal.get("route_cleanup") != s.route_cleanup.as_ref()
+        || terminal.get("media_stop_effect_receipt") != media_stop_effect(s)
+        || terminal.get("renewal_last_request_id") != joined.get("request_id")
+    {
+        return Err("renewal archive provider/terminal lineage differs".into());
+    }
+    let custody = json!({"terminal_lifetime":{"kind":"normal_peer_stop","original_id":original,"receipt":terminal},
+        "accepted_local_session_renewal":proof,"provider_renewal":joined,
+        "renewal_count":s.renewal_count,"current_lifetime_renewal_count":s.current_lifetime_renewal_count});
+    Ok((slot,custody))
+}
+
+/// Actual immutable normal-Stop outcome retained by the native lifetime owner.
 pub(super) fn prepared_terminal_lifetime(host: &Host) -> Result<Value, String> {
     let slot = host
         .peer_lifecycle

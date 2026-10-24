@@ -1576,6 +1576,14 @@ fn archive_prior_completed(host: &Host) -> Result<(), String> {
     if old.local_setup.as_ref() != Some(&actual) {
         return Err("actual completed fresh transaction changed".into());
     }
+    let renewal_custody = pair_renewal::completed_for_archive(host, &old.session)?;
+    let old_phase_state = serde_json::to_value(&old).map_err(safe_decode)?;
+    let mut phase_state = old_phase_state.clone();
+    if let Some(custody) = &renewal_custody {
+        phase_state.as_object_mut().ok_or("completed phase metadata object")?
+            .insert("completed_renewal_custody".into(),custody.clone());
+    }
+    let next_total = prior.total.checked_add(1).ok_or("fresh archived phase count exhausted")?;
     let authority: Value =
         serde_json::from_str(&host.authority.snapshot_json()?).map_err(safe_decode)?;
     let (native_reservation, preparation) = {
@@ -1592,7 +1600,7 @@ fn archive_prior_completed(host: &Host) -> Result<(), String> {
         "app_process_generation":host.capability.binding.generation,"app_record_sha256":host.capability.binding.record_sha256,
         "native_executor_generation":host.capability.generation,"config_sha256":host.config_sha256,
         "native_request_id":old.id,"phase_request_id":old.phase_id,"original_binding":old.original_binding,
-        "phase_status":"completed","phase_state":old,"authority_snapshot":authority,"prior_archive_projection":prior,
+        "phase_status":"completed","phase_state":phase_state,"authority_snapshot":authority,"prior_archive_projection":prior,
         "native_reservation":native_reservation,"preparation":preparation});
     let raw = body.to_string();
     let digest = format!(
@@ -1645,7 +1653,12 @@ fn archive_prior_completed(host: &Host) -> Result<(), String> {
         mark_dispatch(host, &next)?;
     }
     history_custody::archive_setup(host, &old)?;
+    // The exact retry cache remains live through both durable custody calls.
+    // Only local in-memory metadata locks are held for the final atomic join.
+    let _lifetime_guard = pair_renewal::archived_lifetime_guard(host,renewal_custody.as_ref())?;
     let mut s = state(host)?;
+    let current_phase_state = s.fresh.active.as_ref().map(serde_json::to_value)
+        .transpose().map_err(safe_decode)?;
     if s.fresh.history.total != prior.total
         || s.fresh.history.history_sha256 != prior.history_sha256
         || !s
@@ -1653,16 +1666,15 @@ fn archive_prior_completed(host: &Host) -> Result<(), String> {
             .active
             .as_ref()
             .is_some_and(|a| a.completed && a.id == old.id)
+        || current_phase_state.as_ref() != Some(&old_phase_state)
     {
         return Err("fresh archive owner changed during handoff".into());
     }
+    pair_renewal::finish_archived(&mut s,renewal_custody.as_ref())?;
     let history = &mut s.fresh.history;
     history.history_sha256=Some(format!("sha256:{}",rusty_quest_broker_authority::packaged_json_sha256(&json!({
         "$schema":"rusty.quest.embedded_duplex.fresh_setup_phase_archive_chain.v1","previous":prior.history_sha256,"archive":ack}).to_string())));
-    history.total = history
-        .total
-        .checked_add(1)
-        .ok_or("fresh archived phase count exhausted")?;
+    history.total = next_total;
     if history.first.is_none() {
         history.first = Some(ack.clone());
     }

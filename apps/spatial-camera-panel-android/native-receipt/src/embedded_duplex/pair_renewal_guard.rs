@@ -63,8 +63,15 @@ impl CycleLedger {
             }
         }
     }
-    pub(crate) fn complete(&mut self, id: &str) -> Result<(), String> {
+    pub(crate) fn require_completable(&self, id: &str) -> Result<(), String> {
         self.require_fresh(id)?;
+        if self.ongoing_next.is_none() && self.completed.len() >= 32 {
+            return Err("bounded signed renewal cycle history exhausted".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn complete(&mut self, id: &str) -> Result<(), String> {
+        self.require_completable(id)?;
         if let Some(next) = self.ongoing_next {
             self.ongoing_next = Some(
                 next.checked_add(1)
@@ -72,9 +79,6 @@ impl CycleLedger {
             );
             self.abandoned.clear();
             return Ok(());
-        }
-        if self.completed.len() >= 32 {
-            return Err("bounded signed renewal cycle history exhausted".into());
         }
         self.completed.push(id.to_owned());
         Ok(())
