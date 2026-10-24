@@ -624,7 +624,12 @@ public final class EmbeddedDuplexOriginals {
         compactIfJoined(actual);
     }
     private void retainSettledCustody(Record record)throws Exception{
-        if(record.actualAppGeneration<=0 || record.row.isNull("outcome_sha256"))throw new IllegalStateException("actual settled operation actor absent");
+        JSONObject actor=record.row.getJSONObject("actor_binding");Object nativeGeneration=actor.get("native_generation");
+        if(record.actualAppGeneration<=0 || record.row.isNull("outcome_sha256")
+                || !(nativeGeneration instanceof Integer || nativeGeneration instanceof Long)
+                || ((Number)nativeGeneration).longValue()<=0 || !(actor.opt("app_record_sha256") instanceof String)
+                || !actor.getString("app_record_sha256").matches("[0-9a-f]{64}"))
+            throw new IllegalStateException("actual settled operation actor absent");
         JSONObject proof=new JSONObject().put("schema","rusty.quest.embedded_duplex.settled_original_custody.v1")
             .put("original_id",record.id()).put("request_sha256",record.row.getString("request_sha256"))
             .put("outcome_sha256",record.row.getString("outcome_sha256")).put("actor_binding",record.row.getJSONObject("actor_binding"))
@@ -666,7 +671,11 @@ public final class EmbeddedDuplexOriginals {
             // later prepared-lifetime archive readers cannot reconstruct.
             if (record.persistenceFailure != null || !record.continuationWorkerJoined()
                     || !EmbeddedDuplexProcessHost.originalExchangesJoined(record)) return;
-            retainSettledCustody(record);
+            // Enrollment and never-native app closure have no native actor.
+            // Prepared SDK success, however, must never shed that binding.
+            if ("prepare_peer_start".equals(record.row.getString("operation"))
+                    || !record.row.getJSONObject("actor_binding").isNull("native_generation"))
+                retainSettledCustody(record);
         }
         // Immutable UNKNOWN state/cause/identity/hash survives; only heavy in-process owners are released.
         record.row.put("retention", "compacted"); persist(record);

@@ -1395,3 +1395,9 @@ archive path; it does not establish that this newer custody producer was wired.
 The unchanged whole receiver/routing second-lifetime fixture remains the separate
 physical-owner regression. No archive, terminal, identity or UNKNOWN guard is
 relaxed by this publication repair.
+
+Successful enrollment confirmation and never-native app closure retain their
+ordinary ACK/compaction path without claiming native settled custody. Publication
+requires an actual native actor; prepared SDK success always requires that proof
+and refuses missing or malformed native identity. All successful compactions
+still require the actual worker, callback, command-stage and outbound joins.

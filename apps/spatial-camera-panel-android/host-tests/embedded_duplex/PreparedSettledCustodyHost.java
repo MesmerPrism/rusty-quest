@@ -39,11 +39,13 @@ public final class PreparedSettledCustodyHost {
         final EmbeddedDuplexResources resources=new EmbeddedDuplexResources();
         final CompletableFuture<Bundle> sdk=new CompletableFuture<>();
         EmbeddedDuplexOriginals.Record actual;EmbeddedDuplexPreparedStart holder;JSONObject status;
-        Fixture(Path root)throws Exception{
+        Fixture(Path root)throws Exception{this(root,true);}
+        Fixture(Path root,boolean beginPrepare)throws Exception{
             this.root=Files.createDirectory(root);context=new Context(root.toFile());
             java.lang.reflect.Field singleton=EmbeddedDuplexOriginals.class.getDeclaredField("singleton");singleton.setAccessible(true);singleton.set(null,null);
             owner=EmbeddedDuplexOriginals.forApplication(context);originals=root.resolve("operator-originals-v1");EmbeddedDuplexProcessHost.exchanges=true;
-            owner.begin(PREP,"prepare_peer_start",CHALLENGE,new JSONObject().put("actual_call","prepare_peer_start"),()->{
+            EmbeddedDuplexProcessHost.nativeActor=true;EmbeddedDuplexProcessHost.appRecord=true;EmbeddedDuplexProcessHost.appGeneration=74;
+            if(beginPrepare)owner.begin(PREP,"prepare_peer_start",CHALLENGE,new JSONObject().put("actual_call","prepare_peer_start"),()->{
                 actual=EmbeddedDuplexOriginals.capture();return sdk;
             });
         }
@@ -99,6 +101,29 @@ public final class PreparedSettledCustodyHost {
     }
     public static void main(String[] args)throws Exception{
         Path out=Files.createDirectory(Path.of(args[0]));
+        Fixture enrollment=new Fixture(out.resolve("actorless-confirm"),false);
+        EmbeddedDuplexProcessHost.nativeActor=false;EmbeddedDuplexProcessHost.appRecord=false;EmbeddedDuplexProcessHost.appGeneration=0;
+        Bundle confirmation=new Bundle();confirmation.putString("schema","rusty.quest.embedded_duplex.operator_transport.v1");
+        confirmation.putString("status","observed");confirmation.putString("challenge",CHALLENGE);
+        confirmation.putString("review_sha256","7".repeat(64));confirmation.putString("role_id","peer_a");
+        confirmation.putLong("revision",1);confirmation.putString("record_sha256","8".repeat(64));confirmation.putBoolean("local_fixture",false);
+        final EmbeddedDuplexOriginals.Record[] confirmed=new EmbeddedDuplexOriginals.Record[1];String confirmId="7".repeat(32);
+        enrollment.owner.begin(confirmId,"confirm",CHALLENGE,new JSONObject().put("actual_call","confirm"),()->{
+            confirmed[0]=EmbeddedDuplexOriginals.capture();return CompletableFuture.completedFuture(confirmation);
+        });
+        enrollment.owner.joined(confirmed[0]);JSONObject confirmQuery=observation(enrollment.owner.query(confirmId,CHALLENGE));
+        JSONObject confirmedAck=observation(enrollment.owner.acknowledge(confirmId,CHALLENGE,confirmQuery.getString("request_sha256"),confirmQuery.getString("outcome_sha256"),"9".repeat(64)));
+        check("succeeded".equals(confirmedAck.getString("state"))&&"compacted".equals(confirmedAck.getString("retention")),"actorless confirmation lost ordinary successful ACK compaction");
+        check(!Files.exists(enrollment.originals.resolve(confirmId+".settled.json")),"actorless confirmation invented native settled custody");controls++;
+        Fixture noMedia=new Fixture(out.resolve("never-native-close"),false);
+        EmbeddedDuplexProcessHost.nativeActor=false; // Existing app/fence may close before any native claim.
+        Bundle close=new Bundle();close.putString("schema","rusty.quest.embedded_duplex.operator_transport.v1");close.putString("status","observed");close.putString("challenge",CHALLENGE);
+        close.putString("runtime_state","closed");close.putBoolean("display_attached",false);close.putBoolean("peer_route_proven",false);close.putBoolean("media_effect_proven",false);close.putString("close_disposition","never-native");
+        final EmbeddedDuplexOriginals.Record[] closed=new EmbeddedDuplexOriginals.Record[1];String closeId="8".repeat(32);
+        noMedia.owner.begin(closeId,"close_no_media",CHALLENGE,new JSONObject().put("actual_call","close_no_media"),()->{closed[0]=EmbeddedDuplexOriginals.capture();return CompletableFuture.completedFuture(close);});
+        noMedia.owner.joined(closed[0]);JSONObject closeQuery=observation(noMedia.owner.query(closeId,CHALLENGE));
+        JSONObject closeAck=observation(noMedia.owner.acknowledge(closeId,CHALLENGE,closeQuery.getString("request_sha256"),closeQuery.getString("outcome_sha256"),"9".repeat(64)));
+        check("compacted".equals(closeAck.getString("retention"))&&!Files.exists(noMedia.originals.resolve(closeId+".settled.json")),"non-native app close invented native custody or failed compaction");controls++;
         Fixture good=new Fixture(out.resolve("actual-ack-archive"));good.complete();good.joined();JSONObject acknowledged=good.ack();
         check("compacted".equals(acknowledged.getString("retention")),"genuine successful owner did not compact");
         check(Files.isRegularFile(good.settled()),"baseline missing writer: successful ACK compacted without durable settled custody");controls++;
@@ -124,6 +149,25 @@ public final class PreparedSettledCustodyHost {
         check(!"compacted".equals(ackFirst.ack().getString("retention"))&&!Files.exists(ackFirst.settled()),"ACK alone claimed worker join");
         ackFirst.joined();check(Files.isRegularFile(ackFirst.settled())&&"compacted".equals(observation(ackFirst.owner.query(PREP,CHALLENGE)).getString("retention")),"genuine later join failed to retain custody");controls++;
         Fixture pending=new Fixture(out.resolve("pending-worker"));refused(pending::joined);check(!Files.exists(pending.settled()),"live worker emitted settlement");controls++;
+        Fixture missingActor=new Fixture(out.resolve("missing-prepared-native-actor"));
+        try(AutoCloseable ignored=EmbeddedDuplexOriginals.enter(missingActor.actual)){
+            EmbeddedDuplexOriginals.bindActualActor(new JSONObject().put("package_id","host.fixture").put("native_generation",JSONObject.NULL).put("app_record_sha256",JSONObject.NULL));
+        }
+        missingActor.complete();missingActor.joined();refused(missingActor::ack);
+        check(!Files.exists(missingActor.settled())&&missingActor.actual.original!=null,"malformed prepared actor acquired proof or compacted");controls++;
+        Object[][] malformed={
+            {"numeric-hash","app_record_sha256",new java.math.BigInteger("1".repeat(64))},
+            {"boolean-native","native_generation",true},{"float-native","native_generation",73.0},
+            {"string-native","native_generation","73"},{"zero-native","native_generation",0},
+            {"missing-hash","app_record_sha256",JSONObject.NULL},{"bad-hash","app_record_sha256","g".repeat(64)}};
+        for(Object[] fault:malformed){
+            Fixture invalid=new Fixture(out.resolve("malformed-"+fault[0]));invalid.complete();invalid.ack();
+            // Fault only the held producer tuple after genuine outcome/ACK publication.
+            invalid.actual.row.getJSONObject("actor_binding").put((String)fault[1],fault[2]);
+            try{invalid.joined();throw new AssertionError("malformed native custody tuple accepted");}
+            catch(IllegalStateException expected){check("actual settled operation actor absent".equals(expected.getMessage()),"wrong native identity guard");}
+            check(!Files.exists(invalid.settled())&&invalid.actual.original!=null,"malformed tuple acquired native proof or released Future");controls++;
+        }
         Fixture callback=new Fixture(out.resolve("callback-live"));callback.prepare();refused(callback::joined);check(!Files.exists(callback.settled()),"live callback emitted settlement");controls++;
         Fixture noAck=new Fixture(out.resolve("no-consumer-ack"));noAck.complete();noAck.joined();
         check(!Files.exists(noAck.settled()),"unacknowledged operation emitted settlement");refused(()->noAck.owner.requirePreparedArchive(body,EmbeddedDuplexProcessHost.ACTOR));controls++;

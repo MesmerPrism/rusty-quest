@@ -8,13 +8,17 @@ import java.util.function.BooleanSupplier;
 class EmbeddedDuplexProcessHost {
     static Context context;
     static boolean exchanges=true;
+    static boolean nativeActor=true;
+    static boolean appRecord=true;
+    static long appGeneration=74;
     static EmbeddedDuplexOriginals.Record completed;
     static final JSONObject ACTOR=new JSONObject().put("app_process_generation",74).put("app_record_sha256","a".repeat(64))
         .put("native_executor_generation",73).put("config_sha256","b".repeat(64));
     static void forApplication(Context c){context=c;}
     static Context application(){return context;}
-    static long currentAppGeneration(){return 74;}
-    static JSONObject originalActor(){return new JSONObject().put("package_id","host.fixture").put("native_generation",73).put("app_record_sha256","a".repeat(64));}
+    static long currentAppGeneration(){return appGeneration;}
+    static JSONObject originalActor(){return new JSONObject().put("package_id","host.fixture")
+        .put("native_generation",nativeActor?73:JSONObject.NULL).put("app_record_sha256",appRecord?"a".repeat(64):JSONObject.NULL);}
     static void originalCompletion(EmbeddedDuplexOriginals.Record r){completed=r;}
     static boolean originalExchangesJoined(EmbeddedDuplexOriginals.Record r){return exchanges;}
     static boolean originalIncomingExchangesJoined(EmbeddedDuplexOriginals.Record r){return true;}
