@@ -1366,3 +1366,32 @@ This enables correlation of future receiving failures; it is not a fix or a
 retrospective explanation for a caller's EOF. Two-peer in-memory signed dispatch
 controls exercise real Composite/server/retaining paths with modeled platform
 leaves; separate actual endpoint controls cover handler throw/no-reply semantics.
+
+
+## Joined Original custody before prepared-lifetime archive
+
+A successful acknowledged preparation must retain its actual settled-Original
+custody before compaction releases its Future. The prepared archive already
+requires this actor/request/outcome-bound durable proof. Success compaction now
+calls the existing immutable writer only after the actual worker and registered
+callback are terminal, command stages returned, and outbound exchanges joined.
+Either ACK-before-join or join-before-ACK reaches that same publication boundary.
+A still-live obligation retains the owner; a write/fsync/readback failure cannot
+compact it. An exact repeated ACK preserves the same proof bytes. UNKNOWN keeps
+its prior outcome and compaction semantics and never acquires a success proof.
+
+The focused host control compiles whole production Original, prepared SDK holder,
+renderer observation and archive classes. It exercises actual Future completion,
+consumer ACK, custody file publication, normal-Stop archive and distinct next
+preparation. Android directory fsync, process-executor scheduling, JNI and SDK
+resources are explicit modeled leaves. It is not device or pixel evidence:
+
+```text
+python tools/checks/Test-PreparedSettledCustodyHost.py --output target/prepared-settled-custody --json-jar <host-json.jar>
+```
+
+The earlier same-process Stop/second-Start evidence predates the prepared-Original
+archive path; it does not establish that this newer custody producer was wired.
+The unchanged whole receiver/routing second-lifetime fixture remains the separate
+physical-owner regression. No archive, terminal, identity or UNKNOWN guard is
+relaxed by this publication repair.

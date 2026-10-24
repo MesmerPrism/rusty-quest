@@ -661,6 +661,13 @@ public final class EmbeddedDuplexOriginals {
     private void compactIfJoined(Record record) throws Exception {
         if (!record.operationJoined || !record.callbackJoined.isDone()
                 || record.row.isNull("consumer_receipt_sha256") || record.row.isNull("outcome_sha256")) return;
+        if ("succeeded".equals(record.row.getString("state"))) {
+            // Preserve actual joined custody before releasing the Future which
+            // later prepared-lifetime archive readers cannot reconstruct.
+            if (record.persistenceFailure != null || !record.continuationWorkerJoined()
+                    || !EmbeddedDuplexProcessHost.originalExchangesJoined(record)) return;
+            retainSettledCustody(record);
+        }
         // Immutable UNKNOWN state/cause/identity/hash survives; only heavy in-process owners are released.
         record.row.put("retention", "compacted"); persist(record);
         Object retiredOwner=record.retainedCleanupOwner;
