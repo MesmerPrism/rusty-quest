@@ -380,7 +380,14 @@ internal class SpatialVideoSourceRoutingCoordinator(
     state = state.copy(requested = SpatialVideoSource.Disabled, pending = null,
         effective = SpatialVideoSource.Disabled, ownedAcquisition = null, ownedAcquisitionGeneration = 0L,
         sourceOwnerDemand = false, failed = null, failureReason = SpatialVideoSourceReason.None,
-        pendingSinceNs = 0L, readback = null)
+        pendingSinceNs = 0L, readback = null,
+        // The caller joined this exact reader/decoder and removed its native registration.
+        // Retire only that local cache; other producer authority remains independently owned.
+        producerState = state.producerState.let { producer ->
+          if (producer is SpatialProjectionProducerState.ProducerAuthorityUnavailable &&
+              producer.routeGeneration == generation) SpatialProjectionProducerState.NoProducerOwned
+          else producer
+        })
   }
   /** Separate concurrent source-set reservation; the exclusive Local shutdown guard is unchanged. */
   fun beginEmbeddedConcurrentProjectionPeerRequest(proof: SpatialConcurrentPeerAdmission): SpatialVideoSourceRoutingState = synchronized(stateLock) {
