@@ -786,7 +786,9 @@ final class EmbeddedDuplexProcessHost {
                 try {
                     commands.execute(new Runnable() {
                         @Override public void run() {
-                            try { continueWholeClose(held); }
+                            try (AutoCloseable ignored = EmbeddedDuplexOriginals.enter(held.original)) {
+                                continueWholeClose(held);
+                            }
                             catch (Throwable failure) { held.completion.completeExceptionally(failure); }
                             finally {
                                 held.queued.set(false);
