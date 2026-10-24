@@ -1,5 +1,12 @@
 # Rusty Quest
 
+The standalone [renewal wire codec](crates/rusty-quest-peer-wire/README.md)
+and [desktop codec lab](examples/duplex-control-lab/README.md) provide lossless
+renewal projection and bounded JSON inspection through independent Rust
+workspaces. Their pure contract and CLI process checks require no APK or
+private runtime fixtures. Public app/facade and connected-runtime adoption
+remain separate owner integrations.
+
 Owned display capture producers are explicit opt-in utilities. See
 [display/projection capture](apps/display-stream-android/README.md),
 [experimental native square capture](apps/native-browser-capture-android/README.md)
