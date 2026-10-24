@@ -9,6 +9,35 @@ plugins {
 val feedbackSelection = gradle.startParameter.projectProperties["workloadDevelopmentFeedback"] ?: "false"
 require(feedbackSelection in listOf("true", "false")) { "workloadDevelopmentFeedback must be explicit true or false" }
 val feedbackSelected = feedbackSelection == "true"
+val operatorSelection=providers.gradleProperty("workloadMetaXrOperator").getOrElse("false")
+require(operatorSelection in listOf("true","false")) { "Explicit Operator boolean required" }
+val operatorSelected=operatorSelection=="true"
+require(!operatorSelected || feedbackSelected) { "SDK Operator requires public development feedback" }
+require(!operatorSelected || gradle.startParameter.taskNames.none{it.contains("release",ignoreCase=true)}) { "SDK Operator is debug-only" }
+val operatorInputs=listOf("workloadOperatorAssets","workloadOperatorLibraries","workloadOperatorBinding","workloadOperatorLibrarySha256","workloadOperatorManifestSha256").associateWith{providers.gradleProperty(it)}
+if(operatorSelected){
+    require(operatorInputs.values.all{it.isPresent}) { "Exact Operator staging and pins required" }
+    for(key in listOf("workloadOperatorBinding","workloadOperatorLibrarySha256","workloadOperatorManifestSha256"))require(operatorInputs.getValue(key).get().matches(Regex("[a-f0-9]{64}")))
+    for((key,relative,pin) in listOf(Triple("workloadOperatorAssets","openxr/1/api_layers/implicit.d/xr_api_layer_metax_operator.json","workloadOperatorManifestSha256"),Triple("workloadOperatorLibraries","arm64-v8a/libXrApiLayer_METAX_operator.so","workloadOperatorLibrarySha256"))){
+        val bytes=file(operatorInputs.getValue(key).get()).resolve(relative).readBytes()
+        require(MessageDigest.getInstance("SHA-256").digest(bytes).joinToString(""){"%02x".format(it)}==operatorInputs.getValue(pin).get()) { "Operator staged bytes differ" }
+    }
+}else require(operatorInputs.values.none{it.isPresent}) { "Operator inputs require opt-in" }
+val operatorManifest=layout.buildDirectory.file("generated/operator-manifest/AndroidManifest.xml")
+val writeOperatorManifest=tasks.register("writeOperatorManifest") {
+    val contract=layout.projectDirectory.file("../OperatorDebugManifest.xml")
+    inputs.file(contract);outputs.file(operatorManifest);onlyIf{operatorSelected}
+    doLast {
+        val factory=javax.xml.parsers.DocumentBuilderFactory.newInstance()
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl",true)
+        val xml=factory.newDocumentBuilder().parse(contract.asFile)
+        require(xml.documentElement.getAttribute("package")=="io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.operator")
+        xml.documentElement.removeAttribute("package")
+        val destination=operatorManifest.get().asFile;destination.parentFile.mkdirs()
+        javax.xml.transform.TransformerFactory.newInstance().newTransformer().transform(javax.xml.transform.dom.DOMSource(xml),javax.xml.transform.stream.StreamResult(destination))
+    }
+}
+tasks.matching{it.name.startsWith("processDebug")&&it.name.contains("Manifest")}.configureEach{dependsOn(writeOperatorManifest)}
 require(!feedbackSelected || gradle.startParameter.taskNames.none { it.contains("release", ignoreCase = true) }) { "Development feedback is debug-only" }
 val feedbackShaderSources=layout.buildDirectory.dir("generated/development-feedback-shaders")
 val writeFeedbackShaders=tasks.register("writeDevelopmentFeedbackShaders") {
@@ -81,6 +110,15 @@ if (observerSelected) {
 }
 
 android {
+    sourceSets.getByName("debug").java.srcDir(if(operatorSelected) "src/operatorDebug/java" else "src/operatorDisabled/java")
+    sourceSets.getByName("release").java.srcDir("src/operatorDisabled/java")
+    if(operatorSelected){
+        sourceSets.getByName("debug").manifest.srcFile(operatorManifest)
+        sourceSets.getByName("debug").assets.srcDir(operatorInputs.getValue("workloadOperatorAssets").get())
+        sourceSets.getByName("debug").jniLibs.srcDir(operatorInputs.getValue("workloadOperatorLibraries").get())
+        packaging.jniLibs.useLegacyPackaging=true
+        packaging.jniLibs.keepDebugSymbols.add("**/libXrApiLayer_METAX_operator.so")
+    }
     sourceSets.getByName("debug").java.srcDir(if(feedbackSelected) "src/developmentFeedback/java" else "src/feedbackDisabled/java")
     sourceSets.getByName("release").java.srcDir("src/feedbackDisabled/java")
     if(feedbackSelected) {
@@ -112,8 +150,8 @@ android {
         packaging.jniLibs.keepDebugSymbols.add("**/libc++_shared.so")
     }
     defaultConfig {
-        applicationId = if (sessionSelected) privateApplicationId.get() else "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload"
-        manifestPlaceholders["workloadAppLabel"] = if (sessionSelected) privateAppLabel.get() else "@string/app_name"
+        applicationId = if (sessionSelected) privateApplicationId.get() else if(operatorSelected) "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.operator" else "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload"
+        manifestPlaceholders["workloadAppLabel"] = if (sessionSelected) privateAppLabel.get() else if(operatorSelected) "SDK feedback Operator" else "@string/app_name"
         minSdk = 34
         targetSdk = 34
         versionCode = 1
@@ -144,6 +182,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildTypes {
         debug {
+            buildConfigField("boolean", "META_XR_OPERATOR", operatorSelected.toString())
             buildConfigField("boolean", "DEVELOPMENT_FEEDBACK", feedbackSelected.toString())
             buildConfigField("boolean", "SDK_GRAPHICS_HOT_RELOAD", graphicsReloadSelected.toString())
             buildConfigField("boolean", "EXTERNAL_WORKLOAD_HOTLOAD", externalReloadSelected.toString())
@@ -160,6 +199,7 @@ android {
             if (nativeCatalog.isPresent) externalNativeBuild.cmake.arguments.add("-DRQ_HOTLOAD_CATALOG_INCLUDE=" + file(nativeCatalog.get()).absolutePath)
         }
         release {
+            buildConfigField("boolean", "META_XR_OPERATOR", "false")
             buildConfigField("boolean", "DEVELOPMENT_FEEDBACK", "false")
             buildConfigField("boolean", "SDK_GRAPHICS_HOT_RELOAD", "false")
             buildConfigField("boolean", "EXTERNAL_WORKLOAD_HOTLOAD", "false")
@@ -248,8 +288,8 @@ spatial {
             }
         }
         hotReload {
-            appPackage.set(if (sessionSelected) privateApplicationId.get() else "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload")
-            appMainActivity.set(".SpatialWorldspaceHotloadActivity")
+            appPackage.set(if (sessionSelected) privateApplicationId.get() else if(operatorSelected) "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.operator" else "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload")
+            appMainActivity.set("io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.SpatialWorldspaceHotloadActivity")
             assetsDir.set(layout.projectDirectory.dir("src/main/assets").asFile)
             enableShaderCompilation.set(true)
         }

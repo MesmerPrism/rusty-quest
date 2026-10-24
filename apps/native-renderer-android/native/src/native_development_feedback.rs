@@ -125,7 +125,19 @@ fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(any(native_meta_xr_operator,test))]
+#[derive(Default)]
+struct UiEvidence { queued:String, completed:String, count:u64, pending:BTreeSet<String> }
+#[cfg(any(native_meta_xr_operator,test))]
+impl UiEvidence {
+    fn enqueue(&mut self,id:&str){self.queued=id.into();self.pending.insert(id.into());}
+    fn complete(&mut self,id:&str,passed:bool){if self.pending.remove(id)&&passed {self.completed=id.into();self.count=self.count.saturating_add(1);}}
+    fn project(&self,state:&mut Value){state["original_ui_queued_request_id"]=json!(self.queued);state["original_ui_completed_request_id"]=json!(self.completed);state["original_ui_completed_count"]=json!(self.count.to_string());}
+}
+
 struct UiQueue {
+    #[cfg(native_meta_xr_operator)]
+    evidence: UiEvidence,
     generation: u64,
     commands: VecDeque<Command>,
     sequence: u64,
@@ -135,6 +147,8 @@ static UI: OnceLock<Mutex<UiQueue>> = OnceLock::new();
 fn ui() -> &'static Mutex<UiQueue> {
     UI.get_or_init(|| {
         Mutex::new(UiQueue {
+            #[cfg(native_meta_xr_operator)]
+            evidence: UiEvidence::default(),
             generation: 0,
             commands: VecDeque::new(),
             sequence: 0,
@@ -157,6 +171,8 @@ pub(crate) fn enqueue_ui_compute(generation: u64) -> bool {
     }
     state.sequence += 1;
     let id = format!("ui-compute-{}", state.sequence);
+    #[cfg(native_meta_xr_operator)]
+    state.evidence.enqueue(&id);
     state.commands.push_back(Command {
         id,
         method: "native_compute".into(),
@@ -216,6 +232,8 @@ impl NativeDevelopmentFeedback {
         {
             let mut state = ui().lock().unwrap_or_else(|p| p.into_inner());
             *state = UiQueue {
+                #[cfg(native_meta_xr_operator)]
+                evidence: UiEvidence::default(),
                 generation: ui_generation,
                 commands: VecDeque::new(),
                 sequence: 0,
@@ -312,6 +330,8 @@ impl NativeDevelopmentFeedback {
         self.dispatch(command, frame, shader);
     }
     fn dispatch(&mut self, command: Command, frame: u64, shader: &mut ShaderActivator<'_>) {
+        #[cfg(native_meta_xr_operator)]
+        let status_request=command.method=="native_status";
         let result = (|| match command.method.as_str() {
             "native_status" => {
                 command.exact(&[])?;
@@ -381,6 +401,10 @@ impl NativeDevelopmentFeedback {
             _ => Err("method unsupported by native host".into()),
         })();
         self.record(command.id, result, frame);
+        #[cfg(native_meta_xr_operator)]
+        if status_request {
+            if let Some((_,observation))=self.pending.last_mut(){observation["scene"]["operator_layer_loaded"]=json!(crate::native_input_geometry::operator_layer_loaded());}
+        }
     }
     fn state(&self, snapshot: &Snapshot) -> Value {
         json!({"native_state":if snapshot.generation == 0 {"uninitialized"} else {"ready"},"native_session_id":self.session,"native_owner_token":self.owner,"native_generation":snapshot.generation.to_string(),"native_generation_sha256":snapshot.active_sha256,"native_completed_unsigned":snapshot.completed.to_string(),"native_value":snapshot.value.to_string(),"native_allocation":snapshot.allocation_token.to_string(),"native_buffer_hex":snapshot.buffer.iter().map(|b|format!("{b:02x}")).collect::<String>(),"native_retained_images":snapshot.retained_images.to_string(),"native_attempts":snapshot.attempts.to_string(),"native_staged_bytes":snapshot.staged_bytes.to_string(),"native_command_limit":COMMAND_LIMIT.to_string(),"native_commands_consumed":self.seen.len().to_string(),"native_restart_required":(self.seen.len()>=COMMAND_LIMIT).to_string()})
@@ -428,6 +452,15 @@ impl NativeDevelopmentFeedback {
     }
     pub(crate) fn submitted(&mut self, frame: u64) {
         for (id, mut observation) in self.pending.drain(..) {
+            #[cfg(native_meta_xr_operator)]
+            {
+                let mut queue=ui().lock().unwrap_or_else(|p|p.into_inner());
+                if queue.generation==self.ui_generation {
+                    queue.evidence.complete(&id,observation["status"]=="pass");
+                    queue.evidence.project(&mut observation["state"]);
+                }
+                if let Some(geometry)=crate::native_input_geometry::readback_current(&self.owner,&self.session){observation["scene"]["input_geometry"]=geometry;}
+            }
             observation["scene"]["submitted"] = Value::Bool(true);
             observation["scene"]["evidence"] = json!("native-openxr-end-frame");
             observation["scene"]["submitted_frame"] = json!(frame);
@@ -514,6 +547,17 @@ fn atomic_json(directory: &Path, name: &str, value: &Value) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn original_ui_evidence_requires_a_real_queue_entry_and_successful_completion() {
+        let mut evidence=UiEvidence::default();
+        evidence.complete("ui-compute-1",true);assert_eq!(evidence.count,0);
+        evidence.enqueue("ui-compute-1");assert!(evidence.completed.is_empty());
+        evidence.complete("ui-compute-1",true);assert_eq!(evidence.count,1);
+        evidence.complete("ui-compute-1",true);assert_eq!(evidence.count,1);
+        evidence.enqueue("ui-compute-2");evidence.complete("ui-compute-2",false);
+        assert_eq!(evidence.completed,"ui-compute-1");assert_eq!(evidence.count,1);
+    }
+
     #[test]
     fn closed_command_shape_rejects_extra_fields_and_nonstring_arguments() {
         let good = br#"{"schema":"rusty.quest.hotload_command.v1","request_id":"a-1","method":"native_compute","arguments":{"input":"4"}}"#;

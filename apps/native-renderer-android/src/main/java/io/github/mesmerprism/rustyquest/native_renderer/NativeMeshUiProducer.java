@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.app.Presentation;
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.VirtualDisplay;
@@ -13,6 +14,7 @@ import android.util.Log;
 import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.View;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -23,6 +25,8 @@ import android.widget.TextView;
 import android.widget.EditText;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /** App-owned Android widgets rendered into the native OpenXR mesh texture, not another Activity. */
 public final class NativeMeshUiProducer {
@@ -43,6 +47,10 @@ public final class NativeMeshUiProducer {
     private View root;
     private View cursor;
     private TextView status;
+    private Button computeButton;
+    private NativeInputWidgetGeometry inputGeometry;
+    private ViewTreeObserver.OnPreDrawListener inputGeometryListener;
+    private long publishedInputRevision;
     private long downTime;
     private boolean down;
     private long lastMove;
@@ -170,6 +178,13 @@ public final class NativeMeshUiProducer {
         layout.addView(graft, new LinearLayout.LayoutParams(-1, 76));
         button(context, layout, "Reset panel pose and size", 13);
         layout.addView(text(context, "Hand pinch or controller trigger: click / drag.", 16));
+        if (nativeInputSelected()) {
+            inputGeometry = new NativeInputWidgetGeometry();
+            inputGeometryListener = new ViewTreeObserver.OnPreDrawListener() {
+                @Override public boolean onPreDraw() { publishInputGeometry(); return true; }
+            };
+            root.getViewTreeObserver().addOnPreDrawListener(inputGeometryListener);
+        }
     }
 
     private static TextView text(Context context, String value, int size) {
@@ -181,6 +196,7 @@ public final class NativeMeshUiProducer {
 
     private void button(Context context, LinearLayout parent, String label, int code) {
         Button button = new Button(context);
+        if (code == 14 && nativeInputSelected()) computeButton = button;
         button.setText(label);
         button.setAllCaps(false);
         // This combined test is locked to live hands; no unselected replay feature is activated.
@@ -195,6 +211,25 @@ public final class NativeMeshUiProducer {
     private void submit(int code, float value) {
         boolean accepted = nativeControl(generation, code, value);
         status.setText("Control " + code + (accepted ? " accepted by native state" : " rejected") + " • value " + value);
+    }
+
+    private void publishInputGeometry() {
+        if (current != this || root == null || computeButton == null || inputGeometry == null) return;
+        int[] origin = new int[2], location = new int[2];
+        root.getLocationOnScreen(origin); computeButton.getLocationOnScreen(location);
+        int[] bounds = {location[0]-origin[0],location[1]-origin[1],location[0]-origin[0]+computeButton.getWidth(),location[1]-origin[1]+computeButton.getHeight()};
+        Rect visible = new Rect();
+        boolean shown = computeButton.isAttachedToWindow() && computeButton.isShown() && computeButton.getGlobalVisibleRect(visible);
+        int[] clipped = shown ? new int[]{visible.left-origin[0],visible.top-origin[1],visible.right-origin[0],visible.bottom-origin[1]} : new int[4];
+        NativeInputWidgetGeometry.Snapshot measured = inputGeometry.observe(true,true,generation,root.getWidth(),root.getHeight(),bounds,clipped,computeButton.isEnabled(),shown);
+        if(measured == null || measured.revision == publishedInputRevision) return;
+        try {
+            JSONObject widget = new JSONObject().put("id","compute").put("enabled",measured.enabled).put("visible",measured.visible)
+                .put("bounds_pixels",new JSONArray(measured.bounds)).put("clipped_bounds_pixels",new JSONArray(measured.clipped));
+            JSONObject body = new JSONObject().put("panel_generation",generation).put("layout_revision",measured.revision)
+                .put("surface_width_pixels",measured.width).put("surface_height_pixels",measured.height).put("widget",widget);
+            if(nativePublishInputGeometry(generation,body.toString())) publishedInputRevision = measured.revision;
+        } catch (org.json.JSONException invalid) { Log.e(TAG,"event=input-geometry-unavailable",invalid); }
     }
 
     /** All events are generation-bound and delivered on the Android UI thread. */
@@ -281,6 +316,8 @@ public final class NativeMeshUiProducer {
 
     private boolean close() {
         boolean released = true;
+        if(root != null && inputGeometryListener != null && root.getViewTreeObserver().isAlive()) root.getViewTreeObserver().removeOnPreDrawListener(inputGeometryListener);
+        inputGeometryListener = null; inputGeometry = null; computeButton = null;
         try { cancelPointer(); } catch (RuntimeException error) { released = false; }
         try { if (presentation != null) { presentation.dismiss(); presentation = null; } }
         catch (RuntimeException error) { released = false; }
@@ -302,5 +339,7 @@ public final class NativeMeshUiProducer {
 
     private static native boolean nativeControl(long generation, int code, float value);
     private static native boolean nativeFeedbackSelected();
+    private static native boolean nativeInputSelected();
+    private static native boolean nativePublishInputGeometry(long generation, String body);
     private static native String nativeFeedbackStatus(long generation);
 }

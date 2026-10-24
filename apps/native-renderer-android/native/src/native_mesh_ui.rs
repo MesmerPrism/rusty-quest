@@ -344,6 +344,8 @@ pub(crate) fn renderer_observed(generation: u64, revision: u64) -> bool {
     true
 }
 pub(crate) fn activate(generation: u64) {
+    #[cfg(native_meta_xr_operator)]
+    crate::native_input_geometry::reset();
     *controls().lock().unwrap_or_else(|p| p.into_inner()) = ControlSnapshot {
         generation,
         ..ControlSnapshot::default()
@@ -353,6 +355,8 @@ pub(crate) fn deactivate(generation: u64) {
     let mut s = controls().lock().unwrap_or_else(|p| p.into_inner());
     if s.generation == generation {
         s.generation = 0;
+        #[cfg(native_meta_xr_operator)]
+        crate::native_input_geometry::reset();
     }
 }
 fn apply(s: &mut ControlSnapshot, generation: u64, code: i32, value: f32) -> bool {
@@ -534,6 +538,27 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
         );
     }
     accepted as jni::sys::jboolean
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeInputSelected(
+    _env: *mut jni::sys::JNIEnv, _class: jni::sys::jclass,
+) -> jni::sys::jboolean { cfg!(native_meta_xr_operator).into() }
+
+#[cfg(all(target_os = "android", native_meta_xr_operator))]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativePublishInputGeometry(
+    mut env: jni::EnvUnowned, _class: jni::objects::JClass, generation: i64, body: jni::objects::JString,
+) -> jni::sys::jboolean {
+    use jni::Outcome;
+    let current = snapshot().generation;
+    if generation <= 0 || current != generation as u64 { return false.into(); }
+    let result=env.with_env(|env| {
+        let text:String=env.get_string(&body)?.into();
+        Ok::<bool,jni::errors::Error>(crate::native_input_geometry::update(current,&text).is_ok())
+    }).into_outcome();
+    matches!(result,Outcome::Ok(true)).into()
 }
 
 #[cfg(target_os = "android")]

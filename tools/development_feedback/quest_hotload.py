@@ -18,6 +18,10 @@ PACKAGES = {
     "native-openxr": "io.github.mesmerprism.rustyquest.native_renderer.development_hotload",
     "spatial-sdk": "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload",
 }
+OPERATOR_PACKAGES = {
+    "native-openxr": "io.github.mesmerprism.rustyquest.native_renderer.development_hotload_operator",
+    "spatial-sdk": "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.operator",
+}
 FIELDS = {
     "status": (), "native_status": (), "native_init": ("sha256",),
     "native_activate": ("generation", "sha256", "probe_result"),
@@ -104,7 +108,10 @@ def publication_script(target, temp, digest):
 class Operator:
     def __init__(self, args):
         self.args = args
-        self.package = PACKAGES[args.host]
+        selected = getattr(args, "operator_variant", False)
+        if type(selected) is not bool:
+            raise ValueError("operator variant selection must be boolean")
+        self.package = (OPERATOR_PACKAGES if selected else PACKAGES)[args.host]
 
     def shell(self, command, data=None, check=True):
         # exec-in preserves complete binary stdin with the selected Android
@@ -244,6 +251,7 @@ def main():
     parser.add_argument("--adb", required=True)
     parser.add_argument("--serial", required=True)
     parser.add_argument("--host", choices=PACKAGES, required=True)
+    parser.add_argument("--operator-variant", action="store_true", help="Select the fixed coinstalled debug Operator package")
     parser.add_argument("--pid", type=int, required=True)
     parser.add_argument("--session", required=True)
     parser.add_argument("--native-session")

@@ -790,7 +790,7 @@ unsafe fn run_projection_loop_inner(
         available_extensions.ext_hand_tracking,
         enabled_extensions.ext_hand_tracking,
     );
-    let reference_space =
+    let (reference_space, reference_space_kind) =
         create_projection_reference_space(&session, runtime_options.environment_depth_settings)?;
     let mut hand_mesh_capture_recorder = LiveHandMeshCaptureRecorder::new(
         app,
@@ -1510,6 +1510,7 @@ unsafe fn run_projection_loop_inner(
         &mut frame_wait,
         &mut frame_stream,
         &reference_space,
+        reference_space_kind,
         render_pass,
         color_format,
         scene_depth,
@@ -2195,6 +2196,7 @@ unsafe fn run_projection_frames(
     frame_wait: &mut xr::FrameWaiter,
     frame_stream: &mut xr::FrameStream<xr::Vulkan>,
     reference_space: &xr::Space,
+    _reference_space_kind: &'static str,
     render_pass: vk::RenderPass,
     color_format: vk::Format,
     scene_depth: Option<SceneDepthConfig>,
@@ -2290,6 +2292,8 @@ unsafe fn run_projection_frames(
         crate::marker("worldspace-input", format!("status=config trackedHandPointerSelected={} compactRigInputSelected={} handPointerSource=XR_EXT_hand_tracking handAdapterRequiredForRawPointer=false simultaneousTrackingRequired=false",
             crate::native_alternate_input::tracked_pointer_enabled_for_mode(render_mode.marker_value()),
             compact_hand_input_source_mode.selects_live_frame()));
+        #[cfg(native_meta_xr_operator)]
+        crate::marker("worldspace-input", "status=operator-policy inputPolicy=tracked-hands-first controllerFallback=true originalUiHandler=true");
     }
     let mut ui_particle_phase_frame = 0_u64;
     let experiment_frame_gate_clock = Instant::now();
@@ -2400,6 +2404,8 @@ unsafe fn run_projection_frames(
                     }
                     let focused = event.state() == xr::SessionState::FOCUSED;
                     if !focused {
+                        #[cfg(native_meta_xr_operator)]
+                        crate::native_input_geometry::invalidate();
                         alternate_pointer.reset();
                         if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                             panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
@@ -2612,6 +2618,8 @@ unsafe fn run_projection_frames(
         trace_startup_frame(frame_count, "after-xr-begin-frame");
 
         if !frame_state.should_render {
+            #[cfg(native_meta_xr_operator)]
+            crate::native_input_geometry::invalidate();
             alternate_pointer.reset();
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                 panel.controller_ray(app, false, false, [0.0; 3], [0.0; 3])?;
@@ -2655,6 +2663,8 @@ unsafe fn run_projection_frames(
             || !view_flags.contains(xr::ViewStateFlags::ORIENTATION_VALID)
             || !view_flags.contains(xr::ViewStateFlags::POSITION_VALID)
         {
+            #[cfg(native_meta_xr_operator)]
+            crate::native_input_geometry::invalidate();
             // An empty frame with invalid head views also loses pointer admission.
             // Cancel before recovery can turn a stale captured press into ACTION_UP.
             alternate_pointer.reset();
@@ -2874,7 +2884,11 @@ unsafe fn run_projection_frames(
                     && ray.is_some_and(|ray| ray.valid)
                     && renderer_focus_session_state == "FOCUSED";
                 let (owner, hand_pressed, changed) = if alternate_input_enabled {
-                    alternate_pointer.update(controller_selected, ui_hand_sample)
+                    #[cfg(native_meta_xr_operator)]
+                    let selection = alternate_pointer.update_preferring_hands(controller_selected, ui_hand_sample);
+                    #[cfg(not(native_meta_xr_operator))]
+                    let selection = alternate_pointer.update(controller_selected, ui_hand_sample);
+                    selection
                 } else {
                     (
                         crate::native_alternate_input::PointerOwner::Controllers,
@@ -3262,6 +3276,18 @@ unsafe fn run_projection_frames(
             panel.prepare_frame(vk_device, cmd, frame_slot)?;
         }
         let mesh_ui_controls = mesh_ui_panel.as_ref().map(|panel| panel.frame_controls());
+        #[cfg(native_meta_xr_operator)]
+        let input_geometry_frame = mesh_ui_controls.map(|controls| {
+            crate::native_input_geometry::freeze(crate::native_input_geometry::Frame {
+                generation: controls.generation, revision: controls.revision,
+                center: controls.pose.center, right: controls.pose.right, up: controls.pose.up,
+                width: controls.pose.width, height: controls.pose.height,
+                visible: controls.panel_visible && controls.pose_initialized,
+                tracking_valid: view_flags.contains(xr::ViewStateFlags::ORIENTATION_VALID | xr::ViewStateFlags::POSITION_VALID),
+                reference_space: _reference_space_kind.into(),
+                instance: format!("{:?}", xr_instance.as_raw()), session: format!("{:?}", session.as_raw()),
+            })
+        });
         if let Some(feedback) = development_feedback.as_deref_mut() {
             #[cfg(native_development_feedback)]
             feedback.tick_with_shader(frame_count,&mut |candidate| {
@@ -4300,6 +4326,10 @@ unsafe fn run_projection_frames(
         );
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
         frame_timings.submitted_frame_host_ms = elapsed_ms(submitted_frame_host_started);
+        #[cfg(native_meta_xr_operator)]
+        if let Some(prepared) = input_geometry_frame {
+            crate::native_input_geometry::submitted(prepared, frame_count);
+        }
         if let Some(feedback) = development_feedback.as_deref_mut() {
             feedback.submitted(frame_count);
         }
@@ -4963,7 +4993,7 @@ fn reject_live_stimulus_candidate(
 fn create_projection_reference_space(
     session: &xr::Session<xr::Vulkan>,
     environment_depth_settings: NativeEnvironmentDepthSettings,
-) -> Result<xr::Space, String> {
+) -> Result<(xr::Space, &'static str), String> {
     let prefer_stage = environment_depth_settings.reference_space_marker_value() == "openxr-stage";
     let first = if prefer_stage {
         xr::ReferenceSpaceType::STAGE
@@ -4976,9 +5006,10 @@ fn create_projection_reference_space(
         xr::ReferenceSpaceType::STAGE
     };
     match session.create_reference_space(first, xr::Posef::IDENTITY) {
-        Ok(space) => Ok(space),
+        Ok(space) => Ok((space, if first == xr::ReferenceSpaceType::LOCAL {"LOCAL"} else {"STAGE"})),
         Err(first_error) => session
             .create_reference_space(second, xr::Posef::IDENTITY)
+            .map(|space| (space, if second == xr::ReferenceSpaceType::LOCAL {"LOCAL"} else {"STAGE"}))
             .map_err(|second_error| {
                 format!(
                     "create OpenXR reference space: first={first:?} failed with {first_error}; fallback={second:?} failed with {second_error}"

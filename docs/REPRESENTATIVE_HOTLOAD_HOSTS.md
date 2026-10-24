@@ -39,6 +39,31 @@ Retain per-run observations and captures for the exact app and build.
 
 ## Existing build and reload owners
 
+The optional agent-input builds use separate packages. Resolve
+`fixtures/native-app-builds/native-development-hotload-operator.app.json` with
+the existing resolver and pass its lock to the native builder with
+`-EnableMetaXrOperator`, `-MetaXrOperatorLibrary`, its SHA256,
+`-MetaXrOperatorManifest` and its SHA256. The explicit selected feature is
+`debug.meta_xr_operator`; selection and pinned external layer bytes participate
+in the canonical output identity. The original six-feature fixture remains the
+ordinary no-INTERNET host.
+
+The SDK builder selects its fixed `.operator` package only with
+`-DevelopmentFeedback -MetaXrOperator`, exact `-MetaXrOperatorFeatureLockPath`
+and SHA256, library path/SHA256 and manifest path/SHA256. Its SDK app contract
+still owns composition, shader/workload selection, package and Activity.
+Operator artifacts, INTERNET, optional experimental declaration and geometry
+observers remain absent from ordinary/unselected/release builds. SDK selected
+packaging also requires actual native-library extraction.
+
+Both operator variants expose current original Compute bounds and completion
+traces through status readback. See [the finite hand-target
+adapter](META_XR_INPUT_AUTOMATION.md#original-compute-targets-in-the-development-hosts)
+for geometry, live session, original-handler and exact actor-retirement checks.
+This route needs an enabling APK; a sidecar cannot attach the layer to an
+already installed no-INTERNET app. Simulated input does not qualify the broader
+tracking, font/topology replacement, DEX scene or stress matrix above.
+
 Resolve `fixtures/native-app-builds/native-development-hotload.app.json` with
 `tools/Resolve-NativeAppBuild.ps1`, then pass its exact feature lock to the
 existing `tools/Build-NativeRendererAndroid.ps1`. The development capability is

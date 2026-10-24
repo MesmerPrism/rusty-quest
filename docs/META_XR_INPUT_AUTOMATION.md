@@ -8,6 +8,72 @@ keeps its sole XR owner and original widget/action handlers.
 
 ## Finite real Operator backend
 
+### Original Compute targets in the development hosts
+
+The separate `rusty.quest.meta_xr_input.hand_target_capsule.v1` route supports
+the two explicit development hosts on a vendor bundle that provides synthetic
+hands and space conversion but lacks controller setters or full device release.
+It does not weaken the existing full `capsule.v1` requirements below.
+
+`validateHandTargetCapsule` and `runOperatorHandTarget` use the same finite
+stdio proxy and durable journal as the original backend. The binder selects
+this route only for `plan.kind=hand_target`. The plan contains `hand`, a
+100–500 ms `hold_ms`, `cleanup_policy=retire_original_actor`, and actual
+`rusty.quest.development_input_geometry.v1` geometry for the original Compute
+widget. It exposes no arbitrary vendor tool or semantic application command.
+
+Geometry binds the app-owned host session/owner, process, panel generation,
+layout and pose revisions, measured surface size, clipped original widget
+bounds, metric panel axes and actual reference space. Native geometry is
+published from a successful submitted frame. SDK geometry is labeled
+`sdk-ecs-panel-transform`, uses explicit SDK Z reflection into OpenXR
+`LOCAL_FLOOR`, and establishes no submitted-frame or pixel observation.
+Fresh owner readback must keep those stable geometry fields unchanged before
+each new input. The live layer must independently report the same focused,
+advancing XR session; timestamps from these sources are not interchangeable.
+
+The backend computes a target inside the visible clipped button, converts
+target/wrist into STAGE using `openxr_convert_pose_between_spaces`, then sends
+open and aim. It requires the current delivered hand generation and an actual
+delivered stage ray passing within 1.5 cm of the target before one finite pinch.
+The selected registry/schema pins include only instance/session/frame reads,
+hand state, controller-pose reads, hand gestures and space conversion. Existing
+synthetic hand or controller ownership refuses the attempt before mutation.
+
+This hand-target route explicitly holds the pinch through delivered-state
+readback, then opens in its bounded cleanup before observing the original
+click completion. A vendor `auto_release=true` call blocks until it has already
+opened, so its ACK cannot provide a later pressed-state observation. The
+100–500 ms hold excludes transport/readback time; the finite attempt always
+opens and retires its original actor, including after an unknown response.
+The selected native Operator hand-test host prefers a valid tracked hand,
+with controller fallback when no hand is available. Its ordinary unselected
+build keeps controller-first ownership. A controller can retain an active pose
+while stationary; an inactive aim action alone also does not exclude its grip.
+
+The source-owned development-host adapter supplies read-only actor/status/grant
+callbacks and a separately named `stopOriginal` callback through
+`createDevelopmentHostOwner`. A fresh native completed counter and original UI
+completed trace must each advance exactly once, with the module, allocation and
+owner retained. A second read after the final open must keep the resulting
+value and counters. These checks prove the original handler effect, separately
+from synthetic delivery and any independently captured pixels.
+
+The explicit retirement policy permits only the selected original process-owned
+layer/actor to be stopped through its existing package owner. Fresh exact boot,
+PID/birth, app owner and original target evidence must precede that operation;
+replacement actors are never followed. A confirmed typed package-stop receipt
+and matching terminal evidence establish `release_state=retired_original_actor`
+with `cleanup_scope=original_actor_retirement`. This is a distinct scope from
+full physical-device release. An open hand, an ACK or process absence alone
+cannot establish it. The host retains responsibility for its proxy child,
+forward/port, temporary experimental property and resource leases.
+
+Run `node --test tools/development_feedback/operator_hand.test.mjs` for the
+independent hand-only stdio peer and refusal/retirement cases. Run the existing
+backend suite as well when changing shared protocol code. Host passes do not
+prove a headset widget effect, rendered hands, tracking recovery or leak freedom.
+
 `tools/lib/meta-xr-operator-backend.mjs` implements the official standalone
 proxy's newline-delimited stdio MCP protocol, using Node 22 or newer and only
 standard modules. It launches the exact hash-pinned executable with one bare

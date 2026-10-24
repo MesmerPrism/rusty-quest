@@ -12,6 +12,16 @@ from quest_hotload import Operator, create_json, decode, publication_script, val
 
 
 class CommandContractTests(unittest.TestCase):
+    def test_operator_variant_is_closed_and_keeps_original_packages(self):
+        for host, original, selected in (
+            ("native-openxr", "io.github.mesmerprism.rustyquest.native_renderer.development_hotload",
+             "io.github.mesmerprism.rustyquest.native_renderer.development_hotload_operator"),
+            ("spatial-sdk", "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload",
+             "io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.operator"),
+        ):
+            self.assertEqual(original, Operator(SimpleNamespace(host=host)).package)
+            self.assertEqual(selected, Operator(SimpleNamespace(host=host, operator_variant=True)).package)
+
     def setUp(self):
         self.command = {"schema": "rusty.quest.hotload_command.v1", "request_id": "real-edit-1",
                         "method": "native_activate", "arguments": {"generation": "1", "sha256": "a" * 64, "probe_result": "13"}}

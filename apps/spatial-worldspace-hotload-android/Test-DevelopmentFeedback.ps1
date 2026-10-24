@@ -10,7 +10,8 @@ $package='io/github/mesmerprism/rustyquest/spatial_worldspace_hotload'
 $main=Join-Path $PSScriptRoot "app/src/main/java/$package"
 $tests=Join-Path $PSScriptRoot "app/src/test/java/$package"
 $sources=@('AtlasPacket.kt','AtlasDiagnosticProtocol.kt','WorkloadTopology.kt','DevelopmentSceneManifest.kt','CpuFeedbackProjection.kt','FeedbackObservationStore.kt','FrameworkFilesRoot.kt')|ForEach-Object{Join-Path $main $_}
-$sources+=@('DevelopmentSceneHostTest.kt','WorkloadContractHostTest.kt','AtlasDiagnosticHostTest.kt','WorkloadTopologyHostTest.kt','FeedbackObservationHostTest.kt','FrameworkFilesHostTest.kt')|ForEach-Object{Join-Path $tests $_}
+$sources+=@('DevelopmentSceneHostTest.kt','WorkloadContractHostTest.kt','AtlasDiagnosticHostTest.kt','WorkloadTopologyHostTest.kt','FeedbackObservationHostTest.kt','FrameworkFilesHostTest.kt','OperatorGeometryHostTest.kt')|ForEach-Object{Join-Path $tests $_}
+$sources+=Join-Path $PSScriptRoot "app/src/operatorDebug/java/$package/SdkOperatorGeometry.kt"
 $repoRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $sharedSources=@(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'android/development-feedback/src/main/java'),(Join-Path $repoRoot 'android/development-feedback-host/src/main/java') -Recurse -File -Filter '*.java'|ForEach-Object FullName)
 $sharedSources+=Join-Path $repoRoot 'android/development-feedback/src/android/java/org/rusty/quest/feedback/NativeFeedbackBridge.java'
@@ -42,7 +43,7 @@ try{
     $cp=(@($classes)+$jars)-join[IO.Path]::PathSeparator
     Run 'kotlin-compile' $Java (@('-cp',$cp,'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler','-jvm-target','17','-no-stdlib','-no-reflect','-classpath',$cp,'-d',$classes)+$sources)
     $runtime=$classes+[IO.Path]::PathSeparator+$cp
-    foreach($test in @('WorkloadContractHostTest','AtlasDiagnosticHostTest','WorkloadTopologyHostTest','DevelopmentSceneHostTest','FeedbackObservationHostTest','FrameworkFilesHostTest')){
+    foreach($test in @('WorkloadContractHostTest','AtlasDiagnosticHostTest','WorkloadTopologyHostTest','DevelopmentSceneHostTest','FeedbackObservationHostTest','FrameworkFilesHostTest','OperatorGeometryHostTest')){
         Run $test $Java @('-cp',$runtime,('io.github.mesmerprism.rustyquest.spatial_worldspace_hotload.'+$test),$packet)
     }
     Run 'actual-atlas-shader-layout' $Python @((Join-Path $PSScriptRoot 'Test-DevelopmentShader.py'),'--header',(Join-Path $output 'development-atlas-header.json'))
