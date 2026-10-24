@@ -188,10 +188,22 @@ impl State {
         self.dropout_progress[0].demand(live, now);
         generation
     }
+    fn admit_start(&mut self,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>,now:Option<u64>){
+        self.freshness.admitted_start(self.process,self.generation,sequence,original,action,activation,now);
+    }
+    fn complete_start(&mut self,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>,now:Option<u64>){
+        let sealed=self.freshness.completed_start(self.process,self.generation,sequence,original,action,activation,now);
+        if sealed&&self.pending_lifetime.is_some()&&self.pending_lifetime==self.freshness.active_stamp(){
+            if let Some(fact)=self.pending {
+                self.freshness.record_context(frame_epoch(fact),fact.revision,fact.demanded.map(|v|v>0),now);
+            }
+        }
+    }
     fn record(&mut self, fact: FrameFact, now: u64) {
         self.record_timed(fact, now, Some(now));
     }
     fn record_timed(&mut self, fact: FrameFact, now: u64, event_now: Option<u64>) {
+        self.freshness.observe_clock(event_now);
         if fact.primary_prefix != 0
             && (fact.final_abi_version != 2
                 || fact.primary_prefix != 6
@@ -243,13 +255,14 @@ impl State {
         self.last_recorded = now;
         self.recorded = self.recorded.saturating_add(1);
         self.freshness.record_context(frame_epoch(fact), fact.revision, fact.demanded.map(|v|v>0), event_now);
-        self.pending_lifetime = self.freshness.active_stamp();
+        self.pending_lifetime = self.freshness.record_stamp(self.process,self.generation);
         self.pending = Some(fact);
     }
     fn retire(&mut self, ordinal: u64, surface: u64, now: u64) {
         self.retire_timed(ordinal, surface, now, Some(now));
     }
     fn retire_timed(&mut self, ordinal: u64, surface: u64, now: u64, event_now: Option<u64>) {
+        self.freshness.observe_clock(event_now);
         let Some(fact) = self.pending else { return };
         if fact.ordinal != ordinal
             || fact.surface != surface
@@ -669,8 +682,11 @@ fn frame_epoch(fact:FrameFact)->[u64;5] {
         fact.sources[1].map_or(0,|s|s.identity.epoch.source_generation)]
 }
 /// Observers run in owner -> telemetry order and never change an owner's result.
+pub(crate) fn admitted_media_start(sequence:Option<u64>,original:Option<&str>,action:Option<&str>,activation:Option<&str>) {
+    if let Ok(mut s)=STATE.lock(){let now=now_ns();s.admit_start(sequence.unwrap_or(0),original,action,activation,now);}
+}
 pub(crate) fn completed_media_start(sequence:Option<u64>,original:Option<&str>,action:Option<&str>,activation:Option<&str>) {
-    if let Ok(mut s)=STATE.lock(){let now=now_ns();s.freshness.completed_start(sequence.unwrap_or(0),original,action,activation,now);}
+    if let Ok(mut s)=STATE.lock(){let now=now_ns();s.complete_start(sequence.unwrap_or(0),original,action,activation,now);}
 }
 pub(crate) fn media_stop_requested(){if let Ok(mut s)=STATE.lock(){let now=now_ns();s.freshness.stop(now);}}
 pub(crate) fn media_stopped(){if let Ok(mut s)=STATE.lock(){s.freshness.stopped();}}
@@ -1021,7 +1037,7 @@ mod tests {
     #[test]
     fn finite_actual_clean_pair_is_available_for_host_comparator_interop() {
         let mut s=State::empty();let generation=s.arm(7,[1,2],1);
-        s.freshness.completed_start(1,Some("00000000000000000000000000000001"),Some("platform.actual.action.1"),Some("activation.actual.1"),Some(10));
+        s.admit_start(1,Some("00000000000000000000000000000001"),Some("platform.actual.action.1"),Some("activation.actual.1"),Some(10));s.complete_start(1,Some("00000000000000000000000000000001"),Some("platform.actual.action.1"),Some("activation.actual.1"),Some(10));
         let mut first=frame(generation,1,Some(source(2,1)));for source in first.sources.iter_mut().flatten(){source.observed_at_ns=20;}
         s.record(first,20);s.retire(1,8,30);let a=s.dropout_report(40,50,60);
         let mut rpc_before=frame(generation,2,Some(source(2,2)));for source in rpc_before.sources.iter_mut().flatten(){source.observed_at_ns=62;}
@@ -1048,7 +1064,8 @@ mod tests {
         println!("FINITE_MAX_NATIVE_JSON {}",raw);
     }
     fn start_v2(s: &mut State, sequence:u64, now:u64) {
-        s.freshness.completed_start(sequence,Some("original"),Some("action"),Some("activation"),Some(now));
+        s.admit_start(sequence,Some("original"),Some("action"),Some("activation"),Some(now));
+        s.complete_start(sequence,Some("original"),Some("action"),Some("activation"),Some(now));
     }
     #[test]
     #[cfg(not(target_os="android"))]
@@ -1062,6 +1079,116 @@ mod tests {
             let (clock,state_valid)={let mut state=STATE.lock().unwrap();let flags=(state.freshness.clock_valid,state.freshness.state_valid);*state=previous;flags};
             assert!(!clock);assert!(!state_valid);
         }
+    }
+    fn admit_v2(s:&mut State, sequence:u64, now:Option<u64>) {
+        s.admit_start(sequence,Some("original"),Some("action"),Some("activation"),now);
+    }
+    #[test]
+    fn admitted_frame_seals_at_actual_completion_without_moving_start_time() {
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);admit_v2(&mut s,1,Some(15));
+        s.record(frame(generation,1,Some(source(2,1))),20);
+        s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));
+        s.retire(1,8,30);let report=s.dropout_report(31,32,33);
+        assert_eq!(report["state_valid"],true);assert_eq!(report["lifetime"]["started_ns"],25);
+        for row in report["series"].as_array().unwrap(){
+            assert_eq!(row["progress_count"],1);assert_eq!(row["first_progress_ns"],30);
+            assert_eq!(row["first_wait_over_bound_count"],0);assert_eq!(row["rejected_observation_count"],0);
+        }
+        assert_eq!(report["series"][3]["epoch_key"],serde_json::json!([8,7,1,7,2]));
+        assert_eq!(s.words(Some(32),true,true,true)[16],1);
+    }
+    #[test]
+    fn pre_admission_pending_remains_sticky_and_failed_or_foreign_candidate_cannot_seal() {
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);
+        s.record(frame(generation,1,Some(source(2,1))),20);admit_v2(&mut s,1,Some(23));
+        s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));s.retire(1,8,30);
+        assert!(!s.freshness.state_valid);assert_eq!(s.freshness.snapshot(30)[0]["rejected_observation_count"],1);
+        let mut other=State::empty();other.arm(7,[1,2],1);admit_v2(&mut other,1,Some(15));
+        other.complete_start(1,Some("original"),Some("foreign.action"),Some("activation"),Some(25));
+        other.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(30));
+        assert!(!other.freshness.state_valid);
+    }
+    #[test]
+    fn candidate_faults_survive_seal_replays_and_arm_replacement() {
+        for fault in 0..4 {
+            let mut s=State::empty();let generation=s.arm(7,[1,2],1);
+            admit_v2(&mut s,1,if fault==0 {None}else{Some(15)});
+            match fault {1=>s.record_timed(frame(generation,1,Some(source(2,1))),20,None),
+                2=>{let mut bad=frame(generation,1,Some(source(2,1)));bad.ordinal=0;s.record(bad,20);},
+                3=>{s.arm(7,[3,4],20);},_=>{}}
+            admit_v2(&mut s,1,Some(23));
+            s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));
+            s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(30));
+            assert!(!s.freshness.state_valid,"fault={fault}");
+            if fault<=1 {assert!(!s.freshness.clock_valid);}
+        }
+    }
+    #[test]
+    fn stopping_unsealed_candidate_and_late_completion_never_reopen_it() {
+        let mut s=State::empty();s.arm(7,[1,2],1);admit_v2(&mut s,1,Some(15));
+        s.freshness.stop(Some(20));s.freshness.stopped();admit_v2(&mut s,1,Some(23));
+        s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));
+        assert_eq!(s.freshness.phase,"stopped");assert!(s.freshness.active_stamp().is_none());
+        assert!(!s.freshness.state_valid);
+    }
+    #[test]
+    fn candidate_retire_clock_failure_cannot_disappear_before_seal() {
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);admit_v2(&mut s,1,Some(15));
+        s.record(frame(generation,1,Some(source(2,1))),20);s.retire_timed(1,8,23,None);
+        s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));
+        assert!(!s.freshness.clock_valid);assert!(!s.freshness.state_valid);
+    }
+    #[test]
+    fn candidate_actor_binding_and_duplicate_seal_preserve_actual_bad_intervals() {
+        for (process,arm) in [(8,1),(7,2)] {
+            let mut s=State::empty();s.arm(7,[1,2],1);
+            s.freshness.admitted_start(process,arm,1,Some("original"),Some("action"),Some("activation"),Some(15));
+            s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));
+            assert!(!s.freshness.state_valid);assert!(s.freshness.active_stamp().is_none());
+        }
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);admit_v2(&mut s,1,Some(15));
+        s.record(frame(generation,1,Some(source(2,1))),20);
+        s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));s.retire(1,8,750_000_030);
+        admit_v2(&mut s,1,Some(800_000_030));s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(900_000_030));
+        let report=s.dropout_report(900_000_031,900_000_032,900_000_033);
+        assert_eq!(report["lifetime"]["started_ns"],25);
+        assert_eq!(report["series"][0]["first_wait_over_bound_count"],1);
+        assert_eq!(report["series"][3]["source_age_over_bound_count"],1);
+        assert_eq!(report["series"][3]["progress_count"],1);
+    }
+    #[test]
+    fn missing_admission_or_invalid_tuple_cannot_be_repaired_by_reentry() {
+        let mut s=State::empty();s.arm(7,[1,2],1);
+        s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));
+        admit_v2(&mut s,1,Some(30));s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(40));
+        assert!(!s.freshness.state_valid);assert!(s.freshness.active_stamp().is_none());
+        let mut invalid=State::empty();invalid.arm(7,[1,2],1);
+        invalid.admit_start(1,None,Some("action"),Some("activation"),Some(15));
+        invalid.complete_start(1,None,Some("action"),Some("activation"),Some(25));
+        let revision=invalid.freshness.sample_sequence;
+        invalid.admit_start(1,None,Some("action"),Some("activation"),Some(30));
+        invalid.complete_start(1,None,Some("action"),Some("activation"),Some(40));
+        assert!(!invalid.freshness.state_valid);assert_eq!(invalid.freshness.sample_sequence,revision);
+    }
+    #[test]
+    fn stopped_candidate_frame_cannot_join_a_distinct_later_start() {
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);admit_v2(&mut s,1,Some(15));
+        s.record(frame(generation,1,Some(source(2,1))),20);s.freshness.stop(Some(21));s.freshness.stopped();
+        s.admit_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(22));
+        s.complete_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(25));s.retire(1,8,30);
+        assert!(!s.freshness.state_valid);assert_eq!(s.freshness.snapshot(30)[0]["progress_count"],0);
+        assert_eq!(s.freshness.snapshot(30)[0]["rejected_observation_count"],1);
+        assert_eq!(s.words(Some(30),true,true,true)[16],1);
+        s.record(frame(generation,2,Some(source(2,2))),40);s.retire(2,8,50);assert!(!s.freshness.state_valid);
+    }
+    #[test]
+    fn candidate_retirement_before_completion_is_legacy_only_without_retrocredit() {
+        let mut s=State::empty();let generation=s.arm(7,[1,2],1);admit_v2(&mut s,1,Some(15));
+        s.record(frame(generation,1,Some(source(2,1))),20);s.retire(1,8,23);
+        s.complete_start(1,Some("original"),Some("action"),Some("activation"),Some(25));
+        assert_eq!(s.words(Some(30),true,true,true)[16],1);assert_eq!(s.freshness.snapshot(30)[0]["progress_count"],0);
+        s.record(frame(generation,2,Some(source(2,2))),40);s.retire(2,8,50);
+        assert_eq!(s.freshness.snapshot(50)[0]["progress_count"],1);
     }
     #[test]
     fn finite_pending_stamp_rejects_pre_start_retirement_without_changing_native160() {
@@ -1116,7 +1243,7 @@ mod tests {
         }
         assert_eq!(s.freshness.snapshot(1_000_000_030)[0]["gap_over_bound_count"],1);
         s.freshness.stop(Some(1_000_000_040));s.freshness.stopped();
-        s.freshness.completed_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(8_000_000_000));
+        s.admit_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(8_000_000_000));s.complete_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(8_000_000_000));
         for (n,now) in [(3,8_000_000_010),(4,8_020_000_010)] {
             let mut f=frame(generation,n,Some(source(2,n)));for source in f.sources.iter_mut().flatten(){source.observed_at_ns=now;}
             s.record(f,now);s.retire(n,8,now+10);

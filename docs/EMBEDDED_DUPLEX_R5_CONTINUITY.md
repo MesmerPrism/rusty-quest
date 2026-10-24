@@ -10,9 +10,14 @@ diagnostic are retained with their original meanings in `legacy_v1`.
 
 The Native lifecycle owner supplies the actual first owning Start Original,
 platform action, completed activation and checked retired-lifetime sequence.
-Only actual completed activation initializes a lifetime. Duplicate completion,
-polling and capture boundaries do not reset it. Stop marks the lifetime stopping
-before effects; observer failures never alter media results or replay authority.
+After the actual accepted Start mutation and planned activation exist, an
+internal observation token binds those identities to the Native process and
+ARM before physical callbacks. Admission alone initializes no active lifetime
+and earns no progress. Only the exact actual completed activation seals that
+token and initializes the lifetime at the existing completion clock. Duplicate
+admission/completion, polling and capture boundaries do not reset it. Stop
+invalidates even an unsealed token before effects; late completion cannot
+reopen it. Observer failures never alter media results or replay authority.
 New lifetime statistics do not erase old ARM maxima or stopped history.
 
 Four complete series follow the existing actual GPU, distinct full-identity
@@ -23,12 +28,17 @@ every both-origin retirement's worse source age remain visible. Missing images
 do not pause demand or erase known epochs. A first known source binds once;
 later epoch/configuration/surface/demand changes are sticky censored evidence.
 
-Each accepted pending frame receives its current completed-lifetime stamp under
-the telemetry mutex. A pre-Start or older pending frame retiring in a new active
-lifetime makes its evidence unavailable and earns no new-life credit. New v2
-event times are read under that same mutex, independently of unchanged legacy
-event times. Missing/regressed clocks, rejected events and exhausted counters
-cannot later be repaired by a read or healthy progress. Locks flow only from
+Each accepted pending frame receives its actual admitted-Start token under the
+telemetry mutex. A matching admitted frame may retire in the lifetime only
+after exact completion seals that token. Initial epoch/configuration/demand
+context comes solely from its immutable matching pending fact. Pre-completion
+retirement remains legacy-only and earns no retroactive credit. A pre-admission,
+foreign or older pending frame retiring in a new active lifetime makes its
+evidence unavailable; completion never rewrites an unstamped pending frame.
+New v2 event times are read under that same mutex, independently of unchanged
+legacy event times. Missing/regressed clocks, rejected events, ARM changes and
+exhausted counters remain sticky, including faults before sealing. Neither
+completion replay nor healthy progress repairs them. Locks flow only from
 lifecycle owner to telemetry, without owner callbacks under telemetry.
 
 The atomic report includes actual Start lineage, sample entry/current/exit

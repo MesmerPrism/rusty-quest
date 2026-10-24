@@ -99,7 +99,7 @@ def main():
     if args.stage in ('lifecycle', 'all'):
         path = native / 'embedded_duplex/peer_lifecycle.rs'
         inputs.append(path)
-        body = item(path.read_text(), 'fn observe_completed_start(')
+        body = item(path.read_text(), 'fn observe_admitted_start(') + '\n' + item(path.read_text(), 'fn observe_completed_start(')
         # Only the telemetry clock/mutex leaf is modeled here. This tests actual
         # owner tuple extraction; production accounting is compiled separately.
         lib = r'''#![allow(dead_code)]
@@ -107,15 +107,20 @@ use serde_json::Value;
 #[cfg(test)]use serde_json::json;
 mod spatial_stereo_qualification {
  pub static CALLS:std::sync::Mutex<Vec<(Option<u64>,Option<String>,Option<String>,Option<String>)>>=std::sync::Mutex::new(Vec::new());
+ pub static ADMITTED:std::sync::Mutex<Vec<(Option<u64>,Option<String>,Option<String>,Option<String>)>>=std::sync::Mutex::new(Vec::new());
+ pub fn admitted_media_start(s:Option<u64>,o:Option<&str>,a:Option<&str>,i:Option<&str>){ADMITTED.lock().unwrap().push((s,o.map(str::to_owned),a.map(str::to_owned),i.map(str::to_owned)));}
  pub fn completed_media_start(s:Option<u64>,o:Option<&str>,a:Option<&str>,i:Option<&str>){CALLS.lock().unwrap().push((s,o.map(str::to_owned),a.map(str::to_owned),i.map(str::to_owned)));}
 }
 #[derive(Default)]struct Retired{total:u64}
-#[derive(Default)]struct State{retired_lifetimes:Retired,start_observation_original_id:Option<String>,start_mutation:Option<Value>,activation:Option<Value>}
+#[derive(Default)]struct State{retired_lifetimes:Retired,start_observation_original_id:Option<String>,start_mutation:Option<Value>,activation:Option<Value>,activation_id:Option<String>}
 ''' + body + r'''
 #[test]fn actual_completed_start_tuple_and_failed_start_never_fabricate_completion(){
  let mut s=State::default();s.start_observation_original_id=Some("actual.original".into());
  s.start_mutation=Some(json!({"mutation":{"platform_action":{"action_id":"actual.action"}}}));
+ s.activation_id=Some("actual.activation".into());
  s.activation=Some(json!({"activation":{"status":"pending","activation_id":"actual.activation"}}));
+ observe_admitted_start(&s);
+ assert_eq!(spatial_stereo_qualification::ADMITTED.lock().unwrap()[0],(Some(1),Some("actual.original".into()),Some("actual.action".into()),Some("actual.activation".into())));
  observe_completed_start(&s);assert!(spatial_stereo_qualification::CALLS.lock().unwrap().is_empty());
  s.activation.as_mut().unwrap()["activation"]["status"]=json!("completed");
  observe_completed_start(&s);s.retired_lifetimes.total=1;observe_completed_start(&s);

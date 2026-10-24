@@ -543,49 +543,119 @@ impl FiniteSeries {
 fn bounded_id(value:Option<&str>)->Option<String> {
     value.filter(|v|!v.is_empty()&&v.len()<=256&&v.is_ascii()&&!v.bytes().any(|b|b<32)).map(str::to_owned)
 }
+#[derive(Clone, PartialEq, Eq)]
+struct StartIdentity {
+    process:u64, arm:u64, sequence:u64,
+    original:Option<String>, action:Option<String>, activation:Option<String>,
+}
+impl StartIdentity {
+    fn new(process:u64,arm:u64,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>)->Self {
+        Self {process,arm,sequence,original:bounded_id(original),action:bounded_id(action),activation:bounded_id(activation)}
+    }
+    fn valid(&self)->bool {
+        [self.process,self.arm,self.sequence].iter().all(|v|*v>0&&*v<=MAX_COUNTER)
+            &&self.original.is_some()&&self.action.is_some()&&self.activation.is_some()
+    }
+}
+struct AdmittedStart {
+    identity:StartIdentity, token:u64, sealed:bool, stopped:bool,
+    state_valid:bool, clock_valid:bool, rejected:u64, censored:u64,
+}
 pub(crate) struct Freshness {
     pub(crate) sequence:u64,
+    admitted:Option<AdmittedStart>, next_token:u64,
     start_original_id:Option<String>,start_platform_action_id:Option<String>,activation_id:Option<String>,
     started_ns:Option<u64>, pub(crate) phase:&'static str, stop_requested_ns:Option<u64>,
     series:[FiniteSeries;4], context:Option<([u64;5],u64,[bool;2])>,last_clock:u64,
     pub(crate) sample_sequence:u64,pub(crate) state_valid:bool,pub(crate) clock_valid:bool, counter_overflowed:bool,
 }
 impl Freshness {
-    pub(crate) const fn empty()->Self {Self {sequence:0,start_original_id:None,start_platform_action_id:None,activation_id:None,
+    pub(crate) const fn empty()->Self {Self {sequence:0,admitted:None,next_token:0,start_original_id:None,start_platform_action_id:None,activation_id:None,
         started_ns:None,phase:"starting",stop_requested_ns:None,series:[FiniteSeries::empty();4],context:None,last_clock:0,
         sample_sequence:0,state_valid:false,clock_valid:true,counter_overflowed:false}}
     pub(crate) fn observe_clock(&mut self,now:Option<u64>)->Option<u64> {
-        match now {Some(now) if now>=self.last_clock&&now<=MAX_COUNTER=>{self.last_clock=now;Some(now)},_=>{self.clock_valid=false;None}}
+        match now {
+            Some(now) if now>=self.last_clock&&now<=MAX_COUNTER=>{self.last_clock=now;Some(now)},
+            _=>{self.clock_valid=false;if let Some(candidate)=self.admitted.as_mut(){candidate.clock_valid=false;}None}
+        }
     }
     fn revision(&mut self){increment(&mut self.sample_sequence,&mut self.counter_overflowed);}
-    pub(crate) fn completed_start(&mut self,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>,now:Option<u64>) {
-        let (original,action,activation)=(bounded_id(original),bounded_id(action),bounded_id(activation));
-        if sequence==self.sequence && original==self.start_original_id && action==self.start_platform_action_id && activation==self.activation_id {
-            return; // Exact completed replay never resets active, failed or stopped history.
+    pub(crate) fn admitted_start(&mut self,process:u64,arm:u64,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>,now:Option<u64>) {
+        let identity=StartIdentity::new(process,arm,sequence,original,action,activation);
+        if let Some(previous)=self.admitted.as_ref() {
+            if identity==previous.identity {return;} // Reentry never repairs faults or reopens Stop.
+            if !previous.stopped || sequence<=previous.identity.sequence
+                || identity.original==previous.identity.original || identity.action==previous.identity.action
+                || identity.activation==previous.identity.activation {
+                self.reject(true);return;
+            }
         }
-        let Some(now)=self.observe_clock(now) else {self.state_valid=false;return};
-        if sequence<=self.sequence||sequence>MAX_COUNTER||original.is_none()||action.is_none()||activation.is_none()
-            || (self.sequence!=0&&(original==self.start_original_id||action==self.start_platform_action_id||activation==self.activation_id)) {self.state_valid=false;return;}
-        self.sequence=sequence;self.start_original_id=original;self.start_platform_action_id=action;self.activation_id=activation;
-        self.started_ns=Some(now);self.phase="active";self.stop_requested_ns=None;self.series=[FiniteSeries::empty();4];
-        for series in &mut self.series {series.required_since_ns=now;}
-        self.context=None;self.state_valid=true;self.clock_valid=true;self.revision();
+        increment(&mut self.next_token,&mut self.counter_overflowed);
+        let state_valid=identity.valid();
+        self.admitted=Some(AdmittedStart {identity,token:self.next_token,sealed:false,stopped:false,
+            state_valid,clock_valid:true,rejected:0,censored:0});
+        self.observe_clock(now);self.revision();
     }
-    pub(crate) fn active_stamp(&self)->Option<u64>{if self.phase=="active"&&self.started_ns.is_some(){Some(self.sequence)}else{None}}
+    pub(crate) fn completed_start(&mut self,process:u64,arm:u64,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>,now:Option<u64>)->bool {
+        let identity=StartIdentity::new(process,arm,sequence,original,action,activation);
+        if self.admitted.is_none() {
+            // A missed admission is unavailable evidence for this exact Start,
+            // not permission to repair it by later replaying admission.
+            increment(&mut self.next_token,&mut self.counter_overflowed);
+            self.admitted=Some(AdmittedStart {identity,token:self.next_token,sealed:true,stopped:false,
+                state_valid:false,clock_valid:true,rejected:1,censored:1});
+            self.observe_clock(now);self.state_valid=false;self.phase="failed";self.revision();return false;
+        }
+        let candidate=self.admitted.as_ref().expect("present admitted Start");
+        if identity!=candidate.identity {self.observe_clock(now);self.reject(true);return false;}
+        if candidate.sealed||candidate.stopped {return false;}
+        let at=self.observe_clock(now);
+        if !identity.valid(){
+            let candidate=self.admitted.as_mut().expect("matched invalid Start");
+            candidate.sealed=true;candidate.state_valid=false;self.state_valid=false;self.phase="failed";self.revision();return false;
+        }
+        let candidate=self.admitted.as_mut().expect("matched admitted Start");
+        candidate.sealed=true; // Even an unavailable completion clock cannot be retried into clean evidence.
+        let Some(now)=at else {candidate.state_valid=false;self.state_valid=false;self.phase="failed";return false;};
+        let (valid,clock,rejected,censored)=(candidate.state_valid,candidate.clock_valid,candidate.rejected,candidate.censored);
+        self.sequence=sequence;self.start_original_id=identity.original;self.start_platform_action_id=identity.action;self.activation_id=identity.activation;
+        self.started_ns=Some(now);self.phase="active";self.stop_requested_ns=None;self.series=[FiniteSeries::empty();4];
+        for series in &mut self.series {
+            series.required_since_ns=now;series.rejected_observation_count=rejected;series.censored_interval_count=censored;
+        }
+        self.context=None;self.state_valid=valid&&clock;self.clock_valid=clock;self.revision();true
+    }
+    pub(crate) fn active_stamp(&self)->Option<u64>{
+        self.admitted.as_ref().filter(|c|c.sealed&&!c.stopped&&self.phase=="active"&&self.started_ns.is_some()).map(|c|c.token)
+    }
+    pub(crate) fn record_stamp(&self,process:u64,arm:u64)->Option<u64>{
+        self.admitted.as_ref().filter(|c|!c.stopped&&c.identity.process==process&&c.identity.arm==arm).map(|c|c.token)
+    }
     pub(crate) fn reject(&mut self,censored:bool){
+        if let Some(candidate)=self.admitted.as_mut() {
+            candidate.state_valid=false;
+            if !candidate.sealed {
+                increment(&mut candidate.rejected,&mut self.counter_overflowed);
+                if censored {increment(&mut candidate.censored,&mut self.counter_overflowed);}
+                self.revision();return;
+            }
+        }
         if self.started_ns.is_none(){return;}
         self.state_valid=false;self.revision();
         for row in &mut self.series {row.reject();if censored{increment(&mut row.censored_interval_count,&mut row.overflowed);}}
     }
     pub(crate) fn stop(&mut self,now:Option<u64>){
-        if self.started_ns.is_none()||self.stop_requested_ns.is_some(){return;}
+        let Some(candidate)=self.admitted.as_mut() else {return;};
+        if candidate.stopped {return;}
+        candidate.stopped=true;
         self.stop_requested_ns=self.observe_clock(now);self.phase="stopping";self.revision();
     }
     pub(crate) fn stopped(&mut self){if self.phase=="stopping"{self.phase="stopped";self.revision();}}
     pub(crate) fn record_context(&mut self,epoch:[u64;5],config:u64,demand:[bool;2],now:Option<u64>){
-        if self.active_stamp().is_none(){return;}
+        if self.admitted.is_none(){return;}
         if self.observe_clock(now).is_none(){self.reject(true);return;}
         if epoch.iter().any(|v|*v>MAX_COUNTER)||config>MAX_COUNTER{self.reject(true);return;}
+        if self.active_stamp().is_none(){return;}
         // An absent image does not erase its known epoch. A first real source
         // binds that unknown coordinate once; its original first-wait remains.
         let mut epoch=epoch;
@@ -629,9 +699,18 @@ impl Freshness {
 #[cfg(test)]
 pub(crate) mod finite_tests {
     use super::*;
+    trait TestStart {
+        fn complete_for_test(&mut self,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>,now:Option<u64>);
+    }
+    impl TestStart for Freshness {
+        fn complete_for_test(&mut self,sequence:u64,original:Option<&str>,action:Option<&str>,activation:Option<&str>,now:Option<u64>){
+            self.admitted_start(7,1,sequence,original,action,activation,now);
+            self.completed_start(7,1,sequence,original,action,activation,now);
+        }
+    }
     fn life() -> Freshness {
         let mut f = Freshness::empty();
-        f.completed_start(1, Some("original.1"), Some("action.1"), Some("activation.1"), Some(10));
+        f.complete_for_test(1, Some("original.1"), Some("action.1"), Some("activation.1"), Some(10));
         f
     }
     fn event(f: &mut Freshness, ordinal: u64, now: u64, observed: u64) {
@@ -742,9 +821,9 @@ pub(crate) mod finite_tests {
     #[test]
     fn a_higher_sequence_cannot_relabel_the_same_actual_start() {
         let mut f=life();f.stop(Some(20));
-        f.completed_start(2,Some("original.1"),Some("action.1"),Some("activation.1"),Some(30));
+        f.complete_for_test(2,Some("original.1"),Some("action.1"),Some("activation.1"),Some(30));
         assert_eq!(f.sequence,1);assert!(!f.state_valid);assert_eq!(f.phase,"stopping");
-        f.completed_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(40));
+        f.complete_for_test(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(40));
         assert_eq!(f.sequence,2);assert!(f.state_valid);
     }
     #[test]
@@ -753,10 +832,10 @@ pub(crate) mod finite_tests {
         f.retired(None,[8,7,1,7,2],[8,1,1,1],[true;4],[Some(20);2],Some(20));
         event(&mut f,2,30,30);assert!(!f.state_valid);
         assert_eq!(f.snapshot(30)[0]["rejected_observation_count"],1);
-        f.completed_start(1,Some("original.1"),Some("action.1"),Some("activation.1"),Some(40));assert!(!f.state_valid);
-        f.stop(Some(50));f.completed_start(1,Some("original.1"),Some("action.1"),Some("activation.1"),Some(60));assert_eq!(f.phase,"stopping");
-        f.completed_start(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(70));
+        f.complete_for_test(1,Some("original.1"),Some("action.1"),Some("activation.1"),Some(40));assert!(!f.state_valid);
+        f.stop(Some(50));f.complete_for_test(1,Some("original.1"),Some("action.1"),Some("activation.1"),Some(60));assert_eq!(f.phase,"stopping");
+        f.complete_for_test(2,Some("original.2"),Some("action.2"),Some("activation.2"),Some(70));
         assert_eq!(f.sequence,2);assert!(f.state_valid);assert_eq!(f.snapshot(70)[0]["progress_count"],0);
-        f.completed_start(3,None,None,None,Some(80));assert_eq!(f.sequence,2);assert!(!f.state_valid);
+        f.complete_for_test(3,None,None,None,Some(80));assert_eq!(f.sequence,2);assert!(!f.state_valid);
     }
 }

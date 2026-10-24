@@ -566,6 +566,7 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
         state.activation_id = Some(format!("activation.concurrent.{}", entropy()?));
         state.start_mutation = Some(mutation);
     }
+    observe_admitted_start(state);
     if state.route_receipt.is_none() {
         let random = entropy()?;
         let paired = json_value(&pair_ceremony::status(host)?)?;
@@ -630,6 +631,15 @@ fn start(host: &Host, state: &mut State) -> Result<(), String> {
 }
 
 // No observer result participates in admission, media completion or replay.
+fn observe_admitted_start(state: &State) {
+    if let Some(mutation)=state.start_mutation.as_ref() {
+        crate::spatial_stereo_qualification::admitted_media_start(
+            state.retired_lifetimes.total.checked_add(1),
+            state.start_observation_original_id.as_deref(),
+            mutation.pointer("/mutation/platform_action/action_id").and_then(Value::as_str),
+            state.activation_id.as_deref());
+    }
+}
 fn observe_completed_start(state: &State) {
     if state.activation.as_ref().and_then(|v|v.pointer("/activation/status")).and_then(Value::as_str) == Some("completed") {
         crate::spatial_stereo_qualification::completed_media_start(

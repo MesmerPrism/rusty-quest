@@ -438,7 +438,18 @@ def connected_scenario(root,out,executable,args,expected_red):
             hooks=[row for row in trace if row.get('kind')=='freshness_hook']
             for peer in peers:
                 completed=[row for row in hooks if row['peer']==peer and row['hook']=='completed_start']
+                admitted=[row for row in hooks if row['peer']==peer and row['hook']=='admitted_start']
                 assert [row['sequence'] for row in completed]==([1,1,2,3]if peer=='Q'else[1,2,3]),completed
+                assert [{key:row[key]for key in ['peer','sequence','original','action','activation']}for row in admitted]==[
+                    {key:row[key]for key in ['peer','sequence','original','action','activation']}for row in completed],(admitted,completed)
+                for admission in admitted:
+                    before=trace.index(admission)
+                    matching=[n for n,row in enumerate(trace)if row.get('kind')=='physical_owner_boundary'and row['action']==admission['action']]
+                    assert matching,admission
+                    # The repeated completed Start has no new physical effect.
+                    earliest=next(n for n,row in enumerate(trace)if row.get('kind')=='freshness_hook'and row.get('hook')=='admitted_start'and row.get('action')==admission['action'])
+                    completion=next(n for n,row in enumerate(trace)if row.get('kind')=='freshness_hook'and row.get('hook')=='completed_start'and row.get('action')==admission['action'])
+                    assert earliest<min(matching)<=max(matching)<completion,(admission,matching)
                 actual_returns=[json.loads(row['raw'])for row in trace if row.get('kind')=='native_return_boundary'and row['peer']==peer and row['operation']=='start']
                 for hook,value in zip(completed,actual_returns):
                     assert hook['action']==value['start_mutation']['mutation']['platform_action']['action_id'],(hook,value)
@@ -585,7 +596,16 @@ let restored_owner_replay=false;
     fixture=root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/renewal_successor_native.rs'
     if fixture.exists():
         path=generated/'runtime_host.rs'
-        put(path,path.read_text()+'\n'+prefix+suffix+'\npub(crate) mod fixture{\n'+fixture.read_text()+'\n}\n')
+        fixture_body=fixture.read_text()
+        if a.freshness_hooks:
+            # Only instrument the explicit physical primitive, leaving the
+            # actual lifecycle and signed action/receipt algorithms intact.
+            signature='pub(crate) fn execute(peer:usize,ticket:&AndroidMediaExecutionTicket,compensate:bool)->Result<AuthenticatedOwnerEffect,String>{'
+            assert signature in fixture_body
+            fixture_body=fixture_body.replace(signature,signature+'''
+emit(&json!({"kind":"physical_owner_boundary","peer":if peer==0{"Q"}else{"W"},"action":ticket.action_id,"owner_kind":format!("{:?}",ticket.owner_kind)}));
+''',1)
+        put(path,path.read_text()+'\n'+prefix+suffix+'\npub(crate) mod fixture{\n'+fixture_body+'\n}\n')
     diagnostic=generated/'operation_diagnostics.rs'
     put(diagnostic,diagnostic.read_text()+'''
 pub(super) fn fallback(_: &mut jni::JNIEnv<'_>,_:&str) {}
@@ -687,6 +707,10 @@ fn main(){if let Err(error)=embedded_duplex::runtime_host::fixture::run(){panic!
 mod spatial_stereo_qualification {
  static SEQUENCES:std::sync::Mutex<[u64;2]>=std::sync::Mutex::new([0;2]);
  fn peer()->(usize,&'static str){let n=crate::embedded_duplex::runtime_host::fixture::active();(n,if n==0{"Q"}else{"W"})}
+ pub fn admitted_media_start(s:Option<u64>,o:Option<&str>,a:Option<&str>,i:Option<&str>){
+  let (_,p)=peer();
+  println!("{}",serde_json::json!({"kind":"freshness_hook","peer":p,"hook":"admitted_start","sequence":s,"original":o,"action":a,"activation":i}));
+ }
  pub fn completed_media_start(s:Option<u64>,o:Option<&str>,a:Option<&str>,i:Option<&str>){
   let (n,p)=peer();SEQUENCES.lock().unwrap()[n]=s.unwrap_or(0);
   println!("{}",serde_json::json!({"kind":"freshness_hook","peer":p,"hook":"completed_start","sequence":s,"original":o,"action":a,"activation":i}));
