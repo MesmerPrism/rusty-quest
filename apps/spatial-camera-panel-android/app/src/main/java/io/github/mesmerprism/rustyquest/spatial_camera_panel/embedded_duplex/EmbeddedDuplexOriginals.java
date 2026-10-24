@@ -956,12 +956,20 @@ public final class EmbeddedDuplexOriginals {
     }
     synchronized void requirePreparedWholeClosure(JSONObject now,JSONObject actor)throws Exception {
         String id=now.getString("original_id");requireId(id);Record prior=find(id);JSONObject durable=read(path(id));
+        JSONObject settled=settledCustody(durable);
+        Object appGeneration=settled==null?null:settled.opt("app_process_generation");
         if(prior==null||!"prepare_peer_start".equals(durable.getString("operation"))||!"succeeded".equals(durable.getString("state"))
-            ||durable.isNull("consumer_receipt_sha256")||settledCustody(durable)==null||!prior.operationJoined
-            ||!EmbeddedDuplexProcessHost.originalExchangesJoined(prior)
+            ||!"settled".equals(durable.getString("effect_state"))||durable.isNull("consumer_receipt_sha256")||settled==null
+            ||!(appGeneration instanceof Integer||appGeneration instanceof Long)||((Number)appGeneration).longValue()<=0
+            ||((Number)appGeneration).longValue()!=actor.getLong("app_process_generation")
+            ||!prior.restored&&(!prior.operationJoined||!EmbeddedDuplexProcessHost.originalExchangesJoined(prior))
             ||!EmbeddedDuplexCanonicalJson.sha256(outcome(durable)).equals(durable.getString("outcome_sha256"))
             ||!durable.getString("outcome_sha256").equals(prior.row.getString("outcome_sha256")))
             throw new IllegalStateException("actual completed preparation custody absent from whole close");
+        // Compaction releases the live Future. Recover only its already earned
+        // current-app identity; the settled proof carries the historical joins.
+        if(prior.restored)prior.actualAppGeneration=((Number)appGeneration).longValue();
+        EmbeddedDuplexProcessHost.requireCurrentOriginalStopActor(prior);
         JSONObject binding=durable.getJSONObject("actor_binding");
         if(binding.getLong("native_generation")!=actor.getLong("native_executor_generation")
             ||!binding.getString("app_record_sha256").equals(actor.getString("app_record_sha256")))throw new IllegalStateException("whole-close prepared actor differs");

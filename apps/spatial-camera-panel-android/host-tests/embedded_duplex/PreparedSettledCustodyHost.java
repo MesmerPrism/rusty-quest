@@ -99,6 +99,44 @@ public final class PreparedSettledCustodyHost {
                 .put("prepared_status",current).put("terminal_lifetime",new JSONObject().put("kind","normal_peer_stop").put("original_id",STOP).put("receipt",stop));
         }
     }
+    static void wholeCustodyControls(Path out)throws Exception {
+        Fixture pending=new Fixture(out.resolve("whole-live-unacknowledged"));pending.complete();pending.joined();
+        refused(()->pending.owner.requirePreparedWholeClosure(pending.status,EmbeddedDuplexProcessHost.ACTOR));controls++;
+        check(pending.actual.operationJoined&&pending.actual.original!=null,"live joined SDK was fabricated/released");
+        pending.ack(); // Real producer writes settled custody then removes only its in-memory live entry.
+        pending.owner.requirePreparedWholeClosure(pending.status,EmbeddedDuplexProcessHost.ACTOR);controls++;
+        check(pending.actual.operationJoined,"held SDK Original lost its real join");
+        byte[] settled=Files.readAllBytes(pending.settled());
+        JSONObject otherApp=copy(EmbeddedDuplexProcessHost.ACTOR).put("app_process_generation",75);
+        refused(()->pending.owner.requirePreparedWholeClosure(pending.status,otherApp));controls++;
+        JSONObject otherNative=copy(EmbeddedDuplexProcessHost.ACTOR).put("native_executor_generation",99);
+        refused(()->pending.owner.requirePreparedWholeClosure(pending.status,otherNative));controls++;
+        Path hidden=pending.settled().resolveSibling("held-settled-test-only");Files.move(pending.settled(),hidden);
+        try{refused(()->pending.owner.requirePreparedWholeClosure(pending.status,EmbeddedDuplexProcessHost.ACTOR));controls++;}
+        finally{Files.move(hidden,pending.settled());}
+        for(String field:new String[]{"app_process_generation","outcome_sha256","request_sha256","original_worker_terminal","original_callback_terminal","outbound_exchanges_joined"}){
+            JSONObject bad=new JSONObject(new String(settled,java.nio.charset.StandardCharsets.UTF_8));
+            bad.put(field,field.equals("app_process_generation")?75:field.endsWith("terminal")||field.endsWith("joined")?false:"0".repeat(64));
+            Files.writeString(pending.settled(),bad.toString());
+            try{refused(()->pending.owner.requirePreparedWholeClosure(pending.status,EmbeddedDuplexProcessHost.ACTOR));controls++;}
+            finally{Files.write(pending.settled(),settled);}
+        }
+        for(Object generation:new Object[]{74.5,"74",true,0,-1}){
+            JSONObject bad=new JSONObject(new String(settled,java.nio.charset.StandardCharsets.UTF_8)).put("app_process_generation",generation);
+            Files.writeString(pending.settled(),bad.toString());
+            try{refused(()->pending.owner.requirePreparedWholeClosure(pending.status,EmbeddedDuplexProcessHost.ACTOR));controls++;}
+            finally{Files.write(pending.settled(),settled);}
+        }
+        Path row=pending.originals.resolve(PREP+".json");byte[] original=Files.readAllBytes(row);
+        Files.writeString(row,new JSONObject(new String(original,java.nio.charset.StandardCharsets.UTF_8)).put("consumer_receipt_sha256",JSONObject.NULL).toString());
+        try{refused(()->pending.owner.requirePreparedWholeClosure(pending.status,EmbeddedDuplexProcessHost.ACTOR));controls++;}
+        finally{Files.write(row,original);}
+        pending.owner.requirePreparedWholeClosure(pending.status,EmbeddedDuplexProcessHost.ACTOR);controls++;
+        check(Arrays.equals(settled,Files.readAllBytes(pending.settled()))&&Arrays.equals(original,Files.readAllBytes(row)),"read-only whole custody changed durable data");
+        Fixture uncertain=new Fixture(out.resolve("whole-unknown"));uncertain.sdk.completeExceptionally(new IllegalStateException("modeled retained failure"));uncertain.joined();uncertain.ack();
+        Files.write(uncertain.settled(),settled); // A succeeded proof cannot grant authority to an actual UNKNOWN Original.
+        refused(()->uncertain.owner.requirePreparedWholeClosure(pending.status,EmbeddedDuplexProcessHost.ACTOR));controls++;
+    }
     public static void main(String[] args)throws Exception{
         Path out=Files.createDirectory(Path.of(args[0]));
         Fixture enrollment=new Fixture(out.resolve("actorless-confirm"),false);
@@ -191,6 +229,7 @@ public final class PreparedSettledCustodyHost {
         byte[] before=Files.readAllBytes(disk.settled());JSONObject corrupted=new JSONObject(new String(before,java.nio.charset.StandardCharsets.UTF_8)).put("outcome_sha256","0".repeat(64));
         Files.writeString(disk.settled(),corrupted.toString());JSONObject diskBody=disk.archiveBody(disk.stop());
         refused(()->new EmbeddedDuplexPreparedArchive(disk.context).retain(diskBody.toString(),EmbeddedDuplexProcessHost.ACTOR,disk.holder));controls++;
+        wholeCustodyControls(out);
         System.out.println("PASS "+controls+" whole production SDK holder/Original Future callback/join/ACK -> durable settled custody -> exact normal Stop/renderer terminal -> immutable archive -> distinct SDK holder; modeled platform/SDK/JNI leaves, no devices");
     }
 }

@@ -44,7 +44,7 @@ def item(text, signature):
     raise ValueError('Incomplete production item: ' + signature)
 
 
-def build_java_support(*, quest_root, input_spec, support_classes, output, json_jar):
+def build_java_support(*, quest_root, input_spec, support_classes, output, json_jar, whole_close=False):
     """Create a fresh compile directory; return JSON-safe JVM launch metadata."""
     root, out = Path(quest_root).resolve(), Path(output).resolve()
     out.relative_to(root / 'target')
@@ -143,6 +143,9 @@ class ConcurrentStereoQualification {
         path.write_text(value, encoding='utf-8', newline='\n')
         return path
 
+    if whole_close:
+        import prepared_whole_close_support as whole
+        models = whole.models(root, models, item)
     modeled = [write('LifecyclePlatform.java', models)]
     package = 'package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;\n'
     physical_status = item(platform, 'JSONObject preparedPeerPhysicalStatus(')
@@ -152,7 +155,8 @@ class EmbeddedDuplexPlatform {
  boolean freshPeerEffectsNeverEntered()throws Exception{return !leaves.getBoolean("peer_effect_entered")&&!leaves.getBoolean("owner_callback_active");}
  boolean freshPeerControlQuiescent()throws Exception{return !leaves.getBoolean("owner_callback_active");}
  boolean actualControlTerminal(){return false;}boolean incomingFreshTaskJoined(String id){return false;}
-''' + physical_status + '\n}\nclass EmbeddedDuplexProcessFence {\n'
+''' + physical_status + (whole.platform(root, item) if whole_close else '') + '\n}\nclass EmbeddedDuplexProcessFence {\n'
+        + ('static class CallbackLease implements AutoCloseable {public void close(){}}\n' if whole_close else '')
         + 'long generation(){return EmbeddedDuplexProcessHost.ACTOR.getLong("app_process_generation");}\n'
         + 'String epochId(){return EmbeddedDuplexProcessHost.fixtureArm.getString("process_epoch");}\n'
         + 'void requireLive(long g){if(g!=generation())throw new IllegalStateException("modeled app fence changed");}\n'
@@ -198,9 +202,11 @@ public class OwnStereoCaptureRuntime {
              'EmbeddedDuplexFreshStatus', 'EmbeddedDuplexPreparationDiagnostic', 'EmbeddedDuplexReceiver',
              'EmbeddedDuplexDisplay', 'EmbeddedDuplexOwnProjectionFailure', 'EmbeddedDuplexEstimate', 'EmbeddedDuplexDisplaySlot']
     production = [j / (name + '.java') for name in names]
+    if whole_close: production += [j/'EmbeddedDuplexFreshOwnerClosure.java',j/'EmbeddedDuplexWholeCloseRollover.java']
     fixture_java = fixtures / 'PreparedSettledCustodyHost.java'
     kt = [seams['seams'], java / 'SpatialVideoSourceRoutingCoordinator.kt', j / 'EmbeddedDuplexDisplayCoordinator.kt',
           fixtures / 'PreparedSecondLifetimeHost.kt', fixtures / 'RenewalSuccessorLifecycleHost.kt']
+    if whole_close: kt[-1]=write('RenewalSuccessorLifecycleHost.kt',whole.kotlin(root,kt[-1].read_text(encoding='utf8')))
     responses = (j / 'EmbeddedDuplexOperatorResponses.kt').read_text(encoding='utf-8')
     kt.append(write('EmbeddedDuplexOperatorResponses.kt', package + 'import android.os.Bundle\nobject EmbeddedDuplexOperatorResponses {\n'
                     + item(responses, 'private fun Bundle.header(') + '\n'
@@ -229,9 +235,13 @@ object RenewalLifecycleBoundary {
     .put("native_utf16_characters",raw.length).put("wrapped_utf8_bytes",wrapped.toByteArray(Charsets.UTF_8).size)
     .put("scope","exact production lifecycle/receipt bodies; modeled ARM/snapshot, no JNI or pixels")
  }
-''' + item(qualification,'@JvmStatic fun lifecycle(') + '\n' + item(qualification,'private fun receipt(') + '\n}\n'))
+''' + (whole.serializer() if whole_close else '') + item(qualification,'@JvmStatic fun lifecycle(') + '\n' + item(qualification,'private fun receipt(') + '\n}\n'))
     sources = [*production, fixture_java, *kt[1:], qualification_source, j / 'EmbeddedDuplexProcessHost.java', j / 'EmbeddedDuplexPlatform.java',
                j / 'EmbeddedDuplexProcessFence.java', j / 'EmbeddedDuplexFreshHandoffStore.java', j / 'EmbeddedDuplexOperatorResponses.kt', fixtures / 'PreparedSettledCustodyPlatform.java', owner_test, boundary_owner, Path(__file__)]
+    if whole_close:
+        sources += [Path(whole.__file__),j/'EmbeddedDuplexResources.java',
+                    root/'crates/rusty-quest-media-stream-android/android/library/src/main/java/io/github/mesmerprism/rustyquest/media/PackedStereoMediaSourceRuntime.java',
+                    fixtures/'RenewalSuccessorLifecycleHost.kt']
     before = [pin(path) for path in sources]
     cp = os.pathsep.join([str(classes), str(support), json_jar, *libs, *compilers])
     checks = []
@@ -371,7 +381,7 @@ not observations of an Android camera, renderer timer or authority extension.
         return self.preparations[preparation_id]
 
     def call(self, method, payload):
-        if method in ['receiver_start', 'receiver_stop', 'renderer_status']:
+        if method in ['receiver_start', 'receiver_stop', 'renderer_status','sdk_observe','cleanup_primitive']:
             return self._call(method, payload)
         if method in ['peerStartPreparationEligibilityObservationJson', 'peerStartResourceTargetJson']:
             if payload != {} or self.original is None:
@@ -394,6 +404,8 @@ not observations of an Android camera, renderer timer or authority extension.
         if set(payload) != {'input'} or not isinstance(payload['input'], str):
             raise ValueError('Exact string JNI callback payload required')
         exact = payload['input']
+        if method == 'persistFreshOwnerRetirement':
+            return self._call('whole_persist',dict(original_id=self.original,exact_body=exact))
         if method == 'preparePeerStartResources':
             request = json.loads(exact)
             if request['original_id'] != self.original or request['resource_target'] != self.target or request['arm_binding'] != self.arm:

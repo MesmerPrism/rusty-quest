@@ -113,7 +113,7 @@ def jni_leaves(text):
                 replacement = prefix+'super::runtime_host::fixture::execute(self.peer,ticket,compensate)'
             elif name == 'activate':
                 replacement = '''Ok(ProductActivationReadback{schema_id:"rusty.quest.android.media.product_activation_readback.v1".into(),activation_id:activation_id.into(),route_grant_id:authority.route_grant_id.clone(),resulting_state_revision:1,activated:true})'''
-            elif name in ['load_cleanup_preparations','load_retained_cleanup_replay','persist_cleanup_preparations','commit','sign','sign_validated_common_lan','sign_validated_fresh_pair_setup','sign_validated_fresh_phase_prepare','sign_fresh_setup_frame','sign_pair_ceremony','sign_prepared_start_frame','finalize_prepared_transport','prepare_sender','verify_sender','prepare_decoder','verify_decoder','prepared_registry_status','archive_completed_prepared_start','archive_completed_peer_lifetime','archive_fresh_setup_phase','execute_and_verify','execute_and_verify_java','prepared_start_eligibility','peer_start_resource_target','fresh_setup_initial_physical','fresh_setup_registered_physical','fresh_setup_preparation_physical','persist_manifold_fresh_history_archive','complete_fresh_setup_continuation_handoff','complete_incoming_fresh_setup_handoff']:
+            elif name in ['load_cleanup_preparations','load_retained_cleanup_replay','persist_cleanup_preparations','commit','sign','sign_validated_common_lan','sign_validated_fresh_pair_setup','sign_validated_fresh_phase_prepare','sign_fresh_setup_frame','sign_pair_ceremony','sign_prepared_start_frame','finalize_prepared_transport','prepare_sender','verify_sender','prepare_decoder','verify_decoder','prepared_registry_status','archive_completed_prepared_start','archive_completed_peer_lifetime','archive_fresh_setup_phase','execute_and_verify','execute_and_verify_java','prepared_start_eligibility','peer_start_resource_target','fresh_setup_initial_physical','fresh_setup_registered_physical','fresh_setup_preparation_physical','persist_manifold_fresh_history_archive','complete_fresh_setup_continuation_handoff','complete_incoming_fresh_setup_handoff','persist_fresh_owner_retirement']:
                 continue
             changes.append((brace + 1, stop - 1, replacement))
         for start, stop, replacement in reversed(changes):
@@ -164,7 +164,8 @@ def connected_scenario(root,out,executable,args,expected_red):
         (out/'JAVA_BUILD_REUSE.json').write_text(json.dumps({'result':str(selected),'sha256':hashlib.sha256(selected.read_bytes()).hexdigest(),'scope':'Reusing exact source-bound local component classes; no new Java compile claim'},indent=2)+'\n')
     else:
         built=helper.build_java_support(quest_root=root,input_spec=pathlib.Path(args.input_spec),
-            support_classes=pathlib.Path(args.support_classes),output=out/'java',json_jar=pathlib.Path(args.json_jar))
+            support_classes=pathlib.Path(args.support_classes),output=out/'java',json_jar=pathlib.Path(args.json_jar),
+            whole_close=args.scenario=='whole-close')
     stderr=open(out/'native.stderr','xb');raw=open(out/'native.stdout','xb')
     native=subprocess.Popen([str(executable)],cwd=root,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=stderr)
     events=queue.Queue()
@@ -283,6 +284,10 @@ def connected_scenario(root,out,executable,args,expected_red):
         for p in peers:
             assert started[p]['status']=='active',started[p]
             complete(p,starts[p],'start',started[p])
+        if mode=='whole-close':
+            active=peers['Q'].call('whole_probe',dict(original_id=initial['Q']))
+            assert active['product_terminal']is False and active['registry']['state']=='active'and active['opened_history']is True,active
+            (out/'ACTUAL_ACTIVE_SDK_REGISTRY.json').write_text(json.dumps(active,indent=2)+'\n')
         # Clock is a declared OS primitive; actual AuthorityClock/sample and
         # all signed owner expiry predicates still execute on these samples.
         require(commands([('Q','advance',starts['Q'],{'wall_ms':11_000})]))
@@ -306,6 +311,29 @@ def connected_scenario(root,out,executable,args,expected_red):
             complete(p,stops[p],'peer_stop',value);ack(p,stops[p],value,'first-stop')
             ack(p,starts[p],started[p],'first-start-after-stop')
         ack('Q',renewal,renewed,'renewal-after-stop');stages.append('actual_deferred_original_acks')
+        if mode=='whole-close':
+            probe=peers['Q'].call('whole_probe',dict(original_id=initial['Q']))
+            (out/'ACTUAL_STOPPED_SDK_REGISTRY.json').write_text(json.dumps(probe,indent=2)+'\n')
+            assert probe['product_terminal']is True and probe['opened_history']is True,probe
+            negative=peers['Q'].call('whole_negative_controls',dict(original_id=initial['Q']))
+            assert 'error'not in negative,negative
+            (out/'SDK_TERMINAL_CONTROLS.json').write_text(json.dumps(negative,indent=2)+'\n')
+            close=begin('Q','whole_app_close',9)
+            pending=require(commands([('Q','whole',close,{})]))['Q']
+            assert pending['native_host_physical_cleanup']=='pending',pending
+            peers['Q'].call('whole_own_terminal',{})
+            terminal=commands([('Q','complete_whole',close,{})])['Q']
+            (out/'ACTUAL_WHOLE_COMPLETION.json').write_text(json.dumps(terminal,indent=2)+'\n')
+            assert 'error'not in terminal,'actual Native whole completion refused: '+str(terminal.get('error'))
+            assert terminal['native_host_physical_cleanup']=='terminal',terminal
+            assert probe['status_terminal_reads']==1,probe
+            final=require(commands([('Q','whole_state',close,{})]))['Q']
+            assert final==dict(host_present=False,prepared_present=False,closing=False,route_present=False),final
+            post=peers['Q'].call('whole_post_native',dict(receipt=terminal))
+            assert post.get('local_peer_terminal_proof')is True and post.get('rollover_refused')is True and post.get('actual_Concurrent_serializer_preserves_pending')is True,post
+            (out/'POST_NATIVE_JAVA_PREDICATES.json').write_text(json.dumps(post,indent=2)+'\n')
+            stages.append('actual_first_lifetime_whole_close')
+            return dict(passed=True,stages=stages,trace=trace,whole=terminal,final=final)
         if mode!='retained-red':
             controls=require(commands([('W','controls',stops['W'],{'session':pair['session_id']})]))['W']
             assert controls['pair']['actual_state_preserved']and controls['lifetime']['actual_state_preserved'],controls
@@ -474,7 +502,9 @@ def connected_scenario(root,out,executable,args,expected_red):
         raw.close();stderr.close()
         for peer in peers.values():peer.close()
         (out/'SCENARIO_TIMING.json').write_text(json.dumps({'elapsed_seconds':time.monotonic()-scenario_started,
-            'requested_total_lifetimes':3,'requested_middle_lifetime_renewals':args.same_lifetime_renewals},indent=2)+'\n')
+            'requested_total_lifetimes':1 if mode=='whole-close'else 3,
+            'requested_first_lifetime_renewals':1,
+            'requested_middle_lifetime_renewals':None if mode=='whole-close'else args.same_lifetime_renewals},indent=2)+'\n')
         (out/'STAGES.json').write_text(json.dumps(stages,indent=2)+'\n')
         (out/'TRACE.json').write_text(json.dumps(trace,indent=2)+'\n')
 
@@ -484,7 +514,7 @@ def main():
     p.add_argument('--output', required=True)
     p.add_argument('--compile-only', action='store_true')
     p.add_argument('--manifold-root', required=True)
-    p.add_argument('--scenario',choices=['retained-red','corrected','archive-refusal','state-drift','concurrent-stop'])
+    p.add_argument('--scenario',choices=['retained-red','corrected','archive-refusal','state-drift','concurrent-stop','whole-close'])
     p.add_argument('--input-spec')
     p.add_argument('--support-classes')
     p.add_argument('--json-jar')
@@ -701,6 +731,10 @@ mod embedded_duplex;
 mod fixture_config;
 fn main(){if let Err(error)=embedded_duplex::runtime_host::fixture::run(){panic!("{error}")}}
 '''
+    if a.scenario=='whole-close':
+        import prepared_whole_close_support as whole
+        whole.native(out,source_item)
+        app_stubs+=whole.JNI_PRIMITIVES
     put(out / 'main.rs', app_stubs)
     if a.freshness_hooks:
         spy=r'''

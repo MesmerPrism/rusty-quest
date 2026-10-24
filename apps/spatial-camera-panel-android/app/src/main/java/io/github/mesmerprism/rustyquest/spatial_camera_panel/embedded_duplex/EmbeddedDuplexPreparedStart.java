@@ -190,12 +190,15 @@ final class EmbeddedDuplexPreparedStart {
     }
     synchronized JSONObject status(String actualId)throws Exception {
         if(!id().equals(actualId))throw new IllegalStateException("foreign prepared incarnation");
+        // Dormant held gates and a physically stopped media product are distinct.
+        // Observe the real seven-owner/worker barrier once for both projections.
+        final boolean terminal=resources.productResourcesTerminal();
         return new JSONObject().put("$schema","rusty.quest.android.media.prepared_start_readback.v1")
             .put("preparation_id",id()).put("request_sha256",requestSha).put("resource_target_sha256",request.getString("resource_target_sha256"))
             .put("sender",sender==null?JSONObject.NULL:new JSONObject(sender.toString()))
             .put("decoder",decoder==null?JSONObject.NULL:new JSONObject(decoder.toString()))
-            .put("state",abortReceipt!=null?"terminal":abortEntered?"aborting":resources.preparedDeliveryOpened()?"active":decoder!=null?"decoder_ready":decoderEntered?"decoder_preparing":sender!=null?"sender_ready":"entered_unknown")
-            .put("delivery_gate_closed",abortReceipt!=null&&resources.productResourcesTerminal() || !abortEntered&&resources.preparedSenderClosed()&&(decoder==null||resources.preparedDecoderClosed()));
+            .put("state",terminal||abortReceipt!=null?"terminal":abortEntered?"aborting":resources.preparedDeliveryOpened()?"active":decoder!=null?"decoder_ready":decoderEntered?"decoder_preparing":sender!=null?"sender_ready":"entered_unknown")
+            .put("delivery_gate_closed",terminal || !abortEntered&&resources.preparedSenderClosed()&&(decoder==null||resources.preparedDecoderClosed()));
     }
     void requestStopOwned(){requestStop(original);}
     void requestStop(EmbeddedDuplexOriginals.Record actual) {
