@@ -58,8 +58,16 @@ Kotlin/Java source bytes. The applied
 `tools/gradle/android-component-closure.gradle` observes the actual selected
 KotlinCompile `sources`, JavaCompile `source` and their destination directories.
 It rejects a missing, stale or unexpected owned compiler input before compilation.
-The inventory is a content-sensitive compiler task input, so additions and changes
-invalidate compilation through Gradle's existing task model. It does not clear
+The compiler's extra input is a closed content identity containing the inventory
+schema, contract hash, variant, selected components, definitions and root-relative
+source paths/bytes/hashes. Additions, changes, removals and selected contract changes
+invalidate compilation through Gradle's existing task model. Physical root locations,
+the raw feature-lock hash and the full proof fingerprint remain in the original
+inventory and current compiler observation, but do not independently force compiler
+task execution. Unknown inventory fields refuse rather than silently disappear from
+this projection. Gradle's existing source, options, classpath, SDK, generated-code and
+other task inputs remain unchanged; a lock change affecting BuildConfig, manifests
+or other real compilation inputs still invalidates those inputs. This does not clear
 caches or disable incremental compilation. Explicit empty properties prevent an
 ambient Gradle property from silently enabling the route for compatibility callers.
 The canonical builder also pins the exact selected variant Kotlin/Java compiler
@@ -109,8 +117,16 @@ pwsh -NoProfile -File tools/checks/Test-AndroidNativeSourcePaths.ps1
 ```
 
 `Test-AndroidComponentWarmCompile.py` accepts explicit Gradle/Java/cache/D8/android.jar paths and
-uses one fresh JVM fixture project for initial/add/change/unchanged builds,
-configuration-cache reuse and missing-source rejection.
+uses one fresh JVM fixture project for initial/add/change/method/selection/removal/
+unchanged builds, configuration-cache reuse and missing-source rejection. It also
+requires proof-metadata-only inventory changes to preserve actual classes and reuse
+the Kotlin task, while reauthenticating the new raw inventory. Unknown inventory
+fields, rewritten raw authority and missing DEX methods remain refusals.
+`--identity-only` runs the smaller initial/unchanged/proof-metadata counterexample;
+it does not claim the full source-change sequence. The fixture uses an explicit
+task-owned Gradle user home and in-process Kotlin compiler, without daemon lifecycle
+operations against another build. A task reuse result is not a product speedup or
+proof that every Kotlin frontend phase was previously executed.
 It verifies a top-level function's real Kotlin file facade and source/method/class/DEX
 closure, and rejects the function name used incorrectly as a class definition.
 `Test-AndroidComponentBinaryClosure.py`

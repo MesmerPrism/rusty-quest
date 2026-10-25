@@ -61,7 +61,25 @@ if (componentInventory.isPresent() != componentEvidence.isPresent()) {
 if (componentInventory.isPresent()) {
     def expectedFile = file(componentInventory.get())
     def evidenceFile = file(componentEvidence.get()).toPath().resolve('gradle-inputs.json').toFile()
-    def variant = new JsonSlurper().parse(expectedFile).variant.capitalize()
+    // A configuration-cache hit must not retain an old projected identity.
+    // Read through Gradle's tracked provider, rather than an untracked JSON IO.
+    def inventoryText = providers.fileContents(layout.file(providers.provider { expectedFile })).asText.get()
+    def inventory = new JsonSlurper().parseText(inventoryText)
+    // The raw inventory remains the observer's authenticated input. Compiler
+    // identity excludes only physical roots and proof bookkeeping, whose bytes
+    // do not describe additional Kotlin/Java compilation work. Keep a closed
+    // shape so a future inventory field cannot silently lose its dependency.
+    if (inventory.keySet() != (['schema', 'contract_sha256', 'feature_lock_sha256',
+            'variant', 'roots', 'selected_components', 'definitions', 'sources', 'fingerprint'] as Set) ||
+            inventory.schema != 'rusty.quest.android_component_inventory.v1') {
+        throw new GradleException('component-compile-inventory-shape')
+    }
+    def compileIdentity = JsonOutput.toJson([
+        schema: 'rusty.quest.android_component_compile_identity.v1',
+        inventory_schema: inventory.schema, contract_sha256: inventory.contract_sha256,
+        variant: inventory.variant, selected_components: inventory.selected_components,
+        definitions: inventory.definitions, sources: inventory.sources])
+    def variant = inventory.variant.capitalize()
     def kotlinName = providers.gradleProperty('rqAndroidComponentKotlinTask').orElse('compile' + variant + 'Kotlin').get()
     def javaName = providers.gradleProperty('rqAndroidComponentJavaTask').orElse('compile' + variant + 'JavaWithJavac').get()
     afterEvaluate {
@@ -82,8 +100,7 @@ if (componentInventory.isPresent()) {
             outputs.upToDateWhen { false }
         }
         [kotlinTask, javaTask].findAll { it != null }.each { task ->
-            task.inputs.file(expectedFile).withPathSensitivity(PathSensitivity.NONE)
-                .withPropertyName('rqSelectedAndroidComponentInventory')
+            task.inputs.property('rqSelectedAndroidComponentCompileIdentity', compileIdentity)
             task.dependsOn(observer)
         }
     }
