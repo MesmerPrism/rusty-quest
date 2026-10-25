@@ -1,5 +1,12 @@
 # Rusty Quest Validation
 
+Spatial inspection-copy retention has a focused host gate:
+`pwsh -NoProfile -File tools/checks/Test-SpatialApkInspectionRetentionHost.ps1`.
+It runs the actual builder inspection section and real downstream capsule
+reader against a synthetic ZIP and modeled SDK tool leaves. See
+[inspection lifetime](APK_RUN_ISOLATION.md#spatial-inspection-copy-lifetime).
+It does not build an APK, alter an active cache or provide device evidence.
+
 For development graphs whose current Manifold source differs from the exact
 legacy camera/P2P compatibility supplier, keep those suppliers separate. The
 product preparation fixture accepts
