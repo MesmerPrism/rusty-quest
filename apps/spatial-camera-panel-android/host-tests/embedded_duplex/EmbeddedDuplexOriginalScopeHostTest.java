@@ -160,6 +160,40 @@ public final class EmbeddedDuplexOriginalScopeHostTest {
                 check("owned".equals(observed.getString("retention"))&&observed.isNull("consumer_receipt_sha256")&&"d".repeat(64).equals(observed.getString("outcome_sha256")),"query changed outcome/retention/ACK");
                 check(Arrays.equals(exact,Files.readAllBytes(row)),"query or disposition mutated immutable Original");tests++;
             }
+        }else if(group.equals("mixed")){
+            Path a=Files.createDirectory(output.resolve("mixed-a")),b=Files.createDirectory(output.resolve("mixed-b"));
+            JSONObject pa=EmbeddedDuplexPostMediaAbandonmentHostTest.peer(a,"A",10001,"checkpoint","evidence",EmbeddedDuplexPostMediaAbandonmentHostTest.MAP);
+            JSONObject pb=EmbeddedDuplexMixedPostMediaAbandonmentHostTest.clearPeer(b,"B",10002,null,null,null);
+            Path originals=Files.createDirectory(output.resolve("operator-originals-v1"));String id="4".repeat(32);
+            JSONObject oldRow=new JSONObject().put("schema","rusty.quest.embedded_duplex.operator_original.v1")
+                .put("original_id",id).put("state","unknown").put("effect_state","unknown").put("retention","owned")
+                .put("actor_binding",new JSONObject().put("package_id","test.product.app").put("app_record_sha256",pa.getString("original_fence_sha256")))
+                .put("outcome_sha256","d".repeat(64)).put("consumer_receipt_sha256",JSONObject.NULL);
+            Path row=originals.resolve(id+".json");Files.writeString(row,oldRow.toString());byte[] exact=Files.readAllBytes(row);
+            try(EmbeddedDuplexProcessFence current=EmbeddedDuplexProcessFence.acquire(a.toFile(),"checkpoint","evidence",()->{},
+                    new EmbeddedDuplexProcessIncarnation.Identity(EmbeddedDuplexPostMediaAbandonmentHostTest.BOOT,900,10001,12345),p->null)){
+                EmbeddedDuplexProcessHost.instance=new EmbeddedDuplexProcessHost(current,"test.product.app");
+                OriginalCounters counters=new OriginalCounters(originals.toFile());
+                refused(()->counters.unresolvedExceptCurrent()); // Recovery-only denies before admission accounting.
+                JSONObject v8auth=EmbeddedDuplexMixedPostMediaAbandonmentHostTest.auth(current,pa,pb,"peer_a");
+                current.abandon("checkpoint","evidence",new EmbeddedDuplexAbandonmentRequest(v8auth.toString()),(p,d)->{});
+                check(counters.unresolvedExceptCurrent()==0&&counters.unresolvedForRetirement(null)==0&&counters.unrelated()==0,"committed post-media scope still blocks counters");tests++;
+                Bundle queried=counters.query(id,"5".repeat(32));JSONObject observed=new JSONObject(queried.getString("observation_json"));
+                check("unknown".equals(queried.getString("status"))&&"unknown".equals(observed.getString("state"))&&"unknown".equals(observed.getString("effect_state")),"disposed Original query lost UNKNOWN");
+                check("owned".equals(observed.getString("retention"))&&observed.isNull("consumer_receipt_sha256")&&"d".repeat(64).equals(observed.getString("outcome_sha256")),"query changed outcome/retention/ACK");
+                check(Arrays.equals(exact,Files.readAllBytes(row)),"query or disposition mutated immutable Original");tests++;
+                JSONObject typed=new JSONObject().put("authorization_json",v8auth.toString());
+                int[] factories={0};String newId="6".repeat(32),challenge="7".repeat(32);
+                java.util.function.Supplier<java.util.concurrent.CompletableFuture<Bundle>> factory=()->{factories[0]++;return new java.util.concurrent.CompletableFuture<>();};
+                counters.begin(newId,"abandon_retained_scope",challenge,typed,factory);
+                counters.begin(newId,"abandon_retained_scope",challenge,typed,factory);
+                check(factories[0]==1,"same Original replayed factory");tests++;
+                JSONObject changed=new JSONObject(typed.toString());JSONObject auth=new JSONObject(changed.getString("authorization_json"));
+                auth.put("process_absence_evidence_sha256","8".repeat(64));changed.put("authorization_json",auth.toString());
+                refused(()->counters.begin(newId,"abandon_retained_scope",challenge,changed,factory));tests++;
+                check(factories[0]==1&&Arrays.equals(exact,Files.readAllBytes(row)),"changed authorization replayed or mutated old Original");tests++;
+
+            }
         }else throw new AssertionError("unknown test group");
         System.out.println("PASS actual scope/counter group="+group+" controls="+tests+" modeled kernel/Android facts; no devices");
     }

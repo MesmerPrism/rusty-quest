@@ -1245,7 +1245,7 @@ Android API compilation and the actual app/package build remain separate gates.
 
 `abandon_retained_scope` additionally accepts the separately closed
 `rusty.quest.embedded_duplex.abandonment_authorization.v7`. This is an explicit
-post-media **nonaccepting** disposition, not a no-media route. v1–v6 retain their
+post-media **nonaccepting** disposition, not a no-media route. v1â€“v6 retain their
 existing meanings and predicates. In particular, absent Java journals alone do
 not turn a process that entered media into a no-media actor.
 
@@ -1557,3 +1557,44 @@ identities at the same completed teardown join as its existing generation
 reset. A failed/superseded source join retains them; renderer-ID retry and the
 archive's terminal guard remain unchanged. This cold-path defect is not an
 attribution of a separately selected live-Own device failure.
+
+
+### Explicit mixed post-media nonaccepting disposition (v8)
+
+The existing typed `abandon_retained_scope` operator additionally accepts
+`rusty.quest.embedded_duplex.abandonment_authorization.v8` with
+`scope_kind="single_pending_nonaccepting"`. Its closed root and historical-peer
+fields are the v7 fields. Exactly one historical peer must have its actual
+recorded pending fence and the other its actual recorded clear fence. The
+selected role must be the pending peer. V7 remains strict: both of its recorded
+historical fences must be pending. No version alias or reconstructed pending
+fence is accepted.
+
+Both peers retain exact known-birth, full-package-UID absence attestation,
+installed package/APK/signer closure, fence integrity, journal digest and fixed
+five-record checks. Clear-peer journal fields retain their actual recorded
+values; clear alone does not invent absent journals or prove physical cleanup.
+The external operator owns remote absence and complete private custody evidence.
+The selected current process retains the exact same-boot, later-birth,
+immediate-generation, new-nonce, installed-identity, effect-free and held pending
+fence checks. Only that selected pending app enters the existing archive-first
+nonaccepting commit. The clear peer receives no abandonment intent or receipt.
+
+The existing `abandoned_scope.v1` receipt stores the exact nested v8 authorization
+and still states `old_scope_abandoned_cleanup_unknown`,
+`old_cleanup_confirmed=false`, and `old_authority_transferred=false`. Exact old
+Originals and retained UNKNOWNs stay unchanged. Existing commit-witness,
+sidecar/drift, replay projection, generation-floor, restart and current-scope
+rules apply unchanged. No Native/JNI/operator operation name or media authority
+changes. Ordinary clear-peer bootstrap and later Native/SDK/Pair/Start admission
+retain their own guards.
+
+`EmbeddedDuplexMixedPostMediaAbandonment` is a separate package-private static
+validator definition. Selected Android component contracts must include its
+actual class and emitted `supported`, `shape`, `requireCurrent`, `requireBoot`
+and `bind` methods. The focused process-fence host suite executes both v8 role
+orientations, cardinality/identity/tamper/interruption controls and unchanged v7;
+the Original-scope harness executes actual counter/query and ingress request-hash
+bodies with real committed archives. Kernel birth/absence, Android system calls,
+physical proof and future completion/durability adapters remain declared host
+leaves; these checks do not attest Android installation or physical cleanup.

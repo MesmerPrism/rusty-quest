@@ -15,6 +15,9 @@ public final class EmbeddedDuplexAbandonmentRequest {
         if(exact==null || exact.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>24*1024)
             throw new IllegalArgumentException("abandonment request bounds");
         JSONObject object=new JSONObject(exact);Set<String> keys=new HashSet<>();for(java.util.Iterator<String> iterator=object.keys();iterator.hasNext();) keys.add(iterator.next());
+        if(EmbeddedDuplexMixedPostMediaAbandonment.supported(object)) {
+            EmbeddedDuplexMixedPostMediaAbandonment.shape(object);this.exact=exact;return;
+        }
         if(EmbeddedDuplexPostMediaAbandonment.supported(object)) {
             EmbeddedDuplexPostMediaAbandonment.shape(object);this.exact=exact;return;
         }
@@ -55,15 +58,18 @@ public final class EmbeddedDuplexAbandonmentRequest {
     static boolean replayDisposition(JSONObject object) throws Exception {
         String schema=object.getString("$schema");
         return EmbeddedDuplexHistoricalAbandonment.SCHEMA.equals(schema)
-            || EmbeddedDuplexKnownBirthAbandonment.supported(object) || EmbeddedDuplexPostMediaAbandonment.supported(object);
+            || EmbeddedDuplexKnownBirthAbandonment.supported(object) || EmbeddedDuplexPostMediaAbandonment.supported(object)
+            || EmbeddedDuplexMixedPostMediaAbandonment.supported(object);
     }
     static boolean replayScope(JSONObject auth) {
-        return EmbeddedDuplexKnownBirthAbandonment.replayScope(auth) || EmbeddedDuplexPostMediaAbandonment.supported(auth);
+        return EmbeddedDuplexKnownBirthAbandonment.replayScope(auth) || EmbeddedDuplexPostMediaAbandonment.supported(auth)
+            || EmbeddedDuplexMixedPostMediaAbandonment.supported(auth);
     }
     boolean historical() throws Exception {return replayDisposition(json());}
     boolean crossBoot() throws Exception {return EmbeddedDuplexKnownBirthAbandonment.crossBoot(json());}
     boolean requiresBootObservation() throws Exception {return crossBoot() || replayScope(json());}
     static Set<String> preservedRecords(JSONObject auth) {
+        if(EmbeddedDuplexMixedPostMediaAbandonment.supported(auth))return EmbeddedDuplexMixedPostMediaAbandonment.RECORDS;
         if(EmbeddedDuplexPostMediaAbandonment.supported(auth))return EmbeddedDuplexPostMediaAbandonment.RECORDS;
         return EmbeddedDuplexKnownBirthAbandonment.supported(auth)?EmbeddedDuplexKnownBirthAbandonment.records(auth):EmbeddedDuplexHistoricalAbandonment.RECORDS;
     }
@@ -78,20 +84,26 @@ public final class EmbeddedDuplexAbandonmentRequest {
             || (replayScope(auth) && EmbeddedDuplexKnownBirthAbandonment.CLEANUP_RECORD.equals(name));
     }
     void requireCurrent(int pid,int uid,long ticks,long generation) throws Exception {
-        if(EmbeddedDuplexPostMediaAbandonment.supported(json()))
+        if(EmbeddedDuplexMixedPostMediaAbandonment.supported(json()))
+            EmbeddedDuplexMixedPostMediaAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
+        else if(EmbeddedDuplexPostMediaAbandonment.supported(json()))
             EmbeddedDuplexPostMediaAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
         else if(EmbeddedDuplexKnownBirthAbandonment.supported(json()))
             EmbeddedDuplexKnownBirthAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
         else if(historical()) EmbeddedDuplexHistoricalAbandonment.requireCurrent(json(),pid,uid,ticks,generation);
     }
     void requireBoot(String actualBoot) throws Exception {
-        if(EmbeddedDuplexPostMediaAbandonment.supported(json()))
+        if(EmbeddedDuplexMixedPostMediaAbandonment.supported(json()))
+            EmbeddedDuplexMixedPostMediaAbandonment.requireBoot(json(),actualBoot);
+        else if(EmbeddedDuplexPostMediaAbandonment.supported(json()))
             EmbeddedDuplexPostMediaAbandonment.requireBoot(json(),actualBoot);
         else if(EmbeddedDuplexKnownBirthAbandonment.supported(json()))
             EmbeddedDuplexKnownBirthAbandonment.requireBoot(json(),actualBoot);
     }
     void bind(String prior,String current,String checkpoint,String evidence) throws Exception {
-        if(EmbeddedDuplexPostMediaAbandonment.supported(json()))
+        if(EmbeddedDuplexMixedPostMediaAbandonment.supported(json()))
+            EmbeddedDuplexMixedPostMediaAbandonment.bind(json(),prior,current,checkpoint,evidence);
+        else if(EmbeddedDuplexPostMediaAbandonment.supported(json()))
             EmbeddedDuplexPostMediaAbandonment.bind(json(),prior,current,checkpoint,evidence);
         else if(EmbeddedDuplexKnownBirthAbandonment.supported(json()))
             EmbeddedDuplexKnownBirthAbandonment.bind(json(),prior,current,checkpoint,evidence);
