@@ -122,6 +122,36 @@ cache inputs: an Android-only edit must not invalidate native compilation,
 while a native input change must. The Cargo/native dependency assertion keeps
 its existing closure and behavior.
 
+### Authenticated full source provider in a retained capsule
+
+A capsule may project only `primary` and `path-dependency` rows while its
+composition fingerprint also covers `app-owned-input` rows. When
+`source.provider_document` is present, `Test-ApkRunCapsule.ps1` authenticates that
+raw document and the capsule build manifest, verifies the complete canonical
+fingerprint, and joins the packages, primary and complete path-dependency
+projection exactly. Additional full-document rows must be valid app-owned
+inputs. Every source repository still requires the exact recorded commit/tree.
+Artifact reading preserves historical commit/tree semantics; it does not require
+the recorded commit to remain the repository's current HEAD.
+
+Malformed or mismatched provider references fail rather than falling back to the
+projected subset. Older capsules without a provider retain their existing
+composition or no-composition behavior. The reader command and capsule bytes do
+not change. A qualified immutable APK does not need rebuilding for this host
+reader correction; downstream callers separately authenticate their selected
+artifact/capsule and the reader's source origin.
+
+`Assert-QuestBuildSourceCompositionIdentity -Composition <document>` exposes the
+existing structural/package/unique-root/role/overlay/canonical-identity check for
+provider consumers without a Cargo or current-HEAD query. It checks the declared
+identity, not whether a new build occurred. `Assert-QuestBuildSourceCompositionCurrent`
+still performs that check and then all existing current Git/overlay observations.
+
+Run `tools/checks/Test-ApkRunCapsuleComposition.ps1` for the bounded host controls.
+An optional `-ActualCapsulePath` consumes an existing artifact without rewriting
+it. Small APK/manifest fixture bytes are modeled and no Android build or device
+operation occurs.
+
 Native receipt metadata distinguishes the generated JNI input from the final
 APK ZIP entry. Gradle may strip symbols while packaging, so these bytes and
 digests may differ. `native_receipt_artifacts.input` binds the generated input

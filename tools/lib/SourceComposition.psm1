@@ -206,12 +206,9 @@ function Get-QuestBuildSourceComposition {
     }
 }
 
-function Assert-QuestBuildSourceCompositionCurrent {
+function Assert-QuestBuildSourceCompositionIdentity {
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory=$true)]$Composition,
-        [switch]$AllowWorkingTreeChanges
-    )
+    param([Parameter(Mandatory=$true)]$Composition)
     if ($Composition.schema -cnotin @('rusty.quest.apk_source_composition.v1', 'rusty.quest.apk_source_composition.v2') -or
             [string]$Composition.fingerprint -cnotmatch '^[0-9a-f]{64}$') {
         throw 'Unsupported or malformed APK source composition.'
@@ -257,6 +254,16 @@ function Assert-QuestBuildSourceCompositionCurrent {
     if ((Get-SourceCompositionSha256 -Value $canonical) -cne $Composition.fingerprint) {
         throw 'APK source composition fingerprint differs from its document.'
     }
+}
+
+function Assert-QuestBuildSourceCompositionCurrent {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]$Composition,
+        [switch]$AllowWorkingTreeChanges
+    )
+    Assert-QuestBuildSourceCompositionIdentity -Composition $Composition
+    $records = @($Composition.repositories)
     foreach ($record in $records) {
         # Never trust a caller-supplied overlay, even when its document checksum is self-consistent.
         $actual = Get-SourceCompositionRepository -Root $record.repository -RepositoryId $record.repository_id `
@@ -350,4 +357,4 @@ function Assert-QuestNativeDependencyComposition {
     }
 }
 
-Export-ModuleMember -Function Get-QuestBuildSourceComposition, Get-QuestBuildSourceCompositionIdentityCanonicalText, Get-QuestBuildOwnedRepositoryObservation, Add-QuestBuildOwnedRepository, Assert-QuestBuildSourceCompositionCurrent, Assert-QuestNativeDependencyComposition
+Export-ModuleMember -Function Get-QuestBuildSourceComposition, Get-QuestBuildSourceCompositionIdentityCanonicalText, Get-QuestBuildOwnedRepositoryObservation, Add-QuestBuildOwnedRepository, Assert-QuestBuildSourceCompositionIdentity, Assert-QuestBuildSourceCompositionCurrent, Assert-QuestNativeDependencyComposition

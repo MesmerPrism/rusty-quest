@@ -42,6 +42,82 @@ function Assert-FileRecord {
     if ($actual -ne [string]$Record.sha256) { throw "$Label hash mismatch: $($Record.path)" }
 }
 
+function Assert-CompositionProjectionRecord {
+    param($Actual, $Expected, [string]$Label)
+    foreach ($field in @('repository', 'commit', 'tree', 'tracked_worktree_clean', 'worktree_overlay_sha256')) {
+        if ($Actual.PSObject.Properties.Name -notcontains $field) { throw "$Label source record is incomplete." }
+    }
+    $a = [IO.Path]::GetFullPath([string]$Actual.repository).TrimEnd('\', '/')
+    $b = [IO.Path]::GetFullPath([string]$Expected.repository).TrimEnd('\', '/')
+    if ($a -ine $b -or $Actual.tracked_worktree_clean -isnot [bool] -or
+            $Actual.tracked_worktree_clean -ne $Expected.tracked_worktree_clean) { throw "$Label source root/clean binding differs." }
+    foreach ($field in @('commit', 'tree', 'worktree_overlay_sha256')) {
+        if ([string]$Actual.$field -cne [string]$Expected.$field) { throw "$Label source $field differs." }
+    }
+}
+
+function Assert-ProviderComposition {
+    param($Capsule)
+    # Authenticate the existing file records before decoding their contents.
+    Assert-FileRecord -Record $Capsule.build_manifest -Label 'build manifest'
+    Assert-FileRecord -Record $Capsule.source.provider_document -Label 'source composition provider'
+    $manifest = Get-Content -LiteralPath $Capsule.build_manifest.path -Raw | ConvertFrom-Json
+    $provider = Get-Content -LiteralPath $Capsule.source.provider_document.path -Raw | ConvertFrom-Json
+    Assert-QuestBuildSourceCompositionIdentity -Composition $provider
+    if ([string]$provider.fingerprint -cne [string]$Capsule.source.composition_fingerprint -or
+            [string]$manifest.source_composition_fingerprint -cne [string]$provider.fingerprint) {
+        throw 'APK run capsule provider fingerprint binding differs.'
+    }
+    $packages = @($Capsule.source.packages)
+    if (@($packages | Where-Object { $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_) }).Count -gt 0 -or
+            @($packages | Sort-Object -Unique).Count -ne $packages.Count -or
+            (($packages | Sort-Object) -join "`n") -cne ((@($provider.packages) | Sort-Object) -join "`n")) {
+        throw 'APK run capsule provider package selection differs.'
+    }
+    $primary = @($provider.repositories | Where-Object role -CEQ 'primary')[0]
+    Assert-CompositionProjectionRecord $Capsule.source $primary 'APK run capsule primary'
+    $dependencies = @($provider.repositories | Where-Object role -CEQ 'path-dependency')
+    if (@($Capsule.source.dependencies).Count -ne $dependencies.Count) { throw 'APK run capsule provider dependency projection differs.' }
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($dependency in @($Capsule.source.dependencies)) {
+        if ($dependency.role -cne 'path-dependency' -or -not $seen.Add([string]$dependency.repository_id)) {
+            throw 'APK run capsule dependency identity/role is invalid or duplicated.'
+        }
+        $matches = @($dependencies | Where-Object repository_id -CEQ $dependency.repository_id)
+        if ($matches.Count -ne 1) { throw 'APK run capsule provider dependency identity differs.' }
+        Assert-CompositionProjectionRecord $dependency $matches[0] 'APK run capsule dependency'
+    }
+    foreach ($record in @($provider.repositories)) {
+        # Artifacts retain historical commit/tree semantics, not current HEAD.
+        Assert-SourceRepository -Record $record -Label "APK run capsule full source '$($record.repository_id)'"
+    }
+    if ($manifest.source_tracked_worktree_clean -isnot [bool] -or
+            [string]$manifest.source_commit -cne [string]$primary.commit -or
+            [string]$manifest.source_tree -cne [string]$primary.tree -or
+            $manifest.source_tracked_worktree_clean -ne $primary.tracked_worktree_clean -or
+            [string]$manifest.source_worktree_overlay_sha256 -cne [string]$primary.worktree_overlay_sha256) {
+        throw 'APK run capsule build manifest primary source differs.'
+    }
+    $manifestDependencies = @($manifest.source_dependencies)
+    if ($manifestDependencies.Count -ne $dependencies.Count) { throw 'APK run capsule build manifest dependency projection differs.' }
+    $seen.Clear()
+    foreach ($dependency in $manifestDependencies) {
+        $matches = @($dependencies | Where-Object repository_id -CEQ $dependency.repository_id)
+        if ($dependency.role -cne 'path-dependency' -or -not $seen.Add([string]$dependency.repository_id) -or $matches.Count -ne 1) {
+            throw 'APK run capsule build manifest dependency identity differs.'
+        }
+        Assert-CompositionProjectionRecord $dependency $matches[0] 'APK run capsule build manifest dependency'
+    }
+    if ($Capsule.app_lane -ceq 'spatial-camera-panel-android' -and
+            ([string]$manifest.application_id -cne [string]$Capsule.android.package_name -or
+             [string]$manifest.package_name -cne [string]$Capsule.android.package_name -or
+             [string]$Capsule.app_id -cne [string]$Capsule.android.package_name -or
+             [string]$manifest.apk_sha256 -cne [string]$Capsule.apk.sha256 -or
+             [string]$manifest.build_input_lock_sha256 -cne [string]$Capsule.build_lock.sha256)) {
+        throw 'APK run capsule build manifest package/APK/lock binding differs.'
+    }
+}
+
 $resolvedCapsule = (Resolve-Path -LiteralPath $CapsulePath).Path
 $capsule = Get-Content -LiteralPath $resolvedCapsule -Raw | ConvertFrom-Json
 if ([string]$capsule.schema -ne "rusty.quest.apk_run_capsule.v1") { throw "Unsupported APK run capsule schema: $($capsule.schema)" }
@@ -55,9 +131,12 @@ Assert-SourceRepository -Record $capsule.source -Label "APK run capsule primary 
 $hasComposition = $capsule.source.PSObject.Properties.Name -contains "composition_fingerprint"
 $hasPackages = $capsule.source.PSObject.Properties.Name -contains "packages"
 $hasDependencies = $capsule.source.PSObject.Properties.Name -contains "dependencies"
-if ($hasComposition -or $hasPackages -or $hasDependencies) {
+if ($hasComposition -or $hasPackages -or $hasDependencies -or ($capsule.source.PSObject.Properties.Name -contains 'provider_document')) {
     if (-not ($hasComposition -and $hasPackages -and $hasDependencies)) { throw "APK run capsule source composition fields must be complete." }
     if ([string]$capsule.source.composition_fingerprint -notmatch '^[0-9a-f]{64}$' -or @($capsule.source.packages).Count -eq 0) { throw "APK run capsule source composition identity is invalid." }
+    if ($capsule.source.PSObject.Properties.Name -contains 'provider_document') {
+        Assert-ProviderComposition -Capsule $capsule
+    } else {
     $identityRecords = [Collections.Generic.List[object]]::new()
     $primaryOverlaySha256 = if ($capsule.source.PSObject.Properties.Name -contains "worktree_overlay_sha256") { [string]$capsule.source.worktree_overlay_sha256 } else { "" }
     $identityRecords.Add([pscustomobject][ordered]@{
@@ -77,6 +156,7 @@ if ($hasComposition -or $hasPackages -or $hasDependencies) {
         -Repository @($identityRecords.ToArray())
     $observedFingerprint = Get-StringSha256 -Value $canonicalIdentity
     if ($observedFingerprint -ne [string]$capsule.source.composition_fingerprint) { throw "APK run capsule source composition fingerprint mismatch." }
+    }
 }
 Assert-FileRecord -Record $capsule.build_lock -Label "build lock"
 Assert-FileRecord -Record $capsule.build_manifest -Label "build manifest"
