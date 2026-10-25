@@ -95,6 +95,7 @@ Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "lib/SpatialApkInspection.psm1") -Force
 if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
 $selectedEmbeddedDuplexMediaPolicy = Get-EmbeddedDuplexMediaPolicy -Selection $EmbeddedDuplexMediaPolicy
 if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpace($EmbeddedDuplexProductInputRoot)) { throw "Ongoing media requires explicit real-peer product inputs." }
@@ -116,9 +117,13 @@ $buildLaneMutex = $null
 $buildLaneMutexOwned = $false
 $buildLaneMutexAbandoned = $false
 $buildLaneMutexWaitMs = 0L
+$apkInspectionCopy = $null
 
 trap {
     $caughtBuildError = $_
+    if ($null -ne $apkInspectionCopy -and (Test-Path -LiteralPath $apkInspectionCopy.path -PathType Leaf)) {
+        Write-Warning "Inspection attempt retained after failure: $($apkInspectionCopy.path); canonical APK remains in OutDir."
+    }
     if ($buildLaneMutexOwned -and $null -ne $buildLaneMutex) {
         try { $buildLaneMutex.ReleaseMutex() } catch { }
         $buildLaneMutexOwned = $false
@@ -2487,8 +2492,8 @@ $apkOut = Join-Path $OutDir $resolvedApkFileName
 $apkCopied = Copy-FileIfChanged -Source $apkSource -Destination $apkOut
 $sha256 = Get-FileSha256 -Path $apkOut
 $apkInspectionRoot = Join-Path $BuildCacheRoot "apk-v"
-$apkInspectionPath = Join-Path $apkInspectionRoot "$sha256.apk"
-$null = Copy-FileIfChanged -Source $apkOut -Destination $apkInspectionPath
+$apkInspectionCopy = New-QuestApkInspectionCopy -ApkPath $apkOut -InspectionRoot $apkInspectionRoot -ExpectedApkSha256 $sha256
+$apkInspectionPath = $apkInspectionCopy.path
 $inspectionStopwatch = [Diagnostics.Stopwatch]::StartNew()
 $signerInspection = @(& $apksigner "verify" "--verbose" "--print-certs" $apkInspectionPath 2>&1)
 if ($LASTEXITCODE -ne 0) {
@@ -2640,6 +2645,8 @@ Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $apkInspection -Selection $E
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $apkInspection -ResolvedSelection $freshBuildSelection
 $apkInspectionPath = Join-Path $OutDir "apk-inspection.json"
 [void](Set-TextFileIfChanged -Path $apkInspectionPath -Value ($apkInspection | ConvertTo-Json -Depth 12))
+Complete-QuestApkInspectionCopy -Copy $apkInspectionCopy -InspectionReceiptPath $apkInspectionPath -ExpectedInspectionSha256 (Get-FileSha256 $apkInspectionPath)
+$apkInspectionCopy = $null
 $phaseReceipts.Add([ordered]@{
     phase = "zipalign-sign-inspection"
     duration_ms = $inspectionStopwatch.ElapsedMilliseconds

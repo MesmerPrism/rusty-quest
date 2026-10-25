@@ -65,6 +65,32 @@ external-output policy without the parent machine path. See the
 
 ## Run Capsule
 
+### Spatial inspection-copy lifetime
+
+The Spatial builder inspects a short-path, create-new
+`<BuildCacheRoot>/apk-v/attempt-<random-id>.apk` copy. It owns that single file
+under the existing serialized build-cache lane. Signer, alignment, package,
+source-version, ELF and ZIP checks must succeed and `OutDir/apk-inspection.json`
+must be written before the copy can be retired. Finalization rechecks canonical
+APK, copy and inspection-receipt identities, and rejects linked paths. A tool,
+identity, receipt-write or finalization failure preserves the copy and canonical
+APK; the builder reports the failed attempt path. Interrupted attempts also
+remain for diagnosis. This policy does not sweep earlier files.
+
+The canonical `OutDir` APK, inspection JSON, build lock, manifest and run capsule
+remain the supported downstream artifacts. They never refer to the temporary
+inspection APK. Current, rollback, milestone and failure artifacts stay with
+their owning output/evidence policy; existing hash-named inspection copies are
+not automatically removed. Native, Gradle and other warm state are untouched.
+The identity rechecks have a hashing cost; this change claims bounded successful
+inspection-copy retention, not a measured build speedup.
+
+Run `pwsh -NoProfile -File tools/checks/Test-SpatialApkInspectionRetentionHost.ps1`
+for the complete production inspection section with modeled SDK tool leaves,
+real ZIP/JSON publication and the real capsule reader. The host gate includes
+failure retention, mutation, receipt, ownership and linked-root controls; it
+does not compile an APK, exercise real Android SDK inspection or contact a device.
+
 Opt-in callers may use `tools/lib/ContentStableCargoStage.psm1` to materialize
 an exact clean source forest while preserving unchanged raw file timestamps.
 The caller retains the exclusive `native-source.lock` through packaging and
