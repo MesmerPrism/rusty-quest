@@ -1011,16 +1011,13 @@ final class EmbeddedDuplexProcessHost {
             java.util.function.LongSupplier currentRouteGeneration,
             java.util.function.BooleanSupplier ownerAlive) {
         return submit(() -> {
-            if (phase.get()!=Phase.NEW || terminalWholeReceipt==null || closeInFlight
+            if (phase.get()!=Phase.NEW || closeInFlight
                     || platform!=null || resources!=null || runtimeConfigSha256!=null)
                 throw new IllegalStateException("verified whole-app cleanup required before Local");
-            JSONObject proof=new JSONObject(terminalWholeReceipt).getJSONObject("peer_lifecycle");
-            if (!"terminal".equals(proof.optString("whole_app_physical_cleanup")))
-                throw new IllegalStateException("whole-app cleanup remains Pending");
+            String expectedConfig=completedLocalConfig();
             OwnStereoCaptureRuntime own=OwnStereoCaptureRuntime.currentForApplication();
             if (own==null || !"terminal".equals(own.physicalCleanupState()))
                 throw new IllegalStateException("Own physical cleanup remains Pending");
-            String expectedConfig=proof.getString("config_sha256");
             String nativeReceipt=fence.commitIfCurrent(ticket,currentRouteGeneration,ownerAlive,
                     () -> EmbeddedDuplexNative.selectLocalAfterTerminal(expectedConfig));
             JSONObject selected=new JSONObject(nativeReceipt);
@@ -1032,6 +1029,30 @@ final class EmbeddedDuplexProcessHost {
                 throw new IllegalStateException("native Local feature-off proof differs");
             return selected.put("app_verified_config_sha256",expectedConfig).toString();
         });
+    }
+
+    private String completedLocalConfig() throws Exception {
+        if(terminalWholeReceipt!=null){
+            JSONObject proof=new JSONObject(terminalWholeReceipt).getJSONObject("peer_lifecycle");
+            if(!"terminal".equals(proof.optString("whole_app_physical_cleanup")))
+                throw new IllegalStateException("whole-app cleanup remains Pending");
+            return proof.getString("config_sha256");
+        }
+        // This is the retained no-media owner, never a synthesized media wrapper.
+        RetainedNoMediaClose held=noMediaClose;
+        if(held==null || held.original==null || held.original.retainedCleanupOwner!=held
+                || !"whole_app_close".equals(held.original.row.getString("operation"))
+                || held.config==null || held.nativeGeneration<=0 || held.pendingFresh
+                || held.proof==null || lastClosedActorProof==null)
+            throw new IllegalStateException("verified whole-app cleanup required before Local");
+        requireCompletedNoMediaOriginal(held.original,held.proof);
+        processFence.requireLive(held.appGeneration);
+        if(!held.epoch.equals(processFence.epochId())
+                || !EmbeddedDuplexCanonicalJson.encode(held.proof).equals(EmbeddedDuplexCanonicalJson.encode(lastClosedActorProof))
+                || !EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2.equals(held.proof.getString("$schema"))
+                || !"runtime_config_closed".equals(held.proof.getJSONObject("native_retirement").getString("disposition")))
+            throw new IllegalStateException("actual completed no-media Local owner differs");
+        return held.config;
     }
 
     CompletableFuture<Boolean> resumeOwnProjection(long expectedGeneration,

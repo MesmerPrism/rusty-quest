@@ -1,5 +1,38 @@
 # Embedded duplex finite authority and native fencing
 
+## Local selection after configured no-media WholeClose
+
+The Activity-owned Local rollback can consume either the existing normal media
+WholeClose wrapper or a distinct, actually completed configured no-media
+WholeClose owner. The no-media case requires its retained WholeClose Original,
+successful cleanup completion, exact constructor-bound v2 proof, joined callback
+and exchange barriers, matching current app generation/epoch and the same final
+physical proof. It never creates a media lifecycle wrapper or a Start/Stop fact.
+
+Native retains a private in-process Local ticket only after successful capability
+retirement and a final check of the exact previously validated constructor/config,
+retired app/native identity, absent Host/route/preparation/flight and zero
+borrowers. Local may recognize that ticket while the global closing latch remains
+set. It still requires actual capture unclaimed, retired source epoch, terminal
+renderer and inactive banks under the existing Host-to-capture lock order. The
+Activity request sequence, route generation and living-owner fence remain strict.
+The registry observation that can call Java occurs outside the Host lock.
+
+This one-way route selection is not writable authority reconstruction. Closing,
+retained fresh-owner fences, journals and UNKNOWN outcomes remain unchanged; it
+does not admit another SDK or Pair. The returned Local proof and effective route
+marker retain their existing schemas and prove route adoption, not moving pixels
+or comparable camera profiles. Direct preview/reader defaults and Shared Own
+recording defaults must be observed separately before comparison.
+
+`tools/checks/Test-NoMediaLocalHost.py --output <new-output>` runs production Java
+Local/retained-proof/configuration/fence bodies and production Native no-media
+finish, ticket, constructor and Local bodies. It checks both normal and no-media
+paths, failed retirement/final gates, actor/config changes, every physical fact
+and superseded Activity tickets. Android resources/JNI/registry primitives, Host
+closure and physical readbacks are declared models. These tests prove source
+contracts, not an APK/JNI execution, physical cleanup, Direct images or freshness.
+
 ## Finite freshness observation
 
 The existing debug-only `stream_dropout_diagnostic` route exports wrapper v2

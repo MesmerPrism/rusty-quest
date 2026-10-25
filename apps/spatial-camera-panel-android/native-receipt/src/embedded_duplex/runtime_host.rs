@@ -262,7 +262,18 @@ struct ProcessState {
     last_partial_retirement: Option<Value>,
     last_closed_sha256: Option<String>,
     last_closed_runtime_configuration_binding: Option<Value>,
+    completed_no_media_local: Option<CompletedNoMediaLocal>,
     last_peer_close_receipt: Option<String>,
+}
+
+// Created only after the actual configured no-media capability has retired.
+// This is a Local route ticket, never writable authority restoration.
+struct CompletedNoMediaLocal {
+    config_sha256: String,
+    app_generation: u64,
+    app_record_sha256: String,
+    native_generation: u64,
+    configuration_binding: Value,
 }
 
 // Observation only: no callback, credential, configuration body, or cleanup authority.
@@ -1478,21 +1489,53 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 ) -> jstring {
     let result = (|| {
         let sha = read_string(&mut env, &expected_sha, 64)?;
-        let state = process().lock().map_err(|_| "process state poisoned")?;
-        let closed = !state.initializing
-            && !state.closing
-            && !state.lease_integrity_failed
-            && state.host.is_none()
-            && state.host_leases == 0
-            && state.last_closed_sha256.as_deref() == Some(sha.as_str());
-        crate::own_stereo_capture_runtime::select_local_after_terminal(closed)?;
-        Ok(
-            serde_json::json!({"schema":"rusty.quest.local_rollback_native.v1","config_sha256":sha,
-   "feature_enabled":false,"physical_cleanup":"terminal","scope":"route-selection-only"})
-            .to_string(),
-        )
+        select_local_after_terminal(&sha)
     })();
     return_string(&mut env, result)
+}
+
+fn select_local_after_terminal(sha: &str) -> Result<String, String> {
+    // An admitted registry read may call Java. Do it before taking the Host lock.
+    let needs_retired = process()
+        .lock()
+        .map_err(|_| "process state poisoned")?
+        .closing;
+    let retired = if needs_retired {
+        Some(native_fence_jni::ownership_status()?)
+    } else {
+        None
+    };
+    let state = process().lock().map_err(|_| "process state poisoned")?;
+    let no_media = state
+        .completed_no_media_local
+        .as_ref()
+        .is_some_and(|ticket| {
+            ticket.config_sha256 == sha
+                && state.last_closed_runtime_configuration_binding.as_ref()
+                    == Some(&ticket.configuration_binding)
+                && state.fresh_setup_request.is_none()
+                && state.root_reestablishment.is_none()
+                && state.prepared_peer_start.is_none()
+                && state.partial_construction.is_none()
+                && retired.as_ref().is_some_and(|r| {
+                    r["state"] == "retired"
+                        && r["app_process_generation"] == ticket.app_generation
+                        && r["app_record_sha256"] == ticket.app_record_sha256
+                        && r["native_executor_generation"] == ticket.native_generation
+                })
+        });
+    let closed = !state.initializing
+        && (!state.closing || no_media)
+        && !state.lease_integrity_failed
+        && state.host.is_none()
+        && state.host_leases == 0
+        && state.last_closed_sha256.as_deref() == Some(sha);
+    crate::own_stereo_capture_runtime::select_local_after_terminal(closed)?;
+    Ok(
+        serde_json::json!({"schema":"rusty.quest.local_rollback_native.v1","config_sha256":sha,
+        "feature_enabled":false,"physical_cleanup":"terminal","scope":"route-selection-only"})
+        .to_string(),
+    )
 }
 
 fn return_string(env: &mut JNIEnv<'_>, result: Result<String, String>) -> jstring {
@@ -2818,7 +2861,57 @@ fn finish_no_media_retirement(expected: &str) -> Result<String, String> {
         proof["configuration_binding"] = binding;
     }
     capability.retire()?;
+    if let Some(binding) = proof.get("configuration_binding") {
+        retain_no_media_local_retirement(&capability, expected, binding)?;
+    }
     Ok(proof.to_string())
+}
+
+fn retain_no_media_local_retirement(
+    capability: &NativeCapability,
+    expected: &str,
+    binding: &Value,
+) -> Result<(), String> {
+    // finish_no_media_retirement validated this exact stored binding while live.
+    // Its live-capability validator must not run again after retirement.
+    // The capability retirement, not the closing flag, is the admission event.
+    let retired = native_fence_jni::ownership_status()?;
+    if retired["state"] != "retired"
+        || retired["app_process_generation"] != capability.binding.generation
+        || retired["app_record_sha256"] != capability.binding.record_sha256
+        || retired["native_executor_generation"] != capability.generation
+    {
+        return Err("actual no-media Local capability retirement differs".into());
+    }
+    let mut state = process()
+        .lock()
+        .map_err(|_| "no-media Local final gate poisoned")?;
+    let route = prepared_route()
+        .lock()
+        .map_err(|_| "no-media Local route gate poisoned")?;
+    if !state.closing
+        || state.initializing
+        || state.lease_integrity_failed
+        || state.host.is_some()
+        || state.host_leases != 0
+        || route.is_some()
+        || state.fresh_setup_request.is_some()
+        || state.root_reestablishment.is_some()
+        || state.prepared_peer_start.is_some()
+        || state.partial_construction.is_some()
+        || state.last_closed_sha256.as_deref() != Some(expected)
+        || state.last_closed_runtime_configuration_binding.as_ref() != Some(binding)
+    {
+        return Err("actual completed no-media Local owner changed".into());
+    }
+    state.completed_no_media_local = Some(CompletedNoMediaLocal {
+        config_sha256: expected.into(),
+        app_generation: capability.binding.generation,
+        app_record_sha256: capability.binding.record_sha256.clone(),
+        native_generation: capability.generation,
+        configuration_binding: binding.clone(),
+    });
+    Ok(())
 }
 
 #[no_mangle]
