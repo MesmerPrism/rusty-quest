@@ -1272,6 +1272,8 @@ if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
         throw 'Candidate builds require a frozen clean owned Android source composition.'
     }
 }
+# Validate the full app document before deriving Cargo-only views or building artifacts.
+Assert-QuestBuildSourceCompositionIdentity -Composition $sourceComposition
 $primarySource = @($sourceComposition.repositories | Where-Object { $_.role -eq "primary" })
 if ($primarySource.Count -ne 1) { throw "Spatial APK source composition did not resolve exactly one primary Rusty Quest repository." }
 $sourceHead = [string]$primarySource[0].commit
