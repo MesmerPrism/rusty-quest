@@ -50,12 +50,12 @@ use rusty_manifold_peer::{
 use rusty_manifold_peer_runtime_host::{
     ManifoldPeerRuntimeAuthorityFamily, ManifoldPeerRuntimeBrokerLeaseAttemptOutcome,
     ManifoldPeerRuntimeHost, ManifoldPeerRuntimeHostError, ManifoldPeerRuntimeTrustPolicy,
-    PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA,
+    ManifoldPeerRuntimeTrustPolicyFieldsV1, PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA,
 };
 use rusty_manifold_runtime_host::{
     ManifoldRuntimeCommandDescriptor, ManifoldRuntimeCommandRequest, ManifoldRuntimeHostSnapshot,
     ManifoldRuntimeLease, ManifoldRuntimeTypedParamsDigest, HOST_COMMAND_REQUEST_SCHEMA,
-    HOST_SNAPSHOT_SCHEMA, HOST_TYPED_PARAMS_DIGEST_SCHEMA, MAX_TYPED_PARAMS_CANONICAL_BYTES,
+    HOST_TYPED_PARAMS_DIGEST_SCHEMA, MAX_TYPED_PARAMS_CANONICAL_BYTES,
 };
 use rusty_quest_broker_admission::{
     parse_entropy_hex, project_binder_caller, QuestBrokerAdmissionConfig,
@@ -2313,43 +2313,44 @@ fn build_media_peer_runtime_host(
         return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
     }
     let duplex = config.embedded_duplex.as_ref();
-    let trust_policy = ManifoldPeerRuntimeTrustPolicy {
-        schema_id: schema(PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA),
-        policy_id: DottedId::new(format!(
-            "policy.quest.media-runtime.{}",
-            config.product_lock.product_id.as_str()
-        ))
-        .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?,
-        revision: Revision::INITIAL,
-        enabled_authority_families: if duplex.is_some() {
-            vec![
-                ManifoldPeerRuntimeAuthorityFamily::PeerStatus,
-                ManifoldPeerRuntimeAuthorityFamily::Enrollment,
-                ManifoldPeerRuntimeAuthorityFamily::Rendezvous,
-                ManifoldPeerRuntimeAuthorityFamily::MediaSession,
-            ]
-        } else {
-            vec![ManifoldPeerRuntimeAuthorityFamily::MediaSession]
-        },
-        trusted_operator_ids: duplex
-            .map_or_else(Vec::new, |value| value.trusted_operator_ids.clone()),
-        trusted_key_fingerprints: duplex
-            .map_or_else(Vec::new, |value| value.trusted_key_fingerprints.clone()),
-        trusted_adapter_ids: duplex
-            .map_or_else(Vec::new, |value| value.trusted_adapter_ids.clone()),
-        trusted_mesh_proposer_ids: Vec::new(),
-        media_client_grants: grants,
-        trusted_media_revoker_ids: duplex.map_or_else(
-            || vec![DottedId::new("operator.quest.media-runtime").expect("static revoker")],
-            |value| value.trusted_media_revoker_ids.clone(),
-        ),
-        direct_lane_client_grants: Vec::new(),
-        trusted_direct_lane_revoker_ids: Vec::new(),
-        media_runtime_host_id: media_runtime_host_id.clone(),
-        media_runtime_lease_scope_id: media_scope.clone(),
-        direct_lane_runtime_lease_scope_id: DottedId::new("lease.direct-lane")
-            .expect("static direct lane scope"),
-    };
+    let trust_policy =
+        ManifoldPeerRuntimeTrustPolicy::finite(ManifoldPeerRuntimeTrustPolicyFieldsV1 {
+            schema_id: schema(PEER_RUNTIME_HOST_TRUST_POLICY_SCHEMA),
+            policy_id: DottedId::new(format!(
+                "policy.quest.media-runtime.{}",
+                config.product_lock.product_id.as_str()
+            ))
+            .map_err(|_| QuestBrokerRuntimeError::MediaPeerRuntimeConfig)?,
+            revision: Revision::INITIAL,
+            enabled_authority_families: if duplex.is_some() {
+                vec![
+                    ManifoldPeerRuntimeAuthorityFamily::PeerStatus,
+                    ManifoldPeerRuntimeAuthorityFamily::Enrollment,
+                    ManifoldPeerRuntimeAuthorityFamily::Rendezvous,
+                    ManifoldPeerRuntimeAuthorityFamily::MediaSession,
+                ]
+            } else {
+                vec![ManifoldPeerRuntimeAuthorityFamily::MediaSession]
+            },
+            trusted_operator_ids: duplex
+                .map_or_else(Vec::new, |value| value.trusted_operator_ids.clone()),
+            trusted_key_fingerprints: duplex
+                .map_or_else(Vec::new, |value| value.trusted_key_fingerprints.clone()),
+            trusted_adapter_ids: duplex
+                .map_or_else(Vec::new, |value| value.trusted_adapter_ids.clone()),
+            trusted_mesh_proposer_ids: Vec::new(),
+            media_client_grants: grants,
+            trusted_media_revoker_ids: duplex.map_or_else(
+                || vec![DottedId::new("operator.quest.media-runtime").expect("static revoker")],
+                |value| value.trusted_media_revoker_ids.clone(),
+            ),
+            direct_lane_client_grants: Vec::new(),
+            trusted_direct_lane_revoker_ids: Vec::new(),
+            media_runtime_host_id: media_runtime_host_id.clone(),
+            media_runtime_lease_scope_id: media_scope.clone(),
+            direct_lane_runtime_lease_scope_id: DottedId::new("lease.direct-lane")
+                .expect("static direct lane scope"),
+        });
     let mut media_command_ids = vec![
         MANIFOLD_MEDIA_SESSION_ACCEPT_COMMAND,
         rusty_manifold_media_session::MANIFOLD_MEDIA_SESSION_REVOKE_COMMAND,
@@ -2372,18 +2373,8 @@ fn build_media_peer_runtime_host(
         .collect::<Vec<_>>();
     media_commands.sort_by(|left, right| left.command_id.cmp(&right.command_id));
     let peer_runtime_host_id = media_runtime_host_id.clone();
-    let media_command_runtime = ManifoldRuntimeHostSnapshot {
-        schema_id: schema(HOST_SNAPSHOT_SCHEMA),
-        host_id: media_runtime_host_id,
-        authority_revision: Revision::INITIAL,
-        commands: media_commands,
-        leases: Vec::new(),
-        applied_request_ids: Vec::new(),
-        reviewed_sweep_ids: Vec::new(),
-        reviewed_control_lease_adoption_ids: Vec::new(),
-        reviewed_derivative_lease_revocation_ids: Vec::new(),
-        audit_events: Vec::new(),
-    };
+    let media_command_runtime =
+        ManifoldRuntimeHostSnapshot::initial(media_runtime_host_id, media_commands, Vec::new());
     let host = ManifoldPeerRuntimeHost::new(
         peer_runtime_host_id,
         trust_policy,
@@ -3279,7 +3270,6 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use rusty_manifold_admission::{
         ManifoldAdmissionGrant, ManifoldAdmissionSnapshot, ManifoldClientIdentity,
-        ADMISSION_SNAPSHOT_SCHEMA,
     };
     use rusty_manifold_broker_adapter::{
         command_capability, ManifoldBrokerMutationRejectionReason, BROKER_ADAPTER_CONFIG_SCHEMA,
@@ -3651,12 +3641,9 @@ mod tests {
             initial_leases: lease.into_iter().collect(),
             admission: QuestBrokerAdmissionConfig {
                 schema_id: QUEST_ADMISSION_CONFIG_SCHEMA.to_owned(),
-                snapshot: ManifoldAdmissionSnapshot {
-                    root_renewal_policies: Vec::new(),
-                    schema_id: schema(ADMISSION_SNAPSHOT_SCHEMA),
-                    authority_id: id("authority.admission.quest.runtime"),
-                    authority_revision: Revision::new(1).expect("revision"),
-                    grants: vec![ManifoldAdmissionGrant {
+                snapshot: ManifoldAdmissionSnapshot::initial(
+                    id("authority.admission.quest.runtime"),
+                    vec![ManifoldAdmissionGrant {
                         grant_id: id("grant.quest.runtime"),
                         client_lock_id: client_lock.feature_lock_id.clone(),
                         client_lock_fingerprint: format!("sha256:{}", client_lock_sha256),
@@ -3665,14 +3652,9 @@ mod tests {
                         expires_at_ms: 100_000,
                         revoked: false,
                     }],
-                    active_tokens: Vec::new(),
-                    revoked_token_ids: Vec::new(),
-                    consumed_request_ids: Vec::new(),
-                    consumed_use_request_ids: Vec::new(),
-                    reviewed_sweep_ids: Vec::new(),
-                    audit_events: Vec::new(),
-                    max_token_ttl_ms: 30_000,
-                },
+                    Vec::new(),
+                    30_000,
+                ),
             },
             media_session,
             media_sessions: Vec::new(),
@@ -4327,6 +4309,97 @@ mod tests {
                 ),
                 "binding {case}"
             );
+        }
+    }
+
+    #[test]
+    fn finite_media_construction_preserves_initial_state_and_product_scope() {
+        for kind in [
+            QuestBrokerAuthorityBridgeKind::StandaloneProcessJni,
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+        ] {
+            let config = config(
+                kind,
+                vec![ManifoldBrokerFeature::MediaSession],
+                "command.media.session.start",
+                true,
+            );
+            let admission = &config.admission.snapshot;
+            assert_eq!(
+                admission.authority_id,
+                id("authority.admission.quest.runtime")
+            );
+            assert_eq!(admission.authority_revision, Revision::INITIAL);
+            assert_eq!(admission.max_token_ttl_ms, 30_000);
+            assert_eq!(admission.grants.len(), 1);
+            assert_eq!(admission.grants[0].grant_id, id("grant.quest.runtime"));
+            assert!(admission.root_renewal_policies.is_empty());
+            assert!(admission.active_tokens.is_empty());
+            assert!(admission.revoked_token_ids.is_empty());
+            assert!(admission.consumed_request_ids.is_empty());
+            assert!(admission.consumed_use_request_ids.is_empty());
+            assert!(admission.reviewed_sweep_ids.is_empty());
+            assert!(admission.audit_events.is_empty());
+
+            let epoch = id("epoch.quest.finite-construction");
+            let host = build_media_peer_runtime_host(&config, &epoch)
+                .expect("finite media host")
+                .expect("selected media host");
+            let host = host.read().expect("host read");
+            let snapshot = host.snapshot();
+            let policy = &snapshot.trust_policy;
+            assert_eq!(snapshot.provider_epoch_id, epoch);
+            assert_eq!(policy.revision, Revision::INITIAL);
+            assert_eq!(
+                policy.enabled_authority_families,
+                vec![ManifoldPeerRuntimeAuthorityFamily::MediaSession]
+            );
+            assert!(policy.trusted_operator_ids.is_empty());
+            assert!(policy.trusted_key_fingerprints.is_empty());
+            assert!(policy.trusted_adapter_ids.is_empty());
+            assert!(policy.trusted_mesh_proposer_ids.is_empty());
+            assert_eq!(policy.media_client_grants.len(), 1);
+            assert_eq!(
+                policy.trusted_media_revoker_ids,
+                vec![id("operator.quest.media-runtime")]
+            );
+            assert!(policy.direct_lane_client_grants.is_empty());
+            assert!(policy.trusted_direct_lane_revoker_ids.is_empty());
+            assert_eq!(
+                policy.media_runtime_lease_scope_id,
+                id("lease.media.session")
+            );
+            assert_eq!(
+                policy.direct_lane_runtime_lease_scope_id,
+                id("lease.direct-lane")
+            );
+
+            let runtime = &snapshot.media_command_runtime;
+            assert_eq!(runtime.host_id, policy.media_runtime_host_id);
+            assert_eq!(runtime.authority_revision, Revision::INITIAL);
+            assert_eq!(
+                runtime
+                    .commands
+                    .iter()
+                    .map(|command| command.command_id.as_str())
+                    .collect::<Vec<_>>(),
+                vec![
+                    MANIFOLD_MEDIA_SESSION_ACCEPT_COMMAND,
+                    rusty_manifold_media_session::MANIFOLD_MEDIA_SESSION_REVOKE_COMMAND,
+                    MANIFOLD_MEDIA_SESSION_STOP_COMMAND
+                ]
+            );
+            assert!(runtime
+                .commands
+                .iter()
+                .all(|command| command.required_lease_scope.as_ref()
+                    == Some(&policy.media_runtime_lease_scope_id)));
+            assert!(runtime.leases.is_empty());
+            assert!(runtime.applied_request_ids.is_empty());
+            assert!(runtime.reviewed_sweep_ids.is_empty());
+            assert!(runtime.reviewed_control_lease_adoption_ids.is_empty());
+            assert!(runtime.reviewed_derivative_lease_revocation_ids.is_empty());
+            assert!(runtime.audit_events.is_empty());
         }
     }
 
