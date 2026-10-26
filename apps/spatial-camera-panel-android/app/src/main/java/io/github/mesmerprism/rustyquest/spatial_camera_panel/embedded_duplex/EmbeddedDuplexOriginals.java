@@ -218,6 +218,9 @@ public final class EmbeddedDuplexOriginals {
         JSONObject nativeReceipt = receipt.getJSONObject("peer_lifecycle");
         String nativeSchema = nativeReceipt.getString("$schema");
         if (operation.equals("whole_app_close")
+                && nativeSchema.equals("rusty.quest.embedded_duplex.concurrent_no_media_own_cleanup.v1"))
+            return true; // Retain the current real result; this slice adds no no-media ACK join.
+        if (operation.equals("whole_app_close")
                 && nativeSchema.equals("rusty.quest.embedded_duplex.remote_owner_cleanup.v1"))
             return !"terminal".equals(nativeReceipt.optString("whole_app_physical_cleanup"));
         if (!Set.of("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1",
@@ -272,7 +275,7 @@ public final class EmbeddedDuplexOriginals {
         if(!Files.exists(file.toPath(),LinkOption.NOFOLLOW_LINKS))return null;
         if(!Files.isRegularFile(file.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(file.toPath())||Files.size(file.toPath())>MAX_RECORD_BYTES)
             throw new IllegalStateException("original checkpoint type/bounds");
-        JSONObject row=new JSONObject(new String(Files.readAllBytes(file.toPath()),StandardCharsets.UTF_8));
+        JSONObject row=EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(file.toPath()));
         Set<String> keys=new HashSet<>();row.keys().forEachRemaining(keys::add);
         if(!keys.equals(FIELDS)||!RECORD.equals(row.getString("schema"))||!originalId.equals(row.getString("original_id"))
                 ||!OPERATIONS.contains(row.getString("operation")))throw new IllegalStateException("original checkpoint closed schema");

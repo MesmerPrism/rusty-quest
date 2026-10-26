@@ -18,6 +18,18 @@ public final class EmbeddedDuplexCanonicalJson {
     static boolean sameValue(Object left,Object right) throws Exception {
         return encode(left).equals(encode(right));
     }
+    /** Owned checkpoints have one byte encoding, independently of parser duplicate-key behavior. */
+    static JSONObject readOwned(byte[] exact) throws Exception {
+        JSONObject parsed;
+        try { parsed = new JSONObject(new String(exact, StandardCharsets.UTF_8)); }
+        catch (org.json.JSONException malformed) { throw new IllegalStateException("owned JSON is malformed", malformed); }
+        requireOwnedBytes(exact, parsed);
+        return parsed;
+    }
+    static void requireOwnedBytes(byte[] exact, JSONObject parsed) throws Exception {
+        if (!java.util.Arrays.equals(exact, encode(parsed).getBytes(StandardCharsets.UTF_8)))
+            throw new IllegalStateException("owned JSON is not exact canonical bytes");
+    }
     public static String sha256(Object value) throws Exception {
         byte[] digest=MessageDigest.getInstance("SHA-256").digest(encode(value).getBytes(StandardCharsets.UTF_8));
         StringBuilder out=new StringBuilder(64);

@@ -48,6 +48,8 @@ Explicit Original commands bind the held app FileChannel fence to the actual
 kernel boot ID, PID, Android app UID and `/proc/<pid>/stat` birth tick. The
 synced companion binds the exact app record and its subsequent phase records.
 Missing, conflicting, torn or changed companion data denies bound custody.
+Companions and Original checkpoints use exact canonical UTF-8 bytes; duplicate
+keys are denied even when the Android JSON parser would overwrite a prior key.
 The legacy unbound finite fence remains supported. Binding never resets a
 native generation, increments app generation, clears pending recovery or
 infers that a previous process's effects have ended.
@@ -59,7 +61,8 @@ carried command, successful persistence, and the same held process/native
 actor. The actor must still be owned by the actual ready host, or must match
 the outgoing actor captured after the existing whole-product native, Java,
 display and app-fence cleanup barriers. No-media/fresh/retired-owner shortcuts
-are added. If that join is unavailable, the Original stays retained.
+are added. The existing no-media whole-close receipt remains queryable as
+unknown even when its own scope is terminal; this slice grants it no ACK join. If that join is unavailable, the Original stays retained.
 
 A successful ACK writes an immutable logical `compacted` tombstone. It retains
 the full record on disk and drops its live in-memory custody. This label does

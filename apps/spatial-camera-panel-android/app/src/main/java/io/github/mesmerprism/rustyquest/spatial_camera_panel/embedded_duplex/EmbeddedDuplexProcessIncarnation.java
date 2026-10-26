@@ -101,7 +101,7 @@ final class EmbeddedDuplexProcessIncarnation {
             Path path = new File(directory, NAME).toPath();
             if (Files.exists(Paths.get(path + ".new"), LinkOption.NOFOLLOW_LINKS)
                     || !(SCHEMA + "\n").equals(read(new File(directory, WITNESS).toPath(), 128))) return null;
-            JSONObject value = new JSONObject(read(path, 4096));
+            JSONObject value = EmbeddedDuplexCanonicalJson.readOwned(readBytes(path, 4096));
             if (!keys(value).equals(Set.of("$schema", "original_owner", "effect_category", "original_fence_record",
                     "current_fence_sha256", "local_resources_terminated", "termination_receipt_sha256", "sha256"))
                     || !SCHEMA.equals(value.getString("$schema"))
@@ -121,16 +121,19 @@ final class EmbeddedDuplexProcessIncarnation {
         if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)
                 && (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path)))
             throw new IllegalStateException("incarnation companion path invalid");
-        writeNew(temporary, binding.json().toString());
+        writeNew(temporary, EmbeddedDuplexCanonicalJson.encode(binding.json()));
         Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         sync.sync();
         Path witness = new File(directory, WITNESS).toPath();
         if (!Files.exists(witness, LinkOption.NOFOLLOW_LINKS)) { writeNew(witness, SCHEMA + "\n"); sync.sync(); }
     }
     private static String read(Path path, int bound) throws Exception {
+        return new String(readBytes(path, bound), StandardCharsets.UTF_8);
+    }
+    private static byte[] readBytes(Path path, int bound) throws Exception {
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path) || Files.size(path) > bound)
             throw new IllegalStateException("incarnation record unavailable");
-        return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
+        return Files.readAllBytes(path);
     }
     private static Set<String> keys(JSONObject value) {
         Set<String> result = new java.util.HashSet<>();

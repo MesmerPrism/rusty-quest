@@ -45,6 +45,15 @@ public final class EmbeddedDuplexProcessIncarnationHostTest {
                 EmbeddedDuplexCanonicalJson.sha256Bytes(new byte[0]))) throw new AssertionError("canonical digest");
         rejects(() -> EmbeddedDuplexCanonicalJson.encode(1.5));
         rejects(() -> EmbeddedDuplexCanonicalJson.encode("\uD800"));
-        System.out.println("Process incarnation and canonical JSON host controls passed; OS leaves modeled.");
+        byte[] owned = EmbeddedDuplexCanonicalJson.encode(canonical).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        EmbeddedDuplexCanonicalJson.requireOwnedBytes(owned,canonical);
+        // Android JSONTokener overwrites earlier duplicate keys. Supply that exact
+        // last-key-wins result directly so the strict host parser cannot mask this guard.
+        JSONObject lastWins = new JSONObject().put("sha256","conflicting").put("sha256","valid");
+        byte[] conflicting = "{\"sha256\":\"conflicting\",\"sha256\":\"valid\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        rejects(() -> EmbeddedDuplexCanonicalJson.requireOwnedBytes(conflicting,lastWins));
+        rejects(() -> EmbeddedDuplexCanonicalJson.requireOwnedBytes("{ \"sha256\":\"valid\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8),lastWins));
+        rejects(() -> EmbeddedDuplexCanonicalJson.readOwned(new byte[]{(byte)0xff}));
+        System.out.println("Process incarnation and canonical JSON host controls passed; explicit Android last-key-wins checkpoint control; OS leaves modeled.");
     }
 }

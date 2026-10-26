@@ -103,7 +103,7 @@ public final class EmbeddedDuplexOriginalsHostTest {
             if(damage.equals("outcome"))row.put("outcome_sha256",HASH);
             if(damage.equals("schema"))row.put("schema","foreign.schema");
             if(damage.equals("type"))row.put("state",new JSONObject());
-            Files.writeString(file.toPath(),row.toString());
+            Files.writeString(file.toPath(),EmbeddedDuplexCanonicalJson.encode(row));
             denied(()->new EmbeddedDuplexOriginals(root,actor,()->{}).query(ID,CHALLENGE));
         }
     }
@@ -227,6 +227,26 @@ public final class EmbeddedDuplexOriginalsHostTest {
         JSONObject hashed=EmbeddedDuplexOriginals.request("blend_update",CHALLENGE,floats);
         yes(hashed.getJSONObject("extras").getInt("threshold")==Float.floatToRawIntBits(0.25f));
         yes(!hashed.getJSONObject("extras").has("original_id"));
+        // A current no-media whole close is observable but gains no new ACK shortcut.
+        Actor noMediaActor = new Actor();
+        EmbeddedDuplexOriginals noMedia = new EmbeddedDuplexOriginals(Files.createTempDirectory("original-no-media-").toFile(),noMediaActor,()->{});
+        Bundle noMediaResponse = response("terminal");
+        JSONObject wrapper = new JSONObject(noMediaResponse.getString("receipt"));
+        wrapper.put("action","whole_app_close").put("peer_lifecycle",new JSONObject()
+                .put("$schema","rusty.quest.embedded_duplex.concurrent_no_media_own_cleanup.v1")
+                .put("action","whole_app_close").put("whole_app_physical_cleanup","terminal"));
+        noMediaResponse.putString("receipt",wrapper.toString());
+        JSONObject noMediaRequest = EmbeddedDuplexOriginals.request("whole_app_close",CHALLENGE,new Bundle());
+        noMedia.begin(ID,"whole_app_close",CHALLENGE,noMediaRequest,()->{
+            try { EmbeddedDuplexOriginals.bindActualActor(noMediaActor.snapshot(),noMediaActor.appGeneration()); }
+            catch(Exception e){throw new IllegalStateException(e);}
+            return CompletableFuture.completedFuture(noMediaResponse);
+        });
+        Bundle noMediaObservation = noMedia.query(ID,CHALLENGE);
+        yes("unknown".equals(noMediaObservation.getString("status")));
+        yes(!observe(noMediaObservation).isNull("response_sha256"));
+        noMedia.begin(ID,"whole_app_close",CHALLENGE,noMediaRequest,()->{throw new AssertionError("no-media duplicate replayed");});
+        denied(()->noMedia.acknowledge(ID,CHALLENGE,requestHash(noMediaObservation),outcome(noMediaObservation),HASH));
         failureAndPendingControls();
         configurationReceiptControls();
         productionCallerControls();
