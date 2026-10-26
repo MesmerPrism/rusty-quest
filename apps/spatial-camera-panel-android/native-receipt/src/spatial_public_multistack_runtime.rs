@@ -1081,6 +1081,38 @@ impl SpatialPublicGuideTargets {
         plan: SpatialPublicGuidePassPlan,
         profile_stages: bool,
     ) -> Result<SpatialPublicGuidePassRecord, String> {
+        self.record_spatial_public_guide_continuation(
+            device,
+            command_buffer,
+            gpu_timestamps,
+            frame_slot,
+            camera_descriptor_set,
+            elapsed_seconds,
+            camera_reprojection,
+            source_overscan_uv,
+            plan,
+            profile_stages,
+            0,
+        )
+    }
+
+    unsafe fn record_spatial_public_guide_continuation(
+        &self,
+        device: &ash::Device,
+        command_buffer: vk::CommandBuffer,
+        gpu_timestamps: &mut CameraHwbGpuTimestampTracker,
+        frame_slot: usize,
+        camera_descriptor_set: vk::DescriptorSet,
+        elapsed_seconds: f32,
+        camera_reprojection: CameraLatencyStereoReprojection,
+        source_overscan_uv: f32,
+        plan: SpatialPublicGuidePassPlan,
+        profile_stages: bool,
+        completed_prefix: usize,
+    ) -> Result<SpatialPublicGuidePassRecord, String> {
+        if completed_prefix > plan.requested_pass_count || completed_prefix > 1 {
+            return Err("guide-continuation-prefix-invalid".into());
+        }
         if plan.edge_window_selected() {
             return Ok(SpatialPublicGuidePassRecord::not_recorded(
                 plan,
@@ -1093,11 +1125,12 @@ impl SpatialPublicGuideTargets {
                 "guide-resources-unavailable",
             ));
         }
-        let mut recorded_pass_count = 0;
+        let mut recorded_pass_count = completed_prefix;
         for (pass_index, step) in SPATIAL_PUBLIC_GUIDE_PASS_SCHEDULE
             .iter()
             .take(plan.requested_pass_count)
             .enumerate()
+            .skip(completed_prefix)
         {
             let timestamp_stage = CameraHwbGpuTimestampStage::from_guide_pass_index(pass_index)
                 .expect("six-pass guide schedule has one timestamp stage per pass");

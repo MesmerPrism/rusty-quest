@@ -201,6 +201,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 
 & $workflowCheckPath -RepoRoot $repoRootPath
 & $staticCheckPath -RepoRoot $repoRootPath
+& (Join-Path $repoRootPath 'tools/Test-StereoPrimaryInputHost.ps1') -RepoRoot $repoRootPath
 & $rawProjectionFreshnessFinalizerCheckPath -RepoRoot $repoRootPath
 & $rawProjectionFreshnessReducerCheckPath -RepoRoot $repoRootPath
 & $immersiveVideoCheckPath -RepoRoot $repoRootPath

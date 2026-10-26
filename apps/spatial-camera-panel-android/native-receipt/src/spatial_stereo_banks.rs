@@ -1,8 +1,12 @@
 //! Opt-in dual producer banks feeding one retained final graph.
 use super::*;
 use crate::stereo_bank_transport_v1::{self as abi, StereoBankPolicyUniformV1};
+use crate::stereo_bank_transport_v2 as abi2;
 use crate::stereo_input_set::StereoFrameIdentity;
 use std::any::Any;
+mod primary_build {
+    include!(concat!(env!("OUT_DIR"), "/spatial_source_bank_build.rs"));
+}
 static SOURCE_BANKS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static CONTROL_POLICY: Mutex<([u32; 6], u64, [u32; 3])> =
     Mutex::new(([0, 0, 0, 0, 2, 2], 1, [0; 3]));
@@ -177,6 +181,12 @@ impl ScalarProducerBank {
 
 pub(crate) struct StereoBankResources {
     peer: Option<ScalarProducerBank>,
+    primary: Option<ScalarProducerBank>,
+    primary_layout: vk::DescriptorSetLayout,
+    primary_pipeline_layout: vk::PipelineLayout,
+    primary_pipeline: vk::Pipeline,
+    primary_pool: vk::DescriptorPool,
+    primary_set: vk::DescriptorSet,
     guides_layout: vk::DescriptorSetLayout,
     policy_layout: vk::DescriptorSetLayout,
     empty_layout: vk::DescriptorSetLayout,
@@ -243,16 +253,34 @@ impl SpatialPublicGuideTargets {
         }
         let demand = abi::LayoutDemand {
             bound_sets: 6,
-            samplers: 11 + video_sampler_count,
-            sampled_images: 11 + video_sampler_count,
+            samplers: if primary_build::SOURCE_BANK_ABI == 2 {
+                13
+            } else {
+                11
+            } + video_sampler_count,
+            sampled_images: if primary_build::SOURCE_BANK_ABI == 2 {
+                13
+            } else {
+                11
+            } + video_sampler_count,
             uniform_buffers: 4,
-            stage_resources: 16 + video_sampler_count,
+            stage_resources: if primary_build::SOURCE_BANK_ABI == 2 {
+                18
+            } else {
+                16
+            } + video_sampler_count,
             push_bytes: 128,
             uniform_range_bytes: mem::size_of::<ProjectionZoneUniform>() as u32,
         };
         abi::check_final_layout_limits(&limits, &demand)?;
         let mut state = StereoBankResources {
             peer: None,
+            primary: None,
+            primary_layout: vk::DescriptorSetLayout::null(),
+            primary_pipeline_layout: vk::PipelineLayout::null(),
+            primary_pipeline: vk::Pipeline::null(),
+            primary_pool: vk::DescriptorPool::null(),
+            primary_set: vk::DescriptorSet::null(),
             guides_layout: vk::DescriptorSetLayout::null(),
             policy_layout: vk::DescriptorSetLayout::null(),
             empty_layout: vk::DescriptorSetLayout::null(),
@@ -279,10 +307,18 @@ impl SpatialPublicGuideTargets {
         };
         let result = (|| {
             state.peer = Some(ScalarProducerBank::create(self, device, memory)?);
+            if primary_build::SOURCE_BANK_ABI == 2 {
+                state.primary = Some(ScalarProducerBank::create(self, device, memory)?);
+                state.create_primary_pipeline(self, device)?;
+            }
+            let guide_bindings = if state.primary.is_some() {
+                abi2::final_guide_bindings().to_vec()
+            } else {
+                abi::final_guide_bindings().to_vec()
+            };
             state.guides_layout = device
                 .create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::default()
-                        .bindings(&abi::final_guide_bindings()),
+                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&guide_bindings),
                     None,
                 )
                 .map_err(|e| format!("stereo-guide-layout-{e:?}"))?;
@@ -296,14 +332,18 @@ impl SpatialPublicGuideTargets {
             state.empty_layout = device
                 .create_descriptor_set_layout(&vk::DescriptorSetLayoutCreateInfo::default(), None)
                 .map_err(|e| format!("stereo-empty-layout-{e:?}"))?;
-            let (buffer, allocation) =
-                create_host_coherent_uniform_buffer(device, memory, 48, "stereo-policy")?;
+            let (buffer, allocation) = create_host_coherent_uniform_buffer(
+                device,
+                memory,
+                if state.primary.is_some() { 64 } else { 48 },
+                "stereo-policy",
+            )?;
             state.policy_buffer = buffer;
             state.policy_memory = allocation;
             let sizes = [
                 vk::DescriptorPoolSize::default()
                     .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                    .descriptor_count(10),
+                    .descriptor_count(if state.primary.is_some() { 12 } else { 10 }),
                 vk::DescriptorPoolSize::default()
                     .ty(vk::DescriptorType::UNIFORM_BUFFER)
                     .descriptor_count(2),
@@ -331,7 +371,7 @@ impl SpatialPublicGuideTargets {
                 .range(mem::size_of::<ProjectionZoneUniform>() as u64)];
             let policy = [vk::DescriptorBufferInfo::default()
                 .buffer(state.policy_buffer)
-                .range(48)];
+                .range(if state.primary.is_some() { 64 } else { 48 })];
             device.update_descriptor_sets(
                 &[
                     vk::WriteDescriptorSet::default()
@@ -638,6 +678,8 @@ impl SpatialPublicGuideTargets {
             final_draw: false,
             geometry_sampled: false,
             available: [inputs.sources[0].is_some(), inputs.sources[1].is_some()],
+            primary_prefix: 0,
+            final_abi_version: primary_build::SOURCE_BANK_ABI,
         };
         let result = crate::spatial_guide_processing::with_source_bank_processing_policy(
             inputs.processing_policy,
@@ -645,6 +687,12 @@ impl SpatialPublicGuideTargets {
                 // Reserve every sampled Own content hold before any native command
                 // recording, while the exact common fence is reset and unsignaled.
                 #[cfg(target_os = "android")]
+                let primary_camera = inputs.sources[0].as_ref().map(|source| {
+                    let mut reprojection = source.reprojection;
+                    reprojection.left.params = [0.0; 4];
+                    reprojection.right.params = [0.0; 4];
+                    (source.descriptor_set, reprojection)
+                });
                 for origin in 0..2 {
                     if inputs.demanded_prefixes[origin] == 0 {
                         continue;
@@ -669,6 +717,7 @@ impl SpatialPublicGuideTargets {
                     .targets
                     .iter()
                     .chain(state.peer.as_ref().unwrap().targets.iter())
+                    .chain(state.primary.iter().flat_map(|bank| bank.targets.iter()))
                 {
                     begin_guide_pass(
                         device,
@@ -758,19 +807,59 @@ impl SpatialPublicGuideTargets {
                         });
                     aggregate = recording;
                 }
+                let mut primary_prefix = 0;
+                if state.primary.is_some() && abi2::primary_input_ready(receipt.mask, completed)? {
+                    // Both original normalized/reprojected raw targets are complete
+                    // in this command buffer. No alternate clock/source or reimport.
+                    state.record_primary_raw(self, device, command, receipt.mask)?;
+                    let mut plan = current_spatial_public_guide_pass_plan();
+                    plan.requested_pass_count = 6;
+                    plan.requested_downstream_effect_pass_count = 5;
+                    let (camera, reprojection) =
+                        primary_camera.ok_or("primary-original-camera-binding-missing")?;
+                    state.primary.as_mut().unwrap().swap_into(self);
+                    let recording = self.record_spatial_public_guide_continuation(
+                        device,
+                        command,
+                        timestamps,
+                        slot,
+                        camera,
+                        elapsed,
+                        reprojection,
+                        0.0,
+                        plan,
+                        false,
+                        1,
+                    );
+                    state.primary.as_mut().unwrap().swap_into(self);
+                    let recording = recording?;
+                    if !recording.complete() {
+                        return Err("stereo-primary-prefix-incomplete".into());
+                    }
+                    primary_prefix = recording.recorded_pass_count as u32;
+                }
+                receipt.primary_prefix = primary_prefix;
                 // Every descriptor is legal even when prefix0 suppresses sampling.
                 // Both banks own real image views; explicit layout transitions cover
                 // untouched images too. They never borrow another origin's pixels.
                 for target in &self.targets {
                     transition_guide_image_for_sampling(device, command, target.image);
                 }
-                for target in &state.peer.as_ref().unwrap().targets {
+                for target in state
+                    .peer
+                    .as_ref()
+                    .unwrap()
+                    .targets
+                    .iter()
+                    .chain(state.primary.iter().flat_map(|bank| bank.targets.iter()))
+                {
                     transition_guide_image_for_sampling(device, command, target.image);
                 }
                 let visibility = self
                     .targets
                     .iter()
                     .chain(state.peer.as_ref().unwrap().targets.iter())
+                    .chain(state.primary.iter().flat_map(|bank| bank.targets.iter()))
                     .map(|target| {
                         vk::ImageMemoryBarrier::default()
                             .image(target.image)
@@ -790,8 +879,13 @@ impl SpatialPublicGuideTargets {
                     &[],
                     &visibility,
                 );
-                for index in 0..5 {
-                    let images = [
+                let targets = if state.primary.is_some() {
+                    abi2::GUIDE_TARGETS.to_vec()
+                } else {
+                    (0..5).collect()
+                };
+                for (binding_index, index) in targets.into_iter().enumerate() {
+                    let mut images = vec![
                         vk::DescriptorImageInfo::default()
                             .sampler(self.sampler)
                             .image_view(self.targets[index].image_view)
@@ -801,10 +895,22 @@ impl SpatialPublicGuideTargets {
                             .image_view(state.peer.as_ref().unwrap().targets[index].image_view)
                             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
                     ];
+                    if let Some(bank) = state.primary.as_ref() {
+                        images.push(
+                            vk::DescriptorImageInfo::default()
+                                .sampler(self.sampler)
+                                .image_view(bank.targets[index].image_view)
+                                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+                        );
+                    }
                     device.update_descriptor_sets(
                         &[vk::WriteDescriptorSet::default()
                             .dst_set(state.guides)
-                            .dst_binding(abi::GUIDE_BINDINGS[index])
+                            .dst_binding(if state.primary.is_some() {
+                                abi2::GUIDE_BINDINGS[binding_index]
+                            } else {
+                                abi::GUIDE_BINDINGS[binding_index]
+                            })
                             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                             .image_info(&images)],
                         &[],
@@ -812,14 +918,23 @@ impl SpatialPublicGuideTargets {
                 }
                 inputs.policy.source_state =
                     [completed[0], completed[1], 1, inputs.policy.source_state[3]];
+                let v2 =
+                    abi2::StereoBankPolicyUniformV2::from_input(&inputs.policy, primary_prefix);
+                let (bytes, count) = if state.primary.is_some() {
+                    (
+                        (&v2 as *const abi2::StereoBankPolicyUniformV2).cast::<u8>(),
+                        64,
+                    )
+                } else {
+                    (
+                        (&inputs.policy as *const StereoBankPolicyUniformV1).cast::<u8>(),
+                        48,
+                    )
+                };
                 let mapped = device
-                    .map_memory(state.policy_memory, 0, 48, vk::MemoryMapFlags::empty())
+                    .map_memory(state.policy_memory, 0, count, vk::MemoryMapFlags::empty())
                     .map_err(|e| format!("stereo-policy-map-{e:?}"))?;
-                std::ptr::copy_nonoverlapping(
-                    (&inputs.policy as *const StereoBankPolicyUniformV1).cast::<u8>(),
-                    mapped.cast::<u8>(),
-                    48,
-                );
+                std::ptr::copy_nonoverlapping(bytes, mapped.cast::<u8>(), count as usize);
                 device.unmap_memory(state.policy_memory);
                 state.recorded_mask = receipt.mask;
                 state.recorded_prefixes = completed;
@@ -956,6 +1071,140 @@ fn validate_recording_inputs(inputs: &StereoRecordingInputs<'_>) -> Result<(), S
     Ok(())
 }
 impl StereoBankResources {
+    unsafe fn create_primary_pipeline(
+        &mut self,
+        owner: &SpatialPublicGuideTargets,
+        device: &ash::Device,
+    ) -> Result<(), String> {
+        let bindings = [0, 1].map(|binding| {
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(binding)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        });
+        self.primary_layout = device
+            .create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+                None,
+            )
+            .map_err(|e| format!("primary-layout-{e:?}"))?;
+        let sizes = [vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(2)];
+        self.primary_pool = device
+            .create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::default()
+                    .pool_sizes(&sizes)
+                    .max_sets(1),
+                None,
+            )
+            .map_err(|e| format!("primary-pool-{e:?}"))?;
+        self.primary_set = device
+            .allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(self.primary_pool)
+                    .set_layouts(&[self.primary_layout]),
+            )
+            .map_err(|e| format!("primary-set-{e:?}"))?[0];
+        let ranges = [vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .size(mem::size_of::<OpaqueGuidePush>() as u32)];
+        self.primary_pipeline_layout = device
+            .create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&[self.primary_layout])
+                    .push_constant_ranges(&ranges),
+                None,
+            )
+            .map_err(|e| format!("primary-pipeline-layout-{e:?}"))?;
+        self.primary_pipeline = create_fullscreen_fragment_pipeline(
+            device,
+            owner.render_pass,
+            self.primary_pipeline_layout,
+            include_bytes!(concat!(env!("OUT_DIR"), "/spatial_primary_input.frag.spv")),
+            "primary-input",
+            false,
+        )?;
+        Ok(())
+    }
+    unsafe fn record_primary_raw(
+        &self,
+        owner: &SpatialPublicGuideTargets,
+        device: &ash::Device,
+        command: vk::CommandBuffer,
+        mask: [u32; 3],
+    ) -> Result<(), String> {
+        let bank = self.primary.as_ref().ok_or("primary-bank-missing")?;
+        let originals = [
+            &owner.targets[0],
+            &self.peer.as_ref().ok_or("peer-bank-missing")?.targets[0],
+        ];
+        for (binding, target) in originals.into_iter().enumerate() {
+            let image = [vk::DescriptorImageInfo::default()
+                .sampler(owner.sampler)
+                .image_view(target.image_view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+            device.update_descriptor_sets(
+                &[vk::WriteDescriptorSet::default()
+                    .dst_set(self.primary_set)
+                    .dst_binding(binding as u32)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&image)],
+                &[],
+            );
+        }
+        let threshold = f32::from_bits(mask[0] & 0x3fff_ffff);
+        let softness = f32::from_bits(mask[1] & 0x7fff_ffff);
+        let amount = f32::from_bits(mask[2] & 0x7fff_ffff);
+        begin_guide_pass(
+            device,
+            command,
+            owner.render_pass,
+            bank.targets[0].framebuffer,
+            owner.extent,
+        );
+        for eye in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
+            set_packed_eye_view(device, command, owner.extent, eye);
+            device.cmd_bind_pipeline(
+                command,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.primary_pipeline,
+            );
+            device.cmd_bind_descriptor_sets(
+                command,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.primary_pipeline_layout,
+                0,
+                &[self.primary_set],
+                &[],
+            );
+            let push = OpaqueGuidePush {
+                params0: [
+                    eye as f32,
+                    0.0,
+                    owner.extent.width as f32,
+                    owner.extent.height as f32,
+                ],
+                effect: [
+                    threshold,
+                    softness,
+                    amount,
+                    if mask[2] & 0x8000_0000 != 0 { 1.0 } else { 0.0 },
+                ],
+                cycle: [0.0; 4],
+                reprojection_row0: [0.0; 4],
+                reprojection_row1: [0.0; 4],
+                reprojection_row2: [0.0; 4],
+                reprojection_params: [0.0; 4],
+            };
+            push_fragment_constants(device, command, self.primary_pipeline_layout, &push);
+            device.cmd_draw(command, 3, 1, 0, 0);
+        }
+        device.cmd_end_render_pass(command);
+        transition_guide_image_for_sampling(device, command, bank.targets[0].image);
+        Ok(())
+    }
     pub(super) fn mask_diagnostic_plan(
         &self,
         extent: vk::Extent2D,
@@ -995,13 +1244,29 @@ impl StereoBankResources {
         if let Some(bank) = self.peer.take() {
             bank.destroy(device);
         }
-        for pipeline in [self.pipeline, self.displacement_pipeline] {
+        if let Some(bank) = self.primary.take() {
+            bank.destroy(device);
+        }
+        for pipeline in [
+            self.pipeline,
+            self.displacement_pipeline,
+            self.primary_pipeline,
+        ] {
             if pipeline != vk::Pipeline::null() {
                 device.destroy_pipeline(pipeline, None);
             }
         }
         if self.pipeline_layout != vk::PipelineLayout::null() {
             device.destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+        if self.primary_pipeline_layout != vk::PipelineLayout::null() {
+            device.destroy_pipeline_layout(self.primary_pipeline_layout, None);
+        }
+        if self.primary_pool != vk::DescriptorPool::null() {
+            device.destroy_descriptor_pool(self.primary_pool, None);
+        }
+        if self.primary_layout != vk::DescriptorSetLayout::null() {
+            device.destroy_descriptor_set_layout(self.primary_layout, None);
         }
         if self.pool != vk::DescriptorPool::null() {
             device.destroy_descriptor_pool(self.pool, None);
