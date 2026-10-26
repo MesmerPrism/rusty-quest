@@ -143,6 +143,9 @@ internal data class SpatialCameraHwbProjectionRawCarrierBindings(
     val marker: (String) -> Unit,
     val startSourceSetCommonGraph: ((AndroidSurface, Int, Int, Int) -> Long)? = null,
     val deferOwnNativeStart: () -> Boolean = { false },
+    val preparePeerRenderer: ((String,AndroidSurface,Int,Int,Long,Long,Long,Long,Int)->String)? = null,
+    val readPreparedPeerRenderer: ((String)->String)? = null,
+    val abortPreparedPeerRenderer: ((String)->String)? = null,
 )
 
 internal data class SpatialCameraHwbProjectionRawStartSequenceBindings(
@@ -581,6 +584,58 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
     publishLayerFence(removedFence, "removed-$reason")
   }
 
+  private data class PreparedCarrier(val id:String,val route:Long,val surface:AndroidSurface,val fence:SpatialCameraHwbProjectionRawLaunchFence)
+  private var preparedCarrier:PreparedCarrier?=null
+  fun prepareDormantPeerRenderer(id:String,route:Long):String {
+    val held=synchronized(rawLayerPublicationMonitor){
+      check(preparedCarrier==null){"actual renderer JNI preparation already entered"}
+      val surface=checkNotNull(activeRenderSurface){"actual renderer Surface absent"}
+      val fence=checkNotNull(activeLayerFence){"actual renderer layer fence absent"}
+      check(surface.isValid && bindings.privateLayerOverrideLifecycleCurrent(fence.launchChallenge)){"actual renderer carrier is not current"}
+      PreparedCarrier(id,route,surface,fence).also{preparedCarrier=it}
+    }
+    val result=checkNotNull(bindings.preparePeerRenderer){"actual renderer prepare entry absent"}(id,held.surface,
+      CAMERA_HWB_PROJECTION_WIDTH_PX,CAMERA_HWB_PROJECTION_HEIGHT_PX,route,held.fence.launchChallenge,
+      held.fence.layerGeneration,held.fence.layerSwitchCount,held.fence.layerState.code)
+    requirePreparedCarrier(held);requirePreparedRendererReadback(result,held)
+    return result
+  }
+  private fun requirePreparedRendererReadback(raw:String,held:PreparedCarrier){
+    val value=org.json.JSONObject(raw)
+    val schema=value.getString("\$schema")
+    check(schema=="rusty.quest.spatial.prepared_peer_renderer.v2"||schema=="rusty.quest.spatial.prepared_peer_renderer_own_reuse.v2"){
+      "actual prepared renderer entered observation required"
+    }
+    check(value.getString("preparation_id")==held.id &&value.getLong(if(schema=="rusty.quest.spatial.prepared_peer_renderer.v2")"route_generation"else"peer_route_generation")==held.route
+      &&value.getLong("launch_challenge")==held.fence.launchChallenge &&value.getLong("surface_generation")==held.fence.layerGeneration
+      &&value.getLong("layer_switch_count")==held.fence.layerSwitchCount){"actual renderer carrier/fence/counters differ"}
+    if(schema=="rusty.quest.spatial.prepared_peer_renderer.v2")check(value.getInt("requested_width")==CAMERA_HWB_PROJECTION_WIDTH_PX
+      &&value.getInt("requested_height")==CAMERA_HWB_PROJECTION_HEIGHT_PX){"actual renderer requested extent differs"}
+  }
+  private fun requirePreparedCarrier(held:PreparedCarrier)=synchronized(rawLayerPublicationMonitor){
+    check(preparedCarrier===held && activeRenderSurface===held.surface && activeLayerFence==held.fence && held.surface.isValid
+      &&bindings.privateLayerOverrideLifecycleCurrent(held.fence.launchChallenge)){"actual renderer carrier changed during JNI call"}
+  }
+  fun readDormantPeerRenderer(id:String):String {
+    val held=checkNotNull(preparedCarrier){"actual renderer carrier was never entered"};check(held.id==id){"renderer preparation ID differs"}
+    requirePreparedCarrier(held);val result=checkNotNull(bindings.readPreparedPeerRenderer){"renderer read entry absent"}(id);requirePreparedCarrier(held);requirePreparedRendererReadback(result,held);return result
+  }
+  fun abortDormantPeerRenderer(id:String):String {
+    // Cleanup deliberately uses the actual retained Native registration, including
+    // registered-before-Java-SDK cases. No fresh admission or current Surface is needed.
+    val held=preparedCarrier;check(held==null||held.id==id){"actual renderer cleanup ID differs"}
+    val result=checkNotNull(bindings.abortPreparedPeerRenderer){"renderer abort entry absent"}(id)
+    val value=org.json.JSONObject(result)
+    val terminal=when(value.getString("\$schema")){
+      "rusty.quest.spatial.prepared_peer_renderer.v2"->value.getString("state")=="terminal"&&value.getBoolean("cleanup_terminal")&&value.getBoolean("worker_joined")
+      "rusty.quest.spatial.prepared_peer_renderer_own_reuse.v2"->value.getString("state")=="released"&&value.getBoolean("peer_reservation_released")&&!value.getBoolean("own_resources_retired")
+      "rusty.quest.spatial.prepared_peer_renderer_unentered.v2"->value.getBoolean("cleanup_terminal")&&!value.getBoolean("worker_created")
+      else->false
+    }
+    val sourceSettled=(!value.getBoolean("source_hold_acquired")||value.getBoolean("source_hold_released"))&&value.getBoolean("prepare_calls_joined")
+    if(terminal&&sourceSettled)synchronized(rawLayerPublicationMonitor){check(preparedCarrier===held){"renderer cleanup carrier replaced"};preparedCarrier=null}
+    return result
+  }
   fun sourceCarrierContext(): SpatialVideoSourceCarrierContext? =
       synchronized(rawLayerPublicationMonitor) {
         val fence = activeLayerFence ?: return@synchronized null

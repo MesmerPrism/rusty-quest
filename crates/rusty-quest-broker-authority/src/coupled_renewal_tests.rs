@@ -349,6 +349,8 @@ fn run_coupled_owner_graph_with_history_mode(
     );
     runtime_config = runtime_config
         .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+            fresh_setup_local_peer_id: None,
+            fresh_setup_enrollment_selection: None,
             ongoing_media_policy: ongoing.then(|| if generic_history {
                 rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2()
             } else { rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1() }),

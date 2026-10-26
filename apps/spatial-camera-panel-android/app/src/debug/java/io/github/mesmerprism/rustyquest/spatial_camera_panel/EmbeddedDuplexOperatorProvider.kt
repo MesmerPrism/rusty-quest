@@ -28,11 +28,41 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     if (!BuildConfig.DEBUG || !EmbeddedDuplexOperatorContract.callerIsShell(Binder.getCallingUid())) {
       closed()
     }
+    val snapshot = extras?.let { Bundle(it) } ?: Bundle()
     val request = try {
-      EmbeddedDuplexOperatorContract.parseCall(method, argument, extras)
+      EmbeddedDuplexOperatorContract.parseCall(method, argument, snapshot)
     } catch (_: Exception) { closed() }
     val app = requireNotNull(context).applicationContext
     return try {
+      when (request.route) {
+        EmbeddedDuplexOperatorContract.Route.OPERATION_STOP -> return EmbeddedDuplexOriginals.forApplication(app)
+            .requestStop(requireNotNull(request.originalId), request.challenge, requireNotNull(request.requestSha256), requireNotNull(request.stopIntentSha256))
+        EmbeddedDuplexOperatorContract.Route.OPERATION_JOIN_STATUS -> return EmbeddedDuplexOriginals.forApplication(app)
+            .queryJoin(requireNotNull(request.originalId), request.challenge)
+        EmbeddedDuplexOperatorContract.Route.OPERATION_CONTINUATION_STATUS -> return EmbeddedDuplexOriginals.forApplication(app)
+            .queryContinuationJoin(requireNotNull(request.originalId), request.challenge)
+        EmbeddedDuplexOperatorContract.Route.OPERATION_CONTINUATION_HANDOFF -> return EmbeddedDuplexOriginals.forApplication(app)
+            .queryContinuationHandoff(requireNotNull(request.originalId), request.challenge)
+        EmbeddedDuplexOperatorContract.Route.FRESH_PAIR_CONTINUE -> {
+          val canonical = EmbeddedDuplexOriginals.request(method, request.challenge, snapshot)
+          return EmbeddedDuplexOriginals.forApplication(app).beginContinuation(requireNotNull(request.originalId), request.challenge,
+              canonical, requireNotNull(request.priorOriginalId), requireNotNull(request.priorOutcomeSha256)) {
+            EmbeddedDuplexRuntimeService.continueFreshPair(app).thenApply { pairBundle(request.challenge, it) }
+          }
+        }
+        EmbeddedDuplexOperatorContract.Route.PREPARED_PEER_START_STATUS,
+        EmbeddedDuplexOperatorContract.Route.PEER_ROOT_STATUS,
+        EmbeddedDuplexOperatorContract.Route.PAIR_SETUP_RECOVERY_STATUS -> {
+          val actual = when (request.route) {
+            EmbeddedDuplexOperatorContract.Route.PREPARED_PEER_START_STATUS -> EmbeddedDuplexRuntimeService.preparedPeerStartStatus(app)
+            EmbeddedDuplexOperatorContract.Route.PEER_ROOT_STATUS -> EmbeddedDuplexRuntimeService.peerRootStatus(app)
+            else -> EmbeddedDuplexRuntimeService.completedSetupRecoveryStatus(app, request.challenge)
+          }
+          val receipt = actual.get(10, TimeUnit.SECONDS)
+          return Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
+        }
+        else -> Unit
+      }
       if (request.route == EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY) {
         return EmbeddedDuplexRuntimeService.queryOriginal(app, requireNotNull(request.originalId), request.challenge)
       }
@@ -41,9 +71,15 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
             requireNotNull(request.requestSha256), requireNotNull(request.outcomeSha256),
             requireNotNull(request.consumerReceiptSha256))
       }
+      if (request.route == EmbeddedDuplexOperatorContract.Route.PAIR_SESSION && request.originalId != null) {
+        return EmbeddedDuplexRuntimeService.beginOriginal(app, request.originalId, method, request.challenge,
+            EmbeddedDuplexOriginals.request(method, request.challenge, snapshot)) {
+          EmbeddedDuplexRuntimeService.pairSession(app).thenApply { pairBundle(request.challenge, it) }
+        }
+      }
       request.originalId?.let { originalId ->
         // Canonicalize the validated transport values, including raw Float bits, before command admission.
-        val canonical = EmbeddedDuplexOriginals.request(method, request.challenge, extras ?: Bundle())
+        val canonical = EmbeddedDuplexOriginals.request(method, request.challenge, snapshot)
         return EmbeddedDuplexRuntimeService.beginOriginal(app, originalId, method, request.challenge, canonical) {
           val actual = when (request.route) {
             EmbeddedDuplexOperatorContract.Route.START ->
@@ -62,6 +98,10 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
               EmbeddedDuplexRuntimeService.concurrentPolicy(app, request.challenge, request.policy)
             EmbeddedDuplexOperatorContract.Route.BLEND_UPDATE ->
               EmbeddedDuplexRuntimeService.concurrentMask(app, request.challenge, request.mask)
+            EmbeddedDuplexOperatorContract.Route.PREPARE_PEER_START ->
+              EmbeddedDuplexRuntimeService.preparePeerStart(app)
+            EmbeddedDuplexOperatorContract.Route.REESTABLISH_PEER_ROOTS ->
+              EmbeddedDuplexRuntimeService.reestablishPeerRoots(app)
             else -> throw IllegalArgumentException("operator-original-route-invalid")
           }
           actual.thenApply { receipt ->
@@ -70,6 +110,11 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         }
       }
       when (request.route) {
+        EmbeddedDuplexOperatorContract.Route.FRESH_PAIR_CONTINUE, EmbeddedDuplexOperatorContract.Route.PREPARE_PEER_START,
+        EmbeddedDuplexOperatorContract.Route.PREPARED_PEER_START_STATUS, EmbeddedDuplexOperatorContract.Route.REESTABLISH_PEER_ROOTS,
+        EmbeddedDuplexOperatorContract.Route.PEER_ROOT_STATUS, EmbeddedDuplexOperatorContract.Route.OPERATION_STOP,
+        EmbeddedDuplexOperatorContract.Route.OPERATION_JOIN_STATUS, EmbeddedDuplexOperatorContract.Route.OPERATION_CONTINUATION_STATUS,
+        EmbeddedDuplexOperatorContract.Route.OPERATION_CONTINUATION_HANDOFF, EmbeddedDuplexOperatorContract.Route.PAIR_SETUP_RECOVERY_STATUS,
         EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY, EmbeddedDuplexOperatorContract.Route.OPERATION_ACK -> closed()
         EmbeddedDuplexOperatorContract.Route.START, EmbeddedDuplexOperatorContract.Route.RENEW_AUTHORITY,
         EmbeddedDuplexOperatorContract.Route.PEER_STOP, EmbeddedDuplexOperatorContract.Route.PEER_REVOKE,
@@ -250,6 +295,12 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         putBoolean("local_session_current", state.localSessionCurrent)
         putBoolean("remote_session_current", state.remoteSessionCurrent)
         putLong("local_session_expires_at_ms", state.localSessionExpiresAtMs)
+        if (state.selectedFreshPolicy) {
+          state.localSessionRejectionReason?.let { putString("local_session_rejection_reason", it) }
+          state.remoteSessionRejectionReason?.let { putString("remote_session_rejection_reason", it) }
+          putLong("local_session_validated_at_ms", state.localSessionValidatedAtMs)
+          putLong("remote_session_validated_at_ms", state.remoteSessionValidatedAtMs)
+        }
         state.lastStep?.let { putString("last_step", it) }
         state.lastFailureCode?.let { putString("last_failure_code", it) }
         putBoolean("peer_route_proven", state.routeCurrent)

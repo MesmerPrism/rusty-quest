@@ -1,5 +1,10 @@
 //! Fixed signed prepare/commit cleanup; original target and fresh requester are separate.
+use super::super::preparation_native_guard::{
+    FailureReason as NativeReason, Guard as NativeGuard, Trace as NativeTrace,
+};
 use super::*;
+#[path = "cleanup_admission.rs"]
+mod cleanup_admission;
 use ed25519_dalek::{Signature, VerifyingKey};
 use rusty_quest_media_stream_android::*;
 use serde::{Deserialize, Serialize};
@@ -73,7 +78,7 @@ pub(super) struct Cleanup {
     remote_key: [u8; 32],
     generation: u64,
     poisoned: Arc<AtomicBool>,
-    serial: Arc<Mutex<Option<()>>>,
+    serial: Arc<cleanup_admission::Admission>,
     state: Arc<Mutex<PreparedState>>,
     pub(super) requester: Arc<Mutex<Option<Requester>>>,
     failure: Arc<Mutex<Option<&'static str>>>,
@@ -111,6 +116,148 @@ fn same_owner(a: &AndroidMediaExecutionTicket, b: &AndroidMediaExecutionTicket) 
         && a.resource_id == b.resource_id
 }
 impl Cleanup {
+    // Actual unpublished constructor owner only; no cleanup outcome inferred.
+    pub(super) fn construction_snapshot(&self) -> Result<Value, String> {
+        self.require_state()?;
+        let serial = self
+            .serial
+            .try_enter()
+            .map_err(|_| "construction cleanup serial busy")?;
+        if serial.is_none()
+            || self
+                .requester
+                .try_lock()
+                .map_err(|_| "construction cleanup requester busy")?
+                .is_some()
+        {
+            return Err("construction cleanup requester active".into());
+        }
+        serde_json::to_value(
+            &*self
+                .state
+                .try_lock()
+                .map_err(|_| "construction cleanup state busy")?,
+        )
+        .map_err(|_| "construction cleanup snapshot encoding".into())
+    }
+
+    /// Current actual cleanup owner; retained prepared originals must have a real
+    /// completed signed server response before fresh setup can supersede authority.
+    pub(super) fn fresh_setup_quiescence(
+        &self,
+        replay: &RetainedCleanupReplaySnapshot,
+    ) -> Result<(), String> {
+        let trace = NativeTrace::new(&|_, _| {});
+        self.fresh_setup_quiescence_observed(replay, &trace)
+    }
+    pub(super) fn fresh_setup_quiescence_observed(
+        &self,
+        replay: &RetainedCleanupReplaySnapshot,
+        trace: &NativeTrace<'_>,
+    ) -> Result<(), String> {
+        trace.mark(NativeGuard::CleanupState, NativeReason::CallFailed);
+        self.require_state()?;
+        trace.mark(NativeGuard::CleanupPublicKey, NativeReason::CallFailed);
+        let public_key = self.callbacks.local_public_key()?;
+        trace.mark(NativeGuard::CleanupSerial, NativeReason::CallFailed);
+        let serial = self
+            .serial
+            .try_enter()
+            .map_err(|_| "fresh cleanup mutation busy")?;
+        if serial.is_none() {
+            return Err("fresh cleanup mutation checked out".into());
+        }
+        trace.mark(NativeGuard::CleanupStateLock, NativeReason::CallFailed);
+        let state = self
+            .state
+            .try_lock()
+            .map_err(|_| "fresh cleanup retained state busy")?;
+        trace.mark(
+            NativeGuard::CleanupForwardOriginal,
+            NativeReason::PredicateRejected,
+        );
+        if state.originals.values().any(|o| o.effect.is_none()) {
+            return Err("fresh cleanup forward original unresolved".into());
+        }
+        trace.mark(
+            NativeGuard::CleanupPreparedTerminal,
+            NativeReason::PredicateRejected,
+        );
+        for id in state.prepared.keys() {
+            if !replay.terminal.contains_key(id) {
+                return Err("fresh cleanup Prepare lacks terminal original".into());
+            }
+        }
+        trace.mark(NativeGuard::CleanupReplayShape, NativeReason::CallFailed);
+        replay.validate().map_err(str::to_owned)?;
+        trace.mark(NativeGuard::CleanupPending, NativeReason::PredicateRejected);
+        if !replay.pending_request_sha256.is_empty() {
+            return Err("fresh cleanup original pending".into());
+        }
+        for (id, terminal) in &replay.terminal {
+            trace.mark(NativeGuard::CleanupResponseDecode, NativeReason::CallFailed);
+            let r: RetainedCleanupDispatchResponse =
+                serde_json::from_slice(&terminal.response_bytes)
+                    .map_err(|_| "fresh cleanup response decode")?;
+            trace.mark(
+                NativeGuard::CleanupResponseIdentity,
+                NativeReason::PredicateRejected,
+            );
+            if r.schema_id != RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA
+                || &r.dispatch_id != id
+                || r.executor_peer_id != self.local
+                || r.signer_key_id != self.callbacks.key_id()
+                || r.request_sha256 != terminal.request_sha256
+            {
+                return Err("fresh cleanup terminal original not completed".into());
+            }
+            trace.mark(
+                NativeGuard::CleanupResponseCompleted,
+                NativeReason::PredicateRejected,
+            );
+            if r.status != OwnerDispatchStatus::Completed || r.failure.is_some() {
+                return Err("fresh cleanup terminal original not completed".into());
+            }
+            trace.mark(
+                NativeGuard::CleanupResponseTerminal,
+                NativeReason::PredicateRejected,
+            );
+            let effect = r
+                .effect
+                .as_ref()
+                .filter(|e| e.verified.terminal)
+                .ok_or("fresh cleanup terminal original not completed")?;
+            trace.mark(
+                NativeGuard::CleanupResponseGeneration,
+                NativeReason::PredicateRejected,
+            );
+            if effect.readback.executor_generation != self.generation {
+                return Err("fresh cleanup terminal original not completed".into());
+            }
+            trace.mark(
+                NativeGuard::CleanupResponseStop,
+                NativeReason::PredicateRejected,
+            );
+            if effect.readback.operation != MediaStreamPlatformOperation::Stop
+                || effect.readback.observed_state != "stopped"
+            {
+                return Err("fresh cleanup terminal original not completed".into());
+            }
+            trace.mark(
+                NativeGuard::CleanupResponseSignature,
+                NativeReason::CallFailed,
+            );
+            VerifyingKey::from_bytes(&public_key)
+                .map_err(|_| "fresh cleanup key")?
+                .verify_strict(
+                    &retained_cleanup_response_signing_bytes(&r)?,
+                    &Signature::from_bytes(&decode_signature_base64(&r.signature_base64)?),
+                )
+                .map_err(|_| "fresh cleanup terminal signature")?;
+        }
+        Ok(())
+    }
+
     pub(super) fn new(
         authority: QuestEmbeddedDuplexAuthority,
         callbacks: JavaOwnerCallbacks,
@@ -140,7 +287,7 @@ impl Cleanup {
             remote_key,
             generation,
             poisoned: Arc::new(AtomicBool::new(false)),
-            serial: Arc::new(Mutex::new(Some(()))),
+            serial: Arc::new(cleanup_admission::Admission::default()),
             state: Arc::new(Mutex::new(state)),
             requester: Arc::new(Mutex::new(None)),
             failure,
@@ -251,8 +398,8 @@ impl Cleanup {
     pub(super) fn prepare_frame(&self, bytes: &[u8]) -> Result<Vec<u8>, String> {
         let mut failure_stage = OwnerFailureStage::IncomingPrepare;
         let result = (|| {
+            let _mutation = self.serial.enter()?;
             self.require_state()?;
-            let _mutation = Checkout::take(self.serial.clone())?;
             if bytes.len() > 128 * 1024 || !bytes.starts_with(PREPARE_MAGIC) {
                 return Err("cleanup prepare frame bounds".into());
             }
@@ -428,9 +575,11 @@ impl RetainedCleanupAuthoritySource for Cleanup {
     fn current_source(
         &self,
         request: &RetainedCleanupDispatchRequest,
-        now: u64,
+        _observed_now: u64,
     ) -> Result<RetainedCleanupLiveSource, String> {
+        let _observation = self.serial.enter()?;
         self.require_state()?;
+        let now = self.clock.now_ms()?;
         let prepared = self
             .state
             .lock()
@@ -478,6 +627,18 @@ impl RetainedCleanupAuthoritySource for Cleanup {
         if current != prepared.authority || request.cleanup.target != prepared.target_ticket {
             return Err("prepared cleanup authority/target changed".into());
         }
+        // The server's sample preceded admission. Revalidate the complete signed
+        // request against the refreshed clock before its replay/effect admission.
+        verify_signed_retained_cleanup_request(
+            request,
+            &current,
+            &prepared.target_ticket,
+            self.generation,
+            &self.local,
+            &self.remote_key_id,
+            &self.remote_key,
+            now,
+        )?;
         Ok(RetainedCleanupLiveSource {
             projection: current,
             expected_target: prepared.target_ticket,
@@ -499,7 +660,7 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
         mode: AndroidMediaExecutionMode,
     ) -> Result<AuthenticatedOwnerEffect, String> {
         self.cleanup.require_state()?;
-        let _mutation = Checkout::take(self.cleanup.serial.clone())?;
+        let _mutation = self.cleanup.serial.enter()?;
         // Abort carriers retain operation=Start, but Stop/Cleanup must never
         // replace the forward ticket/projection needed to authenticate cleanup.
         let retain_forward = ticket.operation == MediaStreamPlatformOperation::Start

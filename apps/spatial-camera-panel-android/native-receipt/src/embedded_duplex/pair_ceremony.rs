@@ -23,6 +23,39 @@ use serde_json::{json, Value};
 use std::fs::File;
 use std::io::Read;
 
+#[path = "pair_ceremony_id.rs"]
+mod ceremony_id;
+
+#[path = "fresh_pair_setup.rs"]
+mod fresh_pair_setup;
+
+pub(super) fn is_fresh_frame(input: &[u8]) -> bool {
+    input.starts_with(fresh_pair_setup::MAGIC) || input.starts_with(fresh_pair_setup::MAGIC_V2)
+}
+pub(super) fn fresh_continue(host: &Host) -> Result<String, String> {
+    fresh_pair_setup::continue_run(host)
+}
+pub(super) fn fresh_setup(host: &Host) -> Result<String, String> {
+    fresh_pair_setup::run(host)
+}
+pub(super) fn fresh_root_basis(
+    host: &Host,
+) -> Result<
+    (
+        rusty_manifold_peer_runtime_host::ManifoldFreshPairSetupReceipt,
+        String,
+    ),
+    String,
+> {
+    fresh_pair_setup::root_basis(host)
+}
+pub(super) fn pending_fresh_closure(host: &Host) -> Result<Value, String> {
+    fresh_pair_setup::retained_closure(host)
+}
+pub(super) fn fresh_frame(host: &Host, frame: &[u8]) -> Result<Vec<u8>, String> {
+    fresh_pair_setup::handle_frame(host, frame)
+}
+
 #[path = "pair_renewal.rs"]
 mod pair_renewal;
 
@@ -38,7 +71,7 @@ const FRAME_SCHEMA: &str = "rusty.quest.embedded_duplex.pair_ceremony_frame.v1";
 const SIGN_DOMAIN: &[u8] = b"rusty.quest.embedded_duplex.pair_ceremony.v1\0";
 const FRAME_TTL_MS: u64 = 30_000;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 enum Stage {
     Idle,
     Initiating,
@@ -49,12 +82,15 @@ enum Stage {
     Failed,
 }
 
+#[derive(Serialize)]
 pub(super) struct PairState {
     stage: Stage,
+    fresh: fresh_pair_setup::FreshState,
     renewal: pair_renewal::RenewalState,
     renewal_ledger: pair_renewal::CycleLedger,
     last_step: Option<String>,
     last_failure_code: Option<&'static str>,
+    last_failure_cause: Option<Value>,
     ceremony_id: Option<String>,
     session_id: Option<String>,
     nonce_a: Option<String>,
@@ -71,10 +107,12 @@ impl Default for PairState {
     fn default() -> Self {
         Self {
             stage: Stage::Idle,
+            fresh: fresh_pair_setup::FreshState::default(),
             renewal: pair_renewal::RenewalState::default(),
             renewal_ledger: pair_renewal::CycleLedger::default(),
             last_step: None,
             last_failure_code: None,
+            last_failure_cause: None,
             ceremony_id: None,
             session_id: None,
             nonce_a: None,
@@ -154,6 +192,7 @@ fn signed_bytes(body: &FrameBody) -> Result<Vec<u8>, String> {
 }
 
 fn encode(host: &Host, kind: &str, ceremony_id: &str, payload: Value) -> Result<Vec<u8>, String> {
+    ceremony_id::require_frame(ceremony_id, kind)?;
     let now = host.clock.now_ms()?;
     let body = FrameBody {
         schema_id: FRAME_SCHEMA.into(),
@@ -203,13 +242,12 @@ fn decode(
         || body.issued_at_ms > now
         || body.expires_at_ms <= now
         || body.expires_at_ms.saturating_sub(body.issued_at_ms) > FRAME_TTL_MS
-        || !body.ceremony_id.starts_with("ceremony.duplex.")
         || expected_kind.is_some_and(|kind| kind != body.kind)
         || expected_id.is_some_and(|id| id != body.ceremony_id)
     {
         return Err("pair frame binding or time mismatch".into());
     }
-    decode_hex::<32>(&body.ceremony_id["ceremony.duplex.".len()..])?;
+    ceremony_id::require_frame(&body.ceremony_id, &body.kind)?;
     let signature = Signature::from_bytes(&decode_hex::<64>(&frame.signature_hex)?);
     let key = VerifyingKey::from_bytes(&host.remote_public_key)
         .map_err(|_| "enrolled peer key invalid")?;
@@ -284,7 +322,37 @@ fn key_facts(host: &Host, peer_id: &str) -> Result<(String, String), String> {
     Ok((key_id, hex(&public)))
 }
 
+// A borrowed fresh reservation admits each actual authority/signing effect.
+// No process mutex is held across the effect or a Java callback. A Stop which
+// follows admission preserves that entered effect and blocks the next one.
+fn fresh_effect_if_reserved(host: &Host, expected: Option<&str>) -> Result<(), String> {
+    let id = process()
+        .lock()
+        .map_err(|_| "fresh effect gate poisoned")?
+        .fresh_setup_request
+        .clone();
+    if let Some(id) = id {
+        if expected.is_some_and(|expected| {
+            expected != id
+                && !fresh_pair_setup::is_actual_transaction(host, &id, expected).unwrap_or(false)
+        }) {
+            return Err("fresh effect request differs".into());
+        }
+        fresh_pair_setup::mark_dispatch(host, &id)?;
+    }
+    Ok(())
+}
+
 fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
+    prime_with_lifetime(host, now, suffix, PAIR_CREDENTIAL_TTL_MS)
+}
+
+fn prime_with_lifetime(
+    host: &Host,
+    now: u64,
+    suffix: &str,
+    credential_ttl_ms: u64,
+) -> Result<(), String> {
     set_step(host, "prime_snapshot")?;
     let start = snapshot(host)?;
     set_step(host, "prime_host")?;
@@ -334,7 +402,7 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
                 "key_id": key_id, "key_generation": 1, "algorithm": "ed25519",
                 "public_key_hex": public, "public_key_sha256": format!("sha256:{digest}"),
                 "valid_from_ms": now.saturating_sub(1000),
-                "expires_at_ms": now.checked_add(PAIR_CREDENTIAL_TTL_MS).ok_or("pair time overflow")?,
+                "expires_at_ms": now.checked_add(credential_ttl_ms).ok_or("pair time overflow")?,
                 "status": "active", "replaced_by_key_id": null
         }))
         .map_err(safe_decode)?;
@@ -355,7 +423,20 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
             issued_at_ms: now,
             action: ManifoldPeerEnrollmentAction::Enroll { credential },
         };
+        let step = format!("enrollment:{}", peer.peer_id);
+        fresh_pair_setup::prime_enter(
+            host,
+            &step,
+            serde_json::to_value(&request).map_err(safe_decode)?,
+        )?;
+        fresh_effect_if_reserved(host, None)?;
+        fresh_pair_setup::prime_dispatched(host, &step)?;
         let receipt = host.authority.review_enrollment(&request, now)?;
+        fresh_pair_setup::prime_returned(
+            host,
+            &step,
+            serde_json::to_value(&receipt).map_err(safe_decode)?,
+        )?;
         if !receipt.applied {
             remember_specific_failure(
                 host,
@@ -363,6 +444,11 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
             );
             return Err("pair enrollment rejected".into());
         }
+    }
+    // Source-bound fresh apply creates any genuinely missing initial status
+    // under both signatures. Keep the finite/released initial status writer exact.
+    if host.authority.selected_fresh_pair_setup_policy()?.is_some() {
+        return Ok(());
     }
     for (index, peer) in peers.iter().enumerate() {
         set_step(
@@ -392,7 +478,21 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
                     "capability.topology.wifi-direct"]},
             "payload_class": "low_rate_descriptor"
         })).map_err(safe_decode)?;
-        if !host.authority.review_peer_status(proposal, now)?.1.applied {
+        let step = format!("status:{}", peer.peer_id);
+        fresh_pair_setup::prime_enter(
+            host,
+            &step,
+            serde_json::to_value(&proposal).map_err(safe_decode)?,
+        )?;
+        fresh_effect_if_reserved(host, None)?;
+        fresh_pair_setup::prime_dispatched(host, &step)?;
+        let (_, receipt) = host.authority.review_peer_status(proposal, now)?;
+        fresh_pair_setup::prime_returned(
+            host,
+            &step,
+            serde_json::to_value(&receipt).map_err(safe_decode)?,
+        )?;
+        if !receipt.applied {
             remember_specific_failure(host, "peer_status_rejected");
             return Err("pair status rejected".into());
         }
@@ -482,6 +582,7 @@ fn sign(
     host: &Host,
     context: &ManifoldCommonLanReciprocalEd25519Context,
 ) -> Result<ManifoldCommonLanReciprocalEd25519Signature, String> {
+    fresh_effect_if_reserved(host, None)?;
     let input = serde_json::to_string(context).map_err(safe_decode)?;
     serde_json::from_str(&sign_common_lan(host, &input, host.clock.now_ms()?)?).map_err(safe_decode)
 }
@@ -527,6 +628,7 @@ fn apply(
     }))
     .map_err(safe_decode)?;
     let now = host.clock.now_ms()?;
+    fresh_effect_if_reserved(host, Some(ceremony_id))?;
     let reciprocal = host.authority.apply_common_lan_reciprocal(&request, now)?;
     if !reciprocal.accepted {
         remember_specific_failure(
@@ -555,6 +657,7 @@ fn apply(
         "expires_at_ms": session_expires_at_ms
     }))
     .map_err(safe_decode)?;
+    fresh_effect_if_reserved(host, Some(ceremony_id))?;
     let (decision, topology) =
         host.authority
             .apply_common_lan_session(&proposal, &reciprocal, now)?;
@@ -726,7 +829,7 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
     if host.local_peer_id >= host.remote_peer_id {
         return Err("pair ceremony initiator is the lower packaged peer id".into());
     }
-    let ceremony_id = format!("ceremony.duplex.{}", random_hex()?);
+    let ceremony_id = ceremony_id::finite(&random_hex()?)?;
     let session_id = format!("session.duplex.{}", random_hex()?);
     let nonce_a = random_hex()?;
     let now = host.clock.now_ms()?;
@@ -1035,6 +1138,7 @@ pub(super) fn status(host: &Host) -> Result<String, String> {
     let session_id = current.session_id.clone();
     let last_step = current.last_step.clone();
     let last_failure_code = current.last_failure_code;
+    let last_failure_cause = current.last_failure_cause.clone();
     let expired = current.deadline_ms != 0 && current.deadline_ms <= host.clock.now_ms()?;
     drop(current);
     let native_current = if stage == Stage::Completed {
@@ -1050,16 +1154,19 @@ pub(super) fn status(host: &Host) -> Result<String, String> {
     let current = native_current
         .as_ref()
         .is_some_and(|receipt| receipt.current);
-    Ok(
-        json!({"$schema":"rusty.quest.embedded_duplex.pair_status.v1",
+    let mut value = json!({"$schema":"rusty.quest.embedded_duplex.pair_status.v1",
         "state":if current { "peer_session_current_route_unverified" }
             else if stage == Stage::Failed || stage == Stage::Completed || expired { "cleanup_pending" }
             else if stage == Stage::Idle { "not_started" } else { "in_progress" },
         "session_id":session_id, "native_current_session":native_current,
         "last_step":last_step,"last_failure_code":last_failure_code,
-        "route_current":false,"media_effect_proven":false, "renewal":pair_renewal::status(host)?})
-        .to_string(),
-    )
+        "route_current":false,"media_effect_proven":false, "renewal":pair_renewal::status(host)?});
+    if host.authority.selected_fresh_pair_setup_policy()?.is_some() {
+        value["$schema"] = json!("rusty.quest.embedded_duplex.pair_status.v2");
+        value["last_failure_cause"] = json!(last_failure_cause);
+        value["fresh_setup"] = fresh_pair_setup::status(host)?;
+    }
+    Ok(value.to_string())
 }
 
 #[cfg(test)]
@@ -1134,4 +1241,15 @@ mod mutual_deadline_tests {
             &key_b
         ));
     }
+}
+/// Same actual retained pair identity; no observation-time refresh or ceremony.
+pub(super) fn current_session_identity(host: &Host) -> Result<String, String> {
+    let state = state(host)?;
+    if state.stage != Stage::Completed {
+        return Err("actual completed pair identity absent".into());
+    }
+    state
+        .session_id
+        .clone()
+        .ok_or("actual completed session identity absent".into())
 }

@@ -870,6 +870,11 @@ where
     ///
     /// # Errors
     /// Returns an error for authority, freshness, persistence, or callback failure.
+    /// Returns current activation replay state without dispatching or mutating effects.
+    pub fn replay_snapshot(&self) -> ProductActivationReplaySnapshot {
+        self.replay.clone()
+    }
+
     pub fn handle_frame(&mut self, frame: &[u8]) -> Result<Vec<u8>, String> {
         let request = decode_product_activation_request(frame)?;
         validate_product_activation_shape(&request, &self.target_peer_id)?;

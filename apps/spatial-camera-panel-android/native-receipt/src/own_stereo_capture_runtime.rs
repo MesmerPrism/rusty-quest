@@ -98,6 +98,29 @@ pub(crate) fn release_capture_claim_after_terminal() {
     CAPTURE_CLAIMED.store(false, Ordering::Release);
 }
 
+/// Constructor configures limits only; this proves actual global physical
+/// owners terminal before a failed-construction arena can release its metadata.
+pub(crate) fn require_construction_physical_terminal() -> Result<(), String> {
+    if ACTIVE_EPOCH
+        .lock()
+        .map_err(|_| "construction capture epoch poisoned")?
+        .is_some()
+        || capture_claimed()
+    {
+        return Err("partial construction actual capture epoch remains Pending".into());
+    }
+    // The actual renderer owner distinguishes NeverCreated (cleanup0) from
+    // genuinely joined Retired (cleanup2); default0 alone proves neither.
+    let renderer = crate::camera_hwb_probe::no_media_renderer_retirement_status()?;
+    if !matches!(
+        renderer.get("state").and_then(serde_json::Value::as_str),
+        Some("never_created" | "retired")
+    ) || !crate::camera_hwb_probe::local_camera_acquisition_quiescent()
+    {
+        return Err("partial construction actual Own/renderer remains physical Pending".into());
+    }
+    Ok(())
+}
 pub(crate) fn capture_configured() -> bool {
     LIMITS.lock().ok().is_some_and(|v| v.is_some())
 }
@@ -241,4 +264,19 @@ pub(crate) fn concurrent_peer_admission_observed(
         i64::try_from(epoch.source_generation)
             .map_err(|_| "concurrent Own native admission BOUNDS")?,
     ])
+}
+
+/// Actual capture epoch join for fresh authority eligibility. This is identity/
+/// ownership, not image-age admission and never accepts an operator epoch.
+pub(crate) fn capture_epoch_is_current(epoch: crate::stereo_input_set::SourceEpoch) -> bool {
+    if !capture_claimed()
+        || !capture_configured()
+        || !capture_route_selected()
+        || crate::own_packed_pool_jni::process_generation().ok() != Some(epoch.process_generation)
+    {
+        return false;
+    }
+    ACTIVE_EPOCH
+        .lock()
+        .is_ok_and(|active| *active == Some(epoch) && capture_claimed())
 }

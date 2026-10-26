@@ -144,6 +144,17 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
     @Override public void requestWholeProjectionStop() {
         call(display -> { display.requestWholeProjectionStop(); return null; });
     }
+    @Override public long reserveDormantPeerProjection() {return call(EmbeddedDuplexDisplay::reserveDormantPeerProjection);}
+    @Override public String prepareDormantPeerRenderer(String preparationId, long generation,
+            java.util.function.BooleanSupplier desiredStop) {
+        return call(display -> display.prepareDormantPeerRenderer(preparationId, generation, desiredStop));
+    }
+    @Override public String abortDormantPeerRenderer(String preparationId) {
+        return call(display -> display.abortDormantPeerRenderer(preparationId));
+    }
+    @Override public void retireArchivedPreparedRenderer(String preparationId) {
+        call(display -> { display.retireArchivedPreparedRenderer(preparationId); return null; });
+    }
     @Override public long preparePeerProjection() {
         return call(EmbeddedDuplexDisplay::preparePeerProjection);
     }

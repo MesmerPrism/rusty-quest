@@ -45,6 +45,9 @@ param(
     [string]$EmbeddedDuplexProductInputRoot = "",
     [ValidateRange(300000,3600000)][ValidateScript({ $_ % 60000 -eq 0 })][long]$EmbeddedDuplexSetupHorizonMs = 300000,
     [ValidateScript({ $_ -cin @("finite", "ongoing-v2") })][string]$EmbeddedDuplexMediaPolicy = "finite",
+    [ValidateScript({ $_ -cin @("none", "source-bound-v2") })][string]$EmbeddedDuplexFreshSetupPolicy = "none",
+    [string]$EmbeddedDuplexFreshEnrollmentSelectionPath = "",
+    [ValidatePattern('^(?:[0-9a-f]{64})?$')][string]$ExpectedEmbeddedDuplexFreshEnrollmentSelectionSha256 = "",
     [string]$ProductId = "",
     [string]$AppId = "",
     [string]$AppLabel = "",
@@ -92,6 +95,8 @@ Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Forc
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/SpatialApkInspection.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
+if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
 $selectedEmbeddedDuplexMediaPolicy = Get-EmbeddedDuplexMediaPolicy -Selection $EmbeddedDuplexMediaPolicy
 if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpace($EmbeddedDuplexProductInputRoot)) { throw "Ongoing media requires explicit real-peer product inputs." }
 
@@ -1287,6 +1292,12 @@ if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
         -PrivateSourceRoot $resolvedPrivateFeatureSourceDir -Variant $buildTypeLower -PythonPath $PythonPath
 }
 $androidComponentInputs = Get-AndroidComponentInputSummary -Selection $androidComponentSelection
+$freshBuildSelection=Resolve-EmbeddedDuplexFreshSetupBuildSelection -Selection $EmbeddedDuplexFreshSetupPolicy -MediaPolicy $EmbeddedDuplexMediaPolicy `
+    -ValidatedProductInputs $embeddedDuplexProductInputs -EnrollmentSelectionPath $EmbeddedDuplexFreshEnrollmentSelectionPath `
+    -ExpectedEnrollmentSelectionSha256 $ExpectedEmbeddedDuplexFreshEnrollmentSelectionSha256
+$freshDescriptor=[ordered]@{};Set-EmbeddedDuplexFreshSetupPolicyDescriptor $freshDescriptor $freshBuildSelection
+$freshDescriptorJson=if($null-eq$freshBuildSelection){''}else{ConvertTo-FreshSetupCanonicalJson $freshDescriptor.embedded_duplex_fresh_setup_policy}
+$freshDescriptorSha256=if($freshDescriptorJson){Get-StringSha256 $freshDescriptorJson}else{''}
 Import-Module (Join-Path $repoRoot 'tools/src/SourceBankBuildInputs.psm1') -Force
 $sourceBankBuildInputs = Resolve-SourceBankBuildInputs -PrivateLayerProfilePath $resolvedPrivateLayerProfilePath `
     -ValidatedProductInputs $embeddedDuplexProductInputs -VertexShaderPath $resolvedOpaqueProjectionVertexShader `
@@ -1461,6 +1472,7 @@ $nativeIdentityDescriptor = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $nativeIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $nativeIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
 $shellIdentityInputs = [ordered]@{
@@ -1510,6 +1522,7 @@ $shellIdentityDescriptor = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $shellIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $shellIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $shellFingerprint = Get-StringSha256 -Value ($shellIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $packageIdentityDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.package_cache_identity.v1"
@@ -1532,6 +1545,7 @@ if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
     $buildInputDescriptor['artifact_output'] = [ordered]@{schema='rusty.quest.artifact_output.v1';policy='explicit-external-parent-create-new';parent_path_recorded=$false;source_and_cache_disjoint=$true}
 }
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $buildInputDescriptor -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $buildInputDescriptor -ResolvedSelection $freshBuildSelection
 $buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $buildInputDescriptor["fingerprint"] = $buildInputFingerprint
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
@@ -1617,9 +1631,17 @@ New-Item -ItemType Directory -Force -Path @(
 $embeddedDuplexAssetRoot = ""
 if ($null -ne $embeddedDuplexProductInputs) {
     $embeddedDuplexAssetRoot = Join-Path $BuildCacheRoot ("i\{0}" -f $embeddedDuplexProductInputs.closure_sha256.Substring(0, 24))
+    if($null-ne$freshBuildSelection){$embeddedDuplexAssetRoot=Join-Path $BuildCacheRoot ("i\fresh-{0}" -f $freshDescriptorSha256)}
     $embeddedDuplexAssetRoot = Copy-EmbeddedDuplexProductInputs `
         -ValidatedInputs $embeddedDuplexProductInputs `
         -AssetRoot $embeddedDuplexAssetRoot
+    if($null-ne$freshBuildSelection){
+        $freshDirectory=Join-Path $embeddedDuplexAssetRoot 'rusty-quest';New-Item -ItemType Directory -Force -Path $freshDirectory|Out-Null
+        if(((Get-Item -LiteralPath $freshDirectory).Attributes-band[IO.FileAttributes]::ReparsePoint)-ne0){throw 'Fresh descriptor staging directory linked.'}
+        $freshPath=Join-Path $freshDirectory 'fresh-setup-build-policy.json'
+        if(Test-Path -LiteralPath $freshPath){if((Get-FileSha256 $freshPath)-cne$freshDescriptorSha256){throw 'Fresh descriptor staging bytes differ.'}}
+        else{[IO.File]::WriteAllText($freshPath,$freshDescriptorJson,[Text.UTF8Encoding]::new($false))}
+    }
 }
 
 $nativeReceiptRoot = Join-Path $appRoot "native-receipt"
@@ -1752,6 +1774,11 @@ function Invoke-SpatialGradlePhase {
         $env:GRADLE_USER_HOME = $gradleUserHome
         $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS = $EmbeddedDuplexSetupHorizonMs.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY = $EmbeddedDuplexMediaPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY = $EmbeddedDuplexFreshSetupPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.policy_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_target_raw_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64 = $(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_base64})
         $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $resolvedProductId
         $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $appBuildDir
         $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $rootBuildDir
@@ -2072,7 +2099,11 @@ foreach ($name in @('RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER'
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIMARY_INPUT_SHADER',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES',
-        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES')) {
+        'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256')) {
     $sourceBankCargoEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 $previousAndroidHomeForCargo = $env:ANDROID_HOME
@@ -2109,6 +2140,10 @@ try {
     }
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY=$EmbeddedDuplexMediaPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY=$EmbeddedDuplexFreshSetupPolicy
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256=$(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.policy_sha256})
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256=$(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.enrollment_selection_sha256})
     $env:RUSTY_QUEST_SPATIAL_ENVIRONMENT_DEPTH_OWNER = $EnvironmentDepthOwner
     $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PROJECTION_SURFACE_UNIFORM_ABI_VERSION =
         $resolvedProjectionSurfaceUniformAbiVersion.ToString([System.Globalization.CultureInfo]::InvariantCulture)
@@ -2486,6 +2521,14 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 $apkZip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $apkOut).Path)
 try {
     $apkEntryNames = @($apkZip.Entries | ForEach-Object { [string]$_.FullName })
+    $freshEntryName='assets/rusty-quest/fresh-setup-build-policy.json'
+    $freshEntries=@($apkEntryNames|Where-Object{$_-ceq$freshEntryName})
+    if($null-eq$freshBuildSelection){if($freshEntries.Count-ne0){throw 'Unselected APK unexpectedly contains fresh policy.'}}
+    else{
+        $freshPackaged=Get-ZipEntrySha256 -Zip $apkZip -EntryName $freshEntryName
+        if($freshPackaged.sha256-cne$freshDescriptorSha256-or$freshPackaged.size_bytes-ne[Text.Encoding]::UTF8.GetByteCount($freshDescriptorJson)){throw 'APK fresh descriptor bytes differ from actual build selection.'}
+    }
+
     $actualEmbeddedDuplexAssetNames = @($apkEntryNames | Where-Object {
         $_.StartsWith("assets/embedded-duplex/", [StringComparison]::Ordinal)
     } | Sort-Object)
@@ -2575,6 +2618,7 @@ $apkInspection = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$apkInspection['developer_source_version']=$observedSourceVersion}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $apkInspection -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $apkInspection -ResolvedSelection $freshBuildSelection
 $apkInspectionPath = Join-Path $OutDir "apk-inspection.json"
 [void](Set-TextFileIfChanged -Path $apkInspectionPath -Value ($apkInspection | ConvertTo-Json -Depth 12))
 Complete-QuestApkInspectionCopy -Copy $apkInspectionCopy -InspectionReceiptPath $apkInspectionPath -ExpectedInspectionSha256 (Get-FileSha256 $apkInspectionPath)
@@ -3304,6 +3348,7 @@ $manifest = [ordered]@{
 }
 if($UseSourceCompositionVersionName){$manifest['developer_source_version']=$observedSourceVersion}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $manifest -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $manifest -ResolvedSelection $freshBuildSelection
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 if ($null -ne $gradleToolDistribution) { $manifest['gradle_tool_distribution'] = $gradleToolDistribution }
 if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) { $manifest['artifact_output'] = $buildInputDescriptor['artifact_output'] }
@@ -3358,6 +3403,7 @@ $runCapsule = [ordered]@{
     }
 }
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $runCapsule -Selection $EmbeddedDuplexMediaPolicy
+Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $runCapsule -ResolvedSelection $freshBuildSelection
 $runCapsulePath = Join-Path $OutDir "run-capsule.json"
 [void](Set-TextFileIfChanged -Path $runCapsulePath -Value ($runCapsule | ConvertTo-Json -Depth 16))
 

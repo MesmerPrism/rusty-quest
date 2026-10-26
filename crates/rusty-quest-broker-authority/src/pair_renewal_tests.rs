@@ -72,6 +72,8 @@ fn concurrent_actual_current_keys_and_same_session_renew_without_restart() {
         );
         runtime_config = runtime_config
             .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+            fresh_setup_local_peer_id: None,
+            fresh_setup_enrollment_selection: None,
                 ongoing_media_policy: None,
                 schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.to_owned(),
                 runtime_host_id: id("host.quest-a.media-runtime"),

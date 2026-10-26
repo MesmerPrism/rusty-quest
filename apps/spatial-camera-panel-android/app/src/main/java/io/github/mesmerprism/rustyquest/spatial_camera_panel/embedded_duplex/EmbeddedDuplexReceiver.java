@@ -20,7 +20,18 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     interface ReceiverRuntime {
         MediaOwnerProvider provider();
         void start() throws Exception;
+        default void start(java.util.function.BooleanSupplier currentAuthority)throws Exception{
+            if(!currentAuthority.getAsBoolean())throw new IllegalStateException("receiver startup authority no longer current");
+            start();
+        }
         MediaRuntimeSnapshot snapshot();
+        default void prepareDormantDecoder(org.json.JSONObject format)throws Exception {throw new IllegalStateException("dormant decoder unavailable");}
+        default boolean preparedDecoderHeld(){return false;}
+        default boolean preparedDecoderOwned(){return false;}
+        default boolean preparedDeliveryOpened(){return false;}
+        default long preparedPeerDeliveryCount(){throw new IllegalStateException("prepared delivery counter unavailable");}
+        default void requestPreparedStop(){throw new IllegalStateException("prepared Stop unavailable");}
+        default void abortPrepared(){throw new IllegalStateException("prepared abort unavailable");}
         /** Closed enum/counter fields only; never exception text or endpoints. */
         default String closedCounters() { return "counters=UNAVAILABLE"; }
         default org.json.JSONObject diagnosticStages() throws Exception {
@@ -54,6 +65,9 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     private volatile long preparationRevision;
     private volatile long connectionGeneration;
     private volatile long incarnation;
+    private volatile boolean dormantPrepared;
+    private volatile String dormantPreparationId;
+    private volatile String dormantRendererReadback;
     private volatile boolean surfaceReleased;
     private volatile boolean projectionRetired = true;
     enum ArmStage { NONE, PEER_PROJECTION, READER_STAGE, READER_IDENTITY, RECEIVER_CREATE,
@@ -95,7 +109,48 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
 
     // Allocate only inside the authenticated Sink effect, after this retryable owner
     // has already been installed in the registry. A failed preparation retains it.
-    private void prepare() {
+    synchronized org.json.JSONObject prepareDormantDecoder(String id,org.json.JSONObject format,java.util.function.BooleanSupplier stop)throws Exception {
+        if(dormantPreparationId!=null)throw new IllegalStateException("actual dormant decoder already entered");dormantPreparationId=id;
+        prepare(true,format);dormantRendererReadback=display.prepareDormantPeerRenderer(id,staged.routeGeneration(),stop);
+        return new org.json.JSONObject(dormantRendererReadback);
+    }
+    boolean preparedDecoderClosed(){ReceiverRuntime held=receiver;return dormantPrepared &&held!=null&&held.preparedDecoderHeld();}
+    /** Caller has durably retained the exact old PreparedStart archive. No SDK work. */
+    synchronized void retireArchivedPreparedMetadata(String id) {
+        if(id==null||!id.matches("[0-9a-f]{32}")
+            ||dormantPreparationId!=null&&!dormantPreparationId.equals(id))
+            throw new IllegalStateException("archived decoder ID differs");
+        MediaRuntimeSnapshot actual=snapshot();
+        if(!surfaceReleased||!projectionRetired||!actual.terminal()||actual.generation()!=generation)
+            throw new IllegalStateException("archived decoder cleanup remains Pending");
+        display.retireArchivedPreparedRenderer(id);
+        dormantPreparationId=null;dormantRendererReadback=null;dormantPrepared=false;
+    }
+    boolean preparedDecoderOwned(){ReceiverRuntime held=receiver;return dormantPrepared&&held!=null&&held.preparedDecoderOwned();}
+    boolean preparedDeliveryOpened(){ReceiverRuntime held=receiver;return dormantPrepared&&held!=null&&held.preparedDeliveryOpened();}
+    long preparedPeerDeliveryCount(){ReceiverRuntime held=receiver;return held==null?0L:held.preparedPeerDeliveryCount();}
+    void requestPreparedStop(){ReceiverRuntime held=receiver;if(dormantPrepared&&held!=null)held.requestPreparedStop();}
+    synchronized org.json.JSONObject abortDormantDecoder(String id)throws Exception {
+        if(dormantPreparationId!=null&&!dormantPreparationId.equals(id))throw new IllegalStateException("actual dormant cleanup ID differs");
+        // Same receiver monitor serializes against the complete JNI prepare call.
+        // No terminal result can escape while that call owns a temporary window.
+        org.json.JSONObject renderer=new org.json.JSONObject(display.abortDormantPeerRenderer(id));
+        if("unprepared".equals(preparationState)){closeUnstartedAndVerify();return renderer;}
+        if(!dormantPrepared && !"preparation_failed".equals(preparationState))
+            throw new IllegalStateException("receiver is not an actual dormant/partially entered preparation");
+        ReceiverRuntime held=receiver;if(held!=null)held.abortPrepared();
+        if(held!=null)releaseStoppedReaderAndProjection();
+        else {
+            // A thrown stage/create call does not prove no effect. Retire the actual
+            // generation and every installed reader; failures retain these owners.
+            runtimeFactory.retireNativeGeneration(generation);
+            if(staged!=null && !surfaceReleased && !staged.release())throw new IllegalStateException("dormant reader cleanup pending");
+            surfaceReleased=true;retireProjection();preparationState="cleaned";preparationRevision++;
+        }
+        if(!snapshot().terminal())throw new IllegalStateException("actual dormant decoder cleanup remains Pending");return renderer;
+    }
+    private void prepare(){prepare(false,null);}
+    private void prepare(boolean dormant,org.json.JSONObject format) {
         if("cleaned".equals(preparationState) || "stopped".equals(preparationState)) {
             if(!surfaceReleased || !projectionRetired || !snapshot().terminal())
                 throw new IllegalStateException("prior receiver cleanup unresolved");
@@ -111,7 +166,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         projectionRetired = false;
         try {
             armStage = ArmStage.PEER_PROJECTION;
-            long routeGeneration = display.preparePeerProjection();
+            long routeGeneration = dormant?display.reserveDormantPeerProjection():display.preparePeerProjection();
+            dormantPrepared=dormant;
             armStage = ArmStage.READER_STAGE;
             staged = runtimeFactory.stage(width, height, 4, fpsCap, routeGeneration);
             armStage = ArmStage.READER_IDENTITY;
@@ -151,9 +207,14 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             }
             provider = receiver.provider();
             armStage = ArmStage.PEER_BIND;
-            display.bindPeerProjection(staged.routeGeneration(), staged.decoderToken(),
-                    staged.readerGeneration());
-            preparationState = "prepared";
+            if(dormant) {
+                receiver.prepareDormantDecoder(format);
+                if(!receiver.preparedDecoderHeld())throw new IllegalStateException("actual dormant decoder readiness absent");
+                preparationState="dormant_prepared";
+            } else {
+                display.bindPeerProjection(staged.routeGeneration(),staged.decoderToken(),staged.readerGeneration());
+                preparationState="prepared";
+            }
         } catch (Exception failure) {
             failedArmStage = armStage;
             preparationState = "preparation_failed";
@@ -214,10 +275,11 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     public long readerGeneration() { return staged == null ? 0L : staged.readerGeneration(); }
 
     /** Called only after Start; the embedded receiver waits for an actual Surface image. */
-    public void awaitFirstSurfaceImage() throws Exception {
+    public void awaitFirstSurfaceImage() throws Exception { awaitFirstSurfaceImage(()->true); }
+    public void awaitFirstSurfaceImage(java.util.function.BooleanSupplier currentAuthority) throws Exception {
         ReceiverRuntime current = receiver;
         if (current == null || surfaceReleased) throw new IllegalStateException("receiver not prepared");
-        current.start();
+        current.start(currentAuthority);
     }
 
     /** Current exact native image acquisition; no codec callback or GPU proof is implied. */
@@ -290,7 +352,16 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
             CancellationHandle cancellation) throws Exception {
         cancellation.requireCurrent(generation);
         if(action.executorGeneration()!=generation)throw new IllegalArgumentException("receiver executor generation mismatch");
-        if ("arm_receiver".equals(action.actionKind())) prepare();
+        if ("arm_receiver".equals(action.actionKind())) {
+            if(dormantPrepared) {
+                if(!"dormant_prepared".equals(preparationState)||receiver==null||!receiver.preparedDecoderHeld())
+                    throw new IllegalStateException("actual prepared decoder not ready");
+                long committed=display.preparePeerProjection();
+                if(committed!=staged.routeGeneration())throw new IllegalStateException("actual dormant route commit differs");
+                display.bindPeerProjection(committed,staged.decoderToken(),staged.readerGeneration());
+                preparationState="prepared";
+            } else prepare();
+        }
         if (provider == null) {
             if (!("stop".equals(action.actionKind()) || "cleanup".equals(action.actionKind()))) {
                 throw new IllegalStateException("receiver preparation incomplete");
@@ -332,6 +403,17 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         return new MediaRuntimeSnapshot(current.generation(), current.revision(), current.state(),
                 current.terminal() && surfaceReleased && projectionRetired,
                 current.detail(), current.providerHandleId());
+    }
+
+    /** Pure coherent observation; never releases or verifies an owner effect. */
+    synchronized org.json.JSONObject physicalSnapshot() throws Exception {
+        MediaRuntimeSnapshot current = snapshot();
+        return new org.json.JSONObject()
+                .put("generation", current.generation()).put("incarnation", incarnation)
+                .put("provider_handle_id", current.providerHandleId())
+                .put("provider_state_revision", current.revision()).put("state", current.state())
+                .put("terminal", current.terminal()).put("surface_released", surfaceReleased)
+                .put("projection_retired", projectionRetired);
     }
 
     /** Closes only the receiver that has never entered an owner Sink effect. */
@@ -472,7 +554,15 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         }
 
         @Override public MediaOwnerProvider provider() { return receiver.provider(); }
+        @Override public void prepareDormantDecoder(org.json.JSONObject format)throws Exception{receiver.prepareDormantDecoder(format);}
+        @Override public boolean preparedDecoderHeld(){return receiver.preparedDecoderHeld();}
+        @Override public boolean preparedDecoderOwned(){return receiver.preparedDecoderOwned();}
+        @Override public boolean preparedDeliveryOpened(){return receiver.preparedDeliveryOpened();}
+        @Override public long preparedPeerDeliveryCount(){return receiver.preparedPeerDeliveryCount();}
+        @Override public void requestPreparedStop(){receiver.requestPreparedStop();}
+        @Override public void abortPrepared(){receiver.stopAndVerify();}
         @Override public void start() throws Exception { receiver.start(); }
+        @Override public void start(java.util.function.BooleanSupplier currentAuthority)throws Exception{receiver.start(currentAuthority);}
         @Override public MediaRuntimeSnapshot snapshot() { return receiver.snapshot(); }
         @Override public String closedCounters() { return receiver.closedActivationCounters(); }
         @Override public org.json.JSONObject diagnosticStages() throws Exception {

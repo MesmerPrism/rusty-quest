@@ -11,6 +11,9 @@ static REGISTRY: OnceLock<NativeFenceRegistry> = OnceLock::new();
 fn registry() -> &'static NativeFenceRegistry {
     REGISTRY.get_or_init(NativeFenceRegistry::default)
 }
+pub(super) fn ownership_status() -> Result<serde_json::Value, String> {
+    registry().ownership_status()
+}
 pub(super) fn active() -> Result<Arc<NativeCapability>, String> {
     registry().active()
 }
@@ -96,6 +99,78 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             .unwrap_or(std::ptr::null_mut()),
         Err(reason) => {
             let _ = env.throw_new("java/lang/IllegalStateException", reason);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Actual pre-claim process absence: no synthetic executor generation/capability.
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_retireNeverClaimedNoMedia(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    callback: JObject<'_>,
+) -> jstring {
+    let result: Result<String, String> = (|| {
+        if callback.is_null() {
+            return Err("never-claimed app callback absent".into());
+        }
+        super::runtime_host::retire_never_claimed_process_gate()?;
+        let source = Arc::new(JavaAppFenceSource {
+            vm: env.get_java_vm().map_err(|_| "never-claimed app VM")?,
+            callback: env
+                .new_global_ref(callback)
+                .map_err(|_| "never-claimed app callback capture")?,
+        });
+        let binding = registry().retire_never_claimed(source)?;
+        Ok(
+            serde_json::json!({"$schema":"rusty.quest.embedded_duplex.no_media_retirement.v1",
+            "native_runtime_binding":"not_claimed","disposition":"never_claimed_process_closed",
+            "app_process_generation":binding.generation,"app_record_sha256":binding.record_sha256})
+            .to_string(),
+        )
+    })();
+    match result {
+        Ok(text) => env
+            .new_string(text)
+            .map(|v| v.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+        Err(reason) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", reason);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_noMediaRendererRetirementStatus(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jstring {
+    match crate::camera_hwb_probe::no_media_renderer_retirement_status() {
+        Ok(value) => env
+            .new_string(value.to_string())
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_freshSetupRendererEligibilityStatus(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+) -> jstring {
+    match crate::camera_hwb_probe::fresh_setup_renderer_eligibility_status() {
+        Ok(value) => env
+            .new_string(value.to_string())
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut()),
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
             std::ptr::null_mut()
         }
     }

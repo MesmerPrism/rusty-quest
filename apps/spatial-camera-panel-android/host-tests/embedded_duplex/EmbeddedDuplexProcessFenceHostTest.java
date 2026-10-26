@@ -108,6 +108,13 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         EmbeddedDuplexProcessFence first = acquire(directory);
         if (first.generation() != 1) throw new AssertionError("initial generation");
         rejects(() -> acquire(directory));
+        EmbeddedDuplexProcessFence.CallbackGuard draining = first.callbacks();
+        EmbeddedDuplexProcessFence.CallbackLease lease = draining.enter();
+        java.util.concurrent.CompletableFuture<Void> drained = draining.retireAndDrain();
+        if (drained.isDone()) throw new AssertionError("entered callback was credited as joined");
+        rejects(draining::enter);
+        lease.close();
+        if (!drained.isDone() || drained.isCompletedExceptionally()) throw new AssertionError("actual callback return did not join");
         EmbeddedDuplexProcessFence.CallbackGuard liveCallback = first.callbacks();
         EmbeddedDuplexProcessFence.CallbackGuard retiredCallback = first.callbacks();
         liveCallback.requireLive();

@@ -1191,3 +1191,19 @@ pub(crate) fn cancel_sdk_unsubmitted(
         }
     }
 }
+
+pub(crate) struct RetirementOwnerFacts {
+    pub cleanup: u64,
+    pub carrier_live: bool,
+    pub pending_frame: bool,
+}
+pub(crate) fn retirement_owner_facts() -> Result<RetirementOwnerFacts, String> {
+    let state = STATE
+        .lock()
+        .map_err(|_| "renderer qualification owner poisoned")?;
+    Ok(RetirementOwnerFacts {
+        cleanup: state.cleanup,
+        carrier_live: state.carrier_live,
+        pending_frame: state.pending.is_some(),
+    })
+}

@@ -24,6 +24,10 @@ final class EmbeddedDuplexActivationGate {
         long[] currentIncomingFrame(long maxAgeNs);
         /** New v2 Surface evidence. Defaults fail closed for older test adapters. */
         default void awaitFirstSurfaceImage() throws Exception { awaitFirstRenderedFrame(); }
+        default void awaitFirstSurfaceImage(java.util.function.BooleanSupplier currentAuthority)throws Exception{
+            if(!currentAuthority.getAsBoolean())throw new IllegalStateException("activation authority no longer current");
+            awaitFirstSurfaceImage();
+        }
         default long[] currentIncomingAcquiredFrame(long maxAgeNs) { return null; }
         default long[] currentIncomingEffectiveFrame(long maxAgeNs) { return null; }
         long routeGeneration();
@@ -270,7 +274,10 @@ final class EmbeddedDuplexActivationGate {
         // uncertain until readback succeeds, without holding the state lock.
         long readinessDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
         attempt.stage = ActivationStage.FIRST_SURFACE_IMAGE;
-        target.awaitFirstSurfaceImage();
+        target.awaitFirstSurfaceImage(()->{
+            requireCurrentClaim(current,claimedRevision);
+            return clock.wallTimeMillis()<current.expiresAtMs;
+        });
         long[] frame = awaitCurrentIncomingFrame(current, claimedRevision, readinessDeadline,
                 false, 0L);
         if (!acquiredFrame(frame) || clock.wallTimeMillis() >= current.expiresAtMs) {
@@ -508,4 +515,14 @@ final class EmbeddedDuplexActivationGate {
     }
 
     private static boolean empty(String value) { return value == null || value.isEmpty(); }
-}
+
+
+    boolean freshSetupQuiescent(){
+        lock.lock();try{
+            if(pendingFreshArm!=null)return false;
+            if(armed==null)return !cleanupStarted && !activationUncertain && !activated && pendingTerminal==null;
+            // Only the actual verified current Sink Stop makes the previous activation an earned stopped scope.
+            return cleanupStarted && terminalArm==armed && pendingTerminal!=null
+                && terminalProviderRevision>armed.providerStateRevision;
+        }finally{lock.unlock();}
+    }}
