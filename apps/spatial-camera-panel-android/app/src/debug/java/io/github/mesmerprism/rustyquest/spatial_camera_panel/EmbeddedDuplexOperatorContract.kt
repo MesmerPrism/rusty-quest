@@ -41,7 +41,9 @@ internal object EmbeddedDuplexOperatorContract {
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
   enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
-    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK }
+    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK,
+    FRESH_PAIR_CONTINUE, PREPARE_PEER_START, PREPARED_PEER_START_STATUS, REESTABLISH_PEER_ROOTS, PEER_ROOT_STATUS,
+    OPERATION_STOP, OPERATION_JOIN_STATUS, OPERATION_CONTINUATION_STATUS, OPERATION_CONTINUATION_HANDOFF, PAIR_SETUP_RECOVERY_STATUS }
   data class Request(
       val route: Route,
       val challenge: String,
@@ -54,6 +56,9 @@ internal object EmbeddedDuplexOperatorContract {
       val requestSha256: String? = null,
       val outcomeSha256: String? = null,
       val consumerReceiptSha256: String? = null,
+      val priorOriginalId: String? = null,
+      val priorOutcomeSha256: String? = null,
+      val stopIntentSha256: String? = null,
   )
 
   fun callerIsShell(uid: Int): Boolean = uid == Process.SHELL_UID
@@ -65,6 +70,35 @@ internal object EmbeddedDuplexOperatorContract {
 
   internal fun parseFields(method: String, argument: String?, fields: Map<String, Any?>): Request {
     require(argument != null && nonce.matches(argument)) { "operator-challenge-invalid" }
+    val freshRoutes = mapOf("fresh_pair_continue" to Route.FRESH_PAIR_CONTINUE,
+        "prepare_peer_start" to Route.PREPARE_PEER_START, "prepared_peer_start_status" to Route.PREPARED_PEER_START_STATUS,
+        "reestablish_peer_roots" to Route.REESTABLISH_PEER_ROOTS, "peer_root_status" to Route.PEER_ROOT_STATUS,
+        "operation_stop" to Route.OPERATION_STOP, "operation_join_status" to Route.OPERATION_JOIN_STATUS,
+        "operation_continuation_status" to Route.OPERATION_CONTINUATION_STATUS,
+        "operation_continuation_handoff" to Route.OPERATION_CONTINUATION_HANDOFF,
+        "pair_setup_recovery_status" to Route.PAIR_SETUP_RECOVERY_STATUS)
+    freshRoutes[method]?.let { route ->
+      val read = route in setOf(Route.PREPARED_PEER_START_STATUS, Route.PEER_ROOT_STATUS, Route.PAIR_SETUP_RECOVERY_STATUS)
+      val expected = when (route) {
+        Route.FRESH_PAIR_CONTINUE -> setOf(KEY_ORIGINAL_ID, "prior_original_id", "prior_outcome_sha256")
+        Route.OPERATION_STOP -> setOf(KEY_ORIGINAL_ID, "request_sha256", "stop_intent_sha256")
+        else -> if (read) emptySet() else setOf(KEY_ORIGINAL_ID)
+      }
+      require(fields.keys == expected) { "operator-fields-invalid" }
+      if (read) return Request(route, argument)
+      fun token(name: String, pattern: Regex): String {
+        val value = fields[name] as? String
+        require(value != null && pattern.matches(value)) { "operator-fresh-field-invalid" }; return value
+      }
+      val original = token(KEY_ORIGINAL_ID, nonce)
+      return when (route) {
+        Route.FRESH_PAIR_CONTINUE -> Request(route, argument, originalId = original,
+            priorOriginalId = token("prior_original_id", nonce), priorOutcomeSha256 = token("prior_outcome_sha256", sha))
+        Route.OPERATION_STOP -> Request(route, argument, originalId = original,
+            requestSha256 = token("request_sha256", sha), stopIntentSha256 = token("stop_intent_sha256", sha))
+        else -> Request(route, argument, originalId = original)
+      }
+    }
     if (method == METHOD_OPERATION_QUERY || method == METHOD_OPERATION_ACK) {
       val expected = if (method == METHOD_OPERATION_QUERY) setOf(KEY_ORIGINAL_ID)
         else setOf(KEY_ORIGINAL_ID, "request_sha256", "outcome_sha256", "consumer_receipt_sha256")
@@ -83,7 +117,7 @@ internal object EmbeddedDuplexOperatorContract {
     }
     if (fields.containsKey(KEY_ORIGINAL_ID)) {
       require(method in setOf("start", "renew_authority", "peer_stop", "peer_revoke", "whole_app_close",
-          "concurrent_arm", "policy_update", "blend_update")) { "operator-original-route-invalid" }
+          "concurrent_arm", "policy_update", "blend_update", "pair_session")) { "operator-original-route-invalid" }
       val original = fields[KEY_ORIGINAL_ID] as? String
       require(original != null && nonce.matches(original)) { "operator-original-id-invalid" }
       return parseFields(method, argument, fields - KEY_ORIGINAL_ID).copy(originalId = original)
@@ -116,6 +150,9 @@ internal object EmbeddedDuplexOperatorContract {
       else -> throw IllegalArgumentException("operator-method-invalid")
     }
     val expected = when (route) {
+      Route.FRESH_PAIR_CONTINUE, Route.PREPARE_PEER_START, Route.PREPARED_PEER_START_STATUS,
+      Route.REESTABLISH_PEER_ROOTS, Route.PEER_ROOT_STATUS, Route.OPERATION_STOP, Route.OPERATION_JOIN_STATUS,
+      Route.OPERATION_CONTINUATION_STATUS, Route.OPERATION_CONTINUATION_HANDOFF, Route.PAIR_SETUP_RECOVERY_STATUS,
       Route.OPERATION_QUERY, Route.OPERATION_ACK -> throw IllegalArgumentException("operator-original-route-invalid")
       Route.STATUS -> setOf(KEY_ROLE)
       Route.REVIEW -> reviewKeys

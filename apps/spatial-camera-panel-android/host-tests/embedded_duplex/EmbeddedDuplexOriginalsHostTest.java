@@ -180,6 +180,25 @@ public final class EmbeddedDuplexOriginalsHostTest {
         yes("compacted".equals(ack.getString("status")));
         host.harnessClose();
     }
+
+ static JSONObject freshContractLifecycle()throws Exception{
+  JSONObject v=new JSONObject("{\"$schema\":\"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v4\",\"action\":\"peer_status\",\"config_sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"native_executor_generation\":9,\"app_process_generation\":7,\"observed_at_ms\":0,\"status\":\"active\",\"authority_projection\":null,\"broker_evidence\":null,\"start_mutation\":null,\"stop_mutation\":null,\"route_receipt\":null,\"route_termination\":null,\"route_cleanup\":[],\"termination_action\":null,\"revoker_adoption\":null,\"media_completion\":null,\"media_stop_effect_receipt\":null,\"owner_failure_diagnostic\":null,\"owner_failure_diagnostic_status\":null,\"native_owner_dispatch_failure\":null,\"activation\":null,\"renewal_receipts\":[],\"renewal_total_completed\":0,\"renewal_first_request_id\":null,\"renewal_last_request_id\":null,\"renewal_pending\":false,\"peer_physical_cleanup\":\"pending\",\"native_host_physical_cleanup\":\"pending\",\"whole_app_physical_cleanup\":\"pending\",\"last_failure\":null,\"last_failure_action\":null,\"ongoing_media_policy\":{\"$schema\":\"rusty.manifold.peer.ongoing_media_policy.v2\"},\"current_lifetime_renewal_count\":0,\"current_owner_validation\":null,\"last_failure_cause\":null,\"retired_lifetimes\":{\"total\":0,\"first\":null,\"last\":null,\"recent\":[],\"history_sha256\":null}}");
+  return v;
+ }
+
+ static void freshContractControls()throws Exception{
+  EmbeddedDuplexFreshLifecycle.require(freshContractLifecycle());checks++;
+  denied(()->EmbeddedDuplexFreshLifecycle.require(freshContractLifecycle().put("native_executor_generation",0)));
+  denied(()->EmbeddedDuplexFreshLifecycle.require(freshContractLifecycle().put("owner_transport_attempt",JSONObject.NULL)));
+  denied(()->EmbeddedDuplexFreshLifecycle.require(freshContractLifecycle().put("authority_clock_read",JSONObject.NULL)));
+  JSONObject noArchive=freshContractLifecycle();noArchive.remove("retired_lifetimes");denied(()->EmbeddedDuplexFreshLifecycle.require(noArchive));
+  JSONObject wrongPolicy=freshContractLifecycle();wrongPolicy.getJSONObject("ongoing_media_policy").put("$schema","rusty.manifold.peer.ongoing_media_policy.v1");denied(()->EmbeddedDuplexFreshLifecycle.require(wrongPolicy));
+  JSONObject falseArchive=freshContractLifecycle();falseArchive.getJSONObject("retired_lifetimes").put("total",1);denied(()->EmbeddedDuplexFreshLifecycle.require(falseArchive));
+  String unknown="{\"$schema\":\"rusty.quest.embedded_duplex.operation_failure.v1\",\"code\":\"rejected_unknown\",\"operation\":\"fresh_pair_setup\",\"session_id\":null,\"observed_at_ms\":null,\"current_session\":null}";
+  new EmbeddedDuplexNativeOperationFailure(unknown).validatedFailure();checks++;
+  denied(()->new EmbeddedDuplexNativeOperationFailure(new JSONObject(unknown).put("session_id","invented").toString()).validatedFailure());
+  denied(()->new EmbeddedDuplexNativeOperationFailure(new JSONObject(unknown).put("code","invented").toString()).validatedFailure());
+ }
     public static void main(String[] args)throws Exception{
         File root=Files.createTempDirectory("original-custody-").toFile();Actor actor=new Actor();
         EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});
@@ -247,6 +266,7 @@ public final class EmbeddedDuplexOriginalsHostTest {
         yes(!observe(noMediaObservation).isNull("response_sha256"));
         noMedia.begin(ID,"whole_app_close",CHALLENGE,noMediaRequest,()->{throw new AssertionError("no-media duplicate replayed");});
         denied(()->noMedia.acknowledge(ID,CHALLENGE,requestHash(noMediaObservation),outcome(noMediaObservation),HASH));
+        freshContractControls();
         failureAndPendingControls();
         configurationReceiptControls();
         productionCallerControls();

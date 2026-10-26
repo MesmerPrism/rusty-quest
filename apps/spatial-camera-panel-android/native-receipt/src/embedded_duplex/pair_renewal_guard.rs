@@ -1,5 +1,6 @@
 //! Bounded retry and replay guards used by the production signed renewal actor.
-#[derive(Default)]
+use super::super::ceremony_id::{self, CeremonyId};
+#[derive(Default, serde::Serialize)]
 pub(crate) struct CycleLedger {
     completed: Vec<String>,
     ongoing_next: Option<u64>,
@@ -16,11 +17,13 @@ impl CycleLedger {
         self.ongoing_next = Some(1);
         Ok(())
     }
-    pub(crate) fn fresh_id(&self, nonce: &str) -> String {
-        self.ongoing_next.map_or_else(
-            || format!("ceremony.duplex.{nonce}"),
-            |next| format!("ceremony.duplex.continuation.{next}.{nonce}"),
-        )
+    pub(crate) fn fresh_id(&self, nonce: &str) -> Result<String, String> {
+        let id = match self.ongoing_next {
+            Some(next) => ceremony_id::continuation(next, nonce)?,
+            None => ceremony_id::finite(nonce)?,
+        };
+        self.require_fresh(&id)?;
+        Ok(id)
     }
     pub(crate) fn abandon(&mut self, id: &str) -> Result<(), String> {
         if self.ongoing_next.is_none() {
@@ -34,37 +37,41 @@ impl CycleLedger {
         Ok(())
     }
     pub(crate) fn require_fresh(&self, id: &str) -> Result<(), String> {
-        if let Some(next) = self.ongoing_next {
-            let tail = id
-                .strip_prefix("ceremony.duplex.continuation.")
-                .ok_or("continuation cycle namespace required")?;
-            let (ordinal, nonce) = tail.split_once('.').ok_or("continuation cycle shape")?;
-            let parsed = ordinal
-                .parse::<u64>()
-                .map_err(|_| "continuation cycle ordinal")?;
-            if ordinal != parsed.to_string()
-                || parsed != next
-                || nonce.len() != 64
-                || !nonce
-                    .bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                || self.abandoned.iter().any(|old| old == id)
-            {
-                return Err("stale, skipped or abandoned continuation cycle".into());
+        let parsed = ceremony_id::parse(id)?;
+        match (self.ongoing_next, parsed) {
+            (Some(next), CeremonyId::Continuation { ordinal, .. }) => {
+                // Refuse before any effect if the accepted cycle could not commit a successor.
+                next.checked_add(1)
+                    .ok_or("continuation cycle ordinal exhausted")?;
+                if ordinal != next || self.abandoned.iter().any(|old| old == id) {
+                    return Err("stale, skipped or abandoned continuation cycle".into());
+                }
+                Ok(())
             }
-            return Ok(());
-        }
-        if id.starts_with("ceremony.duplex.continuation.") {
-            return Err("continuation cycle requires the selected owner policy".into());
-        }
-        if self.completed.iter().any(|old| old == id) {
-            Err("completed signed renewal cycle cannot be replayed".into())
-        } else {
-            Ok(())
+            (Some(_), CeremonyId::Finite { .. }) => {
+                Err("continuation cycle namespace required".into())
+            }
+            (None, CeremonyId::Continuation { .. }) => {
+                Err("continuation cycle requires the selected owner policy".into())
+            }
+            (None, CeremonyId::Finite { .. }) => {
+                if self.completed.iter().any(|old| old == id) {
+                    Err("completed signed renewal cycle cannot be replayed".into())
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
-    pub(crate) fn complete(&mut self, id: &str) -> Result<(), String> {
+    pub(crate) fn require_completable(&self, id: &str) -> Result<(), String> {
         self.require_fresh(id)?;
+        if self.ongoing_next.is_none() && self.completed.len() >= 32 {
+            return Err("bounded signed renewal cycle history exhausted".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn complete(&mut self, id: &str) -> Result<(), String> {
+        self.require_completable(id)?;
         if let Some(next) = self.ongoing_next {
             self.ongoing_next = Some(
                 next.checked_add(1)
@@ -72,9 +79,6 @@ impl CycleLedger {
             );
             self.abandoned.clear();
             return Ok(());
-        }
-        if self.completed.len() >= 32 {
-            return Err("bounded signed renewal cycle history exhausted".into());
         }
         self.completed.push(id.to_owned());
         Ok(())
@@ -129,9 +133,9 @@ mod tests {
     fn explicit_continuation_has_bounded_replay_fence_past_sixty_four() {
         let mut ledger = CycleLedger::default();
         ledger.enable_ongoing().unwrap();
-        let first = ledger.fresh_id(&"ab".repeat(32));
+        let first = ledger.fresh_id(&"ab".repeat(32)).unwrap();
         for cycle in 1..=80 {
-            let id = ledger.fresh_id(&format!("{cycle:064x}"));
+            let id = ledger.fresh_id(&format!("{cycle:064x}")).unwrap();
             assert!(ledger.require_fresh(&id).is_ok());
             ledger.complete(&id).unwrap();
             assert!(ledger.require_fresh(&id).is_err());
@@ -157,11 +161,11 @@ mod tests {
     fn unresolved_contender_is_bounded_and_not_an_accepted_cycle() {
         let mut ledger = CycleLedger::default();
         ledger.enable_ongoing().unwrap();
-        let cancelled = ledger.fresh_id(&"ab".repeat(32));
+        let cancelled = ledger.fresh_id(&"ab".repeat(32)).unwrap();
         ledger.abandon(&cancelled).unwrap();
         assert!(ledger.require_fresh(&cancelled).is_err());
         assert_eq!(ledger.ongoing_next, Some(1));
-        let accepted = ledger.fresh_id(&"cd".repeat(32));
+        let accepted = ledger.fresh_id(&"cd".repeat(32)).unwrap();
         ledger.complete(&accepted).unwrap();
         assert_eq!(ledger.ongoing_next, Some(2));
         assert!(ledger.require_fresh(&cancelled).is_err());
@@ -176,9 +180,10 @@ mod tests {
                 "ab".repeat(32)
             ))
             .is_err());
-        ledger.complete("ceremony.duplex.original").unwrap();
+        let original = ceremony_id::finite(&"ab".repeat(32)).unwrap();
+        ledger.complete(&original).unwrap();
         assert!(ledger.enable_ongoing().is_err());
-        assert!(ledger.require_fresh("ceremony.duplex.original").is_err());
+        assert!(ledger.require_fresh(&original).is_err());
     }
     #[test]
     fn remote_receipt_accepts_only_existing_signed_clock_skew() {
@@ -255,19 +260,58 @@ mod tests {
     #[test]
     fn completed_cycle_is_rejected_after_state_reset() {
         let mut ledger = CycleLedger::default();
-        ledger.require_fresh("accepted").unwrap();
-        ledger.complete("accepted").unwrap();
-        assert!(ledger.require_fresh("accepted").is_err());
-        assert!(ledger.complete("accepted").is_err());
-        ledger.require_fresh("next").unwrap();
+        let accepted = ceremony_id::finite(&"ab".repeat(32)).unwrap();
+        let next = ceremony_id::finite(&"cd".repeat(32)).unwrap();
+        ledger.require_fresh(&accepted).unwrap();
+        ledger.complete(&accepted).unwrap();
+        assert!(ledger.require_fresh(&accepted).is_err());
+        assert!(ledger.complete(&accepted).is_err());
+        ledger.require_fresh(&next).unwrap();
     }
     #[test]
     fn history_does_not_evict_old_replay_guards() {
         let mut ledger = CycleLedger::default();
         for i in 0..32 {
-            ledger.complete(&i.to_string()).unwrap();
+            ledger
+                .complete(&ceremony_id::finite(&format!("{i:064x}")).unwrap())
+                .unwrap();
         }
-        assert!(ledger.complete("overflow").is_err());
-        assert!(ledger.require_fresh("0").is_err());
+        assert!(ledger
+            .complete(&ceremony_id::finite(&"ff".repeat(32)).unwrap())
+            .is_err());
+        assert!(ledger
+            .require_fresh(&ceremony_id::finite(&format!("{:064x}", 0)).unwrap())
+            .is_err());
+    }
+}
+
+#[cfg(test)]
+mod canonical_ledger_controls {
+    use super::*;
+    #[test]
+    fn syntactic_validity_never_enables_ongoing_policy() {
+        let mut finite = CycleLedger::default();
+        let id = ceremony_id::continuation(1, &"ab".repeat(32)).unwrap();
+        assert!(finite.require_fresh(&id).is_err());
+        assert!(finite.complete(&id).is_err());
+        let original = finite.fresh_id(&"cd".repeat(32)).unwrap();
+        finite.complete(&original).unwrap();
+        assert!(finite.enable_ongoing().is_err());
+        assert_eq!(finite.completed, vec![original]);
+    }
+    #[test]
+    fn final_ordinal_refuses_before_cycle_effects_and_never_wraps_to_finite() {
+        let mut ledger = CycleLedger::default();
+        ledger.enable_ongoing().unwrap();
+        ledger.ongoing_next = Some(u64::MAX - 1);
+        let id = ledger.fresh_id(&"ab".repeat(32)).unwrap();
+        ledger.complete(&id).unwrap();
+        assert_eq!(ledger.ongoing_next, Some(u64::MAX));
+        assert!(ledger.fresh_id(&"cd".repeat(32)).is_err());
+        assert!(ledger
+            .complete(&ceremony_id::continuation(u64::MAX, &"cd".repeat(32)).unwrap())
+            .is_err());
+        assert_eq!(ledger.ongoing_next, Some(u64::MAX));
+        assert!(ledger.completed.is_empty());
     }
 }

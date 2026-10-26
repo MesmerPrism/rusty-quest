@@ -12,6 +12,8 @@ import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.Emb
 object EmbeddedDuplexDiagnosticActivityGate {
   @Volatile private var resumed: WeakReference<SpatialCameraPanelActivity>? = null
   private val main = Handler(Looper.getMainLooper())
+  private fun postOriginal(action: () -> Unit): Boolean = main.post(
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOriginals.carry(Runnable { action() }))
 
   fun resumed(activity: SpatialCameraPanelActivity) {
     if (BuildConfig.DEBUG) resumed = WeakReference(activity)
@@ -28,7 +30,7 @@ object EmbeddedDuplexDiagnosticActivityGate {
       result.complete(false)
       return result
     }
-    val accepted = main.post {
+    val accepted = postOriginal {
       val activity = resumed?.get()
       if (activity == null || !activity.embeddedDuplexLocalDiagnosticReady()) {
         result.complete(false)
@@ -45,7 +47,7 @@ object EmbeddedDuplexDiagnosticActivityGate {
   @JvmStatic
   fun requestRealPeerBootstrap(): CompletableFuture<EmbeddedDuplexRuntimeStatus> {
     val result = CompletableFuture<EmbeddedDuplexRuntimeStatus>()
-    if (!BuildConfig.DEBUG || !main.post {
+    if (!BuildConfig.DEBUG || !postOriginal {
           val activity = resumed?.get()
           if (activity == null) {
             result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
@@ -63,7 +65,7 @@ object EmbeddedDuplexDiagnosticActivityGate {
   @JvmStatic
   fun requestNoMediaClose(): CompletableFuture<String> {
     val result = CompletableFuture<String>()
-    if (!BuildConfig.DEBUG || !main.post {
+    if (!BuildConfig.DEBUG || !postOriginal {
           val activity = resumed?.get()
           if (activity == null) {
             result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
@@ -81,7 +83,7 @@ object EmbeddedDuplexDiagnosticActivityGate {
   @JvmStatic
   fun requestPairSession(): CompletableFuture<EmbeddedDuplexPairStatus> {
     val result = CompletableFuture<EmbeddedDuplexPairStatus>()
-    if (!BuildConfig.DEBUG || !main.post {
+    if (!BuildConfig.DEBUG || !postOriginal {
           val activity = resumed?.get()
           if (activity == null) {
             result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
@@ -99,7 +101,7 @@ object EmbeddedDuplexDiagnosticActivityGate {
   @JvmStatic
   fun requestStartPreflight(): CompletableFuture<EmbeddedDuplexStartPreflight> {
     val result = CompletableFuture<EmbeddedDuplexStartPreflight>()
-    if (!BuildConfig.DEBUG || !main.post {
+    if (!BuildConfig.DEBUG || !postOriginal {
           val activity = resumed?.get()
           if (activity == null) {
             result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))

@@ -16,6 +16,7 @@ public final class EmbeddedDuplexWholeCloseRollover {
     // Policy selection identifies the receipt; it never supplies physical cleanup.
     static boolean localLifecycleProof(JSONObject proof) throws Exception {
         String schema = proof.getString("$schema");
+        if (EmbeddedDuplexFreshLifecycle.SCHEMA.equals(schema)) { EmbeddedDuplexFreshLifecycle.require(proof); return true; }
         if ("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(schema)) return true;
         if (!"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3".equals(schema)) return false;
         JSONObject policy = proof.optJSONObject("ongoing_media_policy");

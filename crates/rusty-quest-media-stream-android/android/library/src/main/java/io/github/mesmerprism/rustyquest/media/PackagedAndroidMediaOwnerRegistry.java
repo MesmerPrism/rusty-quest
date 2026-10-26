@@ -142,6 +142,9 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
         return hex.toString();
     }
 
+    /** Observation of the actual lifetime dispatch latch and outstanding verified-effect rows. */
+    public boolean noOwnerEffectEverAttempted(){synchronized(lifecycleGate){return !anyOwnerEffectAttempted;}}
+    public boolean ownerEffectsQuiescent(){synchronized(lifecycleGate){return executions.isEmpty() && issuedReceipts.isEmpty();}}
     @Override public void close() { cancellation.cancel(); }
     /** One-way no-effect barrier. A provider callback cannot start after this succeeds. */
     public void closeIfNeverAttempted() {

@@ -794,3 +794,6 @@ mod tests {
         assert!(report.external_effects.is_empty());
     }
 }
+
+mod prepared_start;
+pub use prepared_start::*;

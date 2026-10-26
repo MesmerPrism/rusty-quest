@@ -51,7 +51,7 @@ class EmbeddedDuplexOperatorContractTest {
       }
     }
     for (method in listOf("runtime_status","peer_status","concurrent_status","policy_read","blend_read",
-        "bootstrap_real_peer","close_no_media","pair_status","pair_session","start_preflight",
+        "bootstrap_real_peer","close_no_media","pair_status","start_preflight",
         "owner_failure_diagnostic","own_capture_diagnostic","stream_dropout_diagnostic")) {
       assertThrows(IllegalArgumentException::class.java) {
         EmbeddedDuplexOperatorContract.parseFields(method, nonce, mapOf("original_id" to original))
@@ -106,6 +106,39 @@ class EmbeddedDuplexOperatorContractTest {
           EmbeddedDuplexOperatorContract.parseFields("operation_ack", nonce, invalid)
         }
       }
+    }
+  }
+
+  @Test fun freshCallsKeepClosedOriginalAndContinuationShapes() {
+    val original = "a".repeat(32)
+    val selected = mapOf<String,Any?>("original_id" to original)
+    for (method in listOf("prepare_peer_start", "reestablish_peer_roots", "pair_session")) {
+      assertEquals(original, EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected).originalId)
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected + ("json" to "{}"))
+      }
+    }
+    val continued = selected + mapOf("prior_original_id" to "b".repeat(32), "prior_outcome_sha256" to "c".repeat(64))
+    val parsed = EmbeddedDuplexOperatorContract.parseFields("fresh_pair_continue", nonce, continued)
+    assertEquals("b".repeat(32), parsed.priorOriginalId)
+    assertEquals("c".repeat(64), parsed.priorOutcomeSha256)
+    for (bad in listOf(continued - "prior_outcome_sha256", continued + ("prior_outcome_sha256" to "C".repeat(64)),
+        continued + ("prior_original_id" to 1), continued + ("operation" to "arbitrary"))) {
+      assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields("fresh_pair_continue", nonce, bad) }
+    }
+    for (method in listOf("operation_join_status", "operation_continuation_status", "operation_continuation_handoff")) {
+      assertEquals(original, EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected).originalId)
+      assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields(method, nonce, emptyMap()) }
+    }
+    for (method in listOf("prepared_peer_start_status", "peer_root_status", "pair_setup_recovery_status")) {
+      EmbeddedDuplexOperatorContract.parseFields(method, nonce, emptyMap())
+      assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected) }
+    }
+    val stop = selected + mapOf("request_sha256" to "d".repeat(64), "stop_intent_sha256" to "e".repeat(64))
+    assertEquals("e".repeat(64), EmbeddedDuplexOperatorContract.parseFields("operation_stop", nonce, stop).stopIntentSha256)
+    assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields("operation_stop", nonce, stop + ("stop_intent_sha256" to 1)) }
+    for (method in listOf("owner_succession_commit", "abandon_retained_scope", "new_run", "data")) {
+      assertThrows(IllegalArgumentException::class.java) { EmbeddedDuplexOperatorContract.parseFields(method, nonce, selected) }
     }
   }
 

@@ -25,11 +25,62 @@ internal class EmbeddedDuplexDisplayCoordinator(
     private val restartLocal: (Long) -> Boolean,
     private val startOwn: (() -> Boolean)? = null,
     private val stopWholeProjection: (() -> Unit)? = null,
+    private val prepareRenderer: ((String, Long) -> String)? = null,
+    private val readPreparedRenderer: ((String) -> String)? = null,
+    private val abortPreparedRenderer: ((String) -> String)? = null,
 ) : EmbeddedDuplexDisplay {
+  private var dormantPeerRoute: SpatialVideoSourceRoutingCoordinator.PreparedPeerRoute? = null
+  override fun reserveDormantPeerProjection(): Long = serialized { reserveDormantPeerProjectionCurrent(null) }
+  override fun reserveDormantPeerProjection(desiredStop: java.util.function.BooleanSupplier): Long = serialized {
+    reserveDormantPeerProjectionCurrent(desiredStop)
+  }
+  private fun reserveDormantPeerProjectionCurrent(desiredStop: java.util.function.BooleanSupplier?): Long {
+    check(dormantPeerRoute == null && ownedPeerGeneration == 0L) { "dormant reader route already held" }
+    check(desiredStop?.asBoolean != true) { "actual desired Stop during source preparation" }
+    ensureLocalCaptureStoppedCurrent(desiredStop)
+    check(desiredStop?.asBoolean != true) { "actual desired Stop during source preparation" }
+    val candidate=routing.prepareEmbeddedPeerRoute()
+    dormantPeerRoute=candidate
+    return candidate.generation
+  }
+  private var preparedRendererId:String?=null
+  override fun prepareDormantPeerRenderer(id:String,generation:Long,desiredStop:java.util.function.BooleanSupplier):String = serialized {
+    val candidate=checkNotNull(dormantPeerRoute){"actual dormant route candidate absent"}
+    check(candidate.generation==generation &&preparedRendererId==null){"actual dormant renderer candidate differs"}
+    routing.requirePreparedEmbeddedPeerRoute(candidate);val before=checkNotNull(carrier())
+    preparedRendererId=id // Retain before entering the actual JNI callback.
+    var raw=checkNotNull(prepareRenderer){"actual renderer callback absent"}(id,generation)
+    var warned=false;val estimate=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+    while(true){
+      routing.requirePreparedEmbeddedPeerRoute(candidate);check(carrier()==before){"actual dormant carrier superseded"}
+      if(desiredStop.asBoolean)throw IllegalStateException("actual desired Stop during renderer preparation")
+      if(EmbeddedDuplexPreparedRenderer.dormant(raw,id,generation))break
+      if(!warned &&System.nanoTime()>=estimate){warned=true;android.util.Log.w("RQSpatialCameraPanel","same renderer preparation remains Pending")}
+      Thread.sleep(10);raw=checkNotNull(readPreparedRenderer){"actual renderer read callback absent"}(id)
+    }
+    raw
+  }
+  override fun abortDormantPeerRenderer(id:String):String = serialized {
+    check(preparedRendererId==null||preparedRendererId==id){"actual dormant renderer abort ID differs"}
+    var warned=false;val estimate=System.nanoTime()+TimeUnit.SECONDS.toNanos(15)
+    var raw=checkNotNull(abortPreparedRenderer){"actual renderer abort callback absent"}(id)
+    while(!EmbeddedDuplexPreparedRenderer.terminal(raw,id)){
+      if(!warned&&System.nanoTime()>=estimate){warned=true;android.util.Log.w("RQSpatialCameraPanel","same renderer cleanup remains Pending")}
+      Thread.sleep(10);raw=checkNotNull(abortPreparedRenderer){"actual renderer abort callback absent"}(id)
+    }
+    preparedRendererId=null;raw
+  }
   private var ownedPeerGeneration = 0L
   private var retirementGeneration = 0L
   private var ownedDecoderToken = 0L
   private var ownedReaderGeneration = 0L
+  override fun retireArchivedPreparedRenderer(id:String) = serialized {
+    check(preparedRendererId==null || preparedRendererId==id) { "archived renderer ID differs" }
+    check(dormantPeerRoute==null && ownedPeerGeneration==0L && retirementGeneration==0L &&
+        ownedDecoderToken==0L && ownedReaderGeneration==0L) { "archived renderer projection remains Pending" }
+    preparedRendererId=null
+    Unit
+  }
   private fun concurrentOwn(): Boolean = OwnPackedPoolNative.captureRouteSelected() && OwnStereoCaptureRuntime.currentForApplication() != null
   override fun resumeOwnProjection(ownerAlive: java.util.function.BooleanSupplier) = serialized {
     activateOwnProjectionCurrent(ownerAlive)
@@ -60,20 +111,21 @@ internal class EmbeddedDuplexDisplayCoordinator(
     Unit
   }
 
-  override fun ensureLocalCaptureStopped(): Long = serialized {
+  override fun ensureLocalCaptureStopped(): Long = serialized { ensureLocalCaptureStoppedCurrent(null) }
+  private fun ensureLocalCaptureStoppedCurrent(desiredStop: java.util.function.BooleanSupplier?): Long {
     val current = routing.snapshot()
     if (concurrentOwn()) {
       check(EmbeddedDuplexNative.localCameraQuiescent()) { "old native local acquisition remains Pending" }
-      return@serialized current.generation
+      return current.generation
     }
-    if (current.requested == SpatialVideoSource.Peer) {
+    return if (current.requested == SpatialVideoSource.Peer) {
       check(EmbeddedDuplexNative.localCameraQuiescent()) { "local capture still owns camera resources" }
       current.generation
     } else {
       val generation = if (current.requested == SpatialVideoSource.Disabled && current.failed == null) {
         current.generation
       } else request(SpatialVideoSource.Disabled)
-      awaitSource(generation, SpatialVideoSource.Disabled)
+      awaitSource(generation, SpatialVideoSource.Disabled, desiredStop)
       check(EmbeddedDuplexNative.localCameraQuiescent()) { "local camera shutdown incomplete" }
       generation
     }
@@ -94,8 +146,15 @@ internal class EmbeddedDuplexDisplayCoordinator(
           own.phase() == OwnStereoCaptureRuntime.Phase.Live) { "concurrent Own capture superseded" }
       check(capture.fresh()) { "concurrent Own capture not fresh" }
       check(carrier() == context) { "concurrent Own carrier superseded" }
-      routing.beginEmbeddedConcurrentProjectionPeerRequest(proof)
-    } else routing.beginEmbeddedProjectionPeerRequest()
+      val prepared=dormantPeerRoute
+      if(prepared == null)routing.beginEmbeddedConcurrentProjectionPeerRequest(proof)
+      else routing.beginPreparedEmbeddedPeerRequest(prepared,proof)
+    } else {
+      val prepared=dormantPeerRoute
+      if(prepared == null)routing.beginEmbeddedProjectionPeerRequest()
+      else routing.beginPreparedEmbeddedPeerRequest(prepared,null)
+    }
+    dormantPeerRoute=null
     ownedPeerGeneration = staged.generation
     retirementGeneration = 0L
     ownedDecoderToken = 0L
@@ -132,6 +191,8 @@ internal class EmbeddedDuplexDisplayCoordinator(
   }
 
   override fun retirePeerProjection() = serialized {
+    // Reader/decoder owner has already earned its actual terminal join before this metadata is released.
+    if(ownedPeerGeneration == 0L)dormantPeerRoute=null
     if (concurrentOwn()) {
       if (ownedPeerGeneration != 0L && ownedDecoderToken != 0L && ownedReaderGeneration != 0L) {
         check(OwnPackedPoolNative.nativeRetirePeerSource(ownedPeerGeneration, ownedDecoderToken, ownedReaderGeneration)) {
@@ -147,6 +208,11 @@ internal class EmbeddedDuplexDisplayCoordinator(
       // Removal is source-only. Incoming decoder and submitted GPU fences own terminal proof.
       ownedPeerGeneration = 0L; ownedDecoderToken = 0L; ownedReaderGeneration = 0L
       retirementGeneration = 0L
+      // Exact source/routing teardown is earned. Retire only this preparation's
+      // renderer reservation; the independent Own graph remains live. Keep its
+      // ID on callback failure so cleanup retries the same reservation without
+      // repeating the already-completed routing retirement.
+      preparedRendererId?.let { abortDormantPeerRenderer(it) }
       return@serialized Unit
     }
     if (ownedPeerGeneration != 0L) {
@@ -166,7 +232,10 @@ internal class EmbeddedDuplexDisplayCoordinator(
       awaitSource(retirementGeneration, SpatialVideoSource.Disabled)
       ownedPeerGeneration = 0L
       retirementGeneration = 0L
+      ownedDecoderToken = 0L
+      ownedReaderGeneration = 0L
     }
+    preparedRendererId?.let { abortDormantPeerRenderer(it) }
     Unit
   }
 
@@ -197,10 +266,13 @@ internal class EmbeddedDuplexDisplayCoordinator(
     return begun.generation
   }
 
-  private fun awaitSource(generation: Long, source: SpatialVideoSource) {
+  private fun awaitSource(generation: Long, source: SpatialVideoSource,
+      desiredStop: java.util.function.BooleanSupplier? = null) {
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
-    while (System.nanoTime() < deadline) {
+    var warned = false
+    while (desiredStop != null || System.nanoTime() < deadline) {
       check(routing.snapshot().generation == generation) { "source transition superseded" }
+      check(desiredStop?.asBoolean != true) { "actual desired Stop during source preparation" }
       val receipt = read(generation)
       if (receipt != null) {
         val state = routing.reportNativeReadback(receipt)
@@ -209,6 +281,10 @@ internal class EmbeddedDuplexDisplayCoordinator(
             else SpatialVideoSourceResult.Effective
         if (receipt.routeGeneration == generation && receipt.source == source && receipt.result == terminal &&
             receipt.hasStages(SpatialVideoSourceStage.requiredFor(source))) return
+      }
+      if (!warned && System.nanoTime() >= deadline) {
+        warned = true
+        android.util.Log.w("RQSpatialCameraPanel", "same source preparation remains Pending")
       }
       Thread.sleep(10)
     }

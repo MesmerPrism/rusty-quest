@@ -1610,6 +1610,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         restartLocal = cameraHwbProjectionRawCarrierCoordinator::restartLocalAcquisition,
         startOwn = cameraHwbProjectionRawCarrierCoordinator::startOwnSourceSetCommonGraph,
         stopWholeProjection = { stopCameraHwbProjectionPanel("concurrent-qualification-whole-app-close"); Unit },
+        prepareRenderer = cameraHwbProjectionRawCarrierCoordinator::prepareDormantPeerRenderer,
+        readPreparedRenderer = cameraHwbProjectionRawCarrierCoordinator::readDormantPeerRenderer,
+        abortPreparedRenderer = cameraHwbProjectionRawCarrierCoordinator::abortDormantPeerRenderer,
     )
   }
   @Volatile private var embeddedDuplexAttachmentGeneration = 0L
@@ -1717,6 +1720,29 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runOnUiThread {
         marker("channel=embedded-duplex status=" +
             if (failure == null) "real-peer-bootstrap-route-unverified" else "real-peer-bootstrap-pending-cleanup")
+      }
+    }
+    return result
+  }
+
+  /** Explicit app quit entry; callers finish only after this actual owner completes. */
+  fun closeEmbeddedDuplexProduct(): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation == 0L || embeddedDuplexActivityDestroying) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(IllegalStateException("embedded display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.closeProduct(this, generation)
+    result.whenComplete { _, failure ->
+      if (failure == null) {
+        embeddedDuplexAttachmentGeneration = 0L
+        embeddedDuplexRuntimeFuture = null
+      }
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "product-closed" else "product-close-pending")
       }
     }
     return result
@@ -2161,6 +2187,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
             },
             startPeerCommonGraph = ::nativeStartSpatialPeerProjectionCommonGraph,
+            preparePeerRenderer = ::nativePrepareSpatialPeerRenderer,
+            readPreparedPeerRenderer = ::nativeReadPreparedSpatialPeerRenderer,
+            abortPreparedPeerRenderer = ::nativeAbortPreparedSpatialPeerRenderer,
             startSourceSetCommonGraph = ::nativeStartSourceSetCommonGraph,
             deferOwnNativeStart = io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative::captureRouteSelected,
             updateNativeLayerFence = ::nativeUpdateCameraHwbProjectionLayerFence,
@@ -3621,8 +3650,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       } else {
         val pending = embeddedDuplexRuntimeFuture
         val close = {
-          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
-              .EmbeddedDuplexRuntimeService.closeNoMedia(this, generation)
+          (if (BuildConfig.EMBEDDED_DUPLEX_FRESH_SETUP_POLICY == "none")
+            io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.closeNoMedia(this, generation)
+          else io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.closeProduct(this, generation))
               .whenComplete { _, failure ->
                 if (failure == null) {
                   embeddedDuplexAttachmentGeneration = 0L
@@ -3630,9 +3660,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   scheduleOrderedActivityDestroyCleanup()
                 } else {
                   // Keep the old display callback and lifecycle executor reachable.
-                  // The process host remains CLOSING for exact no-media retry;
+                  // The actual product owner retains pending Stop/cleanup for retry;
                   // Activity replacement must not silently adopt this generation.
-                  runOnUiThread { marker("channel=embedded-duplex status=no-media-close-pending") }
+                  runOnUiThread { marker("channel=embedded-duplex status=product-close-pending") }
                 }
               }
         }
@@ -5215,6 +5245,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): LongArray
 
   private external fun nativeStartSourceSetCommonGraph(surface: AndroidSurface, width: Int, height: Int, frameCount: Int): Long
+
+  private external fun nativePrepareSpatialPeerRenderer(preparationId:String,surface:AndroidSurface,width:Int,height:Int,
+      routeGeneration:Long,launchChallenge:Long,layerGeneration:Long,layerSwitchCount:Long,layerStateCode:Int):String
+  private external fun nativeReadPreparedSpatialPeerRenderer(preparationId:String):String
+  private external fun nativeAbortPreparedSpatialPeerRenderer(preparationId:String):String
 
   private external fun nativeStartSpatialPeerProjectionCommonGraph(
       routeGeneration: Long,

@@ -2,6 +2,8 @@
 fn concurrent_revoker_uses_distinct_retained_authority_and_exact_adoption() {
     let cfg=config(QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,vec![ManifoldBrokerFeature::MediaSession],"command.media.session.start",true)
         .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+            fresh_setup_local_peer_id: None,
+            fresh_setup_enrollment_selection: None,
             ongoing_media_policy: None,
             schema_id:crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.to_owned(),runtime_host_id:id("host.quest-a.media-runtime"),
             trusted_operator_ids:vec![id("operator.quest.peer-enrollment")],trusted_key_fingerprints:vec![id("fingerprint.peer.quest-a"),id("fingerprint.peer.quest-b")],
@@ -31,6 +33,8 @@ fn concurrent_revoker_uses_distinct_retained_authority_and_exact_adoption() {
         );
         runtime_config = runtime_config
             .with_embedded_duplex(QuestEmbeddedDuplexAuthorityConfig {
+            fresh_setup_local_peer_id: None,
+            fresh_setup_enrollment_selection: None,
                 ongoing_media_policy: None,
                 schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.to_owned(),
                 runtime_host_id: id("host.quest-a.media-runtime"),

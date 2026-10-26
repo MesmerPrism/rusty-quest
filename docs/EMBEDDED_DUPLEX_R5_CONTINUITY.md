@@ -10,7 +10,9 @@ Explicit current debug mutations can use [Original custody](EMBEDDED_DUPLEX_ORIG
 for durable begin/query/ACK observations and a process-incarnation companion on
 the existing command lane. The default no-ID finite/direct route remains
 available. Original completion/ACK never replaces the physical cleanup or
-runtime authority proofs below, and adds no fresh/succession lifecycle API.
+runtime authority proofs below. The separately selected
+[fresh credential setup provider](EMBEDDED_DUPLEX_FRESH_SETUP.md) adds typed
+fresh phases and lifecycle-v4 joins; owner succession remains separate.
 
 ## App and native execution ownership
 

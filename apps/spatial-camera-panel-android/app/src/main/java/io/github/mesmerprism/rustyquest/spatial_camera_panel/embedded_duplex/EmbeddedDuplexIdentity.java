@@ -202,6 +202,36 @@ final class EmbeddedDuplexIdentity {
         return sign(identity, signingBytes);
     }
 
+    /** Separate fixed domains; the native borrowed phase validates exact signed context first. */
+    static byte[] signValidatedFreshPairSetupBytes(Identity identity,byte[] bytes)throws Exception {
+        return signFreshDomain(identity,bytes,"rusty.manifold.peer.fresh_pair_setup_authorization.v3");
+    }
+    static byte[] signValidatedFreshPhasePrepareBytes(Identity identity,byte[] bytes)throws Exception {
+        return signFreshDomain(identity,bytes,"rusty.manifold.peer.fresh_phase_prepare_authorization.v2");
+    }
+    static byte[] signPreparedPeerStartFrameBytes(Identity identity,byte[] bytes)throws Exception {
+        return signFreshDomain(identity,bytes,"rusty.quest.embedded_duplex.prepared_start_frame.v1");
+    }
+    static byte[] signFreshPairSetupFrameBytes(Identity identity,byte[] bytes)throws Exception {
+        return signFreshDomain(identity,bytes,"rusty.quest.embedded_duplex.fresh_pair_setup_frame.v2");
+    }
+    private static byte[] signFreshDomain(Identity identity,byte[] bytes,String fixedDomain)throws Exception {
+        byte[] domain=(fixedDomain+"\0").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if(identity==null||bytes==null||bytes.length<=domain.length||bytes.length>MAX_AUTHORITY_BYTES||!startsWith(bytes,domain))
+            throw new IllegalArgumentException("fresh setup signing domain or bounds");
+        return sign(identity,bytes);
+    }
+    static byte[] signRetainedManifoldFreshHistory(Identity identity,EmbeddedDuplexManifoldFreshArchive.PreparedCustody sealed)throws Exception{
+        if(identity==null || sealed==null)throw new IllegalArgumentException("source-owned sealed custody required");
+        byte[] signing=sealed.signingBytes();
+        // Only the immutable archive writer can construct PreparedCustody, after
+        // source joins and file/directory fsync/readback. No generic domain gain.
+        if(identity.seed!=null){
+            byte[] result=EmbeddedDuplexNative.ed25519SignFreshHistoryCustody(identity.seed,signing);
+            if(result==null || result.length!=64)throw new IllegalStateException("pure custody signer failed");return result;
+        }
+        Signature signature=Signature.getInstance("Ed25519");signature.initSign(identity.privateKey);signature.update(signing);return signature.sign();
+    }
     private static byte[] sign(Identity identity, byte[] signingBytes) throws Exception {
         if (identity.seed != null) {
             byte[] result = EmbeddedDuplexNative.ed25519SignAuthorityBytes(identity.seed, signingBytes);

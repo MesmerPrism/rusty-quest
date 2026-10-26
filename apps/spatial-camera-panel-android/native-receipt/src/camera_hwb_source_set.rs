@@ -4,6 +4,7 @@ unsafe fn render_source_set_common_graph(
     requested_width: u32,
     requested_height: u32,
     max_frames: u32,
+    admitted_own_epoch: crate::stereo_input_set::SourceEpoch,
     cancellation: Arc<AtomicBool>,
     readiness: &crate::source_graph_startup::Readiness,
     ready_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
@@ -11,10 +12,14 @@ unsafe fn render_source_set_common_graph(
     if cancellation.load(Ordering::Acquire) {
         return Err("source-set-session-cancelled-before-wsi".to_string());
     }
-    let mut owned = PeerCommonGraphResources::new(CameraHwbWsiParts::create(
+
+    let mut owned = PeerCommonGraphResources::new(CameraHwbWsiParts::create_with_startup(
         window,
         requested_width,
         requested_height,
+        max_frames == 0,
+        &cancellation,
+        Some(OwnedRendererStartupSource::Own(admitted_own_epoch)),
     )?);
     let run_result = (|| -> Result<(), String> {
         if cancellation.load(Ordering::Acquire) {
@@ -22,15 +27,25 @@ unsafe fn render_source_set_common_graph(
         }
 
         let deadline = Instant::now() + Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS);
+        let mut seed_estimate_warned = false;
         let mut first_frame = loop {
             if cancellation.load(Ordering::Acquire) {
                 return Err("source-set-cancelled-before-seed".into());
+            }
+            if !crate::own_stereo_capture_runtime::capture_epoch_is_current(admitted_own_epoch) {
+                return Err("source-set-admitted-own-epoch-lost-before-seed".into());
             }
             if let Some(seed) = crate::spatial_stereo_source_import::source_carrier_seed()? {
                 break seed;
             }
             if Instant::now() >= deadline {
-                return Err("source-set-real-seed-timeout".into());
+                if max_frames > 0 {
+                    return Err("source-set-real-seed-timeout".into());
+                }
+                if !seed_estimate_warned {
+                    seed_estimate_warned = true;
+                    log_marker("status=source-set-seed-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());
+                }
             }
             thread::yield_now();
         };
@@ -554,6 +569,7 @@ unsafe fn render_source_set_common_graph(
                     return Err(format!("peer-spatial-sdk-enqueue-{enqueue}"));
                 }
                 let retirement_deadline = Instant::now() + Duration::from_secs(2);
+                let mut retirement_estimate_warned = false;
                 let mut retirement =
                     crate::spatial_sdk_depth_handoff::SpatialSubmitRetirementState::new_bound(
                         request_id,
@@ -562,9 +578,16 @@ unsafe fn render_source_set_common_graph(
                     );
                 let mut shutdown_reason = None;
                 loop {
+                    if max_frames == 0
+                        && !retirement_estimate_warned
+                        && Instant::now() >= retirement_deadline
+                    {
+                        retirement_estimate_warned = true;
+                        log_marker("status=peer-spatial-sdk-retirement-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());
+                    }
                     if shutdown_reason.is_none()
                         && (cancellation.load(Ordering::Acquire)
-                            || Instant::now() >= retirement_deadline)
+                            || max_frames > 0 && Instant::now() >= retirement_deadline)
                     {
                         shutdown_reason = Some(if cancellation.load(Ordering::Acquire) {
                             "source-set-session-cancelled-during-sdk-retirement"
@@ -871,7 +894,14 @@ pub(crate) unsafe fn start_source_set_common_graph(
             ACameraNativeWindow_release(window);
             return 0;
         }
+        let Some(next) = owner.construction_attempts.checked_add(1) else {
+            owner.claim.release(route_generation);
+            ACameraNativeWindow_release(window);
+            return 0;
+        };
+        owner.construction_attempts = next;
         // Diagnostic reset follows the actual existing physical claim/release gate.
+
         owner.window_address = window_address;
         owner.own_epoch = Some(admitted_epoch);
         owner.cancellation = Some(cancellation.clone());
@@ -889,6 +919,7 @@ pub(crate) unsafe fn start_source_set_common_graph(
                         requested_width.max(64),
                         requested_height.max(64),
                         max_frames,
+                        admitted_epoch,
                         worker_cancellation,
                         &worker_readiness,
                         ready_tx,
@@ -927,11 +958,18 @@ pub(crate) unsafe fn start_source_set_common_graph(
                 let released = owner.claim.release(route_generation);
                 debug_assert!(released);
                 ACameraNativeWindow_release(window);
+
                 return 0;
             }
         }
     }
-    let mut outcome = readiness.wait(&ready_rx, crate::source_graph_startup::READY_WAIT);
+    let mut outcome = if max_frames == 0 {
+        readiness.wait_owned(&ready_rx,crate::source_graph_startup::READY_WAIT,&cancellation,||{
+            log_marker("status=source-set-startup-estimate-elapsed sameOriginal=true cancellationRequested=false".to_owned());Ok(())
+        })
+    } else {
+        readiness.wait(&ready_rx, crate::source_graph_startup::READY_WAIT)
+    };
     if outcome == crate::source_graph_startup::WaitOutcome::Ready {
         let owner = PEER_COMMON_GRAPH_SESSION
             .lock()

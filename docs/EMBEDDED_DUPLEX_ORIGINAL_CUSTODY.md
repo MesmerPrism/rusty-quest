@@ -87,6 +87,10 @@ and explicitly selected ongoing-v2 policy when those inputs change.
 
 These are source/host checks. They establish no APK, device, physical camera,
 codec, LAN, performance, owner succession or fresh-session acceptance.
-Fresh-only credential/lifecycle-v4, continuation, archive and owner-succession
-calls remain unavailable. Independent development DATA sessions and the
-independently pinned example are separate consumers and contracts.
+The explicitly selected [fresh credential setup provider](EMBEDDED_DUPLEX_FRESH_SETUP.md)
+adds its own typed phase, continuation and archive custody joins to the same
+actor and command lane. It preserves exact canonical checkpoint reads and the
+existing finite begin/carry/query/ACK rules. Fresh-specific settlement must
+earn its actual typed source and physical joins; it cannot settle a generic
+unknown observation. Owner succession, independent development DATA sessions
+and the independently pinned example remain separate contracts.

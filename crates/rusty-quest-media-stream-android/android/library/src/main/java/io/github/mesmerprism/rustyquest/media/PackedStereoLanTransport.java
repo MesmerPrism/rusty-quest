@@ -18,6 +18,7 @@ final class PackedStereoLanTransport {
     private volatile Socket source, sink;
     private volatile Thread worker, deadlineWorker;
     private volatile boolean stopped, failed;
+    private volatile boolean preparedMode,preparedConnection;
     private volatile long writeDeadlineNs, bytes;
     private Socket writeSocket;
     private volatile String stage = "NEW", firstStage = "NONE", firstCause = "NONE";
@@ -35,6 +36,23 @@ final class PackedStereoLanTransport {
         this.sourceHost = sourceHost; this.sourcePort = sourcePort;
         this.bindHost = bindHost; this.sinkHost = sinkHost; this.sinkPort = sinkPort;
     }
+
+    /** Same exact transport/socket originals, established before media authority. */
+    void prepareClosedSource()throws Exception {
+        synchronized(lock) {
+            if(worker!=null || stopped)throw new IllegalStateException("prepared LAN transport already entered");
+            preparedMode=true;
+            worker=new Thread(this::forward,"rusty-packed-prepared-lan-forward");
+            deadlineWorker=new Thread(this::watchWrites,"rusty-packed-prepared-lan-write-policy");
+            worker.setDaemon(true);deadlineWorker.setDaemon(true);deadlineWorker.start();worker.start();
+        }
+        boolean warned=false;
+        while(!connected.await(1000L,TimeUnit.MILLISECONDS)) {
+            if(!warned){warned=true;try{android.util.Log.w("RQSpatialCameraPanel","prepared LAN connection pending; same sockets retained");}catch(RuntimeException ignored){}}
+        }
+        if(!preparedConnected())throw new IOException("actual prepared LAN connection ended");
+    }
+    boolean preparedConnected(){return preparedMode && preparedConnection && !stopped && !failed && worker!=null && worker.isAlive();}
 
     void start() {
         synchronized (lock) {
@@ -69,8 +87,8 @@ final class PackedStereoLanTransport {
         // Publish before either bind or connect so Stop can cancel the attempt.
         if (!localSource) next.bind(new InetSocketAddress(InetAddress.getByName(bindHost), 0));
         next.connect(new InetSocketAddress(localSource ? sourceHost : sinkHost,
-                localSource ? sourcePort : sinkPort), 3000);
-        next.setTcpNoDelay(true); next.setSoTimeout(4000);
+                localSource ? sourcePort : sinkPort), preparedMode?0:3000);
+        next.setTcpNoDelay(true); next.setSoTimeout(preparedMode?0:4000);
         return next;
     }
 
@@ -84,6 +102,7 @@ final class PackedStereoLanTransport {
                     Socket remote = connect(false);
                     stage = "SOURCE_CONNECT";
                     Socket local = connect(true);
+                    preparedConnection=preparedMode;
                     connected.countDown();
                     InputStream input = local.getInputStream();
                     OutputStream output = remote.getOutputStream();
@@ -114,6 +133,7 @@ final class PackedStereoLanTransport {
                     synchronized (lock) { writeDeadlineNs = 0L; writeSocket = null; }
                     closeConnections();
                 }
+                if(preparedMode){if(!stopped)failed=true;break;} // No transport replay after a real prepared-original failure.
                 if (!stopped && attempt == 8) failed = true;
             }
         } catch (InterruptedException interrupted) {
@@ -181,6 +201,11 @@ final class PackedStereoLanTransport {
         return current.isClosed() ? null : current;
     }
 
+    void requestStop() {
+        stopped=true;connected.countDown();closeConnections();
+        Thread active=worker,watcher=deadlineWorker;
+        if(active!=null)active.interrupt();if(watcher!=null)watcher.interrupt();
+    }
     void stop() {
         stopped = true;
         connected.countDown();

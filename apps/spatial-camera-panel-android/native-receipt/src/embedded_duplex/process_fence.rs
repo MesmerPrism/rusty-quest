@@ -371,12 +371,83 @@ struct RegistryState {
     busy: bool,
     writer: Option<Arc<Writer>>,
     active: Option<Arc<NativeCapability>>,
+    absence_retired: Option<AppBinding>,
 }
 #[derive(Default)]
 pub(super) struct NativeFenceRegistry {
     state: Mutex<RegistryState>,
 }
 impl NativeFenceRegistry {
+    /// Typed observation only. Missing/failed capability validation never becomes absence.
+    pub fn ownership_status(&self) -> Result<serde_json::Value, String> {
+        let (busy, writer, cap, closed) = {
+            let s = self
+                .state
+                .lock()
+                .map_err(|_| "native registry status poisoned")?;
+            (
+                s.busy,
+                s.writer.is_some(),
+                s.active.clone(),
+                s.absence_retired.clone(),
+            )
+        };
+        if busy {
+            return Ok(serde_json::json!({"state":"busy"}));
+        }
+        if let Some(cap) = cap {
+            let retired = cap.retired.load(Ordering::SeqCst);
+            if !retired {
+                cap.require_live()?;
+            }
+            return Ok(
+                serde_json::json!({"state":if retired{"retired"}else{"admitted"},
+                "app_process_generation":cap.binding.generation,"app_record_sha256":cap.binding.record_sha256,
+                "native_executor_generation":cap.generation}),
+            );
+        }
+        if let Some(binding) = closed {
+            return Ok(serde_json::json!({"state":"absence_retired",
+            "app_process_generation":binding.generation,"app_record_sha256":binding.record_sha256}));
+        }
+        Ok(serde_json::json!({"state":if writer{"writer_without_capability"}else{"never_claimed"}}))
+    }
+
+    /// Process-local absence, authenticated by the same live app owner channel.
+    /// This allocates no native capability, opens no native writer, and changes no counter.
+    pub fn retire_never_claimed(
+        &self,
+        source: Arc<dyn AppFenceSource>,
+    ) -> Result<AppBinding, String> {
+        let first = AppBinding::parse(&source.record()?)?;
+        {
+            let mut s = self
+                .state
+                .lock()
+                .map_err(|_| "native absence registry poisoned")?;
+            if s.busy || s.writer.is_some() || s.active.is_some() || s.absence_retired.is_some() {
+                return Err("native never-claimed absence unavailable".into());
+            }
+            s.busy = true;
+        }
+        // No registry mutex is held across the actual app-channel callback.
+        // A failed callback leaves the gate busy/unknown rather than enabling a claim.
+        let second = AppBinding::parse(&source.record()?)?;
+        if first != second {
+            return Err("native absence app owner changed".into());
+        }
+        let mut s = self
+            .state
+            .lock()
+            .map_err(|_| "native absence registry poisoned")?;
+        if !s.busy || s.writer.is_some() || s.active.is_some() || s.absence_retired.is_some() {
+            return Err("native absence registry changed".into());
+        }
+        s.absence_retired = Some(first.clone());
+        s.busy = false;
+        Ok(first)
+    }
+
     pub fn claim(
         &self,
         directory: &Path,
@@ -387,7 +458,8 @@ impl NativeFenceRegistry {
                 .state
                 .lock()
                 .map_err(|_| "native fence registry poisoned")?;
-            if state.busy
+            if state.absence_retired.is_some()
+                || state.busy
                 || state
                     .active
                     .as_ref()

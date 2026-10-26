@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import uuid
@@ -43,6 +44,7 @@ def main():
     parser.add_argument('--java-home', type=pathlib.Path)
     parser.add_argument('--json-jar', type=pathlib.Path)
     parser.add_argument('--smoke', action='store_true')
+    parser.add_argument('--support-classpath', default='', help='Current compiled production fresh-helper classes; not runtime proof')
     args = parser.parse_args()
     root = args.root.resolve()
     out = (args.output or root / 'target' / ('originals-host-' + uuid.uuid4().hex)).resolve()
@@ -79,7 +81,9 @@ def main():
     service_methods = [extract_method(service_source, signature) for signature in (
         'public static Bundle beginOriginal(', 'public static Bundle queryOriginal(',
         'public static Bundle acknowledgeOriginal(')]
-    executor_start = host_source.index('private final ExecutorService commands =')
+    executor_match = re.search(r'private final [\w.]+ commands =', host_source)
+    if executor_match is None: raise ValueError('Actual command executor declaration unavailable')
+    executor_start = executor_match.start()
     executor_end = host_source.index('\n    });', executor_start) + len('\n    });')
     actual_executor = host_source[executor_start:executor_end]
     imports = 'package ' + package.replace('/', '.') + ';\nimport android.content.Context; import android.os.Bundle; import org.json.JSONObject; import java.util.concurrent.*; import java.util.concurrent.atomic.AtomicReference; import java.util.function.Supplier;\n'
@@ -91,6 +95,7 @@ def main():
       private long nativeExecutorGeneration;
       private String nativeAppRecordSha256,terminalWholeReceipt;
       private JSONObject originalClosedActor;
+      private EmbeddedDuplexOriginals.Record activeCommandOriginal;
       private Object platform,resources;
       private final AtomicReference<Phase> phase=new AtomicReference<>(Phase.NEW);
       private EmbeddedDuplexProcessHost(Context context){applicationContext=context;}
@@ -103,7 +108,20 @@ def main():
       void harnessDropResources(){resources=null;}
       void harnessClose()throws Exception{commands.shutdown();if(!commands.awaitTermination(5,TimeUnit.SECONDS))throw new AssertionError("command lane did not settle");if(processFence!=null)processFence.close();}
     """
-    models[package + '/EmbeddedDuplexProcessHost.java'] = imports + 'final class EmbeddedDuplexProcessHost {\n' + host_leaves + actual_executor + '\n' + '\n'.join(host_methods) + '\n}'
+    original_source = (production / 'EmbeddedDuplexOriginals.java').read_text(encoding='utf-8')
+    exercised = {re.search(r'(\w+)\s*\(', method).group(1) for method in host_methods}
+    compile_only = []
+    for name in sorted(set(re.findall(r'EmbeddedDuplexProcessHost\.(\w+)\(', original_source)) - exercised):
+        declaration = re.search(r'(?m)^    (?:public )?static [^\n{]*?\b' + re.escape(name) + r'\(', host_source)
+        if declaration is None: raise ValueError('Missing actual Host API: ' + name)
+        method = extract_method(host_source, declaration.group().strip())
+        header = method[:method.index('{')]
+        # These fresh physical/resource APIs are outside this finite/custody regression's execution scope.
+        # Any accidental invocation fails; no replacement result is supplied for an untested owner.
+        compile_only.append(header + '{throw new UnsupportedOperationException("fresh physical owner outside this regression");}')
+    if compile_only and not args.support_classpath:
+        raise ValueError('Expanded fresh producer requires --support-classpath with current compiled production helper classes')
+    models[package + '/EmbeddedDuplexProcessHost.java'] = imports + 'final class EmbeddedDuplexProcessHost {\n' + host_leaves + actual_executor + '\n' + '\n'.join(host_methods + compile_only) + '\n}'
     models[package + '/EmbeddedDuplexRuntimeService.java'] = imports + 'public final class EmbeddedDuplexRuntimeService {\n' + '\n'.join(service_methods) + '\n}'
     # Redirect only the OS filesystem root; identity parsing, companion and fence producers remain actual source.
     incarnation_source = (production / 'EmbeddedDuplexProcessIncarnation.java').read_text(encoding='utf-8')
@@ -123,16 +141,18 @@ def main():
     classes = out / 'classes'
     classes.mkdir()
     sources = [production / 'EmbeddedDuplexCanonicalJson.java', production / 'EmbeddedDuplexOriginals.java', production / 'EmbeddedDuplexProcessFence.java', fixture]
+    for name in ('EmbeddedDuplexFreshLifecycle.java', 'EmbeddedDuplexNativeOperationFailure.java'):
+        if (production / name).exists(): sources.append(production / name)
     source_paths = sources + [production / name for name in ('EmbeddedDuplexProcessHost.java', 'EmbeddedDuplexRuntimeService.java', 'EmbeddedDuplexProcessIncarnation.java')] + [pathlib.Path(__file__).resolve()]
     source_pins = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
-    command = [str(java_home / 'bin/javac.exe'), '--release', '17', '-encoding', 'UTF-8', '-cp', str(jar), '-d', str(classes)] + model_paths + [str(p) for p in sources]
+    command = [str(java_home / 'bin/javac.exe'), '--release', '17', '-encoding', 'UTF-8', '-cp', os.pathsep.join([str(jar), args.support_classpath]) if args.support_classpath else str(jar), '-d', str(classes)] + model_paths + [str(p) for p in sources]
     with (out / 'compile.log').open('wb') as stream:
         subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=60)
     with (out / 'controls.log').open('wb') as stream:
-        subprocess.run([str(java_home / 'bin/java.exe'), '-Djava.io.tmpdir=' + str(out / 'runtime'), '-Dhost.proc=' + str(proc), '-cp', os.pathsep.join((str(classes), str(jar))), package.replace('/', '.') + '.EmbeddedDuplexOriginalsHostTest'], stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=60)
+        subprocess.run([str(java_home / 'bin/java.exe'), '-Djava.io.tmpdir=' + str(out / 'runtime'), '-Dhost.proc=' + str(proc), '-cp', os.pathsep.join((str(classes), str(jar), args.support_classpath)), package.replace('/', '.') + '.EmbeddedDuplexOriginalsHostTest'], stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=60)
     if any(hashlib.sha256((root / relative).read_bytes()).hexdigest() != digest for relative, digest in source_pins.items()):
         raise ValueError('Source changed during the exact-body host controls; rerun against stable inputs')
-    result = {'status': 'passed', 'sources': source_pins, 'scope': 'Production Original store and exact extracted Host submit/forApplication/actor/settled plus RuntimeService begin/query/ACK; real command executor, Future, fence and file operations. Android/process-root/native/resources leaves modeled.', 'extracted_methods': [{'sha256': hashlib.sha256(method.encode()).hexdigest(), 'source': 'EmbeddedDuplexProcessHost.java' if method in host_methods else 'EmbeddedDuplexRuntimeService.java', 'signature': method[:method.index(chr(123))].strip()} for method in host_methods + service_methods], 'modeled_leaves': ['Android Context/Bundle/Process/system APIs', 'proc root path only; real identity parser', 'checkpoint/evidence journal reads return absent', 'retained platform/resources and native actor facts initialized by host fixture'], 'generated_sources': {str(pathlib.Path(path).relative_to(out)): hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest() for path in model_paths}, 'limitations': ['No APK, device, native effects or physical-cleanup claim.']}
+    result = {'status': 'passed', 'sources': source_pins, 'scope': 'Production Original store and exact extracted Host submit/forApplication/actor/settled plus RuntimeService begin/query/ACK; real command executor, Future, fence and file operations. Android/process-root/native/resources leaves modeled.', 'extracted_methods': [{'sha256': hashlib.sha256(method.encode()).hexdigest(), 'source': 'EmbeddedDuplexProcessHost.java' if method in host_methods else 'EmbeddedDuplexRuntimeService.java', 'signature': method[:method.index(chr(123))].strip()} for method in host_methods + service_methods], 'modeled_leaves': ['Android Context/Bundle/Process/system APIs', 'proc root path only; real identity parser', 'checkpoint/evidence journal reads return absent', 'retained platform/resources and native actor facts initialized by host fixture'], 'generated_sources': {str(pathlib.Path(path).relative_to(out)): hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest() for path in model_paths}, 'compile_only_unexercised_host_apis': [method[:method.index('{')].strip() for method in compile_only], 'support_classpath': args.support_classpath, 'limitations': ['No APK, device, native effects or physical-cleanup claim.', 'Fresh physical/resource Host methods are compile-only boundaries that reject invocation; this regression executes the accepted finite/custody caller path.']}
     (out / 'RESULT.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({'status': 'passed', 'output': str(out)}))
 

@@ -103,4 +103,29 @@ public final class EmbeddedDuplexRuntimeService {
     public static boolean preflightLive(Context context, EmbeddedDuplexStartPreflight observed) {
         return EmbeddedDuplexProcessHost.forApplication(context).preflightLive(observed);
     }
-}
+
+
+    /** Explicit app Close and lifecycle fallback share the authoritative whole-product close. */
+    public static CompletableFuture<String> closeProduct(Context context,long displayGeneration) {
+        return EmbeddedDuplexProcessHost.forApplication(context).closeProduct(displayGeneration);
+    }
+
+    public static CompletableFuture<String> completedSetupRecoveryStatus(Context context,String challenge){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).completedSetupRecoveryStatus(challenge);
+    }
+
+    public static CompletableFuture<String> preparePeerStart(Context context){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).preparePeerStart();
+    }
+    public static CompletableFuture<String> preparedPeerStartStatus(Context context){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).preparedPeerStartStatus();
+    }
+    public static CompletableFuture<String> peerRootStatus(Context context){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).peerRootStatus();
+    }
+    public static CompletableFuture<String> reestablishPeerRoots(Context context){
+        return EmbeddedDuplexProcessHost.existingForRecovery(context).reestablishPeerRoots();
+    }
+    public static CompletableFuture<EmbeddedDuplexPairStatus> continueFreshPair(Context context){
+        return EmbeddedDuplexProcessHost.forApplication(context).continueFreshPair();
+    }}

@@ -344,7 +344,14 @@ mod jni_boundary {
         }
         if accepted && receipt.words[2] != peer_projection_runtime::SOURCE_LOCAL && !concurrent_own
         {
-            crate::camera_hwb_probe::request_camera_hwb_probe_stop();
+            if crate::camera_hwb_probe::preserve_prepared_peer_source(
+                &receipt.words,
+                window as usize,
+            ) {
+                crate::camera_hwb_probe::stop_local_for_prepared_peer();
+            } else {
+                crate::camera_hwb_probe::request_camera_hwb_probe_stop();
+            }
         }
         if receipt.words[2] == peer_projection_runtime::SOURCE_DISABLED
             && receipt.words[11] == peer_projection_runtime::RESULT_PENDING
@@ -471,6 +478,106 @@ mod jni_boundary {
                 route_generation,
             )
         }
+    }
+    fn prepared_json(
+        env_raw: *mut jni::sys::JNIEnv,
+        result: Result<serde_json::Value, String>,
+    ) -> jni::sys::jstring {
+        let Ok(mut env) = (unsafe { JNIEnv::from_raw(env_raw) }) else {
+            return std::ptr::null_mut();
+        };
+        match result {
+            Ok(value) => env
+                .new_string(value.to_string())
+                .map(|s| s.into_raw())
+                .unwrap_or(std::ptr::null_mut()),
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error);
+                std::ptr::null_mut()
+            }
+        }
+    }
+    unsafe fn preparation_id(
+        env_raw: *mut jni::sys::JNIEnv,
+        raw: jni::sys::jstring,
+    ) -> Result<String, String> {
+        if raw.is_null() {
+            return Err("actual renderer preparation ID absent".into());
+        }
+        let mut env = JNIEnv::from_raw(env_raw).map_err(|_| "renderer JNI environment")?;
+        let text = jni::objects::JString::from_raw(raw);
+        let value: String = env
+            .get_string(&text)
+            .map_err(|_| "renderer preparation ID encoding")?
+            .into();
+        if value.len() != 32
+            || !value
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+        {
+            return Err("renderer preparation ID is not native canonical identity".into());
+        }
+        Ok(value)
+    }
+    #[no_mangle]
+    #[allow(non_snake_case)]
+    pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativePrepareSpatialPeerRenderer(
+        env: *mut jni::sys::JNIEnv,
+        _thiz: *mut c_void,
+        id: jni::sys::jstring,
+        surface: *mut c_void,
+        width: i32,
+        height: i32,
+        route: i64,
+        challenge: i64,
+        layer: i64,
+        switches: i64,
+        state: i32,
+    ) -> jni::sys::jstring {
+        let result = (|| {
+            let id = unsafe { preparation_id(env, id) }?;
+            if state != 1 || width < 64 || height < 64 {
+                return Err("actual dormant renderer carrier dimensions/state differ".into());
+            }
+            let _actual_call = crate::camera_hwb_probe::enter_prepared_peer_renderer(&id)?;
+            let window = unsafe { acquire_surface_window(env, surface) };
+            unsafe {
+                crate::camera_hwb_probe::prepare_peer_renderer(
+                    &id,
+                    &_actual_call,
+                    window,
+                    width as u32,
+                    height as u32,
+                    route,
+                    challenge,
+                    layer,
+                    switches,
+                )
+            }
+        })();
+        prepared_json(env, result)
+    }
+    #[no_mangle]
+    #[allow(non_snake_case)]
+    pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeReadPreparedSpatialPeerRenderer(
+        env: *mut jni::sys::JNIEnv,
+        _thiz: *mut c_void,
+        id: jni::sys::jstring,
+    ) -> jni::sys::jstring {
+        let result = unsafe { preparation_id(env, id) }
+            .and_then(|id| crate::camera_hwb_probe::read_prepared_peer_renderer(&id));
+        prepared_json(env, result)
+    }
+    #[no_mangle]
+    #[allow(non_snake_case)]
+    pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeAbortPreparedSpatialPeerRenderer(
+        env: *mut jni::sys::JNIEnv,
+        _thiz: *mut c_void,
+        id: jni::sys::jstring,
+    ) -> jni::sys::jstring {
+        let result = unsafe { preparation_id(env, id) }
+            .and_then(|id| crate::camera_hwb_probe::abort_prepared_peer_renderer(&id));
+        prepared_json(env, result)
     }
 }
 
