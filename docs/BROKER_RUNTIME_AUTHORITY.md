@@ -42,6 +42,14 @@ lease lineage, or call a private adapter command gate. Runtime-state,
 control-lease-authority, initialization-clock, and synchronization failures
 remain distinct typed errors.
 
+Initial finite media hosts use Manifold's typed snapshot constructors and the
+explicit `ManifoldPeerRuntimeTrustPolicyFieldsV1` input. Product-selected
+commands, grants, scopes, trust roots and revokers remain caller-supplied;
+initial revisions and empty histories retain the finite baseline. These
+constructors do not select an ongoing media policy or bypass ordinary owner
+validation. The independently Git-pinned Spatial Video Control example keeps
+its separate declared provider revision until its own adoption checkpoint.
+
 ## Transport request
 
 `rusty.quest.broker.server_mutation_request.v1` contains:
