@@ -1,4 +1,4 @@
-//! Borrowed faÃ§ade over the one live Broker and durable peer Runtime Host.
+//! Borrowed facade over the one live Broker and durable peer Runtime Host.
 
 use std::sync::{Arc, RwLock};
 
@@ -51,6 +51,10 @@ pub const QUEST_RETAINED_CLEANUP_TARGET_SCHEMA: &str =
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestRetainedCleanupSessionRenewal {
+    /// Native accepted checkpoint attestation, authenticated by the enclosing
+    /// signed Prepare. It is never detached restore or fresh media authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_checkpoint: Option<QuestRetainedCleanupContinuationCheckpoint>,
     /// Unique accepted renewal request.
     pub request_id: String,
     /// Stable session.
@@ -83,6 +87,27 @@ pub struct QuestRetainedCleanupSessionRenewal {
     pub reciprocal_expires_at_ms: u64,
     /// Digest of the complete canonical accepted receipt.
     pub receipt_sha256: String,
+}
+
+/// Compact native-owner ancestry signed into the existing cleanup Prepare.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestRetainedCleanupContinuationCheckpoint {
+    /// Closed prospective schema.
+    #[serde(rename = "$schema")]
+    pub schema_id: String,
+    /// Actual native owner checkpoint ordinal.
+    pub checkpoint_sequence: u64,
+    /// Same-session accepted renewals covered by this certificate.
+    pub cumulative_renewals: u64,
+    /// V2 renewals in this exact authenticated Start/derivative lifetime.
+    /// The cumulative field remains global across completed lifetimes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_lifetime_renewal_count: Option<u64>,
+    /// Commitment produced by the validated live owner checkpoint gate.
+    pub source_history_sha256: String,
+    /// Exact complete accepted checkpoint commitment.
+    pub checkpoint_sha256: String,
 }
 
 /// Separates the immutable media target from the live cleanup requester.
@@ -121,6 +146,9 @@ pub struct QuestRetainedCleanupTarget {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestEmbeddedDuplexAuthorityConfig {
+    /// Explicit prospective continuation storage policy; omission is finite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ongoing_media_policy: Option<rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy>,
     /// Schema.
     #[serde(rename = "$schema")]
     pub schema_id: String,
@@ -140,6 +168,9 @@ impl QuestEmbeddedDuplexAuthorityConfig {
     /// Validates exact canonical sets and required trust roots.
     pub(crate) fn validate(&self) -> bool {
         self.schema_id == QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA
+            && self.ongoing_media_policy.as_ref().map_or(true, |policy|
+                *policy == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v1()
+                    || *policy == rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2())
             && self.runtime_host_id.as_str().starts_with("host.")
             && !self.trusted_operator_ids.is_empty()
             && !self.trusted_key_fingerprints.is_empty()
@@ -181,7 +212,39 @@ pub struct QuestEmbeddedDuplexAuthority {
     peer: Arc<RwLock<ManifoldPeerRuntimeHost>>,
 }
 
+/// Local witness captured only after an incoming original dispatch is authenticated.
+/// It is retained with that exact native original, never accepted from a Prepare frame.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestRetainedOriginalEnrollment {
+    schema: String,
+    original_sha256: String,
+    ticket_sha256: String,
+    credential_id: String,
+    key_id: String,
+    key_generation: u64,
+    public_key_sha256: String,
+    valid_from_ms: u64,
+    expires_at_ms: u64,
+    accepted_at_ms: u64,
+}
+
 impl QuestEmbeddedDuplexAuthority {
+    /// Qualifies a fresh signed context/request in the actual selected owner.
+    pub fn current_signed_history_request_id(&self, suffix: &DottedId) -> Result<DottedId, String> {
+        read_peer(&self.peer)?
+            .current_signed_history_request_id(suffix)
+            .map_err(host_error)
+    }
+    /// Qualifies a fresh parent request; finite callers retain their exact IDs.
+    pub fn current_runtime_history_request_id(
+        &self,
+        suffix: &DottedId,
+    ) -> Result<DottedId, String> {
+        read_peer(&self.peer)?
+            .current_runtime_history_request_id(suffix)
+            .map_err(host_error)
+    }
     pub(crate) fn new(
         broker: Arc<RwLock<ManifoldBrokerRuntime>>,
         peer: Arc<RwLock<ManifoldPeerRuntimeHost>>,
@@ -597,14 +660,8 @@ impl QuestEmbeddedDuplexAuthority {
         let broker = read_broker(&self.broker)?;
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
-        let snapshot_json = peer.snapshot_json().map_err(host_error)?;
-        ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
-            &snapshot_json,
-            &snapshot.trust_policy,
-            &snapshot.provider_epoch_id,
-            &broker,
-        )
-        .map_err(host_error)?;
+        peer.validate_owned_state_with_live_broker(&broker)
+            .map_err(host_error)?;
         let route = snapshot
             .pair_media_routes
             .routes
@@ -682,6 +739,58 @@ impl QuestEmbeddedDuplexAuthority {
         )
     }
 
+    /// Capture the receiving registry's current enrollment after signed original admission.
+    /// The caller must retain this with the exact original before entering the provider.
+    pub fn capture_retained_original_enrollment(
+        &self,
+        original: &OwnerDispatchAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket,
+        signer_key_id: &str,
+        signer_key: &[u8; 32],
+        accepted_at_ms: u64,
+    ) -> Result<QuestRetainedOriginalEnrollment, String> {
+        let peer = read_peer(&self.peer)?;
+        let snapshot = peer.snapshot();
+        let credential = snapshot
+            .enrollment
+            .credentials
+            .iter()
+            .find(|credential| {
+                credential.peer_id.as_str() == original.authority_peer_id
+                    && credential.key_id.as_str() == signer_key_id
+                    && matches!(
+                        credential.status,
+                        rusty_manifold_peer::ManifoldPeerCredentialStatus::Active
+                    )
+                    && credential.valid_from_ms <= accepted_at_ms
+                    && credential.expires_at_ms > accepted_at_ms
+            })
+            .ok_or("retained original signer is not currently enrolled")?;
+        if decode_array::<32>(&credential.public_key_hex)? != *signer_key
+            || accepted_at_ms == 0
+            || original.expires_at_ms <= accepted_at_ms
+            || original.schema_id != QUEST_C1_OWNER_PROJECTION_SCHEMA
+            || original.authorization_kind != OwnerDispatchAuthorizationKind::CurrentRoute
+            || ticket.authority_epoch_id != original.authority_provider_epoch_id
+            || ticket.client_id != original.authority_client_id
+            || ticket.lease_id != original.authority_runtime_lease_id
+        {
+            return Err("retained original enrollment admission differs".into());
+        }
+        Ok(QuestRetainedOriginalEnrollment {
+            schema: "rusty.quest.retained_original_enrollment.v1".into(),
+            original_sha256: typed_sha256(original)?,
+            ticket_sha256: typed_sha256(ticket)?,
+            credential_id: credential.credential_id.to_string(),
+            key_id: credential.key_id.to_string(),
+            key_generation: credential.key_generation,
+            public_key_sha256: credential.public_key_sha256.clone(),
+            valid_from_ms: credential.valid_from_ms,
+            expires_at_ms: credential.expires_at_ms,
+            accepted_at_ms,
+        })
+    }
+
     /// Validates bounded sender-owned renewal ancestry inside the already fully
     /// signature-authenticated cleanup frame; foreign authority is never imported.
     pub fn validate_remote_retained_cleanup_projection_with_renewals(
@@ -693,6 +802,30 @@ impl QuestEmbeddedDuplexAuthority {
         signer_key: &[u8; 32],
         now_ms: u64,
         renewals: &[QuestRetainedCleanupSessionRenewal],
+    ) -> Result<(), String> {
+        self.validate_remote_retained_cleanup_projection_with_original_enrollment(
+            cleanup,
+            original,
+            ticket,
+            signer_key_id,
+            signer_key,
+            now_ms,
+            renewals,
+            None,
+        )
+    }
+
+    /// Validate exact retained native original enrollment; absent witnesses preserve legacy checks.
+    pub fn validate_remote_retained_cleanup_projection_with_original_enrollment(
+        &self,
+        cleanup: &RetainedCleanupAuthorityProjection,
+        original: &OwnerDispatchAuthorityProjection,
+        ticket: &AndroidMediaExecutionTicket,
+        signer_key_id: &str,
+        signer_key: &[u8; 32],
+        now_ms: u64,
+        renewals: &[QuestRetainedCleanupSessionRenewal],
+        retained_enrollment: Option<&QuestRetainedOriginalEnrollment>,
     ) -> Result<(), String> {
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
@@ -708,11 +841,30 @@ impl QuestEmbeddedDuplexAuthority {
                         rusty_manifold_peer::ManifoldPeerCredentialStatus::Active
                     )
                     && credential.valid_from_ms <= now_ms
-                    && credential.expires_at_ms > now_ms
+                    && (retained_enrollment.is_some() || credential.expires_at_ms > now_ms)
             })
             .ok_or("cleanup signer is not currently enrolled")?;
         if decode_array::<32>(&credential.public_key_hex)? != *signer_key {
             return Err("cleanup enrolled signer changed".into());
+        }
+        if let Some(witness) = retained_enrollment {
+            if witness.schema != "rusty.quest.retained_original_enrollment.v1"
+                || witness.original_sha256 != typed_sha256(original)?
+                || witness.ticket_sha256 != typed_sha256(ticket)?
+                || witness.credential_id != credential.credential_id.as_str()
+                || witness.key_id != signer_key_id
+                || witness.key_generation != credential.key_generation
+                || witness.public_key_sha256 != credential.public_key_sha256
+                || witness.valid_from_ms != credential.valid_from_ms
+                || credential.expires_at_ms < witness.expires_at_ms
+                || witness.accepted_at_ms == 0
+                || witness.accepted_at_ms > now_ms
+                || witness.valid_from_ms > witness.accepted_at_ms
+                || witness.expires_at_ms <= witness.accepted_at_ms
+                || original.expires_at_ms <= witness.accepted_at_ms
+            {
+                return Err("cleanup retained original enrollment differs".into());
+            }
         }
         let parties = if cleanup.trusted_revoker {
             cleanup.requester_id != cleanup.target_client_id
@@ -739,7 +891,16 @@ impl QuestEmbeddedDuplexAuthority {
             || cleanup.platform_runtime_spec_id != original.platform_runtime_spec_id
             || cleanup.target_client_id != original.authority_client_id
             || cleanup.target_runtime_lease_id != original.authority_runtime_lease_id
-            || !retained_cleanup_topology_matches(renewals, original, cleanup, now_ms)?
+            || !retained_cleanup_topology_matches(
+                renewals,
+                original,
+                cleanup,
+                now_ms,
+                snapshot
+                    .ongoing_media_policy
+                    .as_ref()
+                    .map(|p| p.schema_id.as_str()),
+            )?
             || ticket.authority_epoch_id != cleanup.provider_epoch_id
             || ticket.client_id != cleanup.target_client_id
             || ticket.lease_id != cleanup.target_runtime_lease_id
@@ -768,13 +929,8 @@ impl QuestEmbeddedDuplexAuthority {
         let snapshot = peer.snapshot();
         // Read-only canonical validation includes applied requests, reciprocal
         // receipts and every full session transition; the restored value is not installed.
-        ManifoldPeerRuntimeHost::from_snapshot_with_live_broker_runtime(
-            snapshot.clone(),
-            &snapshot.trust_policy,
-            &snapshot.provider_epoch_id,
-            &broker,
-        )
-        .map_err(host_error)?;
+        peer.validate_owned_state_with_live_broker(&broker)
+            .map_err(host_error)?;
         let route = snapshot
             .pair_media_routes
             .routes
@@ -794,12 +950,13 @@ impl QuestEmbeddedDuplexAuthority {
             .iter()
             .filter(|receipt| receipt.session_id.as_str() == cleanup.peer_session_id)
             .collect();
-        let renewals: Vec<_> = accepted
+        let mut renewals: Vec<_> = accepted
             .iter()
             .skip(accepted.len().saturating_sub(64))
             .map(|receipt| {
                 let prior = &receipt.prior_topology;
                 Ok(QuestRetainedCleanupSessionRenewal {
+                    continuation_checkpoint: None,
                     request_id: receipt.request_id.to_string(),
                     session_id: receipt.session_id.to_string(),
                     decision_id: receipt.decision_id.to_string(),
@@ -819,6 +976,68 @@ impl QuestEmbeddedDuplexAuthority {
                 })
             })
             .collect::<Result<_, String>>()?;
+        if let Some(checkpoint) = &snapshot.concurrent_media_checkpoint {
+            let first = &checkpoint.original.paired_session_receipt;
+            let last = &checkpoint.baseline.paired_session_receipt;
+            if last.session_id.as_str() != cleanup.peer_session_id
+                || first.session_id != last.session_id
+                || last
+                    .resulting_authority_revision
+                    .get()
+                    .checked_sub(first.prior_authority_revision.get())
+                    != Some(
+                        checkpoint
+                            .current_lifetime_renewal_count
+                            .unwrap_or(checkpoint.cumulative_renewals),
+                    )
+            {
+                return Err(
+                    "checkpoint cleanup ancestry is not the original same-session lifetime".into(),
+                );
+            }
+            let checkpoint_sha256 = typed_sha256(checkpoint)?;
+            renewals.retain(|receipt| {
+                receipt.resulting_authority_revision > last.resulting_authority_revision.get()
+            });
+            renewals.insert(
+                0,
+                QuestRetainedCleanupSessionRenewal {
+                    continuation_checkpoint: Some(QuestRetainedCleanupContinuationCheckpoint {
+                        schema_id: if checkpoint.current_lifetime_renewal_count.is_some() {
+                            "rusty.quest.retained_cleanup.continuation_checkpoint.v2"
+                        } else {
+                            "rusty.quest.retained_cleanup.continuation_checkpoint.v1"
+                        }
+                        .into(),
+                        current_lifetime_renewal_count: checkpoint.current_lifetime_renewal_count,
+                        checkpoint_sequence: checkpoint.checkpoint_sequence,
+                        cumulative_renewals: checkpoint.cumulative_renewals,
+                        source_history_sha256: checkpoint.source_history_sha256.clone(),
+                        checkpoint_sha256: checkpoint_sha256.clone(),
+                    }),
+                    request_id: last.request_id.to_string(),
+                    session_id: last.session_id.to_string(),
+                    decision_id: last.decision_id.to_string(),
+                    initiator_peer_id: first.prior_topology.initiator_peer_id.to_string(),
+                    responder_peer_id: first.prior_topology.responder_peer_id.to_string(),
+                    transport_sha256: typed_sha256(&first.prior_topology.transport)?,
+                    route_configuration_sha256: first
+                        .prior_topology
+                        .transport
+                        .route_configuration_sha256
+                        .clone(),
+                    prior_topology_sha256: typed_sha256(&first.prior_topology)?,
+                    topology_sha256: typed_sha256(&last.topology)?,
+                    prior_authority_revision: first.prior_authority_revision.get(),
+                    resulting_authority_revision: last.resulting_authority_revision.get(),
+                    observed_at_ms: first.observed_at_ms,
+                    prior_expires_at_ms: first.prior_expires_at_ms,
+                    expires_at_ms: last.expires_at_ms,
+                    reciprocal_expires_at_ms: last.reciprocal.expires_at_ms,
+                    receipt_sha256: checkpoint_sha256,
+                },
+            );
+        }
         if serde_json::to_vec(&renewals)
             .map_err(|error| error.to_string())?
             .len()
@@ -850,6 +1069,51 @@ impl QuestEmbeddedDuplexAuthority {
         let mut peer = write_peer(&self.peer)?;
         let expected_trust = peer.snapshot().trust_policy.clone();
         let expected_epoch = peer.snapshot().provider_epoch_id.clone();
+        if peer.snapshot().runtime_history_checkpoint.is_some() {
+            peer.restore_current_ongoing_media_snapshot(snapshot_json, &broker)
+                .map_err(host_error)?;
+            let snapshot = peer.snapshot();
+            return Ok(ManifoldPeerRuntimeHostSnapshotMigrationReceipt {
+                schema_id: SchemaId::new(
+                    "rusty.manifold.peer.runtime_host.snapshot_migration_receipt.v1",
+                )
+                .expect("fixed schema"),
+                source_schema_id: snapshot.schema_id.clone(),
+                resulting_schema_id: snapshot.schema_id.clone(),
+                migrated: false,
+                host_id: snapshot.host_id.clone(),
+                provider_epoch_id: snapshot.provider_epoch_id.clone(),
+                preserved_event_sequence: snapshot.event_sequence,
+                preserved_broker_lease_admission_count: snapshot.broker_lease_admissions.len(),
+            });
+        }
+        if peer.snapshot().ongoing_media_policy.is_some() {
+            let anchor = peer
+                .seal_ongoing_media_snapshot(&broker)
+                .map_err(host_error)?;
+            let restored = ManifoldPeerRuntimeHost::restore_ongoing_media_snapshot(
+                snapshot_json,
+                &anchor,
+                &broker,
+            )
+            .map_err(host_error)?;
+            let snapshot = restored.snapshot();
+            let receipt = ManifoldPeerRuntimeHostSnapshotMigrationReceipt {
+                schema_id: SchemaId::new(
+                    "rusty.manifold.peer.runtime_host.snapshot_migration_receipt.v1",
+                )
+                .expect("fixed schema"),
+                source_schema_id: snapshot.schema_id.clone(),
+                resulting_schema_id: snapshot.schema_id.clone(),
+                migrated: false,
+                host_id: snapshot.host_id.clone(),
+                provider_epoch_id: snapshot.provider_epoch_id.clone(),
+                preserved_event_sequence: snapshot.event_sequence,
+                preserved_broker_lease_admission_count: snapshot.broker_lease_admissions.len(),
+            };
+            *peer = restored;
+            return Ok(receipt);
+        }
         let (restored, receipt) =
             ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
                 snapshot_json,
@@ -1114,14 +1378,8 @@ fn cleanup_projection_from_retained(
     now_ms: u64,
 ) -> Result<OwnerDispatchAuthorityProjection, String> {
     let snapshot = peer.snapshot();
-    let snapshot_json = peer.snapshot_json().map_err(host_error)?;
-    ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
-        &snapshot_json,
-        &snapshot.trust_policy,
-        &snapshot.provider_epoch_id,
-        broker,
-    )
-    .map_err(host_error)?;
+    peer.validate_owned_state_with_live_broker(broker)
+        .map_err(host_error)?;
     let route = snapshot
         .pair_media_routes
         .routes
@@ -1328,6 +1586,7 @@ fn retained_cleanup_topology_matches(
     original: &OwnerDispatchAuthorityProjection,
     cleanup: &RetainedCleanupAuthorityProjection,
     now_ms: u64,
+    ongoing_policy_schema: Option<&str>,
 ) -> Result<bool, String> {
     if renewals.is_empty() {
         return Ok(cleanup.signed_topology_sha256 == original.signed_topology_sha256);
@@ -1345,7 +1604,42 @@ fn retained_cleanup_topology_matches(
     let mut anchored = digest == original.signed_topology_sha256;
     let mut seen = std::collections::BTreeSet::from([digest.clone()]);
     let mut requests = std::collections::BTreeSet::new();
-    for renewal in renewals {
+    for (index, renewal) in renewals.iter().enumerate() {
+        let revision_join = if let Some(checkpoint) = &renewal.continuation_checkpoint {
+            let count = checkpoint
+                .current_lifetime_renewal_count
+                .unwrap_or(checkpoint.cumulative_renewals);
+            let policy_matches = match ongoing_policy_schema {
+                Some("rusty.manifold.peer.ongoing_media_policy.v1") => {
+                    checkpoint.schema_id
+                        == "rusty.quest.retained_cleanup.continuation_checkpoint.v1"
+                        && checkpoint.current_lifetime_renewal_count.is_none()
+                        && checkpoint.checkpoint_sequence.checked_mul(16)
+                            == Some(checkpoint.cumulative_renewals)
+                }
+                Some("rusty.manifold.peer.ongoing_media_policy.v2") => {
+                    checkpoint.schema_id
+                        == "rusty.quest.retained_cleanup.continuation_checkpoint.v2"
+                        && checkpoint.current_lifetime_renewal_count.is_some()
+                        && count > 0
+                        && count <= checkpoint.cumulative_renewals
+                        && checkpoint.checkpoint_sequence <= checkpoint.cumulative_renewals
+                }
+                _ => false,
+            };
+            policy_matches
+                && index == 0
+                && checkpoint.checkpoint_sequence > 0
+                && renewal
+                    .resulting_authority_revision
+                    .checked_sub(renewal.prior_authority_revision)
+                    == Some(count)
+                && valid_sha256(&checkpoint.source_history_sha256)
+                && checkpoint.checkpoint_sha256 == renewal.receipt_sha256
+        } else {
+            renewal.prior_authority_revision.checked_add(1)
+                == Some(renewal.resulting_authority_revision)
+        };
         if renewal.session_id != original.peer_session_id
             || renewal.decision_id != first.decision_id
             || renewal.initiator_peer_id != first.initiator_peer_id
@@ -1373,8 +1667,7 @@ fn retained_cleanup_topology_matches(
             || renewal.prior_expires_at_ms <= renewal.observed_at_ms
             || renewal.prior_expires_at_ms >= renewal.expires_at_ms
             || renewal.expires_at_ms > renewal.reciprocal_expires_at_ms
-            || renewal.prior_authority_revision.checked_add(1)
-                != Some(renewal.resulting_authority_revision)
+            || !revision_join
         {
             return Ok(false);
         }

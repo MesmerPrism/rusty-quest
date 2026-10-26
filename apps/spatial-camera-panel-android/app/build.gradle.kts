@@ -14,6 +14,13 @@ val embeddedDuplexSetupHorizonMs = providers.environmentVariable("RUSTY_QUEST_SP
     value
   }
 
+// Explicit app artifact policy, independent of expiring setup credentials.
+val embeddedDuplexMediaPolicy = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY")
+  .orElse("finite").map { raw ->
+    require(raw == "finite" || raw == "ongoing-v2") { "Invalid embedded duplex media policy" }
+    raw
+  }
+
 val spatialApplicationId =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_ID")
     .orElse("io.github.mesmerprism.rustyquest.spatial_camera_panel")
@@ -274,6 +281,7 @@ android {
   defaultConfig {
     applicationId = spatialApplicationId.get()
     buildConfigField("long", "EMBEDDED_DUPLEX_SETUP_HORIZON_MS", "${embeddedDuplexSetupHorizonMs.get()}L")
+    buildConfigField("String", "EMBEDDED_DUPLEX_MEDIA_POLICY", "\"${embeddedDuplexMediaPolicy.get()}\"")
     minSdk = 34
     targetSdk = 34
     versionCode = 1

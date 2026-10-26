@@ -66,6 +66,8 @@ mod projection_surface_features;
 #[cfg(any(target_os = "android", test))]
 mod replay_hands;
 mod rgb_channel_transform;
+#[cfg(any(target_os = "android", test))]
+mod source_graph_startup;
 #[cfg(target_os = "android")]
 mod spatial_controller_actions;
 #[cfg(all(target_os = "android", rq_environment_depth_legacy_native_sidecar))]

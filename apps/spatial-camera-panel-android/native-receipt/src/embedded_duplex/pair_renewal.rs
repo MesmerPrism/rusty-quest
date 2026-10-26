@@ -131,7 +131,7 @@ fn prepare_renewal(
         return Err("current credentials cannot authorize renewal".into());
     }
     let draft: QuestCommonLanContextDraft = serde_json::from_value(json!({
-        "correlation_id":format!("correlation.{id}.{phase}.{role}"),
+        "correlation_id":signed_history_id(host,format!("correlation.{id}.{phase}.{role}"))?,
         "initiator":binding(host,&host.local_peer_id,local_nonce,"initiator")?,
         "responder":binding(host,&host.remote_peer_id,remote_nonce,"responder")?,
         "transport":transport(host)?,"coordinator_epoch":host.capability.generation,
@@ -157,8 +157,11 @@ fn verify_context(
     } else {
         (&host.remote_peer_id, &host.local_peer_id, nonce_b, nonce_a)
     };
-    if context.correlation_id.as_str() != format!("correlation.{id}.{phase}.{role}")
-        || context.initiator.peer_id.as_str() != initiator
+    if !remote_correlation_matches(
+        host,
+        context.correlation_id.as_str(),
+        format!("correlation.{id}.{phase}.{role}"),
+    )? || context.initiator.peer_id.as_str() != initiator
         || context.responder.peer_id.as_str() != responder
         || context.initiator.device_nonce_hex != first
         || context.responder.device_nonce_hex != second
@@ -183,7 +186,7 @@ fn apply_round(
     require_cycle(host, id)?;
     let request: ManifoldCommonLanReciprocalEd25519ReviewRequest = serde_json::from_value(json!({
         "$schema":COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA,
-        "request_id":format!("request.{id}.{phase}.reciprocal"),"context":prepared.0,
+        "request_id":signed_history_id(host,format!("request.{id}.{phase}.reciprocal"))?,"context":prepared.0,
         "initiator_signature":prepared.1,"responder_signature":remote_signature
     }))
     .map_err(safe_decode)?;
@@ -241,7 +244,10 @@ fn apply_round(
             .ok_or("original renewal proposal shape")?;
         fields.insert(
             "proposal_id".into(),
-            json!(format!("proposal.{id}.session.renew")),
+            json!(runtime_history_id(
+                host,
+                format!("proposal.{id}.session.renew")
+            )?),
         );
         fields.insert(
             "expected_authority_revision".into(),
@@ -558,7 +564,22 @@ impl RenewalState {
     }
 }
 
+fn configure_ledger(host: &Host) -> Result<(), String> {
+    let enabled = {
+        let mut provider = Checkout::take(host.provider.clone())?;
+        provider
+            .get()
+            .ongoing_media_continuation_enabled()
+            .map_err(|_| "continuation policy unavailable")?
+    };
+    if enabled {
+        state(host)?.renewal_ledger.enable_ongoing()?;
+    }
+    Ok(())
+}
+
 pub(super) fn run(host: &Host) -> Result<String, String> {
+    configure_ledger(host)?;
     let current_pair = pair_current(host)?;
     let session = current_pair
         .get("session_id")
@@ -584,7 +605,7 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
         }
         if current.renewal.id.is_none() {
             current.renewal = RenewalState {
-                id: Some(format!("ceremony.duplex.{}", random_hex()?)),
+                id: Some(current.renewal_ledger.fresh_id(&random_hex()?)),
                 session: Some(session.clone()),
                 original_decision: Some(decision),
                 initiator: true,
@@ -637,6 +658,7 @@ pub(super) fn status(host: &Host) -> Result<Value, String> {
 }
 
 pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, String> {
+    configure_ledger(host)?;
     let phase = frame
         .payload
         .get("phase")
@@ -655,7 +677,16 @@ pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, Str
     let decision = current_decision(&pair, &session)?;
     let key = format!("{phase}.{}", frame.kind);
     {
-        let current = state(host)?;
+        let mut current = state(host)?;
+        if current.renewal.id.as_deref() != Some(id) && current.renewal.result.is_some() {
+            let old = current
+                .renewal
+                .id
+                .clone()
+                .ok_or("completed renewal identity absent")?;
+            current.renewal_ledger.complete(&old)?;
+            current.renewal = RenewalState::default();
+        }
         current.renewal_ledger.require_fresh(id)?;
         if current.renewal.id.as_deref() == Some(id) {
             if let Some((kind, payload)) =
@@ -704,7 +735,11 @@ pub(super) fn handle_frame(host: &Host, frame: FrameBody) -> Result<Vec<u8>, Str
                     return Err("credential-bound renewal proof required first".into());
                 }
                 if let Some(old) = current.renewal.id.clone() {
-                    current.renewal_ledger.complete(&old)?;
+                    if current.renewal.result.is_some() {
+                        current.renewal_ledger.complete(&old)?;
+                    } else {
+                        current.renewal_ledger.abandon(&old)?;
+                    }
                 }
                 current.renewal = RenewalState {
                     id: Some(id.into()),

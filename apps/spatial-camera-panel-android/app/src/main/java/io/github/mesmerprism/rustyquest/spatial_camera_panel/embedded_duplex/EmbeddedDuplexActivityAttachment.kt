@@ -20,6 +20,10 @@ internal object EmbeddedDuplexActivityAttachment {
   fun attach(context: Context, display: EmbeddedDuplexDisplayCoordinator): Long =
       EmbeddedDuplexProcessHost.forApplication(context).attachDisplay(display)
 
+  fun attach(context: Context, display: EmbeddedDuplexDisplayCoordinator,
+      onWholeClose: java.util.function.Consumer<EmbeddedDuplexWholeCloseRollover>): Long =
+      EmbeddedDuplexProcessHost.forApplication(context).attachDisplay(display, onWholeClose)
+
   /** This is valid only before native bootstrap. A live host requires typed Stop first. */
   fun detachUninitialized(context: Context, generation: Long) {
     EmbeddedDuplexProcessHost.forApplication(context).detachUninitializedDisplay(generation)

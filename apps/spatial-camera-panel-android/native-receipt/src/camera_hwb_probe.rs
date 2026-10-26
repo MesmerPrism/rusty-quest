@@ -164,6 +164,7 @@ fn release_local_camera_start(
 struct PeerCommonGraphSessionOwner {
     claim: PeerSessionClaimState,
     cancellation: Option<Arc<AtomicBool>>,
+    startup_readiness: Option<Arc<crate::source_graph_startup::Readiness>>,
     worker: Option<thread::JoinHandle<()>>,
     window_address: usize,
     own_epoch: Option<crate::stereo_input_set::SourceEpoch>,
@@ -187,6 +188,14 @@ pub(crate) fn select_peer_source_with_own_actor(
     let claim_generation = (u64::try_from(proof[3]).ok()? & i64::MAX as u64).max(1) as i64;
     if owner.claim.generation() != Some(claim_generation)
         || owner.window_address != window_address
+        || !owner.own_epoch.is_some_and(|epoch| {
+            u64::try_from(proof[3]).ok() == Some(epoch.process_generation)
+                && u64::try_from(proof[4]).ok() == Some(epoch.source_generation)
+        })
+        || !owner
+            .startup_readiness
+            .as_ref()
+            .is_some_and(|ready| ready.state() == crate::source_graph_startup::State::Ready)
         || !owner
             .worker
             .as_ref()
@@ -213,6 +222,9 @@ fn stop_peer_common_graph_session() {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let generation = owner.claim.generation();
+        if let Some(ready) = owner.startup_readiness.as_ref() {
+            ready.close();
+        }
         if let Some(cancel) = owner.cancellation.as_ref() {
             cancel.store(true, Ordering::Release);
         }
@@ -225,6 +237,7 @@ fn stop_peer_common_graph_session() {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if owner.claim.generation() == Some(generation) {
             owner.cancellation = None;
+            owner.startup_readiness = None;
             let released = owner.claim.release(generation);
             debug_assert!(released);
         }
@@ -1222,6 +1235,7 @@ pub(crate) unsafe fn start_peer_common_graph(
             ACameraNativeWindow_release(window);
             return 0;
         }
+        owner.startup_readiness = None; // This separate Peer renderer is not a retained Own source graph.
         owner.cancellation = Some(cancellation.clone());
         let worker_cancellation = cancellation.clone();
         ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_add(1, Ordering::AcqRel);

@@ -44,6 +44,7 @@ param(
     [string]$PrivateFeatureResourceDir = "",
     [string]$EmbeddedDuplexProductInputRoot = "",
     [ValidateRange(300000,3600000)][ValidateScript({ $_ % 60000 -eq 0 })][long]$EmbeddedDuplexSetupHorizonMs = 300000,
+    [ValidateScript({ $_ -cin @("finite", "ongoing-v2") })][string]$EmbeddedDuplexMediaPolicy = "finite",
     [string]$ProductId = "",
     [string]$AppId = "",
     [string]$AppLabel = "",
@@ -90,6 +91,9 @@ $spatialPrerequisitesModule = Import-Module (Join-Path $PSScriptRoot "lib/Spatia
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/SpatialApkInspection.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
+$selectedEmbeddedDuplexMediaPolicy = Get-EmbeddedDuplexMediaPolicy -Selection $EmbeddedDuplexMediaPolicy
+if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpace($EmbeddedDuplexProductInputRoot)) { throw "Ongoing media requires explicit real-peer product inputs." }
 
 $SharedSpatialSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
 $SharedSpatialAppId = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
@@ -1456,6 +1460,7 @@ $nativeIdentityDescriptor = [ordered]@{
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $nativeIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 
 $shellIdentityInputs = [ordered]@{
@@ -1504,6 +1509,7 @@ $shellIdentityDescriptor = [ordered]@{
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$shellIdentityDescriptor['developer_source_version']=$sourceVersionMetadata}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $shellIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
 $shellFingerprint = Get-StringSha256 -Value ($shellIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $packageIdentityDescriptor = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.package_cache_identity.v1"
@@ -1525,6 +1531,7 @@ if ($null -ne $gradleToolDistribution) { $buildInputDescriptor['gradle_tool_dist
 if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
     $buildInputDescriptor['artifact_output'] = [ordered]@{schema='rusty.quest.artifact_output.v1';policy='explicit-external-parent-create-new';parent_path_recorded=$false;source_and_cache_disjoint=$true}
 }
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $buildInputDescriptor -Selection $EmbeddedDuplexMediaPolicy
 $buildInputFingerprint = Get-StringSha256 -Value ($buildInputDescriptor | ConvertTo-Json -Depth 20 -Compress)
 $buildInputDescriptor["fingerprint"] = $buildInputFingerprint
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
@@ -1744,6 +1751,7 @@ function Invoke-SpatialGradlePhase {
         $env:JAVA_HOME = $JavaHome
         $env:GRADLE_USER_HOME = $gradleUserHome
         $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS = $EmbeddedDuplexSetupHorizonMs.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY = $EmbeddedDuplexMediaPolicy
         $env:RUSTY_QUEST_SPATIAL_PRODUCT_ID = $resolvedProductId
         $env:RUSTY_QUEST_SPATIAL_APP_BUILD_DIR = $appBuildDir
         $env:RUSTY_QUEST_SPATIAL_ROOT_BUILD_DIR = $rootBuildDir
@@ -2566,6 +2574,7 @@ $apkInspection = [ordered]@{
     private_path_recorded = $false
 }
 if($UseSourceCompositionVersionName){$apkInspection['developer_source_version']=$observedSourceVersion}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $apkInspection -Selection $EmbeddedDuplexMediaPolicy
 $apkInspectionPath = Join-Path $OutDir "apk-inspection.json"
 [void](Set-TextFileIfChanged -Path $apkInspectionPath -Value ($apkInspection | ConvertTo-Json -Depth 12))
 Complete-QuestApkInspectionCopy -Copy $apkInspectionCopy -InspectionReceiptPath $apkInspectionPath -ExpectedInspectionSha256 (Get-FileSha256 $apkInspectionPath)
@@ -3294,6 +3303,7 @@ $manifest = [ordered]@{
     signer_path_alias_password_recorded = $false
 }
 if($UseSourceCompositionVersionName){$manifest['developer_source_version']=$observedSourceVersion}
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $manifest -Selection $EmbeddedDuplexMediaPolicy
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 if ($null -ne $gradleToolDistribution) { $manifest['gradle_tool_distribution'] = $gradleToolDistribution }
 if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) { $manifest['artifact_output'] = $buildInputDescriptor['artifact_output'] }
@@ -3347,6 +3357,7 @@ $runCapsule = [ordered]@{
         restore_on_failure = $true
     }
 }
+Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $runCapsule -Selection $EmbeddedDuplexMediaPolicy
 $runCapsulePath = Join-Path $OutDir "run-capsule.json"
 [void](Set-TextFileIfChanged -Path $runCapsulePath -Value ($runCapsule | ConvertTo-Json -Depth 16))
 

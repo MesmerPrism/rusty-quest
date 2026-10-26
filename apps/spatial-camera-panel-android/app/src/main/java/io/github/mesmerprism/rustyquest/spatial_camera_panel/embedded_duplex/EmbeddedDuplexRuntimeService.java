@@ -7,6 +7,11 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
 
+    /** Read-only token/current-actor check; NEW alone is never proof of full cleanup. */
+    public static boolean wholeCloseRolloverCurrent(Context context, EmbeddedDuplexWholeCloseRollover proof) {
+        return EmbeddedDuplexProcessHost.forApplication(context).wholeCloseRolloverCurrent(proof);
+    }
+
     public static CompletableFuture<String> armConcurrentQualification(Context context, String challenge) {
         return EmbeddedDuplexProcessHost.forApplication(context).concurrentQualification(true, challenge);
     }
