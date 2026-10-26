@@ -261,6 +261,14 @@ fn ongoing_v2_actual_103_coupled_cycles_across_three_renewed_media_lifetimes() {
     );
 }
 
+// Keep mutually exclusive host-fixture stages in separate frames. Production
+// owner calls and all assertions stay unchanged; finite controls must retain
+// the ordinary Rust test-thread stack contract.
+#[inline(never)]
+fn run_coupled_fixture_stage(stage: impl FnOnce()) {
+    stage();
+}
+
 fn run_coupled_owner_graph_with_history_mode(
     retained_abort: bool,
     cross_authority_probe: bool,
@@ -693,6 +701,7 @@ fn run_coupled_owner_graph_with_history_mode(
         (projection, ticket)
     };
     if cross_authority_probe {
+        return run_coupled_fixture_stage(|| {
         // Two independently constructed production stores, signed by actual keys.
         let mut originals = Vec::new();
         for (provider, authority, local, remote) in [
@@ -1742,8 +1751,10 @@ fn run_coupled_owner_graph_with_history_mode(
         assert_eq!(before_a, authority_a.snapshot_json().unwrap());
         assert_eq!(before_b, authority_b.snapshot_json().unwrap());
         return; // No owner Stop completion or physical cleanup is modeled by this authority test.
+        });
     }
     if retained_abort {
+        return run_coupled_fixture_stage(|| {
         let provider = &mut provider_b;
         let client = identity().client_id;
         let original = provider.runtime.as_ref().unwrap().media_sessions[&client]
@@ -1885,7 +1896,9 @@ fn run_coupled_owner_graph_with_history_mode(
             "ACTUAL_091_FAILED_START_CLEANUP: original target retained; independent live Revoke; verified reverse cursor then seven owner Stop readbacks"
         );
         return;
+        });
     }
+    run_coupled_fixture_stage(|| {
     if ongoing && !generic_history {
         for provider in [&mut provider_a, &mut provider_b] {
             provider.enable_ongoing_media_continuation(
@@ -2932,4 +2945,5 @@ fn run_coupled_owner_graph_with_history_mode(
             .len(),
         1
     );
+    });
 }
