@@ -12,7 +12,7 @@ $root = (Resolve-Path -LiteralPath $RepoRoot).Path
 if (-not $OutputRoot) { $OutputRoot = Join-Path $root ('target/ongoing-source-' + [guid]::NewGuid().ToString('N')) }
 $OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
 if (-not $OutputRoot.StartsWith((Join-Path $root 'target') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $OutputRoot)) { throw 'A fresh output beneath the repository target directory is required.' }
-if (-not $JavaHome) { $JavaHome = Split-Path (Split-Path (Get-Command javac -CommandType Application).Source -Parent) -Parent }
+if (-not $JavaHome) { $JavaHome = Split-Path (Split-Path (Get-Command javac -CommandType Application | Select-Object -First 1).Source -Parent) -Parent }
 if (-not $HostJsonJar) {
     $cache = Join-Path $env:USERPROFILE '.gradle/caches/modules-2/files-2.1/org.json/json/20240303'
     $matches = @(Get-ChildItem -LiteralPath $cache -Filter 'json-20240303.jar' -File -Recurse -ErrorAction SilentlyContinue)
@@ -33,10 +33,10 @@ function Invoke-Control([string]$Name, [string]$Executable, [string[]]$Arguments
     if ($exitCode -ne 0) { Get-Content -LiteralPath $log -Tail 40 | Write-Output; throw "$Name failed; retained output: $log" }
     Write-Host "$Name passed"
 }
-$python = (Get-Command python -CommandType Application).Source
-$rustc = (Get-Command rustc -CommandType Application).Source
-$cargo = (Get-Command cargo -CommandType Application).Source
-$pwsh = (Get-Command pwsh -CommandType Application).Source
+$python = (Get-Command python -CommandType Application | Select-Object -First 1).Source
+$rustc = (Get-Command rustc -CommandType Application | Select-Object -First 1).Source
+$cargo = (Get-Command cargo -CommandType Application | Select-Object -First 1).Source
+$pwsh = (Get-Command pwsh -CommandType Application | Select-Object -First 1).Source
 $priorNdk = $env:ANDROID_NDK_HOME
 $priorGlslc = $env:GLSLC
 Push-Location -LiteralPath $root
