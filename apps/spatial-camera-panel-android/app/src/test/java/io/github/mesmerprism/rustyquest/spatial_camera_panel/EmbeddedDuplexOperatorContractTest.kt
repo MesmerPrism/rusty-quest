@@ -21,6 +21,94 @@ class EmbeddedDuplexOperatorContractTest {
       "admission_authority_id" to "admission.authority",
       "max_token_ttl_ms" to 60_000L)
 
+  @Test fun originalIdsOptInOnlyForTheEightClosedRuntimeMutators() {
+    val original = "a".repeat(32)
+    val policy = mapOf<String,Any?>("center" to 0,"middle" to 1,"outer" to 0,
+        "geometry" to 1,"brightness" to 2,"strength" to 0)
+    val blend = mapOf<String,Any?>("version" to 1,"enabled" to true,"threshold" to 0.25f,
+        "softness" to 0.125f,"amount" to 0.75f,"invert" to false,"diagnostic" to true)
+    for (method in listOf("start","renew_authority","peer_stop","peer_revoke","whole_app_close",
+        "concurrent_arm","policy_update","blend_update")) {
+      val fields = when (method) { "policy_update" -> policy; "blend_update" -> blend; else -> emptyMap() }
+      val direct = EmbeddedDuplexOperatorContract.parseFields(method, nonce, fields)
+      val explicit = EmbeddedDuplexOperatorContract.parseFields(method, nonce, fields + ("original_id" to original))
+      assertEquals(null, direct.originalId)
+      assertEquals(original, explicit.originalId)
+      assertEquals(direct.route, explicit.route)
+      assertEquals(direct.challenge, explicit.challenge)
+      if (method == "policy_update") assertTrue(direct.policy!!.contentEquals(explicit.policy!!))
+      if (method == "blend_update") {
+        assertTrue(direct.mask!!.contentEquals(explicit.mask!!))
+        assertTrue(explicit.mask!!.contentEquals(longArrayOf(1,1,0x3e800000,0x3e000000,0x3f400000,0,1)))
+      }
+      for (badId in listOf<Any?>(null, 12, "A".repeat(32), "a".repeat(31), "a".repeat(33))) {
+        assertThrows(IllegalArgumentException::class.java) {
+          EmbeddedDuplexOperatorContract.parseFields(method, nonce, fields + ("original_id" to badId))
+        }
+      }
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce, fields + ("original_id" to original) + ("json" to "{}"))
+      }
+    }
+    for (method in listOf("runtime_status","peer_status","concurrent_status","policy_read","blend_read",
+        "bootstrap_real_peer","close_no_media","pair_status","pair_session","start_preflight",
+        "owner_failure_diagnostic","own_capture_diagnostic","stream_dropout_diagnostic")) {
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce, mapOf("original_id" to original))
+      }
+    }
+    for ((method, base) in listOf("review" to fields, "status" to mapOf("role_id" to "peer_a"),
+        "confirm" to mapOf("review_sha256" to "b".repeat(64)))) {
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, nonce, base + ("original_id" to original))
+      }
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("blend_update", nonce,
+          blend + ("original_id" to original) + ("threshold" to -0.0f))
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("policy_update", nonce,
+          policy + ("original_id" to original) + ("strength" to 3))
+    }
+  }
+
+  @Test fun originalQueryAndAcknowledgmentAreTypedAndClosed() {
+    val original = "a".repeat(32)
+    val queryFields = mapOf<String,Any?>("original_id" to original)
+    val ackFields = queryFields + mapOf("request_sha256" to "b".repeat(64),
+        "outcome_sha256" to "c".repeat(64), "consumer_receipt_sha256" to "d".repeat(64))
+    val query = EmbeddedDuplexOperatorContract.parseFields("operation_query", nonce, queryFields)
+    assertEquals(EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY, query.route)
+    assertEquals(original, query.originalId)
+    val ack = EmbeddedDuplexOperatorContract.parseFields("operation_ack", nonce, ackFields)
+    assertEquals(EmbeddedDuplexOperatorContract.Route.OPERATION_ACK, ack.route)
+    assertEquals(original, ack.originalId)
+    assertEquals("b".repeat(64), ack.requestSha256)
+    assertEquals("c".repeat(64), ack.outcomeSha256)
+    assertEquals("d".repeat(64), ack.consumerReceiptSha256)
+    for (method in listOf("operation_query", "operation_ack")) {
+      val selected = if (method == "operation_query") queryFields else ackFields
+      for (invalid in listOf(selected - "original_id", selected + ("original_id" to "a".repeat(31)),
+          selected + ("original_id" to 1), selected + ("operation" to "start"), selected + ("request" to "{}"))) {
+        assertThrows(IllegalArgumentException::class.java) {
+          EmbeddedDuplexOperatorContract.parseFields(method, nonce, invalid)
+        }
+      }
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields(method, "A".repeat(32), selected)
+      }
+    }
+    for (key in listOf("request_sha256", "outcome_sha256", "consumer_receipt_sha256")) {
+      for (invalid in listOf(ackFields - key, ackFields + (key to "A".repeat(64)),
+          ackFields + (key to "e".repeat(63)), ackFields + (key to 12))) {
+        assertThrows(IllegalArgumentException::class.java) {
+          EmbeddedDuplexOperatorContract.parseFields("operation_ack", nonce, invalid)
+        }
+      }
+    }
+  }
+
   @Test fun neutralMaskIsExplicitVersionedTypedAndClosed() {
     val selected = mapOf<String,Any?>("version" to 1,"enabled" to true,"threshold" to 0.5f,
         "softness" to 0.1f,"amount" to 1f,"invert" to false,"diagnostic" to true)

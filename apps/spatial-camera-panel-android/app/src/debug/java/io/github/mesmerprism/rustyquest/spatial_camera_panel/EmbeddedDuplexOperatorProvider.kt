@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOriginals
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEnrollmentReview
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEnrollmentService
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService
@@ -32,7 +33,44 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     } catch (_: Exception) { closed() }
     val app = requireNotNull(context).applicationContext
     return try {
+      if (request.route == EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY) {
+        return EmbeddedDuplexRuntimeService.queryOriginal(app, requireNotNull(request.originalId), request.challenge)
+      }
+      if (request.route == EmbeddedDuplexOperatorContract.Route.OPERATION_ACK) {
+        return EmbeddedDuplexRuntimeService.acknowledgeOriginal(app, requireNotNull(request.originalId), request.challenge,
+            requireNotNull(request.requestSha256), requireNotNull(request.outcomeSha256),
+            requireNotNull(request.consumerReceiptSha256))
+      }
+      request.originalId?.let { originalId ->
+        // Canonicalize the validated transport values, including raw Float bits, before command admission.
+        val canonical = EmbeddedDuplexOriginals.request(method, request.challenge, extras ?: Bundle())
+        return EmbeddedDuplexRuntimeService.beginOriginal(app, originalId, method, request.challenge, canonical) {
+          val actual = when (request.route) {
+            EmbeddedDuplexOperatorContract.Route.START ->
+              EmbeddedDuplexRuntimeService.peerLifecycle(app, EmbeddedDuplexPeerAction.START, request.challenge)
+            EmbeddedDuplexOperatorContract.Route.RENEW_AUTHORITY ->
+              EmbeddedDuplexRuntimeService.peerLifecycle(app, EmbeddedDuplexPeerAction.RENEW_AUTHORITY, request.challenge)
+            EmbeddedDuplexOperatorContract.Route.PEER_STOP ->
+              EmbeddedDuplexRuntimeService.peerLifecycle(app, EmbeddedDuplexPeerAction.STOP, request.challenge)
+            EmbeddedDuplexOperatorContract.Route.PEER_REVOKE ->
+              EmbeddedDuplexRuntimeService.peerLifecycle(app, EmbeddedDuplexPeerAction.REVOKE, request.challenge)
+            EmbeddedDuplexOperatorContract.Route.WHOLE_APP_CLOSE ->
+              EmbeddedDuplexRuntimeService.peerLifecycle(app, EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE, request.challenge)
+            EmbeddedDuplexOperatorContract.Route.CONCURRENT_ARM ->
+              EmbeddedDuplexRuntimeService.armConcurrentQualification(app, request.challenge)
+            EmbeddedDuplexOperatorContract.Route.POLICY_UPDATE ->
+              EmbeddedDuplexRuntimeService.concurrentPolicy(app, request.challenge, request.policy)
+            EmbeddedDuplexOperatorContract.Route.BLEND_UPDATE ->
+              EmbeddedDuplexRuntimeService.concurrentMask(app, request.challenge, request.mask)
+            else -> throw IllegalArgumentException("operator-original-route-invalid")
+          }
+          actual.thenApply { receipt ->
+            Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
+          }
+        }
+      }
       when (request.route) {
+        EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY, EmbeddedDuplexOperatorContract.Route.OPERATION_ACK -> closed()
         EmbeddedDuplexOperatorContract.Route.START, EmbeddedDuplexOperatorContract.Route.RENEW_AUTHORITY,
         EmbeddedDuplexOperatorContract.Route.PEER_STOP, EmbeddedDuplexOperatorContract.Route.PEER_REVOKE,
         EmbeddedDuplexOperatorContract.Route.PEER_STATUS, EmbeddedDuplexOperatorContract.Route.WHOLE_APP_CLOSE -> {

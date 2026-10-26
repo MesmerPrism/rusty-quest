@@ -69,6 +69,8 @@ final class EmbeddedDuplexProcessHost {
     private String retainedWholeNativeReceipt;
     private String terminalWholeReceipt;
     private String terminalWholeChallenge;
+    // Captured only after existing physical whole-close barriers succeed.
+    private volatile JSONObject originalClosedActor;
     private String enrollmentRecordSha256;
     private volatile boolean localFixture;
     private String diagnosticChallenge;
@@ -226,6 +228,7 @@ final class EmbeddedDuplexProcessHost {
                 // Supersede retained cleanup facts only after the new authenticated host owns real resources/control.
                 ownNoMediaCloseProof = null; ownNoMediaStopTarget = null;
                 terminalWholeReceipt = null; terminalWholeChallenge = null; retainedWholeNativeReceipt = null;
+                originalClosedActor = null;
                 phase.set(Phase.READY);
                 return initialized;
             } catch (Exception failure) {
@@ -1079,6 +1082,8 @@ final class EmbeddedDuplexProcessHost {
         EmbeddedDuplexWholeCloseRollover rollover = activity == null ? null
                 : EmbeddedDuplexWholeCloseRollover.verified(proof, processFence.epochId(), processFence.generation(),
                         nativeExecutorGeneration, attachmentGeneration, expectedSha, enrollmentRecordSha256);
+        // Store the real outgoing actor only after the native/Java/display/fence barriers above.
+        originalClosedActor = noMedia ? null : originalActor();
         platform = null; resources = null; runtimeConfigSha256 = null; nativeExecutorGeneration = 0L;
         nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; startIntent.afterVerifiedCleanup();
         ownNoMediaStopTarget = null;
@@ -1119,13 +1124,55 @@ final class EmbeddedDuplexProcessHost {
         android.system.Os.chmod(new java.io.File(directory, "process-fence.v1.lock").getAbsolutePath(), 0600);
     }
 
+    static long currentAppGeneration() {
+        EmbeddedDuplexProcessHost current = instance;
+        return current == null || current.processFence == null ? 0L : current.processFence.generation();
+    }
+
+    /** Output facts from this retained owner, never transport assertions. */
+    static JSONObject originalActor() throws Exception {
+        EmbeddedDuplexProcessHost current = instance;
+        return new JSONObject().put("package_id", current == null
+                ? io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.APPLICATION_ID
+                : current.applicationContext.getPackageName())
+                .put("app_record_sha256", current == null || current.nativeAppRecordSha256 == null
+                        ? JSONObject.NULL : current.nativeAppRecordSha256)
+                .put("native_generation", current == null || current.nativeExecutorGeneration <= 0L
+                        ? JSONObject.NULL : current.nativeExecutorGeneration);
+    }
+
+    /** An ACK joins the same held generation and either its real retained owner
+     * or its existing verified whole-product close. It cannot infer cleanup. */
+    static boolean originalActorSettled(JSONObject actor, long generation) throws Exception {
+        EmbeddedDuplexProcessHost current = instance;
+        if (current == null || current.processFence == null || generation <= 0L
+                || actor.isNull("app_record_sha256") || actor.optLong("native_generation", 0L) <= 0L) return false;
+        current.processFence.requireLive(generation);
+        current.processFence.requireIncarnation(EmbeddedDuplexProcessIncarnation.current(
+                android.os.Process.myPid(), android.os.Process.myUid()));
+        boolean retained = current.phase.get() == Phase.READY && current.platform != null && current.resources != null
+                && EmbeddedDuplexCanonicalJson.sameValue(originalActor(), actor);
+        JSONObject closed = current.originalClosedActor;
+        boolean terminal = current.phase.get() == Phase.NEW && current.terminalWholeReceipt != null
+                && current.platform == null && current.resources == null && closed != null
+                && EmbeddedDuplexCanonicalJson.sameValue(closed, actor);
+        return retained || terminal;
+    }
+
     private interface Work<T> { T run() throws Exception; }
     private <T> CompletableFuture<T> submit(Work<T> action) {
         CompletableFuture<T> result = new CompletableFuture<>();
-        commands.execute(() -> {
-            try { ensureProcessFence(); result.complete(action.run()); }
-            catch (Throwable failure) { result.completeExceptionally(failure); }
-        });
+        commands.execute(EmbeddedDuplexOriginals.carry(() -> {
+            try {
+                ensureProcessFence();
+                if (EmbeddedDuplexOriginals.hasCurrent()) {
+                    processFence.bindIncarnation(EmbeddedDuplexProcessIncarnation.current(
+                            android.os.Process.myPid(), android.os.Process.myUid()));
+                    EmbeddedDuplexOriginals.bindActualActor(originalActor(), processFence.generation());
+                }
+                result.complete(action.run());
+            } catch (Throwable failure) { result.completeExceptionally(failure); }
+        }));
         return result;
     }
     private static <T> CompletableFuture<T> failed(Throwable failure) {

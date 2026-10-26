@@ -26,6 +26,74 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         if (!"held".equals(ready)) throw new AssertionError("child failed: " + ready);
         return process;
     }
+    // Read only the held descriptor: opening another descriptor can release fcntl locks on Linux.
+    static String heldRecord(EmbeddedDuplexProcessFence fence) throws Exception {
+        java.lang.reflect.Field field = EmbeddedDuplexProcessFence.class.getDeclaredField("channel");
+        field.setAccessible(true);
+        java.nio.channels.FileChannel channel = (java.nio.channels.FileChannel) field.get(fence);
+        java.nio.ByteBuffer bytes = java.nio.ByteBuffer.allocate((int) channel.size());
+        channel.position(0);
+        while (bytes.hasRemaining()) if (channel.read(bytes) < 0) throw new AssertionError("record truncated");
+        return new String(bytes.array(), StandardCharsets.US_ASCII);
+    }
+    static EmbeddedDuplexProcessIncarnation.Identity identity(long ticks) {
+        return new EmbeddedDuplexProcessIncarnation.Identity("00112233-4455-6677-8899-aabbccddeeff", 42, 10001, ticks);
+    }
+    static void incarnationControls() throws Exception {
+        Path dir = Files.createTempDirectory("duplex-bound-fence");
+        try (EmbeddedDuplexProcessFence fence = acquire(dir)) {
+            String before = heldRecord(fence);
+            fence.bindIncarnation(identity(100));
+            if (!before.equals(heldRecord(fence)) || fence.effectsPending())
+                throw new AssertionError("binding changed fence phase/generation");
+            fence.bindIncarnation(identity(100));
+            rejects(() -> fence.bindIncarnation(identity(101)));
+            rejects(() -> acquire(dir));
+            fence.beforeRuntimeEffects("c", "e");
+            String pending = fence.nativeAdmissionRecord();
+            if (EmbeddedDuplexProcessIncarnation.load(dir.toFile(), pending) == null)
+                throw new AssertionError("pending companion did not track exact phase");
+            fence.afterVerifiedNoMediaCleanup(null, null);
+            if (EmbeddedDuplexProcessIncarnation.load(dir.toFile(), heldRecord(fence)) == null)
+                throw new AssertionError("clear companion did not track exact phase");
+        }
+        try (EmbeddedDuplexProcessFence sameActor = acquire(dir)) {
+            sameActor.bindIncarnation(identity(100));
+            if (sameActor.generation() != 2 || sameActor.effectsPending()) throw new AssertionError("binding rollover changed generation");
+        }
+        try (EmbeddedDuplexProcessFence otherActor = acquire(dir)) { rejects(() -> otherActor.bindIncarnation(identity(200))); }
+        // Four-argument acquisition is intentionally unchanged even for a companion conflict.
+        try (EmbeddedDuplexProcessFence legacy = acquire(dir)) { if (legacy.generation() != 4) throw new AssertionError("legacy acquire changed"); }
+        for (String damage : new String[]{"missing", "torn", "corrupt", "witness", "duplicate"}) {
+            Path corrupt = Files.createTempDirectory("duplex-incarnation-" + damage);
+            try (EmbeddedDuplexProcessFence fence = acquire(corrupt)) { fence.bindIncarnation(identity(100)); }
+            Path record = corrupt.resolve("process-incarnation.v1.json");
+            if (damage.equals("missing")) Files.delete(record);
+            if (damage.equals("torn")) Files.writeString(corrupt.resolve("process-incarnation.v1.json.new"), "partial");
+            if (damage.equals("corrupt")) Files.writeString(record, "{}");
+            if (damage.equals("witness")) Files.delete(corrupt.resolve("process-incarnation.v1.initialized"));
+            if (damage.equals("duplicate")) {
+                String exact = Files.readString(record);
+                Files.writeString(record, exact.substring(0, 1) + "\"sha256\":\"duplicate\"," + exact.substring(1));
+            }
+            try (EmbeddedDuplexProcessFence fence = acquire(corrupt)) { rejects(() -> fence.bindIncarnation(identity(100))); }
+        }
+        Path pending = Files.createTempDirectory("duplex-incarnation-pending");
+        try (EmbeddedDuplexProcessFence fence = acquire(pending)) { fence.beforeRuntimeEffects(null, null); }
+        try (EmbeddedDuplexProcessFence fence = acquire(pending)) {
+            fence.bindIncarnation(identity(100));
+            if (!fence.effectsPending() || !fence.recoveryOnly()) throw new AssertionError("incarnation masqueraded as cleanup");
+            rejects(fence::requireFresh);
+        }
+        Path vanished = Files.createTempDirectory("duplex-incarnation-vanished");
+        try (EmbeddedDuplexProcessFence fence = acquire(vanished)) {
+            fence.bindIncarnation(identity(100));
+            Files.delete(vanished.resolve("process-incarnation.v1.json"));
+            rejects(fence::requireFresh);
+            rejects(() -> fence.beforeRuntimeEffects(null, null));
+            rejects(fence::requireFresh);
+        }
+    }
     public static void main(String[] args) throws Exception {
         if (args.length > 0) {
             EmbeddedDuplexProcessFence fence = acquire(Path.of(args[1]));
@@ -35,6 +103,7 @@ public final class EmbeddedDuplexProcessFenceHostTest {
             fence.close();
             return;
         }
+        incarnationControls();
         Path directory = Files.createTempDirectory("duplex-fence-test");
         EmbeddedDuplexProcessFence first = acquire(directory);
         if (first.generation() != 1) throw new AssertionError("initial generation");

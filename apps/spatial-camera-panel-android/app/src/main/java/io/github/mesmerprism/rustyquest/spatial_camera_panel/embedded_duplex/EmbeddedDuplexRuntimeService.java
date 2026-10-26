@@ -1,11 +1,31 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 
 import android.content.Context;
+import android.os.Bundle;
+import org.json.JSONObject;
+import java.util.function.Supplier;
 import java.util.concurrent.CompletableFuture;
 
 /** Shared app-owned handler for the panel and the debug typed operator transport. */
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
+
+    /** Explicit source-owned custody; the supplier returns the existing real command Future. */
+    public static Bundle beginOriginal(Context context, String originalId, String operation, String challenge,
+            JSONObject canonicalRequest, Supplier<CompletableFuture<Bundle>> actualAction) throws Exception {
+        return EmbeddedDuplexOriginals.forApplication(context).begin(
+                originalId, operation, challenge, canonicalRequest, actualAction);
+    }
+
+    public static Bundle queryOriginal(Context context, String originalId, String challenge) throws Exception {
+        return EmbeddedDuplexOriginals.forApplication(context).query(originalId, challenge);
+    }
+
+    public static Bundle acknowledgeOriginal(Context context, String originalId, String challenge,
+            String requestSha256, String outcomeSha256, String consumerReceiptSha256) throws Exception {
+        return EmbeddedDuplexOriginals.forApplication(context).acknowledge(
+                originalId, challenge, requestSha256, outcomeSha256, consumerReceiptSha256);
+    }
 
     /** Read-only token/current-actor check; NEW alone is never proof of full cleanup. */
     public static boolean wholeCloseRolloverCurrent(Context context, EmbeddedDuplexWholeCloseRollover proof) {
