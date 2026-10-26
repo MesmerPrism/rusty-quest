@@ -6,6 +6,12 @@ do not establish camera, codec, reciprocal rendering, renewal or teardown.
 See [the retained cleanup contract](EMBEDDED_DUPLEX_R4_RECOVERY.md) for the
 remaining app transaction and restoration obligations.
 
+Explicit current debug mutations can use [Original custody](EMBEDDED_DUPLEX_ORIGINAL_CUSTODY.md)
+for durable begin/query/ACK observations and a process-incarnation companion on
+the existing command lane. The default no-ID finite/direct route remains
+available. Original completion/ACK never replaces the physical cleanup or
+runtime authority proofs below, and adds no fresh/succession lifecycle API.
+
 ## App and native execution ownership
 
 The app holds its private FileChannel writer lock and a synced generation,

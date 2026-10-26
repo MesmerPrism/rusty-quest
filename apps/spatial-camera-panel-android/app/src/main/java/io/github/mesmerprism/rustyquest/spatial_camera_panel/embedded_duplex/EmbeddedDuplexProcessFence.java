@@ -28,6 +28,9 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private boolean pending;
     private String checkpointDigest;
     private String evidenceDigest;
+    private String acquisitionRecord;
+    private String persistedRecord;
+    private EmbeddedDuplexProcessIncarnation.Binding incarnation;
 
     static EmbeddedDuplexProcessFence acquire(File directory, String checkpoint,
             String evidence, DirectorySync sync) throws Exception {
@@ -63,6 +66,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 throw new IllegalStateException("embedded process writer already held", competing);
             }
             if (lock == null) throw new IllegalStateException("embedded process writer already held");
+            String priorRecord = null;
             long priorGeneration = 0;
             boolean pending = false;
             String checkpointHash = digest(checkpoint), evidenceHash = digest(evidence);
@@ -85,6 +89,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 ByteBuffer bytes = ByteBuffer.allocate((int) size);
                 while (bytes.hasRemaining()) if (channel.read(bytes) < 0) throw new IllegalStateException("process fence truncated");
                 String record = new String(bytes.array(), StandardCharsets.US_ASCII);
+                priorRecord = record;
                 String[] fields = record.split("\\n", -1);
                 if (fields.length != 8 || !"rusty.quest.embedded_duplex.app_process_fence.v1".equals(fields[0])
                         || !fields[1].matches("[1-9][0-9]{0,18}")
@@ -104,6 +109,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             }
             EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, channel, lock,
                     sync, Math.addExact(priorGeneration, 1), pending, checkpointHash, evidenceHash);
+            result.acquisitionRecord = priorRecord;
             result.persist();
             return result;
         } catch (Throwable failure) {
@@ -120,6 +126,54 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         this.generation = generation; this.nonce = UUID.randomUUID().toString();
         this.pending = pending; this.recoveryOnly = pending;
         this.checkpointDigest = checkpoint; this.evidenceDigest = evidence;
+    }
+    /** Explicit command-lane opt-in only. A held legacy fence may acquire its first
+     * process stamp, but binding never increments generation or clears pending.
+     * A witnessed companion must match its owner and the exact prior/current phase;
+     * process death or a different birth never authorizes replacing that binding. */
+    synchronized void bindIncarnation(EmbeddedDuplexProcessIncarnation.Identity identity) throws Exception {
+        requireLive(generation);
+        if (identity == null) throw new IllegalArgumentException("process incarnation absent");
+        verifyHeldRecord();
+        if (incarnation != null) {
+            verifyIncarnation(persistedRecord);
+            if (!incarnation.owner.binding().equals(identity.binding()))
+                throw new IllegalStateException("process incarnation owner differs");
+            return;
+        }
+        EmbeddedDuplexProcessIncarnation.Binding binding;
+        if (EmbeddedDuplexProcessIncarnation.present(directory)) {
+            binding = EmbeddedDuplexProcessIncarnation.load(directory, acquisitionRecord);
+            if (binding == null || !binding.owner.binding().equals(identity.binding()))
+                throw new IllegalStateException("process incarnation companion differs or unavailable");
+        } else binding = new EmbeddedDuplexProcessIncarnation.Binding(identity, persistedRecord);
+        try {
+            EmbeddedDuplexProcessIncarnation.persist(directory, binding, persistedRecord, directorySync);
+            incarnation = binding;
+        } catch (Exception failure) { persistenceFailed = true; throw failure; }
+    }
+    /** Verify an already bound owner without stamping or replacing any custody. */
+    synchronized void requireIncarnation(EmbeddedDuplexProcessIncarnation.Identity identity) {
+        requireLive(generation);
+        if (incarnation == null || identity == null || !incarnation.owner.binding().equals(identity.binding()))
+            throw new IllegalStateException("process incarnation owner unavailable");
+    }
+    private void verifyIncarnation(String record) {
+        EmbeddedDuplexProcessIncarnation.Binding observed = EmbeddedDuplexProcessIncarnation.load(directory, record);
+        if (observed == null || !observed.owner.binding().equals(incarnation.owner.binding())
+                || !observed.originalRecord.equals(incarnation.originalRecord))
+            throw new IllegalStateException("process incarnation companion changed");
+    }
+    private void verifyHeldRecord() throws Exception {
+        try {
+            long size = channel.size();
+            if (size <= 0 || size > 512) throw new IllegalStateException("held app record bounds");
+            ByteBuffer bytes = ByteBuffer.allocate((int) size);
+            channel.position(0);
+            while (bytes.hasRemaining()) if (channel.read(bytes) < 0) throw new IllegalStateException("held app record truncated");
+            if (!persistedRecord.equals(new String(bytes.array(), StandardCharsets.US_ASCII)))
+                throw new IllegalStateException("held app record changed");
+        } catch (Exception failure) { persistenceFailed = true; throw failure; }
     }
     static final class CallbackGuard {
         private final EmbeddedDuplexProcessFence owner;
@@ -146,6 +200,13 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     synchronized void requireLive(long expectedGeneration) {
         if (persistenceFailed || !lock.isValid() || !channel.isOpen() || expectedGeneration != generation) {
             throw new IllegalStateException("stale app process generation");
+        }
+        if (incarnation != null) {
+            try { verifyHeldRecord(); verifyIncarnation(persistedRecord); }
+            catch (Exception failure) {
+                persistenceFailed = true;
+                throw new IllegalStateException("bound process fence custody unavailable", failure);
+            }
         }
     }
     synchronized void requireFresh() {
@@ -206,13 +267,16 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private void persist() throws Exception {
         requireLive(generation);
         try {
-        byte[] bytes = serializedRecord().getBytes(StandardCharsets.US_ASCII);
+        String record = serializedRecord();
+        byte[] bytes = record.getBytes(StandardCharsets.US_ASCII);
         channel.position(0);
         ByteBuffer buffer = ByteBuffer.wrap(bytes);
         while (buffer.hasRemaining()) channel.write(buffer);
         channel.truncate(bytes.length);
         channel.force(true);
         directorySync.sync();
+        if (incarnation != null) EmbeddedDuplexProcessIncarnation.persist(directory, incarnation, record, directorySync);
+        persistedRecord = record;
         } catch (Exception failure) { persistenceFailed = true; throw failure; }
     }
     static String digest(String exact) throws Exception {

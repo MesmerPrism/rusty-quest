@@ -1,0 +1,150 @@
+package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
+
+import java.io.File;
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
+import java.util.Set;
+import org.json.JSONObject;
+
+/** Actual app-process birth identity and a fence-owned companion; confers no cleanup authority. */
+final class EmbeddedDuplexProcessIncarnation {
+    private static final String NAME = "process-incarnation.v1.json";
+    private static final String WITNESS = "process-incarnation.v1.initialized";
+    private static final String SCHEMA = "rusty.quest.embedded_duplex.process_incarnation.v1";
+    static final class Identity {
+        final String boot;
+        final int pid, uid;
+        final long ticks;
+        Identity(String boot, int pid, int uid, long ticks) {
+            if (boot == null || !boot.matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+                    || pid <= 0 || uid < 10000 || ticks <= 0)
+                throw new IllegalArgumentException("invalid process incarnation");
+            this.boot = boot; this.pid = pid; this.uid = uid; this.ticks = ticks;
+        }
+        JSONObject json() throws Exception {
+            return new JSONObject().put("boot_id", boot).put("pid", pid).put("uid", uid).put("start_ticks", ticks);
+        }
+        static Identity read(JSONObject value) throws Exception {
+            if (!keys(value).equals(Set.of("boot_id", "pid", "uid", "start_ticks")))
+                throw new IllegalStateException("incarnation fields");
+            for (String key : new String[]{"pid", "uid", "start_ticks"}) {
+                Object number = value.get(key);
+                if (!(number instanceof Integer || number instanceof Long))
+                    throw new IllegalStateException("incarnation integer type");
+            }
+            if (value.getLong("pid") > Integer.MAX_VALUE || value.getLong("uid") > Integer.MAX_VALUE
+                    || value.getLong("pid") <= 0 || value.getLong("uid") < 10000)
+                throw new IllegalStateException("incarnation integer range");
+            return new Identity(value.getString("boot_id"), value.getInt("pid"), value.getInt("uid"), value.getLong("start_ticks"));
+        }
+        String binding() { return boot + "\n" + pid + "\n" + uid + "\n" + ticks + "\n"; }
+    }
+    static Identity current(int pid, int uid) throws Exception { return current(pid, uid, Paths.get("/proc")); }
+    static Identity current(int pid, int uid, Path proc) throws Exception {
+        String first = boot(proc);
+        Long ticks = kernelStartTicks(pid, proc);
+        String last = boot(proc);
+        if (ticks == null || !first.equals(last)) throw new IllegalStateException("current process incarnation unavailable");
+        return new Identity(first, pid, uid, ticks);
+    }
+    private static String boot(Path proc) throws Exception {
+        Path path = proc.resolve("sys/kernel/random/boot_id");
+        byte[] bytes = Files.readAllBytes(path);
+        if (bytes.length > 128) throw new IllegalStateException("boot identity bounds");
+        return new String(bytes, StandardCharsets.US_ASCII).trim();
+    }
+    static Long kernelStartTicks(int pid) throws Exception { return kernelStartTicks(pid, Paths.get("/proc")); }
+    private static Long kernelStartTicks(int pid, Path proc) throws Exception {
+        if (pid <= 0) throw new IllegalArgumentException("invalid PID");
+        String stat;
+        try { stat = new String(Files.readAllBytes(proc.resolve(Integer.toString(pid)).resolve("stat")), StandardCharsets.US_ASCII); }
+        catch (NoSuchFileException absent) { return null; }
+        int first = stat.indexOf('('), end = stat.lastIndexOf(')');
+        if (stat.length() > 16384 || first < 1 || end <= first || !Integer.toString(pid).equals(stat.substring(0, first).trim()))
+            throw new IllegalStateException("process stat identity unavailable");
+        String[] fields = stat.substring(end + 1).trim().split("\\s+");
+        if (fields.length < 20 || !fields[19].matches("[1-9][0-9]{0,18}"))
+            throw new IllegalStateException("process stat birth unavailable");
+        long ticks;
+        try { ticks = Long.parseLong(fields[19]); }
+        catch (NumberFormatException invalid) { throw new IllegalStateException("process stat birth invalid", invalid); }
+        return ticks;
+    }
+    static final class Binding {
+        final Identity owner;
+        final String originalRecord;
+        String currentSha;
+        Binding(Identity owner, String record) throws Exception {
+            this.owner = owner; originalRecord = record; currentSha = EmbeddedDuplexProcessFence.digest(record);
+        }
+        String checksum() throws Exception {
+            return EmbeddedDuplexProcessFence.digest(owner.binding() + originalRecord + currentSha
+                    + "\nfalse\n-\nprocess_local_resources\n");
+        }
+        JSONObject json() throws Exception {
+            return new JSONObject().put("$schema", SCHEMA).put("original_owner", owner.json())
+                    .put("effect_category", "process_local_resources").put("original_fence_record", originalRecord)
+                    .put("current_fence_sha256", currentSha).put("local_resources_terminated", false)
+                    .put("termination_receipt_sha256", "-").put("sha256", checksum());
+        }
+    }
+    static boolean present(File directory) {
+        for (String name : new String[]{NAME, NAME + ".new", WITNESS})
+            if (Files.exists(new File(directory, name).toPath(), LinkOption.NOFOLLOW_LINKS)) return true;
+        return false;
+    }
+    /** Unknown or interrupted state never becomes an unwitnessed replacement binding. */
+    static Binding load(File directory, String record) {
+        try {
+            Path path = new File(directory, NAME).toPath();
+            if (Files.exists(Paths.get(path + ".new"), LinkOption.NOFOLLOW_LINKS)
+                    || !(SCHEMA + "\n").equals(read(new File(directory, WITNESS).toPath(), 128))) return null;
+            JSONObject value = EmbeddedDuplexCanonicalJson.readOwned(readBytes(path, 4096));
+            if (!keys(value).equals(Set.of("$schema", "original_owner", "effect_category", "original_fence_record",
+                    "current_fence_sha256", "local_resources_terminated", "termination_receipt_sha256", "sha256"))
+                    || !SCHEMA.equals(value.getString("$schema"))
+                    || !"process_local_resources".equals(value.getString("effect_category"))
+                    || !Boolean.FALSE.equals(value.get("local_resources_terminated"))
+                    || !"-".equals(value.getString("termination_receipt_sha256"))) return null;
+            Binding binding = new Binding(Identity.read(value.getJSONObject("original_owner")), value.getString("original_fence_record"));
+            binding.currentSha = value.getString("current_fence_sha256");
+            if (!binding.currentSha.equals(EmbeddedDuplexProcessFence.digest(record))
+                    || !binding.checksum().equals(value.getString("sha256"))) return null;
+            return binding;
+        } catch (Exception unknown) { return null; }
+    }
+    static void persist(File directory, Binding binding, String record, EmbeddedDuplexProcessFence.DirectorySync sync) throws Exception {
+        binding.currentSha = EmbeddedDuplexProcessFence.digest(record);
+        Path path = new File(directory, NAME).toPath(), temporary = Paths.get(path + ".new");
+        if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)
+                && (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path)))
+            throw new IllegalStateException("incarnation companion path invalid");
+        writeNew(temporary, EmbeddedDuplexCanonicalJson.encode(binding.json()));
+        Files.move(temporary, path, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        sync.sync();
+        Path witness = new File(directory, WITNESS).toPath();
+        if (!Files.exists(witness, LinkOption.NOFOLLOW_LINKS)) { writeNew(witness, SCHEMA + "\n"); sync.sync(); }
+    }
+    private static String read(Path path, int bound) throws Exception {
+        return new String(readBytes(path, bound), StandardCharsets.UTF_8);
+    }
+    private static byte[] readBytes(Path path, int bound) throws Exception {
+        if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path) || Files.size(path) > bound)
+            throw new IllegalStateException("incarnation record unavailable");
+        return Files.readAllBytes(path);
+    }
+    private static Set<String> keys(JSONObject value) {
+        Set<String> result = new java.util.HashSet<>();
+        for (java.util.Iterator<String> i = value.keys(); i.hasNext();) result.add(i.next());
+        return result;
+    }
+    private static void writeNew(Path path, String exact) throws Exception {
+        try (FileChannel file = FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS)) {
+            ByteBuffer bytes = ByteBuffer.wrap(exact.getBytes(StandardCharsets.UTF_8));
+            while (bytes.hasRemaining()) file.write(bytes);
+            file.force(true);
+        }
+    }
+}

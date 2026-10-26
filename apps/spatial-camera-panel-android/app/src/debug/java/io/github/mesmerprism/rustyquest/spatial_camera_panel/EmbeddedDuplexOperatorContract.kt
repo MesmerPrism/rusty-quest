@@ -8,6 +8,9 @@ import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.Emb
 internal object EmbeddedDuplexOperatorContract {
   const val SCHEMA = "rusty.quest.embedded_duplex.operator_transport.v1"
   const val AUTHORITY_SUFFIX = ".embedded-duplex-operator"
+  const val METHOD_OPERATION_QUERY = "operation_query"
+  const val METHOD_OPERATION_ACK = "operation_ack"
+  const val KEY_ORIGINAL_ID = "original_id"
   const val METHOD_STATUS = "status"
   const val METHOD_REVIEW = "review"
   const val METHOD_CONFIRM = "confirm"
@@ -38,7 +41,7 @@ internal object EmbeddedDuplexOperatorContract {
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
   enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
-    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE }
+    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK }
   data class Request(
       val route: Route,
       val challenge: String,
@@ -47,6 +50,10 @@ internal object EmbeddedDuplexOperatorContract {
       val reviewSha256: String? = null,
       val policy: LongArray? = null,
       val mask: LongArray? = null,
+      val originalId: String? = null,
+      val requestSha256: String? = null,
+      val outcomeSha256: String? = null,
+      val consumerReceiptSha256: String? = null,
   )
 
   fun callerIsShell(uid: Int): Boolean = uid == Process.SHELL_UID
@@ -58,6 +65,29 @@ internal object EmbeddedDuplexOperatorContract {
 
   internal fun parseFields(method: String, argument: String?, fields: Map<String, Any?>): Request {
     require(argument != null && nonce.matches(argument)) { "operator-challenge-invalid" }
+    if (method == METHOD_OPERATION_QUERY || method == METHOD_OPERATION_ACK) {
+      val expected = if (method == METHOD_OPERATION_QUERY) setOf(KEY_ORIGINAL_ID)
+        else setOf(KEY_ORIGINAL_ID, "request_sha256", "outcome_sha256", "consumer_receipt_sha256")
+      require(fields.keys == expected) { "operator-fields-invalid" }
+      val original = fields[KEY_ORIGINAL_ID] as? String
+      require(original != null && nonce.matches(original)) { "operator-original-id-invalid" }
+      if (method == METHOD_OPERATION_QUERY) return Request(Route.OPERATION_QUERY, argument, originalId = original)
+      fun digest(name: String): String {
+        val value = fields[name] as? String
+        require(value != null && sha.matches(value)) { "operator-original-digest-invalid" }
+        return value
+      }
+      return Request(Route.OPERATION_ACK, argument, originalId = original,
+          requestSha256 = digest("request_sha256"), outcomeSha256 = digest("outcome_sha256"),
+          consumerReceiptSha256 = digest("consumer_receipt_sha256"))
+    }
+    if (fields.containsKey(KEY_ORIGINAL_ID)) {
+      require(method in setOf("start", "renew_authority", "peer_stop", "peer_revoke", "whole_app_close",
+          "concurrent_arm", "policy_update", "blend_update")) { "operator-original-route-invalid" }
+      val original = fields[KEY_ORIGINAL_ID] as? String
+      require(original != null && nonce.matches(original)) { "operator-original-id-invalid" }
+      return parseFields(method, argument, fields - KEY_ORIGINAL_ID).copy(originalId = original)
+    }
     val route = when (method) {
       METHOD_STATUS -> Route.STATUS
       METHOD_REVIEW -> Route.REVIEW
@@ -86,6 +116,7 @@ internal object EmbeddedDuplexOperatorContract {
       else -> throw IllegalArgumentException("operator-method-invalid")
     }
     val expected = when (route) {
+      Route.OPERATION_QUERY, Route.OPERATION_ACK -> throw IllegalArgumentException("operator-original-route-invalid")
       Route.STATUS -> setOf(KEY_ROLE)
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
