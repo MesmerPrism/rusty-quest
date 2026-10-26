@@ -543,40 +543,60 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Na
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeInputSelected(
-    _env: *mut jni::sys::JNIEnv, _class: jni::sys::jclass,
-) -> jni::sys::jboolean { cfg!(native_meta_xr_operator).into() }
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+) -> jni::sys::jboolean {
+    cfg!(native_meta_xr_operator).into()
+}
 
 #[cfg(all(target_os = "android", native_meta_xr_operator))]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativePublishInputGeometry(
-    mut env: jni::EnvUnowned, _class: jni::objects::JClass, generation: i64, body: jni::objects::JString,
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    generation: i64,
+    body: jni::objects::JString,
 ) -> jni::sys::jboolean {
     use jni::Outcome;
     let current = snapshot().generation;
-    if generation <= 0 || current != generation as u64 { return false.into(); }
-    let result=env.with_env(|env| {
-        let text:String=env.get_string(&body)?.into();
-        Ok::<bool,jni::errors::Error>(crate::native_input_geometry::update(current,&text).is_ok())
-    }).into_outcome();
-    matches!(result,Outcome::Ok(true)).into()
+    if generation <= 0 || current != generation as u64 {
+        return false.into();
+    }
+    let result = env
+        .with_env(|env| {
+            let text: String = env.get_string(&body)?.into();
+            Ok::<bool, jni::errors::Error>(
+                crate::native_input_geometry::update(current, &text).is_ok(),
+            )
+        })
+        .into_outcome();
+    matches!(result, Outcome::Ok(true)).into()
 }
 
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeFeedbackSelected(
-    _env: *mut jni::sys::JNIEnv, _class: jni::sys::jclass,
-) -> jni::sys::jboolean { crate::native_development_feedback::selected().into() }
+    _env: *mut jni::sys::JNIEnv,
+    _class: jni::sys::jclass,
+) -> jni::sys::jboolean {
+    crate::native_development_feedback::selected().into()
+}
 
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_NativeMeshUiProducer_nativeFeedbackStatus(
-    mut env: jni::EnvUnowned, _class: jni::objects::JClass, generation: i64,
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    generation: i64,
 ) -> jni::sys::jstring {
     use jni::Outcome;
-    let body=crate::native_development_feedback::ui_status(generation as u64);
-    match env.with_env(|env| env.new_string(body).map(|s|s.into_raw())).into_outcome() {
-        Outcome::Ok(value)=>value,
-        Outcome::Err(_)|Outcome::Panic(_)=>std::ptr::null_mut(),
+    let body = crate::native_development_feedback::ui_status(generation as u64);
+    match env
+        .with_env(|env| env.new_string(body).map(|s| s.into_raw()))
+        .into_outcome()
+    {
+        Outcome::Ok(value) => value,
+        Outcome::Err(_) | Outcome::Panic(_) => std::ptr::null_mut(),
     }
 }
 

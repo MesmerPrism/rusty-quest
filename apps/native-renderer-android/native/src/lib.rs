@@ -17,11 +17,11 @@ mod development_feedback_core;
 pub(crate) use development_feedback_core::{abi, digest, loader, runtime};
 mod development_feedback_contract;
 mod development_feedback_shader;
+#[cfg(all(target_os = "android", native_development_feedback))]
+mod gpu_development_feedback_scene;
 mod native_development_feedback;
 #[cfg(any(native_meta_xr_operator, test))]
 mod native_input_geometry;
-#[cfg(all(target_os = "android", native_development_feedback))]
-mod gpu_development_feedback_scene;
 
 mod bounded_breath_phase_integrator;
 mod breath_calibration_controller_action;

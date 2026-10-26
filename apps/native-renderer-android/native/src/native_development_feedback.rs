@@ -125,14 +125,31 @@ fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(any(native_meta_xr_operator,test))]
+#[cfg(any(native_meta_xr_operator, test))]
 #[derive(Default)]
-struct UiEvidence { queued:String, completed:String, count:u64, pending:BTreeSet<String> }
-#[cfg(any(native_meta_xr_operator,test))]
+struct UiEvidence {
+    queued: String,
+    completed: String,
+    count: u64,
+    pending: BTreeSet<String>,
+}
+#[cfg(any(native_meta_xr_operator, test))]
 impl UiEvidence {
-    fn enqueue(&mut self,id:&str){self.queued=id.into();self.pending.insert(id.into());}
-    fn complete(&mut self,id:&str,passed:bool){if self.pending.remove(id)&&passed {self.completed=id.into();self.count=self.count.saturating_add(1);}}
-    fn project(&self,state:&mut Value){state["original_ui_queued_request_id"]=json!(self.queued);state["original_ui_completed_request_id"]=json!(self.completed);state["original_ui_completed_count"]=json!(self.count.to_string());}
+    fn enqueue(&mut self, id: &str) {
+        self.queued = id.into();
+        self.pending.insert(id.into());
+    }
+    fn complete(&mut self, id: &str, passed: bool) {
+        if self.pending.remove(id) && passed {
+            self.completed = id.into();
+            self.count = self.count.saturating_add(1);
+        }
+    }
+    fn project(&self, state: &mut Value) {
+        state["original_ui_queued_request_id"] = json!(self.queued);
+        state["original_ui_completed_request_id"] = json!(self.completed);
+        state["original_ui_completed_count"] = json!(self.count.to_string());
+    }
 }
 
 struct UiQueue {
@@ -331,7 +348,7 @@ impl NativeDevelopmentFeedback {
     }
     fn dispatch(&mut self, command: Command, frame: u64, shader: &mut ShaderActivator<'_>) {
         #[cfg(native_meta_xr_operator)]
-        let status_request=command.method=="native_status";
+        let status_request = command.method == "native_status";
         let result = (|| match command.method.as_str() {
             "native_status" => {
                 command.exact(&[])?;
@@ -403,7 +420,10 @@ impl NativeDevelopmentFeedback {
         self.record(command.id, result, frame);
         #[cfg(native_meta_xr_operator)]
         if status_request {
-            if let Some((_,observation))=self.pending.last_mut(){observation["scene"]["operator_layer_loaded"]=json!(crate::native_input_geometry::operator_layer_loaded());}
+            if let Some((_, observation)) = self.pending.last_mut() {
+                observation["scene"]["operator_layer_loaded"] =
+                    json!(crate::native_input_geometry::operator_layer_loaded());
+            }
         }
     }
     fn state(&self, snapshot: &Snapshot) -> Value {
@@ -454,12 +474,18 @@ impl NativeDevelopmentFeedback {
         for (id, mut observation) in self.pending.drain(..) {
             #[cfg(native_meta_xr_operator)]
             {
-                let mut queue=ui().lock().unwrap_or_else(|p|p.into_inner());
-                if queue.generation==self.ui_generation {
-                    queue.evidence.complete(&id,observation["status"]=="pass");
+                let mut queue = ui().lock().unwrap_or_else(|p| p.into_inner());
+                if queue.generation == self.ui_generation {
+                    queue
+                        .evidence
+                        .complete(&id, observation["status"] == "pass");
                     queue.evidence.project(&mut observation["state"]);
                 }
-                if let Some(geometry)=crate::native_input_geometry::readback_current(&self.owner,&self.session){observation["scene"]["input_geometry"]=geometry;}
+                if let Some(geometry) =
+                    crate::native_input_geometry::readback_current(&self.owner, &self.session)
+                {
+                    observation["scene"]["input_geometry"] = geometry;
+                }
             }
             observation["scene"]["submitted"] = Value::Bool(true);
             observation["scene"]["evidence"] = json!("native-openxr-end-frame");
@@ -549,13 +575,19 @@ mod tests {
     use super::*;
     #[test]
     fn original_ui_evidence_requires_a_real_queue_entry_and_successful_completion() {
-        let mut evidence=UiEvidence::default();
-        evidence.complete("ui-compute-1",true);assert_eq!(evidence.count,0);
-        evidence.enqueue("ui-compute-1");assert!(evidence.completed.is_empty());
-        evidence.complete("ui-compute-1",true);assert_eq!(evidence.count,1);
-        evidence.complete("ui-compute-1",true);assert_eq!(evidence.count,1);
-        evidence.enqueue("ui-compute-2");evidence.complete("ui-compute-2",false);
-        assert_eq!(evidence.completed,"ui-compute-1");assert_eq!(evidence.count,1);
+        let mut evidence = UiEvidence::default();
+        evidence.complete("ui-compute-1", true);
+        assert_eq!(evidence.count, 0);
+        evidence.enqueue("ui-compute-1");
+        assert!(evidence.completed.is_empty());
+        evidence.complete("ui-compute-1", true);
+        assert_eq!(evidence.count, 1);
+        evidence.complete("ui-compute-1", true);
+        assert_eq!(evidence.count, 1);
+        evidence.enqueue("ui-compute-2");
+        evidence.complete("ui-compute-2", false);
+        assert_eq!(evidence.completed, "ui-compute-1");
+        assert_eq!(evidence.count, 1);
     }
 
     #[test]
@@ -635,46 +667,101 @@ mod tests {
     #[test]
     #[ignore = "requires explicitly prepared trusted host images and retained output"]
     fn real_native_generations_drive_visual_delta_and_preserve_resident_state() {
-        let manifest=std::env::var("FEEDBACK_NATIVE_MANIFEST").expect("prepared host manifest");
-        let output=PathBuf::from(std::env::var("FEEDBACK_TEST_OUTPUT").expect("retained host test output"));
-        let nonce=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let data=output.join(format!("native-adapter-{}-{nonce}",std::process::id()));
+        let manifest = std::env::var("FEEDBACK_NATIVE_MANIFEST").expect("prepared host manifest");
+        let output = PathBuf::from(
+            std::env::var("FEEDBACK_TEST_OUTPUT").expect("retained host test output"),
+        );
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let data = output.join(format!("native-adapter-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&data).unwrap();
-        let mut runtime=NativeDevelopmentFeedback::new(&data,501).unwrap();
-        let session=runtime.session.clone();let owner=runtime.owner.clone();
-        let initial=runtime.host.snapshot().unwrap();
-        let rows:std::collections::BTreeMap<String,Vec<String>>=fs::read_to_string(manifest).unwrap().lines().map(|line|{
-            let values:Vec<String>=line.splitn(4,'\t').map(str::to_owned).collect();
-            assert_eq!(values.len(),4);(values[0].clone(),values)
-        }).collect();
-        for name in ["a1","b2","a3","wrong-version"] {
-            let row=&rows[name];let path=runtime.directory.join(format!("generation-{}.so",row[1]));
-            fs::copy(&row[3],&path).unwrap();let mut permissions=fs::metadata(&path).unwrap().permissions();permissions.set_readonly(true);fs::set_permissions(path,permissions).unwrap();
+        let mut runtime = NativeDevelopmentFeedback::new(&data, 501).unwrap();
+        let session = runtime.session.clone();
+        let owner = runtime.owner.clone();
+        let initial = runtime.host.snapshot().unwrap();
+        let rows: std::collections::BTreeMap<String, Vec<String>> = fs::read_to_string(manifest)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let values: Vec<String> = line.splitn(4, '\t').map(str::to_owned).collect();
+                assert_eq!(values.len(), 4);
+                (values[0].clone(), values)
+            })
+            .collect();
+        for name in ["a1", "b2", "a3", "wrong-version"] {
+            let row = &rows[name];
+            let path = runtime.directory.join(format!("generation-{}.so", row[1]));
+            fs::copy(&row[3], &path).unwrap();
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_readonly(true);
+            fs::set_permissions(path, permissions).unwrap();
         }
-        fn invoke(runtime:&mut NativeDevelopmentFeedback,id:&str,method:&str,args:Value,frame:u64)->Value{
+        fn invoke(
+            runtime: &mut NativeDevelopmentFeedback,
+            id: &str,
+            method: &str,
+            args: Value,
+            frame: u64,
+        ) -> Value {
             let bytes=serde_json::to_vec(&json!({"schema":"rusty.quest.hotload_command.v1","request_id":id,"method":method,"arguments":args})).unwrap();
-            let command=Command::parse(&bytes,id).unwrap();runtime.execute(command,frame,&mut |_|Err("host test has no Vulkan device".into()));
-            let observation=runtime.pending.last().unwrap().1.clone();
+            let command = Command::parse(&bytes, id).unwrap();
+            runtime.execute(command, frame, &mut |_| {
+                Err("host test has no Vulkan device".into())
+            });
+            let observation = runtime.pending.last().unwrap().1.clone();
             runtime.pending.clear(); // CPU host test does not claim xrEndFrame or device pixels.
             observation
         }
-        for (name,probe,value,delta,count) in [("a1","13",5,5,1),("b2","19",15,10,2),("a3","13",20,5,3)]{
-            let row=&rows[name];
-            let activated=invoke(&mut runtime,&format!("{name}-activate"),"native_activate",json!({"generation":row[1],"sha256":row[2],"probe_result":probe}),count*2);
-            assert_eq!(activated["status"],"pass");
-            let computed=invoke(&mut runtime,&format!("{name}-compute"),"native_compute",json!({"input":"4"}),count*2+1);
-            assert_eq!(computed["status"],"pass");
-            assert_eq!((runtime.value,runtime.visual_value,runtime.completed),(value,delta,count));
-            let snapshot=runtime.host.snapshot().unwrap();assert_eq!(snapshot.allocation_token,initial.allocation_token);assert_eq!(snapshot.buffer,value.to_le_bytes());
-            assert_eq!((&runtime.session,&runtime.owner),(&session,&owner));
-            if name=="b2"{
-                let row=&rows["wrong-version"];
-                let refused=invoke(&mut runtime,"bad-abi","native_activate",json!({"generation":row[1],"sha256":row[2],"probe_result":"13"}),8);
-                assert_eq!(refused["status"],"refused");assert_eq!((runtime.value,runtime.visual_value,runtime.completed),(15,10,2));
-                assert_eq!(runtime.host.snapshot().unwrap().generation,2);
+        for (name, probe, value, delta, count) in [
+            ("a1", "13", 5, 5, 1),
+            ("b2", "19", 15, 10, 2),
+            ("a3", "13", 20, 5, 3),
+        ] {
+            let row = &rows[name];
+            let activated = invoke(
+                &mut runtime,
+                &format!("{name}-activate"),
+                "native_activate",
+                json!({"generation":row[1],"sha256":row[2],"probe_result":probe}),
+                count * 2,
+            );
+            assert_eq!(activated["status"], "pass");
+            let computed = invoke(
+                &mut runtime,
+                &format!("{name}-compute"),
+                "native_compute",
+                json!({"input":"4"}),
+                count * 2 + 1,
+            );
+            assert_eq!(computed["status"], "pass");
+            assert_eq!(
+                (runtime.value, runtime.visual_value, runtime.completed),
+                (value, delta, count)
+            );
+            let snapshot = runtime.host.snapshot().unwrap();
+            assert_eq!(snapshot.allocation_token, initial.allocation_token);
+            assert_eq!(snapshot.buffer, value.to_le_bytes());
+            assert_eq!((&runtime.session, &runtime.owner), (&session, &owner));
+            if name == "b2" {
+                let row = &rows["wrong-version"];
+                let refused = invoke(
+                    &mut runtime,
+                    "bad-abi",
+                    "native_activate",
+                    json!({"generation":row[1],"sha256":row[2],"probe_result":"13"}),
+                    8,
+                );
+                assert_eq!(refused["status"], "refused");
+                assert_eq!(
+                    (runtime.value, runtime.visual_value, runtime.completed),
+                    (15, 10, 2)
+                );
+                assert_eq!(runtime.host.snapshot().unwrap().generation, 2);
             }
         }
         fs::write(data.join("host-adapter-result.json"),serde_json::to_vec_pretty(&json!({"host_only":true,"device_tested":false,"session":session,"owner":owner,"completed":runtime.completed,"value":runtime.value,"visual_delta":runtime.visual_value,"bad_abi_refused":true})).unwrap()).unwrap();
-        println!("retained exact host adapter result {}",data.display());
+        println!("retained exact host adapter result {}", data.display());
     }
 }
