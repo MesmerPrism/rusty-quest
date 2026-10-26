@@ -581,6 +581,10 @@ final class EmbeddedDuplexProcessHost {
     /** Real-peer bootstrap stops before admission or any media owner effect. */
     CompletableFuture<EmbeddedDuplexRuntimeStatus> bootstrapRealPeer(long expectedGeneration) {
         if (freshSelected() && !EmbeddedDuplexOriginals.hasCurrent()) {
+            if (processFence != null && processFence.recoveryOnly())
+                return failed(new IllegalStateException("process recovery pending"));
+            if (applicationContext == null)
+                return failed(new IllegalStateException("fresh bootstrap application context unavailable"));
             String challenge = internalChallenge();
             return appOriginal("bootstrap_real_peer", challenge, () -> bootstrapRealPeer(expectedGeneration),
                     actual -> CompletableFuture.completedFuture(runtimeOriginalBundle(challenge, actual)));
@@ -1971,16 +1975,22 @@ final class EmbeddedDuplexProcessHost {
 
     CompletableFuture<String> closeRealPeerNoMedia(long expectedGeneration) {
         if (!freshSelected()) return closeRealPeerNoMediaLegacy(expectedGeneration);
-        if(EmbeddedDuplexOriginals.capture()==null){String challenge=internalChallenge();return appOriginal("close_no_media",challenge,
-            ()->closeRealPeerNoMedia(expectedGeneration),closed->{android.os.Bundle response=runtimeOriginalBundle(challenge,closedNoMediaStatus());
-                response.putString("close_disposition",closed);return CompletableFuture.completedFuture(response);});}
+        // Reject an unrelated attachment or recovery-only process before enrolling
+        // a new Original. Neither rejection owns a new close effect.
         synchronized (attachmentGate) {
             if (localFixture || expectedGeneration == 0L
                     || attachmentGeneration != expectedGeneration) {
                 return failed(new IllegalStateException("real-peer no-media close unavailable"));
             }
-
+            if (processFence != null && processFence.recoveryOnly()) {
+                return failed(new IllegalStateException("retained process effects require recovery; no-media close is not recovery"));
+            }
         }
+        if (applicationContext == null)
+            return failed(new IllegalStateException("fresh no-media application context unavailable"));
+        if(EmbeddedDuplexOriginals.capture()==null){String challenge=internalChallenge();return appOriginal("close_no_media",challenge,
+            ()->closeRealPeerNoMedia(expectedGeneration),closed->{android.os.Bundle response=runtimeOriginalBundle(challenge,closedNoMediaStatus());
+                response.putString("close_disposition",closed);return CompletableFuture.completedFuture(response);});}
         requestDesiredStopOutsideCommandLane(true);
         return closeNoMediaAndDetach(expectedGeneration);
     }

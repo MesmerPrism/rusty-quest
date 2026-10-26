@@ -17,10 +17,12 @@ def main():
  seam_names={'looper':'Looper.java','native':'EmbeddedDuplexNative.java','seams':'SourceBoundary.kt','own':'OwnBoundary.kt'};seams={}
  for name,filename in seam_names.items():
   value=re.search(r'\$'+name+r"=WriteHost '[^']+' @'\r?\n(.*?)\r?\n'@",original,re.S).group(1)
+  if name=='seams':value=value.replace('fun captureRouteSelected()=true','var routeSelected=true\n fun captureRouteSelected()=routeSelected')
   if name=='own':
    value=value.replace('class Capture {fun fresh()=true}', 'class Capture {fun fresh()=true;fun failure():Throwable?=null}')
    value=value.replace('fun phase()=Phase.Live', 'fun phase()=Phase.Live\n fun whenFresh(c:Capture,alive:java.util.function.BooleanSupplier)=java.util.concurrent.CompletableFuture.completedFuture<Void>(null)')
   path=out/filename;path.write_text(value,encoding='utf-8');seams[name]=path
+ log=out/'Log.java';log.write_text('package android.util; public final class Log { public static int w(String tag,String message){System.err.println(tag+": "+message);return 0;} }',encoding='utf-8');seams['log']=log
  peer=out/'EmbeddedDuplexPeerRoots.java';peer.write_text('''package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
 class EmbeddedDuplexPeerRoots {static void keys(org.json.JSONObject v,String... names){java.util.Set<String>s=new java.util.HashSet<>();v.keys().forEachRemaining(s::add);if(!s.equals(new java.util.HashSet<>(java.util.Arrays.asList(names))))throw new IllegalArgumentException();}static void identity(org.json.JSONObject a,org.json.JSONObject b){} }
 ''',encoding='utf-8')
@@ -29,7 +31,7 @@ class EmbeddedDuplexPeerRoots {static void keys(org.json.JSONObject v,String... 
  before=[{'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()} for path in [*production,fixture,slot_fixture,root/'tools/checks/Test-ConcurrentPeerRetirementHost.ps1',pathlib.Path(__file__).resolve()]]
  def run(name,argv):
   result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60);(out/(name+'.stdout')).write_bytes(result.stdout);(out/(name+'.stderr')).write_bytes(result.stderr);return result.returncode
- code=run('java',[spec['tools']['javac'],'--release','17','-cp',cp,'-d',str(classes),str(seams['looper']),str(seams['native']),str(peer),*[str(x) for x in production[:-2]],str(slot_fixture)]);assert code==0,'Java compile'
+ code=run('java',[spec['tools']['javac'],'--release','17','-cp',cp,'-d',str(classes),str(seams['looper']),str(seams['native']),str(log),str(peer),*[str(x) for x in production[:-2]],str(slot_fixture)]);assert code==0,'Java compile'
  code=run('kotlin',[spec['tools']['java'],'-cp',os.pathsep.join(compiler),'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler','-no-stdlib','-no-reflect','-jvm-target','17','-classpath',cp,'-d',str(classes),str(seams['seams']),str(seams['own']),*[str(x) for x in production[-2:]],str(fixture)]);assert code==0,'Kotlin compile'
  argv=[spec['tools']['java'],'-cp',cp,'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.PreparedSecondLifetimeHost'];argv+=['baseline'] if a.baseline else []
  code=run('controls',argv)

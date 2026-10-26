@@ -110,8 +110,9 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
     // Allocate only inside the authenticated Sink effect, after this retryable owner
     // has already been installed in the registry. A failed preparation retains it.
     synchronized org.json.JSONObject prepareDormantDecoder(String id,org.json.JSONObject format,java.util.function.BooleanSupplier stop)throws Exception {
+        if(stop==null)throw new IllegalArgumentException("actual desired Stop unavailable");
         if(dormantPreparationId!=null)throw new IllegalStateException("actual dormant decoder already entered");dormantPreparationId=id;
-        prepare(true,format);dormantRendererReadback=display.prepareDormantPeerRenderer(id,staged.routeGeneration(),stop);
+        prepare(true,format,stop);dormantRendererReadback=display.prepareDormantPeerRenderer(id,staged.routeGeneration(),stop);
         return new org.json.JSONObject(dormantRendererReadback);
     }
     boolean preparedDecoderClosed(){ReceiverRuntime held=receiver;return dormantPrepared &&held!=null&&held.preparedDecoderHeld();}
@@ -149,8 +150,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         }
         if(!snapshot().terminal())throw new IllegalStateException("actual dormant decoder cleanup remains Pending");return renderer;
     }
-    private void prepare(){prepare(false,null);}
-    private void prepare(boolean dormant,org.json.JSONObject format) {
+    private void prepare(){prepare(false,null,null);}
+    private void prepare(boolean dormant,org.json.JSONObject format,java.util.function.BooleanSupplier stop) {
         if("cleaned".equals(preparationState) || "stopped".equals(preparationState)) {
             if(!surfaceReleased || !projectionRetired || !snapshot().terminal())
                 throw new IllegalStateException("prior receiver cleanup unresolved");
@@ -166,7 +167,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         projectionRetired = false;
         try {
             armStage = ArmStage.PEER_PROJECTION;
-            long routeGeneration = dormant?display.reserveDormantPeerProjection():display.preparePeerProjection();
+            long routeGeneration = dormant?display.reserveDormantPeerProjection(stop):display.preparePeerProjection();
             dormantPrepared=dormant;
             armStage = ArmStage.READER_STAGE;
             staged = runtimeFactory.stage(width, height, 4, fpsCap, routeGeneration);

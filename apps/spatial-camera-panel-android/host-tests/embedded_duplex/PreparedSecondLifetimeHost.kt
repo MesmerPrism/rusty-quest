@@ -32,7 +32,77 @@ internal object PreparedSecondLifetimeHost {
     val superseded=Fixture();superseded.dormant(first);superseded.arm(1)
     superseded.routing.beginProjectionSourceRequest(SpatialVideoSource.Disabled,null)
     check(runCatching { superseded.stop(2) }.isFailure);check(superseded.abortIds.isEmpty())
+    pendingSourceControls()
     println("PASS whole Receiver/Display/routing prepare -> entered receiver -> terminal Peer teardown -> exact renderer release -> archive -> second prepare; native/routing failure, same-ID cleanup retry, foreign/current/Pending refusals; Android/native/media leaves modeled")
+  }
+
+  private fun pendingSourceControls() {
+    OwnPackedPoolNative.routeSelected=false
+    try {
+      PendingSource(null).use { f ->
+        val start=System.nanoTime();val pending=f.begin(false)
+        check(f.entered.await(2,java.util.concurrent.TimeUnit.SECONDS))
+        val cleanup=f.cleanup();check(!cleanup.isDone)
+        check(f.failure(pending).contains("native source transition deadline"))
+        val elapsed=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)
+        check(elapsed in 9000..20000);cleanup.get(2,java.util.concurrent.TimeUnit.SECONDS)
+        f.requireStillPending()
+        println("PASS default finite null readback bounded at ${elapsed}ms; queued cleanup runs; no Inactive manufactured")
+      }
+      PendingSource(SpatialVideoSourceResult.Pending).use { f ->
+        val pending=f.begin(true);check(f.entered.await(2,java.util.concurrent.TimeUnit.SECONDS))
+        val cleanup=f.cleanup();Thread.sleep(11000)
+        check(!pending.isDone && !cleanup.isDone);f.requireStillPending()
+        f.stop.set(true);check(f.failure(pending).contains("actual desired Stop during source preparation"))
+        cleanup.get(2,java.util.concurrent.TimeUnit.SECONDS);f.requireStillPending()
+        println("PASS selected real Original Stop supplier escapes >10s Pending and releases queued cleanup; no terminal proof")
+      }
+      PendingSource(null).use { f ->
+        val pending=f.begin(true);check(f.entered.await(2,java.util.concurrent.TimeUnit.SECONDS))
+        val cleanup=f.cleanup();f.routing.beginProjectionSourceRequest(SpatialVideoSource.Local,null)
+        check(f.failure(pending).contains("source transition superseded"));cleanup.get(2,java.util.concurrent.TimeUnit.SECONDS)
+        println("PASS selected Pending source generation supersession releases lifecycle worker")
+      }
+    } finally { OwnPackedPoolNative.routeSelected=true }
+  }
+
+  /** Real serialized coordinator and routing; native Pending/null and OS resources are leaves. */
+  private class PendingSource(val result:SpatialVideoSourceResult?):AutoCloseable {
+    val stop=java.util.concurrent.atomic.AtomicBoolean()
+    val entered=java.util.concurrent.CountDownLatch(1)
+    private val ownerThread=java.util.concurrent.atomic.AtomicReference<Thread>()
+    private val executor=java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+      Thread(task,"pending-source-control").also { ownerThread.set(it) }
+    }
+    private val base=Fixture()
+    private val adapter=object:SpatialVideoSourceExecutionAdapter by base.adapter {
+      override fun selectNativeProvider(request:SpatialVideoSourceNativeRequest,context:SpatialVideoSourceCarrierContext)=
+          base.words(request.routeGeneration,SpatialVideoSourceResult.Pending,SpatialVideoSourceStage.ProviderSelected)
+              .copy(source=request.source,decoderToken=0,readerGeneration=0)
+    }
+    val routing=SpatialVideoSourceRoutingCoordinator(adapter){1000L}
+    private val display=EmbeddedDuplexDisplayCoordinator(routing,{executor.execute(it);true},
+        {Thread.currentThread()===ownerThread.get()},{SpatialVideoSourceCarrierContext(11,12)},
+        {error("unexpected bind")},{error("unexpected attach")},{generation ->
+          entered.countDown()
+          result?.let { base.words(generation,it,SpatialVideoSourceStage.ProviderSelected)
+              .copy(source=SpatialVideoSource.Disabled,decoderToken=0,readerGeneration=0) }
+        },{error("unexpected words")},{error("unexpected Own restart")})
+    private val slot=EmbeddedDuplexDisplaySlot().also { it.attach(display) }
+    init { routing.beginProjectionSourceRequest(SpatialVideoSource.Local,null) }
+    fun begin(selected:Boolean)=java.util.concurrent.CompletableFuture.supplyAsync {
+      if(selected)slot.reserveDormantPeerProjection(stop::get) else slot.ensureLocalCaptureStopped()
+    }
+    fun cleanup()=executor.submit { /* Queue availability is required before any real cleanup callback can run. */ }
+    fun failure(pending:java.util.concurrent.CompletableFuture<Long>):String {
+      try { pending.get(20,java.util.concurrent.TimeUnit.SECONDS);error("Pending source unexpectedly succeeded") }
+      catch(expected:java.util.concurrent.ExecutionException) {
+        return generateSequence(expected as Throwable?){it.cause}.mapNotNull{it.message}.joinToString(" / ")
+      }
+    }
+    fun requireStillPending(){val state=routing.snapshot();check(state.pending==SpatialVideoSource.Disabled)
+      check(state.readback?.result!=SpatialVideoSourceResult.Inactive)}
+    override fun close(){stop.set(true);executor.shutdownNow();check(executor.awaitTermination(2,java.util.concurrent.TimeUnit.SECONDS))}
   }
 
   private fun retire(routing: SpatialVideoSourceRoutingCoordinator, generation: Long) {

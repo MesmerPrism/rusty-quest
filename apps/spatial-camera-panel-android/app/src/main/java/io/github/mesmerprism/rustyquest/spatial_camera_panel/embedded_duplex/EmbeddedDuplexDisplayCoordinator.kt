@@ -30,12 +30,18 @@ internal class EmbeddedDuplexDisplayCoordinator(
     private val abortPreparedRenderer: ((String) -> String)? = null,
 ) : EmbeddedDuplexDisplay {
   private var dormantPeerRoute: SpatialVideoSourceRoutingCoordinator.PreparedPeerRoute? = null
-  override fun reserveDormantPeerProjection(): Long = serialized {
+  override fun reserveDormantPeerProjection(): Long = serialized { reserveDormantPeerProjectionCurrent(null) }
+  override fun reserveDormantPeerProjection(desiredStop: java.util.function.BooleanSupplier): Long = serialized {
+    reserveDormantPeerProjectionCurrent(desiredStop)
+  }
+  private fun reserveDormantPeerProjectionCurrent(desiredStop: java.util.function.BooleanSupplier?): Long {
     check(dormantPeerRoute == null && ownedPeerGeneration == 0L) { "dormant reader route already held" }
-    ensureLocalCaptureStopped()
+    check(desiredStop?.asBoolean != true) { "actual desired Stop during source preparation" }
+    ensureLocalCaptureStoppedCurrent(desiredStop)
+    check(desiredStop?.asBoolean != true) { "actual desired Stop during source preparation" }
     val candidate=routing.prepareEmbeddedPeerRoute()
     dormantPeerRoute=candidate
-    candidate.generation
+    return candidate.generation
   }
   private var preparedRendererId:String?=null
   override fun prepareDormantPeerRenderer(id:String,generation:Long,desiredStop:java.util.function.BooleanSupplier):String = serialized {
@@ -105,20 +111,21 @@ internal class EmbeddedDuplexDisplayCoordinator(
     Unit
   }
 
-  override fun ensureLocalCaptureStopped(): Long = serialized {
+  override fun ensureLocalCaptureStopped(): Long = serialized { ensureLocalCaptureStoppedCurrent(null) }
+  private fun ensureLocalCaptureStoppedCurrent(desiredStop: java.util.function.BooleanSupplier?): Long {
     val current = routing.snapshot()
     if (concurrentOwn()) {
       check(EmbeddedDuplexNative.localCameraQuiescent()) { "old native local acquisition remains Pending" }
-      return@serialized current.generation
+      return current.generation
     }
-    if (current.requested == SpatialVideoSource.Peer) {
+    return if (current.requested == SpatialVideoSource.Peer) {
       check(EmbeddedDuplexNative.localCameraQuiescent()) { "local capture still owns camera resources" }
       current.generation
     } else {
       val generation = if (current.requested == SpatialVideoSource.Disabled && current.failed == null) {
         current.generation
       } else request(SpatialVideoSource.Disabled)
-      awaitSource(generation, SpatialVideoSource.Disabled)
+      awaitSource(generation, SpatialVideoSource.Disabled, desiredStop)
       check(EmbeddedDuplexNative.localCameraQuiescent()) { "local camera shutdown incomplete" }
       generation
     }
@@ -259,11 +266,13 @@ internal class EmbeddedDuplexDisplayCoordinator(
     return begun.generation
   }
 
-  private fun awaitSource(generation: Long, source: SpatialVideoSource) {
+  private fun awaitSource(generation: Long, source: SpatialVideoSource,
+      desiredStop: java.util.function.BooleanSupplier? = null) {
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
     var warned = false
-    while (true) {
+    while (desiredStop != null || System.nanoTime() < deadline) {
       check(routing.snapshot().generation == generation) { "source transition superseded" }
+      check(desiredStop?.asBoolean != true) { "actual desired Stop during source preparation" }
       val receipt = read(generation)
       if (receipt != null) {
         val state = routing.reportNativeReadback(receipt)
@@ -272,6 +281,10 @@ internal class EmbeddedDuplexDisplayCoordinator(
             else SpatialVideoSourceResult.Effective
         if (receipt.routeGeneration == generation && receipt.source == source && receipt.result == terminal &&
             receipt.hasStages(SpatialVideoSourceStage.requiredFor(source))) return
+      }
+      if (!warned && System.nanoTime() >= deadline) {
+        warned = true
+        android.util.Log.w("RQSpatialCameraPanel", "same source preparation remains Pending")
       }
       Thread.sleep(10)
     }

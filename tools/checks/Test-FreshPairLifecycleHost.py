@@ -69,6 +69,7 @@ def main():
  original=(root/'tools/checks/Test-ConcurrentPeerRetirementHost.ps1').read_text();seams={}
  for key,name in [('looper','Looper.java'),('native','EmbeddedDuplexNative.java'),('seams','SourceBoundary.kt'),('own','OwnBoundary.kt')]:
   text=re.search(r'\$'+key+r"=WriteHost '[^']+' @'\r?\n(.*?)\r?\n'@",original,re.S).group(1)
+  if key=='seams':text=text.replace('fun captureRouteSelected()=true','var routeSelected=true\n fun captureRouteSelected()=routeSelected')
   if key=='own':text=text.replace('class Capture {fun fresh()=true}','class Capture {fun fresh()=true;fun failure():Throwable?=null}').replace('fun phase()=Phase.Live','fun phase()=Phase.Live\n fun whenFresh(c:Capture,alive:java.util.function.BooleanSupplier)=java.util.concurrent.CompletableFuture.completedFuture<Void>(null)')
   if key=='native':
    klass=item(text,'class EmbeddedDuplexNative {');text=text.replace(klass,klass[:-1]+'static void requestFreshSetupStop(String id){}\n}')

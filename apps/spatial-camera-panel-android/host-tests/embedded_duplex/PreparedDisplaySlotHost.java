@@ -17,6 +17,7 @@ public final class PreparedDisplaySlotHost {
     static final class Display implements EmbeddedDuplexDisplay {
         String id; long route; BooleanSupplier stop; int prepared, aborted, retired;
         Runnable onPrepare;
+        @Override public long reserveDormantPeerProjection(BooleanSupplier stop) { this.stop = stop; return 23L; }
         @Override public String prepareDormantPeerRenderer(String id, long route, BooleanSupplier stop) {
             prepared++; this.id = id; this.route = route; this.stop = stop;
             if (onPrepare != null) onPrepare.run();
@@ -36,6 +37,7 @@ public final class PreparedDisplaySlotHost {
         EmbeddedDuplexDisplaySlot slot = new EmbeddedDuplexDisplaySlot();
         Display first = new Display(); long generation = slot.attach(first);
         AtomicInteger stopCalls = new AtomicInteger(); BooleanSupplier stop = () -> { stopCalls.incrementAndGet(); return false; };
+        need(slot.reserveDormantPeerProjection(stop) == 23L && first.stop == stop && stopCalls.get() == 0);
         need("host-prepared".equals(slot.prepareDormantPeerRenderer("first", 23L, stop)));
         need(first.prepared == 1 && first.id.equals("first") && first.route == 23L && first.stop == stop && stopCalls.get() == 0);
         need("host-aborted".equals(slot.abortDormantPeerRenderer("first")) && first.aborted == 1);
