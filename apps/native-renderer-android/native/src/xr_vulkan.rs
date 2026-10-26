@@ -585,8 +585,12 @@ unsafe fn run_projection_loop_inner(
     let mesh_ui_enabled =
         crate::native_mesh_ui::enabled_for_mode(runtime_options.render_mode.marker_value());
     if crate::native_development_feedback::selected()
-        && (!mesh_ui_enabled || !runtime_options.render_mode.uses_scene_depth()) {
-        return Err("native development feedback requires its locked worldspace scene and mesh panel".into());
+        && (!mesh_ui_enabled || !runtime_options.render_mode.uses_scene_depth())
+    {
+        return Err(
+            "native development feedback requires its locked worldspace scene and mesh panel"
+                .into(),
+        );
     }
     let mesh_ui_foreign_queue_ready = physical_device_supports_extension(
         &vk_instance,
@@ -1472,15 +1476,26 @@ unsafe fn run_projection_loop_inner(
                 |value| value.checked_add(1),
             )
             .map_err(|_| "native mesh UI generation exhausted".to_string())?
-    } else { 0 };
+    } else {
+        0
+    };
     let mut development_feedback = if crate::native_development_feedback::selected() {
-        Some(crate::native_development_feedback::NativeDevelopmentFeedback::new(
-            &app.internal_data_path().ok_or("native feedback needs app-private data")?,
-            ui_generation,
-        )?)
-    } else { None };
+        Some(
+            crate::native_development_feedback::NativeDevelopmentFeedback::new(
+                &app.internal_data_path()
+                    .ok_or("native feedback needs app-private data")?,
+                ui_generation,
+            )?,
+        )
+    } else {
+        None
+    };
     #[cfg(native_development_feedback)]
-    let mut development_feedback_scene = crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene::new(&vk_device, render_pass)?;
+    let mut development_feedback_scene =
+        crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene::new(
+            &vk_device,
+            render_pass,
+        )?;
     // Start the Android writer after fallible developer-session/pipeline preparation.
     // Every frame-loop exit joins the explicit panel/device teardown below.
     let mut mesh_ui_panel = if mesh_ui_enabled {
@@ -1607,10 +1622,10 @@ unsafe fn run_projection_loop_inner(
             #[cfg(native_development_feedback)]
             development_feedback_scene.destroy(&vk_device);
             match mesh_ui_panel.take() {
-            Some(panel) => panel.destroy(app, &vk_device),
-            None => Ok(()),
+                Some(panel) => panel.destroy(app, &vk_device),
+                None => Ok(()),
             }
-        },
+        }
         Err(error) => {
             if let Some(panel) = mesh_ui_panel.take() {
                 panel.retain_unretired(app);
@@ -2210,7 +2225,9 @@ unsafe fn run_projection_frames(
     guide_blur_graph_renderer: &mut GuideBlurGraphRenderer,
     camera_runtime: Option<&NativeCameraRuntime>,
     mut mesh_ui_panel: Option<&mut GpuMeshUiPanel>,
-    mut development_feedback: Option<&mut crate::native_development_feedback::NativeDevelopmentFeedback>,
+    mut development_feedback: Option<
+        &mut crate::native_development_feedback::NativeDevelopmentFeedback,
+    >,
     #[cfg(native_development_feedback)] development_feedback_scene: &mut crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene,
     render_mode: NativeRendererRenderMode,
     environment_blend_mode: xr::EnvironmentBlendMode,
@@ -2885,7 +2902,8 @@ unsafe fn run_projection_frames(
                     && renderer_focus_session_state == "FOCUSED";
                 let (owner, hand_pressed, changed) = if alternate_input_enabled {
                     #[cfg(native_meta_xr_operator)]
-                    let selection = alternate_pointer.update_preferring_hands(controller_selected, ui_hand_sample);
+                    let selection = alternate_pointer
+                        .update_preferring_hands(controller_selected, ui_hand_sample);
                     #[cfg(not(native_meta_xr_operator))]
                     let selection = alternate_pointer.update(controller_selected, ui_hand_sample);
                     selection
@@ -2928,7 +2946,10 @@ unsafe fn run_projection_frames(
                     },
                 )?;
                 if changed || frame_count % 120 == 0 {
-                    let origin = ray.filter(|r| r.valid).map(|r| r.origin).unwrap_or([0.0; 3]);
+                    let origin = ray
+                        .filter(|r| r.valid)
+                        .map(|r| r.origin)
+                        .unwrap_or([0.0; 3]);
                     crate::marker("worldspace-input", format!("status=current frame={} inputOwner={} exclusiveHandsOrControllers={} controllerPointerSource={} controllerPointerTracked={} controllerPointerOrigin={:.4},{:.4},{:.4} handPointerSource={} handPinchPressed={} pointerVisual={} pointerGraphics=app-vulkan handAimExtensionRequired=false simultaneousTrackingRequired=false", frame_count, owner.marker(), alternate_input_enabled, ray.filter(|r| r.valid).map(|r| r.source).unwrap_or("none"), ray.is_some_and(|r| r.valid), origin[0], origin[1], origin[2], hand.map(|h| h.source()).unwrap_or("none"), hand_pressed, panel.pointer_visual_marker()));
                 }
                 if consumed || (alternate_input_enabled && !controller_selected) {
@@ -2958,7 +2979,8 @@ unsafe fn run_projection_frames(
                         crate::native_renderer_panel_bridge::open_control_panel(
                             app,
                             frame_count,
-                            crate::native_renderer_panel_bridge::right_primary_control_panel_source(),
+                            crate::native_renderer_panel_bridge::right_primary_control_panel_source(
+                            ),
                         );
                     }
                 } else if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {
@@ -3279,20 +3301,31 @@ unsafe fn run_projection_frames(
         #[cfg(native_meta_xr_operator)]
         let input_geometry_frame = mesh_ui_controls.map(|controls| {
             crate::native_input_geometry::freeze(crate::native_input_geometry::Frame {
-                generation: controls.generation, revision: controls.revision,
-                center: controls.pose.center, right: controls.pose.right, up: controls.pose.up,
-                width: controls.pose.width, height: controls.pose.height,
+                generation: controls.generation,
+                revision: controls.revision,
+                center: controls.pose.center,
+                right: controls.pose.right,
+                up: controls.pose.up,
+                width: controls.pose.width,
+                height: controls.pose.height,
                 visible: controls.panel_visible && controls.pose_initialized,
-                tracking_valid: view_flags.contains(xr::ViewStateFlags::ORIENTATION_VALID | xr::ViewStateFlags::POSITION_VALID),
+                tracking_valid: view_flags.contains(
+                    xr::ViewStateFlags::ORIENTATION_VALID | xr::ViewStateFlags::POSITION_VALID,
+                ),
                 reference_space: _reference_space_kind.into(),
-                instance: format!("{:?}", xr_instance.as_raw()), session: format!("{:?}", session.as_raw()),
+                instance: format!("{:?}", xr_instance.as_raw()),
+                session: format!("{:?}", session.as_raw()),
             })
         });
         if let Some(feedback) = development_feedback.as_deref_mut() {
             #[cfg(native_development_feedback)]
-            feedback.tick_with_shader(frame_count,&mut |candidate| {
-                let other_fences:Vec<_>=fences.iter().enumerate().filter_map(|(slot,fence)|(slot!=frame_slot).then_some(*fence)).collect();
-                development_feedback_scene.replace(vk_device,render_pass,candidate,&other_fences)
+            feedback.tick_with_shader(frame_count, &mut |candidate| {
+                let other_fences: Vec<_> = fences
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(slot, fence)| (slot != frame_slot).then_some(*fence))
+                    .collect();
+                development_feedback_scene.replace(vk_device, render_pass, candidate, &other_fences)
             });
             #[cfg(not(native_development_feedback))]
             feedback.tick(frame_count);
@@ -4208,7 +4241,12 @@ unsafe fn run_projection_frames(
             &projection_target_state,
             mesh_ui_panel.as_deref(),
             #[cfg(native_development_feedback)]
-            Some((development_feedback_scene, development_feedback.as_ref().map_or(0, |state| state.visual_value))),
+            Some((
+                development_feedback_scene,
+                development_feedback
+                    .as_ref()
+                    .map_or(0, |state| state.visual_value),
+            )),
         );
         if render_mode.uses_stimulus_volume() {
             gpu_timestamp_tracker.write_stage_end(
@@ -5817,7 +5855,10 @@ unsafe fn record_projection_diagnostic(
     projection_metadata: &CameraProjectionMetadata,
     projection_target_state: &ProjectionTargetState,
     mesh_ui_panel: Option<&GpuMeshUiPanel>,
-    #[cfg(native_development_feedback)] development_feedback_scene: Option<(&crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene, i64)>,
+    #[cfg(native_development_feedback)] development_feedback_scene: Option<(
+        &crate::gpu_development_feedback_scene::GpuDevelopmentFeedbackScene,
+        i64,
+    )>,
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
     let mut visual_stats = ReplayVisualStats::default();
@@ -6203,7 +6244,24 @@ unsafe fn record_projection_diagnostic(
         }
         #[cfg(native_development_feedback)]
         if let Some((scene, value)) = development_feedback_scene {
-            scene.record_eye(device, cmd, eye_projection, mesh_ui_panel.map(|panel| panel.frame_controls()).unwrap_or_default(), frame_count, value, vk::Viewport { x:0.0,y:0.0,width:swapchain.extent.width as f32,height:swapchain.extent.height as f32,min_depth:0.0,max_depth:1.0 });
+            scene.record_eye(
+                device,
+                cmd,
+                eye_projection,
+                mesh_ui_panel
+                    .map(|panel| panel.frame_controls())
+                    .unwrap_or_default(),
+                frame_count,
+                value,
+                vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: swapchain.extent.width as f32,
+                    height: swapchain.extent.height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                },
+            );
         }
         if let Some(panel) = mesh_ui_panel {
             panel.record_eye(

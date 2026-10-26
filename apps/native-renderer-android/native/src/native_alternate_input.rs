@@ -391,21 +391,30 @@ mod tests {
         );
         assert!(!operator_update(&mut state, true, Some(hand(0.05))).1);
         assert!(operator_update(&mut state, true, Some(hand(0.01))).1);
-        assert_eq!(operator_update(&mut state, false, None), (PointerOwner::None, false, true));
+        assert_eq!(
+            operator_update(&mut state, false, None),
+            (PointerOwner::None, false, true)
+        );
         assert!(!operator_update(&mut state, false, Some(hand(0.01))).1);
     }
     #[test]
     fn operator_hand_handoff_cancels_capture_and_runtime_pinch_rearms() {
         let mut state = AlternatePointer::default();
-        let sample = |right, pinch| runtime_aim_pointer(
-            [0.; 3], [0., 0., 0., 1.], right, true, false, pinch
-        );
+        let sample = |right, pinch| {
+            runtime_aim_pointer([0.; 3], [0., 0., 0., 1.], right, true, false, pinch)
+        };
         operator_update(&mut state, true, sample(true, false));
         let (_, pressed, _) = operator_update(&mut state, true, sample(true, true));
         let mut capture = crate::native_mesh_ui::PointerCapture::default();
-        assert_eq!(capture.update(true, pressed, Some([512., 169.])).unwrap().0, 0);
+        assert_eq!(
+            capture.update(true, pressed, Some([512., 169.])).unwrap().0,
+            0
+        );
         let (owner, pressed, changed) = operator_update(&mut state, true, sample(false, true));
-        assert_eq!((owner, pressed, changed), (PointerOwner::LeftHand, false, true));
+        assert_eq!(
+            (owner, pressed, changed),
+            (PointerOwner::LeftHand, false, true)
+        );
         // The render loop cancels the original capture on this ownership edge.
         assert_eq!(capture.update(false, false, None).unwrap().0, 3);
         assert!(!capture.captured());
