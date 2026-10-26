@@ -36,18 +36,23 @@ internal class EmbeddedDuplexDisplayCoordinator(
   }
   override fun activateOwnProjection() = serialized { activateOwnProjectionCurrent(null) }
   private fun activateOwnProjectionCurrent(ownerAlive: java.util.function.BooleanSupplier?) {
-    check(ownerAlive?.asBoolean != false) { "Own resume superseded" }
-    val capture = checkNotNull(OwnStereoCaptureRuntime.currentForApplication()?.retainedCapture()) {
-      "accepted Own capture unavailable"
-    }
+    fun reject(reason: EmbeddedDuplexOwnProjectionFailure.Reason): Nothing =
+      throw EmbeddedDuplexOwnProjectionFailure(reason)
+    if (ownerAlive?.asBoolean == false) reject(EmbeddedDuplexOwnProjectionFailure.Reason.SUPERSEDED)
+    val capture = OwnStereoCaptureRuntime.currentForApplication()?.retainedCapture()
+      ?: reject(EmbeddedDuplexOwnProjectionFailure.Reason.CAPTURE_UNAVAILABLE)
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
     while (!capture.fresh()) {
-      check(ownerAlive?.asBoolean != false) { "Own resume superseded" }
-      check(System.nanoTime() < deadline) { "Own producer readiness remains Pending" }
-      Thread.sleep(10)
+      if (ownerAlive?.asBoolean == false) reject(EmbeddedDuplexOwnProjectionFailure.Reason.SUPERSEDED)
+      if (System.nanoTime() >= deadline) reject(EmbeddedDuplexOwnProjectionFailure.Reason.FRESHNESS_PENDING)
+      try { Thread.sleep(10) }
+      catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        reject(EmbeddedDuplexOwnProjectionFailure.Reason.INTERRUPTED)
+      }
     }
-    check(ownerAlive?.asBoolean != false) { "Own resume superseded" }
-    check(startOwn?.invoke() == true) { "retained Own source carrier unavailable" }
+    if (ownerAlive?.asBoolean == false) reject(EmbeddedDuplexOwnProjectionFailure.Reason.SUPERSEDED)
+    if (startOwn?.invoke() != true) reject(EmbeddedDuplexOwnProjectionFailure.Reason.CARRIER_NOT_READY)
   }
 
   override fun requestWholeProjectionStop() = serialized {

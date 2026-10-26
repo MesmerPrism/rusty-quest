@@ -341,10 +341,10 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
         let request = ManifoldPeerEnrollmentRequest {
             schema_id: serde_json::from_value(json!(PEER_ENROLLMENT_REQUEST_SCHEMA))
                 .map_err(safe_decode)?,
-            request_id: serde_json::from_value(json!(format!(
-                "request.duplex.enroll.{suffix}.{}",
-                peer.peer_id
-            )))
+            request_id: serde_json::from_value(json!(runtime_history_id(
+                host,
+                format!("request.duplex.enroll.{suffix}.{}", peer.peer_id)
+            )?))
             .map_err(safe_decode)?,
             expected_authority_revision: serde_json::from_value(json!(revision(
                 &current,
@@ -378,7 +378,7 @@ fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
         let digest = key_id.strip_prefix("ed25519.").ok_or("pair key identity")?;
         let proposal: ManifoldPeerStatusProposal = serde_json::from_value(json!({
             "$schema": PEER_PROPOSAL_SCHEMA,
-            "proposal_id": format!("proposal.duplex.status.{suffix}.{}", peer.peer_id),
+            "proposal_id": runtime_history_id(host,format!("proposal.duplex.status.{suffix}.{}", peer.peer_id))?,
             "expected_authority_revision": revision(&current, "/accepted_peers/authority_revision")?,
             "proposer_id": adapter,
             "identity": {"$schema": PEER_IDENTITY_SCHEMA, "peer_id": peer.peer_id,
@@ -445,7 +445,7 @@ fn prepare(
 > {
     let now = host.clock.now_ms()?;
     let draft: QuestCommonLanContextDraft = serde_json::from_value(json!({
-        "correlation_id": format!("correlation.{}", ceremony_id),
+        "correlation_id": signed_history_id(host,format!("correlation.{}", ceremony_id))?,
         "initiator": binding(host, &host.local_peer_id, nonce_local, "initiator")?,
         "responder": binding(host, &host.remote_peer_id, nonce_remote, "responder")?,
         "transport": transport(host)?, "coordinator_epoch": 1,
@@ -457,6 +457,25 @@ fn prepare(
     let context = host.authority.prepare_common_lan_context(draft)?;
     let signature = sign(host, &context)?;
     Ok((context, signature))
+}
+
+fn signed_history_id(host: &Host, suffix: String) -> Result<String, String> {
+    let id = serde_json::from_value(json!(suffix)).map_err(safe_decode)?;
+    host.authority
+        .current_signed_history_request_id(&id)
+        .map(|id| id.to_string())
+}
+fn runtime_history_id(host: &Host, suffix: String) -> Result<String, String> {
+    let id = serde_json::from_value(json!(suffix)).map_err(safe_decode)?;
+    host.authority
+        .current_runtime_history_request_id(&id)
+        .map(|id| id.to_string())
+}
+fn remote_correlation_matches(host: &Host, remote: &str, suffix: String) -> Result<bool, String> {
+    let local = signed_history_id(host, suffix.clone())?;
+    Ok(super::super::history_ids::remote_correlation_matches(
+        &local, remote, &suffix,
+    ))
 }
 
 fn sign(
@@ -502,7 +521,7 @@ fn apply(
     set_step(host, "apply_reciprocal")?;
     let request: ManifoldCommonLanReciprocalEd25519ReviewRequest = serde_json::from_value(json!({
         "$schema": COMMON_LAN_RECIPROCAL_ED25519_REVIEW_SCHEMA,
-        "request_id": format!("request.{}.reciprocal", ceremony_id),
+        "request_id": signed_history_id(host,format!("request.{}.reciprocal", ceremony_id))?,
         "context": context, "initiator_signature": local_signature,
         "responder_signature": remote_signature
     }))
@@ -523,7 +542,7 @@ fn apply(
     let current = snapshot(host)?;
     let proposal: ManifoldCommonLanPeerSessionProposal = serde_json::from_value(json!({
         "$schema": COMMON_LAN_PEER_SESSION_PROPOSAL_SCHEMA,
-        "proposal_id": format!("proposal.{}.session", ceremony_id),
+        "proposal_id": runtime_history_id(host,format!("proposal.{}.session", ceremony_id))?,
         "session_id": session_id,
         "expected_authority_revision": revision(&current, "/peer_sessions/authority_revision")?,
         "subject_peer_id": host.local_peer_id,
@@ -754,7 +773,11 @@ pub(super) fn run(host: &Host) -> Result<String, String> {
             parse_signature(signed_a.get("signature").ok_or("peer signature absent")?)?;
         let prepared_b = exchange(host, "prepare_b", "prepared_b", &ceremony_id, json!({}))?;
         let context_b = parse_context(prepared_b.get("context").ok_or("peer context absent")?)?;
-        if context_b.correlation_id.as_str() != format!("correlation.{ceremony_id}") {
+        if !remote_correlation_matches(
+            host,
+            context_b.correlation_id.as_str(),
+            format!("correlation.{ceremony_id}"),
+        )? {
             return Err("peer context correlation differs".into());
         }
         let signature_b_for_b =
@@ -893,7 +916,11 @@ fn handle_frame_inner(host: &Host, bytes: &[u8]) -> Result<Vec<u8>, String> {
             let result: Result<Vec<u8>, String> = (|| -> Result<Vec<u8>, String> {
                 let context =
                     parse_context(frame.payload.get("context").ok_or("pair context absent")?)?;
-                if context.correlation_id.as_str() != format!("correlation.{id}") {
+                if !remote_correlation_matches(
+                    host,
+                    context.correlation_id.as_str(),
+                    format!("correlation.{id}"),
+                )? {
                     return Err("pair context correlation differs".into());
                 }
                 let current = state(host)?;

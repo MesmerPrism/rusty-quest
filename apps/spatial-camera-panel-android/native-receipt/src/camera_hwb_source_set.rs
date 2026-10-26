@@ -5,6 +5,7 @@ unsafe fn render_source_set_common_graph(
     requested_height: u32,
     max_frames: u32,
     cancellation: Arc<AtomicBool>,
+    readiness: &crate::source_graph_startup::Readiness,
     ready_tx: std::sync::mpsc::SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
     if cancellation.load(Ordering::Acquire) {
@@ -238,7 +239,13 @@ unsafe fn render_source_set_common_graph(
                 None
             };
         first_frame.release_seed_content();
-        let _ = ready_tx.send(Ok(()));
+        if cancellation.load(Ordering::Acquire) || !readiness.publish_ready() {
+            return Err("source-set-startup-closed-before-ready".into());
+        }
+        if ready_tx.send(Ok(())).is_err() {
+            readiness.fail();
+            return Err("source-set-startup-receiver-closed".into());
+        }
         while max_frames == 0 || frames_presented < max_frames {
             if cancellation.load(Ordering::Acquire) {
                 break;
@@ -796,6 +803,8 @@ pub(crate) unsafe fn start_source_set_common_graph(
     let window_address = window as usize;
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
     let cancellation = Arc::new(AtomicBool::new(false));
+    let readiness = Arc::new(crate::source_graph_startup::Readiness::default());
+    let startup_started = Instant::now();
     {
         let mut owner = PEER_COMMON_GRAPH_SESSION
             .lock()
@@ -810,7 +819,10 @@ pub(crate) unsafe fn start_source_set_common_graph(
             let same_window =
                 owner.window_address == window_address && owner.own_epoch == Some(admitted_epoch);
             ACameraNativeWindow_release(window);
-            return if same_window { 1 } else { 0 };
+            let ready = owner.startup_readiness.as_ref().is_some_and(|ready|
+                ready.reusable(same_window, true,
+                    owner.cancellation.as_ref().is_none_or(|cancel| cancel.load(Ordering::Acquire))));
+            return if ready { 1 } else { 0 };
         }
         if owner.claim.generation() == Some(route_generation) {
             // Recover only this finished actor and physical carrier, while its independent Own producer lives.
@@ -842,6 +854,7 @@ pub(crate) unsafe fn start_source_set_common_graph(
                 return 0;
             }
             owner.cancellation = None;
+            owner.startup_readiness = None;
             if !owner.claim.release(route_generation) {
                 ACameraNativeWindow_release(window);
                 return 0;
@@ -851,10 +864,13 @@ pub(crate) unsafe fn start_source_set_common_graph(
             ACameraNativeWindow_release(window);
             return 0;
         }
+        // Diagnostic reset follows the actual existing physical claim/release gate.
         owner.window_address = window_address;
         owner.own_epoch = Some(admitted_epoch);
         owner.cancellation = Some(cancellation.clone());
+        owner.startup_readiness = Some(readiness.clone());
         let worker_cancellation = cancellation.clone();
+        let worker_readiness = readiness.clone();
         ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_add(1, Ordering::AcqRel);
         let spawn = thread::Builder::new()
             .name(format!("spatial-peer-common-graph-{route_generation}"))
@@ -867,10 +883,18 @@ pub(crate) unsafe fn start_source_set_common_graph(
                         requested_height.max(64),
                         max_frames,
                         worker_cancellation,
+                        &worker_readiness,
                         ready_tx,
                     )
                 })
                 .unwrap_or_else(|_| Err("panic".to_string()));
+                if result.is_err() { worker_readiness.fail(); } else { worker_readiness.close(); }
+                // A deadline cannot become startup success when late setup retires
+                // cleanly during the caller's mandatory physical join.
+                let result = if result.is_ok()
+                    && worker_readiness.state() == crate::source_graph_startup::State::Failed {
+                    Err("source-set-startup-failed".to_string())
+                } else { result };
                 unsafe {
                     ACameraNativeWindow_release(window.cast::<ANativeWindow>());
                 }
@@ -891,6 +915,8 @@ pub(crate) unsafe fn start_source_set_common_graph(
                 ACTIVE_PEER_COMMON_GRAPH_WORKERS.fetch_sub(1, Ordering::AcqRel);
                 publish_acquisition_stopped_if_quiescent();
                 owner.cancellation = None;
+                readiness.fail();
+                owner.startup_readiness = None;
                 let released = owner.claim.release(route_generation);
                 debug_assert!(released);
                 ACameraNativeWindow_release(window);
@@ -898,20 +924,36 @@ pub(crate) unsafe fn start_source_set_common_graph(
             }
         }
     }
-    if matches!(
-        ready_rx.recv_timeout(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS * 2)),
-        Ok(Ok(()))
-    ) {
-        return 1;
+    let mut outcome = readiness.wait(&ready_rx, crate::source_graph_startup::READY_WAIT);
+    if outcome == crate::source_graph_startup::WaitOutcome::Ready {
+        let owner = PEER_COMMON_GRAPH_SESSION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if owner.claim.generation() == Some(route_generation)
+            && owner.startup_readiness.as_ref().is_some_and(|current| Arc::ptr_eq(current, &readiness))
+            && crate::own_stereo_capture_runtime::own_image_fresh_observed().ok() == Some(admitted_epoch)
+            && readiness.reusable(owner.window_address == window_address && owner.own_epoch == Some(admitted_epoch),
+                owner.worker.as_ref().is_some_and(|worker| !worker.is_finished()), cancellation.load(Ordering::Acquire)) {
+            return 1;
+        }
+        drop(owner);
+        readiness.close();
+        outcome = if readiness.state() == crate::source_graph_startup::State::Failed {
+            crate::source_graph_startup::WaitOutcome::Failed
+        } else { crate::source_graph_startup::WaitOutcome::Closed };
+    }
+    log_marker(format!("status=peer-common-graph-startup-refused routeGeneration={} outcome={} elapsedMs={} physicalJoinRequired=true",
+        route_generation, outcome.marker(), startup_started.elapsed().as_millis()));
+    if outcome != crate::source_graph_startup::WaitOutcome::Closed {
     }
     let worker = {
         let mut owner = PEER_COMMON_GRAPH_SESSION
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if owner.claim.generation() != Some(route_generation) {
+        if owner.claim.generation() != Some(route_generation)
+            || !owner.startup_readiness.as_ref().is_some_and(|current| Arc::ptr_eq(current, &readiness)) {
             None
         } else {
             cancellation.store(true, Ordering::Release);
+            readiness.close();
             owner.worker.take()
         }
     };
@@ -920,8 +962,10 @@ pub(crate) unsafe fn start_source_set_common_graph(
         let mut owner = PEER_COMMON_GRAPH_SESSION
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if owner.claim.generation() == Some(route_generation) {
+        if owner.claim.generation() == Some(route_generation)
+            && owner.startup_readiness.as_ref().is_some_and(|current| Arc::ptr_eq(current, &readiness)) {
             owner.cancellation = None;
+            owner.startup_readiness = None;
             let released = owner.claim.release(route_generation);
             debug_assert!(released);
         }

@@ -61,6 +61,12 @@ final class EmbeddedDuplexSessionInputs {
                 .put("trusted_key_fingerprints", new JSONArray().put(enrollment.remoteKeyId))
                 .put("trusted_adapter_ids", new JSONArray().put(enrollment.adapterId))
                 .put("trusted_media_revoker_ids", new JSONArray().put(enrollment.mediaRevokerId));
+        String mediaPolicySchema = EmbeddedDuplexMediaPolicy.schema(
+                io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_MEDIA_POLICY,
+                fixture, concurrentOwnPeer);
+        if (mediaPolicySchema != null) {
+            embedded.put("ongoing_media_policy", new JSONObject().put("$schema", mediaPolicySchema));
+        }
         JSONObject runtime = new JSONObject()
                 .put("adapter_id", enrollment.adapterId)
                 .put("admission_authority_id", enrollment.admissionAuthorityId)
