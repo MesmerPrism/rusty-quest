@@ -819,9 +819,16 @@ pub(crate) unsafe fn start_source_set_common_graph(
             let same_window =
                 owner.window_address == window_address && owner.own_epoch == Some(admitted_epoch);
             ACameraNativeWindow_release(window);
-            let ready = owner.startup_readiness.as_ref().is_some_and(|ready|
-                ready.reusable(same_window, true,
-                    owner.cancellation.as_ref().is_none_or(|cancel| cancel.load(Ordering::Acquire))));
+            let ready = owner.startup_readiness.as_ref().is_some_and(|ready| {
+                ready.reusable(
+                    same_window,
+                    true,
+                    owner
+                        .cancellation
+                        .as_ref()
+                        .is_none_or(|cancel| cancel.load(Ordering::Acquire)),
+                )
+            });
             return if ready { 1 } else { 0 };
         }
         if owner.claim.generation() == Some(route_generation) {
@@ -926,30 +933,47 @@ pub(crate) unsafe fn start_source_set_common_graph(
     }
     let mut outcome = readiness.wait(&ready_rx, crate::source_graph_startup::READY_WAIT);
     if outcome == crate::source_graph_startup::WaitOutcome::Ready {
-        let owner = PEER_COMMON_GRAPH_SESSION.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let owner = PEER_COMMON_GRAPH_SESSION
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if owner.claim.generation() == Some(route_generation)
-            && owner.startup_readiness.as_ref().is_some_and(|current| Arc::ptr_eq(current, &readiness))
-            && crate::own_stereo_capture_runtime::own_image_fresh_observed().ok() == Some(admitted_epoch)
-            && readiness.reusable(owner.window_address == window_address && owner.own_epoch == Some(admitted_epoch),
-                owner.worker.as_ref().is_some_and(|worker| !worker.is_finished()), cancellation.load(Ordering::Acquire)) {
+            && owner
+                .startup_readiness
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &readiness))
+            && crate::own_stereo_capture_runtime::own_image_fresh_observed().ok()
+                == Some(admitted_epoch)
+            && readiness.reusable(
+                owner.window_address == window_address && owner.own_epoch == Some(admitted_epoch),
+                owner
+                    .worker
+                    .as_ref()
+                    .is_some_and(|worker| !worker.is_finished()),
+                cancellation.load(Ordering::Acquire),
+            )
+        {
             return 1;
         }
         drop(owner);
         readiness.close();
         outcome = if readiness.state() == crate::source_graph_startup::State::Failed {
             crate::source_graph_startup::WaitOutcome::Failed
-        } else { crate::source_graph_startup::WaitOutcome::Closed };
+        } else {
+            crate::source_graph_startup::WaitOutcome::Closed
+        };
     }
     log_marker(format!("status=peer-common-graph-startup-refused routeGeneration={} outcome={} elapsedMs={} physicalJoinRequired=true",
         route_generation, outcome.marker(), startup_started.elapsed().as_millis()));
-    if outcome != crate::source_graph_startup::WaitOutcome::Closed {
-    }
     let worker = {
         let mut owner = PEER_COMMON_GRAPH_SESSION
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if owner.claim.generation() != Some(route_generation)
-            || !owner.startup_readiness.as_ref().is_some_and(|current| Arc::ptr_eq(current, &readiness)) {
+            || !owner
+                .startup_readiness
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &readiness))
+        {
             None
         } else {
             cancellation.store(true, Ordering::Release);
@@ -963,7 +987,11 @@ pub(crate) unsafe fn start_source_set_common_graph(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if owner.claim.generation() == Some(route_generation)
-            && owner.startup_readiness.as_ref().is_some_and(|current| Arc::ptr_eq(current, &readiness)) {
+            && owner
+                .startup_readiness
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &readiness))
+        {
             owner.cancellation = None;
             owner.startup_readiness = None;
             let released = owner.claim.release(route_generation);

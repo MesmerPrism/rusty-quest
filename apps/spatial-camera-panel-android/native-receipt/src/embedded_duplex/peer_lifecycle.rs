@@ -103,7 +103,7 @@ fn current_broker_readback(evidence: &Value) -> Result<Value, String> {
 
 fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
     let current = projection(host).ok();
-    let observed_at_ms=host.clock.now_ms()?;
+    let observed_at_ms = host.clock.now_ms()?;
     let (broker, selected_policy, native_owner_validation) = {
         let mut provider = Checkout::take(host.provider.clone())?;
         let broker = json_value(
@@ -119,12 +119,26 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
             .map(serde_json::to_value)
             .transpose()
             .map_err(safe_decode)?;
-        let validation=if policy.as_ref().and_then(|p|p.get("$schema")).and_then(Value::as_str)==Some("rusty.manifold.peer.ongoing_media_policy.v2") {
-            Some(match provider.get().current_concurrent_ongoing_validation(observed_at_ms) {
-                Ok(value)=>serde_json::to_value(value).map_err(safe_decode)?,
-                Err(_)=>json!({"$schema":"rusty.quest.concurrent.current_ongoing_owner_validation.v1","status":"unavailable","validated_at_ms":observed_at_ms,"reason":"current_owner_validation_unavailable"}),
-            })
-        } else { None };
+        let validation = if policy
+            .as_ref()
+            .and_then(|p| p.get("$schema"))
+            .and_then(Value::as_str)
+            == Some("rusty.manifold.peer.ongoing_media_policy.v2")
+        {
+            Some(
+                match provider
+                    .get()
+                    .current_concurrent_ongoing_validation(observed_at_ms)
+                {
+                    Ok(value) => serde_json::to_value(value).map_err(safe_decode)?,
+                    Err(_) => {
+                        json!({"$schema":"rusty.quest.concurrent.current_ongoing_owner_validation.v1","status":"unavailable","validated_at_ms":observed_at_ms,"reason":"current_owner_validation_unavailable"})
+                    }
+                },
+            )
+        } else {
+            None
+        };
         (broker, policy, validation)
     };
     let physically_stopped =
@@ -170,7 +184,7 @@ fn receipt(host: &Host, state: &State, action: &str) -> Result<Value, String> {
         if history_v2 {
             value["$schema"] = json!("rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3");
             value["current_lifetime_renewal_count"] = json!(state.current_lifetime_renewal_count);
-            value["current_owner_validation"]=json!(native_owner_validation);
+            value["current_owner_validation"] = json!(native_owner_validation);
         }
         value["renewal_total_completed"] = json!(state.renewal_count);
         value["renewal_first_request_id"] = json!(state.first_renewal_request_id);

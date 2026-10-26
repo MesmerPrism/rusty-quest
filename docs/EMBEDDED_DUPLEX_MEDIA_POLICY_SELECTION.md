@@ -18,7 +18,9 @@ unchanged. Selection grants neither a media route nor authority renewal.
 
 This source candidate composes the Camera2 source-graph readiness handshake and
 closed bootstrap failure observations with the ongoing history implementation.
-The accepted incoming-owner restart fix is retained. It is source-only: an
+The existing main incoming-owner lifecycle remains unchanged. This bounded
+package does not import the later prepared/fresh setup or remote-recovery
+lineages from a downstream-selected source tree. It is source-only: an
 actual product source/catalog admission, qualified native closure, generated
 artifact and product-owned physical validation remain required before adoption.
 Java whole-product terminal compatibility is described in
@@ -29,3 +31,12 @@ policy code with modeled enrollment/Android JSON/capture facts; closed builder
 projection checks preserve finite omission and reject unsupported values. They
 are not Android typecheck or device qualification. No timer, wrapper counter,
 expiry bypass or implicit reset selects ongoing behavior.
+
+Run `tools/Test-QuestOngoingMediaSource.ps1` with the selected JDK, host JSON
+dependency and Android NDK for the focused source controls and actual native
+Android type/shader check. The long coupled-owner source test is separate:
+`cargo test -p rusty-quest-broker-authority --locked
+ongoing_v2_actual_103_coupled_cycles_across_three_renewed_media_lifetimes --
+--test-threads=1`. On Windows, set process-local `RUST_MIN_STACK=67108864` for
+this large value-owning host fixture. This changes test-thread stack capacity;
+production/native thread settings and authority bounds are unchanged.

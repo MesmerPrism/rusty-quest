@@ -291,3 +291,17 @@ gate explicitly with its required inputs. Cargo can acquire its ordinary test de
 use `--offline` only after provisioning the registry. The result records the
 selected JAR digest. No Android SDK, Gradle build, APK, or device is invoked by
 this focused gate.
+
+## Opt-in ongoing source composition
+
+The explicit artifact policy and its six build/inspection projections are
+documented in [media policy selection](EMBEDDED_DUPLEX_MEDIA_POLICY_SELECTION.md).
+The native adapter retains actual coupled owner checkpoints and independent
+request epochs; [ongoing continuation](ONGOING_MEDIA_CONTINUATION.md) separates
+finite, partial v1 and complete v2 histories. Camera source reuse now also
+requires actual graph readiness, the same live claim and fresh original source
+epoch. A thread alone supplies no readiness.
+
+This source package adds no fresh credential/pair-setup feature, independent
+Fresh development data session, remote-recovery campaign, APK or device result.
+Those remain separate composition and product checkpoints.

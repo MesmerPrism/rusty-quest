@@ -20,7 +20,7 @@ def main():
     assert finish.count("EmbeddedDuplexWholeCloseRollover.localPeerTerminalProof(proof)")==1
     for token in ['snapshot.length == 160','snapshot[9] == 2L','snapshot[63] == 0L',
         'snapshot[156] == 0L','snapshot[157] == 0L','proof.getLong("app_process_generation") != processFence.generation()',
-        'proof.getLong("native_executor_generation")','remoteOwnerClosureVerified(proof, nativeExecutorGeneration)',
+        'proof.getLong("native_executor_generation")',
         'resources.productResourcesTerminal()','display.detachAfterCleanup(','held.retireProcessCallbacks()']:
         assert finish.index(token)<finish.index("afterVerifiedWholeProductCleanup(")
     native=(root/'apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex/peer_lifecycle.rs').read_text()

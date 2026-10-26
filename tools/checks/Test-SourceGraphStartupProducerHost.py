@@ -84,7 +84,7 @@ mod thread {
   pub fn new()->Self{Self(std::thread::Builder::new())}
   pub fn name(self,s:String)->Self{Self(self.0.name(s))}
   pub fn spawn<F,T>(self,f:F)->std::io::Result<JoinHandle<T>>where F:FnOnce()->T+Send+'static,T:Send+'static{
-   let c=crate::current();let h=self.0.spawn(f)?;
+   let c=crate::current();let finished=c.clone();let h=self.0.spawn(move||{let result=f();finished.event(8);result})?;
    if c.spawn_exits{c.wait(8);while !h.is_finished(){std::thread::yield_now();}}
    Ok(h)
   }
@@ -173,7 +173,7 @@ SELECT_FUNCTION
  }
  #[test]fn failed_setup_is_joined_and_never_admitted(){
   let c=setup(false);let s=begin();c.wait(1);c.send(Command::ExitErr);assert_eq!(s.join().unwrap(),0);
-  assert!(FINISH.lock().unwrap().iter().any(|x|x.1.as_ref().is_some_and(Result::is_err)));
+  assert!(LOGS.lock().unwrap().iter().any(|x|x.contains("error=modeled-renderer-setup-failure")));
   assert_eq!(PEER_COMMON_GRAPH_SESSION.lock().unwrap().claim.generation(),None);retire(&c);
  }
  // Install another incarnation with the SAME numeric generation to exercise Arc ABA.
@@ -200,7 +200,7 @@ SELECT_FUNCTION
   assert_eq!(old_ready.state(),source_graph_startup::State::Failed);
   assert!(!cancel.load(Ordering::SeqCst));assert_eq!(ready.state(),source_graph_startup::State::Ready);
   assert_eq!(PEER_COMMON_GRAPH_SESSION.lock().unwrap().claim.generation(),Some(42));
-  assert!(FINISH.lock().unwrap().iter().all(|x|x.1.as_ref().is_some_and(Result::is_err)));
+  assert!(LOGS.lock().unwrap().iter().any(|x|x.contains("error=source-set-startup-failed")));
   assert!(LOGS.lock().unwrap().iter().any(|x|x.contains("outcome=deadline")));
   tx.send(()).unwrap();retire(&c);assert_eq!(RELEASES.load(Ordering::SeqCst),1);
  }

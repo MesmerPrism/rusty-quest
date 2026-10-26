@@ -5,8 +5,9 @@ The native lifecycle producer emits
 runtime contains the closed one-field
 `rusty.manifold.peer.ongoing_media_policy.v2` policy. Java whole-product
 aggregation and the process-owned Activity rollover token recognize that exact
-pair. The finite lifecycle v1 and authenticated remote-owner cleanup v1 paths
-retain their existing meanings. Lifecycle v2, unknown versions, missing or
+pair. The finite lifecycle v1 retains its meaning. An independently selected
+authenticated remote-owner cleanup v1 remains a separate contract; this
+package adds no remote-owner recovery implementation. Lifecycle v2, unknown versions, missing or
 different policies, and extra policy fields are not this contract.
 
 Schema recognition supplies no cleanup evidence. Local closure still requires
@@ -15,7 +16,8 @@ runtime/app/executor identities, physical Own capture and all resource owners,
 renderer/GPU barriers, callback/control retirement and persisted process fence.
 The same final whole-product proof binds the opaque rollover token. A pending
 barrier cannot clear Activity state or admit a fresh process/runtime. No-media
-closure and remote-owner cleanup retain their separate owner proofs.
+closure retains its separate owner proof. Remote-owner cleanup is not
+substituted for the local native terminal predicate.
 
 Whole-product closure does not require current renewal authority to remain
 active after Stop. In particular the native receipt's current-owner validation

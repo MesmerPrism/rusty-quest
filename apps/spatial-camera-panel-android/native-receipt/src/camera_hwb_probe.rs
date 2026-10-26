@@ -188,11 +188,14 @@ pub(crate) fn select_peer_source_with_own_actor(
     let claim_generation = (u64::try_from(proof[3]).ok()? & i64::MAX as u64).max(1) as i64;
     if owner.claim.generation() != Some(claim_generation)
         || owner.window_address != window_address
-        || !owner.own_epoch.is_some_and(|epoch|
+        || !owner.own_epoch.is_some_and(|epoch| {
             u64::try_from(proof[3]).ok() == Some(epoch.process_generation)
-                && u64::try_from(proof[4]).ok() == Some(epoch.source_generation))
-        || !owner.startup_readiness.as_ref().is_some_and(|ready|
-            ready.state() == crate::source_graph_startup::State::Ready)
+                && u64::try_from(proof[4]).ok() == Some(epoch.source_generation)
+        })
+        || !owner
+            .startup_readiness
+            .as_ref()
+            .is_some_and(|ready| ready.state() == crate::source_graph_startup::State::Ready)
         || !owner
             .worker
             .as_ref()
