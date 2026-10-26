@@ -11,6 +11,42 @@ import org.junit.Test
 
 class EmbeddedDuplexOperatorContractTest {
   private val nonce = "0123456789abcdef0123456789abcdef"
+  @Test fun ordinaryStartUsesSelectedDepthPermissionDemand() {
+    for (layer in listOf(-1.0f, 0.0f, 5.0f, 6.0f)) {
+      assertFalse(embeddedDuplexStartNeedsScenePermission("disabled", layer))
+      assertTrue(embeddedDuplexStartNeedsScenePermission("legacy-native-sidecar", layer))
+      assertTrue(embeddedDuplexStartNeedsScenePermission("spatial-sdk-api-layer", layer))
+    }
+    for (layer in listOf(1.0f, 2.0f, 3.0f, 4.0f, 7.0f, 8.0f)) {
+      assertFalse(embeddedDuplexStartNeedsScenePermission("legacy-native-sidecar", layer))
+      assertFalse(embeddedDuplexStartNeedsScenePermission("spatial-sdk-api-layer", layer))
+    }
+  }
+  @Test fun ordinaryStartIsAnExplicitOwnedStartChoice() {
+    val original = "a".repeat(32)
+    val low = EmbeddedDuplexOperatorContract.parseFields("start", nonce, mapOf("original_id" to original))
+    val ordinary = EmbeddedDuplexOperatorContract.parseFields("start", nonce,
+        mapOf("original_id" to original, "prepare_preflight" to true))
+    assertEquals("START", low.route.name)
+    assertEquals("ORDINARY_START", ordinary.route.name)
+    assertEquals(original, ordinary.originalId)
+    assertEquals(nonce, ordinary.challenge)
+    for (invalid in listOf<Any?>(false, 1, "true", null)) assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("start", nonce,
+          mapOf("original_id" to original, "prepare_preflight" to invalid))
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("start", nonce, mapOf("prepare_preflight" to true))
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("peer_stop", nonce,
+          mapOf("original_id" to original, "prepare_preflight" to true))
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      EmbeddedDuplexOperatorContract.parseFields("start", nonce,
+          mapOf("original_id" to original, "prepare_preflight" to true, "native_command" to "start"))
+    }
+  }
   private val fields = mapOf<String, Any?>(
       "role_id" to "peer_b",
       "remote_public_key_hex" to "ab".repeat(32),

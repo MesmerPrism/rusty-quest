@@ -82,6 +82,8 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         val canonical = EmbeddedDuplexOriginals.request(method, request.challenge, snapshot)
         return EmbeddedDuplexRuntimeService.beginOriginal(app, originalId, method, request.challenge, canonical) {
           val actual = when (request.route) {
+            EmbeddedDuplexOperatorContract.Route.ORDINARY_START ->
+              EmbeddedDuplexDiagnosticActivityGate.requestOrdinaryStart(request.challenge)
             EmbeddedDuplexOperatorContract.Route.START ->
               EmbeddedDuplexRuntimeService.peerLifecycle(app, EmbeddedDuplexPeerAction.START, request.challenge)
             EmbeddedDuplexOperatorContract.Route.RENEW_AUTHORITY ->
@@ -115,7 +117,8 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         EmbeddedDuplexOperatorContract.Route.PEER_ROOT_STATUS, EmbeddedDuplexOperatorContract.Route.OPERATION_STOP,
         EmbeddedDuplexOperatorContract.Route.OPERATION_JOIN_STATUS, EmbeddedDuplexOperatorContract.Route.OPERATION_CONTINUATION_STATUS,
         EmbeddedDuplexOperatorContract.Route.OPERATION_CONTINUATION_HANDOFF, EmbeddedDuplexOperatorContract.Route.PAIR_SETUP_RECOVERY_STATUS,
-        EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY, EmbeddedDuplexOperatorContract.Route.OPERATION_ACK -> closed()
+        EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY, EmbeddedDuplexOperatorContract.Route.OPERATION_ACK,
+        EmbeddedDuplexOperatorContract.Route.ORDINARY_START -> closed()
         EmbeddedDuplexOperatorContract.Route.START, EmbeddedDuplexOperatorContract.Route.RENEW_AUTHORITY,
         EmbeddedDuplexOperatorContract.Route.PEER_STOP, EmbeddedDuplexOperatorContract.Route.PEER_REVOKE,
         EmbeddedDuplexOperatorContract.Route.PEER_STATUS, EmbeddedDuplexOperatorContract.Route.WHOLE_APP_CLOSE -> {

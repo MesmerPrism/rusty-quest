@@ -98,6 +98,25 @@ object EmbeddedDuplexDiagnosticActivityGate {
     return result
   }
 
+  /** The Original remains carried through the same resumed Activity action used by the panel. */
+  @JvmStatic
+  fun requestOrdinaryStart(challenge: String): CompletableFuture<String> {
+    val result = CompletableFuture<String>()
+    if (!BuildConfig.DEBUG || !postOriginal {
+          val activity = resumed?.get()
+          if (activity == null) {
+            result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
+          } else {
+            activity.runEmbeddedDuplexOrdinaryStart(challenge).whenComplete { receipt, failure ->
+              if (failure == null) result.complete(receipt) else result.completeExceptionally(failure)
+            }
+          }
+        }) {
+      result.completeExceptionally(IllegalStateException("Activity dispatch unavailable"))
+    }
+    return result
+  }
+
   @JvmStatic
   fun requestStartPreflight(): CompletableFuture<EmbeddedDuplexStartPreflight> {
     val result = CompletableFuture<EmbeddedDuplexStartPreflight>()

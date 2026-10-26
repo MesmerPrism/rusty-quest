@@ -657,6 +657,96 @@ final class EmbeddedDuplexProcessHost {
         });
     }
 
+    /** One owned Start from an actually prepared current session; setup remains separate. */
+    CompletableFuture<String> ordinaryStart(long expectedGeneration, String requestedChallenge,
+            java.util.function.BooleanSupplier currentActivity) {
+        try {
+            final String challenge = ordinaryStartChallenge(expectedGeneration, requestedChallenge, currentActivity);
+            if (EmbeddedDuplexOriginals.capture() == null) {
+                android.os.Bundle fields = new android.os.Bundle(); fields.putBoolean("prepare_preflight", true);
+                return EmbeddedDuplexOriginals.forApplication(applicationContext).beginInternal("start", challenge,
+                    EmbeddedDuplexOriginals.request("start", challenge, fields),
+                    () -> ordinaryStart(expectedGeneration, challenge, currentActivity),
+                    receipt -> CompletableFuture.completedFuture(receiptOriginalBundle(challenge, receipt)));
+            }
+            final EmbeddedDuplexOriginals.Record original = EmbeddedDuplexOriginals.capture();
+            return submit(() -> {
+                requireOrdinaryStartContext(expectedGeneration, challenge, currentActivity);
+                JSONObject prepared = new JSONObject(EmbeddedDuplexNative.runtimeCommand("prepared_peer_start_status", "{}"));
+                platform.requirePreparedNativeStatus(prepared, true);
+                return challenge;
+            }).thenCompose(ownedContinuation(selected ->
+                prepareStartPreflight(expectedGeneration).thenCompose(ownedContinuation(decision -> {
+                    if (!preflightLive(decision)) return failed(new IllegalStateException("current paired Start intent unavailable"));
+                    return peerLifecycle(EmbeddedDuplexPeerAction.START, selected, () -> {
+                        if (EmbeddedDuplexOriginals.capture() != original)
+                            throw new IllegalStateException("ordinary Start Original changed");
+                        requireOrdinaryStartContext(expectedGeneration, selected, currentActivity);
+                    });
+                }))));
+        } catch (Exception failure) { return failed(failure); }
+    }
+
+    private String ordinaryStartChallenge(long expectedGeneration, String requestedChallenge,
+            java.util.function.BooleanSupplier currentActivity) {
+        if (!freshSelected()) throw new IllegalStateException("actual prepared SDK selection unavailable; use the distinct low-level Start path");
+        synchronized (attachmentGate) {
+            if (phase.get() != Phase.READY || localFixture || resources == null || platform == null
+                    || expectedGeneration <= 0L || attachmentGeneration != expectedGeneration
+                    || displayDetaching || closeInFlight || display.cleanupPending())
+                throw new IllegalStateException("bootstrap and prepare_peer_start are required before Start");
+        }
+        if (processFence == null || runtimeConfigSha256 == null || ownFeatureLockSha256 == null)
+            throw new IllegalStateException("current ARM context unavailable");
+        String selected = ConcurrentStereoQualification.currentHubChallenge(processFence.epochId(),
+                runtimeConfigSha256, ownFeatureLockSha256);
+        if (requestedChallenge != null && !requestedChallenge.equals(selected))
+            throw new IllegalStateException("ordinary Start ARM challenge differs");
+        requireOrdinaryStartContext(expectedGeneration, selected, currentActivity);
+        return selected;
+    }
+
+    private void requireOrdinaryStartContext(long expectedGeneration, String challenge,
+            java.util.function.BooleanSupplier currentActivity) {
+        synchronized (attachmentGate) {
+            if (phase.get() != Phase.READY || localFixture || expectedGeneration <= 0L
+                    || attachmentGeneration != expectedGeneration || displayDetaching
+                    || closeInFlight || display.cleanupPending())
+                throw new IllegalStateException("ordinary Start display changed");
+        }
+        requireFreshProcess();
+        if (currentActivity == null || !currentActivity.getAsBoolean())
+            throw new IllegalStateException("current resumed Activity unavailable");
+        if (applicationContext == null
+                || applicationContext.checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                || applicationContext.checkSelfPermission("horizonos.permission.HEADSET_CAMERA") != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            throw new IllegalStateException("current camera permission unavailable");
+        if (!ConcurrentStereoQualification.currentArmActor(processFence.epochId(), challenge,
+                runtimeConfigSha256, nativeExecutorGeneration))
+            throw new IllegalStateException("ordinary Start current ARM actor differs");
+        EmbeddedDuplexOriginals.Record original = EmbeddedDuplexOriginals.capture();
+        if (original != null && (!"start".equals(original.row.optString("operation"))
+                || !challenge.equals(original.row.optString("original_challenge")) || original.desiredStop.get()))
+            throw new IllegalStateException("ordinary Start Original unavailable or stopped");
+    }
+
+    /** Snapshot the held ARM without queueing behind a pending Start; existing Stop signals its owner. */
+    CompletableFuture<String> stopCurrentPeer(long expectedGeneration) {
+        try {
+            synchronized (attachmentGate) {
+                if (expectedGeneration <= 0L || attachmentGeneration != expectedGeneration || localFixture)
+                    throw new IllegalStateException("current peer Stop display unavailable");
+            }
+            if (processFence == null) throw new IllegalStateException("current peer Stop fence unavailable");
+            processFence.requireLive(processFence.generation());
+            JSONObject arm = ConcurrentStereoQualification.retirementArmObservation(processFence.epochId(),
+                    runtimeConfigSha256, nativeExecutorGeneration);
+            if (!"established".equals(arm.getString("binding")))
+                throw new IllegalStateException("current peer Stop ARM unavailable");
+            return peerLifecycle(EmbeddedDuplexPeerAction.STOP, arm.getString("challenge"));
+        } catch (Exception failure) { return failed(failure); }
+    }
+
     CompletableFuture<EmbeddedDuplexStartPreflight> prepareStartPreflight(long expectedGeneration) {
         synchronized (attachmentGate) {
             if (phase.get() != Phase.READY || localFixture || expectedGeneration == 0L
@@ -1427,13 +1517,19 @@ final class EmbeddedDuplexProcessHost {
         });
     }
     CompletableFuture<String> peerLifecycle(EmbeddedDuplexPeerAction action, String challenge) {
+        return peerLifecycle(action, challenge, null);
+    }
+    private CompletableFuture<String> peerLifecycle(EmbeddedDuplexPeerAction action, String challenge, Runnable beforeStart) {
         if (!freshSelected()) return peerLifecycleLegacy(action, challenge);
         if (action == null) return failed(new IllegalArgumentException("peer action required"));
         if(action!=EmbeddedDuplexPeerAction.STATUS && EmbeddedDuplexOriginals.capture()==null)return appOriginal(action.action,challenge,
-            ()->peerLifecycle(action,challenge),receipt->CompletableFuture.completedFuture(receiptOriginalBundle(challenge,receipt)));
-        return peerLifecycleEntered(action,challenge,false);
+            ()->peerLifecycle(action,challenge,beforeStart),receipt->CompletableFuture.completedFuture(receiptOriginalBundle(challenge,receipt)));
+        return peerLifecycleEntered(action,challenge,false,beforeStart);
     }
     private CompletableFuture<String> peerLifecycleEntered(EmbeddedDuplexPeerAction action,String challenge,boolean wholeClassified){
+        return peerLifecycleEntered(action,challenge,wholeClassified,null);
+    }
+    private CompletableFuture<String> peerLifecycleEntered(EmbeddedDuplexPeerAction action,String challenge,boolean wholeClassified,Runnable beforeStart){
         RetainedNoMediaClose noMedia=noMediaClose;
         if(action==EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE && noMedia==null && terminalWholeReceipt!=null){
             if(!challenge.equals(terminalWholeChallenge))return failed(new IllegalStateException("closed challenge differs"));
@@ -1494,7 +1590,7 @@ final class EmbeddedDuplexProcessHost {
                 return new JSONObject(noMedia.proof.toString()).toString();
             }catch(Exception failure){throw new java.util.concurrent.CompletionException(failure);}});
         }
-        CompletableFuture<String> observed = concurrentQualificationOnLane(false, challenge, false, null, action);
+        CompletableFuture<String> observed = concurrentQualificationOnLane(false, challenge, false, null, action, false, false, null, beforeStart);
         if (action != EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE) return observed;
         return observed.thenCompose(receipt -> {
             RetainedWholeClose held = retainedWholeClose;
@@ -1595,6 +1691,9 @@ final class EmbeddedDuplexProcessHost {
         return concurrentQualificationOnLane(arm,challenge,policyAction,policy,peerAction,maskAction,false,null);
     }
     private CompletableFuture<String> concurrentQualificationOnLane(boolean arm, String challenge, boolean policyAction, long[] policy, EmbeddedDuplexPeerAction peerAction, boolean maskAction, boolean hubAction, java.util.concurrent.atomic.AtomicBoolean cancelled) {
+        return concurrentQualificationOnLane(arm,challenge,policyAction,policy,peerAction,maskAction,hubAction,cancelled,null);
+    }
+    private CompletableFuture<String> concurrentQualificationOnLane(boolean arm, String challenge, boolean policyAction, long[] policy, EmbeddedDuplexPeerAction peerAction, boolean maskAction, boolean hubAction, java.util.concurrent.atomic.AtomicBoolean cancelled, Runnable beforeStart) {
         if (!freshSelected()) return concurrentQualificationOnLaneLegacy(arm, challenge, policyAction, policy, peerAction, maskAction, hubAction, cancelled);
         return submit(() -> {
             requireFreshProcess();
@@ -1655,6 +1754,7 @@ final class EmbeddedDuplexProcessHost {
                         if (retained != null) retained.closeUnusedIncomingForWholeProduct();
                     }
                 }
+                if (peerAction == EmbeddedDuplexPeerAction.START && beforeStart != null) beforeStart.run();
                 if (peerAction == EmbeddedDuplexPeerAction.START) startIntent.dispatch(starting);
                 String nativeReceipt = noMediaFallback ? noMediaWholeProof(receiptConfig)
                         : retainedWholeNativeReceipt != null && peerAction == EmbeddedDuplexPeerAction.WHOLE_APP_CLOSE
