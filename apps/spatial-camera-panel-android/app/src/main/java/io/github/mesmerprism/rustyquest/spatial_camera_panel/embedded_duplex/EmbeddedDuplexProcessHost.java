@@ -73,9 +73,8 @@ final class EmbeddedDuplexProcessHost {
                 if(own!=null&&!"terminal".equals(own.physicalCleanupState()))throw new IllegalStateException("actual Own capture not terminal");
                 String sourceOriginal=legacyWholeOriginalId;
                 if(sourceOriginal==null&&retainedWholeClose!=null&&retainedWholeClose.original!=null)sourceOriginal=retainedWholeClose.original.id();
-                if(sourceOriginal==null&&coldPendingRecovery!=null&&coldPendingRecovery.plan.completed())sourceOriginal=coldPendingRecovery.plan.originalId();
                 if(sourceOriginal==null){
-                    JSONObject recovered=EmbeddedDuplexColdRecovery.latestHandoff(runContext.root,applicationContext.getPackageName());
+                    JSONObject recovered=EmbeddedDuplexColdRecovery.latestCompletedHandoff(runContext.root,applicationContext.getPackageName());
                     if(recovered!=null)sourceOriginal=recovered.getString("whole_original_id");
                 }
                 String release=null;
@@ -132,7 +131,7 @@ final class EmbeddedDuplexProcessHost {
             throw new IllegalStateException("legacy Whole last Native generation differs");
     }
     private void installRunHandoff(String nextRunId,String exactLocator)throws Exception{
-        JSONObject recovered=EmbeddedDuplexColdRecovery.latestHandoff(runContext.root,applicationContext.getPackageName());
+        JSONObject recovered=EmbeddedDuplexColdRecovery.latestCompletedHandoff(runContext.root,applicationContext.getPackageName());
         if(recovered!=null&&(retainedWholeClose==null||retainedWholeClose.original==null)){
             recovered.remove("physical_retirement");
             recovered.put("source_run_id",runContext.runId==null?JSONObject.NULL:runContext.runId);
@@ -164,7 +163,7 @@ final class EmbeddedDuplexProcessHost {
         return new JSONObject().put("$schema","rusty.quest.embedded_duplex.run_status.v2")
             .put("run_id",runContext.runId==null?JSONObject.NULL:runContext.runId).put("selection_generation",runContext.selectionGeneration)
             .put("native",actual).put("app_process_generation",processFence.generation()).put("app_display_generation",attachmentGeneration)
-            .put("app_fence_disposition",EmbeddedDuplexColdRecovery.appDisposition(runContext.root,processFence)).toString();
+            .put("app_fence_disposition",EmbeddedDuplexColdRecovery.appDisposition(runContext.root,processFence,actual)).toString();
     }
     private final InstalledApkDigest installedApkDigest = new InstalledApkDigest();
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
@@ -305,6 +304,8 @@ final class EmbeddedDuplexProcessHost {
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 JSONObject runtime = new JSONObject(runtimeCopy);
                 JSONObject enrollment = new JSONObject(startupCopy);
+                processFence.bindIncarnation(EmbeddedDuplexProcessIncarnation.current(
+                        android.os.Process.myPid(),android.os.Process.myUid()));
                 processFence.beforeRuntimeEffects(checkpointSnapshot(), evidenceSnapshot());
                 JSONObject nativeFence = new JSONObject(EmbeddedDuplexNative.claimNativeProcessFence(processFence));
                 String recordSha = EmbeddedDuplexProcessFence.digest(processFence.nativeAdmissionRecord());

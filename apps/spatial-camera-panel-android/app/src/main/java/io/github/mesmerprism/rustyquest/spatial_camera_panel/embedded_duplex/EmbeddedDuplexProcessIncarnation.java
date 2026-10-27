@@ -56,6 +56,30 @@ final class EmbeddedDuplexProcessIncarnation {
         return new String(bytes, StandardCharsets.US_ASCII).trim();
     }
     static Long kernelStartTicks(int pid) throws Exception { return kernelStartTicks(pid, Paths.get("/proc")); }
+    static String retirementBasis(Identity old,Identity current)throws Exception{
+        if(old.uid!=current.uid)throw new IllegalStateException("retired owner UID differs");
+        String first=boot(Paths.get("/proc"));Long actual=kernelStartTicks(old.pid);String last=boot(Paths.get("/proc"));
+        if(!first.equals(last)||!first.equals(current.boot))throw new IllegalStateException("retirement boot observation changed");
+        if(!old.boot.equals(first))return "boot_changed";
+        if(actual==null)return "not_running";
+        if(actual.longValue()!=old.ticks)return "pid_reused";
+        throw new IllegalStateException("old app process remains live");
+    }
+    static final class RecoveryBinding {
+        final Binding binding;final String exact,phaseRecord;
+        RecoveryBinding(Binding binding,String exact,String phaseRecord){this.binding=binding;this.exact=exact;this.phaseRecord=phaseRecord;}
+    }
+    /** Read one exact owner companion, without rewriting an old actor or requiring its callback. */
+    static RecoveryBinding readForRecovery(File directory)throws Exception{
+        String exact=read(new File(directory,NAME).toPath(),4096);JSONObject value=EmbeddedDuplexCanonicalJson.readOwned(exact.getBytes(StandardCharsets.UTF_8));
+        String original=value.getString("original_fence_record");
+        String clear=EmbeddedDuplexProcessFence.recordedPhase(original,"clear"),pending=EmbeddedDuplexProcessFence.recordedPhase(original,"pending");
+        String current=value.getString("current_fence_sha256");
+        String phase=current.equals(EmbeddedDuplexProcessFence.digest(pending))?pending:current.equals(EmbeddedDuplexProcessFence.digest(clear))?clear:null;
+        if(phase==null)throw new IllegalStateException("incarnation retained phase unsupported");
+        Binding binding=load(directory,phase);if(binding==null)throw new IllegalStateException("incarnation recovery witness invalid");
+        return new RecoveryBinding(binding,exact,phase);
+    }
     private static Long kernelStartTicks(int pid, Path proc) throws Exception {
         if (pid <= 0) throw new IllegalArgumentException("invalid PID");
         String stat;

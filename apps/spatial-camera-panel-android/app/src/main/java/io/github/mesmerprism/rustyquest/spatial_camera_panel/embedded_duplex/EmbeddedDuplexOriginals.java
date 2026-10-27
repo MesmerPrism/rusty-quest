@@ -25,11 +25,11 @@ public final class EmbeddedDuplexOriginals {
     private static final String RECORD = "rusty.quest.embedded_duplex.operator_original.v1";
     private static final String CONTINUATION_RECORD = "rusty.quest.embedded_duplex.operator_original.v2";
     private static final Set<String> FRESH_OPERATIONS = Set.of("bootstrap_real_peer", "pair_session", "fresh_pair_continue",
-            "prepare_peer_start", "abort_prepared_peer_start", "reestablish_peer_roots", "close_no_media");
+            "prepare_peer_start", "abort_prepared_peer_start", "reestablish_peer_roots", "close_no_media", "recover_cold_pending");
     private static final int MAX_RECORD_BYTES = 16 * 1024 * 1024;
     private static final Set<String> OPERATIONS = Set.of("start", "renew_authority", "peer_stop",
             "peer_revoke", "whole_app_close", "concurrent_arm", "policy_update", "blend_update", "bootstrap_real_peer", "pair_session", "fresh_pair_continue",
-            "prepare_peer_start", "abort_prepared_peer_start", "reestablish_peer_roots", "close_no_media");
+            "prepare_peer_start", "abort_prepared_peer_start", "reestablish_peer_roots", "close_no_media", "recover_cold_pending");
     private static final Set<String> FIELDS = Set.of("schema", "original_id", "operation", "request_sha256",
             "original_challenge", "state", "effect_state", "actor_binding", "native_setup_binding",
             "response", "response_sha256", "failure", "outcome_sha256", "retention", "consumer_receipt_sha256");
@@ -139,11 +139,24 @@ public final class EmbeddedDuplexOriginals {
     static EmbeddedDuplexOriginals retained(EmbeddedDuplexRunContext run)throws Exception{
         EmbeddedDuplexOriginals owner=new EmbeddedDuplexOriginals(run.root);owner.capturedRun=run;return owner;
     }
+    static JSONObject retainedRecoveryRow(File root,String originalId)throws Exception{
+        requireId(originalId);Record record=new EmbeddedDuplexOriginals(root).find(originalId);
+        if(record==null)throw new IllegalStateException("named recovery source Original absent");
+        return copy(record.row);
+    }
     /** Exact one-row compatibility witness. No mkdir/chmod, all-row scan, ACK or owner rebind. */
     static JSONObject closedWholeWitness(File root,String originalId)throws Exception{return closedWholeHandoff(root,originalId).getJSONObject("physical_retirement");}
     static JSONObject closedWholeHandoff(File root,String originalId)throws Exception{return closedWholeHandoff(root,originalId,null);}
     static JSONObject closedWholeHandoff(File root,String originalId,String packageId)throws Exception{
         return closedWholeHandoff(root,originalId,packageId,false);
+    }
+    static JSONObject latestWholeHandoff(File root,String packageId)throws Exception{
+        File pointer=new File(root,"operator-originals-v1/latest-whole.v1.json");
+        if(!Files.exists(pointer.toPath(),LinkOption.NOFOLLOW_LINKS))return null;
+        if(!Files.isRegularFile(pointer.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(pointer.toPath())||Files.size(pointer.toPath())>512)throw new IllegalStateException("latest Whole pointer unavailable");
+        JSONObject row=EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(pointer.toPath()));
+        if(!keys(row).equals(Set.of("schema","original_id"))||!"rusty.quest.embedded_duplex.latest_whole.v1".equals(row.getString("schema")))throw new IllegalStateException("latest Whole pointer shape differs");
+        return closedWholeHandoff(root,row.getString("original_id"),packageId);
     }
     /** Historical transport-v2 Whole only; this read never rewrites, ACKs or restores an actor. */
     static JSONObject closedLegacyV2WholeHandoff(File root,String originalId,String packageId)throws Exception{
@@ -193,9 +206,11 @@ public final class EmbeddedDuplexOriginals {
             if(envelope.has("peer_lifecycle"))validationEnvelope.put("peer_lifecycle",validationPhysical);else validationEnvelope=validationPhysical;
             validationResponse=copy(response);validationResponse.put("receipt",EmbeddedDuplexCanonicalJson.encode(validationEnvelope));
         }
-        if(!"observed".equals(response.getString("status"))||nativePending("whole_app_close",validationResponse))
+        boolean directNoMedia=EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2.equals(physical.optString("$schema"));
+        if(directNoMedia)requireRetainedNoMediaWhole(physical);
+        if(!"observed".equals(response.getString("status"))||!directNoMedia&&nativePending("whole_app_close",validationResponse))
             throw new IllegalStateException("retained Whole observation not terminal");
-        EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(validationPhysical);
+        if(!directNoMedia)EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(validationPhysical);
         File file=new File(owner.directory,originalId+".joined.json");
         if(!Files.isRegularFile(file.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(file.toPath())||Files.size(file.toPath())>MAX_RECORD_BYTES)
             throw new IllegalStateException("named Whole join unavailable");
@@ -221,6 +236,37 @@ public final class EmbeddedDuplexOriginals {
         return new JSONObject().put("whole_original_id",originalId).put("request_sha256",join.getString("request_sha256"))
             .put("outcome_sha256",join.getString("outcome_sha256")).put("physical_retirement_sha256",join.getString("physical_retirement_sha256"))
             .put("prior_native_generation",join.getLong("native_executor_generation")).put("physical_retirement",physical);
+    }
+    /** File-only direct configured Whole reader. It verifies the retained DTO and the exact joined actor;
+     * only the live producer may establish its constructor and physical facts. */
+    private static void requireRetainedNoMediaWhole(JSONObject whole)throws Exception{
+        if(!keys(whole).equals(Set.of("$schema","action","app_process_generation","app_record_sha256","process_epoch","native_retirement","arm_observation","own_capture","config_sha256","native_executor_generation",
+                "java_own_capture_cleanup","java_peer_resources_cleanup","java_renderer_cleanup","java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup","app_process_fence_cleanup"))
+                ||!"whole_app_close".equals(whole.getString("action"))||whole.getLong("app_process_generation")<=0||whole.getLong("native_executor_generation")<=0
+                ||!whole.getString("process_epoch").startsWith("app-process."+whole.getLong("app_process_generation")+"."))throw new IllegalStateException("retained no-media Whole shape differs");
+        requireHash(whole.getString("config_sha256"));requireHash(whole.getString("app_record_sha256"));
+        for(String key:new String[]{"java_own_capture_cleanup","java_peer_resources_cleanup","java_renderer_cleanup","java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup","app_process_fence_cleanup"})
+            if(!"terminal".equals(whole.get(key)))throw new IllegalStateException("retained no-media physical owner pending");
+        JSONObject nativeProof=whole.getJSONObject("native_retirement"),binding=nativeProof.getJSONObject("configuration_binding");
+        boolean pending="pending_fresh_local_closed".equals(nativeProof.getString("disposition"));
+        Set<String> expected=new HashSet<>(Set.of("$schema","native_runtime_binding","disposition","app_process_generation","app_record_sha256","native_executor_generation","config_sha256","configuration_binding"));
+        if(pending)expected.addAll(Set.of("transaction_outcome","durable_closure","future_writable_restore"));else expected.add("native_close");
+        if(!keys(nativeProof).equals(expected)||!EmbeddedDuplexRuntimeConfigurationBinding.NATIVE_V2.equals(nativeProof.getString("$schema"))
+                ||!"configured".equals(nativeProof.getString("native_runtime_binding"))||!pending&&!"runtime_config_closed".equals(nativeProof.getString("disposition"))
+                ||!keys(binding).equals(Set.of("$schema","config_sha256","app_process_generation","app_record_sha256","native_executor_generation","local_peer_id","fresh_setup_build_policy"))
+                ||!EmbeddedDuplexRuntimeConfigurationBinding.SCHEMA.equals(binding.getString("$schema")))throw new IllegalStateException("retained configured Native proof differs");
+        for(String key:new String[]{"app_process_generation","app_record_sha256","native_executor_generation","config_sha256"})
+            if(!EmbeddedDuplexCanonicalJson.sameValue(whole.get(key),nativeProof.get(key))||!EmbeddedDuplexCanonicalJson.sameValue(whole.get(key),binding.get(key)))throw new IllegalStateException("retained constructor/Whole actor differs");
+        if(pending){
+            JSONObject ack=nativeProof.getJSONObject("durable_closure");
+            if(!"unknown".equals(nativeProof.getString("transaction_outcome"))||!"fenced_pending_supported_owner_reconciliation".equals(nativeProof.getString("future_writable_restore"))
+                    ||!keys(ack).equals(Set.of("$schema","body_sha256","storage_identity","original_binding","app_process_generation","app_record_sha256","native_executor_generation","config_sha256"))
+                    ||!"rusty.quest.embedded_duplex.fresh_setup_closure_retained.v1".equals(ack.getString("$schema"))||!ack.getString("body_sha256").matches("sha256:[0-9a-f]{64}")||ack.getString("storage_identity").isEmpty())throw new IllegalStateException("retained unknown closure differs");
+            for(String key:new String[]{"app_process_generation","app_record_sha256","native_executor_generation","config_sha256"})if(!EmbeddedDuplexCanonicalJson.sameValue(ack.get(key),whole.get(key)))throw new IllegalStateException("retained closure actor differs");
+        }else{
+            JSONObject close=nativeProof.getJSONObject("native_close");
+            if(!"rusty.quest.embedded_duplex.no_media_closed.v1".equals(close.getString("$schema"))||!whole.getString("config_sha256").equals(close.getString("config_sha256")))throw new IllegalStateException("retained Native close differs");
+        }
     }
     private void requireWritable()throws Exception {
         if(readOnly)throw new IllegalStateException("retained run is query-only");
@@ -562,7 +608,10 @@ public final class EmbeddedDuplexOriginals {
                 && record.row.getJSONObject("response").optString("receipt").contains(EmbeddedDuplexFreshLifecycle.SCHEMA))) {
             if (!record.continuationWorkerJoined() || !EmbeddedDuplexProcessHost.originalExchangesJoined(record))
                 throw new IllegalStateException("fresh Original command/exchange owner has not joined");
-            retainSettledCustody(record);
+            if(record.row.getString("operation").equals("recover_cold_pending")){
+                EmbeddedDuplexColdRecovery.requireCompletedRecord(record,record.row.getJSONObject("response"));
+                if(!"joined".equals(queryJoin(originalId,challenge).getString("status")))throw new IllegalStateException("cold recovery actual joins pending");
+            }else retainSettledCustody(record);
         }
         record.row.put("consumer_receipt_sha256",consumerHash).put("retention","compacted");persist(record);live.remove(originalId);
         return envelope(record,challenge);
@@ -1085,14 +1134,24 @@ public final class EmbeddedDuplexOriginals {
             try(FileOutputStream output=new FileOutputStream(temporary)){output.write(exact.getBytes(StandardCharsets.UTF_8));output.getFD().sync();}
             Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE);syncDirectory();
         }
+        if(record.physicalJoinNativeGeneration>0&&"whole_app_close".equals(record.row.getString("operation"))&&"succeeded".equals(record.row.getString("state"))){
+            JSONObject pointer=new JSONObject().put("schema","rusty.quest.embedded_duplex.latest_whole.v1").put("original_id",record.id());
+            File staged=new File(directory,"latest-whole."+record.id()+".new");String body=EmbeddedDuplexCanonicalJson.encode(pointer);
+            if(Files.exists(staged.toPath(),LinkOption.NOFOLLOW_LINKS)){
+                if(!Files.isRegularFile(staged.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(staged.toPath())||!body.equals(new String(Files.readAllBytes(staged.toPath()),StandardCharsets.UTF_8)))throw new IllegalStateException("staged latest Whole pointer differs");
+            }else{try(FileOutputStream output=new FileOutputStream(Files.createFile(staged.toPath()).toFile())){Os.chmod(staged.getAbsolutePath(),0600);output.write(body.getBytes(StandardCharsets.UTF_8));output.getFD().sync();}}
+            Files.move(staged.toPath(),new File(directory,"latest-whole.v1.json").toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);syncDirectory();
+        }
         record.physicalJoinProof=null;record.operationJoined=true;
         if(!record.restored)compactIfJoined(record);
     }
     synchronized void actualClosedAppOwnerJoined(long appGeneration,long nativeGeneration,String appRecord,
             JSONObject actualPhysicalProof,Object retainedActualOwner)throws Exception{
+        JSONObject terminal=EmbeddedDuplexColdRecovery.SCHEMA.equals(actualPhysicalProof.optString("$schema"))
+                ?actualPhysicalProof.getJSONObject("physical_retirement"):actualPhysicalProof;
         if(appGeneration<=0 || nativeGeneration<0 || appRecord==null || !appRecord.matches("[0-9a-f]{64}")
-                || !"terminal".equals(actualPhysicalProof.getString("whole_app_physical_cleanup"))
-                || !"terminal".equals(actualPhysicalProof.getString("app_process_fence_cleanup"))
+                || !"terminal".equals(terminal.getString("whole_app_physical_cleanup"))
+                || !"terminal".equals(terminal.getString("app_process_fence_cleanup"))
                 || actualPhysicalProof.getLong("app_process_generation")!=appGeneration)
             throw new IllegalStateException("actual app whole-retirement proof differs");
         java.util.ArrayList<Record> actualRows=new java.util.ArrayList<>(live.values());
@@ -1666,6 +1725,7 @@ public final class EmbeddedDuplexOriginals {
     }
     /** A completed Java call can return actual native Pending; retain its response without declaring settlement. */
     private static JSONObject nativePending(Record original,String operation,JSONObject response)throws Exception{
+        if(operation.equals("recover_cold_pending")){EmbeddedDuplexColdRecovery.requireCompletedRecord(original,response);return null;}
         if(EmbeddedDuplexAppAdmission.isResult(response))return null;
         if(operation.equals("prepare_peer_start")) {
             JSONObject nativeReceipt=new JSONObject(response.getString("receipt"));
@@ -1713,6 +1773,7 @@ public final class EmbeddedDuplexOriginals {
         if(EmbeddedDuplexAppAdmission.isResult(actual)){EmbeddedDuplexAppAdmission.requireResult(operation,challenge,actual);return;}
         String[] required,optional;
         switch(operation){
+            case "recover_cold_pending": required=new String[]{"schema","status","challenge","receipt"}; optional=new String[]{}; break;
             case "prepare_peer_start":
             case "reestablish_peer_roots": required=new String[]{"schema","status","challenge","receipt"}; optional=new String[]{}; break;
             case "concurrent_arm": required=new String[]{"schema","status","challenge","receipt"}; optional=new String[]{}; break;

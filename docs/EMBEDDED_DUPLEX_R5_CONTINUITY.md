@@ -341,3 +341,66 @@ epoch. A thread alone supplies no readiness.
 This source package adds no fresh credential/pair-setup feature, independent
 Fresh development data session, remote-recovery campaign, APK or device result.
 Those remain separate composition and product checkpoints.
+
+## App-owned cold process recovery
+
+`run_status.v2` separates the app fence from Native eligibility with the closed
+`app_fence_disposition` enum `clear`, `effects_pending`, `recovery_required`.
+Current-process Pending effects remain ordinary owner work. Cold-restored Pending
+requires cleanup recovery. A restored clear phase whose exact Native handoff
+never published also requires recovery after fresh verification that its old
+process is dead. Read-only inspection uses the held-record/live fence check;
+ordinary effect admission still uses `requireFresh` and every existing Native
+and physical-owner gate. The installed `run_status.v1` contract stays separate.
+
+The debug `recover_cold_pending` operation takes current `run_id`, new
+`original_id`, and optional paired `prior_run_id`/`prior_original_id`. Durable
+Native-owner mode omits both prior extras. Legacy migration uses both exact IDs
+to read one retained Native-bound Original and the two named app companions.
+There is no caller proof JSON, counter, process identity, cleanup flag or path.
+
+New Native allocation stores counter, exact app admission record and the actual
+kernel process birth identity together in `native_process_fence.v2`, in the
+existing fixed lock inode and checksum-bound write before capability publication.
+App initialization also stamps its current companion before allocation, including
+non-Original UI entry. A crash before publishing the bootstrap Original therefore
+does not lose the counter owner. A v1 counter supports only the bounded legacy
+link; a missing or conflicting link is an explicit unsupported case.
+
+Recovery keeps the app fence and Native counter fixed while it checks the exact
+last writable companion, fresh boot/PID/birth retirement and actual current local
+owners. It stops and joins current Own, display, resources, renderer, camera,
+control, callbacks and outbound exchanges. Java callbacks run outside authority
+locks. Native then reacquires its original lock and rechecks counter, companion,
+owner and current kernel identity before retaining the new local retirement.
+Only that verified receipt clears the app Pending phase and stamps the current
+incarnation. Neither counter reset nor historical callback replay is involved.
+Old Original rows, transaction UNKNOWN and remote debt remain unchanged.
+
+Dispatch/query/consumer/join/ACK retain the existing outer
+`operator_transport.v3` Original flow. Its actual Future response is a nested
+`operator_transport.v1` observed receipt of
+`cold_pending_local_retirement.v1`, including the closed eleven-field
+`cold_pending_native_retirement.v1`. The current actor has a null Native
+generation. Its app hash is the operation's Pending hash; the receipt separately
+records the resulting clear hash. The actual new worker/callback/local joins use
+`original_join.v2` with a null Native executor and the entire local receipt hash.
+A restored row never gains an invented live Future or ACK join.
+
+The app retains fixed current-run pointers to completed recovery and joined
+Whole receipts. It chooses a validated closure with the latest Native generation
+for the next selector/admission; a newer normal Whole supersedes an older
+recovery receipt. Restart reads these exact owners without a history scan or an
+ACK census. Interrupted recovery publication remains recovery-required, and a
+new cleanup decision preserves the earlier UNKNOWN row. Staged pointer paths are
+owned by their Original IDs so a dead writer cannot monopolize the next attempt.
+
+The focused `Test-EmbeddedDuplexNewRunHost.py --cold-recovery` control executes
+the actual Java recovery, Original persistence/query/join/ACK, selector, journal
+guards and Native admission prefix. Its Native ABI bridge invokes the actual
+Rust DTO projector and handoff validator. Separate Unix controls exercise the
+real counter inode, owner write, process death, retirement and successor claim;
+the full JNI module compiles against the real JNI crate. Android/platform and
+physical-owner leaves in the JVM control remain models. The optional retained
+witness manifest accepts exact source captures only as temporary test inputs.
+This is source evidence, not APK, target-JNI or hardware validation.

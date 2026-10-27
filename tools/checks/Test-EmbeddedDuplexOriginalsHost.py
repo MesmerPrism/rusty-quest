@@ -69,7 +69,7 @@ def main():
         'android/content/Context.java': 'package android.content; public abstract class Context { public Context getApplicationContext(){return this;} public abstract java.io.File getNoBackupFilesDir(); public String getPackageName(){return "fixture.package";} }',
         'android/system/Os.java': 'package android.system; public final class Os {public static void chmod(String p,int v){} public static java.io.FileDescriptor open(String p,int f,int v){return new java.io.FileDescriptor();} public static void fsync(java.io.FileDescriptor f){} public static void close(java.io.FileDescriptor f){} }',
         'android/system/OsConstants.java': 'package android.system; public final class OsConstants {public static final int O_RDONLY=0,O_CLOEXEC=0,O_NOFOLLOW=0;}',
-        'android/os/Process.java': 'package android.os; public final class Process { public static int myPid(){return 42;} public static int myUid(){return 10001;} }',
+        'android/os/Process.java': 'package android.os; public final class Process { public static int myPid(){return Integer.getInteger("host.pid",42);} public static int myUid(){return Integer.getInteger("host.uid",10001);} }',
         'io/github/mesmerprism/rustyquest/spatial_camera_panel/BuildConfig.java': 'package io.github.mesmerprism.rustyquest.spatial_camera_panel; public final class BuildConfig { public static final String APPLICATION_ID="fixture.package"; }',
     }
     host_source = (production / 'EmbeddedDuplexProcessHost.java').read_text(encoding='utf-8')
@@ -79,7 +79,7 @@ def main():
         'static EmbeddedDuplexRunContext operationalContext(', 'static EmbeddedDuplexRunContext selectedContext(', 'static void syncDirectory(', 'private void installRunHandoff(',
         'private void ensureProcessFence(', 'static long currentAppGeneration(',
         'static JSONObject originalActor(', 'static boolean originalActorSettled(',
-        'private <T> CompletableFuture<T> submit(')]
+        'private <T> CompletableFuture<T> submit(', 'private JSONObject closedRunHandoff(')]
     if args.whole_publication:
         host_methods += [extract_method(host_source, signature) for signature in (
             'static void requireCompletedNoMediaOriginal(', 'private static void verifyNoMediaNative(')]
@@ -102,6 +102,8 @@ def main():
       private long nativeExecutorGeneration;
       private String nativeAppRecordSha256,terminalWholeReceipt;
       private JSONObject originalClosedActor;
+      private RetainedWholeClose retainedWholeClose;private static final class RetainedWholeClose{EmbeddedDuplexOriginals.Record original;}
+      private ColdPendingLocal coldPendingRecovery;private static final class ColdPendingLocal{EmbeddedDuplexColdRecovery.Plan plan;EmbeddedDuplexOriginals.Record original;long appGeneration;}
       private EmbeddedDuplexOriginals.Record activeCommandOriginal;
       private Object platform,resources;
       private final AtomicReference<Phase> phase=new AtomicReference<>(Phase.NEW);
@@ -162,6 +164,9 @@ def main():
     classes = out / 'classes'
     classes.mkdir()
     sources = [production / 'EmbeddedDuplexCanonicalJson.java', production / 'EmbeddedDuplexRunContext.java', production / 'EmbeddedDuplexRunSelectionStore.java', production / 'EmbeddedDuplexOriginals.java', production / 'EmbeddedDuplexProcessFence.java', fixture]
+    if (production / 'EmbeddedDuplexColdRecovery.java').exists():
+        sources.append(production / 'EmbeddedDuplexColdRecovery.java')
+        sources.append(production / 'EmbeddedDuplexNative.java')
     if args.whole_publication:
         sources.append(fixture.with_name('EmbeddedDuplexWholePublicationHostTest.java'))
         sources.append(production / 'EmbeddedDuplexRuntimeConfigurationBinding.java')

@@ -75,6 +75,25 @@ public final class EmbeddedDuplexWholePublicationHostTest {
         yes("observed".equals(new EmbeddedDuplexOriginals(root,actor,()->{}).query(ID,CHALLENGE).getString("status")),"published outcome must survive retrieval");
         store.begin(ID,"whole_app_close",CHALLENGE,request,()->{throw new AssertionError("Whole replayed");});
         yes(effects.get()==1,"query/repeat must preserve once semantics");
+        // This file-only reader control supplies a modeled retained join. Actual
+        // recovery/current callback joins execute in ColdPendingRecoveryHostTest.
+        JSONObject join=new JSONObject().put("schema","rusty.quest.embedded_duplex.original_join.v2").put("original_id",ID).put("operation","whole_app_close")
+            .put("request_sha256",row.getString("request_sha256")).put("outcome_sha256",row.getString("outcome_sha256")).put("actor_binding",row.getJSONObject("actor_binding"))
+            .put("original_worker_terminal",true).put("original_callback_terminal",true).put("outbound_exchanges_joined",true).put("physical_retirement_schema",receipt.getString("$schema"))
+            .put("physical_retirement_sha256",EmbeddedDuplexCanonicalJson.sha256(receipt)).put("app_process_generation",7).put("native_executor_generation",9).put("app_record_sha256",HASH)
+            .put("remote_outcome_resolved",false).put("join_basis",new JSONObject().put("kind","actual_future_callback"));
+        File joinFile=new File(root,"operator-originals-v1/"+ID+".joined.json");Files.writeString(joinFile.toPath(),EmbeddedDuplexCanonicalJson.encode(join));
+        JSONObject handoff=EmbeddedDuplexOriginals.closedWholeHandoff(root,ID,"fixture.package");
+        yes(handoff.getLong("prior_native_generation")==9,"direct configured Whole reader lost Native generation");
+        yes(handoff.getString("physical_retirement_sha256").equals(EmbeddedDuplexCanonicalJson.sha256(receipt)),"direct Whole handoff must hash the original complete proof");
+        denied(()->EmbeddedDuplexOriginals.closedWholeHandoff(root,ID,"other.package"));
+        JSONObject changed=new JSONObject(receipt.toString()).put("java_callback_cleanup","pending");
+        JSONObject changedRow=new JSONObject(row.toString()),changedResponse=new JSONObject(row.getJSONObject("response").toString()).put("receipt",EmbeddedDuplexCanonicalJson.encode(changed));
+        changedRow.put("response",changedResponse).put("response_sha256",EmbeddedDuplexCanonicalJson.sha256(changedResponse));
+        JSONObject outcome=new JSONObject();for(String key:new String[]{"original_id","operation","request_sha256","original_challenge","state","effect_state","actor_binding","native_setup_binding","response_sha256","failure"})outcome.put(key,changedRow.get(key));changedRow.put("outcome_sha256",EmbeddedDuplexCanonicalJson.sha256(outcome));
+        Files.writeString(new File(root,"operator-originals-v1/"+ID+".json").toPath(),EmbeddedDuplexCanonicalJson.encode(changedRow));
+        join.put("outcome_sha256",changedRow.getString("outcome_sha256")).put("physical_retirement_sha256",EmbeddedDuplexCanonicalJson.sha256(changed));Files.writeString(joinFile.toPath(),EmbeddedDuplexCanonicalJson.encode(join));
+        denied(()->EmbeddedDuplexOriginals.closedWholeHandoff(root,ID,"fixture.package"));
     }
     static void invalidDirectControls()throws Exception{
         for(String damage:new String[]{"owner_absent","callback_pending","callback_failed","outbound_pending","barrier_pending","native_actor","constructor_binding","unrecognized"}){

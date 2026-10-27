@@ -24,7 +24,10 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private final DirectorySync directorySync;
     private long generation;
     private String nonce;
-    private final boolean recoveryOnly;
+    private boolean recoveryOnly;
+    private Object coldRecoveryOwner;
+    private java.util.concurrent.Callable<String> coldRecoveryEvidence;
+    private String coldRecoveryPendingRecord;
     private boolean pending;
     private String checkpointDigest;
     private String evidenceDigest;
@@ -304,6 +307,61 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         requireLive(generation);
         verifyHeldRecord();
         return directory.getCanonicalPath();
+    }
+    /** Fixed internal recovery callback; never available as ordinary admission. */
+    public String nativeColdRecoveryRecord() throws Exception {
+        return verifyColdRecoveryCallback(false);
+    }
+    public String nativeColdRecoveryEvidence() throws Exception {
+        return verifyColdRecoveryCallback(true);
+    }
+    private String verifyColdRecoveryCallback(boolean evidenceOnly)throws Exception{
+        java.util.concurrent.Callable<String> verifier;String expected;Object owner;
+        synchronized(this){requireColdRecovery();verifier=coldRecoveryEvidence;expected=coldRecoveryPendingRecord;owner=coldRecoveryOwner;}
+        String evidence=verifier.call(); // Physical owners may call Native; never hold this monitor here.
+        synchronized(this){requireColdRecovery();if(owner!=coldRecoveryOwner||!expected.equals(persistedRecord))throw new IllegalStateException("cold recovery owner changed");}
+        return evidenceOnly?evidence:expected;
+    }
+    synchronized void armColdRecovery(Object actualOwner,java.util.concurrent.Callable<String> verifier)throws Exception{
+        requireLive(generation);verifyHeldRecord();
+        if(!recoveryOnly||!pending||actualOwner==null||verifier==null||coldRecoveryOwner!=null&&coldRecoveryOwner!=actualOwner)
+            throw new IllegalStateException("cold recovery scope unavailable");
+        coldRecoveryOwner=actualOwner;coldRecoveryEvidence=verifier;coldRecoveryPendingRecord=persistedRecord;
+    }
+    synchronized void enterInterruptedColdRecovery()throws Exception{
+        requireFresh();verifyHeldRecord();if(pending)throw new IllegalStateException("interrupted recovery overlaps effects");
+        pending=true;recoveryOnly=true;persist();
+    }
+    private void requireColdRecovery()throws Exception{
+        requireLive(generation);verifyHeldRecord();
+        if(!recoveryOnly||!pending||coldRecoveryOwner==null||coldRecoveryEvidence==null||!persistedRecord.equals(coldRecoveryPendingRecord))
+            throw new IllegalStateException("cold recovery admission unavailable");
+    }
+    String coldRecoveryClearRecord(Object actualOwner)throws Exception{
+        synchronized(this){requireColdRecovery();if(coldRecoveryOwner!=actualOwner)throw new IllegalStateException("cold recovery token differs");
+            return recordedPhase(persistedRecord,"clear");}
+    }
+    void finishColdRecovery(Object actualOwner,EmbeddedDuplexProcessIncarnation.Identity current)throws Exception{
+        verifyColdRecoveryCallback(false);
+        synchronized(this){requireColdRecovery();if(coldRecoveryOwner!=actualOwner)throw new IllegalStateException("cold recovery token differs");
+            // The caller retained the verified Native/local retirement before authorizing this transition.
+            pending=false;recoveryOnly=false;incarnation=null;
+            try{persist();EmbeddedDuplexProcessIncarnation.Binding replacement=new EmbeddedDuplexProcessIncarnation.Binding(current,persistedRecord);
+                EmbeddedDuplexProcessIncarnation.persist(incarnationDirectory,replacement,persistedRecord,directorySync);incarnation=replacement;
+                coldRecoveryOwner=null;coldRecoveryEvidence=null;coldRecoveryPendingRecord=null;
+            }catch(Exception failure){persistenceFailed=true;throw failure;}
+        }
+    }
+    static String recordedPhase(String record,String state)throws Exception{
+        String[] f=record.split("\n",-1);boolean explicit=f.length==9&&f[0].equals("rusty.quest.embedded_duplex.app_process_fence.v2");int checksum=explicit?7:6;
+        if(f.length!=checksum+2||!explicit&&!f[0].equals("rusty.quest.embedded_duplex.app_process_fence.v1")
+                ||!f[1].matches("[1-9][0-9]{0,18}")||Long.parseLong(f[1])<=0
+                ||!f[2].matches("[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+                ||!java.util.Set.of("pending","clear").contains(f[3])||!java.util.Set.of("pending","clear").contains(state)
+                ||!f[4].matches("-|[0-9a-f]{64}")||!f[5].matches("-|[0-9a-f]{64}")
+                ||explicit&&!f[6].matches("[0-9a-f]{32}")||!f[checksum].equals(digest(String.join("\n",java.util.Arrays.copyOf(f,checksum))+"\n"))||!f[checksum+1].isEmpty())
+            throw new IllegalStateException("recorded app phase invalid");
+        f[3]=state;String body=String.join("\n",java.util.Arrays.copyOf(f,checksum))+"\n";return body+digest(body)+"\n";
     }
     synchronized boolean newlyInitialized(){return newlyInitialized;}
     synchronized long previousGeneration(){return acquisitionGeneration;}

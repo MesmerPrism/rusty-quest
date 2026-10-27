@@ -158,7 +158,7 @@ class EmbeddedDuplexNative {
 class EmbeddedDuplexColdRecovery {
     interface LocalOwner {void requireTerminal()throws Exception;JSONObject physicalReceipt()throws Exception;}
     static int prepared,retired,completed;static Plan active;static JSONObject latest;
-    static String disposition="recovery_required";static String appDisposition(File root,EmbeddedDuplexProcessFence fence){return disposition;}
+    static String disposition="recovery_required";static String appDisposition(File root,EmbeddedDuplexProcessFence fence,JSONObject nativeStatus){return disposition;}static String appDisposition(File root,EmbeddedDuplexProcessFence fence){return disposition;}
     static class Plan {final EmbeddedDuplexOriginals.Record record;LocalOwner local;boolean done;Plan(EmbeddedDuplexOriginals.Record r){record=r;}String originalId(){return record.id();}boolean completed(){return done;}}
     static Plan prepare(Context c,EmbeddedDuplexProcessFence f,String priorRun,String priorOriginal,long counter){
         ColdPendingAppRecoveryHost.check(counter==3,"wrong Native floor");prepared++;Plan p=new Plan(EmbeddedDuplexOriginals.capture());
@@ -173,7 +173,7 @@ class EmbeddedDuplexColdRecovery {
     }
     static void requireCompleted(Plan plan)throws Exception{if(!plan.done)throw new IllegalStateException("recovery incomplete");plan.local.requireTerminal();}
     static JSONObject pointer(String id){return new JSONObject().put("whole_original_id",id).put("request_sha256","r").put("outcome_sha256","o").put("physical_retirement_sha256","p").put("prior_native_generation",3).put("physical_retirement",new JSONObject());}
-    static JSONObject latestHandoff(File root,String pkg){return latest==null?null:new JSONObject(latest.toString());}
+    static JSONObject latestCompletedHandoff(File root,String pkg){return latestHandoff(root,pkg);}static JSONObject latestHandoff(File root,String pkg){return latest==null?null:new JSONObject(latest.toString());}
     static boolean hasReceipt(File root,String id){return id.equals("f".repeat(32));}
     static JSONObject closedHandoff(File root,String id,String pkg){return pointer(id);}
 }
