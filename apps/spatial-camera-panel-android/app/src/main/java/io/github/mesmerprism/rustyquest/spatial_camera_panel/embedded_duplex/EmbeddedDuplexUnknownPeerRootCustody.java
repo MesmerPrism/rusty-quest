@@ -19,7 +19,7 @@ final class EmbeddedDuplexUnknownPeerRootCustody {
     private final Context application;
     private final File directory;
     EmbeddedDuplexUnknownPeerRootCustody(Context context)throws Exception {
-        application=context.getApplicationContext();directory=EmbeddedDuplexFreshClosure.activeDirectory(application.getNoBackupFilesDir(),"embedded-duplex-unknown-root-custody-v1");
+        application=context.getApplicationContext();directory=EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(application),"embedded-duplex-unknown-root-custody-v1");
         if(!directory.exists()&&!directory.mkdir())throw new IllegalStateException("unknown root custody directory");
         if(!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("unknown root custody directory type");
         Os.chmod(directory.getAbsolutePath(),0700);syncDirectory(directory.getParentFile());

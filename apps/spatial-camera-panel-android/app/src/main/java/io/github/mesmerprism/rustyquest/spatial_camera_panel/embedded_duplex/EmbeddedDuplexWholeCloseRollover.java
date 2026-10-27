@@ -29,6 +29,17 @@ public final class EmbeddedDuplexWholeCloseRollover {
                 && proof.opt("route_cleanup") instanceof org.json.JSONArray
                 && proof.opt("broker_evidence") instanceof JSONObject;
     }
+    static void requireTerminalPhysical(JSONObject proof)throws Exception{
+        boolean local=localLifecycleProof(proof);
+        boolean remote="rusty.quest.embedded_duplex.remote_owner_cleanup.v1".equals(proof.getString("$schema"));
+        if(!(local||remote)||!"whole_app_close".equals(proof.getString("action"))
+            ||!(local?"terminal":"not_locally_started").equals(proof.getString("peer_physical_cleanup"))
+            ||proof.getLong("app_process_generation")<=0||proof.getLong("native_executor_generation")<=0
+            ||!proof.getString("config_sha256").matches("[0-9a-f]{64}"))throw new IllegalStateException("whole physical owner differs");
+        for(String key:new String[]{"native_host_physical_cleanup","java_own_capture_cleanup","java_renderer_cleanup","java_control_cleanup",
+                "app_process_fence_cleanup","whole_app_physical_cleanup","status"})
+            if(!"terminal".equals(proof.getString(key)))throw new IllegalStateException("whole physical owner pending");
+    }
     // Only the process host can mint this after all physical barriers and the persisted fence join.
     static EmbeddedDuplexWholeCloseRollover verified(JSONObject proof, String epoch, long app,
             long executor, long attachment, String config, String enrollment) throws Exception {
@@ -49,6 +60,24 @@ public final class EmbeddedDuplexWholeCloseRollover {
                 throw new IllegalStateException("whole-close Activity physical proof pending");
         return new EmbeddedDuplexWholeCloseRollover(epoch,app,executor,attachment,config,enrollment,
                 EmbeddedDuplexProcessFence.digest(proof.toString()));
+    }
+    public static boolean completedCacheMatches(java.util.concurrent.CompletableFuture<?> captured,
+            java.util.concurrent.CompletableFuture<?> current,long capturedAttachment,long currentAttachment){
+        return current==captured&&capturedAttachment==currentAttachment&&(captured==null||captured.isDone());
+    }
+    public static boolean completedSelectionCacheMatches(java.util.concurrent.CompletableFuture<?> captured,
+            java.util.concurrent.CompletableFuture<?> current,long capturedAttachment,long currentAttachment,long selectedAttachment){
+        return current==captured&&(captured==null||captured.isDone())
+            &&(selectedAttachment==0||selectedAttachment==capturedAttachment)
+            &&(currentAttachment==capturedAttachment||currentAttachment==0&&selectedAttachment==0);
+    }
+    /** Pure Activity bookkeeping for the exact completed outgoing service Future.
+     * A later run selection cannot revoke A's cache cleanup, and this never clears B's Future/attachment. */
+    public boolean matchesCompletedRuntime(java.util.concurrent.CompletableFuture<EmbeddedDuplexRuntimeStatus> captured,
+            java.util.concurrent.CompletableFuture<EmbeddedDuplexRuntimeStatus> current,long attachment){
+        if(captured==null||!completedCacheMatches(captured,current,attachmentGeneration,attachment)||captured.isCompletedExceptionally()||captured.isCancelled())return false;
+        EmbeddedDuplexRuntimeStatus status=captured.getNow(null);
+        return status!=null&&matchesRuntime(attachment,status.runtimeConfigSha256,status.enrollmentRecordSha256);
     }
     public boolean matchesRuntime(long attachment, String config, String enrollment) {
         return attachmentGeneration==attachment && runtimeConfigSha256.equals(config)

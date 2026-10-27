@@ -10,6 +10,25 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
 
+    public static CompletableFuture<String> newRun(Context context,String runId,String legacyWholeOriginalId){
+        java.util.function.BiConsumer<String,Throwable> reconcile=io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.captureRunSelectionReconciliation();
+        return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,true,legacyWholeOriginalId).whenComplete(reconcile);
+    }
+    public static CompletableFuture<String> resumeRun(Context context,String runId){
+        java.util.function.BiConsumer<String,Throwable> reconcile=io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.captureRunSelectionReconciliation();
+        return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,false,null).whenComplete(reconcile);
+    }
+    public static CompletableFuture<String> runStatus(Context context){return EmbeddedDuplexProcessHost.forApplication(context).runStatus();}
+    public static String selectedRunId(Context context){return EmbeddedDuplexProcessHost.operationalContext(context).runId;}
+    public static <T>T withRunRequest(Context context,String runId,java.util.concurrent.Callable<T> request)throws Exception{
+        return EmbeddedDuplexProcessHost.forApplication(context).withRunRequest(runId,request);
+    }
+    public static Bundle queryOriginal(Context context,String runId,String originalId,String challenge)throws Exception{
+        EmbeddedDuplexRunContext current=EmbeddedDuplexProcessHost.operationalContext(context);
+        if(java.util.Objects.equals(runId,current.runId))return queryOriginal(context,originalId,challenge);
+        EmbeddedDuplexRunContext.requireId(runId);
+        return EmbeddedDuplexOriginals.retained(new EmbeddedDuplexRunSelectionStore(context.getApplicationContext().getNoBackupFilesDir(),dir->{}).retained(runId)).query(originalId,challenge);
+    }
     /** Explicit source-owned custody; the supplier returns the existing real command Future. */
     public static Bundle beginOriginal(Context context, String originalId, String operation, String challenge,
             JSONObject canonicalRequest, Supplier<CompletableFuture<Bundle>> actualAction) throws Exception {

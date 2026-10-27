@@ -22,8 +22,8 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private final FileChannel channel;
     private final FileLock lock;
     private final DirectorySync directorySync;
-    private final long generation;
-    private final String nonce;
+    private long generation;
+    private String nonce;
     private final boolean recoveryOnly;
     private boolean pending;
     private String checkpointDigest;
@@ -31,9 +31,22 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     private String acquisitionRecord;
     private String persistedRecord;
     private EmbeddedDuplexProcessIncarnation.Binding incarnation;
+    private File incarnationDirectory;
+    private String operationalRunId;
+    private String handoffRunId;
+    private java.util.concurrent.Callable<org.json.JSONObject> handoffSource;
+    private boolean newlyInitialized;
+    private long acquisitionGeneration;
 
     static EmbeddedDuplexProcessFence acquire(File directory, String checkpoint,
             String evidence, DirectorySync sync) throws Exception {
+        return acquire(directory,checkpoint,evidence,sync,null,directory);
+    }
+    static EmbeddedDuplexProcessFence acquire(File directory,String checkpoint,String evidence,
+            DirectorySync sync,String runId,File incarnationDirectory)throws Exception {
+        if(runId!=null && !runId.matches("[0-9a-f]{32}"))throw new IllegalArgumentException("fence run id");
+        if(incarnationDirectory==null || !Files.isDirectory(incarnationDirectory.toPath(),LinkOption.NOFOLLOW_LINKS)
+                || Files.isSymbolicLink(incarnationDirectory.toPath()))throw new IllegalStateException("run incarnation directory");
         if (directory == null || sync == null || !directory.isDirectory()
                 || Files.isSymbolicLink(directory.toPath())) {
             throw new IllegalStateException("process fence directory unavailable");
@@ -91,16 +104,20 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 String record = new String(bytes.array(), StandardCharsets.US_ASCII);
                 priorRecord = record;
                 String[] fields = record.split("\\n", -1);
-                if (fields.length != 8 || !"rusty.quest.embedded_duplex.app_process_fence.v1".equals(fields[0])
+                boolean v2="rusty.quest.embedded_duplex.app_process_fence.v2".equals(fields[0]);
+                int checksum=v2?7:6;
+                if (fields.length != (v2?9:8) || !(v2 || "rusty.quest.embedded_duplex.app_process_fence.v1".equals(fields[0]))
                         || !fields[1].matches("[1-9][0-9]{0,18}")
                         || !fields[2].matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
                         || !("pending".equals(fields[3]) || "clear".equals(fields[3]))
                         || !fields[4].matches("-|[0-9a-f]{64}") || !fields[5].matches("-|[0-9a-f]{64}")
-                        || !fields[6].matches("[0-9a-f]{64}")
-                        || !fields[6].equals(digest(String.join("\n", java.util.Arrays.copyOf(fields, 6)) + "\n"))
-                        || !fields[7].isEmpty()) {
+                        || v2 && !fields[6].matches("[0-9a-f]{32}")
+                        || !fields[checksum].matches("[0-9a-f]{64}")
+                        || !fields[checksum].equals(digest(String.join("\n", java.util.Arrays.copyOf(fields, checksum)) + "\n"))
+                        || !fields[checksum+1].isEmpty()) {
                     throw new IllegalStateException("process fence record corrupt");
                 }
+                if(!java.util.Objects.equals(runId,v2?fields[6]:null))throw new IllegalStateException("fence/selected operational run differs");
                 priorGeneration = Long.parseLong(fields[1]);
                 pending = "pending".equals(fields[3]);
                 if (!fields[4].equals(checkpointHash) || !fields[5].equals(evidenceHash)) {
@@ -109,6 +126,8 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             }
             EmbeddedDuplexProcessFence result = new EmbeddedDuplexProcessFence(directory, channel, lock,
                     sync, Math.addExact(priorGeneration, 1), pending, checkpointHash, evidenceHash);
+            result.newlyInitialized=created;result.acquisitionGeneration=priorGeneration;
+            result.operationalRunId=runId;result.incarnationDirectory=incarnationDirectory;
             result.acquisitionRecord = priorRecord;
             result.persist();
             return result;
@@ -142,13 +161,13 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             return;
         }
         EmbeddedDuplexProcessIncarnation.Binding binding;
-        if (EmbeddedDuplexProcessIncarnation.present(directory)) {
-            binding = EmbeddedDuplexProcessIncarnation.load(directory, acquisitionRecord);
+        if (EmbeddedDuplexProcessIncarnation.present(incarnationDirectory)) {
+            binding = EmbeddedDuplexProcessIncarnation.load(incarnationDirectory, acquisitionRecord);
             if (binding == null || !binding.owner.binding().equals(identity.binding()))
                 throw new IllegalStateException("process incarnation companion differs or unavailable");
         } else binding = new EmbeddedDuplexProcessIncarnation.Binding(identity, persistedRecord);
         try {
-            EmbeddedDuplexProcessIncarnation.persist(directory, binding, persistedRecord, directorySync);
+            EmbeddedDuplexProcessIncarnation.persist(incarnationDirectory, binding, persistedRecord, directorySync);
             incarnation = binding;
         } catch (Exception failure) { persistenceFailed = true; throw failure; }
     }
@@ -159,7 +178,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             throw new IllegalStateException("process incarnation owner unavailable");
     }
     private void verifyIncarnation(String record) {
-        EmbeddedDuplexProcessIncarnation.Binding observed = EmbeddedDuplexProcessIncarnation.load(directory, record);
+        EmbeddedDuplexProcessIncarnation.Binding observed = EmbeddedDuplexProcessIncarnation.load(incarnationDirectory, record);
         if (observed == null || !observed.owner.binding().equals(incarnation.owner.binding())
                 || !observed.originalRecord.equals(incarnation.originalRecord))
             throw new IllegalStateException("process incarnation companion changed");
@@ -177,7 +196,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     }
     static final class CallbackGuard {
         private final EmbeddedDuplexProcessFence owner;
-        private final long generation;
+        private long generation;
         private final Object gate=new Object();
         private volatile boolean retired;
         private int entered;
@@ -280,10 +299,39 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         requireFresh();
         return directory.getCanonicalPath();
     }
+    synchronized boolean newlyInitialized(){return newlyInitialized;}
+    synchronized long previousGeneration(){return acquisitionGeneration;}
+    synchronized void operationalHandoff(String nextRunId,java.util.concurrent.Callable<org.json.JSONObject> exactSource){
+        if(nextRunId!=null&&!nextRunId.matches("[0-9a-f]{32}"))throw new IllegalArgumentException("handoff run id");
+        handoffRunId=nextRunId;handoffSource=exactSource;
+    }
+    /** Exact retained source is revalidated on every read. A stored locator is never a reusable permit. */
+    public synchronized String nativeOperationalRunHandoff()throws Exception{
+        requireLive(generation);verifyHeldRecord();
+        if(handoffSource==null)return "";
+        org.json.JSONObject source=handoffSource.call();
+        return EmbeddedDuplexCanonicalJson.encode(new org.json.JSONObject(source.toString())
+            .put("$schema","rusty.quest.embedded_duplex.operational_run_handoff.v1")
+            .put("operational_run_id",handoffRunId).put("app_record_sha256",digest(persistedRecord)));
+    }
+    synchronized String operationalRunId(){requireLive(generation);return operationalRunId;}
+    /** Readback only, including clear records. Never substitutes for pending-only admission. */
+    public synchronized String nativeInspectionRecord()throws Exception{requireLive(generation);verifyHeldRecord();return persistedRecord;}
+    /** The command owner first joins actual global resources/Native owners; a clear bit alone is insufficient. */
+    synchronized void selectOperationalRun(String runId,File companion,String checkpoint,String evidence)throws Exception{
+        requireFresh();verifyHeldRecord();
+        if(pending)throw new IllegalStateException("current operational effects pending");
+        if(runId==null||!runId.matches("[0-9a-f]{32}")||companion==null
+                ||!Files.isDirectory(companion.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(companion.toPath()))throw new IllegalArgumentException("run fence binding");
+        if(runId.equals(operationalRunId))return;
+        generation=Math.addExact(generation,1);nonce=UUID.randomUUID().toString();
+        operationalRunId=runId;incarnationDirectory=companion;incarnation=null;acquisitionRecord=null;
+        bind(checkpoint,evidence);persist();
+    }
     private String serializedRecord() throws Exception {
-        String body = "rusty.quest.embedded_duplex.app_process_fence.v1\n" + generation + "\n"
+        String body = (operationalRunId==null?"rusty.quest.embedded_duplex.app_process_fence.v1\n":"rusty.quest.embedded_duplex.app_process_fence.v2\n") + generation + "\n"
                 + nonce + "\n" + (pending ? "pending" : "clear") + "\n"
-                + checkpointDigest + "\n" + evidenceDigest + "\n";
+                + checkpointDigest + "\n" + evidenceDigest + "\n" + (operationalRunId==null?"":operationalRunId+"\n");
         return body + digest(body) + "\n";
     }
     private void persist() throws Exception {
@@ -297,7 +345,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         channel.truncate(bytes.length);
         channel.force(true);
         directorySync.sync();
-        if (incarnation != null) EmbeddedDuplexProcessIncarnation.persist(directory, incarnation, record, directorySync);
+        if (incarnation != null) EmbeddedDuplexProcessIncarnation.persist(incarnationDirectory, incarnation, record, directorySync);
         persistedRecord = record;
         } catch (Exception failure) { persistenceFailed = true; throw failure; }
     }

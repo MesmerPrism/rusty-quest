@@ -25,6 +25,30 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
   override fun onCreate(): Boolean = context != null
 
   override fun call(method: String, argument: String?, extras: Bundle?): Bundle {
+    if(!BuildConfig.DEBUG || !EmbeddedDuplexOperatorContract.callerIsShell(Binder.getCallingUid())) closed()
+    val snapshot=extras?.let { Bundle(it) } ?: Bundle()
+    val request=try { EmbeddedDuplexOperatorContract.parseCall(method,argument,snapshot) } catch(_:Exception){closed()}
+    val app=requireNotNull(context).applicationContext
+    return try {
+      if(request.route in setOf(EmbeddedDuplexOperatorContract.Route.NEW_RUN,EmbeddedDuplexOperatorContract.Route.RESUME_RUN,EmbeddedDuplexOperatorContract.Route.RUN_STATUS)) {
+        val action=when(request.route){
+          EmbeddedDuplexOperatorContract.Route.NEW_RUN -> EmbeddedDuplexRuntimeService.newRun(app,requireNotNull(request.runId),request.legacyWholeOriginalId)
+          EmbeddedDuplexOperatorContract.Route.RESUME_RUN -> EmbeddedDuplexRuntimeService.resumeRun(app,requireNotNull(request.runId))
+          else -> EmbeddedDuplexRuntimeService.runStatus(app)
+        }
+        return Bundle().apply { putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);putString("status","observed");putString("challenge",request.challenge);putString("receipt",action.get(30,TimeUnit.SECONDS)) }
+      }
+      val response = if(request.route == EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY && request.runId != null)
+        EmbeddedDuplexRuntimeService.queryOriginal(app,request.runId,requireNotNull(request.originalId),request.challenge)
+      else if(request.route in setOf(EmbeddedDuplexOperatorContract.Route.STATUS,EmbeddedDuplexOperatorContract.Route.REVIEW,EmbeddedDuplexOperatorContract.Route.CONFIRM)) {
+        require(request.runId==null) { "persistent-identity-route-is-not-run-scoped" };dispatchCall(method,argument,snapshot)
+      } else EmbeddedDuplexRuntimeService.withRunRequest(app,request.runId) { dispatchCall(method,argument,snapshot) }
+      if(request.runId!=null) { response.putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);response.putString("run_id",request.runId) }
+      response
+    } catch(_:SecurityException){closed()} catch(_:Exception){closed()}
+  }
+
+  private fun dispatchCall(method: String, argument: String?, extras: Bundle?): Bundle {
     if (!BuildConfig.DEBUG || !EmbeddedDuplexOperatorContract.callerIsShell(Binder.getCallingUid())) {
       closed()
     }
@@ -112,6 +136,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         }
       }
       when (request.route) {
+        EmbeddedDuplexOperatorContract.Route.NEW_RUN, EmbeddedDuplexOperatorContract.Route.RESUME_RUN, EmbeddedDuplexOperatorContract.Route.RUN_STATUS,
         EmbeddedDuplexOperatorContract.Route.FRESH_PAIR_CONTINUE, EmbeddedDuplexOperatorContract.Route.PREPARE_PEER_START,
         EmbeddedDuplexOperatorContract.Route.PREPARED_PEER_START_STATUS, EmbeddedDuplexOperatorContract.Route.REESTABLISH_PEER_ROOTS,
         EmbeddedDuplexOperatorContract.Route.PEER_ROOT_STATUS, EmbeddedDuplexOperatorContract.Route.OPERATION_STOP,

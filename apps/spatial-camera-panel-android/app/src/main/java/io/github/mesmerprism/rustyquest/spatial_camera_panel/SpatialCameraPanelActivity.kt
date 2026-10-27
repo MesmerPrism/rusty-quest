@@ -1657,6 +1657,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   /** Invoked only by the private panel after a reviewed local fixture was installed. */
   fun embeddedDuplexLocalDiagnosticReady(): Boolean =
       embeddedDuplexAttachmentGeneration != 0L && !embeddedDuplexActivityDestroying &&
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.selectedRunId(this) == null &&
           !embeddedDuplexDiagnosticFinished && embeddedDuplexDiagnosticFuture == null
 
   fun runEmbeddedDuplexLocalDiagnostic(): CompletableFuture<String> {
@@ -1687,19 +1688,43 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return result
   }
 
+  /** Successful selection retires only the exact outgoing completed UI cache, never a later B cache. */
+  fun captureEmbeddedDuplexRunSelectionReconciliation(): java.util.function.LongConsumer {
+    val runtime = embeddedDuplexRuntimeFuture
+    val diagnostic = embeddedDuplexDiagnosticFuture
+    val attachment = embeddedDuplexAttachmentGeneration
+    val oldStatus = if (runtime != null && runtime.isDone && !runtime.isCompletedExceptionally && !runtime.isCancelled) runtime.getNow(null) else null
+    return java.util.function.LongConsumer { selectedAttachment ->
+      val delivered = java.util.concurrent.CompletableFuture.allOf(*listOfNotNull(runtime, diagnostic).toTypedArray())
+      delivered.whenComplete { _, _ -> runOnUiThread {
+        if (embeddedDuplexActivityDestroying ||
+            !io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(
+                runtime, embeddedDuplexRuntimeFuture, attachment, embeddedDuplexAttachmentGeneration, selectedAttachment) ||
+            !io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(
+                diagnostic, embeddedDuplexDiagnosticFuture, attachment, embeddedDuplexAttachmentGeneration, selectedAttachment)) return@runOnUiThread
+        if (oldStatus != null) {
+          val current = runtime?.getNow(null) ?: return@runOnUiThread
+          if (current.runtimeConfigSha256 != oldStatus.runtimeConfigSha256 ||
+              current.enrollmentRecordSha256 != oldStatus.enrollmentRecordSha256) return@runOnUiThread
+        }
+        embeddedDuplexRuntimeFuture = null
+        embeddedDuplexDiagnosticFuture = null
+        embeddedDuplexDiagnosticFinished = false
+        embeddedDuplexAttachmentGeneration = selectedAttachment
+      } }
+    }
+  }
+
   private fun onEmbeddedDuplexWholeCloseVerified(
       proof: io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexWholeCloseRollover,
   ) {
     val completed = embeddedDuplexRuntimeFuture
     runOnUiThread {
-      if (embeddedDuplexActivityDestroying || completed == null ||
-          embeddedDuplexRuntimeFuture !== completed || !completed.isDone ||
-          completed.isCompletedExceptionally || completed.isCancelled) return@runOnUiThread
-      val status = completed.getNow(null) ?: return@runOnUiThread
-      if (!proof.matchesRuntime(embeddedDuplexAttachmentGeneration,
-              status.runtimeConfigSha256, status.enrollmentRecordSha256) ||
-          !io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
-              .EmbeddedDuplexRuntimeService.wholeCloseRolloverCurrent(this, proof)) return@runOnUiThread
+      // The immutable token reconciles only its captured A Future/attachment. A later NewRun
+      // may already be selected; mutable global B authority is not an A bookkeeping prerequisite.
+      if (embeddedDuplexActivityDestroying ||
+          !proof.matchesCompletedRuntime(completed, embeddedDuplexRuntimeFuture,
+              embeddedDuplexAttachmentGeneration)) return@runOnUiThread
       embeddedDuplexRuntimeFuture = null
       embeddedDuplexAttachmentGeneration = 0L
       marker("channel=embedded-duplex status=whole-close-activity-rollover-verified " +
@@ -1794,6 +1819,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   /** Ordinary panel and typed-provider Start share this current-Activity owner. */
+  fun selectEmbeddedDuplexRun(runId:String,create:Boolean,legacyWholeOriginalId:String?=null):java.util.concurrent.CompletableFuture<String> {
+    return if(create) io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.newRun(applicationContext,runId,legacyWholeOriginalId)
+      else io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.resumeRun(applicationContext,runId)
+  }
+
   fun runEmbeddedDuplexOrdinaryStart(expectedArmChallenge: String? = null): CompletableFuture<String> {
     val generation = embeddedDuplexAttachmentGeneration
     val resumeGeneration = ownResumeGeneration
@@ -3859,6 +3889,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     refreshConnectionHub = connectionHubWearerControlClient::refresh,
                     startConnectionHub = connectionHubWearerControlClient::start,
                     stopConnectionHub = connectionHubWearerControlClient::stop,
+                    selectEmbeddedDuplexRun = { id, create -> selectEmbeddedDuplexRun(id,create) },
+                    embeddedDuplexRunStatus = { io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.runStatus(applicationContext) },
                     runEmbeddedDuplexOrdinaryStart = { runEmbeddedDuplexOrdinaryStart() },
                     runEmbeddedDuplexPeerStop = ::runEmbeddedDuplexPeerStop,
                     prepareEmbeddedDuplexStartPreflight =

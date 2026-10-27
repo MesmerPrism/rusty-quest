@@ -46,6 +46,7 @@ public final class EmbeddedDuplexNative {
 
 
     static native String claimNativeProcessFence(Object heldAppFence);
+    static native String inspectOperationalRun(Object heldAppFence);
 
     static native void finishNativeNoMediaCleanup(long executorGeneration, String expectedConfigSha256);
 

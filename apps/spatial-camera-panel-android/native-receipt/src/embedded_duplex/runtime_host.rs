@@ -114,6 +114,8 @@ struct ActivationSender {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Bootstrap {
+    #[serde(default)]
+    operational_run_id: Option<String>,
     local_peer_id: String,
     remote_peer_id: String,
     local_key_id: String,
@@ -203,6 +205,8 @@ impl Host {
 
 #[derive(Default)]
 struct ProcessState {
+    operational_run_id: Option<String>,
+    operational_run_initialization_floor: u64,
     initialization_attempt: u64,
     initialization_failure: Option<InitializationFailure>,
     initializing: bool,
@@ -227,6 +231,66 @@ struct ProcessState {
     last_closed_runtime_configuration_binding: Option<Value>,
     completed_no_media_local: Option<CompletedNoMediaLocal>,
     last_peer_close_receipt: Option<String>,
+}
+
+#[cfg(test)]
+mod operational_run_controls {
+    use super::*;
+
+    #[test]
+    fn bootstrap_cannot_mix_explicit_and_legacy_native_run_bindings() {
+        let a = "ab".repeat(16);
+        let b = "cd".repeat(16);
+        assert!(require_operational_run_binding(Some(&a), Some(&a)).is_ok());
+        assert!(require_operational_run_binding(None, None).is_ok());
+        for (bootstrap, capability) in [
+            (Some(a.as_str()), Some(b.as_str())),
+            (Some(a.as_str()), None),
+            (None, Some(a.as_str())),
+        ] {
+            assert!(require_operational_run_binding(bootstrap, capability).is_err());
+        }
+    }
+
+    #[test]
+    fn completed_run_metadata_is_not_a_permanent_veto_but_pending_and_poison_are() {
+        let mut p = ProcessState::default();
+        p.initialization_attempt = 7;
+        p.closing = true;
+        p.last_closed_sha256 = Some("a".repeat(64));
+        p.retired_fresh_owner_fenced = true;
+        p.fresh_setup_request = Some("retained-unknown-old-run".into());
+        assert!(operational_run_state_refusal(&p, false).is_none());
+        p.host_leases = 1;
+        assert_eq!(
+            operational_run_state_refusal(&p, false),
+            Some("native_host_lease_owned")
+        );
+        assert!(transition_operational_run_state(&mut p, "ab").is_err());
+        p.host_leases = 0;
+        p.lease_integrity_failed = true;
+        assert_eq!(
+            operational_run_state_refusal(&p, false),
+            Some("native_lease_integrity_failed")
+        );
+        p.lease_integrity_failed = false;
+        transition_operational_run_state(&mut p, &"ab".repeat(16)).unwrap();
+        assert!(!p.retired_fresh_owner_fenced);
+        assert!(!p.closing);
+        assert!(p.fresh_setup_request.is_none());
+        assert_eq!(p.initialization_attempt, 7);
+        assert_eq!(p.operational_run_initialization_floor, 7);
+        assert!(operational_run_state_refusal(&p, false).is_none());
+        p.initialization_attempt += 1;
+        assert_eq!(
+            operational_run_state_refusal(&p, false),
+            Some("native_initialization_unsettled")
+        );
+        assert_eq!(
+            operational_run_state_refusal(&p, true),
+            Some("native_staged_route_owned")
+        );
+    }
 }
 
 // Created only after the actual configured no-media capability has retired.
@@ -472,6 +536,171 @@ fn process() -> &'static Mutex<ProcessState> {
 
 fn prepared_route() -> &'static Mutex<Option<(String, PackagedDuplexRoute)>> {
     PREPARED_ROUTE.get_or_init(|| Mutex::new(None))
+}
+
+fn require_operational_run_binding(
+    bootstrap: Option<&str>,
+    capability: Option<&str>,
+) -> Result<(), String> {
+    if bootstrap != capability {
+        return Err("bootstrap operational run differs from actual native capability".into());
+    }
+    Ok(())
+}
+
+/// Only current in-memory owners enter this predicate; archived runs are not read.
+fn operational_run_state_refusal(
+    state: &ProcessState,
+    route_present: bool,
+) -> Option<&'static str> {
+    if state.initializing {
+        return Some("native_initialization_owned");
+    }
+    if state.lease_integrity_failed {
+        return Some("native_lease_integrity_failed");
+    }
+    if state.host_leases != 0 {
+        return Some("native_host_lease_owned");
+    }
+    if state.host.is_some() {
+        return Some("native_host_owned");
+    }
+    if state.partial_construction.is_some() {
+        return Some("native_constructor_owned");
+    }
+    if state.root_reestablishment.is_some() {
+        return Some("native_root_flight_owned");
+    }
+    if state.prepared_peer_start.is_some() {
+        return Some("native_prepared_sdk_owned");
+    }
+    if route_present {
+        return Some("native_staged_route_owned");
+    }
+    let completed = state.last_closed_sha256.is_some()
+        || state.last_partial_retirement.is_some()
+        || state.completed_no_media_local.is_some();
+    if !completed
+        && (state.initialization_failure.is_some()
+            || state.initialization_attempt != state.operational_run_initialization_floor)
+    {
+        return Some("native_initialization_unsettled");
+    }
+    if state.fresh_setup_request.is_some() && !completed {
+        return Some("native_fresh_setup_owned");
+    }
+    // Never-claimed/uninitialized retirement also leaves closing latched. Its
+    // registry binding is checked separately; this does not infer physical release.
+    if state.closing && !completed && state.initialization_attempt != 0 {
+        return Some("native_closing_owned");
+    }
+    None
+}
+
+/// Observe platform owners outside the process mutex; no Java callback is made.
+/// The bool identifies a completed Native close whose execution slot may still
+/// be retained until the app has joined its own global physical barriers.
+pub(super) fn operational_run_eligibility() -> Result<bool, String> {
+    let completed = {
+        let p = process().lock().map_err(|_| "native_process_poisoned")?;
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "native_route_poisoned")?;
+        if let Some(reason) = operational_run_state_refusal(&p, route.is_some()) {
+            return Err(reason.into());
+        }
+        p.last_closed_sha256.is_some()
+            || p.last_partial_retirement.is_some()
+            || p.completed_no_media_local.is_some()
+    };
+    if crate::own_stereo_capture_runtime::capture_claimed() {
+        return Err("native_own_capture_owned".into());
+    }
+    let renderer = crate::camera_hwb_probe::no_media_renderer_retirement_status()?;
+    if !matches!(
+        renderer.get("state").and_then(Value::as_str),
+        Some("never_created" | "retired")
+    ) {
+        return Err("native_renderer_owned_or_unproven".into());
+    }
+    Ok(completed)
+}
+
+fn transition_operational_run_state(state: &mut ProcessState, run_id: &str) -> Result<(), String> {
+    if run_id.len() != 32
+        || !run_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err("native operational run identity invalid".into());
+    }
+    if let Some(reason) = operational_run_state_refusal(state, false) {
+        return Err(reason.into());
+    }
+    if state.operational_run_id.as_deref() == Some(run_id) {
+        return Err("completed native run cannot be reset".into());
+    }
+    // These are completed metadata only. The guard never permits clearing a
+    // Host, constructor, SDK arena, root flight, lease or integrity failure.
+    state.closing = false;
+    state.initialization_failure = None;
+    state.last_root_reestablishment = None;
+    state.root_terminal_custody = None;
+    state.prepared_archive_cursor = None;
+    state.terminal_fresh_owner_body = None;
+    state.terminal_fresh_owner_ack = None;
+    state.fresh_setup_request = None;
+    state.fresh_setup_stop_request = None;
+    state.retired_fresh_owner_fenced = false;
+    state.last_partial_retirement = None;
+    state.last_closed_sha256 = None;
+    state.last_closed_runtime_configuration_binding = None;
+    state.completed_no_media_local = None;
+    state.last_peer_close_receipt = None;
+    state.operational_run_id = Some(run_id.into());
+    state.operational_run_initialization_floor = state.initialization_attempt;
+    Ok(())
+}
+
+pub(super) fn adopt_operational_run_claim(capability: &NativeCapability) -> Result<(), String> {
+    capability.require_live()?;
+    let run = capability
+        .binding
+        .operational_run_id
+        .as_deref()
+        .ok_or("native run capability absent")?;
+    let already_adopted = {
+        let p = process().lock().map_err(|_| "native_process_poisoned")?;
+        if p.operational_run_id.as_deref() == Some(run) {
+            if p.lease_integrity_failed || p.initializing {
+                return Err("native retry current owner pending or poisoned".into());
+            }
+            if p.host.as_ref().is_some_and(|h| {
+                h.capability.generation != capability.generation
+                    || h.capability.binding != capability.binding
+            }) {
+                return Err("native retry Host binding differs".into());
+            }
+            true
+        } else {
+            false
+        }
+    };
+    if already_adopted {
+        return capability.require_live();
+    }
+    operational_run_eligibility()?;
+    {
+        let mut p = process().lock().map_err(|_| "native_process_poisoned")?;
+        let route = prepared_route()
+            .lock()
+            .map_err(|_| "native_route_poisoned")?;
+        if let Some(reason) = operational_run_state_refusal(&p, route.is_some()) {
+            return Err(reason.into());
+        }
+        transition_operational_run_state(&mut p, run)?;
+    }
+    capability.require_live()
 }
 
 fn stage_packaged_route(config_sha256: String, route: PackagedDuplexRoute) -> Result<(), String> {
@@ -811,6 +1040,12 @@ fn initialize(
     callback: JObject<'_>,
 ) -> Result<String, String> {
     let capability = native_fence_jni::active()?;
+    let bootstrap_binding: Bootstrap =
+        serde_json::from_str(&bootstrap_json).map_err(safe_decode)?;
+    require_operational_run_binding(
+        bootstrap_binding.operational_run_id.as_deref(),
+        capability.binding.operational_run_id.as_deref(),
+    )?;
     let attempted_sha = expected_sha.clone();
     initialize_with_capability(
         &capability,
@@ -1089,6 +1324,10 @@ fn build_host(
         return Err("embedded bridge required".into());
     }
     let bootstrap: Bootstrap = serde_json::from_str(&bootstrap_json).map_err(safe_decode)?;
+    require_operational_run_binding(
+        bootstrap.operational_run_id.as_deref(),
+        capability.binding.operational_run_id.as_deref(),
+    )?;
     let restored_owner_replay = !bootstrap.replay.pending_request_sha256.is_empty()
         || !bootstrap.replay.terminal.is_empty()
         || !bootstrap
@@ -1363,6 +1602,9 @@ fn build_host(
         "executor_generation": capability.generation,
         "app_process_generation":capability.binding.generation,
         "app_record_sha256":capability.binding.record_sha256});
+    if let Some(run) = &capability.binding.operational_run_id {
+        result["operational_run_id"] = json!(run);
+    }
     if own_capture_enabled {
         result["own_stereo_capture_enabled"] = json!(true);
         result["own_capture_bootstrap"] = json!({"scope":"app_owned_capture_bootstrap","app_feature_lock_sha256":own_capture_lock,
@@ -1505,7 +1747,7 @@ fn select_local_after_terminal(sha: &str) -> Result<String, String> {
     )
 }
 
-fn return_string(env: &mut JNIEnv<'_>, result: Result<String, String>) -> jstring {
+pub(super) fn return_string(env: &mut JNIEnv<'_>, result: Result<String, String>) -> jstring {
     match result {
         Ok(value) => match env.new_string(value) {
             Ok(text) => text.into_raw(),
