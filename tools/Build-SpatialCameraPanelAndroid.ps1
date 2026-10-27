@@ -1027,7 +1027,7 @@ if ([string]::IsNullOrWhiteSpace($BuildCacheRoot)) {
 }
 $BuildCacheRoot = [System.IO.Path]::GetFullPath($BuildCacheRoot).TrimEnd([char[]]@('\', '/'))
 if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) {
-    [void](New-ExternalArtifactDirectory -Parent $ArtifactOutputParent -Output $OutDir -ExcludedRoots @($provisionalRepoRoot,$NativeRepoRoot,$BuildCacheRoot,$SharedGradleToolRoot) -Mode $BuildMode -Replace:$ReplaceExistingOutput)
+    [void](New-ExternalArtifactDirectory -Parent $ArtifactOutputParent -Output $OutDir -ExcludedRoots @(@($provisionalRepoRoot,$NativeRepoRoot,$BuildCacheRoot,$SharedGradleToolRoot) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -Mode $BuildMode -Replace:$ReplaceExistingOutput)
 }
 if (-not [string]::IsNullOrWhiteSpace($SharedGradleToolRoot)) {
     $sharedToolPath = [IO.Path]::GetFullPath($SharedGradleToolRoot).TrimEnd([char[]]@('\', '/'))
