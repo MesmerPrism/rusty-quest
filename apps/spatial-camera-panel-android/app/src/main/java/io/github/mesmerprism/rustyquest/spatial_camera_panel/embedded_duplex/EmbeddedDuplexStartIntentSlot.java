@@ -29,7 +29,20 @@ final class EmbeddedDuplexStartIntentSlot {
         if (observed == null || dispatched != observed)
             throw new IllegalStateException("Start intent acknowledgement differs");
         JSONObject result = new JSONObject(nativeReceipt);
-        if (!"rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(result.getString("$schema"))
+        String schema = result.getString("$schema");
+        boolean fresh = EmbeddedDuplexFreshLifecycle.SCHEMA.equals(schema);
+        if (fresh) EmbeddedDuplexFreshLifecycle.require(result);
+        boolean ongoing = "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3".equals(schema);
+        if (ongoing) {
+            JSONObject policy = result.getJSONObject("ongoing_media_policy");
+            Object count = result.get("current_lifetime_renewal_count");
+            Object validation = result.get("current_owner_validation");
+            if (policy.length() != 1 || !"rusty.manifold.peer.ongoing_media_policy.v2".equals(policy.getString("$schema"))
+                    || !(count instanceof Integer || count instanceof Long) || ((Number) count).longValue() < 0L
+                    || validation != JSONObject.NULL && !(validation instanceof JSONObject))
+                throw new IllegalStateException("Start acknowledgement ongoing lineage differs");
+        }
+        if (!(fresh || ongoing || "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1".equals(schema))
                 || !"start".equals(result.getString("action"))
                 || !observed.runtimeConfigSha256.equals(result.getString("config_sha256"))
                 || result.getLong("native_executor_generation") <= 0L

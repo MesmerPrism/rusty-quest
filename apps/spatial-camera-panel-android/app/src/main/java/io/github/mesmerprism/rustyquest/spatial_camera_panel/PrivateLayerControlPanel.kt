@@ -112,6 +112,18 @@ private enum class RegionSettingsTab(val label: String) {
   Diagnostics("Diagnostics"),
 }
 
+private fun embeddedDuplexActionStatus(action: String, receipt: String?, failure: Throwable?): String {
+  if (failure != null) return "$action unavailable."
+  val status = runCatching {
+    val observed = org.json.JSONObject(requireNotNull(receipt))
+    (observed.optJSONObject("peer_lifecycle") ?: observed).getString("status")
+  }.getOrNull()
+  return when (status) {
+    "active", "pending", "terminal", "failed", "unknown" -> "$action result: $status."
+    else -> "$action result received."
+  }
+}
+
 @Composable
 internal fun PrivateLayerControlPanel(
     layerOverride: Float,
@@ -141,6 +153,8 @@ internal fun PrivateLayerControlPanel(
     refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    runEmbeddedDuplexOrdinaryStart: () -> CompletableFuture<String>,
+    runEmbeddedDuplexPeerStop: () -> CompletableFuture<String>,
     prepareEmbeddedDuplexStartPreflight: () -> CompletableFuture<EmbeddedDuplexStartPreflight>,
     embeddedDuplexStartPreflightLive: (EmbeddedDuplexStartPreflight) -> Boolean,
     environmentDepthUnavailableWarning: () -> String?,
@@ -230,6 +244,10 @@ internal fun PrivateLayerControlPanel(
   var localVideoCadenceMode by remember { mutableStateOf(SpatialVideoCadencePanelBridge.current()) }
   var localSharedMediaLibrary by remember { mutableStateOf(sharedMediaLibraryStatus()) }
   var localConnectionHub by remember { mutableStateOf(connectionHubStatus()) }
+  var duplexStartPending by remember { mutableStateOf(false) }
+  var duplexStopPending by remember { mutableStateOf(false) }
+  var duplexStartStatus by remember { mutableStateOf("Start has not been requested.") }
+  var duplexStopStatus by remember { mutableStateOf("Peer Stop has not been requested.") }
   var duplexPreflight by remember { mutableStateOf<EmbeddedDuplexStartPreflight?>(null) }
   var duplexPreflightPending by remember { mutableStateOf(false) }
   var duplexPreflightUnavailable by remember { mutableStateOf(false) }
@@ -1288,6 +1306,40 @@ internal fun PrivateLayerControlPanel(
 
       if (currentPage == PrivateLayerPanelPage.ExternalControl) {
         if (BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED) {
+          Section("Peer session") {
+            Text("Start the prepared peer session, or request Peer Stop independently.",
+                style = MaterialTheme.typography.bodySmall, color = LayerPanelMuted)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+              Button(
+                  enabled = !duplexStartPending,
+                  onClick = {
+                    duplexStartPending = true
+                    duplexStartStatus = "Start pending..."
+                    runEmbeddedDuplexOrdinaryStart().whenComplete { receipt, failure ->
+                      Handler(Looper.getMainLooper()).post {
+                        duplexStartStatus = embeddedDuplexActionStatus("Start", receipt, failure)
+                        duplexStartPending = false
+                      }
+                    }
+                  },
+              ) { Text("Start") }
+              Button(
+                  enabled = !duplexStopPending,
+                  onClick = {
+                    duplexStopPending = true
+                    duplexStopStatus = "Peer Stop pending..."
+                    runEmbeddedDuplexPeerStop().whenComplete { receipt, failure ->
+                      Handler(Looper.getMainLooper()).post {
+                        duplexStopStatus = embeddedDuplexActionStatus("Peer Stop", receipt, failure)
+                        duplexStopPending = false
+                      }
+                    }
+                  },
+              ) { Text("Peer Stop") }
+            }
+            Text(duplexStartStatus, color = LayerPanelMuted)
+            Text(duplexStopStatus, color = LayerPanelMuted)
+          }
           Section("Embedded duplex preflight") {
             Text(
                 "Checks the current signed pair session and retains this display's pre-Start intent. No route or media starts.",

@@ -99,6 +99,10 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal fun embeddedDuplexStartNeedsScenePermission(depthOwner: String, layerOverride: Float): Boolean =
+    SpatialEnvironmentDepthOwner.parse(depthOwner) != SpatialEnvironmentDepthOwner.Disabled &&
+        PrivateLayerControls.environmentDepthConsumerRequired(layerOverride)
+
 class SpatialCameraPanelActivity : AppSystemActivity() {
   private val productPolicy = SpatialProductBuildPolicy.current
   private val presentationPolicy = SpatialPresentationBuildPolicy.current
@@ -1784,6 +1788,58 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runOnUiThread {
         marker("channel=embedded-duplex status=" +
             if (failure == null) "peer-session-current-route-unverified" else "pair-ceremony-cleanup-pending")
+      }
+    }
+    return result
+  }
+
+  /** Ordinary panel and typed-provider Start share this current-Activity owner. */
+  fun runEmbeddedDuplexOrdinaryStart(expectedArmChallenge: String? = null): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    val resumeGeneration = ownResumeGeneration
+    val currentActivity = java.util.function.BooleanSupplier {
+      val current = ownResumeActive && ownResumeGeneration == resumeGeneration && generation > 0L &&
+          embeddedDuplexAttachmentGeneration == generation && !embeddedDuplexActivityDestroying
+      if (current && embeddedDuplexStartNeedsScenePermission(
+              BuildConfig.ENVIRONMENT_DEPTH_OWNER, privateLayerControlCoordinator.layerOverride) &&
+          checkSelfPermission("horizonos.permission.USE_SCENE") != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        throw IllegalStateException("current selected environment-depth scene permission unavailable")
+      }
+      current
+    }
+    val admissionFailure = runCatching {
+      check(currentActivity.getAsBoolean()) { "current resumed Activity unavailable" }
+    }.exceptionOrNull()
+    if (admissionFailure != null) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(admissionFailure)
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.ordinaryStart(this, generation, expectedArmChallenge, currentActivity)
+    result.whenComplete { _, failure ->
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "ordinary-start-result-observed" else "ordinary-start-unavailable")
+      }
+    }
+    return result
+  }
+
+  /** Peer Stop remains available independently of a pending Start or its prerequisites. */
+  fun runEmbeddedDuplexPeerStop(): CompletableFuture<String> {
+    val generation = embeddedDuplexAttachmentGeneration
+    if (generation <= 0L || embeddedDuplexActivityDestroying) {
+      return CompletableFuture<String>().apply {
+        completeExceptionally(IllegalStateException("current peer Stop display unavailable"))
+      }
+    }
+    val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
+        .EmbeddedDuplexRuntimeService.stopCurrentPeer(this, generation)
+    result.whenComplete { _, failure ->
+      runOnUiThread {
+        marker("channel=embedded-duplex status=" +
+            if (failure == null) "peer-stop-result-observed" else "peer-stop-unavailable")
       }
     }
     return result
@@ -3803,6 +3859,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     refreshConnectionHub = connectionHubWearerControlClient::refresh,
                     startConnectionHub = connectionHubWearerControlClient::start,
                     stopConnectionHub = connectionHubWearerControlClient::stop,
+                    runEmbeddedDuplexOrdinaryStart = { runEmbeddedDuplexOrdinaryStart() },
+                    runEmbeddedDuplexPeerStop = ::runEmbeddedDuplexPeerStop,
                     prepareEmbeddedDuplexStartPreflight =
                         ::prepareEmbeddedDuplexStartPreflight,
                     embeddedDuplexStartPreflightLive =

@@ -68,6 +68,17 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context).peerLifecycle(action, challenge);
     }
 
+    /** App-owned composition; a missing prerequisite keeps its distinct setup/recovery action. */
+    public static CompletableFuture<String> ordinaryStart(Context context, long displayGeneration,
+            String expectedArmChallenge, java.util.function.BooleanSupplier currentActivity) {
+        return EmbeddedDuplexProcessHost.forApplication(context).ordinaryStart(
+                displayGeneration, expectedArmChallenge, currentActivity);
+    }
+
+    public static CompletableFuture<String> stopCurrentPeer(Context context, long displayGeneration) {
+        return EmbeddedDuplexProcessHost.forApplication(context).stopCurrentPeer(displayGeneration);
+    }
+
     public static CompletableFuture<EmbeddedDuplexRuntimeStatus> status(Context context) {
         return EmbeddedDuplexProcessHost.forApplication(context).runtimeStatus();
     }

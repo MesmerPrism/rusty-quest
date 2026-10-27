@@ -23,6 +23,7 @@ internal object EmbeddedDuplexOperatorContract {
   const val METHOD_PAIR_STATUS = "pair_status"
   const val METHOD_PAIR_SESSION = "pair_session"
   const val METHOD_START_PREFLIGHT = "start_preflight"
+  const val KEY_PREPARE_PREFLIGHT = "prepare_preflight"
   const val KEY_ROLE = "role_id"
   const val KEY_REMOTE_KEY = "remote_public_key_hex"
   const val KEY_RUNTIME_HOST = "runtime_host_id"
@@ -41,7 +42,7 @@ internal object EmbeddedDuplexOperatorContract {
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
   enum class Route { STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
-    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK,
+    CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, ORDINARY_START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK,
     FRESH_PAIR_CONTINUE, PREPARE_PEER_START, PREPARED_PEER_START_STATUS, REESTABLISH_PEER_ROOTS, PEER_ROOT_STATUS,
     OPERATION_STOP, OPERATION_JOIN_STATUS, OPERATION_CONTINUATION_STATUS, OPERATION_CONTINUATION_HANDOFF, PAIR_SETUP_RECOVERY_STATUS }
   data class Request(
@@ -70,6 +71,13 @@ internal object EmbeddedDuplexOperatorContract {
 
   internal fun parseFields(method: String, argument: String?, fields: Map<String, Any?>): Request {
     require(argument != null && nonce.matches(argument)) { "operator-challenge-invalid" }
+    if (method == "start" && fields.containsKey(KEY_PREPARE_PREFLIGHT)) {
+      require(fields.keys == setOf(KEY_ORIGINAL_ID, KEY_PREPARE_PREFLIGHT) &&
+          fields[KEY_PREPARE_PREFLIGHT] == true) { "operator-fields-invalid" }
+      val original = fields[KEY_ORIGINAL_ID] as? String
+      require(original != null && nonce.matches(original)) { "operator-original-id-invalid" }
+      return Request(Route.ORDINARY_START, argument, originalId = original)
+    }
     val freshRoutes = mapOf("fresh_pair_continue" to Route.FRESH_PAIR_CONTINUE,
         "prepare_peer_start" to Route.PREPARE_PEER_START, "prepared_peer_start_status" to Route.PREPARED_PEER_START_STATUS,
         "reestablish_peer_roots" to Route.REESTABLISH_PEER_ROOTS, "peer_root_status" to Route.PEER_ROOT_STATUS,
@@ -153,7 +161,7 @@ internal object EmbeddedDuplexOperatorContract {
       Route.FRESH_PAIR_CONTINUE, Route.PREPARE_PEER_START, Route.PREPARED_PEER_START_STATUS,
       Route.REESTABLISH_PEER_ROOTS, Route.PEER_ROOT_STATUS, Route.OPERATION_STOP, Route.OPERATION_JOIN_STATUS,
       Route.OPERATION_CONTINUATION_STATUS, Route.OPERATION_CONTINUATION_HANDOFF, Route.PAIR_SETUP_RECOVERY_STATUS,
-      Route.OPERATION_QUERY, Route.OPERATION_ACK -> throw IllegalArgumentException("operator-original-route-invalid")
+      Route.OPERATION_QUERY, Route.OPERATION_ACK, Route.ORDINARY_START -> throw IllegalArgumentException("operator-original-route-invalid")
       Route.STATUS -> setOf(KEY_ROLE)
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
