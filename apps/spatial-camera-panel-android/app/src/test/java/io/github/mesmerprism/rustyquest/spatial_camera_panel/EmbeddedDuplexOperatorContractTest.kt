@@ -103,7 +103,7 @@ class EmbeddedDuplexOperatorContractTest {
       }
     }
     for (method in listOf("runtime_status","peer_status","concurrent_status","policy_read","blend_read",
-        "bootstrap_real_peer","close_no_media","pair_status","start_preflight",
+        "bootstrap_admission_status","close_no_media","pair_status","start_preflight",
         "owner_failure_diagnostic","own_capture_diagnostic","stream_dropout_diagnostic")) {
       assertThrows(IllegalArgumentException::class.java) {
         EmbeddedDuplexOperatorContract.parseFields(method, nonce, mapOf("original_id" to original))

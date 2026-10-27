@@ -10,6 +10,46 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
 
+    /** One bootstrap Original exists before enqueue or Activity pre-entry evaluation. */
+    public static CompletableFuture<EmbeddedDuplexRuntimeStatus> bootstrapRealPeerCommand(Context context) {
+        return bootstrapRealPeerFromActivity(context,()->
+                io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.requestRealPeerBootstrap());
+    }
+    public static CompletableFuture<EmbeddedDuplexRuntimeStatus> bootstrapRealPeerFromActivity(Context context,
+            Supplier<CompletableFuture<EmbeddedDuplexRuntimeStatus>> actualAction) {
+        try {
+            EmbeddedDuplexOriginals.Record current=EmbeddedDuplexOriginals.capture();
+            if(current!=null) {
+                if(!"bootstrap_real_peer".equals(current.row.getString("operation")))throw new IllegalStateException("bootstrap Original operation differs");
+                return actualAction.get();
+            }
+            String challenge=java.util.UUID.randomUUID().toString().replace("-","");
+            return EmbeddedDuplexOriginals.forApplication(context).beginInternal("bootstrap_real_peer",challenge,
+                    EmbeddedDuplexOriginals.request("bootstrap_real_peer",challenge,new Bundle()),actualAction,state->{
+                        try{return CompletableFuture.completedFuture(EmbeddedDuplexAppAdmission.serviceBundle(challenge,state));}
+                        catch(Exception failure){return CompletableFuture.failedFuture(failure);}
+                    });
+        } catch(Throwable failure){return CompletableFuture.failedFuture(failure);}
+    }
+    public static CompletableFuture<String> bootstrapReadiness(Context context,String expectedRunId) {
+        try {
+            // This read does not obtain ProcessHost.forApplication or acquire a writer/Native capability.
+            EmbeddedDuplexRunSelectionStore store=new EmbeddedDuplexRunSelectionStore(
+                    context.getApplicationContext().getNoBackupFilesDir(),directory->{throw new IllegalStateException("read-only selector sync");});
+            EmbeddedDuplexRunContext captured=store.current();
+            if(!java.util.Objects.equals(expectedRunId,captured.runId))throw new IllegalStateException("readiness selector differs from requested run");
+            return io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.requestBootstrapReadiness()
+                    .thenApply(raw->{try{
+                        captured.requireSame(store.current());
+                        return EmbeddedDuplexCanonicalJson.encode(new JSONObject()
+                                .put("$schema","rusty.quest.embedded_duplex.bootstrap_readiness_observation.v1")
+                                .put("selector_run_id",captured.runId==null?JSONObject.NULL:captured.runId)
+                                .put("selector_generation",captured.selectionGeneration)
+                                .put("activity",new JSONObject(raw)));
+                    }catch(Exception failure){throw new java.util.concurrent.CompletionException(failure);}});
+        } catch(Throwable failure){return CompletableFuture.failedFuture(failure);}
+    }
+
     public static CompletableFuture<String> newRun(Context context,String runId,String legacyWholeOriginalId){
         java.util.function.BiConsumer<String,Throwable> reconcile=io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.captureRunSelectionReconciliation();
         return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,true,legacyWholeOriginalId).whenComplete(reconcile);

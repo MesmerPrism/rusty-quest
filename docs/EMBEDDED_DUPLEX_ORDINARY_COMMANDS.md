@@ -112,3 +112,26 @@ The selected installed `50f5d5a2166974865b0534fd21d0b59080cef1e2` family already
 accepts lifecycle-v4; this work does not identify an installed v4 bug or a device
 hold. The new wire flag and UI handler require the next APK containing this
 source. Source checks do not change the currently installed package.
+
+## Current attachment and bootstrap admission
+
+`bootstrap_admission_status` is a closed read-only call with a challenge and, for an explicit run, its `run_id`. It creates no Original, Java ProcessHost, Native Host, writer or resource. The adapter reads the existing durable selector before and after the queued Activity observation and refuses a changed selection. `selector_run_id` and `selector_generation` identify that durable read; they do not assert a captured Native capability. The nested `rusty.quest.embedded_duplex.bootstrap_readiness.v1` reports the current Activity attachment/pre-service facts.
+
+Attachment reasons preserve the actual producer order: product inputs disabled, Activity destroying, local diagnostic finished, capture route not selected, already attached, scene not ready, carrier fence absent, Surface invalid, or open. The carrier facts come from the same monitor and actual Surface validity used by `sourceCarrierContext`. An absent Activity and an unaccepted main-thread post are distinct observations. Unobserved facts remain null. Existing Host `runtime_status.display_attached` remains a separate Host fact.
+
+Bootstrap evaluates its existing four Activity guards again immediately before calling the service: attachment absent, Activity destroying, retained diagnostic Future, or retained runtime Future. Retained Future state is reported even when completed or failed. This guard evaluation does not probe the carrier or Native route; `attachment_observed=false` makes that limit explicit. A prior readiness read supplies no token and does not bypass Host, permission, SDK, enrollment, Pair, Native or resource guards.
+
+Both the human Activity entry and typed `bootstrap_real_peer` now obtain the same app-owned bootstrap Original before queueing/evaluating that Activity action. Typed callers may supply a closed `original_id` and query the exact request/outcome later. A source-proven `Handler.post(false)` releases only its exact unqueued callback reservation without executing the action. A queued/throwing/timeout/cancelled dispatch does not provide this evidence.
+
+New bootstrap responses use the explicit `rusty.quest.embedded_duplex.bootstrap_result.v1` union:
+
+| `kind` | Meaning |
+| --- | --- |
+| `app_refusal` | A specific live source-owned pre-service guard refused. The response binds the exact Original/request, run selection and actual process identity; `service_entered=false`. |
+| `service_result` | The existing service returned its actual RuntimeStatus projection. Route/media acceptance remains unproven; this is not physical cleanup evidence. |
+
+An app refusal is retained as a known observation with `effect_state=not_entered`, not successful bootstrap. Its actual task/completion callback joins publish the distinct `rusty.quest.embedded_duplex.original_app_admission_join.v1` through `operation_join_status`. Inline Future completion can precede task exit, so the join remains pending until the real callback reservation is released. This app-only receipt contains no Native retirement claim. ACK can compact only the same live held source refusal after its exact callback, current process/run and durable outcome checks. Restored JSON, fabricated result values, changed actors/runs, corrupt joins and unjoined callbacks cannot supply that authority.
+
+Generic service exceptions, actual entered work, Native Pending/partial construction and existing UNKNOWN retain their current uncertainty and Native/physical join/ACK rules. The existing legacy response/checkpoint formats remain readable. Strict consumers of the next artifact must handle both explicit bootstrap union kinds and the app-only join schema; current installed SDK/APK pins are unaffected. No automatic retry, SDK preparation, Pair, Start, cleanup, history reset or ACK is introduced.
+
+Source qualification uses `tools/Test-EmbeddedDuplexAppAdmissionSource.ps1` with the selected existing Kotlin toolchain manifest and public policy vector. It compiles finite/default-none and ongoing/source-bound-fresh Android callers, runs focused actual parser/Original/callback and byte-extracted Activity/Gate/carrier/service controls, and executes the new JUnit tests in both selections. Android Handler/Surface and low-level service/resource leaves are declared models where used. Unchanged Native/JNI component evidence is reused by exact source bytes; there is no APK/device, private enrollment-byte or hardware acceptance claim.

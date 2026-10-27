@@ -21,6 +21,7 @@ internal object EmbeddedDuplexOperatorContract {
   const val METHOD_OWN_CAPTURE_DIAGNOSTIC = "own_capture_diagnostic"
   const val METHOD_STREAM_DROPOUT_DIAGNOSTIC = "stream_dropout_diagnostic"
   const val METHOD_BOOTSTRAP_REAL_PEER = "bootstrap_real_peer"
+  const val METHOD_BOOTSTRAP_ADMISSION_STATUS = "bootstrap_admission_status"
   const val METHOD_CLOSE_NO_MEDIA = "close_no_media"
   const val METHOD_PAIR_STATUS = "pair_status"
   const val METHOD_PAIR_SESSION = "pair_session"
@@ -43,7 +44,7 @@ internal object EmbeddedDuplexOperatorContract {
   private val reviewKeys = setOf(KEY_ROLE, KEY_REMOTE_KEY, KEY_RUNTIME_HOST,
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
-  enum class Route { NEW_RUN, RESUME_RUN, RUN_STATUS, STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER,
+  enum class Route { NEW_RUN, RESUME_RUN, RUN_STATUS, STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER, BOOTSTRAP_ADMISSION_STATUS,
     CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, ORDINARY_START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK,
     FRESH_PAIR_CONTINUE, PREPARE_PEER_START, PREPARED_PEER_START_STATUS, REESTABLISH_PEER_ROOTS, PEER_ROOT_STATUS,
     OPERATION_STOP, OPERATION_JOIN_STATUS, OPERATION_CONTINUATION_STATUS, OPERATION_CONTINUATION_HANDOFF, PAIR_SETUP_RECOVERY_STATUS }
@@ -145,7 +146,7 @@ internal object EmbeddedDuplexOperatorContract {
     }
     if (fields.containsKey(KEY_ORIGINAL_ID)) {
       require(method in setOf("start", "renew_authority", "peer_stop", "peer_revoke", "whole_app_close",
-          "concurrent_arm", "policy_update", "blend_update", "pair_session")) { "operator-original-route-invalid" }
+          "concurrent_arm", "policy_update", "blend_update", "pair_session", METHOD_BOOTSTRAP_REAL_PEER)) { "operator-original-route-invalid" }
       val original = fields[KEY_ORIGINAL_ID] as? String
       require(original != null && nonce.matches(original)) { "operator-original-id-invalid" }
       return parseFields(method, argument, fields - KEY_ORIGINAL_ID).copy(originalId = original)
@@ -159,6 +160,7 @@ internal object EmbeddedDuplexOperatorContract {
       METHOD_OWN_CAPTURE_DIAGNOSTIC -> Route.OWN_CAPTURE_DIAGNOSTIC
       METHOD_STREAM_DROPOUT_DIAGNOSTIC -> Route.STREAM_DROPOUT_DIAGNOSTIC
       METHOD_BOOTSTRAP_REAL_PEER -> Route.BOOTSTRAP_REAL_PEER
+      METHOD_BOOTSTRAP_ADMISSION_STATUS -> Route.BOOTSTRAP_ADMISSION_STATUS
       METHOD_CLOSE_NO_MEDIA -> Route.CLOSE_NO_MEDIA
       METHOD_PAIR_STATUS -> Route.PAIR_STATUS
       METHOD_PAIR_SESSION -> Route.PAIR_SESSION
@@ -185,7 +187,7 @@ internal object EmbeddedDuplexOperatorContract {
       Route.STATUS -> setOf(KEY_ROLE)
       Route.REVIEW -> reviewKeys
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
-      Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.CLOSE_NO_MEDIA,
+      Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.BOOTSTRAP_ADMISSION_STATUS, Route.CLOSE_NO_MEDIA,
       Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.OWNER_FAILURE_DIAGNOSTIC, Route.OWN_CAPTURE_DIAGNOSTIC, Route.STREAM_DROPOUT_DIAGNOSTIC, Route.POLICY_READ, Route.BLEND_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
       Route.BLEND_UPDATE -> setOf("version","enabled","threshold","softness","amount","invert","diagnostic")
       Route.POLICY_UPDATE -> setOf("center", "middle", "outer", "geometry", "brightness", "strength")
@@ -209,7 +211,7 @@ internal object EmbeddedDuplexOperatorContract {
     if (route in setOf(Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE)) return Request(route, argument)
     if (route == Route.POLICY_READ || route == Route.BLEND_READ || route == Route.CONCURRENT_ARM || route == Route.CONCURRENT_STATUS ||
         route == Route.OWNER_FAILURE_DIAGNOSTIC || route == Route.OWN_CAPTURE_DIAGNOSTIC || route == Route.STREAM_DROPOUT_DIAGNOSTIC ||
-        route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER ||
+        route == Route.RUNTIME_STATUS || route == Route.BOOTSTRAP_REAL_PEER || route == Route.BOOTSTRAP_ADMISSION_STATUS ||
         route == Route.CLOSE_NO_MEDIA || route == Route.PAIR_STATUS ||
         route == Route.PAIR_SESSION || route == Route.START_PREFLIGHT)
       return Request(route, argument)

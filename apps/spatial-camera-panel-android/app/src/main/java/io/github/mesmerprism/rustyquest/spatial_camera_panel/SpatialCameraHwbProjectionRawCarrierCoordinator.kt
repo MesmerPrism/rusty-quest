@@ -636,6 +636,12 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
     if(terminal&&sourceSettled)synchronized(rawLayerPublicationMonitor){check(preparedCarrier===held){"renderer cleanup carrier replaced"};preparedCarrier=null}
     return result
   }
+  fun sourceCarrierReadiness(): io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.CarrierFacts =
+      synchronized(rawLayerPublicationMonitor) {
+        io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.CarrierFacts(
+            activeLayerFence != null, activeRenderSurface?.isValid == true)
+      }
+
   fun sourceCarrierContext(): SpatialVideoSourceCarrierContext? =
       synchronized(rawLayerPublicationMonitor) {
         val fence = activeLayerFence ?: return@synchronized null

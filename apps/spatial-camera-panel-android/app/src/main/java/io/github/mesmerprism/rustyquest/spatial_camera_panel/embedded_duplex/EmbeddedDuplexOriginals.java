@@ -57,6 +57,7 @@ public final class EmbeddedDuplexOriginals {
         int commands;
         long appGeneration;
         boolean boundActor, callbackJoined, restored;
+        EmbeddedDuplexAppAdmission.Refusal appAdmissionRefusal;
 
         final CompletableFuture<Void> callbackTerminal = new CompletableFuture<>();
         Throwable retainedFailure, joinPublicationFailure;
@@ -261,8 +262,125 @@ public final class EmbeddedDuplexOriginals {
             try(AutoCloseable ignored=enter(actual)){action.run();}
             catch(RuntimeException|Error failure){throw failure;}
             catch(Exception impossible){throw new IllegalStateException(impossible);}
-            finally{synchronized(actual.owner){actual.commands--;}}
+            finally{synchronized(actual.owner){actual.commands--;actual.owner.tryAppAdmissionJoin(actual);}}
         };
+    }
+    /** Reserve before enqueue; only a proven rejected post releases without running the action. */
+    public static boolean post(Runnable action,java.util.function.Predicate<Runnable> poster) {
+        Record actual=CURRENT.get();if(actual==null)return poster.test(action);
+        synchronized(actual.owner){actual.commands++;}
+        java.util.concurrent.atomic.AtomicInteger state=new java.util.concurrent.atomic.AtomicInteger();
+        Runnable callback=()->{
+            if(!state.compareAndSet(0,1))throw new IllegalStateException("Original callback already entered or rejected");
+            try(AutoCloseable ignored=enter(actual)){action.run();}
+            catch(RuntimeException|Error failure){throw failure;}
+            catch(Exception impossible){throw new IllegalStateException(impossible);}
+            finally{synchronized(actual.owner){actual.commands--;state.set(2);actual.owner.tryAppAdmissionJoin(actual);}}
+        };
+        // A throwing poster may already have queued it. That reservation remains owned.
+        boolean accepted=poster.test(callback);
+        if(!accepted) {
+            if(!state.compareAndSet(0,3))throw new IllegalStateException("rejected Original callback actually entered");
+            synchronized(actual.owner){actual.commands--;actual.owner.tryAppAdmissionJoin(actual);}
+        }
+        return accepted;
+    }
+    static JSONObject appAdmissionSubject(Record actual)throws Exception {
+        if(actual!=null) {
+            actual.owner.requireSelected();
+            if(!"bootstrap_real_peer".equals(actual.row.getString("operation")))throw new IllegalStateException("app refusal Original operation");
+        }
+        EmbeddedDuplexRunContext run=actual==null?null:actual.owner.capturedRun;
+        return new JSONObject().put("original_id",actual==null?JSONObject.NULL:actual.id())
+                .put("original_challenge",actual==null?JSONObject.NULL:actual.row.getString("original_challenge"))
+                .put("request_sha256",actual==null?JSONObject.NULL:actual.row.getString("request_sha256"))
+                .put("run_id",run==null||run.runId==null?JSONObject.NULL:run.runId)
+                .put("selection_generation",run==null?0:run.selectionGeneration);
+    }
+    static void retainAppAdmissionRefusal(Record actual,EmbeddedDuplexAppAdmission.Refusal refusal)throws Exception {
+        synchronized(actual.owner) {
+            actual.owner.requireSelected();
+            if(CURRENT.get()!=actual||actual.restored||actual.callbackJoined||actual.boundActor
+                    ||actual.enteredCommandStages.get()!=0||actual.appAdmissionRefusal!=null)
+                throw new IllegalStateException("app refusal source already entered or changed");
+            actual.appAdmissionRefusal=refusal;
+        }
+    }
+    private void requireLiveAppRefusal(Record actual,EmbeddedDuplexAppAdmission.Refusal refusal)throws Exception {
+        requireSelected();
+        if(refusal==null||refusal.original!=actual||actual.owner!=this||live.get(actual.id())!=actual||actual.restored
+                ||actual.appAdmissionRefusal!=refusal||actual.boundActor||actual.enteredCommandStages.get()!=0
+                ||!actual.row.isNull("native_setup_binding")||!refusal.currentProcess()
+                ||!"bootstrap_real_peer".equals(actual.row.getString("operation")))
+            throw new IllegalStateException("actual local app refusal owner differs or entered service");
+        JSONObject subject=appAdmissionSubject(actual),payload=refusal.payload();
+        for(String key:new String[]{"original_id","original_challenge","request_sha256","run_id","selection_generation"})
+            if(!EmbeddedDuplexCanonicalJson.sameValue(subject.get(key),payload.get(key)))throw new IllegalStateException("app refusal subject changed");
+    }
+    private synchronized void tryAppAdmissionJoin(Record actual) {
+        if(actual.appAdmissionRefusal==null)return;
+        try{retainAppAdmissionJoin(actual);}catch(Exception unavailable){actual.joinPublicationFailure=unavailable;}
+    }
+    private void retainAppAdmissionJoin(Record actual)throws Exception {
+        if(actual.persistenceFailure!=null||!actual.callbackJoined||!actual.continuationWorkerJoined()
+                ||!"succeeded".equals(actual.row.getString("state"))||!"not_entered".equals(actual.row.getString("effect_state")))return;
+        requireLiveAppRefusal(actual,actual.appAdmissionRefusal);
+        File current=path(actual.id());
+        if(!Files.isRegularFile(current.toPath(),LinkOption.NOFOLLOW_LINKS)
+                ||!EmbeddedDuplexCanonicalJson.encode(actual.row).equals(EmbeddedDuplexCanonicalJson.encode(
+                        EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(current.toPath())))))
+            throw new IllegalStateException("local app durable outcome changed");
+        JSONObject payload=actual.appAdmissionRefusal.payload();
+        JSONObject proof=new JSONObject().put("schema",EmbeddedDuplexAppAdmission.JOIN)
+                .put("original_id",actual.id()).put("operation","bootstrap_real_peer")
+                .put("request_sha256",actual.row.getString("request_sha256")).put("outcome_sha256",actual.row.getString("outcome_sha256"))
+                .put("response_sha256",actual.row.getString("response_sha256")).put("actor_binding",copy(actual.row.getJSONObject("actor_binding")))
+                .put("run_id",payload.get("run_id")).put("selection_generation",payload.get("selection_generation"))
+                .put("process_identity",payload.getJSONObject("process_identity"))
+                .put("original_worker_terminal",true).put("original_callback_terminal",true).put("service_entered",false);
+        validateAppAdmissionJoin(proof,actual.row);
+        String exact=EmbeddedDuplexCanonicalJson.encode(proof);File target=new File(directory,actual.id()+".joined.json");
+        if(Files.exists(target.toPath(),LinkOption.NOFOLLOW_LINKS)) {
+            if(!Files.isRegularFile(target.toPath(),LinkOption.NOFOLLOW_LINKS)
+                    ||!exact.equals(new String(Files.readAllBytes(target.toPath()),StandardCharsets.UTF_8)))
+                throw new IllegalStateException("local app joined receipt changed");
+        } else {
+            File temporary=new File(directory,actual.id()+".joined.tmp");
+            if(!temporary.createNewFile())throw new IllegalStateException("local app join pending write");
+            Os.chmod(temporary.getAbsolutePath(),0600);
+            try(FileOutputStream output=new FileOutputStream(temporary)){output.write(exact.getBytes(StandardCharsets.UTF_8));output.getFD().sync();}
+            Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE);syncDirectory();
+        }
+        actual.operationJoined=true;
+    }
+    private static void validateAppAdmissionJoin(JSONObject proof,JSONObject row)throws Exception {
+        requireAppAdmissionRow(row);
+        EmbeddedDuplexAppAdmission.keys(proof,"schema","original_id","operation","request_sha256","outcome_sha256",
+                "response_sha256","actor_binding","run_id","selection_generation","process_identity",
+                "original_worker_terminal","original_callback_terminal","service_entered");
+        JSONObject response=row.getJSONObject("response");
+        EmbeddedDuplexAppAdmission.requireResult("bootstrap_real_peer",row.getString("original_challenge"),response);
+        JSONObject payload=new JSONObject(response.getString("receipt"));
+        if(!EmbeddedDuplexAppAdmission.JOIN.equals(proof.getString("schema"))||!EmbeddedDuplexAppAdmission.isRefusal(response)
+                ||!"bootstrap_real_peer".equals(row.getString("operation"))||!"succeeded".equals(row.getString("state"))
+                ||!"not_entered".equals(row.getString("effect_state")))throw new IllegalStateException("local app join response differs");
+        for(String key:new String[]{"original_id","operation","request_sha256","outcome_sha256","response_sha256","actor_binding"})
+            if(!EmbeddedDuplexCanonicalJson.sameValue(proof.get(key),row.get(key)))throw new IllegalStateException("local app join outcome differs");
+        for(String key:new String[]{"run_id","selection_generation","process_identity"})
+            if(!EmbeddedDuplexCanonicalJson.sameValue(proof.get(key),payload.get(key)))throw new IllegalStateException("local app join subject differs");
+        for(String key:new String[]{"original_worker_terminal","original_callback_terminal","service_entered"})
+            if(!(proof.get(key) instanceof Boolean)||proof.getBoolean(key)==key.equals("service_entered"))
+                throw new IllegalStateException("local app callback/service facts differ");
+    }
+    private static void requireAppAdmissionRow(JSONObject row)throws Exception {
+        JSONObject response=row.getJSONObject("response");
+        EmbeddedDuplexAppAdmission.requireResult(row.getString("operation"),row.getString("original_challenge"),response);
+        JSONObject payload=new JSONObject(response.getString("receipt"));
+        if(!EmbeddedDuplexAppAdmission.isRefusal(response)||!"succeeded".equals(row.getString("state"))
+                ||!"not_entered".equals(row.getString("effect_state"))||!row.isNull("native_setup_binding")||!row.isNull("failure"))
+            throw new IllegalStateException("local app refusal row state differs");
+        for(String field:new String[]{"original_id","original_challenge","request_sha256"})
+            if(!row.getString(field).equals(payload.getString(field)))throw new IllegalStateException("local app refusal row subject differs");
     }
     static void bindActualActor(JSONObject actor,long generation)throws Exception {
         Record actual=CURRENT.get();if(actual==null)return;
@@ -279,7 +397,19 @@ public final class EmbeddedDuplexOriginals {
     }
     private synchronized void complete(Record record,Bundle response,Throwable failure) {
         try {
-            if(failure!=null) {
+            EmbeddedDuplexAppAdmission.Refusal refused=EmbeddedDuplexAppAdmission.refusal(failure);
+            boolean appRefusal=refused!=null || response!=null&&EmbeddedDuplexAppAdmission.RESULT.equals(response.getString("schema"))
+                    &&"app_refusal".equals(response.getString("kind"));
+            if(appRefusal) {
+                if(refused==null)refused=record.appAdmissionRefusal;
+                requireLiveAppRefusal(record,refused);
+                JSONObject actual=bundleObject(EmbeddedDuplexAppAdmission.refusalBundle(record.row.getString("original_challenge"),refused));
+                if(response!=null&&!EmbeddedDuplexCanonicalJson.encode(actual).equals(EmbeddedDuplexCanonicalJson.encode(bundleObject(response))))
+                    throw new IllegalStateException("actual app refusal response changed");
+                EmbeddedDuplexAppAdmission.requireResult("bootstrap_real_peer",record.row.getString("original_challenge"),actual);
+                record.row.put("response",actual).put("response_sha256",EmbeddedDuplexCanonicalJson.sha256(actual))
+                        .put("state","succeeded").put("effect_state","not_entered");
+            } else if(failure!=null) {
                 record.row.put("state","unknown").put("effect_state","uncertain")
                         .put("failure",new JSONObject().put("schema","rusty.quest.embedded_duplex.original_failure.v1").put("code","actual_future_failed"));
             } else {
@@ -300,7 +430,7 @@ public final class EmbeddedDuplexOriginals {
             }
             record.row.put("outcome_sha256",EmbeddedDuplexCanonicalJson.sha256(outcome(record.row)));persist(record);
         } catch(Throwable unavailable){record.persistenceFailure=unavailable;}
-        finally{record.callbackJoined=true;record.callbackTerminal.complete(null);}
+        finally{record.callbackJoined=true;record.callbackTerminal.complete(null);tryAppAdmissionJoin(record);}
     }
     private static JSONObject validateResponse(Record record,Bundle response)throws Exception {
         if(response==null||!response.keySet().equals(Set.of("schema","status","challenge","receipt")))
@@ -362,6 +492,19 @@ public final class EmbeddedDuplexOriginals {
         if(!record.row.isNull("consumer_receipt_sha256")&&!consumerHash.equals(record.row.getString("consumer_receipt_sha256")))
             throw new IllegalStateException("original acknowledgement changed");
         if("compacted".equals(record.row.getString("retention")))return envelope(record,challenge);
+        if(!record.row.isNull("response")&&EmbeddedDuplexAppAdmission.isRefusal(record.row.getJSONObject("response"))) {
+            requireLiveAppRefusal(record,record.appAdmissionRefusal);
+            if(record.future==null||record.future.isCancelled()||!record.continuationWorkerJoined()
+                    ||!record.callbackJoined||record.persistenceFailure!=null||record.joinPublicationFailure!=null)
+                throw new IllegalStateException("local app refusal callback has not joined");
+            retainAppAdmissionJoin(record);
+            File joined=new File(directory,record.id()+".joined.json");
+            if(!Files.isRegularFile(joined.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("local app join absent");
+            validateAppAdmissionJoin(EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(joined.toPath())),record.row);
+            String previous=EmbeddedDuplexCanonicalJson.encode(record.row);
+            record.row.put("consumer_receipt_sha256",consumerHash).put("retention","compacted");persist(record,previous);live.remove(originalId);
+            return envelope(record,challenge);
+        }
         if(record.restored||!record.boundActor||record.future==null||!record.future.isDone()||record.future.isCancelled()
                 ||!record.callbackJoined||record.commands!=0||record.persistenceFailure!=null
                 ||!"succeeded".equals(record.row.getString("state"))
@@ -423,8 +566,10 @@ public final class EmbeddedDuplexOriginals {
                 || ((Number) nativeGeneration).longValue() <= 0L)) throw new IllegalStateException("Original native actor type");
         String state = row.getString("state");
         String effect = row.getString("effect_state");
+        boolean appRefusal=!row.isNull("response")&&EmbeddedDuplexAppAdmission.isRefusal(row.getJSONObject("response"));
+        if(appRefusal)requireAppAdmissionRow(row);
         if (!(state.equals("registered") ? effect.equals("not_entered") : state.equals("pending") ? effect.equals("entered")
-                : state.equals("succeeded") ? effect.equals("observed") : effect.equals("uncertain")))
+                : state.equals("succeeded") ? effect.equals(appRefusal?"not_entered":"observed") : effect.equals("uncertain")))
             throw new IllegalStateException("Original state join");
         if (row.isNull("response") != row.isNull("response_sha256")
                 || (state.equals("succeeded") && (row.isNull("response") || row.isNull("outcome_sha256") || !row.isNull("failure")))
@@ -447,6 +592,9 @@ public final class EmbeddedDuplexOriginals {
         return restored;
     }
     private void persist(Record record)throws Exception {
+        persist(record,null);
+    }
+    private void persist(Record record,String expectedPrevious)throws Exception {
         try {
             requireWritable();byte[] raw=EmbeddedDuplexCanonicalJson.encode(record.row).getBytes(StandardCharsets.UTF_8);
             if(raw.length>MAX_RECORD_BYTES)throw new IllegalStateException("original checkpoint bounds");
@@ -455,6 +603,10 @@ public final class EmbeddedDuplexOriginals {
             if(Files.exists(target.toPath(),LinkOption.NOFOLLOW_LINKS)&&(!Files.isRegularFile(target.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(target.toPath())))
                 throw new IllegalStateException("original target type");
             Files.createFile(temporary.toPath());Os.chmod(temporary.getAbsolutePath(),0600);
+            if(expectedPrevious!=null&&(!Files.isRegularFile(target.toPath(),LinkOption.NOFOLLOW_LINKS)
+                    ||!expectedPrevious.equals(EmbeddedDuplexCanonicalJson.encode(
+                            EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(target.toPath()))))))
+                throw new IllegalStateException("local app acknowledgement durable owner changed");
             try(FileOutputStream output=new FileOutputStream(temporary)){output.write(raw);output.getFD().sync();}
             Files.move(temporary.toPath(),target.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);sync.run();
         }catch(Exception unavailable){record.persistenceFailure=unavailable;throw unavailable;}
@@ -663,11 +815,14 @@ public final class EmbeddedDuplexOriginals {
         requireId(id);requireId(challenge);Record record=find(id);
         if(record==null)throw new IllegalStateException("original join target absent");
         if(record.physicalJoinProof!=null)retainPhysicalJoin(record);
+        if(record.appAdmissionRefusal!=null)tryAppAdmissionJoin(record);
         if(record.joinPublicationFailure!=null)throw new IllegalStateException("actual original joins publication unavailable",record.joinPublicationFailure);
         File file=new File(directory,id+".joined.json");JSONObject proof=null;
         if(Files.exists(file.toPath(),LinkOption.NOFOLLOW_LINKS)){
             if(!Files.isRegularFile(file.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("original join receipt type");
             proof=EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(file.toPath()));
+            if(EmbeddedDuplexAppAdmission.JOIN.equals(proof.optString("schema")))validateAppAdmissionJoin(proof,record.row);
+            else {
             java.util.HashSet<String> keys=new java.util.HashSet<>();proof.keys().forEachRemaining(keys::add);
             boolean v2="rusty.quest.embedded_duplex.original_join.v2".equals(proof.getString("schema"));
             java.util.HashSet<String> expected=new java.util.HashSet<>(java.util.Arrays.asList("schema","original_id","operation","request_sha256",
@@ -690,6 +845,7 @@ public final class EmbeddedDuplexOriginals {
                     || !proof.isNull("native_executor_generation") && proof.getLong("native_executor_generation")<=0)
                 throw new IllegalStateException("original retained join binding differs");
             if(v2)validateJoinBasis(proof.getJSONObject("join_basis"),record.row,proof);
+            }
         }
         Bundle result=new Bundle();result.putString("schema","rusty.quest.embedded_duplex.operator_original_join.v1");
         result.putString("status",proof==null?"pending":"joined");result.putString("challenge",challenge);result.putString("original_id",id);
@@ -896,6 +1052,7 @@ public final class EmbeddedDuplexOriginals {
             metadata.appGeneration=appGeneration;actualRows.add(metadata);
         }
         for(Record record:actualRows){
+            if(!record.row.isNull("response")&&EmbeddedDuplexAppAdmission.isRefusal(record.row.getJSONObject("response")))continue;
             if(record.appGeneration!=appGeneration)continue;
             JSONObject actor=record.row.getJSONObject("actor_binding");
             if(!actor.isNull("native_generation") && (actor.getLong("native_generation")!=nativeGeneration
@@ -1430,6 +1587,7 @@ public final class EmbeddedDuplexOriginals {
         requireId(row.getString("original_id"));requireId(row.getString("original_challenge"));requireHash(row.getString("request_sha256"));
         if(!row.isNull("response")){
             validateResponse(row.getString("operation"),row.getString("original_challenge"),row.getJSONObject("response"));
+            if(EmbeddedDuplexAppAdmission.isRefusal(row.getJSONObject("response")))requireAppAdmissionRow(row);
             if(!EmbeddedDuplexCanonicalJson.sha256(row.getJSONObject("response")).equals(row.getString("response_sha256")))
                 throw new IllegalStateException("original response bytes changed");
         }
@@ -1449,6 +1607,7 @@ public final class EmbeddedDuplexOriginals {
     }
     /** A completed Java call can return actual native Pending; retain its response without declaring settlement. */
     private static JSONObject nativePending(Record original,String operation,JSONObject response)throws Exception{
+        if(EmbeddedDuplexAppAdmission.isResult(response))return null;
         if(operation.equals("prepare_peer_start")) {
             JSONObject nativeReceipt=new JSONObject(response.getString("receipt"));
             if(!"ready".equals(nativeReceipt.optString("state")))return nativeReceipt;
@@ -1492,6 +1651,7 @@ public final class EmbeddedDuplexOriginals {
         throw new IllegalArgumentException("native lifecycle schema");
     }
     private static void validateResponse(String operation,String challenge,JSONObject actual)throws Exception{
+        if(EmbeddedDuplexAppAdmission.isResult(actual)){EmbeddedDuplexAppAdmission.requireResult(operation,challenge,actual);return;}
         String[] required,optional;
         switch(operation){
             case "prepare_peer_start":

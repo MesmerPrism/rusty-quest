@@ -144,7 +144,7 @@ def main():
     classes = out / 'classes'
     classes.mkdir()
     sources = [production / 'EmbeddedDuplexCanonicalJson.java', production / 'EmbeddedDuplexRunContext.java', production / 'EmbeddedDuplexRunSelectionStore.java', production / 'EmbeddedDuplexOriginals.java', production / 'EmbeddedDuplexProcessFence.java', fixture]
-    for name in ('EmbeddedDuplexFreshLifecycle.java', 'EmbeddedDuplexNativeOperationFailure.java'):
+    for name in ('EmbeddedDuplexFreshLifecycle.java', 'EmbeddedDuplexNativeOperationFailure.java', 'EmbeddedDuplexAppAdmission.java'):
         if (production / name).exists(): sources.append(production / name)
     source_paths = sources + [production / name for name in ('EmbeddedDuplexProcessHost.java', 'EmbeddedDuplexRuntimeService.java', 'EmbeddedDuplexProcessIncarnation.java')] + [pathlib.Path(__file__).resolve()]
     source_pins = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
