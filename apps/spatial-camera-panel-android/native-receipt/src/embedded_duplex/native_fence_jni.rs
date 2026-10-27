@@ -34,12 +34,7 @@ impl AppFenceSource for JavaAppFenceSource {
             .vm
             .attach_current_thread()
             .map_err(|_| "native app channel attach failed")?;
-        callback_string(
-            &mut env,
-            self.callback.as_obj(),
-            self.record_method,
-            512,
-        )
+        callback_string(&mut env, self.callback.as_obj(), self.record_method, 512)
     }
     fn inspection_record(&self) -> Result<String, String> {
         let mut env = self
@@ -212,37 +207,62 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_readColdPendingOwner(
-    mut env:JNIEnv<'_>,_class:JClass<'_>,callback:JObject<'_>,
-)->jstring{
-    let result=(||{let directory=callback_string(&mut env,&callback,"nativeInspectionDirectory",4096)?;
-        let source=capture_source(&mut env,callback)?;let before=source.inspection_record()?;
-        let value=super::process_fence::cold_pending_owner(Path::new(&directory))?;
-        if before!=source.inspection_record()?{return Err("cold owner app fence changed".into());}Ok(value.to_string())})();
-    super::runtime_host::return_string(&mut env,result)
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    callback: JObject<'_>,
+) -> jstring {
+    let result = (|| {
+        let directory = callback_string(&mut env, &callback, "nativeInspectionDirectory", 4096)?;
+        let source = capture_source(&mut env, callback)?;
+        let before = source.inspection_record()?;
+        let value = super::process_fence::cold_pending_owner(Path::new(&directory))?;
+        if before != source.inspection_record()? {
+            return Err("cold owner app fence changed".into());
+        }
+        Ok(value.to_string())
+    })();
+    super::runtime_host::return_string(&mut env, result)
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_retireColdPendingLocal(
-    mut env:JNIEnv<'_>,_class:JClass<'_>,callback:JObject<'_>,
-)->jstring{
-    let result=(||{
-        let directory=callback_string(&mut env,&callback,"nativeInspectionDirectory",4096)?;
-        let link=callback_string(&mut env,&callback,"nativeColdRecoveryEvidence",16384)?;
-        let mut source=capture_source(&mut env,callback)?;
-        Arc::get_mut(&mut source).ok_or("cold source unexpectedly shared")?.record_method="nativeColdRecoveryRecord";
-        let record=source.record()?;
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    callback: JObject<'_>,
+) -> jstring {
+    let result = (|| {
+        let directory = callback_string(&mut env, &callback, "nativeInspectionDirectory", 4096)?;
+        let link = callback_string(&mut env, &callback, "nativeColdRecoveryEvidence", 16384)?;
+        let mut source = capture_source(&mut env, callback)?;
+        Arc::get_mut(&mut source)
+            .ok_or("cold source unexpectedly shared")?
+            .record_method = "nativeColdRecoveryRecord";
+        let record = source.record()?;
         // These are current Native owners, never a recreated registry/old counter absence inference.
         super::runtime_host::retire_never_claimed_process_gate()?;
         super::runtime_host::operational_run_eligibility()?;
-        let receipt=registry().retire_cold_pending_local(Path::new(&directory),&record,&link)?;
+        let receipt =
+            registry().retire_cold_pending_local(Path::new(&directory), &record, &link)?;
         // All Java/physical callbacks are outside registry/flock commit locks.
-        if source.record()?!=record||source.inspection_record()?!=record{
+        if source.record()? != record || source.inspection_record()? != record {
             return Err("cold retirement held app source changed".into());
         }
-        let mut check=source.vm.attach_current_thread().map_err(|_|"cold verification attach")?;
-        if callback_string(&mut check,source.callback.as_obj(),"nativeColdRecoveryEvidence",16384)?!=link{return Err("cold retirement local owner changed".into());}
+        let mut check = source
+            .vm
+            .attach_current_thread()
+            .map_err(|_| "cold verification attach")?;
+        if callback_string(
+            &mut check,
+            source.callback.as_obj(),
+            "nativeColdRecoveryEvidence",
+            16384,
+        )? != link
+        {
+            return Err("cold retirement local owner changed".into());
+        }
         Ok(receipt)
-    })();super::runtime_host::return_string(&mut env,result)
+    })();
+    super::runtime_host::return_string(&mut env, result)
 }
 fn callback_string(
     env: &mut JNIEnv<'_>,
