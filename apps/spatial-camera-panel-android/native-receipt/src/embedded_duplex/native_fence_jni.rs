@@ -26,6 +26,7 @@ pub(super) fn generation_current(generation: u64) -> bool {
 struct JavaAppFenceSource {
     vm: JavaVM,
     callback: GlobalRef,
+    record_method: &'static str,
 }
 impl AppFenceSource for JavaAppFenceSource {
     fn record(&self) -> Result<String, String> {
@@ -36,7 +37,7 @@ impl AppFenceSource for JavaAppFenceSource {
         callback_string(
             &mut env,
             self.callback.as_obj(),
-            "nativeAdmissionRecord",
+            self.record_method,
             512,
         )
     }
@@ -122,6 +123,7 @@ fn capture_source(
         return Err("native app fence callback absent".into());
     }
     Ok(Arc::new(JavaAppFenceSource {
+        record_method: "nativeAdmissionRecord",
         vm: env
             .get_java_vm()
             .map_err(|_| "native app fence VM failed")?,
@@ -176,7 +178,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         if callback.is_null() {
             return Err("native app fence callback absent".into());
         }
-        let directory = callback_string(&mut env, &callback, "nativeFenceDirectory", 4096)?;
+        let directory = callback_string(&mut env, &callback, "nativeInspectionDirectory", 4096)?;
         let source = capture_source(&mut env, callback)?;
         let first = source.inspection_record()?;
         let (binding, pending) = AppBinding::inspect(&first)?;
@@ -206,6 +208,41 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         Ok(value.to_string())
     })();
     super::runtime_host::return_string(&mut env, result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_readColdPendingOwner(
+    mut env:JNIEnv<'_>,_class:JClass<'_>,callback:JObject<'_>,
+)->jstring{
+    let result=(||{let directory=callback_string(&mut env,&callback,"nativeInspectionDirectory",4096)?;
+        let source=capture_source(&mut env,callback)?;let before=source.inspection_record()?;
+        let value=super::process_fence::cold_pending_owner(Path::new(&directory))?;
+        if before!=source.inspection_record()?{return Err("cold owner app fence changed".into());}Ok(value.to_string())})();
+    super::runtime_host::return_string(&mut env,result)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_embedded_1duplex_EmbeddedDuplexNative_retireColdPendingLocal(
+    mut env:JNIEnv<'_>,_class:JClass<'_>,callback:JObject<'_>,
+)->jstring{
+    let result=(||{
+        let directory=callback_string(&mut env,&callback,"nativeInspectionDirectory",4096)?;
+        let link=callback_string(&mut env,&callback,"nativeColdRecoveryEvidence",16384)?;
+        let mut source=capture_source(&mut env,callback)?;
+        Arc::get_mut(&mut source).ok_or("cold source unexpectedly shared")?.record_method="nativeColdRecoveryRecord";
+        let record=source.record()?;
+        // These are current Native owners, never a recreated registry/old counter absence inference.
+        super::runtime_host::retire_never_claimed_process_gate()?;
+        super::runtime_host::operational_run_eligibility()?;
+        let receipt=registry().retire_cold_pending_local(Path::new(&directory),&record,&link)?;
+        // All Java/physical callbacks are outside registry/flock commit locks.
+        if source.record()?!=record||source.inspection_record()?!=record{
+            return Err("cold retirement held app source changed".into());
+        }
+        let mut check=source.vm.attach_current_thread().map_err(|_|"cold verification attach")?;
+        if callback_string(&mut check,source.callback.as_obj(),"nativeColdRecoveryEvidence",16384)?!=link{return Err("cold retirement local owner changed".into());}
+        Ok(receipt)
+    })();super::runtime_host::return_string(&mut env,result)
 }
 fn callback_string(
     env: &mut JNIEnv<'_>,
@@ -305,6 +342,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         }
         super::runtime_host::retire_never_claimed_process_gate()?;
         let source = Arc::new(JavaAppFenceSource {
+            record_method: "nativeAdmissionRecord",
             vm: env.get_java_vm().map_err(|_| "never-claimed app VM")?,
             callback: env
                 .new_global_ref(callback)

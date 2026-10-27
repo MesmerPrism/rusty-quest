@@ -73,11 +73,15 @@ final class EmbeddedDuplexProcessHost {
                 if(own!=null&&!"terminal".equals(own.physicalCleanupState()))throw new IllegalStateException("actual Own capture not terminal");
                 String sourceOriginal=legacyWholeOriginalId;
                 if(sourceOriginal==null&&retainedWholeClose!=null&&retainedWholeClose.original!=null)sourceOriginal=retainedWholeClose.original.id();
+                if(sourceOriginal==null){
+                    JSONObject recovered=EmbeddedDuplexColdRecovery.latestCompletedHandoff(runContext.root,applicationContext.getPackageName());
+                    if(recovered!=null)sourceOriginal=recovered.getString("whole_original_id");
+                }
                 String release=null;
                 if(sourceOriginal!=null){
                     JSONObject source=runContext.legacy()
                         ?EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(runContext.root,sourceOriginal,applicationContext.getPackageName())
-                        :EmbeddedDuplexOriginals.closedWholeHandoff(runContext.root,sourceOriginal,applicationContext.getPackageName());
+                        :closedRunHandoff(runContext.root,sourceOriginal);
                     JSONObject pointer=new JSONObject(source.toString());pointer.remove("physical_retirement");
                     pointer.put("source_run_id",runContext.runId==null?JSONObject.NULL:runContext.runId);
                     release=EmbeddedDuplexCanonicalJson.encode(EmbeddedDuplexRunSelectionStore.validateRelease(pointer));
@@ -109,7 +113,7 @@ final class EmbeddedDuplexProcessHost {
                 installRunHandoff(next.runId,next.releaseSourceJson);
                 EmbeddedDuplexOriginals.selectedRunChanged();
                 originalClosedActor=null;terminalWholeReceipt=null;terminalWholeChallenge=null;wholeCloseRollover=null;
-                retainedWholeNativeReceipt=null;lastClosedActorProof=null;retainedWholeClose=null;noMediaClose=null;
+                retainedWholeNativeReceipt=null;lastClosedActorProof=null;retainedWholeClose=null;noMediaClose=null;coldPendingRecovery=null;
                 wholeCallbackMarker=null;wholeCallbackPlatform=null;
                 nativeConfigurationContext=null;setupCredentials=null;pendingReview=null;lastBootstrapFailure=null;diagnosticChallenge=null;
                 result.complete(runStatusOnLane());
@@ -127,6 +131,12 @@ final class EmbeddedDuplexProcessHost {
             throw new IllegalStateException("legacy Whole last Native generation differs");
     }
     private void installRunHandoff(String nextRunId,String exactLocator)throws Exception{
+        JSONObject recovered=EmbeddedDuplexColdRecovery.latestCompletedHandoff(runContext.root,applicationContext.getPackageName());
+        if(recovered!=null&&(retainedWholeClose==null||retainedWholeClose.original==null)){
+            recovered.remove("physical_retirement");
+            recovered.put("source_run_id",runContext.runId==null?JSONObject.NULL:runContext.runId);
+            exactLocator=EmbeddedDuplexCanonicalJson.encode(EmbeddedDuplexRunSelectionStore.validateRelease(recovered));
+        }
         if(exactLocator==null){processFence.operationalHandoff(null,null);return;}
         final String locator=EmbeddedDuplexCanonicalJson.encode(EmbeddedDuplexRunSelectionStore.validateRelease(new JSONObject(exactLocator)));
         processFence.operationalHandoff(nextRunId,()->{
@@ -134,20 +144,26 @@ final class EmbeddedDuplexProcessHost {
             java.io.File root=expected.isNull("source_run_id")?applicationContext.getNoBackupFilesDir():runSelection.retained(expected.getString("source_run_id")).root;
             JSONObject actual=expected.isNull("source_run_id")
                 ?EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,expected.getString("whole_original_id"),applicationContext.getPackageName())
-                :EmbeddedDuplexOriginals.closedWholeHandoff(root,expected.getString("whole_original_id"),applicationContext.getPackageName());
+                :closedRunHandoff(root,expected.getString("whole_original_id"));
             for(String key:new String[]{"whole_original_id","request_sha256","outcome_sha256","physical_retirement_sha256","prior_native_generation"})
                 if(!EmbeddedDuplexCanonicalJson.sameValue(actual.get(key),expected.get(key)))throw new IllegalStateException("release source changed");
             return actual;
         });
+    }
+    private JSONObject closedRunHandoff(java.io.File root,String originalId)throws Exception{
+        return EmbeddedDuplexColdRecovery.hasReceipt(root,originalId)
+            ?EmbeddedDuplexColdRecovery.closedHandoff(root,originalId,applicationContext.getPackageName())
+            :EmbeddedDuplexOriginals.closedWholeHandoff(root,originalId,applicationContext.getPackageName());
     }
     CompletableFuture<String> runStatus(){CompletableFuture<String> result=new CompletableFuture<>();commands.execute(()->{
         try{ensureProcessFence();result.complete(runStatusOnLane());}catch(Throwable error){result.completeExceptionally(error);}});return result;}
     private String runStatusOnLane()throws Exception{
         JSONObject actual=new JSONObject(EmbeddedDuplexNative.inspectOperationalRun(processFence));
         if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(actual.getString("$schema")))throw new IllegalStateException("Native run readback schema");
-        return new JSONObject().put("$schema","rusty.quest.embedded_duplex.run_status.v1")
+        return new JSONObject().put("$schema","rusty.quest.embedded_duplex.run_status.v2")
             .put("run_id",runContext.runId==null?JSONObject.NULL:runContext.runId).put("selection_generation",runContext.selectionGeneration)
-            .put("native",actual).put("app_process_generation",processFence.generation()).put("app_display_generation",attachmentGeneration).toString();
+            .put("native",actual).put("app_process_generation",processFence.generation()).put("app_display_generation",attachmentGeneration)
+            .put("app_fence_disposition",EmbeddedDuplexColdRecovery.appDisposition(runContext.root,processFence,actual)).toString();
     }
     private final InstalledApkDigest installedApkDigest = new InstalledApkDigest();
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
@@ -288,6 +304,8 @@ final class EmbeddedDuplexProcessHost {
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 JSONObject runtime = new JSONObject(runtimeCopy);
                 JSONObject enrollment = new JSONObject(startupCopy);
+                processFence.bindIncarnation(EmbeddedDuplexProcessIncarnation.current(
+                        android.os.Process.myPid(),android.os.Process.myUid()));
                 processFence.beforeRuntimeEffects(checkpointSnapshot(), evidenceSnapshot());
                 JSONObject nativeFence = new JSONObject(EmbeddedDuplexNative.claimNativeProcessFence(processFence));
                 String recordSha = EmbeddedDuplexProcessFence.digest(processFence.nativeAdmissionRecord());
@@ -1380,6 +1398,11 @@ final class EmbeddedDuplexProcessHost {
      * or its existing verified whole-product close. It cannot infer cleanup. */
     static boolean originalActorSettled(JSONObject actor, long generation) throws Exception {
         EmbeddedDuplexProcessHost current = instance;
+        ColdPendingLocal recovery=current==null?null:current.coldPendingRecovery;
+        if(recovery!=null&&generation==recovery.appGeneration&&actor.isNull("native_generation")
+                &&EmbeddedDuplexCanonicalJson.sameValue(actor,recovery.original.row.getJSONObject("actor_binding"))){
+            EmbeddedDuplexColdRecovery.requireCompleted(recovery.plan);return true;
+        }
         if (current == null || current.processFence == null || generation <= 0L
                 || actor.isNull("app_record_sha256") || actor.optLong("native_generation", 0L) <= 0L) return false;
         current.processFence.requireLive(generation);
@@ -1585,6 +1608,10 @@ final class EmbeddedDuplexProcessHost {
         return held==null?null:held.signalOriginalStop(actual);
     }
     static boolean originalExchangesJoined(EmbeddedDuplexOriginals.Record actual){
+        if(actual!=null&&actual.retainedCleanupOwner instanceof EmbeddedDuplexColdRecovery.Plan){
+            try{EmbeddedDuplexColdRecovery.requireCompleted((EmbeddedDuplexColdRecovery.Plan)actual.retainedCleanupOwner);return true;}
+            catch(Exception pending){return false;}
+        }
         EmbeddedDuplexProcessHost current=instance;EmbeddedDuplexPlatform held=current==null?null:current.platform;
         return held==null || held.originalExchangesJoined(actual);
     }
@@ -1646,7 +1673,9 @@ final class EmbeddedDuplexProcessHost {
                     && original.row.getJSONObject("actor_binding").optLong("native_generation",-1)==current.lastClosedActorProof.optLong("native_executor_generation",-2)
                     && original.row.getJSONObject("actor_binding").optString("app_record_sha256").equals(current.lastClosedActorProof.optString("app_record_sha256"));
                 boolean completedPersistence=operation.equals("confirm") || operation.equals("abandon_retained_scope") || operation.equals("owner_succession_commit");
-                if(retainedByLiveOwner || terminalAppClose || terminalStartedClose || completedPersistence)
+                boolean terminalColdRecovery=original.retainedCleanupOwner instanceof EmbeddedDuplexColdRecovery.Plan;
+                if(terminalColdRecovery)EmbeddedDuplexColdRecovery.requireCompleted((EmbeddedDuplexColdRecovery.Plan)original.retainedCleanupOwner);
+                if(retainedByLiveOwner || terminalAppClose || terminalStartedClose || terminalColdRecovery || completedPersistence)
                     EmbeddedDuplexOriginals.forApplication(current.applicationContext).joined(original);
             }catch(Exception retained){/* Persistence/join failure retains the same heavy original; never invents compaction. */}
         });
@@ -2206,6 +2235,138 @@ final class EmbeddedDuplexProcessHost {
                 return receipt;
             }catch(Exception pendingOrInvalid){throw new java.util.concurrent.CompletionException(pendingOrInvalid);}
         });
+    }
+
+    private volatile ColdPendingLocal coldPendingRecovery;
+    /** Cleanup-only lane: ordinary submit binds a fresh incarnation and is not cold recovery. */
+    CompletableFuture<String> recoverColdPending(String runId,String priorRunId,String priorOriginalId){
+        CompletableFuture<String> result=new CompletableFuture<>();
+        EmbeddedDuplexRunContext selected=runContext;
+        commands.execute(EmbeddedDuplexOriginals.carry(()->{
+            try{
+                selected.requireSame(runContext);
+                if(!java.util.Objects.equals(runId,selected.runId))throw new IllegalStateException("recovery selected run differs");
+                ensureProcessFence();processFence.requireLive(processFence.generation());
+                EmbeddedDuplexOriginals.Record original=EmbeddedDuplexOriginals.capture();
+                if(original==null||!"recover_cold_pending".equals(original.row.getString("operation")))
+                    throw new IllegalStateException("actual recovery Original absent");
+                if(coldPendingRecovery!=null)throw new IllegalStateException("recovery owner already retained");
+                JSONObject nativeStatus=new JSONObject(EmbeddedDuplexNative.inspectOperationalRun(processFence));
+                if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(nativeStatus.getString("$schema")))
+                    throw new IllegalStateException("recovery Native inspection schema differs");
+                long counter=nativeStatus.getLong("native_generation");
+                EmbeddedDuplexColdRecovery.Plan plan=EmbeddedDuplexColdRecovery.prepare(applicationContext,processFence,priorRunId,priorOriginalId,counter);
+                ColdPendingLocal held;
+                synchronized(attachmentGate){
+                    if(closeInFlight||displayDetaching||phase.get()==Phase.CLOSING)
+                        throw new IllegalStateException("another local cleanup owner remains");
+                    held=new ColdPendingLocal(plan,original,selected);
+                    held.stopProjection=held.attachment==0?null:display.retainOwnedProjectionStopTarget(held.attachment);
+                    coldPendingRecovery=held;
+                    closeInFlight=true;phase.set(Phase.CLOSING);
+                }
+                held.completion.whenComplete((receipt,failure)->{if(failure==null)result.complete(receipt);else result.completeExceptionally(failure);});
+                continueColdPending(held);
+            }catch(Throwable failure){result.completeExceptionally(failure);}
+        }));
+        return result;
+    }
+    private final class ColdPendingLocal implements EmbeddedDuplexColdRecovery.LocalOwner {
+        final EmbeddedDuplexColdRecovery.Plan plan;
+        final EmbeddedDuplexOriginals.Record original;
+        final EmbeddedDuplexRunContext selected;
+        final EmbeddedDuplexProcessFence fence=processFence;
+        final long appGeneration=fence.generation(),attachment=attachmentGeneration,nativeGeneration=nativeExecutorGeneration;
+        final String config=runtimeConfigSha256;
+        final EmbeddedDuplexRuntimeConfigurationBinding.Context configurationContext=nativeConfigurationContext;
+        final EmbeddedDuplexPlatform platformOwner=platform;
+        final EmbeddedDuplexResources resourceOwner=resources;
+        final OwnStereoCaptureRuntime own=OwnStereoCaptureRuntime.currentForApplication();
+        final CompletableFuture<String> completion=new CompletableFuture<>();
+        Runnable stopProjection;
+        CompletableFuture<Void> callbacks;
+        boolean stopIssued,controlClosed,resourcesClosed,displayDetached,released;
+        String nativeRetirement;
+        JSONObject receipt;
+        ColdPendingLocal(EmbeddedDuplexColdRecovery.Plan plan,EmbeddedDuplexOriginals.Record original,EmbeddedDuplexRunContext selected){
+            this.plan=plan;this.original=original;this.selected=selected;
+        }
+        void requireCapturedOwners()throws Exception{
+            selected.requireSame(runContext);fence.requireLive(appGeneration);
+            if(processFence!=fence||coldPendingRecovery!=this||OwnStereoCaptureRuntime.currentForApplication()!=own)
+                throw new IllegalStateException("recovery local owner changed");
+            synchronized(attachmentGate){
+                if(released){
+                    if(phase.get()!=Phase.NEW||platform!=null||resources!=null||attachmentGeneration!=0||closeInFlight||displayDetaching)
+                        throw new IllegalStateException("recovery closed owner changed");
+                }else if(phase.get()!=Phase.CLOSING||!closeInFlight||platform!=platformOwner||resources!=resourceOwner
+                        ||attachmentGeneration!=attachment||nativeExecutorGeneration!=nativeGeneration
+                        ||nativeConfigurationContext!=configurationContext
+                        ||!java.util.Objects.equals(runtimeConfigSha256,config))
+                    throw new IllegalStateException("recovery retained local owner changed");
+            }
+        }
+        boolean ownTerminal()throws Exception{
+            return own==null||java.util.Arrays.asList("retired","not_created").contains(own.physicalRetirementObservation().getString("state"));
+        }
+        @Override public void requireTerminal()throws Exception{
+            requireCapturedOwners();
+            if(!stopIssued||!controlClosed||!resourcesClosed||!displayDetached||display.cleanupPending()
+                    ||!ownTerminal()||resourceOwner!=null&&!resourceOwner.productResourcesTerminal()
+                    ||!EmbeddedDuplexRendererRetirement.currentTerminal()||!EmbeddedDuplexNative.localCameraQuiescent()
+                    ||callbacks==null||!callbacks.isDone()||callbacks.isCancelled()||callbacks.isCompletedExceptionally()
+                    ||platformOwner!=null&&!platformOwner.actualOutboundExchangesJoined())
+                throw new IllegalStateException("recovery actual local barriers remain Pending");
+            callbacks.join();
+        }
+        @Override public JSONObject physicalReceipt()throws Exception{
+            requireTerminal();JSONObject actual=new JSONObject();
+            for(String key:new String[]{"java_own_capture_cleanup","java_peer_resources_cleanup","java_renderer_cleanup",
+                    "java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup"})actual.put(key,"terminal");
+            return actual;
+        }
+    }
+    private void continueColdPending(ColdPendingLocal held){
+        if(held.completion.isDone())return;
+        try(AutoCloseable ignored=EmbeddedDuplexOriginals.enter(held.original)){
+            held.requireCapturedOwners();
+            if(!held.stopIssued){
+                held.stopIssued=true;
+                if(held.own!=null)held.own.requestStopOwn();
+                if(held.stopProjection!=null)held.stopProjection.run();
+            }
+            // These calls may wait on platform work. No host/authority monitor is held.
+            if(!held.controlClosed){if(held.platformOwner!=null)held.platformOwner.closeControlForNoMedia();held.controlClosed=true;}
+            if(!held.ownTerminal()){scheduleColdPending(held);return;}
+            if(!held.resourcesClosed){if(held.resourceOwner!=null)held.resourceOwner.closeUnstartedAndVerify();held.resourcesClosed=true;}
+            if(!held.displayDetached){
+                if(held.attachment!=0)display.detachAfterCleanup(held.attachment,()->{});
+                held.displayDetached=true;
+            }
+            if(!EmbeddedDuplexRendererRetirement.currentTerminal()||!EmbeddedDuplexNative.localCameraQuiescent()){
+                scheduleColdPending(held);return;
+            }
+            if(held.callbacks==null){
+                CompletableFuture<Void> drain=held.platformOwner==null?CompletableFuture.completedFuture(null):held.platformOwner.retireProcessCallbacksAsync();
+                held.callbacks=drain.thenRunAsync(()->{},commands);
+            }
+            if(!held.callbacks.isDone()||held.platformOwner!=null&&!held.platformOwner.actualOutboundExchangesJoined()){
+                scheduleColdPending(held);return;
+            }
+            held.requireTerminal();
+            EmbeddedDuplexColdRecovery.arm(held.plan,held);
+            if(held.nativeRetirement==null)held.nativeRetirement=EmbeddedDuplexNative.retireColdPendingLocal(held.fence);
+            held.receipt=EmbeddedDuplexColdRecovery.complete(held.plan,held.nativeRetirement);
+            String appRecord=held.original.row.getJSONObject("actor_binding").getString("app_record_sha256");
+            EmbeddedDuplexOriginals.forApplication(applicationContext).actualClosedAppOwnerJoined(held.appGeneration,0L,appRecord,held.receipt,held.plan);
+            platform=null;resources=null;runtimeConfigSha256=null;nativeExecutorGeneration=0L;nativeAppRecordSha256=null;nativeConfigurationContext=null;
+            enrollmentRecordSha256=null;startIntent.afterVerifiedCleanup();localFixture=false;
+            synchronized(attachmentGate){attachmentGeneration=0L;displayDetaching=false;closeInFlight=false;phase.set(Phase.NEW);held.released=true;}
+            held.completion.complete(held.receipt.toString());
+        }catch(Throwable failure){held.completion.completeExceptionally(failure);}
+    }
+    private void scheduleColdPending(ColdPendingLocal held){
+        commands.schedule(EmbeddedDuplexOriginals.carryActual(held.original,()->continueColdPending(held)),50,java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     CompletableFuture<String> closeRealPeerNoMedia(long expectedGeneration) {

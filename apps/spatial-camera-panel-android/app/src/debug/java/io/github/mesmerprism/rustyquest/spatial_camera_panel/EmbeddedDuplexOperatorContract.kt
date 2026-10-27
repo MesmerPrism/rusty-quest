@@ -9,6 +9,8 @@ internal object EmbeddedDuplexOperatorContract {
   const val SCHEMA = "rusty.quest.embedded_duplex.operator_transport.v1"
   const val AUTHORITY_SUFFIX = ".embedded-duplex-operator"
   const val RUN_SCHEMA = "rusty.quest.embedded_duplex.operator_transport.v3"
+  /** This producer's closed status DTO; installed v1 producers retain their own exact contract. */
+  const val RUN_STATUS_SCHEMA = "rusty.quest.embedded_duplex.run_status.v2"
   const val KEY_RUN_ID = "run_id"
   const val METHOD_OPERATION_QUERY = "operation_query"
   const val METHOD_OPERATION_ACK = "operation_ack"
@@ -44,7 +46,7 @@ internal object EmbeddedDuplexOperatorContract {
   private val reviewKeys = setOf(KEY_ROLE, KEY_REMOTE_KEY, KEY_RUNTIME_HOST,
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
-  enum class Route { NEW_RUN, RESUME_RUN, RUN_STATUS, STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER, BOOTSTRAP_ADMISSION_STATUS,
+  enum class Route { NEW_RUN, RESUME_RUN, RUN_STATUS, RECOVER_COLD_PENDING, STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER, BOOTSTRAP_ADMISSION_STATUS,
     CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, ORDINARY_START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK,
     FRESH_PAIR_CONTINUE, PREPARE_PEER_START, PREPARED_PEER_START_STATUS, REESTABLISH_PEER_ROOTS, PEER_ROOT_STATUS,
     OPERATION_STOP, OPERATION_JOIN_STATUS, OPERATION_CONTINUATION_STATUS, OPERATION_CONTINUATION_HANDOFF, PAIR_SETUP_RECOVERY_STATUS }
@@ -65,6 +67,7 @@ internal object EmbeddedDuplexOperatorContract {
       val stopIntentSha256: String? = null,
       val runId: String? = null,
       val legacyWholeOriginalId: String? = null,
+      val priorRunId: String? = null,
   )
 
   fun callerIsShell(uid: Int): Boolean = uid == Process.SHELL_UID
@@ -76,6 +79,22 @@ internal object EmbeddedDuplexOperatorContract {
 
   internal fun parseFields(method: String, argument: String?, fields: Map<String, Any?>): Request {
     require(argument != null && nonce.matches(argument)) { "operator-challenge-invalid" }
+    if (method == "recover_cold_pending") {
+      require(fields.keys == setOf(KEY_RUN_ID, KEY_ORIGINAL_ID) ||
+          fields.keys == setOf(KEY_RUN_ID, KEY_ORIGINAL_ID, "prior_run_id", "prior_original_id")) { "operator-fields-invalid" }
+      fun selectedId(name: String): String {
+        val value = fields[name] as? String
+        require(value != null && nonce.matches(value)) { "operator-recovery-id-invalid" }
+        return value
+      }
+      val priorRun = fields["prior_run_id"]
+      val priorOriginal = fields["prior_original_id"]
+      require((priorRun == null && priorOriginal == null) ||
+          (priorRun is String && nonce.matches(priorRun) && priorOriginal is String && nonce.matches(priorOriginal))) { "operator-recovery-prior-invalid" }
+      return Request(Route.RECOVER_COLD_PENDING, argument, runId=selectedId(KEY_RUN_ID),
+          originalId=selectedId(KEY_ORIGINAL_ID), priorRunId=priorRun as String?,
+          priorOriginalId=priorOriginal as String?)
+    }
     if (method == "new_run" || method == "resume_run" || method == "run_status") {
       if (method == "run_status") { require(fields.isEmpty()) { "operator-fields-invalid" }; return Request(Route.RUN_STATUS, argument) }
       val expected = if (method == "new_run" && fields.containsKey("legacy_whole_original_id"))
@@ -180,7 +199,7 @@ internal object EmbeddedDuplexOperatorContract {
       else -> throw IllegalArgumentException("operator-method-invalid")
     }
     val expected = when (route) {
-      Route.NEW_RUN, Route.RESUME_RUN, Route.RUN_STATUS, Route.FRESH_PAIR_CONTINUE, Route.PREPARE_PEER_START, Route.PREPARED_PEER_START_STATUS,
+      Route.NEW_RUN, Route.RESUME_RUN, Route.RUN_STATUS, Route.RECOVER_COLD_PENDING, Route.FRESH_PAIR_CONTINUE, Route.PREPARE_PEER_START, Route.PREPARED_PEER_START_STATUS,
       Route.REESTABLISH_PEER_ROOTS, Route.PEER_ROOT_STATUS, Route.OPERATION_STOP, Route.OPERATION_JOIN_STATUS,
       Route.OPERATION_CONTINUATION_STATUS, Route.OPERATION_CONTINUATION_HANDOFF, Route.PAIR_SETUP_RECOVERY_STATUS,
       Route.OPERATION_QUERY, Route.OPERATION_ACK, Route.ORDINARY_START -> throw IllegalArgumentException("operator-original-route-invalid")

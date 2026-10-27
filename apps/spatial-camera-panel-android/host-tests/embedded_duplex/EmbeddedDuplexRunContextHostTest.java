@@ -227,6 +227,9 @@ public final class EmbeddedDuplexRunContextHostTest {
   io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached=failedA;
   io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.attachment=7;
   org.json.JSONObject selected=new org.json.JSONObject(EmbeddedDuplexRuntimeService.newRun(context,a,null).get());
+  yes(selected.getString("$schema").equals("rusty.quest.embedded_duplex.run_status.v2"));
+  yes(selected.keySet().equals(Set.of("$schema","run_id","selection_generation","native","app_process_generation","app_display_generation","app_fence_disposition")));
+  yes(selected.getString("app_fence_disposition").equals("clear"));
   yes(io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached==failedA);
   io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.resume();
   yes(io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached==null);
@@ -293,6 +296,23 @@ public final class EmbeddedDuplexRunContextHostTest {
   // Exact Resume selects retained A only; it cannot turn its unknown action into success/ACK.
   EmbeddedDuplexRuntimeService.resumeRun(context,a).get();yes(EmbeddedDuplexRuntimeService.selectedRunId(context).equals(a));
   yes(Arrays.equals(oldBytes,Files.readAllBytes(oldRow.toPath())));
+  java.lang.reflect.Field fenceField=EmbeddedDuplexProcessHost.class.getDeclaredField("processFence");fenceField.setAccessible(true);
+  EmbeddedDuplexProcessFence fence=(EmbeddedDuplexProcessFence)fenceField.get(host);
+  host.harnessSubmit(()->{fence.beforeRuntimeEffects(null,null);return null;}).get();
+  org.json.JSONObject pendingStatus=new org.json.JSONObject(EmbeddedDuplexRuntimeService.runStatus(context).get());
+  yes(pendingStatus.getString("app_fence_disposition").equals("effects_pending"));
+  yes(pendingStatus.getJSONObject("native").getBoolean("globally_eligible")); // A Native observation cannot override the separate app gate.
+  host.harnessClose();
+  java.lang.reflect.Field instanceField=EmbeddedDuplexProcessHost.class.getDeclaredField("instance");instanceField.setAccessible(true);instanceField.set(null,null);
+  EmbeddedDuplexProcessHost restored=EmbeddedDuplexProcessHost.forApplication(context);
+  org.json.JSONObject recoveryStatus=new org.json.JSONObject(EmbeddedDuplexRuntimeService.runStatus(context).get());
+  yes(recoveryStatus.getString("app_fence_disposition").equals("recovery_required"));
+  yes(recoveryStatus.getJSONObject("native").getBoolean("globally_eligible"));
+  EmbeddedDuplexProcessFence recovered=(EmbeddedDuplexProcessFence)fenceField.get(restored);
+  String restoredBytes=recovered.nativeInspectionRecord();
+  rejectFuture(EmbeddedDuplexRuntimeService.newRun(context,c,null));
+  yes(restoredBytes.equals(recovered.nativeInspectionRecord()));yes(EmbeddedDuplexRuntimeService.selectedRunId(context).equals(a));
+  restored.harnessClose();
   System.out.println("run caller checks="+checks+"; actual selector/store/fence/Original bodies, Native physical state modeled");
  }
  public static void main(String[] args)throws Exception{

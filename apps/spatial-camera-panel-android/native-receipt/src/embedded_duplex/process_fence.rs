@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 const APP_SCHEMA: &str = "rusty.quest.embedded_duplex.app_process_fence.v1";
 const APP_RUN_SCHEMA: &str = "rusty.quest.embedded_duplex.app_process_fence.v2";
 const NATIVE_SCHEMA: &str = "rusty.quest.embedded_duplex.native_process_fence.v1";
+const NATIVE_OWNER_SCHEMA: &str = "rusty.quest.embedded_duplex.native_process_fence.v2";
 const LOCK_NAME: &str = "native-process-fence.v1.lock";
 const WITNESS_NAME: &str = "native-process-fence.v1.initialized";
 
@@ -116,6 +117,31 @@ pub(super) fn validate_operational_run_handoff(
     }
     let p = &h.physical_retirement;
     let schema = p["$schema"].as_str().ok_or("handoff Whole schema absent")?;
+    if schema=="rusty.quest.embedded_duplex.cold_pending_local_retirement.v1"{
+        value_fields(p,&["$schema","recovery_original_id","run_id","prior_run_id","prior_original_id","app_process_generation","app_record_sha256","app_clear_record_sha256","prior_native_generation","old_process_identity","current_process_identity","old_process_retirement","owner_link_sha256","native_retirement","physical_retirement","transaction_outcome","remote_outcome_resolved"])?;
+        let app=p["app_process_generation"].as_u64().filter(|v|*v>0).ok_or("cold handoff app generation")?;
+        if p["recovery_original_id"]!=h.whole_original_id||p["prior_native_generation"].as_u64()!=Some(counter)
+            ||app>binding.generation||pending&&app==binding.generation||p["transaction_outcome"]!="unchanged"||p["remote_outcome_resolved"]!=false{
+            return Err("cold handoff subject differs".into());}
+        let n=&p["native_retirement"];value_fields(n,&["$schema","recovery_original_id","run_id","app_process_generation","app_record_sha256","prior_native_generation","owner_link_sha256","disposition","native_counter_preserved","transaction_outcome","remote_outcome_resolved"])?;
+        for k in ["recovery_original_id","run_id","app_process_generation","app_record_sha256","prior_native_generation","owner_link_sha256","transaction_outcome","remote_outcome_resolved"]{if n[k]!=p[k]{return Err("cold handoff Native join differs".into());}}
+        if n["$schema"]!="rusty.quest.embedded_duplex.cold_pending_native_retirement.v1"||n["native_counter_preserved"]!=true||n["disposition"]!="prior_process_local_retired"{return Err("cold handoff Native disposition".into());}
+        let physical=&p["physical_retirement"];let names=["java_own_capture_cleanup","java_peer_resources_cleanup","java_renderer_cleanup","java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup","app_process_fence_cleanup"];
+        value_fields(physical,&names)?;if names.iter().any(|k|physical[*k]!="terminal"){return Err("cold handoff local owner pending".into());}
+        if digest(&canonical_handoff_json(p)?)!=h.physical_retirement_sha256{return Err("cold handoff digest differs".into());}
+        return Ok(digest(raw));
+    }
+    if schema=="rusty.quest.embedded_duplex.no_media_whole_retirement.v2"{
+        let app=p["app_process_generation"].as_u64().filter(|v|*v>0).ok_or("no-media handoff app generation")?;
+        let native=&p["native_retirement"];let constructor=&native["configuration_binding"];
+        if p["action"]!="whole_app_close"||app>binding.generation||pending&&app==binding.generation||p["native_executor_generation"].as_u64()!=Some(counter)
+            ||native["$schema"]!="rusty.quest.embedded_duplex.no_media_retirement.v2"||native["native_runtime_binding"]!="configured"
+            ||constructor["$schema"]!="rusty.quest.embedded_duplex.runtime_configuration_binding.v1"{return Err("no-media handoff constructor subject differs".into());}
+        for k in ["app_process_generation","app_record_sha256","native_executor_generation","config_sha256"]{if p[k]!=native[k]||native[k]!=constructor[k]{return Err("no-media handoff actor differs".into());}}
+        for k in ["java_own_capture_cleanup","java_peer_resources_cleanup","java_renderer_cleanup","java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup","app_process_fence_cleanup"]{if p[k]!="terminal"{return Err("no-media handoff local owner pending".into());}}
+        if digest(&canonical_handoff_json(p)?)!=h.physical_retirement_sha256{return Err("no-media handoff digest differs".into());}
+        return Ok(digest(raw));
+    }
     let local = match schema {
         "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1" => true,
         "rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v3"
@@ -274,7 +300,7 @@ fn read_bounded(file: &mut File) -> Result<String, String> {
         .metadata()
         .map_err(|_| "native fence stat failed")?
         .len();
-    if size == 0 || size > 512 {
+    if size == 0 || size > 2048 {
         return Err("native fence state missing or corrupt".into());
     }
     file.seek(SeekFrom::Start(0))
@@ -463,7 +489,12 @@ impl Writer {
             .checked_add(1)
             .filter(|v| *v <= i64::MAX as u64)
             .ok_or("native executor generation exhausted")?;
-        let body = format!("{NATIVE_SCHEMA}\n{next}\n");
+        // Counter and owner are one checksum-bound durable write, before capability publication.
+        // An Original result is not required to recover this binding after a crash.
+        let app_record = self.app_source.record()?;
+        if AppBinding::parse(&app_record)? != binding { return Err("allocation app owner changed".into()); }
+        let owner = serde_json::json!({"counter":next,"app_record":app_record,"process_identity":current_native_process_identity()?});
+        let body = format!("{NATIVE_OWNER_SCHEMA}\n{}\n",canonical_handoff_json(&owner)?);
         let record = format!("{body}{}\n", digest(&body));
         let committed = (|| {
             let mut file = self
@@ -498,6 +529,9 @@ impl Writer {
     }
 }
 fn parse_counter(record: &str) -> Result<u64, String> {
+    if record.starts_with(&format!("{NATIVE_OWNER_SCHEMA}\n")) {
+        return Ok(parse_owner_record(record)?.get("counter").and_then(serde_json::Value::as_u64).unwrap());
+    }
     let fields: Vec<_> = record.split('\n').collect();
     if fields.len() != 4
         || fields[0] != NATIVE_SCHEMA
@@ -513,6 +547,113 @@ fn parse_counter(record: &str) -> Result<u64, String> {
         .ok()
         .filter(|v| *v > 0 && *v <= i64::MAX as u64)
         .ok_or("native incarnation journal invalid".into())
+}
+
+fn current_native_process_identity() -> Result<serde_json::Value,String> {
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").map_err(|_|"native owner boot unavailable")?;
+    let pid=std::process::id();
+    let stat=fs::read_to_string(format!("/proc/{pid}/stat")).map_err(|_|"native owner birth unavailable")?;
+    let end=stat.rfind(')').ok_or("native owner stat invalid")?;
+    let ticks=stat[end+1..].split_whitespace().nth(19).and_then(|v|v.parse::<u64>().ok()).filter(|v|*v>0).ok_or("native owner birth invalid")?;
+    if fs::read_to_string("/proc/sys/kernel/random/boot_id").map_err(|_|"native owner boot unavailable")? != boot {return Err("native owner boot changed".into());}
+    Ok(serde_json::json!({"boot_id":boot.trim(),"pid":pid,"uid":unsafe{libc::geteuid()},"start_ticks":ticks}))
+}
+
+fn parse_owner_record(record:&str)->Result<serde_json::Value,String>{
+    let f=record.split('\n').collect::<Vec<_>>();
+    if record.len()>2048||f.len()!=4||f[0]!=NATIVE_OWNER_SCHEMA||!f[3].is_empty()||f[2]!=digest(&format!("{}\n{}\n",f[0],f[1])){
+        return Err("native owner/counter record invalid".into());
+    }
+    let value:serde_json::Value=serde_json::from_str(f[1]).map_err(|_|"native owner binding JSON invalid")?;
+    let fields=value.as_object().ok_or("native owner binding object required")?;
+    if !(fields.len()==3||fields.len()==4&&fields.contains_key("retirement"))||!["counter","app_record","process_identity"].iter().all(|k|fields.contains_key(*k))
+        ||!value["counter"].as_u64().is_some_and(|v|v>0&&v<=i64::MAX as u64)
+        ||canonical_handoff_json(&value)?!=f[1]{return Err("native owner binding fields invalid".into());}
+    AppBinding::parse(value["app_record"].as_str().ok_or("native owner app record missing")?)?;
+    let p=value["process_identity"].as_object().ok_or("native owner identity missing")?;
+    if p.len()!=4||!["boot_id","pid","uid","start_ticks"].iter().all(|k|p.contains_key(*k))
+        ||!p["boot_id"].as_str().is_some_and(|v|v.len()==36&&v.bytes().enumerate().all(|(i,b)|if [8,13,18,23].contains(&i){b==b'-'}else{b.is_ascii_digit()||(b'a'..=b'f').contains(&b)}))
+        ||!p["pid"].as_u64().is_some_and(|v|v>0&&v<=i32::MAX as u64)
+        ||!p["uid"].as_u64().is_some_and(|v|v<=u32::MAX as u64)
+        ||!p["start_ticks"].as_u64().is_some_and(|v|v>0&&v<=i64::MAX as u64){return Err("native owner identity invalid".into());}
+    if let Some(r)=value.get("retirement"){
+        value_fields(r,&["receipt","current_process_identity","app_record"])?;
+        let binding=AppBinding::parse(r["app_record"].as_str().ok_or("retired app record absent")?)?;
+        let n=&r["receipt"];value_fields(n,&["$schema","recovery_original_id","run_id","app_process_generation","app_record_sha256","prior_native_generation","owner_link_sha256","disposition","native_counter_preserved","transaction_outcome","remote_outcome_resolved"])?;
+        value_fields(&r["current_process_identity"],&["boot_id","pid","uid","start_ticks"])?;
+        if n["$schema"]!="rusty.quest.embedded_duplex.cold_pending_native_retirement.v1"||n["app_process_generation"].as_u64()!=Some(binding.generation)
+            ||n["app_record_sha256"]!=binding.record_sha256||n["run_id"].as_str()!=binding.operational_run_id.as_deref()||n["prior_native_generation"]!=value["counter"]
+            ||n["native_counter_preserved"]!=true||n["transaction_outcome"]!="unchanged"||n["remote_outcome_resolved"]!=false||n["disposition"]!="prior_process_local_retired"
+            ||r["current_process_identity"]["uid"]!=value["process_identity"]["uid"]{return Err("native retained local retirement invalid".into());}
+    }
+    Ok(value)
+}
+
+pub(super) fn cold_pending_owner(directory:&Path)->Result<serde_json::Value,String>{
+    let counter=inspect_unclaimed_counter(directory)?.ok_or("cold recovery Native counter absent")?;
+    let path=directory.join(LOCK_NAME);private_metadata(&path,false)?;
+    let mut file=OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW|libc::O_CLOEXEC).open(&path).map_err(|_|"cold owner read failed")?;
+    let raw=read_bounded(&mut file)?;
+    if parse_counter(&raw)?!=counter{return Err("cold owner changed during read".into());}
+    let owner=if raw.starts_with(&format!("{NATIVE_OWNER_SCHEMA}\n")){parse_owner_record(&raw)?}else{serde_json::Value::Null};
+    Ok(serde_json::json!({"$schema":"rusty.quest.embedded_duplex.cold_pending_native_owner.v1","native_generation":counter,"native_record_sha256":digest(&raw),"owner":owner}))
+}
+
+fn value_fields(value:&serde_json::Value,names:&[&str])->Result<(),String>{
+    if !value.as_object().is_some_and(|v|v.len()==names.len()&&names.iter().all(|k|v.contains_key(*k))){return Err("cold recovery closed fields differ".into());}Ok(())
+}
+/// The closed retirement DTO is shared by the commit and finite producer/consumer ABI controls.
+/// This pure projection supplies no cleanup authority; only the verified commit may publish it.
+pub(super) fn cold_pending_retirement_receipt(record:&str,link:&str,counter:u64)->Result<serde_json::Value,String>{
+    let binding=AppBinding::parse(record)?;
+    let evidence:serde_json::Value=serde_json::from_str(link).map_err(|_|"cold receipt owner link invalid")?;
+    Ok(serde_json::json!({"$schema":"rusty.quest.embedded_duplex.cold_pending_native_retirement.v1",
+        "recovery_original_id":evidence["recovery_original_id"],"run_id":evidence["run_id"],"app_process_generation":binding.generation,
+        "app_record_sha256":binding.record_sha256,"prior_native_generation":counter,"owner_link_sha256":digest(link),
+        "disposition":"prior_process_local_retired","native_counter_preserved":true,"transaction_outcome":"unchanged","remote_outcome_resolved":false}))
+}
+fn verify_dead_native_owner(old:&serde_json::Value,current:&serde_json::Value,basis:&str)->Result<(),String>{
+    if &current_native_process_identity()?!=current||old["uid"]!=current["uid"]{return Err("cold recovery current kernel actor differs".into());}
+    let actual=if old["boot_id"]!=current["boot_id"]{"boot_changed"}else{
+        let pid=old["pid"].as_u64().ok_or("cold old PID absent")?;
+        match fs::read_to_string(format!("/proc/{pid}/stat")){
+            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>"not_running",
+            Err(_)=>return Err("cold old process observation unavailable".into()),
+            Ok(stat)=>{let end=stat.rfind(')').ok_or("cold old stat invalid")?;let ticks=stat[end+1..].split_whitespace().nth(19).and_then(|s|s.parse::<u64>().ok()).ok_or("cold old birth invalid")?;
+                if Some(ticks)==old["start_ticks"].as_u64(){return Err("cold old process still live".into());}"pid_reused"}
+        }
+    };
+    if actual!=basis{return Err("cold old process retirement basis changed".into());}Ok(())
+}
+fn validate_cold_link(raw:&str,binding:&AppBinding,record:&str,counter:u64)->Result<serde_json::Value,String>{
+    if raw.len()>16384{return Err("cold owner link bounds".into());}
+    let v:serde_json::Value=serde_json::from_str(raw).map_err(|_|"cold owner link JSON invalid")?;
+    value_fields(&v,&["$schema","recovery_original_id","run_id","app_process_generation","app_record_sha256","prior_native_generation","native_record_sha256","native_owner","last_writable_record","last_incarnation_json","old_process_identity","current_process_identity","old_process_retirement"])?;
+    if v["$schema"]!="rusty.quest.embedded_duplex.cold_pending_owner_link.v1"||canonical_handoff_json(&v)?!=raw
+        ||v["recovery_original_id"].as_str().is_none_or(|s|s.len()!=32||!s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b)))
+        ||v["run_id"].as_str()!=binding.operational_run_id.as_deref()||v["app_process_generation"].as_u64()!=Some(binding.generation)
+        ||v["app_record_sha256"]!=binding.record_sha256||v["prior_native_generation"].as_u64()!=Some(counter)||v["native_record_sha256"]!=digest(record)
+        ||v["native_owner"]["counter"].as_u64()!=Some(counter){return Err("cold owner link current/counter subject differs".into());}
+    let source=AppBinding::parse(v["native_owner"]["app_record"].as_str().ok_or("cold source app record absent")?)?;
+    let (last,_last_pending)=AppBinding::inspect(v["last_writable_record"].as_str().ok_or("cold last writable record absent")?)?;
+    if last.operational_run_id!=binding.operational_run_id||source.generation>last.generation||last.generation>=binding.generation{return Err("cold writable phase ordering differs".into());}
+    let companion:serde_json::Value=serde_json::from_str(v["last_incarnation_json"].as_str().ok_or("cold incarnation absent")?).map_err(|_|"cold incarnation JSON invalid")?;
+    value_fields(&companion,&["$schema","original_owner","effect_category","original_fence_record","current_fence_sha256","local_resources_terminated","termination_receipt_sha256","sha256"])?;
+    let old=&v["old_process_identity"];value_fields(old,&["boot_id","pid","uid","start_ticks"])?;
+    if companion["$schema"]!="rusty.quest.embedded_duplex.process_incarnation.v1"||companion["original_owner"]!=*old
+        ||companion["effect_category"]!="process_local_resources"||companion["local_resources_terminated"]!=false||companion["termination_receipt_sha256"]!="-"
+        ||companion["current_fence_sha256"]!=last.record_sha256{return Err("cold companion last owner differs".into());}
+    let checksum=digest(&format!("{}\n{}\n{}\n{}\n{}{}\nfalse\n-\nprocess_local_resources\n",
+        old["boot_id"].as_str().ok_or("old boot absent")?,old["pid"].as_u64().ok_or("old PID absent")?,old["uid"].as_u64().ok_or("old UID absent")?,old["start_ticks"].as_u64().ok_or("old birth absent")?,
+        companion["original_fence_record"].as_str().ok_or("old original record absent")?,last.record_sha256));
+    if companion["sha256"]!=checksum{return Err("cold companion checksum differs".into());}
+    let maintained=record.starts_with(&format!("{NATIVE_OWNER_SCHEMA}\n"));
+    if maintained{
+        if parse_owner_record(record)?!=v["native_owner"]{return Err("cold durable Native owner differs".into());}
+        if v["native_owner"].get("retirement").is_none()&&v["native_owner"]["process_identity"]!=*old{return Err("cold Native owner/last writer differs".into());}
+    }else if v["native_owner"]["process_identity"]!=*old{return Err("legacy Native owner/last writer differs".into());}
+    verify_dead_native_owner(old,&v["current_process_identity"],v["old_process_retirement"].as_str().ok_or("cold retirement basis absent")?)?;
+    Ok(v)
 }
 
 pub(super) struct NativeCapability {
@@ -559,6 +700,7 @@ struct RegistryState {
     writer: Option<Arc<Writer>>,
     active: Option<Arc<NativeCapability>>,
     absence_retired: Option<AppBinding>,
+    cold_retirement: Option<(AppBinding,String,String)>,
 }
 #[derive(Default)]
 pub(super) struct NativeFenceRegistry {
@@ -616,6 +758,42 @@ fn inspect_unclaimed_counter(directory_path: &Path) -> Result<Option<u64>, Strin
 }
 
 impl NativeFenceRegistry {
+    /// New local retirement, never a replay or settlement of an old transaction.
+    /// Java/physical callbacks were bracketed by JNI before entering this Native-only commit.
+    pub(super) fn retire_cold_pending_local(&self,directory:&Path,record:&str,link:&str)->Result<String,String>{
+        let binding=AppBinding::parse(record)?;let link_digest=digest(link);
+        {
+            let mut state=self.state.lock().map_err(|_|"cold registry poisoned")?;
+            if let Some((prior,hash,receipt))=&state.cold_retirement{
+                if prior==&binding&&hash==&link_digest{return Ok(receipt.clone());}
+                return Err("cold retirement source changed".into());
+            }
+            if state.busy||state.writer.is_some()||state.active.is_some()||state.absence_retired.is_some(){return Err("cold Native owner not absent".into());}
+            state.busy=true;
+        }
+        struct FixedSource(String);impl AppFenceSource for FixedSource{fn record(&self)->Result<String,String>{Ok(self.0.clone())}}
+        let result=(||{
+            // The original Native flock protects the exact counter and inode; no Java callbacks below.
+            let writer=Writer::open(directory,Arc::new(FixedSource(record.into())),&binding)?;writer.observe()?;
+            let counter=writer.counter.load(Ordering::SeqCst);if counter==0{return Err("cold Native counter missing".into());}
+            let before={let mut file=writer.file.lock().map_err(|_|"cold Native file poisoned")?;read_bounded(&mut file)?};
+            let evidence=validate_cold_link(link,&binding,&before,counter)?;
+            let receipt=cold_pending_retirement_receipt(record,link,counter)?;
+            // Legacy owner migration is exact evidence, not a counter reset or a fabricated old success.
+            let mut owner=evidence["native_owner"].clone();owner["retirement"]=serde_json::json!({"receipt":receipt,
+                "current_process_identity":evidence["current_process_identity"],"app_record":record});
+            let body=format!("{NATIVE_OWNER_SCHEMA}\n{}\n",canonical_handoff_json(&owner)?);let exact=format!("{body}{}\n",digest(&body));
+            if exact.len()>2048{return Err("cold durable Native binding bounds".into());}
+            {let mut file=writer.file.lock().map_err(|_|"cold Native file poisoned")?;
+                file.seek(SeekFrom::Start(0)).map_err(|_|"cold Native seek")?;file.write_all(exact.as_bytes()).map_err(|_|"cold Native write")?;
+                file.set_len(exact.len() as u64).map_err(|_|"cold Native truncate")?;file.sync_all().map_err(|_|"cold Native sync")?;writer.directory.sync_all().map_err(|_|"cold Native directory sync")?;}
+            writer.observe()?;Ok(receipt.to_string())
+        })();
+        let mut state=self.state.lock().map_err(|_|"cold registry poisoned")?;
+        if let Ok(receipt)=&result{state.absence_retired=Some(binding.clone());state.cold_retirement=Some((binding,link_digest,receipt.clone()));}
+        // No capability was allocated. Failed/uncertain Original custody remains with Java.
+        state.busy=false;result
+    }
     /// Readback of an already accepted exact claim; never allocate/reset on retry.
     pub fn retry_selected_run(
         &self,
@@ -1052,6 +1230,99 @@ mod operational_run_tests {
         assert!(observation.refusal.is_none());
         assert!(!path.join(LOCK_NAME).exists());
         assert!(!path.join(WITNESS_NAME).exists());
+    }
+
+    #[test]
+    fn allocation_persists_exact_owner_before_original_publication() {
+        let path = directory();
+        let raw = run_record(&"ab".repeat(16), "pending");
+        let source = Arc::new(Source(Mutex::new(raw.clone())));
+        let registry = NativeFenceRegistry::default();
+        let admitted = registry.claim_selected_run(&path, source).unwrap();
+        // No Original result or actor publication is supplied by this neutral caller.
+        let exact = fs::read_to_string(path.join(LOCK_NAME)).unwrap();
+        let body: serde_json::Value = serde_json::from_str(exact.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(body["app_record"], raw);
+        assert_eq!(body["counter"], admitted.generation);
+        assert_eq!(body["process_identity"]["pid"], std::process::id());
+        assert!(body["process_identity"]["start_ticks"].as_u64().unwrap() > 0);
+        assert_eq!(parse_counter(&exact).unwrap(), admitted.generation);
+    }
+
+    fn cold_record(run:&str,generation:u64,state:&str)->String{
+        let b=format!("{APP_RUN_SCHEMA}\n{generation}\n01234567-89ab-cdef-0123-456789abcdef\n{state}\n-\n-\n{run}\n");format!("{b}{}\n",digest(&b))
+    }
+    fn cold_fixture(path:&Path,old:serde_json::Value)->(String,serde_json::Value){
+        cold_fixture_phase(path,old,"pending")
+    }
+    fn cold_fixture_phase(path:&Path,old:serde_json::Value,last_phase:&str)->(String,serde_json::Value){
+        let a="a".repeat(32);let b="b".repeat(32);let current=cold_record(&b,7,"pending");let last=cold_record(&b,6,last_phase);let clear=cold_record(&b,6,"clear");
+        let raw=format!("{NATIVE_SCHEMA}\n3\n");let native=format!("{raw}{}\n",digest(&raw));
+        fs::write(path.join(LOCK_NAME),&native).unwrap();fs::set_permissions(path.join(LOCK_NAME),fs::Permissions::from_mode(0o600)).unwrap();
+        fs::write(path.join(WITNESS_NAME),format!("{NATIVE_SCHEMA}\n")).unwrap();fs::set_permissions(path.join(WITNESS_NAME),fs::Permissions::from_mode(0o600)).unwrap();
+        let checksum=digest(&format!("{}\n{}\n{}\n{}\n{}{}\nfalse\n-\nprocess_local_resources\n",old["boot_id"].as_str().unwrap(),old["pid"],old["uid"],old["start_ticks"],clear,digest(&last)));
+        let companion=serde_json::json!({"$schema":"rusty.quest.embedded_duplex.process_incarnation.v1","original_owner":old,"effect_category":"process_local_resources","original_fence_record":clear,
+            "current_fence_sha256":digest(&last),"local_resources_terminated":false,"termination_receipt_sha256":"-","sha256":checksum});
+        let link=serde_json::json!({"$schema":"rusty.quest.embedded_duplex.cold_pending_owner_link.v1","recovery_original_id":"d".repeat(32),"run_id":b,
+            "app_process_generation":7,"app_record_sha256":digest(&current),"prior_native_generation":3,"native_record_sha256":digest(&native),
+            "native_owner":{"counter":3,"app_record":cold_record(&a,5,"pending"),"process_identity":old},"last_writable_record":last,"last_incarnation_json":canonical_handoff_json(&companion).unwrap(),
+            "old_process_identity":old,"current_process_identity":current_native_process_identity().unwrap(),"old_process_retirement":"not_running"});
+        (current,link)
+    }
+    fn dead_child_identity()->serde_json::Value{
+        let mut child=std::process::Command::new("sleep").arg("30").spawn().unwrap();let pid=child.id();
+        let stat=fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();let end=stat.rfind(')').unwrap();
+        let ticks=stat[end+1..].split_whitespace().nth(19).unwrap().parse::<u64>().unwrap();
+        let mut old=current_native_process_identity().unwrap();old["pid"]=serde_json::json!(pid);old["start_ticks"]=serde_json::json!(ticks);
+        child.kill().unwrap();child.wait().unwrap();old
+    }
+    #[test]
+    fn cold_retirement_preserves_counter_and_ordinary_followup_allocates_next(){
+        let path=directory();let (record,link)=cold_fixture(&path,dead_child_identity());let registry=NativeFenceRegistry::default();
+        let exact=canonical_handoff_json(&link).unwrap();let reply=registry.retire_cold_pending_local(&path,&record,&exact).unwrap();
+        let native:serde_json::Value=serde_json::from_str(&reply).unwrap();assert_eq!(native["prior_native_generation"],3);
+        assert_eq!(registry.retire_cold_pending_local(&path,&record,&exact).unwrap(),reply);
+        let owner=cold_pending_owner(&path).unwrap();assert_eq!(owner["native_generation"],3);assert_eq!(owner["owner"]["retirement"]["receipt"],native);
+        let c="c".repeat(32);let next=cold_record(&c,8,"pending");
+        let mut physical=serde_json::Map::new();for key in ["java_own_capture_cleanup","java_peer_resources_cleanup","java_renderer_cleanup","java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup","app_process_fence_cleanup"]{physical.insert(key.into(),serde_json::json!("terminal"));}
+        let receipt=serde_json::json!({"$schema":"rusty.quest.embedded_duplex.cold_pending_local_retirement.v1","recovery_original_id":"d".repeat(32),"run_id":"b".repeat(32),"prior_run_id":"a".repeat(32),"prior_original_id":"e".repeat(32),
+            "app_process_generation":7,"app_record_sha256":digest(&record),"app_clear_record_sha256":digest(&cold_record(&"b".repeat(32),7,"clear")),"prior_native_generation":3,
+            "old_process_identity":link["old_process_identity"],"current_process_identity":link["current_process_identity"],"old_process_retirement":"not_running","owner_link_sha256":digest(&exact),
+            "native_retirement":native,"physical_retirement":physical,"transaction_outcome":"unchanged","remote_outcome_resolved":false});
+        let (binding,_)=AppBinding::inspect(&next).unwrap();
+        let handoff=serde_json::json!({"$schema":"rusty.quest.embedded_duplex.operational_run_handoff.v1","operational_run_id":c,"app_record_sha256":binding.record_sha256,"prior_native_generation":3,
+            "whole_original_id":"d".repeat(32),"request_sha256":"1".repeat(64),"outcome_sha256":"2".repeat(64),"physical_retirement_sha256":digest(&canonical_handoff_json(&receipt).unwrap()),"physical_retirement":receipt});
+        let raw=handoff.to_string();assert!(validate_operational_run_handoff(&raw,&binding,true,3).is_ok());
+        assert!(validate_operational_run_handoff(&raw,&binding,true,4).is_err());
+        // A restart loses the in-memory absence slot but not its exact correct-N source proof.
+        drop(registry);let restarted=NativeFenceRegistry::default();let source=Arc::new(HandoffSource{record:Mutex::new(next),handoff:Mutex::new(Some(raw))});
+        let cap=restarted.claim_selected_run(&path,source).unwrap();assert_eq!(cap.generation,4);assert!(cap.require_live().is_ok());
+        assert_eq!(parse_counter(&fs::read_to_string(path.join(LOCK_NAME)).unwrap()).unwrap(),4);
+    }
+    #[test]
+    fn clear_before_old_publication_establishes_new_local_retirement_without_old_success(){
+        let path=directory();let (record,link)=cold_fixture_phase(&path,dead_child_identity(),"clear");
+        let receipt=NativeFenceRegistry::default().retire_cold_pending_local(&path,&record,&canonical_handoff_json(&link).unwrap()).unwrap();
+        let value:serde_json::Value=serde_json::from_str(&receipt).unwrap();
+        assert_eq!(value["prior_native_generation"],3);assert_eq!(value["transaction_outcome"],"unchanged");assert_eq!(value["remote_outcome_resolved"],false);
+        assert_eq!(cold_pending_owner(&path).unwrap()["owner"]["counter"],3);
+    }
+    #[test]
+    fn cold_retirement_rejects_live_owner_wrong_counter_companion_and_advanced_counter(){
+        for damage in ["live","counter","boot","birth","companion","missing-link","advance"]{
+            let path=directory();let old=if damage=="live"{current_native_process_identity().unwrap()}else{dead_child_identity()};let (record,mut link)=cold_fixture(&path,old);
+            match damage{
+                "counter"=>link["prior_native_generation"]=serde_json::json!(4),
+                "boot"=>link["current_process_identity"]["boot_id"]=serde_json::json!("00000000-0000-0000-0000-000000000000"),
+                "birth"=>link["current_process_identity"]["start_ticks"]=serde_json::json!(1),
+                "companion"=>link["last_incarnation_json"]=serde_json::json!("{}"),
+                "missing-link"=>{link.as_object_mut().unwrap().remove("last_writable_record");},
+                "advance"=>{let b=format!("{NATIVE_SCHEMA}\n4\n");fs::write(path.join(LOCK_NAME),format!("{b}{}\n",digest(&b))).unwrap();},_=>{}
+            }
+            let before=fs::read(path.join(LOCK_NAME)).unwrap();
+            assert!(NativeFenceRegistry::default().retire_cold_pending_local(&path,&record,&canonical_handoff_json(&link).unwrap()).is_err(),"{damage}");
+            assert_eq!(before,fs::read(path.join(LOCK_NAME)).unwrap(),"{damage} changed counter/owner bytes");
+        }
     }
 
     #[test]

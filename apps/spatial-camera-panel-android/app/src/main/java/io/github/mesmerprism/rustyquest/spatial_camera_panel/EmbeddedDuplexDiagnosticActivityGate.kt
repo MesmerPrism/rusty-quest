@@ -35,7 +35,7 @@ object EmbeddedDuplexDiagnosticActivityGate {
       if (failure == null && receipt != null && reconcile != null) {
         val generation = runCatching {
           val status = org.json.JSONObject(receipt)
-          require(status.getString("\$schema") == "rusty.quest.embedded_duplex.run_status.v1")
+          require(status.getString("\$schema") == "rusty.quest.embedded_duplex.run_status.v2")
           status.getLong("app_display_generation").also { require(it >= 0L) }
         }.getOrNull()
         if (generation != null) reconcile.accept(generation)

@@ -34,6 +34,15 @@ cleanup retain uncertainty. A completed Java call alone cannot settle them.
 The configuration/arm routes retain their own current receipt schemas and
 operation/challenge checks; their observations grant no physical-cleanup claim.
 
+The direct `no_media_whole_retirement.v2` Whole result uses `$schema` rather
+than the concurrent qualification wrapper. Its completion selects the existing
+retained no-media owner check, including the actual completion/callback joins,
+outbound exchange drain, terminal Java/app barriers and native constructor
+binding. A joined local Whole may be observed while its retained Pair
+`transaction_outcome` remains `unknown`; publication does not resolve that
+transaction or add an ACK/replay route. Other receipt schemas retain their
+existing dispatch and settlement rules.
+
 `operation_query` accepts only the challenge and Original ID. It returns the
 transport-v2 envelope and canonical `observation_json`; its challenge is the
 query challenge and the row preserves the original challenge. Outcomes are
@@ -60,9 +69,11 @@ completed non-cancelled Future, its joined source callback, no remaining
 carried command, successful persistence, and the same held process/native
 actor. The actor must still be owned by the actual ready host, or must match
 the outgoing actor captured after the existing whole-product native, Java,
-display and app-fence cleanup barriers. No-media/fresh/retired-owner shortcuts
-are added. The existing no-media whole-close receipt remains queryable as
-unknown even when its own scope is terminal; this slice grants it no ACK join. If that join is unavailable, the Original stays retained.
+display and app-fence cleanup barriers. The existing wrapped
+`concurrent_no_media_own_cleanup.v1` receipt remains queryable as unknown even
+when its own scope is terminal; it gains no ACK join. Direct v2 publication
+adds no acknowledgement shortcut. If the actual join is unavailable, the
+Original stays retained.
 
 A successful ACK writes an immutable logical `compacted` tombstone. It retains
 the full record on disk and drops its live in-memory custody. This label does
@@ -79,6 +90,12 @@ Run `python tools/checks/Test-EmbeddedDuplexOriginalsHost.py --root .` with a JD
 and the pinned org.json 20240303 host dependency. The host controls use real
 production store/Future/file code and source-extracted production caller joins;
 Android OS, native/resource observations remain declared model leaves. Run
+the same command with `--whole-publication` and the current source-compiled
+`--support-classpath` to exercise direct v2 Whole completion, durable retrieval,
+incomplete/unrecognized results and qualified-wrapper pending controls through
+the actual store and exact Host settlement predicates. Constructor and physical
+observations in those controls are explicit fixtures, not Native/device proof.
+Run
 `pwsh -NoProfile -File tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1`
 with `-JavaHome`, `-HostJsonJar` and optional `-AndroidJar` for actual process
 parser, companion and API source checks. Compile the actual app composition
