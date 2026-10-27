@@ -145,9 +145,10 @@ final class EmbeddedDuplexProcessHost {
     private String runStatusOnLane()throws Exception{
         JSONObject actual=new JSONObject(EmbeddedDuplexNative.inspectOperationalRun(processFence));
         if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(actual.getString("$schema")))throw new IllegalStateException("Native run readback schema");
-        return new JSONObject().put("$schema","rusty.quest.embedded_duplex.run_status.v1")
+        return new JSONObject().put("$schema","rusty.quest.embedded_duplex.run_status.v2")
             .put("run_id",runContext.runId==null?JSONObject.NULL:runContext.runId).put("selection_generation",runContext.selectionGeneration)
-            .put("native",actual).put("app_process_generation",processFence.generation()).put("app_display_generation",attachmentGeneration).toString();
+            .put("native",actual).put("app_process_generation",processFence.generation()).put("app_display_generation",attachmentGeneration)
+            .put("app_fence_disposition",processFence.recoveryOnly()?"recovery_required":processFence.effectsPending()?"effects_pending":"clear").toString();
     }
     private final InstalledApkDigest installedApkDigest = new InstalledApkDigest();
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.

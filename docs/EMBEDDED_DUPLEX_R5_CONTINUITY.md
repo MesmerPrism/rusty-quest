@@ -40,6 +40,34 @@ live admission readback. This is not a durable restore mapping or a cleanup
 reconstruction protocol. Process death, lock reacquisition, an empty recreated
 registry and stale callback suppression cannot prove old provider teardown.
 
+### Observation of a cold-restored Pending fence
+
+Operational-run inspection uses `nativeInspectionDirectory` and the existing
+`nativeInspectionRecord` callbacks. Both verify the actual live held writer and
+exact persisted record, including when acquisition retained Pending recovery
+state. Admission keeps its separate `nativeFenceDirectory`,
+`nativeAdmissionRecord` and `requireFresh` gates. Readback never clears Pending,
+grants a capability or changes a run selection. Native registry, resource-owner,
+stale-handoff and changed-record refusals remain actual inspection results.
+
+The successor operator declares `run_status.v2`: its closed fields are `$schema`,
+`run_id`, `selection_generation`, `native`, `app_process_generation`,
+`app_display_generation` and `app_fence_disposition`. The last field is exactly
+`clear`, `effects_pending` or `recovery_required`; recovery-only disposition takes
+precedence over the pending bit. Native inspection keeps its v1 schema. A Native
+eligible result alone grants no app admission. A consumer must version-dispatch
+the exact v1 and v2 DTOs; v1 has no app disposition and must not acquire an
+inferred `clear`. Existing installed v1 producers retain their six-field schema.
+
+Run `tools/checks/Test-EmbeddedDuplexProcessFenceHost.ps1` for actual Java cold
+acquisition/readback and unchanged effect-gate controls. Run
+`python tools/checks/Test-ColdPendingRunInspectionHost.py` for the complete
+source-extracted JNI inspection caller/projection against explicit JNI, registry
+and platform models. These host controls prove neither an installed JNI binding
+nor physical cleanup/recovery. A dead old process does not need to join an old
+in-memory callback, but any new local recovery must establish its own actual
+retirement facts and preserve persistent counter lineage and remote UNKNOWNs.
+
 ## Validation boundaries
 
 ### Verified terminal Stop projection

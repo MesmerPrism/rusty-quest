@@ -299,6 +299,12 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         requireFresh();
         return directory.getCanonicalPath();
     }
+    /** Read-only inspection, including a cold-restored Pending owner; never execution admission. */
+    public synchronized String nativeInspectionDirectory() throws Exception {
+        requireLive(generation);
+        verifyHeldRecord();
+        return directory.getCanonicalPath();
+    }
     synchronized boolean newlyInitialized(){return newlyInitialized;}
     synchronized long previousGeneration(){return acquisitionGeneration;}
     synchronized void operationalHandoff(String nextRunId,java.util.concurrent.Callable<org.json.JSONObject> exactSource){

@@ -176,7 +176,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         if callback.is_null() {
             return Err("native app fence callback absent".into());
         }
-        let directory = callback_string(&mut env, &callback, "nativeFenceDirectory", 4096)?;
+        let directory = callback_string(&mut env, &callback, "nativeInspectionDirectory", 4096)?;
         let source = capture_source(&mut env, callback)?;
         let first = source.inspection_record()?;
         let (binding, pending) = AppBinding::inspect(&first)?;

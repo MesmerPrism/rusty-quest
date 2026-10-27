@@ -9,6 +9,8 @@ internal object EmbeddedDuplexOperatorContract {
   const val SCHEMA = "rusty.quest.embedded_duplex.operator_transport.v1"
   const val AUTHORITY_SUFFIX = ".embedded-duplex-operator"
   const val RUN_SCHEMA = "rusty.quest.embedded_duplex.operator_transport.v3"
+  /** This producer's closed status DTO; installed v1 producers retain their own exact contract. */
+  const val RUN_STATUS_SCHEMA = "rusty.quest.embedded_duplex.run_status.v2"
   const val KEY_RUN_ID = "run_id"
   const val METHOD_OPERATION_QUERY = "operation_query"
   const val METHOD_OPERATION_ACK = "operation_ack"

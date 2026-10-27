@@ -39,6 +39,38 @@ public final class EmbeddedDuplexProcessFenceHostTest {
     static EmbeddedDuplexProcessIncarnation.Identity identity(long ticks) {
         return new EmbeddedDuplexProcessIncarnation.Identity("00112233-4455-6677-8899-aabbccddeeff", 42, 10001, ticks);
     }
+    // JNI resolves this public callback by name; exercise that same lookup on the real held writer.
+    static String inspectionDirectory(EmbeddedDuplexProcessFence fence) throws Exception {
+        try { return (String)EmbeddedDuplexProcessFence.class.getMethod("nativeInspectionDirectory").invoke(fence); }
+        catch(java.lang.reflect.InvocationTargetException rejected) {
+            if(rejected.getCause() instanceof IllegalStateException)throw (IllegalStateException)rejected.getCause();
+            throw rejected;
+        }
+        catch(NoSuchMethodException absent) { throw new AssertionError("read-only inspection directory callback unavailable",absent); }
+    }
+    static void inspectionControls() throws Exception {
+        Path directory=Files.createTempDirectory("duplex-cold-inspection");
+        try(EmbeddedDuplexProcessFence initial=acquire(directory)){initial.beforeRuntimeEffects(null,null);}
+        EmbeddedDuplexProcessFence recovered=acquire(directory);
+        if(!recovered.recoveryOnly()||!recovered.effectsPending())throw new AssertionError("fixture did not restore actual Pending");
+        String exact=recovered.nativeInspectionRecord();
+        if(!directory.toFile().getCanonicalPath().equals(inspectionDirectory(recovered)))throw new AssertionError("inspection directory differs from held owner");
+        if(!exact.equals(recovered.nativeInspectionRecord())||!recovered.effectsPending()||!recovered.recoveryOnly())
+            throw new AssertionError("inspection changed pending/recovery/generation bytes");
+        rejects(recovered::nativeFenceDirectory);rejects(recovered::nativeAdmissionRecord);
+        rejects(recovered::requireFresh);rejects(recovered::callbacks);
+        rejects(()->recovered.beforeRuntimeEffects(null,null));
+        rejects(()->recovered.beforeNativeAbsenceRetirement(null,null));
+        rejects(()->recovered.afterVerifiedNoMediaCleanup(null,null));
+        rejects(()->recovered.afterVerifiedWholeProductCleanup(null,null,"a".repeat(64)));
+        // Corrupt the already-held inode through its retained descriptor; never reopen the fcntl inode.
+        var field=EmbeddedDuplexProcessFence.class.getDeclaredField("channel");field.setAccessible(true);
+        var channel=(java.nio.channels.FileChannel)field.get(recovered);
+        channel.position(0);channel.write(java.nio.ByteBuffer.wrap("x".getBytes(StandardCharsets.US_ASCII)));channel.force(true);
+        rejects(()->inspectionDirectory(recovered));
+        recovered.close();rejects(()->inspectionDirectory(recovered));
+        System.out.println("Cold Pending inspection controls passed; actual writer verified, all effect gates retained.");
+    }
     static void incarnationControls() throws Exception {
         Path dir = Files.createTempDirectory("duplex-bound-fence");
         try (EmbeddedDuplexProcessFence fence = acquire(dir)) {
@@ -128,6 +160,7 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         }
         incarnationControls();
         runControls();
+        inspectionControls();
         Path directory = Files.createTempDirectory("duplex-fence-test");
         EmbeddedDuplexProcessFence first = acquire(directory);
         if (first.generation() != 1) throw new AssertionError("initial generation");

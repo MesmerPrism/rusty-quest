@@ -45,7 +45,9 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
           EmbeddedDuplexOperatorContract.Route.RESUME_RUN -> EmbeddedDuplexRuntimeService.resumeRun(app,requireNotNull(request.runId))
           else -> EmbeddedDuplexRuntimeService.runStatus(app)
         }
-        return Bundle().apply { putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);putString("status","observed");putString("challenge",request.challenge);putString("receipt",action.get(30,TimeUnit.SECONDS)) }
+        val receipt = action.get(30,TimeUnit.SECONDS)
+        require(org.json.JSONObject(receipt).getString("\$schema") == EmbeddedDuplexOperatorContract.RUN_STATUS_SCHEMA)
+        return Bundle().apply { putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);putString("status","observed");putString("challenge",request.challenge);putString("receipt",receipt) }
       }
       val response = if(request.route == EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY && request.runId != null)
         EmbeddedDuplexRuntimeService.queryOriginal(app,request.runId,requireNotNull(request.originalId),request.challenge)
