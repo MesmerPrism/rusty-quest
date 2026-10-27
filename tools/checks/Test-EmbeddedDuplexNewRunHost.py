@@ -58,7 +58,7 @@ def native_controls(root,out):
 
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--root',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parents[2]);p.add_argument('--output',type=pathlib.Path);p.add_argument('--java-home',type=pathlib.Path);p.add_argument('--json-jar',type=pathlib.Path);p.add_argument('--support-classpath',default=os.environ.get('RUSTY_QUEST_APP_TEST_CLASSPATH',''));p.add_argument('--smoke',action='store_true');p.add_argument('--native-controls',action='store_true');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--root',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parents[2]);p.add_argument('--output',type=pathlib.Path);p.add_argument('--java-home',type=pathlib.Path);p.add_argument('--json-jar',type=pathlib.Path);p.add_argument('--support-classpath',default=os.environ.get('RUSTY_QUEST_APP_TEST_CLASSPATH',''));p.add_argument('--smoke',action='store_true');p.add_argument('--native-controls',action='store_true');p.add_argument('--legacy-whole-manifest',type=pathlib.Path);a=p.parse_args()
  if not a.support_classpath:raise ValueError('Select current source-compiled app helpers with --support-classpath or RUSTY_QUEST_APP_TEST_CLASSPATH')
  root=a.root.resolve();out=(a.output or root/'target'/('new-run-'+uuid.uuid4().hex)).resolve()
  if not out.is_relative_to(root/'target'):raise ValueError('Output must be new under target')
@@ -108,7 +108,7 @@ def main():
  long attachmentGeneration=7;void harnessAttachment(long value){attachmentGeneration=value;}
  private final Display display=new Display();private static final class Display{boolean cleanupPending(){return false;}void detachAfterCleanup(long generation,Runnable close){if(generation<=0)throw new AssertionError("missing display owner");close.run();}}
  """
- signatures=['<T>T withRunRequest(', 'CompletableFuture<String> selectRun(', 'CompletableFuture<String> runStatus()', 'private String runStatusOnLane()', 'private static <T> CompletableFuture<T> failed(', 'private boolean joinWholeCallbackOwner(', 'void armDiagnosticChallenge(', 'CompletableFuture<EmbeddedDuplexEnrollment> provisionLocalDiagnosticFixture(']
+ signatures=['<T>T withRunRequest(', 'CompletableFuture<String> selectRun(', 'CompletableFuture<String> runStatus()', 'private String runStatusOnLane()', 'private static <T> CompletableFuture<T> failed(', 'private boolean joinWholeCallbackOwner(', 'static void requireLegacyWholeActor(', 'void armDiagnosticChallenge(', 'CompletableFuture<EmbeddedDuplexEnrollment> provisionLocalDiagnosticFixture(']
  methods=[extract(host,x) for x in signatures]
  models[key]=body[:-1]+fields+'\n'+'\n'.join(methods)+'\n}'
  service_methods=[extract(service,x) for x in ['public static CompletableFuture<String> newRun(', 'public static CompletableFuture<String> resumeRun(', 'public static CompletableFuture<String> runStatus(', 'public static String selectedRunId(', 'public static <T>T withRunRequest(', 'public static Bundle queryOriginal(Context context,String runId,String originalId,String challenge)']]
@@ -152,8 +152,23 @@ def main():
  run('compile',[str(java/'bin/javac.exe'),'--release','17','-encoding','UTF-8','-cp',cp,'-d',str(classes)]+[str(x) for x in generated+production+[fixture,original_fixture]])
  argv=[str(java/'bin/java.exe'),'-Dhost.proc='+str(baseline/'proc'),'-cp',os.pathsep.join([str(classes),cp]),pkg.replace('/','.')+'.EmbeddedDuplexRunContextHostTest']
  run('store',argv);run('caller',argv+['caller'])
+ retained=[]
+ if a.legacy_whole_manifest:
+  manifest=a.legacy_whole_manifest.resolve();selection=json.loads(manifest.read_text(encoding='utf-8-sig'))
+  for index,item in enumerate(selection['cases']):
+   pair=[]
+   for key in ['row','join']:
+    path=pathlib.Path(item[key]['path']).resolve();raw=path.read_bytes()
+    if hashlib.sha256(raw).hexdigest()!=item[key]['sha256']:raise ValueError('Retained legacy '+key+' changed')
+    pair.append(str(path))
+   run('legacy-fileonly-'+str(index),argv+['legacy-files']+pair)
+   for key,path in zip(['row','join'],pair):
+    if hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()!=item[key]['sha256']:raise ValueError('Retained input mutated')
+   retained.append(item)
+  retained={'manifest_sha256':hashlib.sha256(manifest.read_bytes()).hexdigest(),'cases':retained,'scope':'Exact saved row/join bytes through read-only production codec under JVM write/delete/exec/network traps. No current actor/Native/resource authority.'}
+
  if any(hashlib.sha256((root/x).read_bytes()).hexdigest()!=h for x,h in pins.items()):raise ValueError('Inputs changed during controls')
- result={'status':'passed','source_pins':pins,'scope':'Actual run selector/store/fence/Original/service bodies and real filesystem/Future; Native/Android/current-resource leaves modeled. Existing 76 Original assertions retained.','limits':['No Native runtime/hardware/private enrollment byte claim; separate actual Native controls and Android composition required.'],'generated_pins':{str(x.relative_to(out)):hashlib.sha256(x.read_bytes()).hexdigest() for x in generated},'extracted_methods':[{'signature':x[:x.index('{')].strip(),'sha256':hashlib.sha256(x.encode()).hexdigest()} for x in methods+service_methods]}
+ result={'status':'passed','retained_legacy':retained,'source_pins':pins,'scope':'Actual run selector/store/fence/Original/service bodies and real filesystem/Future; Native/Android/current-resource leaves modeled. Existing 76 Original assertions retained.','limits':['No Native runtime/hardware/private enrollment byte claim; separate actual Native controls and Android composition required.'],'generated_pins':{str(x.relative_to(out)):hashlib.sha256(x.read_bytes()).hexdigest() for x in generated},'extracted_methods':[{'signature':x[:x.index('{')].strip(),'sha256':hashlib.sha256(x.encode()).hexdigest()} for x in methods+service_methods]}
  if a.native_controls:result['native_controls']=native_controls(root,out)
  (out/'RESULT.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8');print(json.dumps({'status':'passed','output':str(out)}))
 if __name__=='__main__':main()

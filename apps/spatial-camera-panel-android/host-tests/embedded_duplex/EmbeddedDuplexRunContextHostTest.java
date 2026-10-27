@@ -9,6 +9,35 @@ public final class EmbeddedDuplexRunContextHostTest {
   checks++;try{value.get(5,java.util.concurrent.TimeUnit.SECONDS);throw new AssertionError("not refused");}
   catch(java.util.concurrent.ExecutionException expected){if(!(expected.getCause() instanceof IllegalStateException))throw expected;}
  }
+ static void refreshOutcome(org.json.JSONObject row)throws Exception{
+  org.json.JSONObject out=new org.json.JSONObject();
+  for(String key:new String[]{"original_id","operation","request_sha256","original_challenge","state","effect_state","actor_binding","native_setup_binding","response_sha256","failure"})out.put(key,row.get(key));
+  row.put("outcome_sha256",EmbeddedDuplexCanonicalJson.sha256(out));
+ }
+ @SuppressWarnings("removal")
+ static void savedLegacyWhole(String rowPath,String joinPath)throws Exception{
+  byte[] sourceRow=Files.readAllBytes(java.nio.file.Path.of(rowPath)),sourceJoin=Files.readAllBytes(java.nio.file.Path.of(joinPath));
+  org.json.JSONObject row=EmbeddedDuplexCanonicalJson.readOwned(sourceRow);String id=row.getString("original_id");
+  File root=Files.createTempDirectory("legacy-fileonly-").toFile(),directory=new File(root,"operator-originals-v1");yes(directory.mkdir());
+  File copiedRow=new File(directory,id+".json"),copiedJoin=new File(directory,id+".joined.json");Files.write(copiedRow.toPath(),sourceRow);Files.write(copiedJoin.toPath(),sourceJoin);
+  SecurityManager previous=System.getSecurityManager();
+  System.setSecurityManager(new SecurityManager(){
+   public void checkPermission(java.security.Permission p){}
+   public void checkWrite(String path){throw new AssertionError("FILEONLY write: "+path);}
+   public void checkDelete(String path){throw new AssertionError("FILEONLY delete: "+path);}
+   public void checkExec(String path){throw new AssertionError("FILEONLY exec");}
+   public void checkConnect(String host,int port){throw new AssertionError("FILEONLY connect");}
+  });
+  try{
+   org.json.JSONObject result=EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,row.getJSONObject("actor_binding").getString("package_id"));
+   yes(result.getString("request_sha256").equals(row.getString("request_sha256")));yes(result.getString("outcome_sha256").equals(row.getString("outcome_sha256")));
+   yes(result.getLong("prior_native_generation")==row.getJSONObject("actor_binding").getLong("native_generation"));
+   yes(Arrays.equals(sourceRow,Files.readAllBytes(copiedRow.toPath())));yes(Arrays.equals(sourceJoin,Files.readAllBytes(copiedJoin.toPath())));
+   denied(()->EmbeddedDuplexOriginals.closedWholeHandoff(root,id));
+  }finally{System.setSecurityManager(previous);}
+  yes(Arrays.equals(sourceRow,Files.readAllBytes(java.nio.file.Path.of(rowPath))));yes(Arrays.equals(sourceJoin,Files.readAllBytes(java.nio.file.Path.of(joinPath))));
+  System.out.println("Saved legacy Whole FILEONLY reader passed; no current Native eligibility claimed.");
+ }
  static void legacyWitnessControls()throws Exception{
   File root=Files.createTempDirectory("legacy-release").toFile();String id="9".repeat(32),challenge="8".repeat(32),hash="7".repeat(64);
   EmbeddedDuplexOriginalsHostTest.Actor actor=new EmbeddedDuplexOriginalsHostTest.Actor();actor.generation=1;
@@ -32,6 +61,70 @@ public final class EmbeddedDuplexRunContextHostTest {
   byte[] original=Files.readAllBytes(new File(root,"operator-originals-v1/"+id+".json").toPath());
   org.json.JSONObject handoff=EmbeddedDuplexOriginals.closedWholeHandoff(root,id);yes(handoff.getLong("prior_native_generation")==9);
   yes(handoff.getString("physical_retirement_sha256").equals(EmbeddedDuplexCanonicalJson.sha256(physical)));
+  // Neutral SDK2 transport-v2 record: preserve its old effect token in its outcome digest.
+  File rowFile=new File(root,"operator-originals-v1/"+id+".json");
+  org.json.JSONObject legacyRow=new org.json.JSONObject(new String(original,java.nio.charset.StandardCharsets.UTF_8));
+  legacyRow.put("effect_state","settled");refreshOutcome(legacyRow);
+  org.json.JSONObject legacyJoin=new org.json.JSONObject(join.toString()).put("outcome_sha256",legacyRow.getString("outcome_sha256"));
+  Files.writeString(rowFile.toPath(),EmbeddedDuplexCanonicalJson.encode(legacyRow));Files.writeString(joined.toPath(),EmbeddedDuplexCanonicalJson.encode(legacyJoin));
+  byte[] legacyBytes=Files.readAllBytes(rowFile.toPath()),legacyJoinBytes=Files.readAllBytes(joined.toPath());
+  org.json.JSONObject oldHandoff=EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,"fixture.package");
+  yes(oldHandoff.getLong("prior_native_generation")==9);
+  yes(oldHandoff.getString("outcome_sha256").equals(legacyRow.getString("outcome_sha256")));
+  denied(()->EmbeddedDuplexOriginals.closedWholeHandoff(root,id)); // The current codec stays strict.
+  EmbeddedDuplexOriginals currentCodec=new EmbeddedDuplexOriginals(root,actor,()->{});
+  denied(()->currentCodec.query(id,challenge));
+  denied(()->currentCodec.acknowledge(id,challenge,legacyRow.getString("request_sha256"),legacyRow.getString("outcome_sha256"),hash));
+  java.util.concurrent.atomic.AtomicInteger effects=new java.util.concurrent.atomic.AtomicInteger();
+  denied(()->currentCodec.begin(id,"whole_app_close",challenge,request,()->{effects.incrementAndGet();return java.util.concurrent.CompletableFuture.completedFuture(response);}));yes(effects.get()==0);
+  org.json.JSONObject bad=new org.json.JSONObject(legacyRow.toString()).put("request_sha256","5".repeat(64));refreshOutcome(bad);
+  Files.writeString(rowFile.toPath(),EmbeddedDuplexCanonicalJson.encode(bad));
+  Files.writeString(joined.toPath(),EmbeddedDuplexCanonicalJson.encode(new org.json.JSONObject(legacyJoin.toString()).put("request_sha256",bad.getString("request_sha256")).put("outcome_sha256",bad.getString("outcome_sha256"))));
+  denied(()->EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,"fixture.package"));
+  bad=new org.json.JSONObject(legacyRow.toString()).put("state","unknown").put("effect_state","unknown");refreshOutcome(bad);
+  Files.writeString(rowFile.toPath(),EmbeddedDuplexCanonicalJson.encode(bad));
+  Files.writeString(joined.toPath(),EmbeddedDuplexCanonicalJson.encode(new org.json.JSONObject(legacyJoin.toString()).put("request_sha256",bad.getString("request_sha256")).put("outcome_sha256",bad.getString("outcome_sha256"))));
+  denied(()->EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,"fixture.package"));
+  Files.write(rowFile.toPath(),legacyBytes);Files.write(joined.toPath(),legacyJoinBytes);denied(()->EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,"other.package"));
+  Files.writeString(joined.toPath(),EmbeddedDuplexCanonicalJson.encode(new org.json.JSONObject(legacyJoin.toString()).put("outcome_sha256","4".repeat(64))));
+  denied(()->EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,"fixture.package"));Files.write(joined.toPath(),legacyJoinBytes);
+  yes(Arrays.equals(legacyBytes,Files.readAllBytes(rowFile.toPath())));yes(Arrays.equals(legacyJoinBytes,Files.readAllBytes(joined.toPath())));
+  org.json.JSONObject oldV4=EmbeddedDuplexOriginalsHostTest.freshContractLifecycle().put("action","whole_app_close")
+    .put("app_process_generation",1).put("authority_clock_read",org.json.JSONObject.NULL).put("owner_transport_attempt",org.json.JSONObject.NULL);
+  for(String field:new String[]{"peer_physical_cleanup","native_host_physical_cleanup","java_own_capture_cleanup","java_renderer_cleanup","java_control_cleanup","app_process_fence_cleanup","whole_app_physical_cleanup","status"})oldV4.put(field,"terminal");
+  org.json.JSONObject oldV4Row=new org.json.JSONObject(legacyRow.toString());
+  org.json.JSONObject oldV4Response=new org.json.JSONObject(legacyRow.getJSONObject("response").toString());
+  org.json.JSONObject oldV4Envelope=new org.json.JSONObject(oldV4Response.getString("receipt")).put("peer_lifecycle",oldV4);
+  oldV4Response.put("receipt",EmbeddedDuplexCanonicalJson.encode(oldV4Envelope));oldV4Row.put("response",oldV4Response).put("response_sha256",EmbeddedDuplexCanonicalJson.sha256(oldV4Response));refreshOutcome(oldV4Row);
+  org.json.JSONObject oldV4Join=new org.json.JSONObject(legacyJoin.toString()).put("outcome_sha256",oldV4Row.getString("outcome_sha256"))
+    .put("physical_retirement_schema",oldV4.getString("$schema")).put("physical_retirement_sha256",EmbeddedDuplexCanonicalJson.sha256(oldV4));
+  Files.writeString(rowFile.toPath(),EmbeddedDuplexCanonicalJson.encode(oldV4Row));Files.writeString(joined.toPath(),EmbeddedDuplexCanonicalJson.encode(oldV4Join));
+  yes(EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,"fixture.package").getString("physical_retirement_sha256").equals(EmbeddedDuplexCanonicalJson.sha256(oldV4)));
+  org.json.JSONObject unsupportedV4=new org.json.JSONObject(oldV4.toString()).put("unexpected_diagnostic",org.json.JSONObject.NULL);
+  oldV4Envelope.put("peer_lifecycle",unsupportedV4);oldV4Response.put("receipt",EmbeddedDuplexCanonicalJson.encode(oldV4Envelope));oldV4Row.put("response_sha256",EmbeddedDuplexCanonicalJson.sha256(oldV4Response));refreshOutcome(oldV4Row);
+  Files.writeString(rowFile.toPath(),EmbeddedDuplexCanonicalJson.encode(oldV4Row));
+  Files.writeString(joined.toPath(),EmbeddedDuplexCanonicalJson.encode(new org.json.JSONObject(oldV4Join.toString()).put("outcome_sha256",oldV4Row.getString("outcome_sha256")).put("physical_retirement_sha256",EmbeddedDuplexCanonicalJson.sha256(unsupportedV4))));
+  denied(()->EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,"fixture.package"));
+  for(String mode:new String[]{"missing_core","missing_legacy_slot","pending_cleanup","wrong_diagnostic_type"}){
+   org.json.JSONObject malformed=new org.json.JSONObject(oldV4.toString());
+   if(mode.equals("missing_core"))malformed.remove("broker_evidence");
+   if(mode.equals("missing_legacy_slot"))malformed.remove("authority_clock_read");
+   if(mode.equals("pending_cleanup"))malformed.put("java_renderer_cleanup","pending");
+   if(mode.equals("wrong_diagnostic_type"))malformed.put("owner_transport_attempt","not an owned diagnostic object");
+   org.json.JSONObject malformedEnvelope=new org.json.JSONObject(legacyRow.getJSONObject("response").getString("receipt")).put("peer_lifecycle",malformed);
+   org.json.JSONObject malformedResponse=new org.json.JSONObject(legacyRow.getJSONObject("response").toString()).put("receipt",EmbeddedDuplexCanonicalJson.encode(malformedEnvelope));
+   org.json.JSONObject malformedRow=new org.json.JSONObject(legacyRow.toString()).put("response",malformedResponse).put("response_sha256",EmbeddedDuplexCanonicalJson.sha256(malformedResponse));refreshOutcome(malformedRow);
+   org.json.JSONObject malformedJoin=new org.json.JSONObject(oldV4Join.toString()).put("outcome_sha256",malformedRow.getString("outcome_sha256")).put("physical_retirement_sha256",EmbeddedDuplexCanonicalJson.sha256(malformed));
+   Files.writeString(rowFile.toPath(),EmbeddedDuplexCanonicalJson.encode(malformedRow));Files.writeString(joined.toPath(),EmbeddedDuplexCanonicalJson.encode(malformedJoin));
+   denied(()->EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,id,"fixture.package"));
+  }
+  // Restore only this synthetic fixture for its existing current-format controls below.
+  Files.write(rowFile.toPath(),original);Files.writeString(joined.toPath(),EmbeddedDuplexCanonicalJson.encode(join));
+  org.json.JSONObject nativeStatus=new org.json.JSONObject().put("native_generation",9);
+  EmbeddedDuplexProcessHost.requireLegacyWholeActor(physical,nativeStatus,5); // More than one idle generation.
+  denied(()->EmbeddedDuplexProcessHost.requireLegacyWholeActor(physical,nativeStatus,0));
+  denied(()->EmbeddedDuplexProcessHost.requireLegacyWholeActor(new org.json.JSONObject(physical.toString()).put("app_process_generation",6),nativeStatus,5));
+  denied(()->EmbeddedDuplexProcessHost.requireLegacyWholeActor(physical,new org.json.JSONObject().put("native_generation",8),5));
   String unknownId="6".repeat(32);org.json.JSONObject pendingPhysical=new org.json.JSONObject(physical.toString()).put("action","start").put("status","pending");
   android.os.Bundle pendingResponse=new android.os.Bundle(response);pendingResponse.putString("receipt",new org.json.JSONObject().put("schema","rusty.quest.stereo.concurrent_qualification_receipt.v1").put("action","start").put("challenge",challenge).put("peer_lifecycle",pendingPhysical).toString());
   owner.begin(unknownId,"start",challenge,new org.json.JSONObject(request.toString()).put("method","start"),()->java.util.concurrent.CompletableFuture.completedFuture(pendingResponse));
@@ -177,6 +270,7 @@ public final class EmbeddedDuplexRunContextHostTest {
   System.out.println("run caller checks="+checks+"; actual selector/store/fence/Original bodies, Native physical state modeled");
  }
  public static void main(String[] args)throws Exception{
+  if(args.length>0&&args[0].equals("legacy-files")){savedLegacyWhole(args[1],args[2]);return;}
   if(args.length>0&&args[0].equals("caller")){legacyWitnessControls();callerControls();activityCacheControls();return;}
   File app=Files.createTempDirectory("run-host").toFile();
   byte[] identity="real retained identity bytes".getBytes();Files.write(new File(app,"identity").toPath(),identity);
