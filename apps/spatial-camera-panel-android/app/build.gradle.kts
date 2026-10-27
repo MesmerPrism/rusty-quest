@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.jetbrains.kotlin.android)
@@ -8,7 +10,7 @@ plugins {
 // One semantic policy is resolved from the selected Manifold source dependency.
 // Values stay Long through BuildConfig; development horizons exceed signed32.
 val embeddedDuplexDevelopmentLifetimeJson = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_BASE64")
-  .orElse("").map { encoded -> if (encoded.isEmpty()) "" else String(java.util.Base64.getDecoder().decode(encoded), Charsets.UTF_8) }
+  .orElse("").map { encoded -> if (encoded.isEmpty()) "" else String(Base64.getDecoder().decode(encoded), Charsets.UTF_8) }
 val embeddedDuplexDevelopmentHorizonMs = embeddedDuplexDevelopmentLifetimeJson.map { raw ->
   if (raw.isEmpty()) 0L else {
     val policy = groovy.json.JsonSlurper().parseText(raw) as Map<*, *>
