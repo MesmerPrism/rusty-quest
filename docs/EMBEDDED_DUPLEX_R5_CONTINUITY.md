@@ -70,6 +70,39 @@ retirement facts and preserve persistent counter lineage and remote UNKNOWNs.
 
 ## Validation boundaries
 
+### Prepared media readiness and retirement estimates
+
+The incoming activation's readiness estimate is diagnostic. The same claimed
+arm and revision continue waiting for actual acquired and GPU-retired frames;
+the exact receiver/route/decoder/reader identities, 500 ms frame freshness,
+current authority expiry and cleanup fence still apply. Stop, supersession,
+interruption and malformed or foreign evidence remain real failures.
+
+The selected prepared receiver similarly keeps its same decoder and delivery
+latch past its startup estimate. Each wait checks the actual current-authority
+supplier and desired Stop. A readiness estimate cannot invoke cleanup or
+recreate a decoder. Prepared worker and callback retirement joins retain the
+same threads until actual death, keeping resource and connection barriers.
+Caller interruption during those joins is restored after the real join; it
+does not manufacture terminal cleanup. The nonprepared compatibility receiver
+retains its explicit startup and shutdown bounds. Transport read and codec
+polling bounds remain separate from readiness.
+
+A dispatched display lifecycle action has one retained future. Its estimate
+warns without abandoning queued effects. An interrupted waiting caller drains
+that same future and restores its interrupt status after receiving the actual
+success or failure. It cannot free caller-owned SDK resources while its queued
+action remains live. Main-thread blocking and a fenced lifecycle dispatcher
+still reject before dispatch.
+
+`tools/checks/Test-OwnedMediaWaitsHost.py` compiles the complete production
+callers using an explicit SDK compile-command inventory plus JSON/JUnit host
+dependencies. It checks delayed readiness and dispatch beyond the production
+estimates, exact claim/freshness fences, actual desired Stop, interrupted
+caller custody, real thread retirement and the legacy bounded path. Android
+and SDK resources are host models in these controls; separate Android/SDK
+typechecking and device evidence retain their own limits.
+
 ### Verified terminal Stop projection
 
 The incoming Sink gate accepts the existing C1 `retained_cleanup` projection
