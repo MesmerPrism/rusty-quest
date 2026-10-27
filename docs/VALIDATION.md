@@ -1,5 +1,11 @@
 # Rusty Quest Validation
 
+External Spatial artifact preflight has a focused host gate:
+`pwsh -NoProfile -File tools/checks/Test-SpatialArtifactPreflightHost.ps1`.
+It executes the actual caller and directory guard with default or explicit
+optional roots, checks excluded-root overlaps and unsafe outputs, and performs
+no APK build, shared-cache operation or device operation.
+
 Spatial inspection-copy retention has a focused host gate:
 `pwsh -NoProfile -File tools/checks/Test-SpatialApkInspectionRetentionHost.ps1`.
 It runs the actual builder inspection section and real downstream capsule
