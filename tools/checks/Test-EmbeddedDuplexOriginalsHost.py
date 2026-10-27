@@ -44,6 +44,7 @@ def main():
     parser.add_argument('--java-home', type=pathlib.Path)
     parser.add_argument('--json-jar', type=pathlib.Path)
     parser.add_argument('--smoke', action='store_true')
+    parser.add_argument('--whole-publication', action='store_true', help='Exercise direct no-media Whole publication with exact Host settlement predicates')
     parser.add_argument('--support-classpath', default='', help='Current compiled production fresh-helper classes; not runtime proof')
     args = parser.parse_args()
     root = args.root.resolve()
@@ -79,6 +80,9 @@ def main():
         'private void ensureProcessFence(', 'static long currentAppGeneration(',
         'static JSONObject originalActor(', 'static boolean originalActorSettled(',
         'private <T> CompletableFuture<T> submit(')]
+    if args.whole_publication:
+        host_methods += [extract_method(host_source, signature) for signature in (
+            'static void requireCompletedNoMediaOriginal(', 'private static void verifyNoMediaNative(')]
     service_methods = [extract_method(service_source, signature) for signature in (
         'public static Bundle beginOriginal(', 'public static Bundle queryOriginal(Context context, String originalId, String challenge)',
         'public static Bundle acknowledgeOriginal(')]
@@ -112,6 +116,20 @@ def main():
       void harnessClose()throws Exception{commands.shutdown();if(!commands.awaitTermination(5,TimeUnit.SECONDS))throw new AssertionError("command lane did not settle");if(processFence!=null)processFence.close();}
     """
     original_source = (production / 'EmbeddedDuplexOriginals.java').read_text(encoding='utf-8')
+    if args.whole_publication:
+        # Resource/Future facts are explicit leaves; both owner predicates above remain exact.
+        host_leaves += '''
+      static final class PhysicalPlatform {boolean joined=true;boolean actualOutboundExchangesJoined(){return joined;}}
+      static final class RetainedNoMediaClose {
+        String config,appRecord;long appGeneration,nativeGeneration;boolean pendingFresh;Object resources;
+        EmbeddedDuplexRuntimeConfigurationBinding.Context configurationContext;PhysicalPlatform platform;
+        JSONObject proof;final CompletableFuture<String> completion=new CompletableFuture<>();CompletableFuture<Void> callbackMarker;
+      }
+    '''
+        config_key = 'io/github/mesmerprism/rustyquest/spatial_camera_panel/BuildConfig.java'
+        models[config_key] = models[config_key][:-2] + ''' public static final String EMBEDDED_DUPLEX_FRESH_SETUP_POLICY="source-bound-v2";
+          public static final String EMBEDDED_DUPLEX_FRESH_POLICY_SHA256="",EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256="",
+          EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64="",EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256=""; }'''
     exercised = {re.search(r'(\w+)\s*\(', method).group(1) for method in host_methods}
     compile_only = []
     for name in sorted(set(re.findall(r'EmbeddedDuplexProcessHost\.(\w+)\(', original_source)) - exercised):
@@ -144,6 +162,9 @@ def main():
     classes = out / 'classes'
     classes.mkdir()
     sources = [production / 'EmbeddedDuplexCanonicalJson.java', production / 'EmbeddedDuplexRunContext.java', production / 'EmbeddedDuplexRunSelectionStore.java', production / 'EmbeddedDuplexOriginals.java', production / 'EmbeddedDuplexProcessFence.java', fixture]
+    if args.whole_publication:
+        sources.append(fixture.with_name('EmbeddedDuplexWholePublicationHostTest.java'))
+        sources.append(production / 'EmbeddedDuplexRuntimeConfigurationBinding.java')
     for name in ('EmbeddedDuplexFreshLifecycle.java', 'EmbeddedDuplexNativeOperationFailure.java', 'EmbeddedDuplexAppAdmission.java'):
         if (production / name).exists(): sources.append(production / name)
     source_paths = sources + [production / name for name in ('EmbeddedDuplexProcessHost.java', 'EmbeddedDuplexRuntimeService.java', 'EmbeddedDuplexProcessIncarnation.java')] + [pathlib.Path(__file__).resolve()]
@@ -152,10 +173,13 @@ def main():
     with (out / 'compile.log').open('wb') as stream:
         subprocess.run(command, stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=60)
     with (out / 'controls.log').open('wb') as stream:
-        subprocess.run([str(java_home / 'bin/java.exe'), '-Djava.io.tmpdir=' + str(out / 'runtime'), '-Dhost.proc=' + str(proc), '-cp', os.pathsep.join((str(classes), str(jar), args.support_classpath)), package.replace('/', '.') + '.EmbeddedDuplexOriginalsHostTest'], stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=60)
+        for main_class in ['EmbeddedDuplexOriginalsHostTest'] + (['EmbeddedDuplexWholePublicationHostTest'] if args.whole_publication else []):
+            subprocess.run([str(java_home / 'bin/java.exe'), '-Djava.io.tmpdir=' + str(out / 'runtime'), '-Dhost.proc=' + str(proc), '-cp', os.pathsep.join((str(classes), str(jar), args.support_classpath)), package.replace('/', '.') + '.' + main_class], stdout=stream, stderr=subprocess.STDOUT, check=True, timeout=60)
     if any(hashlib.sha256((root / relative).read_bytes()).hexdigest() != digest for relative, digest in source_pins.items()):
         raise ValueError('Source changed during the exact-body host controls; rerun against stable inputs')
     result = {'status': 'passed', 'sources': source_pins, 'scope': 'Production Original store and exact extracted Host submit/forApplication/actor/settled plus RuntimeService begin/query/ACK; real command executor, Future, fence and file operations. Android/process-root/native/resources leaves modeled.', 'extracted_methods': [{'sha256': hashlib.sha256(method.encode()).hexdigest(), 'source': 'EmbeddedDuplexProcessHost.java' if method in host_methods else 'EmbeddedDuplexRuntimeService.java', 'signature': method[:method.index(chr(123))].strip()} for method in host_methods + service_methods], 'modeled_leaves': ['Android Context/Bundle/Process/system APIs', 'proc root path only; real identity parser', 'checkpoint/evidence journal reads return absent', 'retained platform/resources and native actor facts initialized by host fixture'], 'generated_sources': {str(pathlib.Path(path).relative_to(out)): hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest() for path in model_paths}, 'compile_only_unexercised_host_apis': [method[:method.index('{')].strip() for method in compile_only], 'support_classpath': args.support_classpath, 'limitations': ['No APK, device, native effects or physical-cleanup claim.', 'Fresh physical/resource Host methods are compile-only boundaries that reject invocation; this regression executes the accepted finite/custody caller path.']}
+    if args.whole_publication:
+        result['whole_publication'] = {'scope': 'Actual complete/store/query/reload and exact requireCompletedNoMediaOriginal/verifyNoMediaNative predicates plus actual RuntimeConfigurationBinding.Context.require/requireNative.', 'modeled_leaves': ['Retained resource owner fields, callback/completion Futures and outbound-exchange observation', 'Constructor witness Context initialized from a synthetic complete fixture through its private constructor; prepare and actual Native construction are not exercised'], 'limitations': ['No installed APK or repair of historical Original publication.', 'Other fresh physical/resource Host APIs remain compile-only boundaries.']}
     (out / 'RESULT.json').write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps({'status': 'passed', 'output': str(out)}))
 

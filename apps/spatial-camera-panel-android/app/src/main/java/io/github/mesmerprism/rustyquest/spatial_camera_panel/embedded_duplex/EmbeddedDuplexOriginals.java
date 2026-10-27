@@ -467,7 +467,11 @@ public final class EmbeddedDuplexOriginals {
                     pending = retained != null;
                 } else {
                     actual = validateResponse(record, response);
-                    pending = nativePending(operation, actual);
+                    JSONObject receipt = new JSONObject(actual.getString("receipt"));
+                    if (operation.equals("whole_app_close")
+                            && EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2.equals(receipt.optString("$schema")))
+                        pending = nativePending(record, operation, actual) != null;
+                    else pending = nativePending(operation, actual);
                 }
                 record.row.put("response",actual).put("response_sha256",EmbeddedDuplexCanonicalJson.sha256(actual));
                 record.row.put("state",pending?"unknown":"succeeded").put("effect_state",pending?"uncertain":"observed");
