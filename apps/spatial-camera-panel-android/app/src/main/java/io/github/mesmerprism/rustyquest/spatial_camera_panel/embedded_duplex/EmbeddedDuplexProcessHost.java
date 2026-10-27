@@ -75,7 +75,9 @@ final class EmbeddedDuplexProcessHost {
                 if(sourceOriginal==null&&retainedWholeClose!=null&&retainedWholeClose.original!=null)sourceOriginal=retainedWholeClose.original.id();
                 String release=null;
                 if(sourceOriginal!=null){
-                    JSONObject source=EmbeddedDuplexOriginals.closedWholeHandoff(runContext.root,sourceOriginal,applicationContext.getPackageName());
+                    JSONObject source=runContext.legacy()
+                        ?EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(runContext.root,sourceOriginal,applicationContext.getPackageName())
+                        :EmbeddedDuplexOriginals.closedWholeHandoff(runContext.root,sourceOriginal,applicationContext.getPackageName());
                     JSONObject pointer=new JSONObject(source.toString());pointer.remove("physical_retirement");
                     pointer.put("source_run_id",runContext.runId==null?JSONObject.NULL:runContext.runId);
                     release=EmbeddedDuplexCanonicalJson.encode(EmbeddedDuplexRunSelectionStore.validateRelease(pointer));
@@ -85,13 +87,17 @@ final class EmbeddedDuplexProcessHost {
                 if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(nativeStatus.getString("$schema"))
                     ||!nativeStatus.getBoolean("globally_eligible"))throw new IllegalStateException("actual Native owner unresolved");
                 if(runContext.legacy()&&(!processFence.newlyInitialized()||!nativeStatus.isNull("native_generation"))){
-                    JSONObject whole=terminalWholeReceipt==null?EmbeddedDuplexOriginals.closedWholeWitness(
-                        runContext.root,legacyWholeOriginalId):new JSONObject(terminalWholeReceipt).getJSONObject("peer_lifecycle");
-                    EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(whole);
-                    if(whole.getLong("app_process_generation")!=processFence.previousGeneration()
-                        &&whole.getLong("app_process_generation")!=processFence.generation())throw new IllegalStateException("legacy Whole app generation differs");
-                    if(nativeStatus.isNull("native_generation")||whole.getLong("native_executor_generation")!=nativeStatus.getLong("native_generation"))
-                        throw new IllegalStateException("legacy Whole last Native generation differs");
+                    JSONObject whole;
+                    if(terminalWholeReceipt==null){
+                        // The versioned read already validates physical invariants. Keep its original
+                        // legacy proof for the Native hash join; do not parse it as a current DTO again.
+                        whole=EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(runContext.root,legacyWholeOriginalId,
+                            applicationContext.getPackageName()).getJSONObject("physical_retirement");
+                    }else{
+                        whole=new JSONObject(terminalWholeReceipt).getJSONObject("peer_lifecycle");
+                        EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(whole);
+                    }
+                    requireLegacyWholeActor(whole,nativeStatus,processFence.generation());
                 }
                 EmbeddedDuplexRunContext next=create?runSelection.newRun(id,release):runSelection.resumeRun(id);
                 // Publication is crash-fail-closed: restart refuses selector/fence disagreement.
@@ -112,13 +118,23 @@ final class EmbeddedDuplexProcessHost {
             try{if(processFence!=null)installRunHandoff(runContext.runId,runContext.releaseSourceJson);}catch(Exception restore){failure.addSuppressed(restore);}
             result.completeExceptionally(failure);}});return result;
     }
+    // A closed Whole can predate idle app incarnations; only the actual Native floor identifies its last runtime.
+    static void requireLegacyWholeActor(JSONObject whole,JSONObject nativeStatus,long currentAppGeneration)throws Exception{
+        long historicalApp=whole.getLong("app_process_generation");
+        if(historicalApp<=0||currentAppGeneration<=0||historicalApp>currentAppGeneration)
+            throw new IllegalStateException("legacy Whole app generation differs");
+        if(nativeStatus.isNull("native_generation")||whole.getLong("native_executor_generation")!=nativeStatus.getLong("native_generation"))
+            throw new IllegalStateException("legacy Whole last Native generation differs");
+    }
     private void installRunHandoff(String nextRunId,String exactLocator)throws Exception{
         if(exactLocator==null){processFence.operationalHandoff(null,null);return;}
         final String locator=EmbeddedDuplexCanonicalJson.encode(EmbeddedDuplexRunSelectionStore.validateRelease(new JSONObject(exactLocator)));
         processFence.operationalHandoff(nextRunId,()->{
             JSONObject expected=new JSONObject(locator);
             java.io.File root=expected.isNull("source_run_id")?applicationContext.getNoBackupFilesDir():runSelection.retained(expected.getString("source_run_id")).root;
-            JSONObject actual=EmbeddedDuplexOriginals.closedWholeHandoff(root,expected.getString("whole_original_id"),applicationContext.getPackageName());
+            JSONObject actual=expected.isNull("source_run_id")
+                ?EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(root,expected.getString("whole_original_id"),applicationContext.getPackageName())
+                :EmbeddedDuplexOriginals.closedWholeHandoff(root,expected.getString("whole_original_id"),applicationContext.getPackageName());
             for(String key:new String[]{"whole_original_id","request_sha256","outcome_sha256","physical_retirement_sha256","prior_native_generation"})
                 if(!EmbeddedDuplexCanonicalJson.sameValue(actual.get(key),expected.get(key)))throw new IllegalStateException("release source changed");
             return actual;

@@ -143,15 +143,59 @@ public final class EmbeddedDuplexOriginals {
     static JSONObject closedWholeWitness(File root,String originalId)throws Exception{return closedWholeHandoff(root,originalId).getJSONObject("physical_retirement");}
     static JSONObject closedWholeHandoff(File root,String originalId)throws Exception{return closedWholeHandoff(root,originalId,null);}
     static JSONObject closedWholeHandoff(File root,String originalId,String packageId)throws Exception{
-        requireId(originalId);EmbeddedDuplexOriginals owner=new EmbeddedDuplexOriginals(root);Record record=owner.find(originalId);
-        if(record==null||!"whole_app_close".equals(record.row.getString("operation"))||record.row.isNull("response")||record.row.isNull("outcome_sha256"))
+        return closedWholeHandoff(root,originalId,packageId,false);
+    }
+    /** Historical transport-v2 Whole only; this read never rewrites, ACKs or restores an actor. */
+    static JSONObject closedLegacyV2WholeHandoff(File root,String originalId,String packageId)throws Exception{
+        return closedWholeHandoff(root,originalId,packageId,true);
+    }
+    private static JSONObject closedWholeHandoff(File root,String originalId,String packageId,boolean legacyV2Whole)throws Exception{
+        requireId(originalId);EmbeddedDuplexOriginals owner=new EmbeddedDuplexOriginals(root);Record record=owner.find(originalId,legacyV2Whole);
+        if(record==null||!"whole_app_close".equals(record.row.getString("operation"))
+            ||!"succeeded".equals(record.row.getString("state"))||!record.row.isNull("failure")
+            ||record.row.isNull("response")||record.row.isNull("outcome_sha256"))
             throw new IllegalStateException("named retained Whole witness unavailable");
         JSONObject response=record.row.getJSONObject("response");
         validateResponse("whole_app_close",record.row.getString("original_challenge"),response);
-        if(!"observed".equals(response.getString("status"))||nativePending("whole_app_close",response))throw new IllegalStateException("retained Whole observation not terminal");
         JSONObject envelope=new JSONObject(response.getString("receipt"));
         JSONObject physical=envelope.has("peer_lifecycle")?envelope.getJSONObject("peer_lifecycle"):envelope;
-        EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(physical);
+        JSONObject validationResponse=response,validationPhysical=physical;
+        if(legacyV2Whole&&"settled".equals(record.row.getString("effect_state"))
+            &&EmbeddedDuplexFreshLifecycle.SCHEMA.equals(physical.getString("$schema"))){
+            // SDK2 required these diagnostic slots. Validate only a transient core view;
+            // the original physical value below remains the hash/join/Native handoff subject.
+            for(String field:new String[]{"authority_clock_read","owner_transport_attempt"})
+                if(!physical.has(field)||!(physical.isNull(field)||physical.get(field) instanceof JSONObject))
+                    throw new IllegalStateException("legacy Whole diagnostic slots differ");
+            if(!physical.isNull("authority_clock_read")){
+                JSONObject clock=physical.getJSONObject("authority_clock_read");
+                if(!keys(clock).equals(Set.of("schema","action","stage","clock_read_grants_authority","attempt_count","maximum_attempts",
+                        "maximum_uncertainty_ns","maximum_wall_monotonic_delta_ms","samples"))
+                    ||!"rusty.quest.embedded_duplex.authority_clock_read.v1".equals(clock.getString("schema"))
+                    ||!Boolean.FALSE.equals(clock.get("clock_read_grants_authority")))
+                    throw new IllegalStateException("legacy clock diagnostic shape differs");
+            }
+            if(!physical.isNull("owner_transport_attempt")){
+                JSONObject attempt=physical.getJSONObject("owner_transport_attempt");
+                if(!keys(attempt).equals(Set.of("schema","qualification_claimed","response_authentication_claimed","strict_parser_status","strict_parser_error","closed_java_fields"))
+                    ||!"rusty.quest.embedded_duplex.owner_transport_attempt_native_read.v1".equals(attempt.getString("schema"))
+                    ||!Boolean.FALSE.equals(attempt.get("qualification_claimed"))||!Boolean.FALSE.equals(attempt.get("response_authentication_claimed"))
+                    ||!Set.of("AVAILABLE","REJECTED","UNAVAILABLE").contains(attempt.getString("strict_parser_status")))
+                    throw new IllegalStateException("legacy transport diagnostic shape differs");
+                if("AVAILABLE".equals(attempt.getString("strict_parser_status"))){
+                    if(!attempt.isNull("strict_parser_error")||!keys(attempt.getJSONObject("closed_java_fields")).equals(Set.of("attempt_sequence","phase","outcome","failure")))
+                        throw new IllegalStateException("legacy transport observation differs");
+                }else if(!attempt.isNull("closed_java_fields")||!(attempt.get("strict_parser_error") instanceof String))
+                    throw new IllegalStateException("legacy transport unavailability differs");
+            }
+            validationPhysical=copy(physical);validationPhysical.remove("authority_clock_read");validationPhysical.remove("owner_transport_attempt");
+            JSONObject validationEnvelope=copy(envelope);
+            if(envelope.has("peer_lifecycle"))validationEnvelope.put("peer_lifecycle",validationPhysical);else validationEnvelope=validationPhysical;
+            validationResponse=copy(response);validationResponse.put("receipt",EmbeddedDuplexCanonicalJson.encode(validationEnvelope));
+        }
+        if(!"observed".equals(response.getString("status"))||nativePending("whole_app_close",validationResponse))
+            throw new IllegalStateException("retained Whole observation not terminal");
+        EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(validationPhysical);
         File file=new File(owner.directory,originalId+".joined.json");
         if(!Files.isRegularFile(file.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(file.toPath())||Files.size(file.toPath())>MAX_RECORD_BYTES)
             throw new IllegalStateException("named Whole join unavailable");
@@ -532,7 +576,9 @@ public final class EmbeddedDuplexOriginals {
         JSONObject out=new JSONObject();for(String key:new String[]{"original_id","operation","request_sha256","original_challenge",
                 "state","effect_state","actor_binding","native_setup_binding","response_sha256","failure"})out.put(key,row.get(key));if (CONTINUATION_RECORD.equals(row.getString("schema"))) out.put("predecessor_binding", row.getJSONObject("predecessor_binding")); return out;
     }
-    private Record find(String originalId)throws Exception {
+    private Record find(String originalId)throws Exception { return find(originalId,false); }
+    private Record find(String originalId,boolean legacyV2Whole)throws Exception {
+        if(legacyV2Whole&&!readOnly)throw new IllegalStateException("legacy Whole reader must be read-only");
         Record current=live.get(originalId);if(current!=null)return current;
         File file=new File(directory,originalId+".json");
         if(Files.exists(new File(file.getPath()+".tmp").toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("original pending publication retained");
@@ -547,8 +593,17 @@ public final class EmbeddedDuplexOriginals {
         if(!keys.equals(expectedFields)||!(RECORD.equals(row.getString("schema")) || continuation)||!originalId.equals(row.getString("original_id"))
                 ||!OPERATIONS.contains(row.getString("operation")))throw new IllegalStateException("original checkpoint closed schema");
         id(row.getString("original_id"));id(row.getString("original_challenge"));hash(row.getString("request_sha256"));
+        boolean sdk2Whole=legacyV2Whole&&RECORD.equals(row.getString("schema"))
+            &&"whole_app_close".equals(row.getString("operation"))&&"succeeded".equals(row.getString("state"))
+            &&"settled".equals(row.getString("effect_state"));
+        if(sdk2Whole){
+            JSONObject request=new JSONObject().put("schema",TRANSPORT).put("method","whole_app_close")
+                .put("challenge",row.getString("original_challenge")).put("extras",new JSONObject());
+            if(!row.getString("request_sha256").equals(EmbeddedDuplexCanonicalJson.sha256(request)))
+                throw new IllegalStateException("legacy Whole transport-v2 request differs");
+        }
         if(!Set.of("registered","pending","unknown","succeeded").contains(row.getString("state"))
-                ||!Set.of("not_entered","entered","uncertain","observed").contains(row.getString("effect_state"))
+                ||!sdk2Whole&&!Set.of("not_entered","entered","uncertain","observed").contains(row.getString("effect_state"))
                 ||!(Set.of("owned","compacted").contains(row.getString("retention"))
                     || FRESH_OPERATIONS.contains(row.getString("operation")) && "acknowledged_join_pending".equals(row.getString("retention"))))throw new IllegalStateException("original checkpoint state");
         if(!row.isNull("response_sha256")&&!row.getString("response_sha256").equals(EmbeddedDuplexCanonicalJson.sha256(row.getJSONObject("response"))))
@@ -569,7 +624,7 @@ public final class EmbeddedDuplexOriginals {
         boolean appRefusal=!row.isNull("response")&&EmbeddedDuplexAppAdmission.isRefusal(row.getJSONObject("response"));
         if(appRefusal)requireAppAdmissionRow(row);
         if (!(state.equals("registered") ? effect.equals("not_entered") : state.equals("pending") ? effect.equals("entered")
-                : state.equals("succeeded") ? effect.equals(appRefusal?"not_entered":"observed") : effect.equals("uncertain")))
+                : state.equals("succeeded") ? effect.equals(sdk2Whole?"settled":appRefusal?"not_entered":"observed") : effect.equals("uncertain")))
             throw new IllegalStateException("Original state join");
         if (row.isNull("response") != row.isNull("response_sha256")
                 || (state.equals("succeeded") && (row.isNull("response") || row.isNull("outcome_sha256") || !row.isNull("failure")))
