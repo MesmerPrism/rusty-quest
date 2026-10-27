@@ -7,7 +7,7 @@ def native_controls(root,out):
  prefix=['wsl.exe','--'] if os.name=='nt' else []
  def linux(path):
   if not prefix:return str(path)
-  return subprocess.check_output(prefix+['wslpath','-a',str(path)],text=True,encoding='utf-8').strip()
+  return subprocess.check_output(prefix+['wslpath','-a',path.as_posix()],text=True,encoding='utf-8').strip()
  def command(name,args):
   r=subprocess.run(prefix+args,capture_output=True,timeout=240)
   (harness/(name+'.stdout')).write_bytes(r.stdout);(harness/(name+'.stderr')).write_bytes(r.stderr)
