@@ -17,6 +17,7 @@ internal object EmbeddedDuplexOperatorContract {
   const val KEY_ORIGINAL_ID = "original_id"
   const val METHOD_STATUS = "status"
   const val METHOD_REVIEW = "review"
+  const val METHOD_REVIEW_POLICY_UPDATE = "review_policy_update"
   const val METHOD_CONFIRM = "confirm"
   const val METHOD_RUNTIME_STATUS = "runtime_status"
   const val METHOD_OWNER_FAILURE_DIAGNOSTIC = "owner_failure_diagnostic"
@@ -46,7 +47,7 @@ internal object EmbeddedDuplexOperatorContract {
   private val reviewKeys = setOf(KEY_ROLE, KEY_REMOTE_KEY, KEY_RUNTIME_HOST,
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
-  enum class Route { NEW_RUN, RESUME_RUN, RUN_STATUS, RECOVER_COLD_PENDING, STATUS, REVIEW, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER, BOOTSTRAP_ADMISSION_STATUS,
+  enum class Route { NEW_RUN, RESUME_RUN, RUN_STATUS, RECOVER_COLD_PENDING, STATUS, REVIEW, REVIEW_POLICY_UPDATE, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER, BOOTSTRAP_ADMISSION_STATUS,
     CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, ORDINARY_START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK,
     FRESH_PAIR_CONTINUE, PREPARE_PEER_START, PREPARED_PEER_START_STATUS, REESTABLISH_PEER_ROOTS, PEER_ROOT_STATUS,
     OPERATION_STOP, OPERATION_JOIN_STATUS, OPERATION_CONTINUATION_STATUS, OPERATION_CONTINUATION_HANDOFF, PAIR_SETUP_RECOVERY_STATUS }
@@ -69,6 +70,14 @@ internal object EmbeddedDuplexOperatorContract {
       val legacyWholeOriginalId: String? = null,
       val priorRunId: String? = null,
   )
+
+  /** Typed output of the actual source-owned metadata review; it grants no authority. */
+  fun policyReviewReceipt(review: io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexEnrollmentReview): String =
+    io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexCanonicalJson.encode(
+      org.json.JSONObject().put("\$schema", "rusty.quest.embedded_duplex.enrollment_policy_review.v1")
+        .put("policy", requireNotNull(io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexSetupCredentials.developmentPolicy()))
+        .put("prior_revision", review.priorRevision).put("prior_record_sha256", review.priorRecordSha256)
+        .put("max_token_ttl_ms", review.proposedMaxTokenTtlMs).put("review_sha256", review.reviewSha256))
 
   fun callerIsShell(uid: Int): Boolean = uid == Process.SHELL_UID
 
@@ -106,7 +115,7 @@ internal object EmbeddedDuplexOperatorContract {
       return Request(if(method == "new_run") Route.NEW_RUN else Route.RESUME_RUN, argument, runId=run, legacyWholeOriginalId=legacy)
     }
     if(fields.containsKey(KEY_RUN_ID)) {
-      require(method !in setOf(METHOD_STATUS,METHOD_REVIEW,METHOD_CONFIRM)) { "persistent-identity-route-is-not-run-scoped" }
+      require(method !in setOf(METHOD_STATUS,METHOD_REVIEW,METHOD_REVIEW_POLICY_UPDATE,METHOD_CONFIRM)) { "persistent-identity-route-is-not-run-scoped" }
       val run = fields[KEY_RUN_ID] as? String
       require(run != null && nonce.matches(run)) { "operator-run-id-invalid" }
       return parseFields(method, argument, fields - KEY_RUN_ID).copy(runId=run)
@@ -173,6 +182,7 @@ internal object EmbeddedDuplexOperatorContract {
     val route = when (method) {
       METHOD_STATUS -> Route.STATUS
       METHOD_REVIEW -> Route.REVIEW
+      METHOD_REVIEW_POLICY_UPDATE -> Route.REVIEW_POLICY_UPDATE
       METHOD_CONFIRM -> Route.CONFIRM
       METHOD_RUNTIME_STATUS -> Route.RUNTIME_STATUS
       METHOD_OWNER_FAILURE_DIAGNOSTIC -> Route.OWNER_FAILURE_DIAGNOSTIC
@@ -205,6 +215,7 @@ internal object EmbeddedDuplexOperatorContract {
       Route.OPERATION_QUERY, Route.OPERATION_ACK, Route.ORDINARY_START -> throw IllegalArgumentException("operator-original-route-invalid")
       Route.STATUS -> setOf(KEY_ROLE)
       Route.REVIEW -> reviewKeys
+      Route.REVIEW_POLICY_UPDATE -> emptySet()
       Route.CONFIRM -> setOf(KEY_REVIEW_SHA)
       Route.RUNTIME_STATUS, Route.BOOTSTRAP_REAL_PEER, Route.BOOTSTRAP_ADMISSION_STATUS, Route.CLOSE_NO_MEDIA,
       Route.PAIR_STATUS, Route.PAIR_SESSION, Route.START_PREFLIGHT, Route.CONCURRENT_ARM, Route.CONCURRENT_STATUS, Route.OWNER_FAILURE_DIAGNOSTIC, Route.OWN_CAPTURE_DIAGNOSTIC, Route.STREAM_DROPOUT_DIAGNOSTIC, Route.POLICY_READ, Route.BLEND_READ, Route.START, Route.RENEW_AUTHORITY, Route.PEER_STOP, Route.PEER_REVOKE, Route.PEER_STATUS, Route.WHOLE_APP_CLOSE -> emptySet()
@@ -234,6 +245,7 @@ internal object EmbeddedDuplexOperatorContract {
         route == Route.CLOSE_NO_MEDIA || route == Route.PAIR_STATUS ||
         route == Route.PAIR_SESSION || route == Route.START_PREFLIGHT)
       return Request(route, argument)
+    if (route == Route.REVIEW_POLICY_UPDATE) return Request(route, argument)
     if (route == Route.CONFIRM) {
       val digest = fields[KEY_REVIEW_SHA] as? String
       require(digest != null && sha.matches(digest)) { "operator-review-digest-invalid" }
@@ -252,7 +264,7 @@ internal object EmbeddedDuplexOperatorContract {
     }
     val remoteKey = fields[KEY_REMOTE_KEY] as? String
     val ttl = fields[KEY_TTL] as? Long
-    require(remoteKey != null && key.matches(remoteKey) && ttl != null && ttl in 1L..86_400_000L) {
+    require(remoteKey != null && key.matches(remoteKey) && ttl != null && ttl in 1L..io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexSetupCredentials.selectedHorizon(86_400_000L)) {
       "operator-peer-or-ttl-invalid"
     }
     return Request(route, argument, roleId = role,

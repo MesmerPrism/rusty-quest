@@ -10,6 +10,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EmbeddedDuplexOperatorContractTest {
+  @Test fun policyMetadataReviewIsExplicitPersistentAndAcceptsNoCallerFields() {
+    val challenge = "a".repeat(32)
+    val request = EmbeddedDuplexOperatorContract.parseFields("review_policy_update", challenge, emptyMap())
+    assertEquals(EmbeddedDuplexOperatorContract.Route.REVIEW_POLICY_UPDATE, request.route)
+    for (fields in listOf(mapOf("max_token_ttl_ms" to 2_592_000_000L), mapOf("role_id" to "peer_a"),
+        mapOf("run_id" to "b".repeat(32)), mapOf("original_id" to "b".repeat(32)))) {
+      assertThrows(IllegalArgumentException::class.java) {
+        EmbeddedDuplexOperatorContract.parseFields("review_policy_update", challenge, fields)
+      }
+    }
+  }
+
   private val nonce = "0123456789abcdef0123456789abcdef"
   @Test fun explicitRunCallsAreClosedAndRetainActualOperation() {
     val run="b".repeat(32); val original="c".repeat(32)

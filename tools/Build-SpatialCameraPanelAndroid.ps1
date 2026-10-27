@@ -43,7 +43,8 @@ param(
     [string]$PrivateFeatureAssetDir = "",
     [string]$PrivateFeatureResourceDir = "",
     [string]$EmbeddedDuplexProductInputRoot = "",
-    [ValidateRange(300000,3600000)][ValidateScript({ $_ % 60000 -eq 0 })][long]$EmbeddedDuplexSetupHorizonMs = 300000,
+    [ValidateRange(300000,9223372036854775807)][ValidateScript({ $_ % 60000 -eq 0 })][long]$EmbeddedDuplexSetupHorizonMs = 300000,
+    [ValidateSet("finite", "development-v1",IgnoreCase=$false)][string]$EmbeddedDuplexLifetimePolicy = "finite",
     [ValidateScript({ $_ -cin @("finite", "ongoing-v2") })][string]$EmbeddedDuplexMediaPolicy = "finite",
     [ValidateScript({ $_ -cin @("none", "source-bound-v2") })][string]$EmbeddedDuplexFreshSetupPolicy = "none",
     [string]$EmbeddedDuplexFreshEnrollmentSelectionPath = "",
@@ -1292,7 +1293,9 @@ if (-not [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
         -PrivateSourceRoot $resolvedPrivateFeatureSourceDir -Variant $buildTypeLower -PythonPath $PythonPath
 }
 $androidComponentInputs = Get-AndroidComponentInputSummary -Selection $androidComponentSelection
-$freshBuildSelection=Resolve-EmbeddedDuplexFreshSetupBuildSelection -Selection $EmbeddedDuplexFreshSetupPolicy -MediaPolicy $EmbeddedDuplexMediaPolicy `
+$developmentLifetime=Resolve-EmbeddedDuplexDevelopmentLifetime -Selection $EmbeddedDuplexLifetimePolicy -SourceComposition $sourceComposition -FiniteHorizonMs $EmbeddedDuplexSetupHorizonMs
+$EmbeddedDuplexSetupHorizonMs=[long]$developmentLifetime.horizon_ms
+$freshBuildSelection=Resolve-EmbeddedDuplexFreshSetupBuildSelection -Selection $EmbeddedDuplexFreshSetupPolicy -DevelopmentLifetimePolicy $developmentLifetime.policy -MediaPolicy $EmbeddedDuplexMediaPolicy `
     -ValidatedProductInputs $embeddedDuplexProductInputs -EnrollmentSelectionPath $EmbeddedDuplexFreshEnrollmentSelectionPath `
     -ExpectedEnrollmentSelectionSha256 $ExpectedEmbeddedDuplexFreshEnrollmentSelectionSha256
 $freshDescriptor=[ordered]@{};Set-EmbeddedDuplexFreshSetupPolicyDescriptor $freshDescriptor $freshBuildSelection
@@ -1343,6 +1346,7 @@ Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
 $sourceVersionMetadata=New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) -Enabled:$UseSourceCompositionVersionName
 $buildInputDescriptor = [ordered]@{
     android_components = $androidComponentInputs
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
     embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.spatial_camera_panel.build_input_lock.v1"
     source_commit = $sourceHead
@@ -1467,6 +1471,7 @@ $nativeIdentityDescriptor = [ordered]@{
     distortion_speed_scale = $resolvedDistortionSpeedScale
     environment_depth_owner = $EnvironmentDepthOwner
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
     embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
@@ -1517,6 +1522,7 @@ $shellIdentityDescriptor = [ordered]@{
     private_assets_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_assets) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_assets.sha256 }
     private_resources_sha256 = if ($null -eq $buildInputDescriptor.packaged_inputs.private_resources) { "" } else { [string]$buildInputDescriptor.packaged_inputs.private_resources.sha256 }
     embedded_duplex_product_input_closure_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.closure_sha256 })
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
     embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
@@ -1772,6 +1778,8 @@ function Invoke-SpatialGradlePhase {
         $env:RUSTY_QUEST_ANDROID_NDK_VERSION = Split-Path -Leaf $NdkHome
         $env:JAVA_HOME = $JavaHome
         $env:GRADLE_USER_HOME = $gradleUserHome
+        $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_LIFETIME_POLICY = $EmbeddedDuplexLifetimePolicy
+        $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_BASE64 = $developmentLifetime.policy_base64
         $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS = $EmbeddedDuplexSetupHorizonMs.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY = $EmbeddedDuplexMediaPolicy
     $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY = $EmbeddedDuplexFreshSetupPolicy
@@ -2100,6 +2108,7 @@ foreach ($name in @('RUSTY_QUEST_SPATIAL_CAMERA_PANEL_SOURCE_BANK_VERTEX_SHADER'
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_SLOTS',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_BYTES',
         'RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OWN_POOL_GPU_USES',
+        'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_LIFETIME_POLICY',
         'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY',
         'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY',
         'RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256',
@@ -2140,6 +2149,7 @@ try {
     }
     $env:RUSTY_QUEST_SPATIAL_LOCKED_FINAL_PRESENTATION = $lockedFinalPresentationEnabled.ToString().ToLowerInvariant()
     $env:RUSTY_QUEST_SPATIAL_DISTORTION_SPEED_SCALE = $resolvedDistortionSpeedScale.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_LIFETIME_POLICY=$EmbeddedDuplexLifetimePolicy
     $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_MEDIA_POLICY=$EmbeddedDuplexMediaPolicy
     $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY=$EmbeddedDuplexFreshSetupPolicy
     $env:RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256=$(if($null-eq$freshBuildSelection){''}else{$freshBuildSelection.policy_sha256})
@@ -2599,6 +2609,7 @@ $apkInspection = [ordered]@{
     app_owned_rust_native_receipt_count = $nativeReceiptPayloadEntries.Count
     embedded_media_additional_native_payload_count = $unexpectedEmbeddedMediaNativePayload.Count
     embedded_media_rust_linkage = "statically-linked-once-in-spatial-camera-panel-native-receipt"
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
     embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_inputs = [ordered]@{
         configured = ($null -ne $embeddedDuplexProductInputs)
@@ -2723,6 +2734,7 @@ $manifest = [ordered]@{
         native_payload_count = 0
         rust_linkage = [string]$embeddedMediaArtifactInspection.rust_linkage
     }
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
     embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     embedded_duplex_product_inputs = [ordered]@{
         configured = ($null -ne $embeddedDuplexProductInputs)
@@ -3355,6 +3367,7 @@ if (-not [string]::IsNullOrWhiteSpace($ArtifactOutputParent)) { $manifest['artif
 [void](Set-TextFileIfChanged -Path $manifestPath -Value ($manifest | ConvertTo-Json -Depth 12))
 
 $runCapsule = [ordered]@{
+    embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
     embedded_duplex_setup_horizon_ms = $EmbeddedDuplexSetupHorizonMs
     schema = "rusty.quest.apk_run_capsule.v1"
     capsule_id = "spatial-$($resolvedAppId.Replace('.', '-'))-$($buildInputFingerprint.Substring(0, 12))"

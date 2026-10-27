@@ -31,7 +31,7 @@ public final class EmbeddedDuplexEnrollment {
                 || !dotted(runtimeHostId) || !runtimeHostId.startsWith("host.")
                 || !dotted(trustedOperatorId) || !dotted(adapterId)
                 || !dotted(mediaRevokerId) || !dotted(admissionAuthorityId)
-                || maxTokenTtlMs <= 0L || maxTokenTtlMs > 24L * 60L * 60L * 1000L
+                || maxTokenTtlMs <= 0L || maxTokenTtlMs > (localFixture ? 24L * 60L * 60L * 1000L : EmbeddedDuplexSetupCredentials.selectedHorizon(24L * 60L * 60L * 1000L))
                 || revision <= 0L || recordSha256 == null || !recordSha256.matches("[0-9a-f]{64}")) {
             throw new IllegalArgumentException("private enrollment binding");
         }

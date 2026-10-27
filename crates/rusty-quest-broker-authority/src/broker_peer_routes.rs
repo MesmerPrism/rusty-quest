@@ -390,7 +390,12 @@ impl QuestBrokerRuntimeProvider {
             ))?)
             .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
         let expires_at_ms = now_ms
-            .checked_add(180_000)
+            .checked_add(
+                rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                    peer.development_lifetime_policy(),
+                    180_000,
+                ),
+            )
             .ok_or_else(rejected)?
             .min(media.expires_at_ms)
             .min(lease.expires_at_ms)

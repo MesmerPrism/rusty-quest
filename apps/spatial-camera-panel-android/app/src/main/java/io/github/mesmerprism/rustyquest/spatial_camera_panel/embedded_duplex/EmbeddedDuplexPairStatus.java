@@ -8,6 +8,8 @@ public final class EmbeddedDuplexPairStatus {
     public final String exactNativeObservation;
     public final JSONObject historicalFailureCause;
     public final JSONObject freshSetupObservation;
+    /** Optional elapsed-estimate observation; never session or cleanup authority. */
+    public final Boolean ceremonyWaitWarning;
     public final String state;
     public final String sessionId;
     public final boolean localSessionCurrent;
@@ -26,7 +28,8 @@ public final class EmbeddedDuplexPairStatus {
     private EmbeddedDuplexPairStatus(String state, String sessionId, boolean localCurrent,
             boolean remoteCurrent, long expiresAtMs, String lastStep, String lastFailureCode,
             String localReason, String remoteReason, long localValidatedAtMs, long remoteValidatedAtMs,
-            boolean freshPolicy,String exactNative,JSONObject cause,JSONObject freshObservation) {
+            boolean freshPolicy,String exactNative,JSONObject cause,JSONObject freshObservation,
+            Boolean ceremonyWaitWarning) {
         if (!("not_started".equals(state) || "in_progress".equals(state)
                 || "cleanup_pending".equals(state)
                 || "peer_session_current_route_unverified".equals(state))
@@ -38,6 +41,7 @@ public final class EmbeddedDuplexPairStatus {
         }
         this.selectedFreshPolicy=freshPolicy;this.exactNativeObservation=exactNative;
         this.historicalFailureCause=cause;this.freshSetupObservation=freshObservation;
+        this.ceremonyWaitWarning = ceremonyWaitWarning;
         this.state = state;
         this.sessionId = sessionId;
         this.localSessionCurrent = localCurrent;
@@ -120,6 +124,12 @@ public final class EmbeddedDuplexPairStatus {
         }
         return requireFreshStatusV1(value);
     }
+    private static Boolean waitWarning(JSONObject value) throws Exception {
+        if (!value.has("ceremony_wait_warning")) return null;
+        Object warning = value.get("ceremony_wait_warning");
+        if (!(warning instanceof Boolean)) throw new IllegalArgumentException("pair wait warning Boolean");
+        return (Boolean) warning;
+    }
     private static JSONObject requireFreshStatusV1(JSONObject value)throws Exception{
         keys(value,"$schema","state","request_id","session_id","reservation","failure","local_setup","remote_setup",
             "local_current","remote_current","final_local_current","prior_pair","eligibility","completed_setups");
@@ -147,9 +157,15 @@ public final class EmbeddedDuplexPairStatus {
         boolean freshResultV2="rusty.quest.embedded_duplex.fresh_pair_setup_result.v2".equals(schema);
         boolean freshResult=freshResultV2 || "rusty.quest.embedded_duplex.fresh_pair_setup_result.v1".equals(schema);
         JSONObject cause=null,freshObservation=null;
+        Boolean ceremonyWaitWarning = waitWarning(value);
         if(freshPolicy){
-            keys(value,"$schema","state","session_id","native_current_session","last_step","last_failure_code",
-                "route_current","media_effect_proven","renewal","last_failure_cause","fresh_setup");
+            String[] fields = {"$schema","state","session_id","native_current_session","last_step","last_failure_code",
+                "route_current","media_effect_proven","renewal","last_failure_cause","fresh_setup"};
+            if (value.has("ceremony_wait_warning")) {
+                fields = java.util.Arrays.copyOf(fields, fields.length + 1);
+                fields[fields.length - 1] = "ceremony_wait_warning";
+            }
+            keys(value, fields);
             freshObservation=requireFreshStatus(value.getJSONObject("fresh_setup"));
             if(!value.isNull("last_failure_cause"))cause=new EmbeddedDuplexNativeOperationFailure(value.getJSONObject("last_failure_cause").toString()).validatedFailure();
         }else if(freshResult){
@@ -191,7 +207,8 @@ public final class EmbeddedDuplexPairStatus {
         return new EmbeddedDuplexPairStatus(value.getString("state"), session,
                 current, remoteCurrent, expires, lastStep, lastFailureCode,
                 rejectionReason(local, session), rejectionReason(remote, session),
-                validatedAt(local), validatedAt(remote),freshPolicy || freshResult,nativeJson,cause,freshObservation);
+                validatedAt(local), validatedAt(remote),freshPolicy || freshResult,nativeJson,cause,freshObservation,
+                ceremonyWaitWarning);
     }
 
 
@@ -220,11 +237,11 @@ public final class EmbeddedDuplexPairStatus {
         String lastFailureCode = value.has("last_failure_code") && !value.isNull("last_failure_code")
                 ? value.getString("last_failure_code") : null;
         return new EmbeddedDuplexPairStatus(value.getString("state"), session,
-                current, remoteCurrent, expires, lastStep, lastFailureCode);
+                current, remoteCurrent, expires, lastStep, lastFailureCode, waitWarning(value));
     }
     private EmbeddedDuplexPairStatus(String state,String sessionId,boolean localCurrent,boolean remoteCurrent,
-            long expiresAtMs,String lastStep,String lastFailureCode) {
-        this(state,sessionId,localCurrent,remoteCurrent,expiresAtMs,lastStep,lastFailureCode,null,null,0L,0L,false,null,null,null);
+            long expiresAtMs,String lastStep,String lastFailureCode,Boolean ceremonyWaitWarning) {
+        this(state,sessionId,localCurrent,remoteCurrent,expiresAtMs,lastStep,lastFailureCode,null,null,0L,0L,false,null,null,null,ceremonyWaitWarning);
     }
     static EmbeddedDuplexPairStatus parse(String nativeJson) throws Exception {
         String schema=new JSONObject(nativeJson).getString("$schema");

@@ -241,8 +241,11 @@ fn observe(host: &Host, id: &str) -> Result<Observation, String> {
         None
     };
     if let Some(actual) = &receipt {
-        rusty_manifold_peer_runtime_host::validate_fresh_pair_setup_receipt(actual)
-            .map_err(|_| "actual retained phase receipt invalid")?;
+        rusty_manifold_peer_runtime_host::validate_fresh_pair_setup_receipt_with_lifetime_policy(
+            actual,
+            host.development_lifetime_policy.as_ref(),
+        )
+        .map_err(|_| "actual retained phase receipt invalid")?;
         let a = a
             .as_ref()
             .ok_or("actual phase receipt lacks native Attempt")?;
@@ -334,8 +337,11 @@ fn validate_observation(
     }
     canonical(&value.phase_request_id)?;
     if let Some(receipt) = &value.receipt {
-        rusty_manifold_peer_runtime_host::validate_fresh_pair_setup_receipt(receipt)
-            .map_err(|_| "signed retained phase receipt invalid")?;
+        rusty_manifold_peer_runtime_host::validate_fresh_pair_setup_receipt_with_lifetime_policy(
+            receipt,
+            host.development_lifetime_policy.as_ref(),
+        )
+        .map_err(|_| "signed retained phase receipt invalid")?;
         if receipt.request.context.native_phase_id.as_str() != value.phase_request_id
             || receipt.request.context.native_setup_request_id.as_str() != value.native_request_id
             || receipt.local_peer_id.as_str() != peer

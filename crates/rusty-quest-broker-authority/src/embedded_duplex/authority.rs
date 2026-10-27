@@ -175,7 +175,8 @@ pub struct QuestEmbeddedDuplexAuthorityConfig {
 impl QuestEmbeddedDuplexAuthorityConfig {
     /// Validates exact canonical sets and required trust roots.
     pub(crate) fn validate(&self) -> bool {
-        self.schema_id == QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA
+        matches!(self.schema_id.as_str(), QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA
+            | QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA)
             && self.fresh_setup_local_peer_id.is_some()==self.fresh_setup_enrollment_selection.is_some()
             && self.fresh_setup_local_peer_id.as_ref().map_or(true, |id|
                 self.fresh_setup_enrollment_selection.as_ref().is_some_and(|selection|selection.keys.iter().any(|key|&key.peer_id==id)) && self.ongoing_media_policy.as_ref()==Some(&rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2()))
@@ -192,7 +193,21 @@ impl QuestEmbeddedDuplexAuthorityConfig {
             && canonical_set(&self.trusted_adapter_ids)
             && canonical_set(&self.trusted_media_revoker_ids)
     }
+
+    pub(crate) fn require_lifetime_policy_selection(
+        &self,
+        policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> bool {
+        self.validate()
+            && (self.schema_id == QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA)
+                == policy.is_some()
+            && policy.map_or(true, |value| value.is_source_owned_v1())
+    }
 }
+
+/// Selected config retains the legacy field shape and requires trusted constructor policy.
+pub const QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA: &str =
+    "rusty.quest.embedded_duplex.development_authority_config.v1";
 
 /// Product-selected portions of a common-LAN context. Authority revisions are
 /// always read from the current durable Runtime Host.
@@ -1474,14 +1489,12 @@ impl QuestEmbeddedDuplexAuthority {
             *peer = restored;
             return Ok(receipt);
         }
-        let (restored, receipt) =
-            ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
-                snapshot_json,
-                &expected_trust,
-                &expected_epoch,
-                &broker,
-            )
-            .map_err(host_error)?;
+        let (restored, receipt) = match peer.development_lifetime_policy() {
+            Some(policy) => ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime_and_lifetime_policy(
+                snapshot_json, &expected_trust, &expected_epoch, &broker, policy),
+            None => ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
+                snapshot_json, &expected_trust, &expected_epoch, &broker),
+        }.map_err(host_error)?;
         *peer = restored;
         Ok(receipt)
     }
@@ -1628,7 +1641,23 @@ impl QuestOwnerDispatchAuthorityVerifier {
     }
 }
 
+impl QuestOwnerDispatchAuthorityVerifier {
+    fn selected_authentication_validity_ms(&self) -> Result<u64, String> {
+        let peer = read_peer(&self.authority.peer)?;
+        Ok(
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                peer.development_lifetime_policy(),
+                MAX_OWNER_DISPATCH_REQUEST_AGE_MS,
+            ),
+        )
+    }
+}
+
 impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        self.selected_authentication_validity_ms()
+    }
+
     fn verify_current(
         &self,
         request: &OwnerDispatchRequest,
@@ -1638,7 +1667,8 @@ impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
         let now_ms = self.clock.now_ms()?;
         if now_ms == 0
             || request.issued_at_ms > now_ms.saturating_add(MAX_OWNER_DISPATCH_FUTURE_SKEW_MS)
-            || now_ms.saturating_sub(request.issued_at_ms) > MAX_OWNER_DISPATCH_REQUEST_AGE_MS
+            || now_ms.saturating_sub(request.issued_at_ms)
+                > self.selected_authentication_validity_ms()?
         {
             return Err("owner dispatch request is not currently fresh".to_owned());
         }
@@ -1656,6 +1686,10 @@ impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
 }
 
 impl ProductActivationAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        self.selected_authentication_validity_ms()
+    }
+
     fn verify_activation(
         &self,
         request: &ProductActivationRequest,

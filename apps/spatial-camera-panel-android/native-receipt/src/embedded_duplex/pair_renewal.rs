@@ -98,7 +98,8 @@ fn current_decision(current: &Value, session: &str) -> Result<String, String> {
 fn require_cycle(host: &Host, id: &str) -> Result<(), String> {
     let current = state(host)?;
     if current.renewal.id.as_deref() != Some(id)
-        || current.renewal.deadline_ms <= host.clock.now_ms()?
+        || (host.development_lifetime_policy.is_none()
+            && current.renewal.deadline_ms <= host.clock.now_ms()?)
     {
         return Err("renewal cycle unavailable or expired; original pair retained".into());
     }
@@ -127,11 +128,11 @@ fn prepare_renewal(
         .ok_or("current renewal expiry absent")?;
     let expiry = if phase == CREDENTIAL {
         old_expiry.min(
-            now.checked_add(FRAME_TTL_MS - ISSUE_BACKDATE_MS)
+            now.checked_add(host.lifetime_horizon(FRAME_TTL_MS) - ISSUE_BACKDATE_MS)
                 .ok_or("renewal time overflow")?,
         )
     } else {
-        now.checked_add(CONTEXT_TTL_MS - ISSUE_BACKDATE_MS)
+        now.checked_add(host.lifetime_horizon(CONTEXT_TTL_MS) - ISSUE_BACKDATE_MS)
             .ok_or("renewal time overflow")?
     };
     if expiry <= now {
@@ -296,9 +297,9 @@ fn validate_receipt(
         now,
         expiry,
         if phase == CREDENTIAL {
-            PAIR_CREDENTIAL_TTL_MS
+            host.lifetime_horizon(PAIR_CREDENTIAL_TTL_MS)
         } else {
-            CONTEXT_TTL_MS
+            host.lifetime_horizon(CONTEXT_TTL_MS)
         },
         if remote { ISSUE_BACKDATE_MS } else { 0 },
     )?;

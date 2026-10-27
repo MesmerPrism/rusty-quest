@@ -165,6 +165,8 @@ impl CurrentOwnerProjectionSource for ConfiguredProjectionSource {
 
 #[derive(Clone)]
 struct Host {
+    development_lifetime_policy:
+        Option<rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
     capability: Arc<NativeCapability>,
     provider: Arc<Mutex<Option<QuestBrokerRuntimeProvider>>>,
     server: Arc<Mutex<Option<DispatchServer>>>,
@@ -195,6 +197,12 @@ struct Host {
 }
 
 impl Host {
+    fn lifetime_horizon(&self, finite_ms: u64) -> u64 {
+        rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+            self.development_lifetime_policy.as_ref(),
+            finite_ms,
+        )
+    }
     fn current_grant_id(&self) -> Result<String, String> {
         self.route_grant_id
             .lock()
@@ -1484,7 +1492,7 @@ fn build_host(
             .ok_or("constructor provider checked out")?;
         let status = if let Some(held) = &partial {
             held.enter_provider()?;
-            provider.initialize_retaining_construction(
+            provider.initialize_retaining_construction_with_lifetime_policy(
                 &config_json,
                 &expected_sha,
                 &entropy,
@@ -1494,14 +1502,26 @@ fn build_host(
                     .broker
                     .lock()
                     .map_err(|_| "construction Broker custody poisoned")?,
+                config
+                    .embedded_duplex
+                    .as_ref()
+                    .map(super::development_lifetime_policy::for_config)
+                    .transpose()?
+                    .flatten(),
             )
         } else {
-            provider.initialize(
+            provider.initialize_with_lifetime_policy(
                 &config_json,
                 &expected_sha,
                 &entropy,
                 i64::try_from(clock.now_ms()?).map_err(|_| "authority clock overflow")?,
                 monotonic_ns()?,
+                config
+                    .embedded_duplex
+                    .as_ref()
+                    .map(super::development_lifetime_policy::for_config)
+                    .transpose()?
+                    .flatten(),
             )
         }
         .map_err(|error| provider_initialization_reason(&error))?;
@@ -1671,6 +1691,13 @@ fn build_host(
     // of that retention arena while final capability/publication can still fail.
     Ok((
         Host {
+            development_lifetime_policy: config
+                .embedded_duplex
+                .as_ref()
+                .map(super::development_lifetime_policy::for_config)
+                .transpose()?
+                .flatten()
+                .cloned(),
             capability,
             provider: provider_slot.clone(),
             server: server_slot,
@@ -2139,7 +2166,9 @@ fn complete_start(host: &Host, input: &str) -> Result<String, String> {
             schema_id: PRODUCT_ACTIVATION_REQUEST_SCHEMA.to_owned(),
             activation_id: pending.activation_id.clone(),
             issued_at_ms: now,
-            expires_at_ms: authority.expires_at_ms.min(now.saturating_add(30_000)),
+            expires_at_ms: authority
+                .expires_at_ms
+                .min(now.saturating_add(host.lifetime_horizon(30_000))),
             target_peer_id: host.remote_peer_id.clone(),
             authority,
             proof: proof.clone(),
@@ -2189,14 +2218,15 @@ fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String>
         &live.enrolled,
         &context,
         CommonLanSigningPolicy {
+            development_lifetime_policy: host.development_lifetime_policy.as_ref(),
             local_peer_id: &host.local_peer_id,
             trust_policy_id: &live.trust_policy_id,
             trust_policy_revision: live.trust_policy_revision,
             network_scope_id: &host.packaged_route.network_scope_id,
             now_ms: now,
-            max_context_age_ms: 30_000,
+            max_context_age_ms: host.lifetime_horizon(30_000),
             max_future_skew_ms: 0,
-            max_context_ttl_ms: 240_000,
+            max_context_ttl_ms: host.lifetime_horizon(240_000),
         },
     )?;
     // Snapshot and route are owned local values. No host, provider, peer, or
@@ -3663,7 +3693,10 @@ fn constructor_configuration_binding(
     let Some(duplex) = config.embedded_duplex.as_ref() else {
         return Ok(None);
     };
-    let Some(projection) = duplex.fresh_setup_build_policy_projection()? else {
+    let Some(projection) = duplex.fresh_setup_build_policy_projection_with_lifetime_policy(
+        super::development_lifetime_policy::for_config(duplex)?,
+    )?
+    else {
         return Ok(None);
     };
     if duplex

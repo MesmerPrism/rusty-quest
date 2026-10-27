@@ -603,7 +603,12 @@ impl QuestBrokerRuntimeProvider {
                 .admission_snapshot()
                 .root_renewal_horizon_ms(&grant.grant_id);
             let expiry = now_ms
-                .checked_add(5_000)
+                .checked_add(
+                    rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                        broker.development_lifetime_policy(),
+                        5_000,
+                    ),
+                )
                 .ok_or_else(rejected)?
                 .min(grant.expires_at_ms)
                 .min(lease.expires_at_ms)

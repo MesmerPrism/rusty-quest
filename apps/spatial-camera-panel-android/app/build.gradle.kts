@@ -5,12 +5,27 @@ plugins {
   alias(libs.plugins.compose.compiler)
 }
 
-// Explicit artifact-bound finite setup policy; existing unselected builds keep five minutes.
+// One semantic policy is resolved from the selected Manifold source dependency.
+// Values stay Long through BuildConfig; development horizons exceed signed32.
+val embeddedDuplexDevelopmentLifetimeJson = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_BASE64")
+  .orElse("").map { encoded -> if (encoded.isEmpty()) "" else String(java.util.Base64.getDecoder().decode(encoded), Charsets.UTF_8) }
+val embeddedDuplexDevelopmentHorizonMs = embeddedDuplexDevelopmentLifetimeJson.map { raw ->
+  if (raw.isEmpty()) 0L else {
+    val policy = groovy.json.JsonSlurper().parseText(raw) as Map<*, *>
+    require(policy.keys == setOf("$" + "schema", "policy_id", "delegated_authority_horizon_ms") &&
+      policy["$" + "schema"] == "rusty.manifold.development.lifetime_policy.v1" &&
+      policy["policy_id"] == "policy.manifold.development-lifetime.v1") { "Invalid development lifetime policy" }
+    val value = policy["delegated_authority_horizon_ms"].toString().toLong()
+    require(value > 3_600_000L && value % 60_000L == 0L) { "Invalid development authority horizon" }
+    value
+  }
+}
 val embeddedDuplexSetupHorizonMs = providers.environmentVariable("RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_SETUP_HORIZON_MS")
   .orElse("300000").map { raw ->
     require(raw.matches(Regex("[0-9]+"))) { "Invalid embedded duplex setup horizon" }
     val value = raw.toLongOrNull() ?: error("Embedded duplex setup horizon overflow")
-    require(value in 300_000L..3_600_000L && value % 60_000L == 0L) { "Embedded duplex setup horizon must be whole minutes in 300000..3600000 ms" }
+    val selected = embeddedDuplexDevelopmentHorizonMs.get()
+    require(value % 60_000L == 0L && (if (selected == 0L) value in 300_000L..3_600_000L else value == selected)) { "Embedded duplex setup horizon differs from selected source policy" }
     value
   }
 
@@ -303,6 +318,7 @@ android {
 
   defaultConfig {
     applicationId = spatialApplicationId.get()
+    buildConfigField("String", "EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_JSON", buildConfigString(embeddedDuplexDevelopmentLifetimeJson.get()))
     buildConfigField("long", "EMBEDDED_DUPLEX_SETUP_HORIZON_MS", "${embeddedDuplexSetupHorizonMs.get()}L")
     buildConfigField("String", "EMBEDDED_DUPLEX_MEDIA_POLICY", "\"${embeddedDuplexMediaPolicy.get()}\"")
     buildConfigField("String", "EMBEDDED_DUPLEX_FRESH_SETUP_POLICY", buildConfigString(embeddedDuplexFreshInputs.get()))
