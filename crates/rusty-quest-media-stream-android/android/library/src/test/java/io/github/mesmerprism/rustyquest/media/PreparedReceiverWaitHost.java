@@ -1,0 +1,117 @@
+package io.github.mesmerprism.rustyquest.media;
+
+import android.os.HandlerThread;
+import android.view.Surface;
+import java.lang.reflect.Field;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+
+/** Complete production receiver; Android SDK fields are explicit host resource models. */
+public final class PreparedReceiverWaitHost {
+    private static final class Call {
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        volatile boolean interrupted;
+        final Thread thread;
+        Call(Checked body) {
+            thread = new Thread(() -> {
+                try { body.run(); } catch (Throwable actual) { failure.set(actual); }
+                finally { interrupted = Thread.currentThread().isInterrupted(); }
+            }, "prepared-receiver-caller");
+            thread.setDaemon(true); thread.start();
+        }
+        void done() throws Exception { thread.join(2000); require(!thread.isAlive(), "caller did not finish"); }
+    }
+    private interface Checked { void run() throws Exception; }
+    private static PackedStereoMediaReceiver receiver(boolean prepared) throws Exception {
+        PackedStereoMediaReceiver r = new PackedStereoMediaReceiver(new Surface(), "127.0.0.1", 12345, 7,
+                new PackedStereoMediaReceiver.Bounds(4096, 65536, 64, 64, 2, 100, 100, 100, 60, 60, 0, 0), null);
+        set(r, "preparedMode", prepared); set(r, "state", "receiver_armed");
+        set(r, "connectionState", "listening"); set(r, "ready", new CountDownLatch(1));
+        return r;
+    }
+    private static Field field(String name) throws Exception {
+        Field f = PackedStereoMediaReceiver.class.getDeclaredField(name); f.setAccessible(true); return f;
+    }
+    private static void set(Object r, String name, Object value) throws Exception { field(name).set(r, value); }
+    private static Object get(Object r, String name) throws Exception { return field(name).get(r); }
+    private static void require(boolean value, String why) { if (!value) throw new AssertionError(why); }
+    private static void pending(Call call) throws Exception { Thread.sleep(180); require(call.thread.isAlive(), "estimate abandoned actual owner"); }
+    private static void receiving(PackedStereoMediaReceiver r) throws Exception {
+        synchronized (get(r, "lock")) {
+            set(r, "state", "receiving"); set(r, "connectionState", "receiving");
+            ((CountDownLatch) get(r, "ready")).countDown();
+        }
+    }
+    public static void main(String[] args) throws Exception {
+        PackedStereoMediaReceiver delayed = receiver(true);
+        Call start = new Call(() -> delayed.start(() -> true)); pending(start);
+        require((boolean)get(delayed,"preparedDeliveryOpen"), "same prepared delivery not opened");
+        receiving(delayed); start.done(); require(start.failure.get() == null, "actual readiness rejected");
+
+        for (boolean stop : new boolean[] {false, true}) {
+            PackedStereoMediaReceiver r = receiver(true); AtomicBoolean authority = new AtomicBoolean(true);
+            Call blocked = new Call(() -> r.start(authority::get)); pending(blocked);
+            if (stop) r.requestPreparedStop(); else authority.set(false);
+            blocked.done(); require(blocked.failure.get() != null, "actual invalidity ignored");
+            require(!(boolean)get(r,"stopRequested") || stop, "authority invalidity performed unsolicited cleanup");
+            require(!r.snapshot().terminal(), "startup invalidity invented terminal cleanup");
+        }
+        PackedStereoMediaReceiver interruptedStart = receiver(true);
+        Call interrupted = new Call(() -> interruptedStart.start(() -> true));
+        Thread.sleep(20); interrupted.thread.interrupt(); interrupted.done();
+        require(interrupted.failure.get() instanceof InterruptedException, "startup interrupt not returned");
+        require(!(boolean)get(interruptedStart,"stopRequested"), "startup interrupt silently stopped owner");
+
+        for (boolean callback : new boolean[] {false, true}) {
+            PackedStereoMediaReceiver r = receiver(true); CountDownLatch release = new CountDownLatch(1);
+            Thread held;
+            if (callback) {
+                HandlerThread c = new HandlerThread("held-callback"); c.hostRelease = release; held = c;
+                set(r,"renderThread",c);
+            } else {
+                held = new Thread(() -> {
+                    boolean done = false;
+                    while (!done) try { release.await(); done = true; } catch (InterruptedException ignored) { }
+                    try { set(r,"worker",null); } catch (Exception failure) { throw new AssertionError(failure); }
+                },"held-worker");
+                set(r,"worker",held);
+            }
+            held.setDaemon(true); held.start();
+            Call cleanup = new Call(r::stopAndVerify); pending(cleanup);
+            cleanup.thread.interrupt(); pending(cleanup);
+            require(!r.snapshot().terminal(), "live resource declared terminal");
+            release.countDown(); cleanup.done(); held.join(1000);
+            require(cleanup.failure.get() == null && cleanup.interrupted, "cleanup interrupt abandoned custody/outcome");
+            require(r.snapshot().terminal(), "real cleanup not terminal");
+            if (callback) require(((HandlerThread) held).hostQuitCalls == 1, "callback shutdown dispatched twice");
+        }
+
+        PackedStereoMediaReceiver workerFinally = receiver(true);
+        HandlerThread finalCallback = new HandlerThread("worker-finally-callback");
+        finalCallback.hostRelease = new CountDownLatch(1); set(workerFinally,"renderThread",finalCallback); finalCallback.start();
+        Call finalJoin = new Call(() -> {
+            java.lang.reflect.Method method = PackedStereoMediaReceiver.class.getDeclaredMethod("releaseRenderThread");
+            method.setAccessible(true); method.invoke(workerFinally);
+        });
+        pending(finalJoin); finalJoin.thread.interrupt(); pending(finalJoin);
+        finalCallback.hostRelease.countDown(); finalJoin.done();
+        require(finalJoin.failure.get() == null && finalJoin.interrupted && get(workerFinally,"renderThread") == null,
+                "worker-finally callback retirement abandoned actual thread");
+
+        PackedStereoMediaReceiver foreign = receiver(true);
+        HandlerThread old = new HandlerThread("old-callback"); old.hostRelease = new CountDownLatch(1);
+        set(foreign,"renderThread",old); old.start();
+        Call oldCleanup = new Call(foreign::stopAndVerify); pending(oldCleanup);
+        HandlerThread successor = new HandlerThread("successor-callback");
+        set(foreign,"renderThread",successor); old.hostRelease.countDown(); oldCleanup.done();
+        require(oldCleanup.failure.get() instanceof IllegalStateException, "foreign callback accepted");
+        require(get(foreign,"renderThread") == successor && successor.hostQuitCalls == 0, "successor callback affected");
+
+        PackedStereoMediaReceiver legacy = receiver(false);
+        Call legacyStart = new Call(legacy::start); legacyStart.done();
+        require(legacyStart.failure.get() instanceof java.io.IOException, "legacy startup bound changed");
+        System.out.println("PASS complete receiver: selected prepared >estimate readiness, authority/Stop/interrupt controls; same actual worker/callback drains, restored interrupt, foreign owner rejection; legacy startup remains bounded");
+    }
+}

@@ -269,11 +269,9 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         closeListener();
         if (active != null && active != Thread.currentThread()) {
             active.interrupt();
-            try {
-                active.join(bounds.shutdownTimeoutMs);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-            }
+            if (preparedMode) awaitPreparedRetirement(active);
+            else try { active.join(bounds.shutdownTimeoutMs); }
+            catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
         // A prior worker may have ended with retained decoder/socket ownership.
         // Retry physical release only after its death is positively observed.
@@ -291,7 +289,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         // Retain ownership while it drains; joining under the monitor fences it out.
         if (callbacks != null) {
             callbacks.quitSafely();
-            try { callbacks.join(bounds.shutdownTimeoutMs); }
+            if (preparedMode) awaitPreparedRetirement(callbacks);
+            else try { callbacks.join(bounds.shutdownTimeoutMs); }
             catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
         synchronized (lock) {
@@ -310,6 +309,29 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             connectionState = "stopped";
             revision.incrementAndGet();
         }
+    }
+
+    /** A prepared owner cannot leave a live SDK thread behind because an estimate elapsed. */
+    private void awaitPreparedRetirement(Thread held) {
+        if (held == Thread.currentThread()) throw new IllegalStateException("receiver retirement cannot join its own thread");
+        long estimate = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bounds.shutdownTimeoutMs);
+        boolean warned = false, interrupted = false;
+        try {
+            while (held.isAlive()) {
+                try {
+                    if (warned) held.join();
+                    else held.join(Math.max(1L, TimeUnit.NANOSECONDS.toMillis(estimate - System.nanoTime())));
+                } catch (InterruptedException request) {
+                    // Keep the same join and resource custody, then restore the
+                    // caller's interrupt status after actual thread retirement.
+                    interrupted = true;
+                }
+                if (!warned && held.isAlive() && System.nanoTime() >= estimate) {
+                    warned = true;
+                    warnPreparedWait("same receiver retirement remains Pending");
+                }
+            }
+        } finally { if (interrupted) Thread.currentThread().interrupt(); }
     }
 
     @Override public void close() { stopAndVerify(); }
@@ -890,7 +912,8 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         HandlerThread callbacks = renderThread;
         if (callbacks == null) return;
         callbacks.quitSafely();
-        try { callbacks.join(bounds.shutdownTimeoutMs); }
+        if (preparedMode) awaitPreparedRetirement(callbacks);
+        else try { callbacks.join(bounds.shutdownTimeoutMs); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         if (!callbacks.isAlive()) renderThread = null;
         else recordCleanupFailure("render callback thread did not terminate");
@@ -1130,7 +1153,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         private void count(int n) { synchronized (lock) { bytesRead += n; connectionBytesSeen = true; } }
     }
 
-    /** Explicit allocation and time bounds supplied by the embedding host. */
+    /** Host allocation/transport bounds; prepared startup and retirement times are advisory estimates. */
     public static final class Bounds {
         final int maxHeaderBytes;
         final int maxPacketBytes;
@@ -1242,6 +1265,7 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         requireNotMainThread("start");
         CountDownLatch startReady;
         synchronized (lock) {
+            if (preparedMode && stopRequested) throw new IOException("prepared receiver startup no longer current");
             if ("new".equals(state)) arm();
             if ("receiving".equals(state)) return;
             if (!("receiver_armed".equals(state))) {
@@ -1255,6 +1279,41 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
                 return;
             }
             startReady = ready;
+        }
+        if (preparedMode) {
+            long estimate = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(bounds.startupTimeoutMs);
+            boolean warned = false;
+            while (true) {
+                if (!currentAuthority.getAsBoolean()) {
+                    throw new IllegalStateException("receiver startup authority no longer current");
+                }
+                synchronized (lock) {
+                    if (stopRequested || ready != startReady
+                            || !("receiver_armed".equals(state) || "receiving".equals(state))) {
+                        throw new IOException(failure.isEmpty() ? "prepared receiver startup no longer current" : failure);
+                    }
+                }
+                if (startReady.await(5L, TimeUnit.MILLISECONDS)) {
+                    if (!currentAuthority.getAsBoolean()) {
+                        throw new IllegalStateException("receiver startup authority no longer current");
+                    }
+                    synchronized (lock) {
+                        if (!stopRequested && ready == startReady && "receiving".equals(state)
+                                && "receiving".equals(connectionState)) return;
+                    }
+                    throw new IOException(failure.isEmpty() ? "prepared receiver did not enter live state" : failure);
+                }
+                MediaCodec current = decoder;
+                long connection;
+                synchronized (lock) { connection = connectionGeneration; }
+                if (acquisitionProbe != null && current != null && connection > 0L) {
+                    pollSurfaceAcquisition(current, connection);
+                }
+                if (!warned && System.nanoTime() >= estimate) {
+                    warned = true;
+                    warnPreparedWait("same prepared receiver startup remains Pending");
+                }
+            }
         }
         boolean witnessed;
         if (acquisitionProbe == null) {
@@ -1281,5 +1340,10 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
         if (!"receiving".equals(state)) {
             throw new IOException(failure.isEmpty() ? "receiver did not enter live state" : failure);
         }
+    }
+
+    private static void warnPreparedWait(String message) {
+        try { android.util.Log.w("RQSpatialCameraPanel", message); }
+        catch (RuntimeException ignored) { /* A diagnostic cannot retire the held owner. */ }
     }
 }

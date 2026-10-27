@@ -9,6 +9,74 @@ import org.json.JSONObject;
 import org.junit.Test;
 
 public final class EmbeddedDuplexActivationGateTest {
+    @Test public void sameActivationWaitsPastEstimateForActualAcquiredAndEffectiveFrames() throws Exception {
+        FakeTarget target = new FakeTarget();
+        target.onAwait = () -> {
+            try { Thread.sleep(15_100L); }
+            catch (InterruptedException interrupted) { throw new AssertionError(interrupted); }
+        };
+        target.acquiredPending = 1;
+        target.effectivePending = 1;
+        EmbeddedDuplexActivationGate gate = armed(target);
+        assertTrue(new JSONObject(gate.activate("activation.delayed",
+                authority().toString(), proof().toString())).getBoolean("activated"));
+        assertEquals(1, target.awaited);
+        assertEquals(1, target.activated);
+        assertEquals(1, target.pendingLogCount);
+    }
+
+    @Test public void pendingFrameWaitStillObservesActualStopAndExpiry() throws Exception {
+        for (boolean expire : new boolean[] { false, true }) {
+            FakeTarget target = new FakeTarget();
+            java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(1000L);
+            EmbeddedDuplexActivationGate gate = new EmbeddedDuplexActivationGate(target, now::get);
+            gate.afterVerifiedOwnerEffect(authority(), ticket(), readback(), verified(), false);
+            target.acquiredPending = 1;
+            target.onAcquired = () -> {
+                if (expire) now.set(2000L);
+                else {
+                    try { gate.beforeOwnerEffect(authority(), stop(), false); }
+                    catch (Exception failure) { throw new AssertionError(failure); }
+                }
+            };
+            assertThrows(IllegalStateException.class, () -> gate.activate("activation.fenced",
+                    authority().toString(), proof().toString()));
+            assertEquals(0, target.activated);
+        }
+    }
+
+    @Test public void foreignAndStaleFramesRemainRejectedWithoutGraphAttachment() throws Exception {
+        for (int damage = 1; damage <= 2; damage++) {
+            FakeTarget target = new FakeTarget(); target.frameDamage = damage;
+            EmbeddedDuplexActivationGate gate = armed(target);
+            assertThrows(IllegalStateException.class, () -> gate.activate("activation.frame",
+                    authority().toString(), proof().toString()));
+            assertEquals(0, target.activated);
+        }
+    }
+
+    @Test public void interruptedPendingFrameWaitRetainsTheSameUncertainClaim() throws Exception {
+        FakeTarget target = new FakeTarget(); target.acquiredPending = Integer.MAX_VALUE;
+        java.util.concurrent.CountDownLatch queried = new java.util.concurrent.CountDownLatch(1);
+        target.onAcquired = queried::countDown;
+        EmbeddedDuplexActivationGate gate = armed(target);
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread caller = new Thread(() -> {
+            try { gate.activate("activation.interrupted", authority().toString(), proof().toString()); }
+            catch (Throwable actual) { failure.set(actual); }
+        });
+        caller.setDaemon(true); caller.start();
+        assertTrue(queried.await(2, java.util.concurrent.TimeUnit.SECONDS));
+        caller.interrupt(); caller.join(2000);
+        assertTrue(!caller.isAlive());
+        assertTrue(failure.get() instanceof InterruptedException);
+        target.acquiredPending = 0;
+        assertThrows(IllegalStateException.class, () -> gate.activate("activation.replay",
+                authority().toString(), proof().toString()));
+        assertEquals(1, target.awaited);
+        assertEquals(0, target.activated);
+    }
+
     @Test public void exactArmAndProofActivateOnlyAfterFreshNativeReadback() throws Exception {
         FakeTarget target = new FakeTarget();
         EmbeddedDuplexActivationGate gate = armed(target);
@@ -836,20 +904,33 @@ public final class EmbeddedDuplexActivationGateTest {
         int activated;
         boolean failAwait;
         boolean failDiagnosticLog;
-        int failureLogCount;
+        int failureLogCount, pendingLogCount;
+        int acquiredPending, effectivePending, frameDamage;
+        Runnable onAcquired;
+        @Override public void logActivationPending(String stage, long elapsedMs) {
+            pendingLogCount++;
+            assertTrue(elapsedMs >= 15_000L);
+        }
         @Override public void logActivationFailure(String record) {
             failureLogCount++;
             assertTrue(record.contains("code=ACTIVATION_EFFECT_UNCERTAIN"));
             if (failDiagnosticLog) throw new IllegalStateException("diagnostic log unavailable");
         }
         @Override public long[] currentIncomingAcquiredFrame(long maxAgeNs) {
+            assertEquals(500_000_000L, maxAgeNs);
+            if (onAcquired != null) onAcquired.run();
+            if (acquiredPending-- > 0) return null;
             long[] words = new long[19];
             words[0] = 2; words[1] = 7; words[2] = 8;
             words[3] = route; words[4] = decoder; words[5] = reader; words[6] = 100;
             words[15] = 1000; words[16] = 1100; words[17] = 1200; words[18] = 200;
+            if (frameDamage == 1) words[4]++;
+            if (frameDamage == 2) { words[17] = 500_001_001L; words[18] = 500_000_001L; }
             return words;
         }
         @Override public long[] currentIncomingEffectiveFrame(long maxAgeNs) {
+            assertEquals(500_000_000L, maxAgeNs);
+            if (effectivePending-- > 0) return null;
             long[] words = new long[21];
             words[0] = 2; words[1] = 7; words[2] = 8;
             words[3] = route; words[4] = decoder; words[5] = reader; words[6] = 100;

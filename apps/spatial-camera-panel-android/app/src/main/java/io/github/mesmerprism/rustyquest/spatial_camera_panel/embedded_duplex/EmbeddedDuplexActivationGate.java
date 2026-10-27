@@ -46,6 +46,10 @@ final class EmbeddedDuplexActivationGate {
         default void logActivationFailure(String closedRecord) {
             android.util.Log.i("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-rejected " + closedRecord);
         }
+        default void logActivationPending(String stage, long elapsedMs) {
+            android.util.Log.w("RQSpatialCameraPanel", "channel=embedded-duplex status=activation-pending stage="
+                    + stage + " elapsedMs=" + elapsedMs);
+        }
     }
 
     interface Clock { long wallTimeMillis(); }
@@ -209,6 +213,7 @@ final class EmbeddedDuplexActivationGate {
     private static final class ActivationAttempt {
         ActivationStage stage = ActivationStage.ARM_PROOF;
         final long startedNs = System.nanoTime();
+        boolean readinessWarned;
         long elapsedMs() { return Math.max(0L, (System.nanoTime() - startedNs) / 1_000_000L); }
     }
 
@@ -273,14 +278,14 @@ final class EmbeddedDuplexActivationGate {
 
         // Display and native callbacks can reenter the process. Keep the claim
         // uncertain until readback succeeds, without holding the state lock.
-        long readinessDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        long readinessEstimate = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
         attempt.stage = ActivationStage.FIRST_SURFACE_IMAGE;
         target.awaitFirstSurfaceImage(()->{
             requireCurrentClaim(current,claimedRevision);
             return clock.wallTimeMillis()<current.expiresAtMs;
         });
-        long[] frame = awaitCurrentIncomingFrame(current, claimedRevision, readinessDeadline,
-                false, 0L);
+        long[] frame = awaitCurrentIncomingFrame(current, claimedRevision, readinessEstimate,
+                false, 0L, attempt);
         if (!acquiredFrame(frame) || clock.wallTimeMillis() >= current.expiresAtMs) {
             throw new IllegalStateException("fresh incoming frame unavailable");
         }
@@ -289,7 +294,7 @@ final class EmbeddedDuplexActivationGate {
         target.activateIncomingProjection();
         attempt.stage = ActivationStage.NATIVE_EFFECTIVE;
         long[] effectiveFrame = awaitCurrentIncomingFrame(current, claimedRevision,
-                readinessDeadline, true, frame[17]);
+                readinessEstimate, true, frame[17], attempt);
         long[] projection = target.currentProjection();
         if (!effectiveFrame(effectiveFrame, frame) || !effectiveProjection(projection)
                 || clock.wallTimeMillis() >= current.expiresAtMs) {
@@ -313,7 +318,8 @@ final class EmbeddedDuplexActivationGate {
     }
 
     private long[] awaitCurrentIncomingFrame(ArmEvidence current, long claimedRevision,
-            long deadlineNs, boolean effective, long minimumGpuRetiredNs) throws Exception {
+            long estimateNs, boolean effective, long minimumGpuRetiredNs,
+            ActivationAttempt attempt) throws Exception {
         while (true) {
             requireCurrentClaim(current, claimedRevision);
             if (clock.wallTimeMillis() >= current.expiresAtMs) {
@@ -333,8 +339,11 @@ final class EmbeddedDuplexActivationGate {
                         || frame[4] != target.decoderToken() || frame[5] != target.readerGeneration()
                         || frame[17] <= 0L || frame[17] >= minimumGpuRetiredNs) return frame;
             }
-            if (System.nanoTime() >= deadlineNs) {
-                throw new IllegalStateException("fresh incoming frame unavailable");
+            if (!attempt.readinessWarned && System.nanoTime() >= estimateNs) {
+                attempt.readinessWarned = true;
+                // An estimate cannot revoke this arm or manufacture fresh evidence.
+                try { target.logActivationPending(attempt.stage.name(), attempt.elapsedMs()); }
+                catch (RuntimeException ignored) { }
             }
             Thread.sleep(5L);
         }
