@@ -374,6 +374,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         header("observed")
         putString("challenge", challenge)
         putString("pair_state", state.state)
+        state.ceremonyWaitWarning?.let { putBoolean("ceremony_wait_warning", it) }
         state.sessionId?.let { putString("session_id", it) }
         putBoolean("local_session_current", state.localSessionCurrent)
         putBoolean("remote_session_current", state.remoteSessionCurrent)

@@ -2754,6 +2754,7 @@ final class EmbeddedDuplexProcessHost {
     private static android.os.Bundle pairOriginalBundle(String challenge,EmbeddedDuplexPairStatus state) {
         android.os.Bundle value=new android.os.Bundle();value.putString("schema","rusty.quest.embedded_duplex.operator_transport.v1");
         value.putString("status","observed");value.putString("challenge",challenge);value.putString("pair_state",state.state);
+        if(state.ceremonyWaitWarning!=null)value.putBoolean("ceremony_wait_warning",state.ceremonyWaitWarning);
         if(state.sessionId!=null)value.putString("session_id",state.sessionId);
         value.putBoolean("local_session_current",state.localSessionCurrent);value.putBoolean("remote_session_current",state.remoteSessionCurrent);
         value.putLong("local_session_expires_at_ms",state.localSessionExpiresAtMs);value.putBoolean("peer_route_proven",state.routeCurrent);
