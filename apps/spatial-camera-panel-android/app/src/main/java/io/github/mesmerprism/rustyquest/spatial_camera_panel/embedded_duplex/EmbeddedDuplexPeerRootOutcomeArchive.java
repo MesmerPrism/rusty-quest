@@ -17,7 +17,7 @@ final class EmbeddedDuplexPeerRootOutcomeArchive {
     private final File directory;
     EmbeddedDuplexPeerRootOutcomeArchive(Context context)throws Exception {
         application=context.getApplicationContext();
-        directory=EmbeddedDuplexFreshClosure.activeDirectory(application.getNoBackupFilesDir(),"embedded-duplex-peer-root-outcomes-v1");
+        directory=EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(application),"embedded-duplex-peer-root-outcomes-v1");
         if(!directory.exists() && !directory.mkdir())throw new IllegalStateException("root outcome directory");
         if(!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("root outcome directory type");
         Os.chmod(directory.getAbsolutePath(),0700);

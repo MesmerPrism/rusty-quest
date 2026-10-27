@@ -18,6 +18,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     private final EmbeddedDuplexReceiver incoming;
     private MediaProductBinding binding;
     private final Context context;
+    private final java.io.File operationalRoot;
     private final JSONObject nativeInitialization, outgoingSpec;
     private final long maxPairDeltaNs;
     private final Lane source;
@@ -34,6 +35,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
             throw new IllegalArgumentException("embedded resource initialization");
         }
         this.context = context;
+        this.operationalRoot=EmbeddedDuplexProcessHost.operationalRoot(context);
         this.nativeInitialization = nativeInitialization;
         this.maxPairDeltaNs = maxPairDeltaNs;
         generation = nativeInitialization.getLong("executor_generation");
@@ -244,7 +246,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     @Override public void recordActivationFailure(String closedRecord) {
         if (!closedActivationRecord(closedRecord, false)) return;
         synchronized (EmbeddedDuplexResources.class) {
-            java.io.File file = new java.io.File(context.getNoBackupFilesDir(),
+            java.io.File file = new java.io.File(operationalRoot,
                     "embedded-duplex-activation-diagnostics.v1.txt");
             android.util.AtomicFile atomic = new android.util.AtomicFile(file);
             java.util.ArrayDeque<String> lines = new java.util.ArrayDeque<>();

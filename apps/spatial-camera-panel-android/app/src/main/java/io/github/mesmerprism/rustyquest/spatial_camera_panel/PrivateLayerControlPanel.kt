@@ -153,6 +153,8 @@ internal fun PrivateLayerControlPanel(
     refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    selectEmbeddedDuplexRun: (String, Boolean) -> CompletableFuture<String>,
+    embeddedDuplexRunStatus: () -> CompletableFuture<String>,
     runEmbeddedDuplexOrdinaryStart: () -> CompletableFuture<String>,
     runEmbeddedDuplexPeerStop: () -> CompletableFuture<String>,
     prepareEmbeddedDuplexStartPreflight: () -> CompletableFuture<EmbeddedDuplexStartPreflight>,
@@ -1306,6 +1308,24 @@ internal fun PrivateLayerControlPanel(
 
       if (currentPage == PrivateLayerPanelPage.ExternalControl) {
         if (BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED) {
+          Section("Operational run") {
+            var runId by rememberSaveable { mutableStateOf(java.util.UUID.randomUUID().toString().replace("-","")) }
+            var runMessage by remember { mutableStateOf("Select a new run, or resume an exact retained run. Identity and settings stay with this app.") }
+            var selecting by remember { mutableStateOf(false) }
+            OutlinedTextField(value=runId,onValueChange={runId=it},label={Text("Run ID")},singleLine=true)
+            Row(horizontalArrangement=Arrangement.spacedBy(10.dp)) {
+              for(create in listOf(true,false)) Button(enabled=!selecting,onClick={
+                selecting=true
+                selectEmbeddedDuplexRun(runId,create).whenComplete { receipt,failure -> Handler(Looper.getMainLooper()).post {
+                  runMessage=embeddedDuplexActionStatus(if(create) "NewRun" else "ResumeRun",receipt,failure);selecting=false
+                } }
+              }) { Text(if(create) "New run" else "Resume run") }
+              Button(enabled=!selecting,onClick={embeddedDuplexRunStatus().whenComplete { receipt,failure -> Handler(Looper.getMainLooper()).post {
+                runMessage=embeddedDuplexActionStatus("Run",receipt,failure)
+              } }}) { Text("Run status") }
+            }
+            Text(runMessage,color=LayerPanelMuted)
+          }
           Section("Peer session") {
             Text("Start the prepared peer session, or request Peer Stop independently.",
                 style = MaterialTheme.typography.bodySmall, color = LayerPanelMuted)

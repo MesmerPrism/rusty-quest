@@ -134,4 +134,20 @@ object EmbeddedDuplexDiagnosticActivityGate {
     }
     return result
   }
+  @JvmStatic
+  fun requestNewRun(runId: String, legacyWholeOriginalId: String? = null): CompletableFuture<String> = selectRun(runId,true,legacyWholeOriginalId)
+  @JvmStatic
+  fun requestResumeRun(runId: String): CompletableFuture<String> = selectRun(runId,false,null)
+  private fun selectRun(runId:String,create:Boolean,legacy:String?):CompletableFuture<String>{
+    val result=CompletableFuture<String>()
+    if(!BuildConfig.DEBUG || !main.post {
+      val activity=resumed?.get()
+      if(activity==null)result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
+      else activity.selectEmbeddedDuplexRun(runId,create,legacy).whenComplete { receipt,failure ->
+        if(failure==null)result.complete(receipt) else result.completeExceptionally(failure)
+      }
+    }) result.completeExceptionally(IllegalStateException("Activity dispatch unavailable"))
+    return result
+  }
+
 }

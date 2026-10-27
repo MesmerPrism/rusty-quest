@@ -33,6 +33,105 @@ final class EmbeddedDuplexProcessHost {
     }
 
     private final Context applicationContext;
+    private final EmbeddedDuplexRunSelectionStore runSelection;
+    private volatile EmbeddedDuplexRunContext runContext;
+    private final Object runRequestGate=new Object();
+    private int runRequests;
+    static java.io.File operationalRoot(Context context){return forApplication(context).runContext.root;}
+    static EmbeddedDuplexRunContext operationalContext(Context context){return forApplication(context).runContext;}
+    static EmbeddedDuplexRunContext selectedContext(){EmbeddedDuplexProcessHost host=instance;return host==null?null:host.runContext;}
+    static void syncDirectory(java.io.File directory)throws Exception{
+        java.io.FileDescriptor fd=android.system.Os.open(directory.getAbsolutePath(),android.system.OsConstants.O_RDONLY|android.system.OsConstants.O_CLOEXEC|android.system.OsConstants.O_NOFOLLOW,0);
+        try{android.system.Os.fsync(fd);}finally{android.system.Os.close(fd);}
+    }
+    <T>T withRunRequest(String runId,java.util.concurrent.Callable<T> request)throws Exception{
+        synchronized(runRequestGate){
+            if(!java.util.Objects.equals(runId,runContext.runId))throw new IllegalStateException("explicit selected run required");
+            runRequests++;
+        }
+        try{return request.call();}finally{synchronized(runRequestGate){runRequests--;}}
+    }
+    CompletableFuture<String> selectRun(String id,boolean create,String legacyWholeOriginalId){
+        try{EmbeddedDuplexRunContext.requireId(id);}catch(Exception invalid){return failed(invalid);}
+        CompletableFuture<String> result=new CompletableFuture<>();
+        commands.execute(()->{try{
+            synchronized(runRequestGate){
+                if(runRequests!=0)throw new IllegalStateException("operational request in flight");
+                ensureProcessFence();
+                if(id.equals(runContext.runId)){
+                    if(create&&legacyWholeOriginalId!=null&&(runContext.releaseSourceJson==null
+                        ||!legacyWholeOriginalId.equals(new JSONObject(runContext.releaseSourceJson).getString("whole_original_id"))))
+                        throw new IllegalStateException("NewRun retry release source differs");
+                    result.complete(runStatusOnLane());return;
+                }
+                processFence.requireFresh();
+                if(processFence.effectsPending()||phase.get()!=Phase.NEW||closeInFlight||displayDetaching||display.cleanupPending()
+                    ||platform!=null||resources!=null||nativeExecutorGeneration!=0||runtimeConfigSha256!=null
+                    ||activeCommandOriginal!=null||!EmbeddedDuplexOriginals.selectionIdle()
+                    ||wholeCallbackMarker!=null&&!wholeCallbackMarker.isDone())throw new IllegalStateException("current run owner unresolved");
+                OwnStereoCaptureRuntime own=OwnStereoCaptureRuntime.currentForApplication();
+                if(own!=null&&!"terminal".equals(own.physicalCleanupState()))throw new IllegalStateException("actual Own capture not terminal");
+                String sourceOriginal=legacyWholeOriginalId;
+                if(sourceOriginal==null&&retainedWholeClose!=null&&retainedWholeClose.original!=null)sourceOriginal=retainedWholeClose.original.id();
+                String release=null;
+                if(sourceOriginal!=null){
+                    JSONObject source=EmbeddedDuplexOriginals.closedWholeHandoff(runContext.root,sourceOriginal,applicationContext.getPackageName());
+                    JSONObject pointer=new JSONObject(source.toString());pointer.remove("physical_retirement");
+                    pointer.put("source_run_id",runContext.runId==null?JSONObject.NULL:runContext.runId);
+                    release=EmbeddedDuplexCanonicalJson.encode(EmbeddedDuplexRunSelectionStore.validateRelease(pointer));
+                } else if(runContext.releaseSourceJson!=null)release=runContext.releaseSourceJson;
+                installRunHandoff(id,release);
+                JSONObject nativeStatus=new JSONObject(EmbeddedDuplexNative.inspectOperationalRun(processFence));
+                if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(nativeStatus.getString("$schema"))
+                    ||!nativeStatus.getBoolean("globally_eligible"))throw new IllegalStateException("actual Native owner unresolved");
+                if(runContext.legacy()&&(!processFence.newlyInitialized()||!nativeStatus.isNull("native_generation"))){
+                    JSONObject whole=terminalWholeReceipt==null?EmbeddedDuplexOriginals.closedWholeWitness(
+                        runContext.root,legacyWholeOriginalId):new JSONObject(terminalWholeReceipt).getJSONObject("peer_lifecycle");
+                    EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(whole);
+                    if(whole.getLong("app_process_generation")!=processFence.previousGeneration()
+                        &&whole.getLong("app_process_generation")!=processFence.generation())throw new IllegalStateException("legacy Whole app generation differs");
+                    if(nativeStatus.isNull("native_generation")||whole.getLong("native_executor_generation")!=nativeStatus.getLong("native_generation"))
+                        throw new IllegalStateException("legacy Whole last Native generation differs");
+                }
+                EmbeddedDuplexRunContext next=create?runSelection.newRun(id,release):runSelection.resumeRun(id);
+                // Publication is crash-fail-closed: restart refuses selector/fence disagreement.
+                runContext=next;
+                java.io.File replay=new java.io.File(next.root,"embedded-duplex-replay");
+                if(!replay.exists()&&!replay.mkdir())throw new IllegalStateException("selected replay directory");
+                android.system.Os.chmod(replay.getAbsolutePath(),0700);syncDirectory(next.root);
+                processFence.selectOperationalRun(id,replay,checkpointSnapshot(),evidenceSnapshot());
+                installRunHandoff(next.runId,next.releaseSourceJson);
+                EmbeddedDuplexOriginals.selectedRunChanged();
+                originalClosedActor=null;terminalWholeReceipt=null;terminalWholeChallenge=null;wholeCloseRollover=null;
+                retainedWholeNativeReceipt=null;lastClosedActorProof=null;retainedWholeClose=null;noMediaClose=null;
+                nativeConfigurationContext=null;setupCredentials=null;pendingReview=null;lastBootstrapFailure=null;
+                result.complete(runStatusOnLane());
+            }
+        }catch(Throwable failure){
+            try{if(processFence!=null)installRunHandoff(runContext.runId,runContext.releaseSourceJson);}catch(Exception restore){failure.addSuppressed(restore);}
+            result.completeExceptionally(failure);}});return result;
+    }
+    private void installRunHandoff(String nextRunId,String exactLocator)throws Exception{
+        if(exactLocator==null){processFence.operationalHandoff(null,null);return;}
+        final String locator=EmbeddedDuplexCanonicalJson.encode(EmbeddedDuplexRunSelectionStore.validateRelease(new JSONObject(exactLocator)));
+        processFence.operationalHandoff(nextRunId,()->{
+            JSONObject expected=new JSONObject(locator);
+            java.io.File root=expected.isNull("source_run_id")?applicationContext.getNoBackupFilesDir():runSelection.retained(expected.getString("source_run_id")).root;
+            JSONObject actual=EmbeddedDuplexOriginals.closedWholeHandoff(root,expected.getString("whole_original_id"),applicationContext.getPackageName());
+            for(String key:new String[]{"whole_original_id","request_sha256","outcome_sha256","physical_retirement_sha256","prior_native_generation"})
+                if(!EmbeddedDuplexCanonicalJson.sameValue(actual.get(key),expected.get(key)))throw new IllegalStateException("release source changed");
+            return actual;
+        });
+    }
+    CompletableFuture<String> runStatus(){CompletableFuture<String> result=new CompletableFuture<>();commands.execute(()->{
+        try{ensureProcessFence();result.complete(runStatusOnLane());}catch(Throwable error){result.completeExceptionally(error);}});return result;}
+    private String runStatusOnLane()throws Exception{
+        JSONObject actual=new JSONObject(EmbeddedDuplexNative.inspectOperationalRun(processFence));
+        if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(actual.getString("$schema")))throw new IllegalStateException("Native run readback schema");
+        return new JSONObject().put("$schema","rusty.quest.embedded_duplex.run_status.v1")
+            .put("run_id",runContext.runId==null?JSONObject.NULL:runContext.runId).put("selection_generation",runContext.selectionGeneration)
+            .put("native",actual).put("app_process_generation",processFence.generation()).toString();
+    }
     private final InstalledApkDigest installedApkDigest = new InstalledApkDigest();
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
     private volatile EmbeddedDuplexProcessFence processFence;
@@ -82,6 +181,14 @@ final class EmbeddedDuplexProcessHost {
 
     private EmbeddedDuplexProcessHost(Context applicationContext) {
         this.applicationContext = applicationContext;
+        // Existing isolated attachment tests have no Android storage/Native owner.
+        if(applicationContext==null){runSelection=null;runContext=new EmbeddedDuplexRunContext(new java.io.File("."),new java.io.File("."),null,0);return;}
+        try{
+            runSelection=new EmbeddedDuplexRunSelectionStore(applicationContext.getNoBackupFilesDir(),new EmbeddedDuplexRunSelectionStore.DirectorySync(){
+                public void sync(java.io.File dir)throws Exception{syncDirectory(dir);}
+                public void privateMode(java.io.File file,boolean directory)throws Exception{android.system.Os.chmod(file.getAbsolutePath(),directory?0700:0600);}
+            });runContext=runSelection.current();
+        }catch(Exception unavailable){throw new IllegalStateException("operational run selection unavailable",unavailable);}
     }
 
     EmbeddedDuplexDisplaySlot displayAttachment() { return display; }
@@ -196,6 +303,7 @@ final class EmbeddedDuplexProcessHost {
                         identity.keyId(), enrollment,
                         new JSONObject(callbacks.loadDispatchReplay()),
                         new JSONObject(callbacks.loadActivationReplay()));
+                if(runContext.runId!=null)bootstrap.put("operational_run_id",runContext.runId);
                 platform = callbacks;
                 EmbeddedDuplexBootstrap.mark(trace, EmbeddedDuplexBootstrap.Failure.NATIVE_INITIALIZE);
                 String initialized = EmbeddedDuplexNative.initializeRuntime(prepared.runtimeConfigJson,
@@ -1211,6 +1319,7 @@ final class EmbeddedDuplexProcessHost {
     private void ensureProcessFence() throws Exception {
         if (processFence != null) {
             processFence.requireLive(processFence.generation());
+            if(!java.util.Objects.equals(runContext.runId,processFence.operationalRunId()))throw new IllegalStateException("incomplete run/fence publication");
             return;
         }
         // Journal constructors validate the private directory and file types.
@@ -1218,12 +1327,16 @@ final class EmbeddedDuplexProcessHost {
         String evidence = evidenceSnapshot();
         java.io.File directory = new java.io.File(applicationContext.getNoBackupFilesDir(),
                 "embedded-duplex-replay");
+        if(!directory.exists()&&!directory.mkdir())throw new IllegalStateException("global fence directory");
+        android.system.Os.chmod(directory.getAbsolutePath(),0700);syncDirectory(applicationContext.getNoBackupFilesDir());
         processFence = EmbeddedDuplexProcessFence.acquire(directory, checkpoint, evidence, () -> {
             java.io.FileDescriptor fd = android.system.Os.open(directory.getAbsolutePath(),
                     android.system.OsConstants.O_RDONLY | android.system.OsConstants.O_CLOEXEC, 0);
             try { android.system.Os.fsync(fd); } finally { android.system.Os.close(fd); }
-        });
+            java.io.File companion=new java.io.File(runContext.root,"embedded-duplex-replay");if(!companion.equals(directory))syncDirectory(companion);
+        },runContext.runId,new java.io.File(runContext.root,"embedded-duplex-replay"));
         android.system.Os.chmod(new java.io.File(directory, "process-fence.v1.lock").getAbsolutePath(), 0600);
+        installRunHandoff(runContext.runId,runContext.releaseSourceJson);
     }
 
     static long currentAppGeneration() {
@@ -1264,8 +1377,10 @@ final class EmbeddedDuplexProcessHost {
     private interface Work<T> { T run() throws Exception; }
     private <T> CompletableFuture<T> submit(Work<T> action) {
         CompletableFuture<T> result = new CompletableFuture<>();
+        final EmbeddedDuplexRunContext capturedRun=runContext;
         commands.execute(EmbeddedDuplexOriginals.carry(() -> {
             try {
+                capturedRun.requireSame(runContext);
                 ensureProcessFence();
                 if (EmbeddedDuplexOriginals.hasCurrent()) {
                     processFence.bindIncarnation(EmbeddedDuplexProcessIncarnation.current(

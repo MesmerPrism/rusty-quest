@@ -25,7 +25,7 @@ final class EmbeddedDuplexManifoldFreshArchive {
     }
     private final File directory;
     EmbeddedDuplexManifoldFreshArchive(Context app)throws Exception{
-        directory=EmbeddedDuplexFreshClosure.activeDirectory(app.getNoBackupFilesDir(),"embedded-duplex-manifold-fresh-history-v1");
+        directory=EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(app),"embedded-duplex-manifold-fresh-history-v1");
         if(!directory.exists() && !directory.mkdir())throw new IllegalStateException("Manifold custody directory create");
         if(!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("Manifold custody directory type");
         Os.chmod(directory.getAbsolutePath(),0700);sync(directory.getParentFile());

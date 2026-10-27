@@ -1794,6 +1794,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   /** Ordinary panel and typed-provider Start share this current-Activity owner. */
+  fun selectEmbeddedDuplexRun(runId:String,create:Boolean,legacyWholeOriginalId:String?=null):java.util.concurrent.CompletableFuture<String> {
+    return if(create) io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.newRun(applicationContext,runId,legacyWholeOriginalId)
+      else io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.resumeRun(applicationContext,runId)
+  }
+
   fun runEmbeddedDuplexOrdinaryStart(expectedArmChallenge: String? = null): CompletableFuture<String> {
     val generation = embeddedDuplexAttachmentGeneration
     val resumeGeneration = ownResumeGeneration
@@ -3859,6 +3864,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     refreshConnectionHub = connectionHubWearerControlClient::refresh,
                     startConnectionHub = connectionHubWearerControlClient::start,
                     stopConnectionHub = connectionHubWearerControlClient::stop,
+                    selectEmbeddedDuplexRun = { id, create -> selectEmbeddedDuplexRun(id,create) },
+                    embeddedDuplexRunStatus = { io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.runStatus(applicationContext) },
                     runEmbeddedDuplexOrdinaryStart = { runEmbeddedDuplexOrdinaryStart() },
                     runEmbeddedDuplexPeerStop = ::runEmbeddedDuplexPeerStop,
                     prepareEmbeddedDuplexStartPreflight =

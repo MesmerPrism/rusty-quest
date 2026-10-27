@@ -29,6 +29,17 @@ public final class EmbeddedDuplexWholeCloseRollover {
                 && proof.opt("route_cleanup") instanceof org.json.JSONArray
                 && proof.opt("broker_evidence") instanceof JSONObject;
     }
+    static void requireTerminalPhysical(JSONObject proof)throws Exception{
+        boolean local=localLifecycleProof(proof);
+        boolean remote="rusty.quest.embedded_duplex.remote_owner_cleanup.v1".equals(proof.getString("$schema"));
+        if(!(local||remote)||!"whole_app_close".equals(proof.getString("action"))
+            ||!(local?"terminal":"not_locally_started").equals(proof.getString("peer_physical_cleanup"))
+            ||proof.getLong("app_process_generation")<=0||proof.getLong("native_executor_generation")<=0
+            ||!proof.getString("config_sha256").matches("[0-9a-f]{64}"))throw new IllegalStateException("whole physical owner differs");
+        for(String key:new String[]{"native_host_physical_cleanup","java_own_capture_cleanup","java_renderer_cleanup","java_control_cleanup",
+                "app_process_fence_cleanup","whole_app_physical_cleanup","status"})
+            if(!"terminal".equals(proof.getString(key)))throw new IllegalStateException("whole physical owner pending");
+    }
     // Only the process host can mint this after all physical barriers and the persisted fence join.
     static EmbeddedDuplexWholeCloseRollover verified(JSONObject proof, String epoch, long app,
             long executor, long attachment, String config, String enrollment) throws Exception {

@@ -94,6 +94,29 @@ public final class EmbeddedDuplexProcessFenceHostTest {
             rejects(fence::requireFresh);
         }
     }
+    static void runControls() throws Exception {
+        Path global=Files.createTempDirectory("run-global"),a=Files.createTempDirectory("run-a"),b=Files.createTempDirectory("run-b");
+        try(EmbeddedDuplexProcessFence fence=acquire(global)) {
+            Object inode=Files.getAttribute(global.resolve("process-fence.v1.lock"),"basic:fileKey");
+            fence.selectOperationalRun("a".repeat(32),a.toFile(),null,null);
+            fence.bindIncarnation(identity(100));String old=Files.readString(a.resolve("process-incarnation.v1.json"));
+            EmbeddedDuplexProcessFence.CallbackGuard callback=fence.callbacks();
+            fence.beforeRuntimeEffects(null,null);
+            rejects(()->fence.selectOperationalRun("b".repeat(32),b.toFile(),null,null));
+            fence.afterVerifiedWholeProductCleanup(null,null,"0".repeat(64));
+            fence.selectOperationalRun("b".repeat(32),b.toFile(),null,null);
+            rejects(callback::requireLive);fence.bindIncarnation(identity(200));
+            if(!old.equals(Files.readString(a.resolve("process-incarnation.v1.json"))))throw new AssertionError("old incarnation changed");
+            if(!"b".repeat(32).equals(fence.operationalRunId()))throw new AssertionError("run absent");
+            String record=fence.nativeInspectionRecord();if(!record.startsWith("rusty.quest.embedded_duplex.app_process_fence.v2\n")||!record.contains("\nclear\n"))throw new AssertionError("v2 inspection");
+            rejects(fence::nativeAdmissionRecord);
+            if(!java.util.Objects.equals(inode,Files.getAttribute(global.resolve("process-fence.v1.lock"),"basic:fileKey")))throw new AssertionError("inode replaced");
+        }
+        rejects(()->acquire(global));
+        try(EmbeddedDuplexProcessFence fence=EmbeddedDuplexProcessFence.acquire(global.toFile(),null,null,()->{},"b".repeat(32),b.toFile())){
+            if(!"b".repeat(32).equals(fence.operationalRunId()))throw new AssertionError("restart run mismatch");
+        }
+    }
     public static void main(String[] args) throws Exception {
         if (args.length > 0) {
             EmbeddedDuplexProcessFence fence = acquire(Path.of(args[1]));
@@ -104,6 +127,7 @@ public final class EmbeddedDuplexProcessFenceHostTest {
             return;
         }
         incarnationControls();
+        runControls();
         Path directory = Files.createTempDirectory("duplex-fence-test");
         EmbeddedDuplexProcessFence first = acquire(directory);
         if (first.generation() != 1) throw new AssertionError("initial generation");

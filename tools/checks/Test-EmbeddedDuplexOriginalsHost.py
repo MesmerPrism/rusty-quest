@@ -74,12 +74,13 @@ def main():
     host_source = (production / 'EmbeddedDuplexProcessHost.java').read_text(encoding='utf-8')
     service_source = (production / 'EmbeddedDuplexRuntimeService.java').read_text(encoding='utf-8')
     host_methods = [extract_method(host_source, signature) for signature in (
-        'static synchronized EmbeddedDuplexProcessHost forApplication(',
+        'static synchronized EmbeddedDuplexProcessHost forApplication(', 'static java.io.File operationalRoot(',
+        'static EmbeddedDuplexRunContext operationalContext(', 'static EmbeddedDuplexRunContext selectedContext(', 'static void syncDirectory(', 'private void installRunHandoff(',
         'private void ensureProcessFence(', 'static long currentAppGeneration(',
         'static JSONObject originalActor(', 'static boolean originalActorSettled(',
         'private <T> CompletableFuture<T> submit(')]
     service_methods = [extract_method(service_source, signature) for signature in (
-        'public static Bundle beginOriginal(', 'public static Bundle queryOriginal(',
+        'public static Bundle beginOriginal(', 'public static Bundle queryOriginal(Context context, String originalId, String challenge)',
         'public static Bundle acknowledgeOriginal(')]
     executor_match = re.search(r'private final [\w.]+ commands =', host_source)
     if executor_match is None: raise ValueError('Actual command executor declaration unavailable')
@@ -91,6 +92,8 @@ def main():
       private enum Phase {NEW, PROVISIONING, BOOTSTRAPPING, READY, CLOSING, FAILED}
       private static volatile EmbeddedDuplexProcessHost instance;
       private final Context applicationContext;
+      private final EmbeddedDuplexRunContext runContext;
+      private EmbeddedDuplexRunSelectionStore runSelection;
       private volatile EmbeddedDuplexProcessFence processFence;
       private long nativeExecutorGeneration;
       private String nativeAppRecordSha256,terminalWholeReceipt;
@@ -98,7 +101,7 @@ def main():
       private EmbeddedDuplexOriginals.Record activeCommandOriginal;
       private Object platform,resources;
       private final AtomicReference<Phase> phase=new AtomicReference<>(Phase.NEW);
-      private EmbeddedDuplexProcessHost(Context context){applicationContext=context;}
+      private EmbeddedDuplexProcessHost(Context context){applicationContext=context;runContext=new EmbeddedDuplexRunContext(context.getNoBackupFilesDir(),context.getNoBackupFilesDir(),null,0);}
       private String checkpointSnapshot(){return null;}
       private String evidenceSnapshot(){return null;}
       private interface Work<T>{T run()throws Exception;}
@@ -140,7 +143,7 @@ def main():
         model_paths.append(str(path))
     classes = out / 'classes'
     classes.mkdir()
-    sources = [production / 'EmbeddedDuplexCanonicalJson.java', production / 'EmbeddedDuplexOriginals.java', production / 'EmbeddedDuplexProcessFence.java', fixture]
+    sources = [production / 'EmbeddedDuplexCanonicalJson.java', production / 'EmbeddedDuplexRunContext.java', production / 'EmbeddedDuplexRunSelectionStore.java', production / 'EmbeddedDuplexOriginals.java', production / 'EmbeddedDuplexProcessFence.java', fixture]
     for name in ('EmbeddedDuplexFreshLifecycle.java', 'EmbeddedDuplexNativeOperationFailure.java'):
         if (production / name).exists(): sources.append(production / name)
     source_paths = sources + [production / name for name in ('EmbeddedDuplexProcessHost.java', 'EmbeddedDuplexRuntimeService.java', 'EmbeddedDuplexProcessIncarnation.java')] + [pathlib.Path(__file__).resolve()]

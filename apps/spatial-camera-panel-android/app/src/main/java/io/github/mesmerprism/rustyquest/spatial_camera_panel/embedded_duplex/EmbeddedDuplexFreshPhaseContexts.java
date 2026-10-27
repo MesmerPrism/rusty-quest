@@ -15,7 +15,7 @@ import org.json.JSONObject;
 final class EmbeddedDuplexFreshPhaseContexts {
     private final File directory;
     EmbeddedDuplexFreshPhaseContexts(Context context)throws Exception{
-        directory=EmbeddedDuplexFreshClosure.activeDirectory(context.getNoBackupFilesDir(),"embedded-duplex-fresh-contexts-v1");
+        directory=EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(context),"embedded-duplex-fresh-contexts-v1");
         if(!directory.exists() && !directory.mkdir())throw new IllegalStateException("phase contexts directory create");
         if(!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("phase contexts directory type");
         Os.chmod(directory.getAbsolutePath(),0700);sync(directory.getParentFile());

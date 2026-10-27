@@ -16,7 +16,7 @@ final class EmbeddedDuplexPeerLifetimeArchive {
     private final Context application;
     private final File directory;
     EmbeddedDuplexPeerLifetimeArchive(Context context)throws Exception{
-        application=context.getApplicationContext();directory=EmbeddedDuplexFreshClosure.activeDirectory(application.getNoBackupFilesDir(),"embedded-duplex-lifetime-archives-v1");
+        application=context.getApplicationContext();directory=EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(application),"embedded-duplex-lifetime-archives-v1");
         if(!directory.exists() && !directory.mkdir())throw new IllegalStateException("lifetime archive directory");
         if(!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("lifetime archive directory type");
         Os.chmod(directory.getAbsolutePath(),0700);

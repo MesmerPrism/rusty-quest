@@ -15,7 +15,7 @@ import org.json.JSONObject;
 final class EmbeddedDuplexFreshOwnerClosure {
     private final File directory,file;
     EmbeddedDuplexFreshOwnerClosure(Context context)throws Exception{
-        directory=EmbeddedDuplexFreshClosure.activeDirectory(context.getNoBackupFilesDir(),"embedded-duplex-fresh-owner-closure-v1");
+        directory=EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(context),"embedded-duplex-fresh-owner-closure-v1");
         if(!directory.exists() && !directory.mkdir())throw new IllegalStateException("fresh owner closure directory");
         if(!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("fresh owner closure type");
         Os.chmod(directory.getAbsolutePath(),0700);file=new File(directory,"terminal-owner.json");

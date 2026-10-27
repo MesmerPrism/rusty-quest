@@ -15,7 +15,7 @@ import org.json.JSONObject;
 final class EmbeddedDuplexFreshPhaseArchive {
     private final File directory;
     EmbeddedDuplexFreshPhaseArchive(Context context)throws Exception{
-        directory=EmbeddedDuplexFreshClosure.activeDirectory(context.getNoBackupFilesDir(),"embedded-duplex-fresh-phase-archives-v1");
+        directory=EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(context),"embedded-duplex-fresh-phase-archives-v1");
         if(!directory.exists() && !directory.mkdir())throw new IllegalStateException("fresh phase archive directory");
         if(!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("fresh phase archive type");
         Os.chmod(directory.getAbsolutePath(),0700);

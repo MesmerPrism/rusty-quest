@@ -21,7 +21,7 @@ final class EmbeddedDuplexConstructionClosure {
     static final String WHOLE="rusty.quest.embedded_duplex.no_media_whole_retirement.v3";
     private final File directory,file;
     EmbeddedDuplexConstructionClosure(Context context)throws Exception{
-        this(EmbeddedDuplexFreshClosure.activeDirectory(context.getNoBackupFilesDir(),"embedded-duplex-partial-construction-v1"));
+        this(EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(context),"embedded-duplex-partial-construction-v1"));
     }
     // Same writer path for source-owned filesystem controls; no public/Binder API.
     EmbeddedDuplexConstructionClosure(File directory)throws Exception{

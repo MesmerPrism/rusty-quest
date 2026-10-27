@@ -35,6 +35,9 @@ public final class EmbeddedDuplexOriginals {
             "response", "response_sha256", "failure", "outcome_sha256", "retention", "consumer_receipt_sha256");
     private static final ThreadLocal<Record> CURRENT = new ThreadLocal<>();
     private static EmbeddedDuplexOriginals singleton;
+    private EmbeddedDuplexRunContext capturedRun;
+    private boolean readOnly;
+    public static final String RUN_TRANSPORT="rusty.quest.embedded_duplex.operator_transport.v3";
     private final File root, directory;
     private final ActorSource actors;
     private final DirectorySync sync;
@@ -75,21 +78,22 @@ public final class EmbeddedDuplexOriginals {
 
     public static synchronized EmbeddedDuplexOriginals forApplication(Context context) throws Exception {
         Context app=Objects.requireNonNull(context).getApplicationContext();
-        if(singleton==null) {
-            EmbeddedDuplexProcessHost.forApplication(app);
-            singleton=new EmbeddedDuplexOriginals(app.getNoBackupFilesDir(),new ActorSource() {
+        EmbeddedDuplexRunContext run=EmbeddedDuplexProcessHost.operationalContext(app);
+        if(singleton==null || !singleton.root.equals(run.root)) {
+            singleton=new EmbeddedDuplexOriginals(run.root,new ActorSource() {
                 public JSONObject snapshot()throws Exception{return EmbeddedDuplexProcessHost.originalActor();}
                 public long appGeneration(){return EmbeddedDuplexProcessHost.currentAppGeneration();}
                 public boolean settled(JSONObject actor,long generation)throws Exception{return EmbeddedDuplexProcessHost.originalActorSettled(actor,generation);}
             },()->{
                 // Sync the parent too: the first directory entry must survive a crash.
-                for (File directory : new File[]{app.getNoBackupFilesDir(),
-                        new File(app.getNoBackupFilesDir(), "operator-originals-v1")}) {
+                for (File directory : new File[]{run.root,
+                        new File(run.root, "operator-originals-v1")}) {
                     java.io.FileDescriptor fd=Os.open(directory.getAbsolutePath(),
                             OsConstants.O_RDONLY|OsConstants.O_CLOEXEC|OsConstants.O_NOFOLLOW,0);
                     try{Os.fsync(fd);}finally{Os.close(fd);}
                 }
             });
+            singleton.capturedRun=run;
         }
         return singleton;
     }
@@ -105,7 +109,77 @@ public final class EmbeddedDuplexOriginals {
         if(!Files.isDirectory(file.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(file.toPath()))
             throw new IllegalStateException("original directory type");
     }
+    private static void validateNativeSetupBinding(JSONObject row)throws Exception{
+        if(row.isNull("native_setup_binding"))return;
+        JSONObject binding=row.getJSONObject("native_setup_binding");
+        if(!Set.of("pair_session","fresh_pair_continue").contains(row.getString("operation"))
+            ||!keys(binding).equals(Set.of("setup_request_id","context_sha256"))
+            ||!binding.getString("setup_request_id").matches("[a-z][a-z0-9_.-]{0,255}")
+            ||!binding.isNull("context_sha256")&&!binding.getString("context_sha256").matches("sha256:[0-9a-f]{64}"))
+            throw new IllegalStateException("retained Native setup binding differs");
+    }
+    private void requireSelected(){if(capturedRun!=null&&!readOnly)capturedRun.requireSame(EmbeddedDuplexProcessHost.selectedContext());}
+    private boolean validRequestScope(JSONObject request)throws Exception{
+        if(capturedRun==null||capturedRun.legacy())return TRANSPORT.equals(request.getString("schema"))&&!request.getJSONObject("extras").has("run_id");
+        requireSelected();return RUN_TRANSPORT.equals(request.getString("schema"))&&capturedRun.runId.equals(request.getJSONObject("extras").getString("run_id"));
+    }
+    static synchronized boolean selectionIdle(){
+        if(singleton==null)return true;
+        synchronized(singleton){for(Record row:singleton.live.values())
+            if(row.commands!=0||row.enteredCommandStages.get()!=0||row.future!=null&&!row.future.isDone()
+                ||row.serviceCompletionCallbackRegistered&&!row.callbackTerminal.isDone())return false;}
+        return true; // Deliberately no historical row/UNKNOWN/ACK census.
+    }
+    static synchronized void selectedRunChanged(){if(!selectionIdle())throw new IllegalStateException("Original work entered");singleton=null;}
+    private EmbeddedDuplexOriginals(File root)throws Exception{
+        this.root=root;directory=new File(root,"operator-originals-v1");regularDirectory(root);regularDirectory(directory);
+        actors=null;sync=()->{throw new IllegalStateException("query-only run sync");};readOnly=true;
+    }
+    static EmbeddedDuplexOriginals retained(EmbeddedDuplexRunContext run)throws Exception{
+        EmbeddedDuplexOriginals owner=new EmbeddedDuplexOriginals(run.root);owner.capturedRun=run;return owner;
+    }
+    /** Exact one-row compatibility witness. No mkdir/chmod, all-row scan, ACK or owner rebind. */
+    static JSONObject closedWholeWitness(File root,String originalId)throws Exception{return closedWholeHandoff(root,originalId).getJSONObject("physical_retirement");}
+    static JSONObject closedWholeHandoff(File root,String originalId)throws Exception{return closedWholeHandoff(root,originalId,null);}
+    static JSONObject closedWholeHandoff(File root,String originalId,String packageId)throws Exception{
+        requireId(originalId);EmbeddedDuplexOriginals owner=new EmbeddedDuplexOriginals(root);Record record=owner.find(originalId);
+        if(record==null||!"whole_app_close".equals(record.row.getString("operation"))||record.row.isNull("response")||record.row.isNull("outcome_sha256"))
+            throw new IllegalStateException("named retained Whole witness unavailable");
+        JSONObject response=record.row.getJSONObject("response");
+        validateResponse("whole_app_close",record.row.getString("original_challenge"),response);
+        if(!"observed".equals(response.getString("status"))||nativePending("whole_app_close",response))throw new IllegalStateException("retained Whole observation not terminal");
+        JSONObject envelope=new JSONObject(response.getString("receipt"));
+        JSONObject physical=envelope.has("peer_lifecycle")?envelope.getJSONObject("peer_lifecycle"):envelope;
+        EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(physical);
+        File file=new File(owner.directory,originalId+".joined.json");
+        if(!Files.isRegularFile(file.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(file.toPath())||Files.size(file.toPath())>MAX_RECORD_BYTES)
+            throw new IllegalStateException("named Whole join unavailable");
+        JSONObject join=EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(file.toPath()));
+        Set<String> fields=Set.of("schema","original_id","operation","request_sha256","outcome_sha256","actor_binding","original_worker_terminal",
+            "original_callback_terminal","outbound_exchanges_joined","physical_retirement_schema","physical_retirement_sha256","app_process_generation",
+            "native_executor_generation","app_record_sha256","remote_outcome_resolved","join_basis");
+        if(!keys(join).equals(fields)||!"rusty.quest.embedded_duplex.original_join.v2".equals(join.getString("schema"))
+            ||!originalId.equals(join.getString("original_id"))||!"whole_app_close".equals(join.getString("operation"))
+            ||!record.row.getString("request_sha256").equals(join.getString("request_sha256"))
+            ||!record.row.getString("outcome_sha256").equals(join.getString("outcome_sha256"))
+            ||!EmbeddedDuplexCanonicalJson.sameValue(record.row.getJSONObject("actor_binding"),join.getJSONObject("actor_binding"))
+            ||!join.getBoolean("original_worker_terminal")||!join.getBoolean("original_callback_terminal")||!join.getBoolean("outbound_exchanges_joined")
+            ||join.getBoolean("remote_outcome_resolved")||!physical.getString("$schema").equals(join.getString("physical_retirement_schema"))
+            ||!EmbeddedDuplexCanonicalJson.sha256(physical).equals(join.getString("physical_retirement_sha256"))
+            ||physical.getLong("app_process_generation")!=join.getLong("app_process_generation")
+            ||physical.getLong("native_executor_generation")!=join.getLong("native_executor_generation"))throw new IllegalStateException("named Whole join differs");
+        JSONObject actor=record.row.getJSONObject("actor_binding");
+        if(packageId!=null&&!packageId.equals(actor.getString("package_id")))throw new IllegalStateException("retained Whole package differs");
+        if(actor.isNull("native_generation")||actor.getLong("native_generation")!=join.getLong("native_executor_generation")
+            ||!actor.getString("app_record_sha256").equals(join.getString("app_record_sha256")))throw new IllegalStateException("named Whole actor differs");
+        validateJoinBasis(join.getJSONObject("join_basis"),record.row,join);
+        return new JSONObject().put("whole_original_id",originalId).put("request_sha256",join.getString("request_sha256"))
+            .put("outcome_sha256",join.getString("outcome_sha256")).put("physical_retirement_sha256",join.getString("physical_retirement_sha256"))
+            .put("prior_native_generation",join.getLong("native_executor_generation")).put("physical_retirement",physical);
+    }
     private void requireWritable()throws Exception {
+        if(readOnly)throw new IllegalStateException("retained run is query-only");
+        requireSelected();
         regularDirectory(root);regularDirectory(directory);
         if(Files.exists(new File(root,"embedded-duplex-owner-succession-v1").toPath(),LinkOption.NOFOLLOW_LINKS))
             throw new IllegalStateException("archived custody requires its actual succession owner");
@@ -131,7 +205,9 @@ public final class EmbeddedDuplexOriginals {
                 throw new IllegalArgumentException("operator request hash type");
             fields.put(key,value);
         }
-        return new JSONObject().put("schema",TRANSPORT).put("method",operation).put("challenge",challenge).put("extras",fields);
+        EmbeddedDuplexRunContext run=EmbeddedDuplexProcessHost.selectedContext();
+        if(run!=null&&run.runId!=null&&!fields.has("run_id"))fields.put("run_id",run.runId);
+        return new JSONObject().put("schema",fields.has("run_id")?RUN_TRANSPORT:TRANSPORT).put("method",operation).put("challenge",challenge).put("extras",fields);
     }
 
     public Bundle begin(String originalId,String operation,String challenge,JSONObject request,
@@ -139,7 +215,7 @@ public final class EmbeddedDuplexOriginals {
         id(originalId);id(challenge);Objects.requireNonNull(action);
         if(!OPERATIONS.contains(operation))throw new IllegalArgumentException("unsupported Original operation");
         if (request == null || !keys(request).equals(Set.of("schema", "method", "challenge", "extras"))
-                || !TRANSPORT.equals(request.getString("schema")) || !operation.equals(request.getString("method"))
+                || !validRequestScope(request) || !operation.equals(request.getString("method"))
                 || !challenge.equals(request.getString("challenge")) || !(request.get("extras") instanceof JSONObject))
             throw new IllegalArgumentException("Original canonical request differs");
         if (FRESH_OPERATIONS.contains(operation)) return beginBound(originalId, operation, challenge, request, null, null, action);
@@ -166,6 +242,7 @@ public final class EmbeddedDuplexOriginals {
         synchronized(this){return envelope(held,challenge);}
     }
     static AutoCloseable enter(Record actual) {
+        if(actual!=null)actual.owner.requireSelected();
         Record previous=CURRENT.get();if(actual==null)CURRENT.remove();else CURRENT.set(actual);
         return ()->{if(previous==null)CURRENT.remove();else CURRENT.set(previous);};
     }
@@ -303,9 +380,9 @@ public final class EmbeddedDuplexOriginals {
         if(record.persistenceFailure!=null)throw new IllegalStateException("original publication unavailable",record.persistenceFailure);
         JSONObject observation=copy(record.row);String state=observation.getString("state");
         if(record.restored&&(state.equals("registered")||state.equals("pending")))observation.put("state","unknown");
-        String status="compacted".equals(observation.getString("retention"))?"compacted":
-                "succeeded".equals(observation.getString("state"))?"observed":"unknown".equals(observation.getString("state"))?"unknown":"pending";
-        Bundle out=new Bundle();out.putString("schema",TRANSPORT);out.putString("status",status);out.putString("challenge",challenge);
+        String status="unknown".equals(observation.getString("state"))?"unknown":
+                "compacted".equals(observation.getString("retention"))?"compacted":"succeeded".equals(observation.getString("state"))?"observed":"pending";
+        Bundle out=new Bundle();out.putString("schema",capturedRun!=null&&!capturedRun.legacy()?RUN_TRANSPORT:TRANSPORT);if(capturedRun!=null&&!capturedRun.legacy())out.putString("run_id",capturedRun.runId);out.putString("status",status);out.putString("challenge",challenge);
         out.putString("original_id",record.id());out.putString("observation_json",EmbeddedDuplexCanonicalJson.encode(observation));return out;
     }
     private static JSONObject outcome(JSONObject row)throws Exception {
@@ -338,7 +415,8 @@ public final class EmbeddedDuplexOriginals {
         JSONObject actor = row.getJSONObject("actor_binding");
         if (!keys(actor).equals(Set.of("package_id", "app_record_sha256", "native_generation"))
                 || !(actor.get("package_id") instanceof String) || actor.getString("package_id").isEmpty()
-                || !row.isNull("native_setup_binding")) throw new IllegalStateException("Original actor shape");
+                ) throw new IllegalStateException("Original actor shape");
+        validateNativeSetupBinding(row);
         if (!actor.isNull("app_record_sha256")) hash(actor.getString("app_record_sha256"));
         Object nativeGeneration = actor.get("native_generation");
         if (nativeGeneration != JSONObject.NULL && (!(nativeGeneration instanceof Integer || nativeGeneration instanceof Long)
@@ -353,11 +431,20 @@ public final class EmbeddedDuplexOriginals {
                 || ((state.equals("registered") || state.equals("pending"))
                     && (!row.isNull("response") || !row.isNull("outcome_sha256") || !row.isNull("failure"))))
             throw new IllegalStateException("Original outcome join");
+        boolean compactedUnknown=row.getString("retention").equals("compacted")&&state.equals("unknown");
         if (row.getString("retention").equals("compacted")) {
-            if (!state.equals("succeeded")) throw new IllegalStateException("Original compaction state");
-            hash(row.getString("consumer_receipt_sha256"));
+            if(compactedUnknown){if(!row.isNull("consumer_receipt_sha256"))throw new IllegalStateException("UNKNOWN is not consumer ACK");}
+            else {if (!state.equals("succeeded")) throw new IllegalStateException("Original compaction state");hash(row.getString("consumer_receipt_sha256"));}
         } else if (!row.isNull("consumer_receipt_sha256")) throw new IllegalStateException("Original consumer state");
-        Record restored=new Record(this,row);restored.restored=true;return restored;
+        Record restored=new Record(this,row);restored.restored=true;
+        if(compactedUnknown){
+            // Physical-owner compaction is not outcome settlement. Reuse the exact retained join validator, then return UNKNOWN.
+            synchronized(this){live.put(originalId,restored);try{
+                if(!"joined".equals(queryJoin(originalId,row.getString("original_challenge")).getString("status")))
+                    throw new IllegalStateException("UNKNOWN compaction join absent");
+            }finally{live.remove(originalId);}}
+        }
+        return restored;
     }
     private void persist(Record record)throws Exception {
         try {
@@ -380,11 +467,13 @@ public final class EmbeddedDuplexOriginals {
             Supplier<CompletableFuture<Bundle>> factory)throws Exception{
         requireId(priorId);requireHash(priorOutcome);
         if (request == null || !keys(request).equals(Set.of("schema","method","challenge","extras"))
-                || !TRANSPORT.equals(request.getString("schema")) || !"fresh_pair_continue".equals(request.getString("method"))
+                || !validRequestScope(request) || !"fresh_pair_continue".equals(request.getString("method"))
                 || !challenge.equals(request.getString("challenge")) || !(request.get("extras") instanceof JSONObject))
             throw new IllegalArgumentException("fresh continuation canonical request differs");
         JSONObject extras=request.getJSONObject("extras");
-        if (!keys(extras).equals(Set.of("prior_original_id","prior_outcome_sha256"))
+        Set<String> expectedExtras=new HashSet<>(Set.of("prior_original_id","prior_outcome_sha256"));
+        if(capturedRun!=null&&!capturedRun.legacy())expectedExtras.add("run_id");
+        if (!keys(extras).equals(expectedExtras)
                 || !priorId.equals(extras.getString("prior_original_id")) || !priorOutcome.equals(extras.getString("prior_outcome_sha256")))
             throw new IllegalArgumentException("fresh continuation source predecessor differs");
         if(id.equals(priorId))throw new IllegalArgumentException("continuation requires new wrapper original");
@@ -578,7 +667,7 @@ public final class EmbeddedDuplexOriginals {
         File file=new File(directory,id+".joined.json");JSONObject proof=null;
         if(Files.exists(file.toPath(),LinkOption.NOFOLLOW_LINKS)){
             if(!Files.isRegularFile(file.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("original join receipt type");
-            proof=new JSONObject(new String(Files.readAllBytes(file.toPath()),StandardCharsets.UTF_8));
+            proof=EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(file.toPath()));
             java.util.HashSet<String> keys=new java.util.HashSet<>();proof.keys().forEachRemaining(keys::add);
             boolean v2="rusty.quest.embedded_duplex.original_join.v2".equals(proof.getString("schema"));
             java.util.HashSet<String> expected=new java.util.HashSet<>(java.util.Arrays.asList("schema","original_id","operation","request_sha256",

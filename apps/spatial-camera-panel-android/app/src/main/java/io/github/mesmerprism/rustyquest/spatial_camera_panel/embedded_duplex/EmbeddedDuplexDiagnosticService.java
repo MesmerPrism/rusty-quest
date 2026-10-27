@@ -155,6 +155,6 @@ public final class EmbeddedDuplexDiagnosticService {
     private static File receiptFile(Context context) {
         Context app = context.getApplicationContext();
         if (app == null) throw new IllegalStateException("application context unavailable");
-        return new File(app.getNoBackupFilesDir(), RELATIVE);
+        return new File(EmbeddedDuplexProcessHost.operationalRoot(app), RELATIVE);
     }
 }

@@ -30,7 +30,7 @@ final class EmbeddedDuplexFreshClosure {
     private final File directory;
     private final File file;
     EmbeddedDuplexFreshClosure(Context context) throws Exception {
-        directory = EmbeddedDuplexFreshClosure.activeDirectory(context.getNoBackupFilesDir(),"embedded-duplex-fresh-closure-v1");
+        directory = EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(context),"embedded-duplex-fresh-closure-v1");
         if (!directory.exists() && !directory.mkdir()) throw new IllegalStateException("fresh closure directory");
         if (!Files.isDirectory(directory.toPath(), LinkOption.NOFOLLOW_LINKS)) throw new IllegalStateException("fresh closure directory type");
         Os.chmod(directory.getAbsolutePath(),0700);

@@ -11,6 +11,22 @@ import org.junit.Test
 
 class EmbeddedDuplexOperatorContractTest {
   private val nonce = "0123456789abcdef0123456789abcdef"
+  @Test fun explicitRunCallsAreClosedAndRetainActualOperation() {
+    val run="b".repeat(32); val original="c".repeat(32)
+    val create=EmbeddedDuplexOperatorContract.parseFields("new_run",nonce,mapOf("run_id" to run,"legacy_whole_original_id" to original))
+    assertEquals("NEW_RUN",create.route.name); assertEquals(run,create.runId);assertEquals(original,create.legacyWholeOriginalId)
+    assertEquals("RESUME_RUN",EmbeddedDuplexOperatorContract.parseFields("resume_run",nonce,mapOf("run_id" to run)).route.name)
+    assertEquals("RUN_STATUS",EmbeddedDuplexOperatorContract.parseFields("run_status",nonce,emptyMap()).route.name)
+    val start=EmbeddedDuplexOperatorContract.parseFields("start",nonce,mapOf("run_id" to run,"original_id" to original,"prepare_preflight" to true))
+    assertEquals("ORDINARY_START",start.route.name);assertEquals(run,start.runId);assertEquals(original,start.originalId)
+    assertEquals(run,EmbeddedDuplexOperatorContract.parseFields("operation_query",nonce,mapOf("run_id" to run,"original_id" to original)).runId)
+    assertEquals(run,EmbeddedDuplexOperatorContract.parseFields("operation_ack",nonce,mapOf("run_id" to run,"original_id" to original,
+        "request_sha256" to "d".repeat(64),"outcome_sha256" to "e".repeat(64),"consumer_receipt_sha256" to "f".repeat(64))).runId)
+    for(fields in listOf(mapOf("run_id" to "../escape"),mapOf("run_id" to run,"path" to "/outside"),emptyMap<String,Any>()))
+      assertThrows(IllegalArgumentException::class.java){EmbeddedDuplexOperatorContract.parseFields("new_run",nonce,fields)}
+    assertThrows(IllegalArgumentException::class.java){EmbeddedDuplexOperatorContract.parseFields("resume_run",nonce,mapOf("run_id" to run,"legacy_whole_original_id" to original))}
+    assertThrows(IllegalArgumentException::class.java){EmbeddedDuplexOperatorContract.parseFields("run_status",nonce,mapOf("run_id" to run))}
+  }
   @Test fun ordinaryStartUsesSelectedDepthPermissionDemand() {
     for (layer in listOf(-1.0f, 0.0f, 5.0f, 6.0f)) {
       assertFalse(embeddedDuplexStartNeedsScenePermission("disabled", layer))

@@ -16,7 +16,7 @@ final class EmbeddedDuplexPreparedArchive {
     private final Context application;
     private final File directory;
     EmbeddedDuplexPreparedArchive(Context context)throws Exception {
-        application=context.getApplicationContext();directory=EmbeddedDuplexFreshClosure.activeDirectory(application.getNoBackupFilesDir(),"embedded-duplex-prepared-lifetimes-v1");
+        application=context.getApplicationContext();directory=EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(application),"embedded-duplex-prepared-lifetimes-v1");
         if(!directory.exists()&&!directory.mkdir())throw new IllegalStateException("prepared archive directory");
         if(!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS))throw new IllegalStateException("prepared archive directory type");
         Os.chmod(directory.getAbsolutePath(),0700);sync(directory.getParentFile());

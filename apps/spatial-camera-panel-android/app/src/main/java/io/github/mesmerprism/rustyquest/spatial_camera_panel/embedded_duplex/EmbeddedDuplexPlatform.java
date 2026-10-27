@@ -43,6 +43,7 @@ final class EmbeddedDuplexPlatform {
         return guard.enter();
     }
     private void requireProcessCallback() {
+        operationalRun.requireSame(EmbeddedDuplexProcessHost.selectedContext());
         EmbeddedDuplexProcessFence.CallbackGuard guard = processCallbacks;
         if (guard == null) throw new IllegalStateException("app callback fence absent");
         guard.requireLive();
@@ -260,6 +261,7 @@ final class EmbeddedDuplexPlatform {
     }
     private static final int MAX_REPLAY_BYTES = 16 * 1024 * 1024;
     private final EmbeddedDuplexIdentity.Identity identity;
+    private final EmbeddedDuplexRunContext operationalRun;
     private final EmbeddedDuplexDisplay display;
     private final String localPeerId;
     private final String remotePeerId;
@@ -624,6 +626,7 @@ final class EmbeddedDuplexPlatform {
                 || remoteControlPort <= 0 || remoteControlPort > 65535) {
             throw new IllegalArgumentException("embedded platform binding");
         }
+        this.operationalRun=EmbeddedDuplexProcessHost.operationalContext(context);
         this.identity = identity;
         this.display = display;
         this.localPeerId = localPeerId;
@@ -632,7 +635,7 @@ final class EmbeddedDuplexPlatform {
         this.remoteControlAddress = numericIpv4(remoteControlIp);
         this.remoteControlPort = remoteControlPort;
         this.localFixture = localFixture;
-        replayDirectory = EmbeddedDuplexFreshClosure.activeDirectory(context.getNoBackupFilesDir(), "embedded-duplex-replay");
+        replayDirectory = EmbeddedDuplexFreshClosure.activeDirectory(EmbeddedDuplexProcessHost.operationalRoot(context), "embedded-duplex-replay");
         rejectLink(replayDirectory);
         if (!replayDirectory.isDirectory() && !replayDirectory.mkdir()) {
             throw new IllegalStateException("replay directory unavailable");

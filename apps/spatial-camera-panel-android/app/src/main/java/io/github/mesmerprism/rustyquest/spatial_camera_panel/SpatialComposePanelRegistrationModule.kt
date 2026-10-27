@@ -45,6 +45,8 @@ internal data class SpatialPrivateLayerPanelRegistrationBindings(
     val refreshConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     val startConnectionHub: () -> ConnectionHubWearerControlSnapshot,
     val stopConnectionHub: () -> ConnectionHubWearerControlSnapshot,
+    val selectEmbeddedDuplexRun: (String, Boolean) -> CompletableFuture<String>,
+    val embeddedDuplexRunStatus: () -> CompletableFuture<String>,
     val runEmbeddedDuplexOrdinaryStart: () -> CompletableFuture<String>,
     val runEmbeddedDuplexPeerStop: () -> CompletableFuture<String>,
     val prepareEmbeddedDuplexStartPreflight: () -> CompletableFuture<EmbeddedDuplexStartPreflight>,
@@ -152,6 +154,8 @@ internal object SpatialComposePanelRegistrationModule {
                       refreshConnectionHub = bindings.refreshConnectionHub,
                       startConnectionHub = bindings.startConnectionHub,
                       stopConnectionHub = bindings.stopConnectionHub,
+                      selectEmbeddedDuplexRun = bindings.selectEmbeddedDuplexRun,
+                      embeddedDuplexRunStatus = bindings.embeddedDuplexRunStatus,
                       runEmbeddedDuplexOrdinaryStart = bindings.runEmbeddedDuplexOrdinaryStart,
                       runEmbeddedDuplexPeerStop = bindings.runEmbeddedDuplexPeerStop,
                       prepareEmbeddedDuplexStartPreflight =
