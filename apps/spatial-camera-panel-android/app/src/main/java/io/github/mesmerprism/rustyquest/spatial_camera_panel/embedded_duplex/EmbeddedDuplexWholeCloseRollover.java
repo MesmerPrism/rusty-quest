@@ -61,6 +61,24 @@ public final class EmbeddedDuplexWholeCloseRollover {
         return new EmbeddedDuplexWholeCloseRollover(epoch,app,executor,attachment,config,enrollment,
                 EmbeddedDuplexProcessFence.digest(proof.toString()));
     }
+    public static boolean completedCacheMatches(java.util.concurrent.CompletableFuture<?> captured,
+            java.util.concurrent.CompletableFuture<?> current,long capturedAttachment,long currentAttachment){
+        return current==captured&&capturedAttachment==currentAttachment&&(captured==null||captured.isDone());
+    }
+    public static boolean completedSelectionCacheMatches(java.util.concurrent.CompletableFuture<?> captured,
+            java.util.concurrent.CompletableFuture<?> current,long capturedAttachment,long currentAttachment,long selectedAttachment){
+        return current==captured&&(captured==null||captured.isDone())
+            &&(selectedAttachment==0||selectedAttachment==capturedAttachment)
+            &&(currentAttachment==capturedAttachment||currentAttachment==0&&selectedAttachment==0);
+    }
+    /** Pure Activity bookkeeping for the exact completed outgoing service Future.
+     * A later run selection cannot revoke A's cache cleanup, and this never clears B's Future/attachment. */
+    public boolean matchesCompletedRuntime(java.util.concurrent.CompletableFuture<EmbeddedDuplexRuntimeStatus> captured,
+            java.util.concurrent.CompletableFuture<EmbeddedDuplexRuntimeStatus> current,long attachment){
+        if(captured==null||!completedCacheMatches(captured,current,attachmentGeneration,attachment)||captured.isCompletedExceptionally()||captured.isCancelled())return false;
+        EmbeddedDuplexRuntimeStatus status=captured.getNow(null);
+        return status!=null&&matchesRuntime(attachment,status.runtimeConfigSha256,status.enrollmentRecordSha256);
+    }
     public boolean matchesRuntime(long attachment, String config, String enrollment) {
         return attachmentGeneration==attachment && runtimeConfigSha256.equals(config)
                 && enrollmentRecordSha256.equals(enrollment);

@@ -11,16 +11,35 @@ import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.Emb
 /** Debug transport reaches only fixed actions on the current resumed Activity. */
 object EmbeddedDuplexDiagnosticActivityGate {
   @Volatile private var resumed: WeakReference<SpatialCameraPanelActivity>? = null
+  // Pure bookkeeping may complete while paused; this weak reference grants no effect/foreground authority.
+  @Volatile private var bookkeeping: WeakReference<SpatialCameraPanelActivity>? = null
   private val main = Handler(Looper.getMainLooper())
   private fun postOriginal(action: () -> Unit): Boolean = main.post(
       io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOriginals.carry(Runnable { action() }))
 
   fun resumed(activity: SpatialCameraPanelActivity) {
+    bookkeeping = WeakReference(activity)
     if (BuildConfig.DEBUG) resumed = WeakReference(activity)
   }
 
   fun paused(activity: SpatialCameraPanelActivity) {
     if (resumed?.get() === activity) resumed = null
+  }
+
+  /** Captured before the actual source-owned selection; a missing Activity remains headless. */
+  @JvmStatic
+  fun captureRunSelectionReconciliation(): java.util.function.BiConsumer<String?, Throwable?> {
+    val reconcile = bookkeeping?.get()?.captureEmbeddedDuplexRunSelectionReconciliation()
+    return java.util.function.BiConsumer { receipt, failure ->
+      if (failure == null && receipt != null && reconcile != null) {
+        val generation = runCatching {
+          val status = org.json.JSONObject(receipt)
+          require(status.getString("\$schema") == "rusty.quest.embedded_duplex.run_status.v1")
+          status.getLong("app_display_generation").also { require(it >= 0L) }
+        }.getOrNull()
+        if (generation != null) reconcile.accept(generation)
+      }
+    }
   }
 
   @JvmStatic

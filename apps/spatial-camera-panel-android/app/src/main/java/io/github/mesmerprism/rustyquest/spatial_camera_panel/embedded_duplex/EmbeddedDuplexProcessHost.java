@@ -55,7 +55,7 @@ final class EmbeddedDuplexProcessHost {
         try{EmbeddedDuplexRunContext.requireId(id);}catch(Exception invalid){return failed(invalid);}
         CompletableFuture<String> result=new CompletableFuture<>();
         commands.execute(()->{try{
-            synchronized(runRequestGate){
+            synchronized(runRequestGate){synchronized(attachmentGate){
                 if(runRequests!=0)throw new IllegalStateException("operational request in flight");
                 ensureProcessFence();
                 if(id.equals(runContext.runId)){
@@ -68,7 +68,7 @@ final class EmbeddedDuplexProcessHost {
                 if(processFence.effectsPending()||phase.get()!=Phase.NEW||closeInFlight||displayDetaching||display.cleanupPending()
                     ||platform!=null||resources!=null||nativeExecutorGeneration!=0||runtimeConfigSha256!=null
                     ||activeCommandOriginal!=null||!EmbeddedDuplexOriginals.selectionIdle()
-                    ||wholeCallbackMarker!=null&&!wholeCallbackMarker.isDone())throw new IllegalStateException("current run owner unresolved");
+                    ||wholeCallbackMarker!=null&&(!wholeCallbackMarker.isDone()||wholeCallbackMarker.isCompletedExceptionally()||wholeCallbackMarker.isCancelled()))throw new IllegalStateException("current run owner unresolved");
                 OwnStereoCaptureRuntime own=OwnStereoCaptureRuntime.currentForApplication();
                 if(own!=null&&!"terminal".equals(own.physicalCleanupState()))throw new IllegalStateException("actual Own capture not terminal");
                 String sourceOriginal=legacyWholeOriginalId;
@@ -104,9 +104,10 @@ final class EmbeddedDuplexProcessHost {
                 EmbeddedDuplexOriginals.selectedRunChanged();
                 originalClosedActor=null;terminalWholeReceipt=null;terminalWholeChallenge=null;wholeCloseRollover=null;
                 retainedWholeNativeReceipt=null;lastClosedActorProof=null;retainedWholeClose=null;noMediaClose=null;
-                nativeConfigurationContext=null;setupCredentials=null;pendingReview=null;lastBootstrapFailure=null;
+                wholeCallbackMarker=null;wholeCallbackPlatform=null;
+                nativeConfigurationContext=null;setupCredentials=null;pendingReview=null;lastBootstrapFailure=null;diagnosticChallenge=null;
                 result.complete(runStatusOnLane());
-            }
+            }}
         }catch(Throwable failure){
             try{if(processFence!=null)installRunHandoff(runContext.runId,runContext.releaseSourceJson);}catch(Exception restore){failure.addSuppressed(restore);}
             result.completeExceptionally(failure);}});return result;
@@ -130,7 +131,7 @@ final class EmbeddedDuplexProcessHost {
         if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(actual.getString("$schema")))throw new IllegalStateException("Native run readback schema");
         return new JSONObject().put("$schema","rusty.quest.embedded_duplex.run_status.v1")
             .put("run_id",runContext.runId==null?JSONObject.NULL:runContext.runId).put("selection_generation",runContext.selectionGeneration)
-            .put("native",actual).put("app_process_generation",processFence.generation()).toString();
+            .put("native",actual).put("app_process_generation",processFence.generation()).put("app_display_generation",attachmentGeneration).toString();
     }
     private final InstalledApkDigest installedApkDigest = new InstalledApkDigest();
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
@@ -1057,16 +1058,16 @@ final class EmbeddedDuplexProcessHost {
      * bootstrap without Start, then prove terminal closure before reporting. */
     CompletableFuture<String> diagnoseLocalFixture(long expectedGeneration) {
         final String challenge;
-        synchronized (attachmentGate) {
-            if (expectedGeneration == 0L || attachmentGeneration != expectedGeneration
+        synchronized(runRequestGate){synchronized (attachmentGate) {
+            if (!runContext.legacy() || expectedGeneration == 0L || attachmentGeneration != expectedGeneration
                     || displayDetaching || display.cleanupPending()
                     || diagnosticChallenge == null
                     || !phase.compareAndSet(Phase.NEW, Phase.BOOTSTRAPPING)) {
                 return failed(new IllegalStateException("local diagnostic display unavailable"));
             }
             challenge = diagnosticChallenge;
-            diagnosticChallenge = null;
-        }
+            diagnosticChallenge = null;runRequests++;
+        }}
         AtomicReference<String> enrollmentSha = new AtomicReference<>();
         EmbeddedDuplexBootstrap.Trace trace = new EmbeddedDuplexBootstrap.Trace();
         CompletableFuture<String> bootstrap = submit(() -> {
@@ -1108,7 +1109,7 @@ final class EmbeddedDuplexProcessHost {
                             failure == null ? "bootstrap_closed" : "bootstrap_failed_closed",
                             enrollmentSha.get(), configSha,
                             failure == null ? null : trace.failure()));
-        }).thenCompose(next -> next);
+        }).thenCompose(next -> next).whenComplete((value,failure)->{synchronized(runRequestGate){runRequests--;}});
     }
 
     private String terminalDiagnosticResult(String challenge, String status,
@@ -2416,6 +2417,16 @@ final class EmbeddedDuplexProcessHost {
         else if(!held.config.equals(proof.getString("config_sha256")))throw new IllegalStateException("native no-media config differs");
     }
 
+    private boolean joinWholeCallbackOwner(EmbeddedDuplexPlatform held)throws Exception{
+        if(wholeCallbackMarker==null){
+            display.detachAfterCleanup(attachmentGeneration,held::closeControlAfterProductCleanup);
+            wholeCallbackPlatform=held;
+            wholeCallbackMarker=held.retireProcessCallbacksAsync().thenRunAsync(()->{},commands);
+        }
+        if(wholeCallbackPlatform!=held)throw new IllegalStateException("whole callback owner changed");
+        if(!wholeCallbackMarker.isDone())return false;
+        wholeCallbackMarker.join();return true;
+    }
     private void finishWholeAppProof(JSONObject proof, String expectedSha, boolean noMedia) throws Exception {
         proof.put("whole_app_physical_cleanup", "pending");
         long[] snapshot = io.github.mesmerprism.rustyquest.spatial_camera_panel.StereoBankControls.INSTANCE.concurrentQualification();
@@ -2439,14 +2450,7 @@ final class EmbeddedDuplexProcessHost {
         } else {
             EmbeddedDuplexPlatform held = platform;
             if (held == null || resources == null || !resources.productResourcesTerminal()) return;
-            if(wholeCallbackMarker==null){
-                display.detachAfterCleanup(attachmentGeneration, held::closeControlAfterProductCleanup);
-                wholeCallbackPlatform=held;
-                wholeCallbackMarker=held.retireProcessCallbacksAsync().thenRunAsync(()->{},commands);
-            }
-            if(wholeCallbackPlatform!=held)throw new IllegalStateException("whole callback owner changed");
-            if(!wholeCallbackMarker.isDone())return;
-            wholeCallbackMarker.join();
+            if(!joinWholeCallbackOwner(held))return;
         }
         if (!noMedia && retainedWholeClose != null) {
             OwnStereoCaptureRuntime own = OwnStereoCaptureRuntime.currentForApplication();

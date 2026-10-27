@@ -5,6 +5,9 @@ def native_controls(root,out):
  native=root/'apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex'
  harness=out/'native';harness.mkdir()
  prefix=['wsl.exe','--'] if os.name=='nt' else []
+ cargo=subprocess.check_output(prefix+['bash','-lc','command -v cargo'],text=True,encoding='utf-8').strip() if prefix else shutil.which('cargo')
+ rustc=subprocess.check_output(prefix+['bash','-lc','command -v rustc'],text=True,encoding='utf-8').strip() if prefix else shutil.which('rustc')
+ if not cargo or not rustc:raise ValueError('Native Unix Rust toolchain unavailable')
  def linux(path):
   if not prefix:return str(path)
   return subprocess.check_output(prefix+['wslpath','-a',path.as_posix()],text=True,encoding='utf-8').strip()
@@ -49,8 +52,8 @@ def native_controls(root,out):
  manifest=linux(harness/'Cargo.toml');target=linux(harness/'target')
  # A unique actual TMPDIR prevents old retained fixture pid names from being reused.
  tmp=subprocess.check_output(prefix+['mktemp','-d','/tmp/quest-new-run-XXXXXX'],text=True,encoding='utf-8').strip()
- command('resolve',['cargo','generate-lockfile','--offline','--manifest-path',manifest])
- command('controls',['env','TMPDIR='+tmp,'cargo','test','--locked','--offline','--manifest-path',manifest,'--target-dir',target])
+ command('resolve',['env','RUSTC='+rustc,cargo,'generate-lockfile','--offline','--manifest-path',manifest])
+ command('controls',['env','TMPDIR='+tmp,'RUSTC='+rustc,cargo,'test','--locked','--offline','--manifest-path',manifest,'--target-dir',target,'--','--test-threads=1'])
  return {'native_pins':{x.name:hashlib.sha256(x.read_bytes()).hexdigest() for x in [native/'process_fence.rs',native/'runtime_host.rs',native/'native_fence_jni.rs']},'generated_pins':{x.name:hashlib.sha256(x.read_bytes()).hexdigest() for x in harness.iterdir() if x.is_file()},'scope':'Exact production Unix fence/inline tests plus extracted actual runtime run-binding/metadata guards; enclosing runtime owners/platform modeled; SHA256 seam uses actual sha256sum. Full Android/JNI compile separate.'}
 
 
@@ -70,7 +73,20 @@ def main():
  run('originals',[sys.executable,str(old),'--root',str(root),'--output',str(baseline),'--java-home',str(java),'--json-jar',str(jar),'--support-classpath',a.support_classpath])
  spec=importlib.util.spec_from_file_location('extract_actual',old);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);extract=m.extract_method
  pkg='io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex';source=root/'apps/spatial-camera-panel-android/app/src/main/java'/pkg
+ activity_path=source.parent/'SpatialCameraPanelActivity.kt'
+ activity=activity_path.read_text(encoding='utf-8')
+ callback=extract(activity,'private fun onEmbeddedDuplexWholeCloseVerified(')
+ selection_ui=extract(activity,'fun captureEmbeddedDuplexRunSelectionReconciliation(')
+ assert 'completedSelectionCacheMatches(' in selection_ui and 'embeddedDuplexDiagnosticFuture = null' in selection_ui
+ assert selection_ui.index('val runtime = embeddedDuplexRuntimeFuture') < selection_ui.index('return java.util.function.LongConsumer')
+ assert 'wholeCloseRolloverCurrent' not in callback
+ assert callback.index('val completed = embeddedDuplexRuntimeFuture') < callback.index('runOnUiThread')
+ assert callback.index('proof.matchesCompletedRuntime(completed, embeddedDuplexRuntimeFuture,') < callback.index('embeddedDuplexRuntimeFuture = null')
+ gate_path=source.parent/'EmbeddedDuplexDiagnosticActivityGate.kt'
+ gate_source=gate_path.read_text(encoding='utf-8')
+ assert 'bookkeeping = WeakReference(activity)' in gate_source and 'bookkeeping = null' not in gate_source
  host=(source/'EmbeddedDuplexProcessHost.java').read_text(encoding='utf-8');service=(source/'EmbeddedDuplexRuntimeService.java').read_text(encoding='utf-8')
+ assert service.index('captureRunSelectionReconciliation()') < service.index('.selectRun(runId,true,legacyWholeOriginalId).whenComplete(reconcile)')
  models={x.relative_to(baseline/'models').as_posix():x.read_text(encoding='utf-8') for x in (baseline/'models').rglob('*.java')}
  key=pkg+'/EmbeddedDuplexProcessHost.java';body=models[key]
  old_ctor='private EmbeddedDuplexProcessHost(Context context){applicationContext=context;runContext=new EmbeddedDuplexRunContext(context.getNoBackupFilesDir(),context.getNoBackupFilesDir(),null,0);}'
@@ -79,29 +95,49 @@ def main():
  # Only enclosing Android/Native/resource observations are replaced. The selected owner methods remain exact.
  fields="""
  private final EmbeddedDuplexRunSelectionStore runSelection;
- private final Object runRequestGate=new Object();private int runRequests;
+ private final Object runRequestGate=new Object();private int runRequests;private final Object attachmentGate=new Object();private String diagnosticChallenge;
  private boolean closeInFlight,displayDetaching;private String runtimeConfigSha256,terminalWholeChallenge;
  private Object wholeCloseRollover,retainedWholeNativeReceipt,lastClosedActorProof,noMediaClose;private RetainedWholeClose retainedWholeClose;private static final class RetainedWholeClose{EmbeddedDuplexOriginals.Record original;}
  private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;
- private CompletableFuture<Void> wholeCallbackMarker;
- private final Display display=new Display();private static final class Display{boolean cleanupPending(){return false;}}
+ private CompletableFuture<Void> wholeCallbackMarker;private EmbeddedDuplexPlatform wholeCallbackPlatform;
+ boolean harnessJoinWhole(EmbeddedDuplexPlatform value)throws Exception{return joinWholeCallbackOwner(value);}
+ long attachmentGeneration=7;void harnessAttachment(long value){attachmentGeneration=value;}
+ private final Display display=new Display();private static final class Display{boolean cleanupPending(){return false;}void detachAfterCleanup(long generation,Runnable close){if(generation<=0)throw new AssertionError("missing display owner");close.run();}}
  """
- signatures=['<T>T withRunRequest(', 'CompletableFuture<String> selectRun(', 'CompletableFuture<String> runStatus()', 'private String runStatusOnLane()', 'private static <T> CompletableFuture<T> failed(']
+ signatures=['<T>T withRunRequest(', 'CompletableFuture<String> selectRun(', 'CompletableFuture<String> runStatus()', 'private String runStatusOnLane()', 'private static <T> CompletableFuture<T> failed(', 'private boolean joinWholeCallbackOwner(']
  methods=[extract(host,x) for x in signatures]
  models[key]=body[:-1]+fields+'\n'+'\n'.join(methods)+'\n}'
  service_methods=[extract(service,x) for x in ['public static CompletableFuture<String> newRun(', 'public static CompletableFuture<String> resumeRun(', 'public static CompletableFuture<String> runStatus(', 'public static String selectedRunId(', 'public static <T>T withRunRequest(', 'public static Bundle queryOriginal(Context context,String runId,String originalId,String challenge)']]
  key=pkg+'/EmbeddedDuplexRuntimeService.java';models[key]=models[key][:-1]+'\n'+'\n'.join(service_methods)+'\n}'
+ models['io/github/mesmerprism/rustyquest/spatial_camera_panel/EmbeddedDuplexDiagnosticActivityGate.java']="""package io.github.mesmerprism.rustyquest.spatial_camera_panel;
+ public final class EmbeddedDuplexDiagnosticActivityGate {
+ public static boolean present,paused;public static java.util.concurrent.CompletableFuture<?> cached;public static long attachment;public static Runnable posted;public static int reconciled;
+ public static java.util.function.BiConsumer<String,Throwable> captureRunSelectionReconciliation(){
+ final boolean had=present;final java.util.concurrent.CompletableFuture<?> a=cached;final long generation=attachment;
+ return (receipt,failure)->{if(!had||failure!=null)return;try{long selected=new org.json.JSONObject(receipt).getLong("app_display_generation");posted=()->{
+ if(io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(a,cached,generation,attachment,selected)){cached=null;attachment=selected;reconciled++;}};
+ if(!paused)posted.run();}catch(Exception invalid){throw new AssertionError(invalid);}};
+ }
+ public static void resume(){paused=false;if(posted!=null)posted.run();}
+ }
+ """
+ diagnostic_path=source/'EmbeddedDuplexDiagnosticService.java';diagnostic=diagnostic_path.read_text(encoding='utf-8')
+ for signature in ['public static void arm(', 'public static String provisionLocalFixture(', 'public static boolean requestRun(', 'public static String read(']:
+  actual=extract(diagnostic,signature)
+  assert 'requireLegacyTransport(context);' in actual
+ models[pkg+'/EmbeddedDuplexDiagnosticService.java']='package '+pkg.replace('/','.')+'; import android.content.Context; final class EmbeddedDuplexDiagnosticService {'+extract(diagnostic,'private static void requireLegacyTransport(')+' static void harnessRequire(Context c){requireLegacyTransport(c);} }'
  models[pkg+'/EmbeddedDuplexNative.java']="""package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
  final class EmbeddedDuplexNative {static boolean eligible=true;static String actualRun;static Long nativeGeneration;
  static String inspectOperationalRun(Object source)throws Exception{return new org.json.JSONObject().put("$schema","rusty.quest.embedded_duplex.operational_run_native.v1")
  .put("globally_eligible",eligible).put("operational_run_id",actualRun==null?org.json.JSONObject.NULL:actualRun).put("native_generation",nativeGeneration==null?org.json.JSONObject.NULL:nativeGeneration).toString();}}
  """
+ models[pkg+'/EmbeddedDuplexPlatform.java']='package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;final class EmbeddedDuplexPlatform{final java.util.concurrent.CompletableFuture<Void> retired=new java.util.concurrent.CompletableFuture<>();int retirementCalls,controlCloses;void closeControlAfterProductCleanup(){controlCloses++;}java.util.concurrent.CompletableFuture<Void> retireProcessCallbacksAsync(){retirementCalls++;return retired;}}'
  models[pkg+'/OwnStereoCaptureRuntime.java']='package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;final class OwnStereoCaptureRuntime{static OwnStereoCaptureRuntime currentForApplication(){return null;}String physicalCleanupState(){throw new AssertionError("unmodeled Own owner");}}'
  generated=[]
  for name,value in models.items():
   path=out/'models'/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(value,encoding='utf-8');generated.append(path)
  names=['EmbeddedDuplexCanonicalJson.java','EmbeddedDuplexRunContext.java','EmbeddedDuplexRunSelectionStore.java','EmbeddedDuplexOriginals.java','EmbeddedDuplexProcessFence.java','EmbeddedDuplexFreshLifecycle.java','EmbeddedDuplexNativeOperationFailure.java','EmbeddedDuplexWholeCloseRollover.java']
- production=[source/name for name in names];fixture=root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/EmbeddedDuplexRunContextHostTest.java';original_fixture=root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/EmbeddedDuplexOriginalsHostTest.java';inputs=production+[fixture,original_fixture,source/'EmbeddedDuplexProcessHost.java',source/'EmbeddedDuplexRuntimeService.java',old,pathlib.Path(__file__).resolve()]
+ production=[source/name for name in names];fixture=root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/EmbeddedDuplexRunContextHostTest.java';original_fixture=root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/EmbeddedDuplexOriginalsHostTest.java';inputs=production+[fixture,original_fixture,activity_path,gate_path,source/'EmbeddedDuplexProcessHost.java',source/'EmbeddedDuplexRuntimeService.java',old,diagnostic_path,pathlib.Path(__file__).resolve()]
  pins={str(x.relative_to(root)):hashlib.sha256(x.read_bytes()).hexdigest() for x in inputs}
  classes=out/'classes';classes.mkdir();cp=os.pathsep.join([str(jar),a.support_classpath])
  run('compile',[str(java/'bin/javac.exe'),'--release','17','-encoding','UTF-8','-cp',cp,'-d',str(classes)]+[str(x) for x in generated+production+[fixture,original_fixture]])

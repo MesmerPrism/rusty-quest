@@ -61,12 +61,49 @@ public final class EmbeddedDuplexRunContextHostTest {
   yes(Arrays.equals(original,Files.readAllBytes(new File(root,"operator-originals-v1/"+id+".json").toPath())));
   System.out.println("Legacy Original/join subjects modeled; actual source reader and dynamic held-channel handoff controls passed.");
  }
+ static void activityCacheControls()throws Exception{
+  String config="a".repeat(64),enrollment="b".repeat(64);long attachment=7;
+  org.json.JSONObject physical=new org.json.JSONObject().put("$schema","rusty.quest.embedded_duplex.concurrent_peer_lifecycle.v1")
+    .put("action","whole_app_close").put("peer_physical_cleanup","terminal").put("config_sha256",config)
+    .put("app_process_generation",1).put("native_executor_generation",9);
+  for(String key:new String[]{"native_host_physical_cleanup","java_own_capture_cleanup","java_renderer_cleanup","java_control_cleanup","app_process_fence_cleanup","whole_app_physical_cleanup","status"})physical.put(key,"terminal");
+  EmbeddedDuplexWholeCloseRollover proof=EmbeddedDuplexWholeCloseRollover.verified(physical,"app-process.1.fixture",1,9,attachment,config,enrollment);
+  java.util.concurrent.CompletableFuture<EmbeddedDuplexRuntimeStatus> a=java.util.concurrent.CompletableFuture.completedFuture(new EmbeddedDuplexRuntimeStatus("bootstrapped_route_unverified",true,config,enrollment));
+  java.util.concurrent.CompletableFuture<EmbeddedDuplexRuntimeStatus> b=java.util.concurrent.CompletableFuture.completedFuture(new EmbeddedDuplexRuntimeStatus("bootstrapped_route_unverified",true,config,enrollment));
+  java.util.concurrent.atomic.AtomicReference<java.util.concurrent.CompletableFuture<EmbeddedDuplexRuntimeStatus>> cache=new java.util.concurrent.atomic.AtomicReference<>(a);
+  Runnable delayedA=()->{if(proof.matchesCompletedRuntime(a,cache.get(),attachment))cache.set(null);};
+  // Global run B may already be selected. This token owns only the exact A bookkeeping cache.
+  delayedA.run();yes(cache.get()==null);
+  cache.set(b);delayedA.run();yes(cache.get()==b);
+  yes(!proof.matchesCompletedRuntime(a,a,attachment+1));yes(!proof.matchesCompletedRuntime(a,b,attachment));
+  yes(!proof.matchesCompletedRuntime(a,new java.util.concurrent.CompletableFuture<>(),attachment));
+  java.util.concurrent.CompletableFuture<?> failed=java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("A failed before effects"));
+  yes(EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(failed,failed,7,7,7));
+  yes(EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(failed,failed,7,0,0));
+  yes(!EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(failed,b,7,7,0));
+  yes(!EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(failed,failed,7,8,0));
+  yes(!EmbeddedDuplexWholeCloseRollover.completedSelectionCacheMatches(new java.util.concurrent.CompletableFuture<>(),null,7,7,0));
+
+  System.out.println("Delayed A Activity cache controls passed; no global B state authorizes clearing B.");
+ }
  static void callerControls()throws Exception{
   File app=Files.createTempDirectory("run-caller").toFile();byte[] identity="retained key and enrollment fixture bytes".getBytes();
   File key=new File(app,"embedded-duplex-identity");yes(key.mkdir());File record=new File(key,"ed25519-identity.v1");Files.write(record.toPath(),identity);
   android.content.Context context=new android.content.Context(){public File getNoBackupFilesDir(){return app;}};
   String a="a".repeat(32),b="b".repeat(32),c="c".repeat(32),id="d".repeat(32),challenge="e".repeat(32);
+  EmbeddedDuplexDiagnosticService.harnessRequire(context);yes(EmbeddedDuplexProcessHost.operationalContext(context).legacy());
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.present=true;
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.paused=true;
+  java.util.concurrent.CompletableFuture<?> failedA=java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("pre-effect A bootstrap failure"));
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached=failedA;
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.attachment=7;
   org.json.JSONObject selected=new org.json.JSONObject(EmbeddedDuplexRuntimeService.newRun(context,a,null).get());
+  yes(io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached==failedA);
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.resume();
+  yes(io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached==null);
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.present=false;
+
+  denied(()->EmbeddedDuplexDiagnosticService.harnessRequire(context));
   yes(selected.getString("run_id").equals(a));yes(selected.getJSONObject("native").isNull("operational_run_id"));
   EmbeddedDuplexRunContext old=EmbeddedDuplexProcessHost.operationalContext(context);
   EmbeddedDuplexOriginals originals=EmbeddedDuplexOriginals.forApplication(context);
@@ -82,10 +119,30 @@ public final class EmbeddedDuplexRunContextHostTest {
     catch(Exception e){return java.util.concurrent.CompletableFuture.failedFuture(e);}
     return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("old Pair unknown after actual native source binding"));
   });
+  EmbeddedDuplexProcessHost host=EmbeddedDuplexProcessHost.forApplication(context);
+  EmbeddedDuplexPlatform platformA=new EmbeddedDuplexPlatform();
+  yes(!host.harnessJoinWhole(platformA));rejectFuture(EmbeddedDuplexRuntimeService.newRun(context,b,null));
+  platformA.retired.complete(null);host.harnessSubmit(()->null).get();yes(host.harnessJoinWhole(platformA));yes(platformA.retirementCalls==1);yes(platformA.controlCloses==1);
   // Native/physical leaves are modeled; the selector, service, Original, fence and filesystem are actual.
   EmbeddedDuplexNative.actualRun=a;EmbeddedDuplexNative.nativeGeneration=1L;
+  host.harnessAttachment(0);
+  java.util.concurrent.CompletableFuture<?> closedA=java.util.concurrent.CompletableFuture.completedFuture("actual modeled A service delivery");
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.present=true;
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.paused=true;
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached=closedA;
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.attachment=7;
   selected=new org.json.JSONObject(EmbeddedDuplexRuntimeService.newRun(context,b,null).get());
+  yes(io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached==closedA);
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.resume();
+  yes(io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.cached==null);
+  yes(io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.attachment==0);
+  io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.present=false;
+
   yes(selected.getString("run_id").equals(b));yes(selected.getJSONObject("native").getString("operational_run_id").equals(a));
+  host.harnessAttachment(8);EmbeddedDuplexPlatform platformB=new EmbeddedDuplexPlatform();
+  yes(!host.harnessJoinWhole(platformB));platformB.retired.complete(null);host.harnessSubmit(()->null).get();
+  yes(host.harnessJoinWhole(platformB));yes(platformB.retirementCalls==1);yes(platformB.controlCloses==1);
+
   yes(Arrays.equals(oldBytes,Files.readAllBytes(oldRow.toPath())));
   yes("unknown".equals(EmbeddedDuplexRuntimeService.queryOriginal(context,a,id,challenge).getString("status")));
   android.os.Bundle pairQuery=EmbeddedDuplexRuntimeService.queryOriginal(context,a,pairId,challenge);
@@ -110,7 +167,7 @@ public final class EmbeddedDuplexRunContextHostTest {
   System.out.println("run caller checks="+checks+"; actual selector/store/fence/Original bodies, Native physical state modeled");
  }
  public static void main(String[] args)throws Exception{
-  if(args.length>0&&args[0].equals("caller")){legacyWitnessControls();callerControls();return;}
+  if(args.length>0&&args[0].equals("caller")){legacyWitnessControls();callerControls();activityCacheControls();return;}
   File app=Files.createTempDirectory("run-host").toFile();
   byte[] identity="real retained identity bytes".getBytes();Files.write(new File(app,"identity").toPath(),identity);
   EmbeddedDuplexRunSelectionStore store=new EmbeddedDuplexRunSelectionStore(app,new EmbeddedDuplexRunSelectionStore.DirectorySync(){public void sync(File d){} public void privateMode(File p,boolean d){/* Host Windows mode modeled; Android uses actual chmod. */}});

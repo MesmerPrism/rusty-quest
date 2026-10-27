@@ -10,8 +10,14 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
 
-    public static CompletableFuture<String> newRun(Context context,String runId,String legacyWholeOriginalId){return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,true,legacyWholeOriginalId);}
-    public static CompletableFuture<String> resumeRun(Context context,String runId){return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,false,null);}
+    public static CompletableFuture<String> newRun(Context context,String runId,String legacyWholeOriginalId){
+        java.util.function.BiConsumer<String,Throwable> reconcile=io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.captureRunSelectionReconciliation();
+        return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,true,legacyWholeOriginalId).whenComplete(reconcile);
+    }
+    public static CompletableFuture<String> resumeRun(Context context,String runId){
+        java.util.function.BiConsumer<String,Throwable> reconcile=io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.captureRunSelectionReconciliation();
+        return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,false,null).whenComplete(reconcile);
+    }
     public static CompletableFuture<String> runStatus(Context context){return EmbeddedDuplexProcessHost.forApplication(context).runStatus();}
     public static String selectedRunId(Context context){return EmbeddedDuplexProcessHost.operationalContext(context).runId;}
     public static <T>T withRunRequest(Context context,String runId,java.util.concurrent.Callable<T> request)throws Exception{
