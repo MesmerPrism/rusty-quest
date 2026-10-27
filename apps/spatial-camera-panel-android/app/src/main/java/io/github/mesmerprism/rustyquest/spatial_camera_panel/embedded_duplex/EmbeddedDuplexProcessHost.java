@@ -1022,14 +1022,17 @@ final class EmbeddedDuplexProcessHost {
     }
 
     CompletableFuture<EmbeddedDuplexEnrollment> provisionLocalDiagnosticFixture(String challenge) {
-        synchronized (attachmentGate) {
-            if (challenge == null || !challenge.equals(diagnosticChallenge)) {
-                return failed(new IllegalStateException("local diagnostic challenge unavailable"));
-            }
-        }
         try {
-            return replaceEnrollment(EmbeddedDuplexEnrollmentResolver.localDiagnosticDraft(
-                    applicationContext));
+            return withRunRequest(null,()->{
+                synchronized (attachmentGate) {
+                    if (!runContext.legacy() || challenge == null || !challenge.equals(diagnosticChallenge)) {
+                        return failed(new IllegalStateException("local diagnostic challenge unavailable"));
+                    }
+                }
+                // Keep the existing request reservation across the private draft callback, not its lock.
+                // replaceEnrollment admits PROVISIONING before this reservation is released.
+                return replaceEnrollment(EmbeddedDuplexEnrollmentResolver.localDiagnosticDraft(applicationContext));
+            });
         } catch (Exception failure) {
             return failed(failure);
         }
@@ -1037,7 +1040,7 @@ final class EmbeddedDuplexProcessHost {
 
     void armDiagnosticChallenge(String challenge) {
         synchronized (attachmentGate) {
-            if (challenge == null || !challenge.matches("[0-9a-f]{32}")
+            if (!runContext.legacy() || challenge == null || !challenge.matches("[0-9a-f]{32}")
                     || phase.get() != Phase.NEW || displayDetaching || closeInFlight
                     || platform != null || resources != null || runtimeConfigSha256 != null
                     || diagnosticChallenge != null) {

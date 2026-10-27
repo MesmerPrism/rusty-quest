@@ -92,6 +92,16 @@ public final class EmbeddedDuplexRunContextHostTest {
   android.content.Context context=new android.content.Context(){public File getNoBackupFilesDir(){return app;}};
   String a="a".repeat(32),b="b".repeat(32),c="c".repeat(32),id="d".repeat(32),challenge="e".repeat(32);
   EmbeddedDuplexDiagnosticService.harnessRequire(context);yes(EmbeddedDuplexProcessHost.operationalContext(context).legacy());
+  EmbeddedDuplexProcessHost host=EmbeddedDuplexProcessHost.forApplication(context);
+  host.armDiagnosticChallenge(challenge);
+  java.util.concurrent.ExecutorService privateDraft=java.util.concurrent.Executors.newSingleThreadExecutor(task->{Thread thread=new Thread(task,"private-draft-control");thread.setDaemon(true);return thread;});
+  java.util.concurrent.Future<java.util.concurrent.CompletableFuture<EmbeddedDuplexEnrollment>> provision=privateDraft.submit(()->host.provisionLocalDiagnosticFixture(challenge));
+  yes(EmbeddedDuplexEnrollmentResolver.entered.await(5,java.util.concurrent.TimeUnit.SECONDS));
+  rejectFuture(EmbeddedDuplexRuntimeService.newRun(context,a,null));yes(EmbeddedDuplexRuntimeService.selectedRunId(context)==null);yes(host.fixtureWrites==0);
+  EmbeddedDuplexEnrollmentResolver.release.countDown();java.util.concurrent.CompletableFuture<EmbeddedDuplexEnrollment> heldWrite=provision.get(5,java.util.concurrent.TimeUnit.SECONDS);
+  yes(host.fixtureWrites==1&&!heldWrite.isDone());rejectFuture(EmbeddedDuplexRuntimeService.newRun(context,a,null));
+  host.harnessFinishFixture();heldWrite.get();privateDraft.shutdown();yes(privateDraft.awaitTermination(5,java.util.concurrent.TimeUnit.SECONDS));
+
   io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.present=true;
   io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.paused=true;
   java.util.concurrent.CompletableFuture<?> failedA=java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("pre-effect A bootstrap failure"));
@@ -104,6 +114,7 @@ public final class EmbeddedDuplexRunContextHostTest {
   io.github.mesmerprism.rustyquest.spatial_camera_panel.EmbeddedDuplexDiagnosticActivityGate.present=false;
 
   denied(()->EmbeddedDuplexDiagnosticService.harnessRequire(context));
+  denied(()->host.armDiagnosticChallenge(challenge));rejectFuture(host.provisionLocalDiagnosticFixture(challenge));
   yes(selected.getString("run_id").equals(a));yes(selected.getJSONObject("native").isNull("operational_run_id"));
   EmbeddedDuplexRunContext old=EmbeddedDuplexProcessHost.operationalContext(context);
   EmbeddedDuplexOriginals originals=EmbeddedDuplexOriginals.forApplication(context);
@@ -119,7 +130,6 @@ public final class EmbeddedDuplexRunContextHostTest {
     catch(Exception e){return java.util.concurrent.CompletableFuture.failedFuture(e);}
     return java.util.concurrent.CompletableFuture.failedFuture(new IllegalStateException("old Pair unknown after actual native source binding"));
   });
-  EmbeddedDuplexProcessHost host=EmbeddedDuplexProcessHost.forApplication(context);
   EmbeddedDuplexPlatform platformA=new EmbeddedDuplexPlatform();
   yes(!host.harnessJoinWhole(platformA));rejectFuture(EmbeddedDuplexRuntimeService.newRun(context,b,null));
   platformA.retired.complete(null);host.harnessSubmit(()->null).get();yes(host.harnessJoinWhole(platformA));yes(platformA.retirementCalls==1);yes(platformA.controlCloses==1);

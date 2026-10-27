@@ -101,10 +101,14 @@ def main():
  private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;
  private CompletableFuture<Void> wholeCallbackMarker;private EmbeddedDuplexPlatform wholeCallbackPlatform;
  boolean harnessJoinWhole(EmbeddedDuplexPlatform value)throws Exception{return joinWholeCallbackOwner(value);}
+ int fixtureWrites;CompletableFuture<EmbeddedDuplexEnrollment> fixtureWrite;
+ CompletableFuture<EmbeddedDuplexEnrollment> replaceEnrollment(EmbeddedDuplexEnrollmentDraft draft){synchronized(attachmentGate){if(!phase.compareAndSet(Phase.NEW,Phase.PROVISIONING))return failed(new IllegalStateException("provisioning phase busy"));fixtureWrites++;fixtureWrite=new CompletableFuture<>();return fixtureWrite;}}
+ void harnessFinishFixture(){phase.set(Phase.NEW);fixtureWrite.complete(null);}
+
  long attachmentGeneration=7;void harnessAttachment(long value){attachmentGeneration=value;}
  private final Display display=new Display();private static final class Display{boolean cleanupPending(){return false;}void detachAfterCleanup(long generation,Runnable close){if(generation<=0)throw new AssertionError("missing display owner");close.run();}}
  """
- signatures=['<T>T withRunRequest(', 'CompletableFuture<String> selectRun(', 'CompletableFuture<String> runStatus()', 'private String runStatusOnLane()', 'private static <T> CompletableFuture<T> failed(', 'private boolean joinWholeCallbackOwner(']
+ signatures=['<T>T withRunRequest(', 'CompletableFuture<String> selectRun(', 'CompletableFuture<String> runStatus()', 'private String runStatusOnLane()', 'private static <T> CompletableFuture<T> failed(', 'private boolean joinWholeCallbackOwner(', 'void armDiagnosticChallenge(', 'CompletableFuture<EmbeddedDuplexEnrollment> provisionLocalDiagnosticFixture(']
  methods=[extract(host,x) for x in signatures]
  models[key]=body[:-1]+fields+'\n'+'\n'.join(methods)+'\n}'
  service_methods=[extract(service,x) for x in ['public static CompletableFuture<String> newRun(', 'public static CompletableFuture<String> resumeRun(', 'public static CompletableFuture<String> runStatus(', 'public static String selectedRunId(', 'public static <T>T withRunRequest(', 'public static Bundle queryOriginal(Context context,String runId,String originalId,String challenge)']]
@@ -125,6 +129,11 @@ def main():
  for signature in ['public static void arm(', 'public static String provisionLocalFixture(', 'public static boolean requestRun(', 'public static String read(']:
   actual=extract(diagnostic,signature)
   assert 'requireLegacyTransport(context);' in actual
+ models[pkg+'/EmbeddedDuplexEnrollmentDraft.java']='package '+pkg.replace('/','.')+'; final class EmbeddedDuplexEnrollmentDraft {}'
+ models[pkg+'/EmbeddedDuplexEnrollmentResolver.java']='package '+pkg.replace('/','.')+''' ; final class EmbeddedDuplexEnrollmentResolver {
+ static java.util.concurrent.CountDownLatch entered=new java.util.concurrent.CountDownLatch(1),release=new java.util.concurrent.CountDownLatch(1);
+ static EmbeddedDuplexEnrollmentDraft localDiagnosticDraft(android.content.Context c)throws Exception{entered.countDown();if(!release.await(5,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("private draft release timeout");return new EmbeddedDuplexEnrollmentDraft();}
+ }'''
  models[pkg+'/EmbeddedDuplexDiagnosticService.java']='package '+pkg.replace('/','.')+'; import android.content.Context; final class EmbeddedDuplexDiagnosticService {'+extract(diagnostic,'private static void requireLegacyTransport(')+' static void harnessRequire(Context c){requireLegacyTransport(c);} }'
  models[pkg+'/EmbeddedDuplexNative.java']="""package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;
  final class EmbeddedDuplexNative {static boolean eligible=true;static String actualRun;static Long nativeGeneration;
