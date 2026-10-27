@@ -3742,6 +3742,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     embeddedDuplexActivityDestroying = true
     immersiveVideoPanelCoordinator.retireScene("sdk-spatial-shutdown")
     backgroundImmersiveVideoPanelCoordinator.retireScene("sdk-spatial-shutdown")
+    spatialVirtualRoomModule.retireScene("sdk-spatial-shutdown")
+    stagedAssetModule.retireScene("sdk-spatial-shutdown")
+    cameraHwbProjectionPanelCarrierCoordinator.retireScene("sdk-spatial-shutdown")
     super.onSpatialShutdown()
   }
 

@@ -342,6 +342,14 @@ or respawn requests. The same coordinator cannot reacquire a retired scene.
 Decoder release and final thread shutdown retain the existing asynchronous
 player/lifecycle owners; the Android `super.onDestroy()` call remains synchronous.
 
+The same pre-model handoff retires the optional virtual-room/skybox and staged
+asset Entity owners and cancels their pending scene adoption. The projection
+panel carrier separates its SDK Entity/SceneObject handles from Native/Surface
+custody: the hook retires only SDK handles. Its existing worker still owns
+Native stop, retains the Surface while stop is pending or fails, and releases
+that reference only after stop succeeds. Late panel adoption cannot replace
+those retained resources.
+
 `tools/checks/Test-SpatialEntityLifecycleHost.py` accepts explicit `--repo-root`,
 fresh `--output-root` under `target/`, `--java-home` and `--kotlin-lib` paths.
 It compiles actual Activity destruction/SDK-hook methods, the lifecycle shutdown
@@ -349,6 +357,8 @@ coordinator and selected video ownership/callback methods with modeled platform
 leaves. It covers a blocked cleanup worker, finishing `onStop`, repeated and
 reentrant cleanup, an entered scene mutation, late callbacks and a fresh
 coordinator. It does not run Android, Meta native code or a codec.
+Enabled room, skybox, staged-asset and retained panel-carrier cases cover the
+same boundary, including late load/adoption and blocked or failed Native stop.
 
 This check does not establish same-process display reattachment after Whole
 retirement. A later launch still needs its actual scene, carrier and typed
