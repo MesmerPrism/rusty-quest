@@ -3735,6 +3735,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     super.onStop()
   }
 
+  override fun onSpatialShutdown() {
+    // VrActivity reaches this before DataModel.destroy, from finishing onStop or
+    // onDestroy. The later lifecycle worker may release codecs, but cannot own
+    // Entity deletion after the SDK has invalidated the model's native pointer.
+    embeddedDuplexActivityDestroying = true
+    immersiveVideoPanelCoordinator.retireScene("sdk-spatial-shutdown")
+    backgroundImmersiveVideoPanelCoordinator.retireScene("sdk-spatial-shutdown")
+    super.onSpatialShutdown()
+  }
+
   override fun onDestroy() {
     EmbeddedDuplexDiagnosticActivityGate.paused(this)
     embeddedDuplexActivityDestroying = true

@@ -330,3 +330,28 @@ tests cover 180° SBS, 360° mono, flat top-bottom, default-off behavior,
 single-URI media access, unknown classifications, path confinement, mixed
 encrypted stereo catalogs, layout-aware resolution scaling and source
 rectangles, and selection wraparound.
+
+## Activity scene lifetime
+
+Meta Spatial SDK 0.13.2 destroys the Activity's DataModel synchronously during
+finishing `onStop` or `onDestroy`. The Activity therefore retires its video
+scene owners in `onSpatialShutdown`, before that native model is invalidated.
+Each coordinator fences scene mutations and callbacks, takes and clears its
+Entity handles before deleting them, and rejects later Surface/panel callbacks
+or respawn requests. The same coordinator cannot reacquire a retired scene.
+Decoder release and final thread shutdown retain the existing asynchronous
+player/lifecycle owners; the Android `super.onDestroy()` call remains synchronous.
+
+`tools/checks/Test-SpatialEntityLifecycleHost.py` accepts explicit `--repo-root`,
+fresh `--output-root` under `target/`, `--java-home` and `--kotlin-lib` paths.
+It compiles actual Activity destruction/SDK-hook methods, the lifecycle shutdown
+coordinator and selected video ownership/callback methods with modeled platform
+leaves. It covers a blocked cleanup worker, finishing `onStop`, repeated and
+reentrant cleanup, an entered scene mutation, late callbacks and a fresh
+coordinator. It does not run Android, Meta native code or a codec.
+
+This check does not establish same-process display reattachment after Whole
+retirement. A later launch still needs its actual scene, carrier and typed
+attachment observations. Fresh actor launch and in-place display recreation
+are separate runtime outcomes; this fix grants neither a history bypass nor
+permission to reuse old Entity handles.
