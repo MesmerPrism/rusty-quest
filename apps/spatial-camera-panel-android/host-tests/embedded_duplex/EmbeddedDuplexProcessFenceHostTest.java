@@ -161,6 +161,7 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         incarnationControls();
         runControls();
         inspectionControls();
+        predecessorPublicationCuts();
         Path directory = Files.createTempDirectory("duplex-fence-test");
         EmbeddedDuplexProcessFence first = acquire(directory);
         if (first.generation() != 1) throw new AssertionError("initial generation");
@@ -227,6 +228,70 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         try (EmbeddedDuplexProcessFence unused = acquire(missing)) { }
         Files.delete(missing.resolve("process-fence.v1.lock"));
         rejects(() -> acquire(missing));
+        preservedJournalQuarantine();
         System.out.println("App process fence host regressions passed; native/effect/device fencing unproven.");
     }
+
+    static void preservedJournalQuarantine() throws Exception {
+        Path global=Files.createTempDirectory("duplex-journal-quarantine"),replay=Files.createTempDirectory("duplex-journal-owner");
+        String run="d".repeat(32),prior;
+        EmbeddedDuplexProcessIncarnation.Identity old=new EmbeddedDuplexProcessIncarnation.Identity("00112233-4455-6677-8899-aabbccddeeff",55,10001,101);
+        try(EmbeddedDuplexProcessFence fence=EmbeddedDuplexProcessFence.acquire(global.toFile(),null,null,()->{},run,replay.toFile())){
+            fence.bindIncarnation(old);
+            fence.beforeRuntimeEffects("old checkpoint exact", "old evidence exact");
+            prior=fence.nativeInspectionRecord();
+        }
+        rejects(()->EmbeddedDuplexProcessIncarnation.readForRecovery(replay.toFile()));
+        byte[] companion=Files.readAllBytes(replay.resolve("process-incarnation.v1.json"));
+        try(EmbeddedDuplexProcessFence quarantined=EmbeddedDuplexProcessFence.acquire(global.toFile(),"new checkpoint exact","new evidence exact",()->{},run,replay.toFile())){
+            if(!quarantined.recoveryOnly()||!quarantined.effectsPending())throw new AssertionError("Pending journal drift was not quarantined");
+            rejects(quarantined::requireFresh);
+            if(!prior.equals(quarantined.acquisitionRecordForRecovery()))throw new AssertionError("exact prior phase lost");
+            EmbeddedDuplexProcessIncarnation.RecoveryBinding last=EmbeddedDuplexProcessIncarnation.readForRecovery(replay.toFile(),quarantined.acquisitionRecordForRecovery());
+            if(!last.phaseRecord.equals(prior)||!last.binding.owner.binding().equals(old.binding()))throw new AssertionError("prior companion owner changed");
+            String[] fields=quarantined.nativeInspectionRecord().split("\n",-1);
+            if(!fields[4].equals(EmbeddedDuplexProcessFence.digest("new checkpoint exact"))||!fields[5].equals(EmbeddedDuplexProcessFence.digest("new evidence exact")))throw new AssertionError("observed journal digests not bound");
+            if(!java.util.Arrays.equals(companion,Files.readAllBytes(replay.resolve("process-incarnation.v1.json"))))throw new AssertionError("old companion rewritten");
+        }
+        try(EmbeddedDuplexProcessFence repeated=EmbeddedDuplexProcessFence.acquire(global.toFile(),"new checkpoint exact","new evidence exact",()->{},run,replay.toFile())){
+            EmbeddedDuplexProcessIncarnation.RecoveryBinding last=EmbeddedDuplexProcessIncarnation.readForRecovery(replay.toFile(),repeated.acquisitionRecordForRecovery());
+            if(!last.phaseRecord.equals(prior)||!repeated.recoveryOnly())throw new AssertionError("crash before prepare lost exact old phase");
+            Path witness=replay.resolve("process-incarnation.phase."+EmbeddedDuplexProcessFence.digest(prior)+".record");
+            byte[] exact=Files.readAllBytes(witness);Files.writeString(witness,EmbeddedDuplexProcessFence.recordedPhase(prior,"clear"));
+            rejects(()->EmbeddedDuplexProcessIncarnation.readForRecovery(replay.toFile(),repeated.acquisitionRecordForRecovery()));Files.write(witness,exact);
+        }
+        Path clear=Files.createTempDirectory("duplex-clear-journal-binding"),clearReplay=Files.createTempDirectory("duplex-clear-journal-owner");
+        try(EmbeddedDuplexProcessFence fence=EmbeddedDuplexProcessFence.acquire(clear.toFile(),null,null,()->{},run,clearReplay.toFile())){
+            fence.beforeRuntimeEffects("retained checkpoint", "retained evidence");
+            fence.afterVerifiedNoMediaCleanup("retained checkpoint", "retained evidence");
+        }
+        rejects(()->EmbeddedDuplexProcessFence.acquire(clear.toFile(),"changed checkpoint","changed evidence",()->{},run,clearReplay.toFile()));
+    }
+    static void predecessorPublicationCuts()throws Exception{
+        for(int point=1;point<=3;point++){
+            final int cut=point;
+            Path global=Files.createTempDirectory("duplex-predecessor-global"),replay=Files.createTempDirectory("duplex-predecessor-owner");
+            String run="f".repeat(32),prior;
+            try(EmbeddedDuplexProcessFence f=EmbeddedDuplexProcessFence.acquire(global.toFile(),null,null,()->{},run,replay.toFile())){
+                f.bindIncarnation(identity(101));f.beforeRuntimeEffects("prior checkpoint","prior evidence");prior=f.nativeInspectionRecord();
+            }
+            byte[] old=Files.readAllBytes(global.resolve("process-fence.v1.lock"));
+            Path witness=replay.resolve("process-incarnation.phase."+EmbeddedDuplexProcessFence.digest(prior)+".record");
+            int[] calls={0};
+            rejects(()->EmbeddedDuplexProcessFence.acquire(global.toFile(),"new checkpoint","new evidence",()->{
+                if(++calls[0]==cut)throw new IllegalStateException("injected durable publication cut");
+            },run,replay.toFile()));
+            if(cut==1&&Files.exists(witness))throw new AssertionError("predecessor published before complete staged durability");
+            if(cut<=2&&!java.util.Arrays.equals(old,Files.readAllBytes(global.resolve("process-fence.v1.lock"))))throw new AssertionError("global overwritten before predecessor publication completed");
+            if(cut>=2&&!java.util.Arrays.equals(old,Files.readAllBytes(witness)))throw new AssertionError("published predecessor bytes differ");
+            // Partial unique staging bytes are never a checksum-named witness.
+            Path orphan=replay.resolve(witness.getFileName()+".orphan.new");Files.writeString(orphan,"partial predecessor");
+            try(EmbeddedDuplexProcessFence f=EmbeddedDuplexProcessFence.acquire(global.toFile(),"new checkpoint","new evidence",()->{},run,replay.toFile())){
+                EmbeddedDuplexProcessIncarnation.RecoveryBinding recovered=EmbeddedDuplexProcessIncarnation.readForRecovery(replay.toFile(),f.acquisitionRecordForRecovery());
+                if(!prior.equals(recovered.phaseRecord)||!f.recoveryOnly())throw new AssertionError("publication cut lost authenticated prior phase");
+                if(!"partial predecessor".equals(Files.readString(orphan)))throw new AssertionError("orphan bytes changed");
+            }
+        }
+    }
+
 }

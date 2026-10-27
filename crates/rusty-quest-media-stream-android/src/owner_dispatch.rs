@@ -327,6 +327,11 @@ pub trait OwnerDispatchSigner: Send + Sync {
 
 /// Current authority verifier implemented over the live durable Runtime Host.
 pub trait OwnerDispatchAuthorityVerifier: Send + Sync {
+    /// Trusted accepted source policy; no duration supplied by a wire request.
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        Ok(MAX_OWNER_DISPATCH_REQUEST_AGE_MS)
+    }
+
     /// Authenticates key, peer, projection, ticket, and current time before effect.
     ///
     /// # Errors
@@ -341,6 +346,11 @@ pub trait OwnerDispatchAuthorityVerifier: Send + Sync {
 
 /// Target-side verifier for a signed full-product activation barrier.
 pub trait ProductActivationAuthorityVerifier: Send + Sync {
+    /// Trusted accepted source policy; no duration supplied by a wire request.
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        Ok(MAX_OWNER_DISPATCH_REQUEST_AGE_MS)
+    }
+
     /// Authenticates the source signer and current target-local C1 projection.
     ///
     /// # Errors
@@ -896,10 +906,12 @@ where
             return self.terminalize_pending(&request.activation_id, &request_sha256);
         }
         let now_ms = self.clock.now_ms()?;
-        if now_ms == 0
+        let authentication_validity_ms = self.verifier.authentication_validity_ms()?;
+        if authentication_validity_ms == 0
+            || now_ms == 0
             || request.issued_at_ms > now_ms.saturating_add(MAX_OWNER_DISPATCH_FUTURE_SKEW_MS)
             || request.expires_at_ms <= now_ms
-            || now_ms.saturating_sub(request.issued_at_ms) > MAX_OWNER_DISPATCH_REQUEST_AGE_MS
+            || now_ms.saturating_sub(request.issued_at_ms) > authentication_validity_ms
         {
             return Err("activation request is not current".to_owned());
         }
@@ -1081,6 +1093,24 @@ where
     /// # Errors
     /// Returns an error for invalid authority, framing, persistence, or execution evidence.
     pub fn handle_frame(&mut self, frame: &[u8]) -> Result<Vec<u8>, String> {
+        self.handle_frame_with_admission(frame, |_| Ok(()))
+    }
+
+    /// Apply a process-owner admission check to the authenticated new effect.
+    /// The callback sees only a shape-, target-, freshness- and signature-verified
+    /// request, before pending persistence or registry entry. Cached terminal and
+    /// uncertain results retain the existing exact-once readback behavior.
+    ///
+    /// # Errors
+    /// Returns existing protocol errors or the owning process admission refusal.
+    pub fn handle_frame_with_admission<F>(
+        &mut self,
+        frame: &[u8],
+        admit_authenticated_effect: F,
+    ) -> Result<Vec<u8>, String>
+    where
+        F: FnOnce(&OwnerDispatchRequest) -> Result<(), String>,
+    {
         if frame.is_empty() || frame.len() > MAX_OWNER_DISPATCH_FRAME_BYTES {
             return Err("dispatch frame bounds".to_owned());
         }
@@ -1106,11 +1136,12 @@ where
             );
         }
         let target_now_ms = self.clock.now_ms()?;
-        if target_now_ms == 0
+        let authentication_validity_ms = self.verifier.authentication_validity_ms()?;
+        if authentication_validity_ms == 0
+            || target_now_ms == 0
             || request.issued_at_ms
                 > target_now_ms.saturating_add(MAX_OWNER_DISPATCH_FUTURE_SKEW_MS)
-            || target_now_ms.saturating_sub(request.issued_at_ms)
-                > MAX_OWNER_DISPATCH_REQUEST_AGE_MS
+            || target_now_ms.saturating_sub(request.issued_at_ms) > authentication_validity_ms
         {
             return Err("dispatch request is not currently fresh".to_owned());
         }
@@ -1123,6 +1154,7 @@ where
         let signature = decode_signature_base64(&request.signature_base64)?;
         self.verifier
             .verify_current(&request, &signing_bytes, &signature)?;
+        admit_authenticated_effect(&request)?;
 
         // Persistable uncertainty is established before crossing into platform code.
         self.replay
@@ -2033,7 +2065,14 @@ mod tests {
                 resource_id: ticket.resource_id.clone(),
                 provider_handle_id: "provider.handle.1".to_owned(),
                 provider_state_revision: 1,
-                observed_state: "started".to_owned(),
+                observed_state: if ticket.operation
+                    == rusty_quest_media_stream::MediaStreamPlatformOperation::Stop
+                {
+                    "stopped"
+                } else {
+                    "started"
+                }
+                .to_owned(),
                 receipt_id: "receipt.effect.1".to_owned(),
             };
             let readback_json = serde_json::to_string(&readback).expect("readback");
@@ -2045,7 +2084,8 @@ mod tests {
                     executor_generation: readback.executor_generation,
                     provider_state_revision: readback.provider_state_revision,
                     observed_state: readback.observed_state.clone(),
-                    terminal: false,
+                    terminal: ticket.operation
+                        == rusty_quest_media_stream::MediaStreamPlatformOperation::Stop,
                     provider_handle_id: readback.provider_handle_id.clone(),
                     detail_sha256: format!("sha256:{}", "0".repeat(64)),
                 },
@@ -2116,6 +2156,212 @@ mod tests {
                 .expect("sign"),
         );
         request
+    }
+
+    struct LongAuthenticationVerifier(TestVerifier);
+    impl OwnerDispatchAuthorityVerifier for LongAuthenticationVerifier {
+        fn authentication_validity_ms(&self) -> Result<u64, String> {
+            Ok(90_000)
+        }
+        fn verify_current(
+            &self,
+            r: &OwnerDispatchRequest,
+            b: &[u8],
+            s: &[u8; 64],
+        ) -> Result<(), String> {
+            OwnerDispatchAuthorityVerifier::verify_current(&self.0, r, b, s)
+        }
+    }
+    impl ProductActivationAuthorityVerifier for LongAuthenticationVerifier {
+        fn authentication_validity_ms(&self) -> Result<u64, String> {
+            Ok(90_000)
+        }
+        fn verify_activation(
+            &self,
+            r: &ProductActivationRequest,
+            b: &[u8],
+            s: &[u8; 64],
+        ) -> Result<(), String> {
+            ProductActivationAuthorityVerifier::verify_activation(&self.0, r, b, s)
+        }
+    }
+    #[test]
+    fn both_servers_use_source_authentication_horizon_and_keep_envelope_expiry() {
+        let source = TestSigner {
+            id: "key.a".into(),
+            key: SigningKey::from_bytes(&[3; 32]),
+        };
+        let calls = Arc::new(Mutex::new(0));
+        let mut server = OwnerDispatchServer::restore(
+            "peer.b".into(),
+            LongAuthenticationVerifier(TestVerifier {
+                key: source.key.verifying_key(),
+            }),
+            TestRegistry {
+                calls: calls.clone(),
+            },
+            TestSigner {
+                id: "key.b".into(),
+                key: SigningKey::from_bytes(&[4; 32]),
+            },
+            Box::new(FixedClock(50_000)),
+            OwnerDispatchReplaySnapshot::default(),
+            Box::new(TestStore::default()),
+        )
+        .unwrap();
+        let mut request = signed_request(&source);
+        request.authority.expires_at_ms = 100_000;
+        request.signature_base64 = encode_signature_base64(
+            &source
+                .sign(&request_signing_bytes(&request).unwrap())
+                .unwrap(),
+        );
+        server
+            .handle_frame(&encode_request_frame(&request).unwrap())
+            .unwrap();
+        assert_eq!(*calls.lock().unwrap(), 1);
+        let completion_json = "{\"$schema\":\"rusty.quest.broker.media_completion_response.v1\",\"platform_effect_completed\":true}".to_owned();
+        let mut authority = projection();
+        authority.expires_at_ms = 100_000;
+        let mut activation = ProductActivationRequest {
+            schema_id: PRODUCT_ACTIVATION_REQUEST_SCHEMA.into(),
+            activation_id: "activation.long-auth".into(),
+            issued_at_ms: 1_000,
+            expires_at_ms: 100_000,
+            target_peer_id: "peer.b".into(),
+            authority,
+            proof: ProductActivationProof {
+                action_id: "action.1".into(),
+                provider_epoch_id: "epoch.1".into(),
+                client_id: "client.1".into(),
+                lease_id: "lease.1".into(),
+                runtime_spec_id: "runtime.1".into(),
+                resulting_runtime_revision: 2,
+                owner_receipt_ids: (1..=7).map(|n| format!("receipt.owner.{n}")).collect(),
+                completion_sha256: sha256_prefixed(completion_json.as_bytes()),
+            },
+            completion_json,
+            signer_key_id: source.id.clone(),
+            signature_base64: String::new(),
+        };
+        let activations = Arc::new(Mutex::new(0));
+        let mut target = ProductActivationServer::restore(
+            "peer.b".into(),
+            LongAuthenticationVerifier(TestVerifier {
+                key: source.key.verifying_key(),
+            }),
+            TestActivationRegistry {
+                calls: activations.clone(),
+            },
+            TestSigner {
+                id: "key.b".into(),
+                key: SigningKey::from_bytes(&[4; 32]),
+            },
+            Box::new(FixedClock(50_000)),
+            ProductActivationReplaySnapshot::default(),
+            Box::new(TestActivationStore::default()),
+        )
+        .unwrap();
+        target
+            .handle_frame(&encode_product_activation_request(activation.clone(), &source).unwrap())
+            .unwrap();
+        assert_eq!(*activations.lock().unwrap(), 1);
+        activation.activation_id = "activation.expired-parent".into();
+        activation.expires_at_ms = 49_999;
+        assert!(target
+            .handle_frame(&encode_product_activation_request(activation, &source).unwrap())
+            .is_err());
+        assert_eq!(*activations.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn owning_admission_observes_only_authenticated_new_effects_and_retains_once() {
+        use std::cell::Cell;
+        let authority_signer = TestSigner {
+            id: "key.a".into(),
+            key: SigningKey::from_bytes(&[3; 32]),
+        };
+        let calls = Arc::new(Mutex::new(0));
+        let mut server = OwnerDispatchServer::restore(
+            "peer.b".into(),
+            TestVerifier {
+                key: authority_signer.key.verifying_key(),
+            },
+            TestRegistry {
+                calls: calls.clone(),
+            },
+            TestSigner {
+                id: "key.b".into(),
+                key: SigningKey::from_bytes(&[4; 32]),
+            },
+            Box::new(TestClock),
+            OwnerDispatchReplaySnapshot::default(),
+            Box::new(TestStore::default()),
+        )
+        .unwrap();
+        let mut request = signed_request(&authority_signer);
+        let admitted = Cell::new(0);
+        let mut tampered = request.clone();
+        tampered.signature_base64 = encode_signature_base64(&[0; 64]);
+        assert!(server
+            .handle_frame_with_admission(&encode_request_frame(&tampered).unwrap(), |_| {
+                admitted.set(admitted.get() + 1);
+                Ok(())
+            })
+            .is_err());
+        assert_eq!(admitted.get(), 0);
+        assert_eq!(*calls.lock().unwrap(), 0);
+        assert!(server
+            .handle_frame_with_admission(&encode_request_frame(&request).unwrap(), |_| Err(
+                "prepared Start gate closed".into()
+            ))
+            .is_err());
+        assert!(server.replay_snapshot().pending_request_sha256.is_empty());
+        assert_eq!(*calls.lock().unwrap(), 0);
+        request.ticket.operation = rusty_quest_media_stream::MediaStreamPlatformOperation::Stop;
+        request.ticket.action_kind = rusty_quest_media_stream::MediaStreamOwnerActionKind::Stop;
+        request.signature_base64 = encode_signature_base64(
+            &authority_signer
+                .sign(&request_signing_bytes(&request).unwrap())
+                .unwrap(),
+        );
+        let frame = encode_request_frame(&request).unwrap();
+        let first = server
+            .handle_frame_with_admission(&frame, |verified| {
+                assert_eq!(
+                    verified.ticket.operation,
+                    rusty_quest_media_stream::MediaStreamPlatformOperation::Stop
+                );
+                admitted.set(admitted.get() + 1);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(admitted.get(), 1);
+        assert_eq!(*calls.lock().unwrap(), 1);
+        assert_eq!(
+            decode_response_frame(&first).unwrap().status,
+            OwnerDispatchStatus::Completed
+        );
+        // A cached result is observational and never reacquires admission/effect.
+        let repeated = server
+            .handle_frame_with_admission(&frame, |_| panic!("cached effect admitted twice"))
+            .unwrap();
+        assert_eq!(first, repeated);
+        assert_eq!(*calls.lock().unwrap(), 1);
+        let mut wrong_target = request.clone();
+        wrong_target.dispatch_id = "dispatch.wrong".into();
+        wrong_target.target_peer_id = "other".into();
+        wrong_target.signature_base64 = encode_signature_base64(
+            &authority_signer
+                .sign(&request_signing_bytes(&wrong_target).unwrap())
+                .unwrap(),
+        );
+        assert!(server
+            .handle_frame_with_admission(&encode_request_frame(&wrong_target).unwrap(), |_| panic!(
+                "wrong target admitted"
+            ))
+            .is_err());
+        assert_eq!(*calls.lock().unwrap(), 1);
     }
 
     #[test]

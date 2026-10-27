@@ -798,6 +798,25 @@ fn host() -> Result<HostLease, String> {
 
 fn host_for_setup(setup_or_observation: bool) -> Result<HostLease, String> {
     let mut state = process().lock().map_err(|_| "process state poisoned")?;
+    require_general_host_gate(&state, setup_or_observation)?;
+    let host = state
+        .host
+        .clone()
+        .ok_or("embedded runtime not initialized")?;
+    state.host_leases = state
+        .host_leases
+        .checked_add(1)
+        .ok_or("runtime host lease overflow")?;
+    drop(state);
+    let lease = HostLease(host);
+    lease.capability.require_live()?;
+    Ok(lease)
+}
+
+fn require_general_host_gate(
+    state: &ProcessState,
+    setup_or_observation: bool,
+) -> Result<(), String> {
     if state.closing {
         return Err("embedded runtime closing".into());
     }
@@ -814,18 +833,46 @@ fn host_for_setup(setup_or_observation: bool) -> Result<HostLease, String> {
     if state.fresh_setup_request.is_some() && !setup_or_observation {
         return Err("fresh setup original remains pending".into());
     }
-    let host = state
-        .host
-        .clone()
-        .ok_or("embedded runtime not initialized")?;
-    state.host_leases = state
+    Ok(())
+}
+
+/// Lookup is not execution admission. Cleanup handlers still authenticate the
+/// exact retained target/signature/once before any registry or SDK effect.
+fn host_for_cleanup_lookup() -> Result<HostLease, String> {
+    let mut p = process()
+        .lock()
+        .map_err(|_| "cleanup lookup gate poisoned")?;
+    if p.initializing
+        || p.lease_integrity_failed
+        || p.root_reestablishment.is_some()
+        || p.closing && !(p.root_terminal_custody.is_some() && p.retired_fresh_owner_fenced)
+    {
+        return Err("cleanup current root unavailable".into());
+    }
+    let host = p.host.clone().ok_or("cleanup current Host absent")?;
+    p.host_leases = p
         .host_leases
         .checked_add(1)
-        .ok_or("runtime host lease overflow")?;
-    drop(state);
+        .ok_or("cleanup host lease overflow")?;
+    drop(p);
     let lease = HostLease(host);
     lease.capability.require_live()?;
     Ok(lease)
+}
+
+fn require_general_host_admission(host: &Host, setup_or_observation: bool) -> Result<(), String> {
+    let p = process()
+        .lock()
+        .map_err(|_| "general admission gate poisoned")?;
+    if !p.host.as_ref().is_some_and(|current| {
+        Arc::ptr_eq(&current.capability, &host.capability)
+            && Arc::ptr_eq(&current.peer_lifecycle, &host.peer_lifecycle)
+    }) {
+        return Err("general admission current root changed".into());
+    }
+    require_general_host_gate(&p, setup_or_observation)?;
+    drop(p);
+    host.capability.require_live()
 }
 
 fn slot_present<T>(slot: &Arc<Mutex<Option<T>>>) -> Result<(), String> {
@@ -1880,13 +1927,15 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             return prepared_start::handle_frame(&bytes);
         }
         let fresh = pair_ceremony::is_fresh_frame(&bytes);
-        let host = host_for_setup(fresh)?;
+        let host = host_for_cleanup_lookup()?;
         if fresh {
+            require_general_host_admission(&host, true)?;
             let result = pair_ceremony::fresh_frame(&host, &bytes);
             host.capability.require_live()?;
             return result;
         }
         if bytes.starts_with(pair_ceremony::FRAME_MAGIC) {
+            require_general_host_admission(&host, false)?;
             let result = pair_ceremony::handle_frame(&host, &bytes);
             host.capability.require_live()?;
             return result;
@@ -1927,6 +1976,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         }
         host.owner_effect_attempted.store(true, Ordering::SeqCst);
         let result = if decode_product_activation_request(&bytes).is_ok() {
+            require_general_host_admission(&host, false)?;
             Checkout::take(host.activation_server.clone())?
                 .get()
                 .handle_frame(&bytes)
@@ -1934,7 +1984,17 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         } else {
             Checkout::take(host.server.clone())?
                 .get()
-                .handle_frame(&bytes)
+                .handle_frame_with_admission(&bytes, |authenticated| {
+                    use rusty_quest_media_stream_android::{AndroidMediaExecutionMode, OwnerDispatchAuthorizationKind};
+                    if authenticated.ticket.executor_generation != host.capability.generation {
+                        return Err("authenticated owner executor differs".into());
+                    }
+                    let cleanup = matches!(authenticated.ticket.operation, rusty_quest_media_stream::MediaStreamPlatformOperation::Stop)
+                        || authenticated.mode == AndroidMediaExecutionMode::CompensateUncertain
+                        && authenticated.authority.authorization_kind == OwnerDispatchAuthorizationKind::RetainedCleanup;
+                    if cleanup { host.capability.require_live() }
+                    else { require_general_host_admission(&host, false) }
+                })
                 .map_err(|error| {
                     let stage = match error.as_str() {
                         "dispatch frame bounds"|"dispatch frame bounds or magic"|"dispatch frame lengths"|
@@ -3674,7 +3734,7 @@ fn host_for_root_terminal_cleanup() -> Result<HostLease, String> {
         .map_err(|_| "terminal root cleanup process poisoned")?;
     if p.root_terminal_custody.is_none() {
         drop(p);
-        return host();
+        return host_for_cleanup_lookup();
     }
     if !p.closing
         || !p.retired_fresh_owner_fenced

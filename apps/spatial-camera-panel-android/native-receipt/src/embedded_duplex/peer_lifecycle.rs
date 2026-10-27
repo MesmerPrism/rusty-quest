@@ -1138,6 +1138,9 @@ pub(super) fn operate(env: &mut JNIEnv<'_>, word: i32) -> Result<String, String>
         host()?
     };
     host.capability.require_live()?;
+    if word == 6 {
+        host.callbacks.current_whole_cleanup_original_id()?;
+    }
     if !crate::own_stereo_capture_runtime::capture_route_selected() {
         return Err("authenticated concurrent source feature inactive".into());
     }
@@ -1288,6 +1291,7 @@ fn complete_retained_whole_close(
 ) -> Result<Option<String>, String> {
     let host = host_for_retained_whole_cleanup()?;
     host.capability.require_live()?;
+    host.callbacks.current_whole_cleanup_original_id()?;
     require_retained_whole_close_binding(
         expected,
         &host.config_sha256,

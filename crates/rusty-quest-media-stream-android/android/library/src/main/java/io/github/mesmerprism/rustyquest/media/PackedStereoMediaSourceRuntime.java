@@ -274,6 +274,28 @@ public final class PackedStereoMediaSourceRuntime {
             runtime.stop(reason);
             requireStopped();
         }
+        /** One owned local Stop request; the same actual drain owner and
+         * callbacks retain cleanup beyond the ordinary observation interval. */
+        public void stopOwnedLocalResources(String reason) {
+            Runtime held=runtime;
+            held.requestOwnedLocalStop(reason);
+            long warningAt=System.nanoTime()+10_000_000_000L;
+            while(!held.resourcesReleased()) {
+                held.continueOwnedLocalStop();
+                if(runtime!=held)throw new IllegalStateException("owned local source incarnation changed");
+                if(System.nanoTime()>=warningAt){
+                    System.err.println("packed owned local source cleanup remains Pending");
+                    warningAt=System.nanoTime()+10_000_000_000L;
+                }
+                try{Thread.sleep(50L);}catch(InterruptedException stopped){
+                    Thread.currentThread().interrupt();throw new IllegalStateException("owned local source cleanup interrupted",stopped);
+                }
+            }
+            if(runtime!=held)throw new IllegalStateException("owned local source incarnation changed");
+            // This is a newly observed local resource fact, independent of the
+            // previous bounded Stop observation or any transaction outcome.
+            held.terminal=true;if(!"failed".equals(held.state))held.state="stopped";
+        }
         public void requireStopped() {
             if (!runtime.isFullyStopped()) {
                 throw new IllegalStateException("packed pipeline resources remain live");
@@ -1338,7 +1360,7 @@ public final class PackedStereoMediaSourceRuntime {
             return false;
         }
 
-        void stop(String reason) {
+        ServerSocket requestOwnedLocalStop(String reason) {
             stopRequested = true;
             synchronized(preparationMonitor){preparationMonitor.notifyAll();}
             PackedStereoLanTransport transport = lanTransport;
@@ -1355,13 +1377,34 @@ public final class PackedStereoMediaSourceRuntime {
             requestCameraClose(leftCamera);
             requestCameraClose(rightCamera);
             ensureStopDrainOwner();
+            Thread accept=acceptThread;HandlerThread camera=cameraThread;
+            if(accept!=null)accept.interrupt();if(camera!=null)camera.quitSafely();
+            if(serverSocket==server&&(server==null||server.isClosed()))serverSocket=null;
+            return server;
+        }
+
+        void continueOwnedLocalStop() {
+            if(!stopRequested)throw new IllegalStateException("owned local Stop not requested");
+            closeRetiredConnection();retryUnresolvedConnection();
+            ServerSocket server=serverSocket;
+            closeQuietly(server);
+            if(serverSocket==server&&(server==null||server.isClosed()))serverSocket=null;
+            ensureStopDrainOwner();
+            synchronized (lifecycleLock) {
+                Thread source=sourceThread;
+                // Keep the source-owner check and leaf retirement atomic with
+                // ensureStopDrainOwner, which publishes the sole codec drain.
+                if(source==null||!source.isAlive())releaseLocalResources();
+            }
+        }
+
+        void stop(String reason) {
+            ServerSocket server=requestOwnedLocalStop(reason);
             Thread source = sourceThread;
             Thread accept = acceptThread;
             HandlerThread camera = cameraThread;
             // sourceLoop owns the codec drain through positive encoder input
             // retirement. Interrupting it here can strand a blocked submission.
-            if (accept != null) accept.interrupt();
-            if (camera != null) camera.quitSafely();
             join(source);
             join(accept);
             join(camera);
@@ -1369,7 +1412,7 @@ public final class PackedStereoMediaSourceRuntime {
             if (source != null && !source.isAlive()) sourceThread = null;
             if (accept != null && !accept.isAlive()) acceptThread = null;
             if (camera != null && !camera.isAlive()) cameraThread = null;
-            if (server == null || server.isClosed()) serverSocket = null;
+            if (serverSocket==server && (server == null || server.isClosed())) serverSocket = null;
             terminal = resourcesReleased();
             if (!terminal) markStopFailure("pipeline resources did not stop within deadline");
             else if (!"failed".equals(state)) state = "stopped";

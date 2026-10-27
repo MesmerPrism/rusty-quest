@@ -72,10 +72,11 @@ def native_controls(root,out,abi=False):
 
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--root',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parents[2]);p.add_argument('--output',type=pathlib.Path);p.add_argument('--java-home',type=pathlib.Path);p.add_argument('--json-jar',type=pathlib.Path);p.add_argument('--support-classpath',default=os.environ.get('RUSTY_QUEST_APP_TEST_CLASSPATH',''));p.add_argument('--smoke',action='store_true');p.add_argument('--native-controls',action='store_true');p.add_argument('--native-result',type=pathlib.Path);p.add_argument('--cold-recovery',action='store_true');p.add_argument('--recovery-witness-manifest',type=pathlib.Path);p.add_argument('--legacy-whole-manifest',type=pathlib.Path);a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--root',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parents[2]);p.add_argument('--output',type=pathlib.Path);p.add_argument('--scratch-root',type=pathlib.Path);p.add_argument('--java-home',type=pathlib.Path);p.add_argument('--json-jar',type=pathlib.Path);p.add_argument('--support-classpath',default=os.environ.get('RUSTY_QUEST_APP_TEST_CLASSPATH',''));p.add_argument('--smoke',action='store_true');p.add_argument('--native-controls',action='store_true');p.add_argument('--native-result',type=pathlib.Path);p.add_argument('--cold-recovery',action='store_true');p.add_argument('--recovery-witness-manifest',type=pathlib.Path);p.add_argument('--legacy-whole-manifest',type=pathlib.Path);a=p.parse_args()
  if not a.support_classpath:raise ValueError('Select current source-compiled app helpers with --support-classpath or RUSTY_QUEST_APP_TEST_CLASSPATH')
  root=a.root.resolve();out=(a.output or root/'target'/('new-run-'+uuid.uuid4().hex)).resolve()
- if not out.is_relative_to(root/'target'):raise ValueError('Output must be new under target')
+ permitted=a.scratch_root.resolve() if a.scratch_root else root/'target'
+ if out==permitted or not out.is_relative_to(permitted):raise ValueError('Output must be new beneath the selected scratch root')
  out.mkdir(parents=True,exist_ok=False)
  java=a.java_home or pathlib.Path(os.environ.get('JAVA_HOME') or pathlib.Path(shutil.which('javac')).parent.parent)
  jars=list((pathlib.Path.home()/'.gradle/caches/modules-2/files-2.1/org.json/json/20240303').rglob('*.jar'));jar=a.json_jar or jars[0]
@@ -84,7 +85,7 @@ def main():
   r=subprocess.run(argv,cwd=root,capture_output=True,timeout=120);(out/(name+'.stdout')).write_bytes(r.stdout);(out/(name+'.stderr')).write_bytes(r.stderr)
   if r.returncode:raise RuntimeError(name+' failed: '+r.stderr.decode('utf-8',errors='replace')[-5000:])
  old=root/'tools/checks/Test-EmbeddedDuplexOriginalsHost.py';baseline=out/'originals'
- run('originals',[sys.executable,str(old),'--root',str(root),'--output',str(baseline),'--java-home',str(java),'--json-jar',str(jar),'--support-classpath',a.support_classpath])
+ run('originals',[sys.executable,str(old),'--root',str(root),'--output',str(baseline),'--java-home',str(java),'--json-jar',str(jar),'--support-classpath',a.support_classpath]+(['--scratch-root',str(permitted)] if a.scratch_root else []))
  spec=importlib.util.spec_from_file_location('extract_actual',old);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);extract=m.extract_method
  pkg='io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex';source=root/'apps/spatial-camera-panel-android/app/src/main/java'/pkg
  activity_path=source.parent/'SpatialCameraPanelActivity.kt'
@@ -112,7 +113,7 @@ def main():
  private final EmbeddedDuplexRunSelectionStore runSelection;
  private final Object runRequestGate=new Object();private int runRequests;private final Object attachmentGate=new Object();private String diagnosticChallenge;
  private boolean closeInFlight,displayDetaching;private String runtimeConfigSha256,terminalWholeChallenge;
- private Object wholeCloseRollover,retainedWholeNativeReceipt,lastClosedActorProof,noMediaClose;private RetainedWholeClose retainedWholeClose;private static final class RetainedWholeClose{EmbeddedDuplexOriginals.Record original;}
+ private Object wholeCloseRollover,wholeLocalDrain,retainedWholeNativeReceipt,lastClosedActorProof,noMediaClose;private RetainedWholeClose retainedWholeClose;private static final class RetainedWholeClose{EmbeddedDuplexOriginals.Record original;}
  private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;
  private CompletableFuture<Void> wholeCallbackMarker;private EmbeddedDuplexPlatform wholeCallbackPlatform;
  boolean harnessJoinWhole(EmbeddedDuplexPlatform value)throws Exception{return joinWholeCallbackOwner(value);}
@@ -127,6 +128,7 @@ def main():
  signatures=['<T>T withRunRequest(', 'CompletableFuture<String> selectRun(', 'CompletableFuture<String> runStatus()', 'private String runStatusOnLane()', 'private static <T> CompletableFuture<T> failed(', 'private boolean joinWholeCallbackOwner(', 'static void requireLegacyWholeActor(', 'void armDiagnosticChallenge(', 'CompletableFuture<EmbeddedDuplexEnrollment> provisionLocalDiagnosticFixture(']
  methods=[extract(host,x) for x in signatures]
  if a.cold_recovery:
+  body=body.replace('private String checkpointSnapshot(){return null;}',extract(host,'private String checkpointSnapshot(')).replace('private String evidenceSnapshot(){return null;}',extract(host,'private String evidenceSnapshot('))
   body=body.replace('private Object platform,resources;','private EmbeddedDuplexPlatform platform;private EmbeddedDuplexResources resources;').replace('platform=new Object();resources=new Object();','platform=new EmbeddedDuplexPlatform();resources=new EmbeddedDuplexResources();')
   body=body.replace('private ColdPendingLocal coldPendingRecovery;private static final class ColdPendingLocal{EmbeddedDuplexColdRecovery.Plan plan;EmbeddedDuplexOriginals.Record original;long appGeneration;}','')
   fields=fields.replace('retainedWholeNativeReceipt,lastClosedActorProof,noMediaClose','retainedWholeNativeReceipt,noMediaClose').replace('private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;','private EmbeddedDuplexRuntimeConfigurationBinding.Context nativeConfigurationContext;private Object setupCredentials,pendingReview,lastBootstrapFailure;private JSONObject lastClosedActorProof;')
@@ -201,13 +203,14 @@ def main():
  classes=out/'classes';classes.mkdir();cp=os.pathsep.join([str(jar),a.support_classpath])
  cold_fixture=root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/ColdPendingRecoveryHostTest.java'
  if a.cold_recovery:inputs.append(cold_fixture);pins[str(cold_fixture.relative_to(root))]=hashlib.sha256(cold_fixture.read_bytes()).hexdigest()
+ (out/'SOURCE_INPUTS.json').write_text(json.dumps(pins,indent=2)+'\n',encoding='utf-8')
  run('compile',[str(java/'bin/javac.exe'),'--release','17','-encoding','UTF-8','-cp',cp,'-d',str(classes)]+[str(x) for x in generated+production+[fixture,original_fixture]+([cold_fixture] if a.cold_recovery else [])])
  argv=[str(java/'bin/java.exe'),'-Dhost.proc='+str(baseline/'proc'),'-cp',os.pathsep.join([str(classes),cp]),pkg.replace('/','.')+'.EmbeddedDuplexRunContextHostTest']
  run('store',argv)
  native_result=None
  if a.cold_recovery:
   if a.native_result:
-   native_result=json.loads(a.native_result.read_text())['native_controls']
+   retained_native=json.loads(a.native_result.read_text());native_result=retained_native.get('native_controls',retained_native)
    for name,pin in native_result['native_pins'].items():
     if hashlib.sha256((root/'apps/spatial-camera-panel-android/native-receipt/src/embedded_duplex'/name).read_bytes()).hexdigest()!=pin:raise ValueError('Reused Native evidence source changed: '+name)
   else:native_result=native_controls(root,out,True)
@@ -241,7 +244,8 @@ def main():
    retained.append(item)
   retained={'manifest_sha256':hashlib.sha256(manifest.read_bytes()).hexdigest(),'cases':retained,'scope':'Exact saved row/join codec under JVM write/delete/exec/network traps; actual Java selectRun and retained callback separately execute with modeled Native eligibility/claim. Original input bytes remain exact; no current hardware authority.'}
 
- if any(hashlib.sha256((root/x).read_bytes()).hexdigest()!=h for x,h in pins.items()):raise ValueError('Inputs changed during controls')
+ changed=[x for x,h in pins.items() if hashlib.sha256((root/x).read_bytes()).hexdigest()!=h]
+ if changed:raise ValueError('Inputs changed during controls: '+', '.join(changed))
  result={'status':'passed','retained_legacy':retained,'source_pins':pins,'scope':'Actual run selector/store/fence/Original/service bodies and real filesystem/Future; Native/Android/current-resource leaves modeled. Existing 76 Original assertions retained.','limits':['No Native runtime/hardware/private enrollment byte claim; separate actual Native controls and Android composition required.'],'generated_pins':{str(x.relative_to(out)):hashlib.sha256(x.read_bytes()).hexdigest() for x in generated},'extracted_methods':[{'signature':x[:x.index('{')].strip(),'sha256':hashlib.sha256(x.encode()).hexdigest()} for x in methods+service_methods]}
  if a.recovery_witness_manifest:result['recovery_witness_manifest']={'path':str(a.recovery_witness_manifest.resolve()),'sha256':hashlib.sha256(a.recovery_witness_manifest.read_bytes()).hexdigest(),'scope':'Exact source witnesses copied only into temporary JVM fixtures; kernel/platform/commit leaves modeled, actual Native DTO projector used. Both Q/W no old closure supplied.'}
  if native_result:result['native_controls']=native_result

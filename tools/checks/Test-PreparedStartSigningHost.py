@@ -34,7 +34,7 @@ def signing_domains(java):
         domains.append(bytes(constants[name], "ascii").decode("unicode_escape"))
     domains.extend(bytes(value, "ascii").decode("unicode_escape") + "\0"
                    for value in re.findall(r'return signFreshDomain\(identity,bytes,"([^"\n]+)"\);', java))
-    if len(domains) != 16 or len(set(domains)) != len(domains):
+    if len(domains) != 18 or len(set(domains)) != len(domains):
         raise ValueError("closed Java signing callback inventory changed; review its actual consumers")
     return domains
 

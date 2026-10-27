@@ -9,10 +9,9 @@ use crate::owner_dispatch::{
     OwnerDispatchClock, OwnerDispatchSigner, OwnerDispatchStatus,
 };
 use crate::{
-    retained_cleanup_request_sha256, verify_signed_retained_cleanup_request,
-    AndroidMediaExecutionTicket, RetainedCleanupAuthorityProjection,
-    RetainedCleanupDispatchRequest, RetainedCleanupReplayDecision, RetainedCleanupReplaySnapshot,
-    RetainedCleanupReplayStore,
+    retained_cleanup_request_sha256, AndroidMediaExecutionTicket,
+    RetainedCleanupAuthorityProjection, RetainedCleanupDispatchRequest,
+    RetainedCleanupReplayDecision, RetainedCleanupReplaySnapshot, RetainedCleanupReplayStore,
 };
 
 /// Signed v2 response schema.
@@ -20,6 +19,11 @@ pub const RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA: &str =
     "rusty.quest.android.media.retained_cleanup_dispatch_response.v2";
 const RESPONSE_DOMAIN: &[u8] =
     b"rusty.quest.android.media.retained_cleanup_dispatch.v2\0response\0";
+/// Owned cleanup response, including an authenticated no-effect refresh refusal.
+pub const OWNED_CLEANUP_DISPATCH_RESPONSE_SCHEMA: &str =
+    "rusty.quest.android.media.retained_cleanup_dispatch_response.v3";
+const OWNED_RESPONSE_DOMAIN: &[u8] =
+    b"rusty.quest.android.media.retained_cleanup_dispatch.v3\0response\0";
 
 /// Independent target-side authority, obtained from retained owner state and
 /// current peer/Broker evidence. The request is only a lookup hint.
@@ -38,6 +42,11 @@ pub struct RetainedCleanupLiveSource {
 
 /// Source authority that must not treat request fields as proof.
 pub trait RetainedCleanupAuthoritySource {
+    /// Actual target-owned accepted policy. The caller's frame cannot supply it.
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        Ok(crate::DEFAULT_OWNED_CLEANUP_AUTHENTICATION_VALIDITY_MS)
+    }
+
     /// Derive all live evidence independently of the request payload.
     ///
     /// # Errors
@@ -95,8 +104,13 @@ pub fn retained_cleanup_response_signing_bytes(
     let mut unsigned = response.clone();
     unsigned.signature_base64.clear();
     let payload = serde_json::to_vec(&unsigned).map_err(|_| "cleanup response encode")?;
-    let mut bytes = Vec::with_capacity(RESPONSE_DOMAIN.len() + payload.len());
-    bytes.extend_from_slice(RESPONSE_DOMAIN);
+    let domain = match response.schema_id.as_str() {
+        RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA => RESPONSE_DOMAIN,
+        OWNED_CLEANUP_DISPATCH_RESPONSE_SCHEMA => OWNED_RESPONSE_DOMAIN,
+        _ => return Err("cleanup response signing schema".into()),
+    };
+    let mut bytes = Vec::with_capacity(domain.len() + payload.len());
+    bytes.extend_from_slice(domain);
     bytes.extend_from_slice(&payload);
     Ok(bytes)
 }
@@ -117,18 +131,26 @@ pub fn verify_retained_cleanup_response(
 ) -> Result<RetainedCleanupDispatchResponse, String> {
     let response: RetainedCleanupDispatchResponse =
         serde_json::from_slice(response_bytes).map_err(|_| "cleanup response decode")?;
-    if response.schema_id != RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA
-        || response.dispatch_id != request.dispatch_id
+    let owned = request.schema_id == crate::OWNED_CLEANUP_DISPATCH_REQUEST_SCHEMA;
+    let refresh = owned
+        && response.status == OwnerDispatchStatus::Rejected
+        && response.effect.is_none()
+        && response.failure.as_deref() == Some(crate::OWNED_CLEANUP_AUTHENTICATION_EXPIRED);
+    if (if owned {
+        response.schema_id != OWNED_CLEANUP_DISPATCH_RESPONSE_SCHEMA
+    } else {
+        response.schema_id != RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA
+    }) || response.dispatch_id != request.dispatch_id
         || response.executor_peer_id != expected_executor_peer_id
         || response.executor_peer_id != request.target_peer_id
         || response.request_sha256
             != retained_cleanup_request_sha256(request).map_err(str::to_owned)?
         || &request.cleanup.target != expected_target
         || response.signer_key_id != expected_executor_key_id
-        || response.status == OwnerDispatchStatus::Rejected
+        || response.status == OwnerDispatchStatus::Rejected && !refresh
         || (response.status == OwnerDispatchStatus::Completed)
             != (response.effect.is_some() && response.failure.is_none())
-        || (response.status == OwnerDispatchStatus::Uncertain)
+        || (response.status == OwnerDispatchStatus::Uncertain || refresh)
             != (response.effect.is_none() && response.failure.is_some())
         || response.effect.as_ref().is_some_and(|effect| {
             validate_effect(expected_target, request.cleanup.mode, effect).is_err()
@@ -232,7 +254,7 @@ where
         }
         let now_ms = self.clock.now_ms()?;
         let live = self.source.current_source(request, now_ms)?;
-        verify_signed_retained_cleanup_request(
+        if let Err(refusal) = crate::verify_signed_retained_cleanup_request_with_lifetime(
             request,
             &live.projection,
             &live.expected_target,
@@ -241,7 +263,24 @@ where
             &live.signer_key_id,
             &live.signer_key,
             now_ms,
-        )?;
+            self.source.authentication_validity_ms()?,
+        ) {
+            if request.schema_id == crate::OWNED_CLEANUP_DISPATCH_REQUEST_SCHEMA
+                && refusal == crate::OWNED_CLEANUP_AUTHENTICATION_EXPIRED
+            {
+                // Authentication and current exact target succeeded. No replay
+                // reservation or registry call has occurred. The signed refusal
+                // permits only an envelope refresh for this same effect identity.
+                return self.signed_response(
+                    request,
+                    request_sha256,
+                    OwnerDispatchStatus::Rejected,
+                    None,
+                    Some(crate::OWNED_CLEANUP_AUTHENTICATION_EXPIRED.into()),
+                );
+            }
+            return Err(refusal);
+        }
         self.replay.reserve(
             &mut self.replay_store,
             &request.dispatch_id,
@@ -294,7 +333,12 @@ where
         failure: Option<String>,
     ) -> Result<Vec<u8>, String> {
         let mut response = RetainedCleanupDispatchResponse {
-            schema_id: RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA.into(),
+            schema_id: if request.schema_id == crate::OWNED_CLEANUP_DISPATCH_REQUEST_SCHEMA {
+                OWNED_CLEANUP_DISPATCH_RESPONSE_SCHEMA
+            } else {
+                RETAINED_CLEANUP_DISPATCH_RESPONSE_SCHEMA
+            }
+            .into(),
             dispatch_id: request.dispatch_id.clone(),
             executor_peer_id: self.target_peer_id.clone(),
             request_sha256,
@@ -335,6 +379,7 @@ mod tests {
         VERIFIED_OWNER_EFFECT_SCHEMA,
     };
 
+    const TEST_OWNED_AUTH_VALIDITY_MS: u64 = 90_000;
     struct TestSigner(SigningKey, &'static str);
     impl OwnerDispatchSigner for TestSigner {
         fn key_id(&self) -> &str {
@@ -374,6 +419,9 @@ mod tests {
         calls: Arc<AtomicUsize>,
     }
     impl RetainedCleanupAuthoritySource for Source {
+        fn authentication_validity_ms(&self) -> Result<u64, String> {
+            Ok(TEST_OWNED_AUTH_VALIDITY_MS)
+        }
         fn current_source(
             &self,
             _: &RetainedCleanupDispatchRequest,
@@ -522,6 +570,200 @@ mod tests {
         };
         sign_retained_cleanup_request(&mut request, &signer).unwrap();
         (request, signer, projection, target)
+    }
+
+    struct MovingClock(Arc<std::sync::atomic::AtomicU64>);
+    impl OwnerDispatchClock for MovingClock {
+        fn now_ms(&self) -> Result<u64, String> {
+            Ok(self.0.load(Ordering::SeqCst))
+        }
+    }
+    fn owned_fixture() -> (
+        RetainedCleanupDispatchRequest,
+        TestSigner,
+        RetainedCleanupAuthorityProjection,
+        AndroidMediaExecutionTicket,
+    ) {
+        use sha2::Digest;
+        let (mut request, coordinator, mut projection, target) = fixture();
+        projection.schema_id = crate::OWNED_CLEANUP_PROJECTION_SCHEMA.into();
+        // Both old requester and topology have expired. They are retained
+        // historical subjects, while the signed envelope has its own policy.
+        projection.requester_expires_at_ms = 1;
+        projection.expires_at_ms = 2;
+        request.schema_id = crate::OWNED_CLEANUP_DISPATCH_REQUEST_SCHEMA.into();
+        request.cleanup.schema_id = crate::OWNED_CLEANUP_TICKET_SCHEMA.into();
+        request.cleanup.authority = projection.clone();
+        request.cleanup.owner_effect_sha256 = format!(
+            "sha256:{:x}",
+            sha2::Sha256::digest(
+                serde_json::to_vec(&(&projection, &target, request.cleanup.mode)).unwrap()
+            )
+        );
+        request.signature_base64.clear();
+        sign_retained_cleanup_request(&mut request, &coordinator).unwrap();
+        (request, coordinator, projection, target)
+    }
+    #[test]
+    fn owned_cleanup_survives_thirty_seconds_and_expired_requester_with_exact_once_query() {
+        use sha2::Digest;
+        let (request, coordinator, projection, target) = owned_fixture();
+        let clock = Arc::new(std::sync::atomic::AtomicU64::new(60_100));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let source_calls = Arc::new(AtomicUsize::new(0));
+        let executor = TestSigner(SigningKey::from_bytes(&[28; 32]), "key.peer.b.1");
+        let key = executor.0.verifying_key().to_bytes();
+        let mut server = RetainedCleanupDispatchServer::restore(
+            "peer.b".into(),
+            "key.peer.b.1".into(),
+            Source {
+                projection,
+                target: target.clone(),
+                key: coordinator.0.verifying_key().to_bytes(),
+                calls: source_calls.clone(),
+            },
+            SuccessRegistry(calls.clone()),
+            executor,
+            MovingClock(clock.clone()),
+            RetainedCleanupReplaySnapshot::default(),
+            Store,
+        )
+        .unwrap();
+        let first = server.handle(&request).unwrap();
+        assert_eq!(
+            verify_retained_cleanup_response(
+                &first,
+                &request,
+                &target,
+                "peer.b",
+                "key.peer.b.1",
+                &key
+            )
+            .unwrap()
+            .status,
+            OwnerDispatchStatus::Completed
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        clock.store(
+            TEST_OWNED_AUTH_VALIDITY_MS + request.issued_at_ms + 1,
+            Ordering::SeqCst,
+        );
+        assert_eq!(server.handle(&request).unwrap(), first);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(source_calls.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn only_signed_expired_unentered_v3_envelope_can_refresh_same_dispatch() {
+        use sha2::Digest;
+        let (mut request, coordinator, projection, target) = owned_fixture();
+        let now = request.issued_at_ms + TEST_OWNED_AUTH_VALIDITY_MS + 1;
+        let clock = Arc::new(std::sync::atomic::AtomicU64::new(now));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let executor = TestSigner(SigningKey::from_bytes(&[28; 32]), "key.peer.b.1");
+        let key = executor.0.verifying_key().to_bytes();
+        let mut server = RetainedCleanupDispatchServer::restore(
+            "peer.b".into(),
+            "key.peer.b.1".into(),
+            Source {
+                projection,
+                target: target.clone(),
+                key: coordinator.0.verifying_key().to_bytes(),
+                calls: Arc::new(AtomicUsize::new(0)),
+            },
+            SuccessRegistry(calls.clone()),
+            executor,
+            MovingClock(clock.clone()),
+            RetainedCleanupReplaySnapshot::default(),
+            Store,
+        )
+        .unwrap();
+        let mut invalid = request.clone();
+        invalid.signature_base64 = crate::encode_signature_base64(&[0; 64]);
+        assert!(server.handle(&invalid).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let refusal = server.handle(&request).unwrap();
+        let proof = verify_retained_cleanup_response(
+            &refusal,
+            &request,
+            &target,
+            "peer.b",
+            "key.peer.b.1",
+            &key,
+        )
+        .unwrap();
+        assert_eq!(proof.status, OwnerDispatchStatus::Rejected);
+        assert_eq!(
+            proof.failure.as_deref(),
+            Some(crate::OWNED_CLEANUP_AUTHENTICATION_EXPIRED)
+        );
+        assert!(server.replay_snapshot().pending_request_sha256.is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let same_id = request.dispatch_id.clone();
+        request.issued_at_ms = now;
+        request.signature_base64.clear();
+        sign_retained_cleanup_request(&mut request, &coordinator).unwrap();
+        let completed = server.handle(&request).unwrap();
+        assert_eq!(request.dispatch_id, same_id);
+        assert_eq!(
+            verify_retained_cleanup_response(
+                &completed,
+                &request,
+                &target,
+                "peer.b",
+                "key.peer.b.1",
+                &key
+            )
+            .unwrap()
+            .status,
+            OwnerDispatchStatus::Completed
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(server.handle(&request).unwrap(), completed);
+        let mut wrong = request.clone();
+        wrong.dispatch_id = "foreign.counter".into();
+        wrong.cleanup.target.executor_generation += 1;
+        wrong.signature_base64.clear();
+        sign_retained_cleanup_request(&mut wrong, &coordinator).unwrap();
+        assert!(server.handle(&wrong).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn owned_pending_query_after_wire_expiry_never_reenters_registry_or_refreshes() {
+        let (request, coordinator, projection, target) = owned_fixture();
+        let mut replay = RetainedCleanupReplaySnapshot::default();
+        replay.pending_request_sha256.insert(
+            request.dispatch_id.clone(),
+            crate::retained_cleanup_request_sha256(&request).unwrap(),
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let source_calls = Arc::new(AtomicUsize::new(0));
+        let mut server = RetainedCleanupDispatchServer::restore(
+            "peer.b".into(),
+            "key.peer.b.1".into(),
+            Source {
+                projection,
+                target,
+                key: coordinator.0.verifying_key().to_bytes(),
+                calls: source_calls.clone(),
+            },
+            SuccessRegistry(calls.clone()),
+            TestSigner(SigningKey::from_bytes(&[28; 32]), "key.peer.b.1"),
+            MovingClock(Arc::new(std::sync::atomic::AtomicU64::new(
+                TEST_OWNED_AUTH_VALIDITY_MS + 1_000,
+            ))),
+            replay,
+            Store,
+        )
+        .unwrap();
+        let observed: RetainedCleanupDispatchResponse =
+            serde_json::from_slice(&server.handle(&request).unwrap()).unwrap();
+        assert_eq!(observed.status, OwnerDispatchStatus::Uncertain);
+        assert_eq!(
+            observed.failure.as_deref(),
+            Some("pending_compensation_required")
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(source_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

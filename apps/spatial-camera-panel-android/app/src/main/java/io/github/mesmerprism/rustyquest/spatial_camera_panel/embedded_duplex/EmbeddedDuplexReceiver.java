@@ -32,6 +32,8 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         default long preparedPeerDeliveryCount(){throw new IllegalStateException("prepared delivery counter unavailable");}
         default void requestPreparedStop(){throw new IllegalStateException("prepared Stop unavailable");}
         default void abortPrepared(){throw new IllegalStateException("prepared abort unavailable");}
+        /** Exact local receiver lifetime, independent of transaction publication. */
+        default void stopOwnedLocalResources(){throw new IllegalStateException("local receiver retirement unavailable");}
         /** Closed enum/counter fields only; never exception text or endpoints. */
         default String closedCounters() { return "counters=UNAVAILABLE"; }
         default org.json.JSONObject diagnosticStages() throws Exception {
@@ -417,6 +419,21 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                 .put("projection_retired", projectionRetired);
     }
 
+    /** Retire the held local decoder/reader/projection, retaining ticket history.
+     * This does not mint a signed remote Stop or settle any old transaction. */
+    synchronized void retireOwnedLocalResources() {
+        if(("cleaned".equals(preparationState)||"stopped".equals(preparationState))&&surfaceReleased&&projectionRetired)return;
+        if("unprepared".equals(preparationState)){closeUnstartedAndVerify();return;}
+        ReceiverRuntime held=receiver;
+        if(held!=null){held.stopOwnedLocalResources();releaseStoppedReaderAndProjection(true);}
+        else {
+            runtimeFactory.retireNativeGeneration(generation);
+            if(staged!=null&&!surfaceReleased)awaitOwnedReaderRelease(staged);
+            surfaceReleased=true;retireProjection();preparationState="cleaned";preparationRevision++;
+        }
+        if(!snapshot().terminal())throw new IllegalStateException("actual local receiver retirement remains Pending");
+    }
+
     /** Closes only the receiver that has never entered an owner Sink effect. */
     synchronized void closeUnstartedAndVerify() {
         if (("cleaned".equals(preparationState) || "stopped".equals(preparationState))
@@ -448,14 +465,30 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
                 "embedded-receiver-cleanup." + generation + "." + preparationRevision);
     }
 
-    private void releaseStoppedReaderAndProjection() {
+    private void releaseStoppedReaderAndProjection() { releaseStoppedReaderAndProjection(false); }
+
+    private void awaitOwnedReaderRelease(ProjectionResource actual) {
+        long warningAt=System.nanoTime()+10_000_000_000L;
+        while(!actual.release()){
+            if(staged!=actual)throw new IllegalStateException("actual Whole reader owner changed");
+            if(System.nanoTime()>=warningAt){
+                System.err.println("embedded Whole reader cleanup remains Pending generation="+generation);
+                warningAt=System.nanoTime()+10_000_000_000L;
+            }
+            try{Thread.sleep(50L);}catch(InterruptedException stopped){
+                Thread.currentThread().interrupt();throw new IllegalStateException("actual Whole reader cleanup interrupted",stopped);
+            }
+        }
+    }
+    private void releaseStoppedReaderAndProjection(boolean owningWhole) {
         MediaRuntimeSnapshot stopped = receiver.snapshot();
         if (!stopped.terminal() || stopped.generation() != generation) {
             throw new IllegalStateException("receiver still owns decoder resources");
         }
         if (!surfaceReleased) {
             runtimeFactory.retireNativeGeneration(generation);
-            if (!staged.release()) {
+            if(owningWhole)awaitOwnedReaderRelease(staged);
+            else if (!staged.release()) {
                 throw new IllegalStateException("embedded reader cleanup remains pending");
             }
             surfaceReleased = true;
@@ -562,6 +595,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         @Override public long preparedPeerDeliveryCount(){return receiver.preparedPeerDeliveryCount();}
         @Override public void requestPreparedStop(){receiver.requestPreparedStop();}
         @Override public void abortPrepared(){receiver.stopAndVerify();}
+        @Override public void stopOwnedLocalResources(){receiver.stopAndVerify();}
         @Override public void start() throws Exception { receiver.start(); }
         @Override public void start(java.util.function.BooleanSupplier currentAuthority)throws Exception{receiver.start(currentAuthority);}
         @Override public MediaRuntimeSnapshot snapshot() { return receiver.snapshot(); }

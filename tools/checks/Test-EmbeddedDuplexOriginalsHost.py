@@ -43,13 +43,15 @@ def main():
     parser.add_argument('--output', type=pathlib.Path)
     parser.add_argument('--java-home', type=pathlib.Path)
     parser.add_argument('--json-jar', type=pathlib.Path)
+    parser.add_argument('--scratch-root', type=pathlib.Path)
     parser.add_argument('--smoke', action='store_true')
     parser.add_argument('--whole-publication', action='store_true', help='Exercise direct no-media Whole publication with exact Host settlement predicates')
     parser.add_argument('--support-classpath', default='', help='Current compiled production fresh-helper classes; not runtime proof')
     args = parser.parse_args()
     root = args.root.resolve()
     out = (args.output or root / 'target' / ('originals-host-' + uuid.uuid4().hex)).resolve()
-    if not out.is_relative_to(root / 'target'):
+    permitted=args.scratch_root.resolve() if args.scratch_root else root/'target'
+    if out==permitted or not out.is_relative_to(permitted):
         raise ValueError('Fresh output must be beneath repository target')
     out.mkdir(parents=True, exist_ok=False)
     java_home = args.java_home or pathlib.Path(os.environ.get('JAVA_HOME') or pathlib.Path(shutil.which('javac')).parent.parent)

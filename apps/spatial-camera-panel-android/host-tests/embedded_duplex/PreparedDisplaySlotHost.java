@@ -83,6 +83,23 @@ public final class PreparedDisplaySlotHost {
             slot.retireArchivedPreparedRenderer("next");
         });
         need(next.aborted == 1 && next.retired == 1);
-        System.out.println("PASS 8 actual DisplaySlot groups: prepare/abort/archive, all-default coverage, exact exception, recursion, foreign generation, inflight drain, detach/replacement and retained cleanup retry");
+        delayedCallbackKeepsCleanupOwned();
+        System.out.println("PASS 9 actual DisplaySlot groups: prepare/abort/archive, all-default coverage, exact exception, recursion, foreign generation, inflight drain, detach/replacement and retained cleanup retry");
     }
+    static void delayedCallbackKeepsCleanupOwned()throws Exception {
+        EmbeddedDuplexDisplaySlot held=new EmbeddedDuplexDisplaySlot();Display display=new Display();long generation=held.attach(display);
+        CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1),cleanup=new CountDownLatch(1);
+        display.onPrepare=()->{entered.countDown();try{release.await();}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IllegalStateException(e);}};
+        CompletableFuture<String> callback=CompletableFuture.supplyAsync(()->held.prepareDormantPeerRenderer("delayed",23L,()->false));
+        need(entered.await(2,TimeUnit.SECONDS));
+        CompletableFuture<Void> closing=CompletableFuture.runAsync(()->{try{held.detachAfterCleanup(generation,cleanup::countDown);}catch(Exception e){throw new java.util.concurrent.CompletionException(e);}});
+        try {
+            Thread.sleep(11_000L);
+            need(!closing.isDone()&&cleanup.getCount()==1&&held.cleanupPending());
+            refused(()->held.attach(new Display()));
+        } finally { release.countDown(); }
+        callback.get(2,TimeUnit.SECONDS);closing.get(2,TimeUnit.SECONDS);
+        need(cleanup.getCount()==0);need(held.attach(new Display())==generation+1);
+    }
+
 }

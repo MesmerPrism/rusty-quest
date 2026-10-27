@@ -307,14 +307,15 @@ impl JavaOwnerCallbacks {
         self.fresh_closure_callback("persistFreshOwnerRetirement", body)
     }
     pub(crate) fn current_operator_original_id(&self) -> Result<String, String> {
+        self.operator_original_id("currentOperatorOriginalId")
+    }
+    pub(crate) fn current_whole_cleanup_original_id(&self) -> Result<String, String> {
+        self.operator_original_id("currentWholeCleanupOriginalId")
+    }
+    fn operator_original_id(&self, method: &str) -> Result<String, String> {
         let mut env = self.attached()?;
         self.capability.require_live()?;
-        let call = env.call_method(
-            self.callback.as_obj(),
-            "currentOperatorOriginalId",
-            "()Ljava/lang/String;",
-            &[],
-        );
+        let call = env.call_method(self.callback.as_obj(), method, "()Ljava/lang/String;", &[]);
         let object = self
             .checked_call(&mut env, call, "java_bridge.actual_original_id")?
             .l()

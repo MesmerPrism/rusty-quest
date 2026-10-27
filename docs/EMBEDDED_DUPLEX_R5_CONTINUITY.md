@@ -377,11 +377,26 @@ Only that verified receipt clears the app Pending phase and stamps the current
 incarnation. Neither counter reset nor historical callback replay is involved.
 Old Original rows, transaction UNKNOWN and remote debt remain unchanged.
 
+Populated Start/evidence journals do not prevent local retirement. Recovery
+captures their exact current and prior digests from the source-owned companions,
+checks the bytes again before commit and handoff, and preserves every old row
+and journal byte. The internal owner link v2 carries exactly those four digest
+strings; callers cannot supply them. Same-run nonterminal Start still blocks
+ordinary bootstrap. A new run uses its own journal scope and the newly earned
+local handoff without pretending that the old media transaction completed.
+Before overwriting a Pending global phase, acquisition durably retains its exact
+predecessor in a checksum-named private file. Recovery reads only that named
+predecessor when the companion checksum requires it, without scanning history.
+The predecessor is fully written and synced under a unique staging name before
+atomic publication; incomplete orphan staging bytes never become the named proof.
+
 Dispatch/query/consumer/join/ACK retain the existing outer
 `operator_transport.v3` Original flow. Its actual Future response is a nested
 `operator_transport.v1` observed receipt of
-`cold_pending_local_retirement.v1`, including the closed eleven-field
-`cold_pending_native_retirement.v1`. The current actor has a null Native
+`cold_pending_local_retirement.v2`, including the closed eleven-field
+`cold_pending_native_retirement.v2`. The paired v1 codecs remain explicit
+compatibility readers; mixed local/Native versions are rejected. The local
+receipt keeps its seventeen closed fields. The current actor has a null Native
 generation. Its app hash is the operation's Pending hash; the receipt separately
 records the resulting clear hash. The actual new worker/callback/local joins use
 `original_join.v2` with a null Native executor and the entire local receipt hash.
@@ -404,3 +419,51 @@ the full JNI module compiles against the real JNI crate. Android/platform and
 physical-owner leaves in the JVM control remain models. The optional retained
 witness manifest accepts exact source captures only as temporary test inputs.
 This is source evidence, not APK, target-JNI or hardware validation.
+
+
+## Owning local cleanup after partial Start
+
+A carried `whole_app_close` Original first validates its actual current Java
+actor and held attachment/resources. It requests both local media directions
+once and retains their actual workers while decoder, reader, encoder, camera,
+renderer and callback joins remain Pending. Physical joins run outside the
+command lane so the callbacks needed to finish them can run. Observation
+intervals emit warnings; they cannot free a live owner or certify a join.
+Before local drain, the current registry fences new forward effects and joins
+only callbacks actually executing in this process. Historical UNKNOWN records
+remain unchanged. Late registry installation inherits the same fence. The codec
+source-owner check and local leaf retirement share the existing lifecycle lock.
+Local resource retirement grants no remote Stop readback or transaction result.
+A failed or ambiguous logical Whole preserves the same Original and UNKNOWN.
+
+Native current-root lookup is separate from ordinary operation admission.
+Whole validates the current carried Whole Original. Incoming owner dispatch
+verifies the signed exact target before classifying Stop or retained
+compensation for cleanup admission. Start and activation still require the
+ordinary gate. Lookup alone, a stop latch, an expired Pair or caller data cannot
+authorize an SDK effect.
+
+The maintained two-principal cleanup projection, ticket, request and response
+use component v3. Entitlement comes from the independently retained original
+Start, exact target/counter, accepted original enrollment and current signer
+status. Historical requester, Pair and topology expiry remain recorded target
+evidence rather than renewable cleanup rights. Revocation, key changes,
+foreign target/root and replay collisions still reject. The explicit v2 reader
+preserves its finite legacy rules.
+
+Remote authentication retains signed issuance, future skew and a finite horizon
+selected by the accepted source policy. An omitted development policy keeps the
+finite compatibility horizon. Cached Pending and terminal queries retain their
+exact request/response identity beyond that interval. After transport
+uncertainty the sender keeps the same commit bytes. Only an authenticated signed
+`owned_cleanup_authentication_expired_no_effect` refusal, produced before replay
+reservation or registry entry, permits a fresh envelope for that same cleanup
+identity. It cannot refresh or remutate an uncertain effect.
+
+New exceptional Original completion emits `original_failure.v2` at the existing
+completion seam. Its seven closed fields bind operation, Original, fixed
+`actual_future_completion` stage, direct throwable family and bounded cause
+category. No exception message, stack, endpoint or credential is exported.
+This retains safe failure classification, not a complete state-guard diagnosis.
+The outcome stays UNKNOWN/uncertain. Existing terminal failure rows, outcome
+hashes and ACK custody are read byte-exact and are never upgraded in place.

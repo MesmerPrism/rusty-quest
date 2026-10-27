@@ -304,6 +304,39 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     }
     @Override public long[] currentProjection() { return display.currentProjection(routeGeneration()); }
 
+    /** Close only resources owned by this exact retained object. No fake owner
+     * action/readback is inserted into the signed logical registry. */
+    void retireOwnedLocalResources() {
+        final Throwable[] failures=new Throwable[2];
+        final PackedStereoMediaSourceRuntime.Pipeline held=pipeline;
+        // Both directions must receive their own local Stop even when the other
+        // direction is still draining. Neither callback is run under Native or
+        // authority locks, and the carried command joins this exact worker.
+        Thread sender=null;
+        if(held!=null){
+            sender=new Thread(EmbeddedDuplexOriginals.carryActual(EmbeddedDuplexOriginals.capture(),()->{
+                try{held.stopOwnedLocalResources("whole_actual_local_resources");}
+                catch(Throwable failure){failures[1]=failure;}
+            }),"embedded-whole-source-drain");
+            try{sender.start();}catch(Throwable failure){failures[1]=failure;}
+        }
+        try{incoming.retireOwnedLocalResources();}catch(Throwable failure){failures[0]=failure;}
+        if(sender!=null){
+            try{while(sender.isAlive()){
+                sender.join(10_000L);
+                if(sender.isAlive())System.err.println("embedded Whole source drain remains Pending generation="+generation);
+            }}catch(InterruptedException interrupted){
+                Thread.currentThread().interrupt();throw new IllegalStateException("actual Whole local resource join interrupted",interrupted);
+            }
+        }
+        Throwable failure=failures[0]==null?failures[1]:failures[0];
+        if(failures[0]!=null&&failures[1]!=null)failure.addSuppressed(failures[1]);
+        if(failure!=null)throw new IllegalStateException("actual Whole local resource cleanup remains Pending",failure);
+        if(pipeline!=held)throw new IllegalStateException("actual Whole local source owner changed");
+        if(!incoming.snapshot().terminal())throw new IllegalStateException("actual Whole local receiver remains Pending");
+        if(held!=null)held.requireStopped();
+    }
+
     /** Whole-product close may retire an incoming route that never entered a Sink effect. */
     void closeUnusedIncomingForWholeProduct() {
         if ("unprepared".equals(incoming.snapshot().state())) {

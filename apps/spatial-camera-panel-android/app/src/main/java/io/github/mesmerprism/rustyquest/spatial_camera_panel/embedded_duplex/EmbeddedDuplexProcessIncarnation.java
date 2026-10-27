@@ -80,6 +80,64 @@ final class EmbeddedDuplexProcessIncarnation {
         Binding binding=load(directory,phase);if(binding==null)throw new IllegalStateException("incarnation recovery witness invalid");
         return new RecoveryBinding(binding,exact,phase);
     }
+    /** The held fence supplies the exact prior phase; callers never supply a replacement owner. */
+    static RecoveryBinding readForRecovery(File directory,String priorRecord)throws Exception{
+        EmbeddedDuplexProcessFence.recordedPhase(priorRecord,"pending");
+        String exact=read(new File(directory,NAME).toPath(),4096);
+        JSONObject value=EmbeddedDuplexCanonicalJson.readOwned(exact.getBytes(StandardCharsets.UTF_8));
+        String original=value.getString("original_fence_record");
+        EmbeddedDuplexProcessFence.recordedPhase(original,"pending");
+        String expected=value.getString("current_fence_sha256");
+        if(!expected.matches("[0-9a-f]{64}"))throw new IllegalStateException("incarnation retained digest invalid");
+        if(!expected.equals(EmbeddedDuplexProcessFence.digest(priorRecord))){
+            String acquisition=priorRecord;
+            priorRecord=read(phasePath(directory,expected),512);
+            EmbeddedDuplexProcessFence.recordedPhase(priorRecord,"pending");
+            String[] acquired=acquisition.split("\n",-1),witness=priorRecord.split("\n",-1);
+            if(!expected.equals(EmbeddedDuplexProcessFence.digest(priorRecord))||acquired.length!=witness.length
+                    ||!acquired[0].endsWith(".v2")||!acquired[6].equals(witness[6])||Long.parseLong(witness[1])>=Long.parseLong(acquired[1]))
+                throw new IllegalStateException("incarnation predecessor witness differs");
+        }
+        String[] before=original.split("\n",-1),prior=priorRecord.split("\n",-1);
+        String originalRun=before[0].endsWith(".v2")?before[6]:null;
+        String priorRun=prior[0].endsWith(".v2")?prior[6]:null;
+        if(!java.util.Objects.equals(originalRun,priorRun)||Long.parseLong(before[1])>Long.parseLong(prior[1])
+                ||!value.getString("current_fence_sha256").equals(EmbeddedDuplexProcessFence.digest(priorRecord)))
+            throw new IllegalStateException("incarnation exact retained phase differs");
+        Binding binding=load(directory,priorRecord);
+        if(binding==null||!binding.originalRecord.equals(original)
+                ||!exact.equals(read(new File(directory,NAME).toPath(),4096)))
+            throw new IllegalStateException("incarnation exact recovery witness invalid");
+        return new RecoveryBinding(binding,exact,priorRecord);
+    }
+    /** Retain one immutable exact predecessor before a cold acquisition overwrites the global record. */
+    static void retainRecoveryPhase(File directory,String record,EmbeddedDuplexProcessFence.DirectorySync sync)throws Exception{
+        EmbeddedDuplexProcessFence.recordedPhase(record,"pending");
+        byte[] exact=record.getBytes(StandardCharsets.UTF_8);
+        if(exact.length==0||exact.length>512||!"pending".equals(record.split("\n",-1)[3])
+                ||!Files.isDirectory(directory.toPath(),LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(directory.toPath()))
+            throw new IllegalStateException("incarnation predecessor scope invalid");
+        Path path=phasePath(directory,EmbeddedDuplexProcessFence.digest(record));
+        if(!Files.exists(path,LinkOption.NOFOLLOW_LINKS)){
+            Set<OpenOption> options=Set.of(StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS);
+            java.nio.file.attribute.FileAttribute<?>[] permissions=Files.getFileStore(directory.toPath()).supportsFileAttributeView("posix")
+                ?new java.nio.file.attribute.FileAttribute<?>[]{java.nio.file.attribute.PosixFilePermissions.asFileAttribute(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))}
+                :new java.nio.file.attribute.FileAttribute<?>[0];
+            Path staged=new File(directory,path.getFileName()+"."+java.util.UUID.randomUUID()+".new").toPath();
+            try(FileChannel file=FileChannel.open(staged,options,permissions)){
+                ByteBuffer bytes=ByteBuffer.wrap(exact);while(bytes.hasRemaining())file.write(bytes);file.force(true);
+            }
+            // A killed writer may leave its unique staging bytes, but never a
+            // partially published checksum-named predecessor. The caller holds
+            // the global app fence lock through both durability boundaries.
+            sync.sync();
+            try{Files.move(staged,path,StandardCopyOption.ATOMIC_MOVE);}
+            catch(FileAlreadyExistsException raced){/* Only identical final bytes are accepted below. */}
+        }
+        if(!java.util.Arrays.equals(exact,readBytes(path,512)))throw new IllegalStateException("incarnation predecessor bytes changed");
+        sync.sync();
+    }
+    private static Path phasePath(File directory,String digest){return new File(directory,"process-incarnation.phase."+digest+".record").toPath();}
     private static Long kernelStartTicks(int pid, Path proc) throws Exception {
         if (pid <= 0) throw new IllegalArgumentException("invalid PID");
         String stat;

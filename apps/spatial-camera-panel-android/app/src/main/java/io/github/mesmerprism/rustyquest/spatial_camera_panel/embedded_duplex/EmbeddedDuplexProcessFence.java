@@ -123,7 +123,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
                 if(!java.util.Objects.equals(runId,v2?fields[6]:null))throw new IllegalStateException("fence/selected operational run differs");
                 priorGeneration = Long.parseLong(fields[1]);
                 pending = "pending".equals(fields[3]);
-                if (!fields[4].equals(checkpointHash) || !fields[5].equals(evidenceHash)) {
+                if ((!fields[4].equals(checkpointHash) || !fields[5].equals(evidenceHash)) && (!pending || !v2)) {
                     throw new IllegalStateException("process fence journal binding differs; migration unsupported");
                 }
             }
@@ -132,6 +132,7 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
             result.newlyInitialized=created;result.acquisitionGeneration=priorGeneration;
             result.operationalRunId=runId;result.incarnationDirectory=incarnationDirectory;
             result.acquisitionRecord = priorRecord;
+            if(pending&&runId!=null)EmbeddedDuplexProcessIncarnation.retainRecoveryPhase(incarnationDirectory,priorRecord,sync);
             result.persist();
             return result;
         } catch (Throwable failure) {
@@ -365,6 +366,13 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
     }
     synchronized boolean newlyInitialized(){return newlyInitialized;}
     synchronized long previousGeneration(){return acquisitionGeneration;}
+    /** Exact held predecessor, retained before this acquisition wrote its new generation. */
+    synchronized String acquisitionRecordForRecovery()throws Exception{
+        requireLive(generation);verifyHeldRecord();
+        if(acquisitionRecord==null)throw new IllegalStateException("retained app acquisition record absent");
+        recordedPhase(acquisitionRecord,"pending");
+        return acquisitionRecord;
+    }
     synchronized void operationalHandoff(String nextRunId,java.util.concurrent.Callable<org.json.JSONObject> exactSource){
         if(nextRunId!=null&&!nextRunId.matches("[0-9a-f]{32}"))throw new IllegalArgumentException("handoff run id");
         handoffRunId=nextRunId;handoffSource=exactSource;

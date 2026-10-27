@@ -33,6 +33,7 @@ public final class EmbeddedDuplexOriginals {
     private static final Set<String> FIELDS = Set.of("schema", "original_id", "operation", "request_sha256",
             "original_challenge", "state", "effect_state", "actor_binding", "native_setup_binding",
             "response", "response_sha256", "failure", "outcome_sha256", "retention", "consumer_receipt_sha256");
+    private static final Set<String> FAILURE_FAMILIES=Set.of("completion","execution","state","argument","security","cancelled","interrupted","timeout","io","linkage","native_operation","own_projection","other");
     private static final ThreadLocal<Record> CURRENT = new ThreadLocal<>();
     private static EmbeddedDuplexOriginals singleton;
     private EmbeddedDuplexRunContext capturedRun;
@@ -501,7 +502,7 @@ public final class EmbeddedDuplexOriginals {
                         .put("state","succeeded").put("effect_state","not_entered");
             } else if(failure!=null) {
                 record.row.put("state","unknown").put("effect_state","uncertain")
-                        .put("failure",new JSONObject().put("schema","rusty.quest.embedded_duplex.original_failure.v1").put("code","actual_future_failed"));
+                        .put("failure",actualFutureFailure(record,failure));
             } else {
                 JSONObject actual;
                 String operation = record.row.getString("operation");
@@ -525,6 +526,51 @@ public final class EmbeddedDuplexOriginals {
             record.row.put("outcome_sha256",EmbeddedDuplexCanonicalJson.sha256(outcome(record.row)));persist(record);
         } catch(Throwable unavailable){record.persistenceFailure=unavailable;}
         finally{record.callbackJoined=true;record.callbackTerminal.complete(null);tryAppAdmissionJoin(record);}
+    }
+    private static JSONObject actualFutureFailure(Record record,Throwable failure)throws Exception{
+        return new JSONObject().put("schema","rusty.quest.embedded_duplex.original_failure.v2").put("code","actual_future_failed")
+            .put("operation",record.row.getString("operation")).put("original_id",record.id()).put("stage","actual_future_completion")
+            .put("throwable_family",throwableFamily(failure)).put("cause_category",causeCategory(failure));
+    }
+    private static String throwableFamily(Throwable failure){
+        if(failure instanceof java.util.concurrent.CompletionException)return "completion";
+        if(failure instanceof java.util.concurrent.ExecutionException)return "execution";
+        if(failure instanceof EmbeddedDuplexNativeOperationFailure)return "native_operation";
+        if(failure instanceof EmbeddedDuplexOwnProjectionFailure)return "own_projection";
+        if(failure instanceof java.util.concurrent.CancellationException)return "cancelled";
+        if(failure instanceof IllegalStateException)return "state";
+        if(failure instanceof IllegalArgumentException)return "argument";
+        if(failure instanceof SecurityException)return "security";
+        if(failure instanceof InterruptedException)return "interrupted";
+        if(failure instanceof java.util.concurrent.TimeoutException)return "timeout";
+        if(failure instanceof java.io.IOException)return "io";
+        if(failure instanceof LinkageError)return "linkage";
+        return "other";
+    }
+    private static String causeCategory(Throwable failure){
+        Set<Throwable> seen=java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for(int depth=0;depth<16;depth++){
+            if(failure==null||!seen.add(failure))return "unavailable";
+            Throwable next;try{next=failure.getCause();}catch(Throwable unavailable){return "unavailable";}
+            if(next==null)return throwableFamily(failure);
+            failure=next;
+        }
+        return "unavailable";
+    }
+    private static void validateOriginalFailure(JSONObject row)throws Exception{
+        if(row.isNull("failure"))return;
+        JSONObject failure=row.getJSONObject("failure");String schema=failure.getString("schema");
+        if("rusty.quest.embedded_duplex.original_failure.v1".equals(schema)){
+            if(!keys(failure).equals(Set.of("schema","code"))||!"actual_future_failed".equals(failure.get("code")))throw new IllegalStateException("Original v1 failure fields");
+            return;
+        }
+        if(!"rusty.quest.embedded_duplex.original_failure.v2".equals(schema)
+                ||!keys(failure).equals(Set.of("schema","code","operation","original_id","stage","throwable_family","cause_category")))throw new IllegalStateException("Original failure schema/fields");
+        for(String key:keys(failure))if(!(failure.get(key) instanceof String))throw new IllegalStateException("Original failure scalar type");
+        if(!"actual_future_failed".equals(failure.getString("code"))||!row.getString("operation").equals(failure.getString("operation"))
+                ||!row.getString("original_id").equals(failure.getString("original_id"))||!"actual_future_completion".equals(failure.getString("stage"))
+                ||!FAILURE_FAMILIES.contains(failure.getString("throwable_family"))
+                ||!FAILURE_FAMILIES.contains(failure.getString("cause_category"))&&!"unavailable".equals(failure.getString("cause_category")))throw new IllegalStateException("Original failure subject/category");
     }
     private static JSONObject validateResponse(Record record,Bundle response)throws Exception {
         if(response==null||!response.keySet().equals(Set.of("schema","status","challenge","receipt")))
@@ -659,6 +705,7 @@ public final class EmbeddedDuplexOriginals {
                 ||!sdk2Whole&&!Set.of("not_entered","entered","uncertain","observed").contains(row.getString("effect_state"))
                 ||!(Set.of("owned","compacted").contains(row.getString("retention"))
                     || FRESH_OPERATIONS.contains(row.getString("operation")) && "acknowledged_join_pending".equals(row.getString("retention"))))throw new IllegalStateException("original checkpoint state");
+        validateOriginalFailure(row);
         if(!row.isNull("response_sha256")&&!row.getString("response_sha256").equals(EmbeddedDuplexCanonicalJson.sha256(row.getJSONObject("response"))))
             throw new IllegalStateException("original response digest differs");
         if(!row.isNull("outcome_sha256")&&!row.getString("outcome_sha256").equals(EmbeddedDuplexCanonicalJson.sha256(outcome(row))))
@@ -1147,7 +1194,7 @@ public final class EmbeddedDuplexOriginals {
     }
     synchronized void actualClosedAppOwnerJoined(long appGeneration,long nativeGeneration,String appRecord,
             JSONObject actualPhysicalProof,Object retainedActualOwner)throws Exception{
-        JSONObject terminal=EmbeddedDuplexColdRecovery.SCHEMA.equals(actualPhysicalProof.optString("$schema"))
+        JSONObject terminal=EmbeddedDuplexColdRecovery.isReceiptSchema(actualPhysicalProof.optString("$schema"))
                 ?actualPhysicalProof.getJSONObject("physical_retirement"):actualPhysicalProof;
         if(appGeneration<=0 || nativeGeneration<0 || appRecord==null || !appRecord.matches("[0-9a-f]{64}")
                 || !"terminal".equals(terminal.getString("whole_app_physical_cleanup"))

@@ -158,7 +158,8 @@ final class EmbeddedDuplexActivationGate {
                 || !ticket.clientId.equals(armed.clientId) || !ticket.leaseId.equals(armed.leaseId)) {
             return; // Verified physical cleanup is not a grant to reopen this arm lineage.
         }
-        boolean retained = "rusty.quest.android.media.retained_cleanup_projection.v2".equals(
+        boolean ownedCleanup="rusty.quest.android.media.retained_cleanup_projection.v3".equals(authority.getString("$schema"));
+        boolean retained = ownedCleanup || "rusty.quest.android.media.retained_cleanup_projection.v2".equals(
                 authority.getString("$schema"));
         String epoch = authority.getString(retained ? "provider_epoch_id" : "authority_provider_epoch_id");
         String client = authority.getString(retained ? "target_client_id" : "authority_client_id");
@@ -170,7 +171,7 @@ final class EmbeddedDuplexActivationGate {
         if (!epoch.equals(armed.providerEpochId) || !client.equals(armed.clientId)
                 || !lease.equals(armed.leaseId)
                 || !target.incomingRuntimeSpecId().equals(authority.getString("platform_runtime_spec_id"))
-                || authority.getLong("expires_at_ms") <= clock.wallTimeMillis()
+                || !ownedCleanup&&authority.getLong("expires_at_ms") <= clock.wallTimeMillis()
                 || !"rusty.quest.android.media.verified_owner_effect.v1".equals(verified.getString("$schema"))
                 || verified.getLong("executor_generation") != target.generation()
                 || !verified.getBoolean("terminal") || !"stopped".equals(verified.getString("observed_state"))

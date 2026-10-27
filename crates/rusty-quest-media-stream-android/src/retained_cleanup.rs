@@ -27,6 +27,23 @@ pub const RETAINED_CLEANUP_DISPATCH_REQUEST_SCHEMA: &str =
     "rusty.quest.android.media.retained_cleanup_dispatch_request.v2";
 const RETAINED_CLEANUP_DISPATCH_DOMAIN: &[u8] =
     b"rusty.quest.android.media.retained_cleanup_dispatch.v2\0request\0";
+/// Durable owned-resource cleanup. These fields bind the original target;
+/// requester deadlines remain historical data rather than cleanup entitlement.
+pub const OWNED_CLEANUP_PROJECTION_SCHEMA: &str =
+    "rusty.quest.android.media.retained_cleanup_projection.v3";
+pub const OWNED_CLEANUP_TICKET_SCHEMA: &str =
+    "rusty.quest.android.media.retained_cleanup_ticket.v3";
+pub const OWNED_CLEANUP_DISPATCH_REQUEST_SCHEMA: &str =
+    "rusty.quest.android.media.retained_cleanup_dispatch_request.v3";
+const OWNED_CLEANUP_DISPATCH_DOMAIN: &[u8] =
+    b"rusty.quest.android.media.retained_cleanup_dispatch.v3\0request\0";
+/// Finite compatibility default. A trusted source supplies its accepted policy
+/// horizon separately; the wire request never chooses this value.
+pub const DEFAULT_OWNED_CLEANUP_AUTHENTICATION_VALIDITY_MS: u64 = 30_000;
+/// Returned only after the signature and exact current target were authenticated.
+pub const OWNED_CLEANUP_AUTHENTICATION_EXPIRED: &str =
+    "owned_cleanup_authentication_expired_no_effect";
+
 /// Bounded uncertainty and exact-response replay, separate from v1 dispatch.
 pub const MAX_RETAINED_CLEANUP_REPLAY_BYTES: usize = 16 * 1024 * 1024;
 /// Maximum unresolved effects after a crash.
@@ -321,8 +338,13 @@ pub fn retained_cleanup_request_signing_bytes(
     if payload.len() > MAX_OWNER_DISPATCH_FRAME_BYTES {
         return Err("cleanup request exceeds frame bound");
     }
-    let mut bytes = Vec::with_capacity(RETAINED_CLEANUP_DISPATCH_DOMAIN.len() + payload.len());
-    bytes.extend_from_slice(RETAINED_CLEANUP_DISPATCH_DOMAIN);
+    let domain = match request.schema_id.as_str() {
+        RETAINED_CLEANUP_DISPATCH_REQUEST_SCHEMA => RETAINED_CLEANUP_DISPATCH_DOMAIN,
+        OWNED_CLEANUP_DISPATCH_REQUEST_SCHEMA => OWNED_CLEANUP_DISPATCH_DOMAIN,
+        _ => return Err("cleanup request signing schema"),
+    };
+    let mut bytes = Vec::with_capacity(domain.len() + payload.len());
+    bytes.extend_from_slice(domain);
     bytes.extend_from_slice(&payload);
     Ok(bytes)
 }
@@ -359,12 +381,44 @@ pub fn verify_signed_retained_cleanup_request(
     enrolled_signer_key: &[u8; 32],
     now_ms: u64,
 ) -> Result<(), String> {
-    if request.schema_id != RETAINED_CLEANUP_DISPATCH_REQUEST_SCHEMA
+    verify_signed_retained_cleanup_request_with_lifetime(
+        request,
+        live,
+        expected_target,
+        expected_executor_generation,
+        expected_executor_peer_id,
+        expected_signer_key_id,
+        enrolled_signer_key,
+        now_ms,
+        DEFAULT_OWNED_CLEANUP_AUTHENTICATION_VALIDITY_MS,
+    )
+}
+/// Verify against an independently selected target-owned authentication policy.
+/// No horizon value in the request is used as an admission oracle.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_signed_retained_cleanup_request_with_lifetime(
+    request: &RetainedCleanupDispatchRequest,
+    live: &RetainedCleanupAuthorityProjection,
+    expected_target: &AndroidMediaExecutionTicket,
+    expected_executor_generation: u64,
+    expected_executor_peer_id: &str,
+    expected_signer_key_id: &str,
+    enrolled_signer_key: &[u8; 32],
+    now_ms: u64,
+    authentication_validity_ms: u64,
+) -> Result<(), String> {
+    if authentication_validity_ms == 0 {
+        return Err("cleanup authentication policy invalid".into());
+    }
+    let owned = request.schema_id == OWNED_CLEANUP_DISPATCH_REQUEST_SCHEMA;
+    if (!owned && request.schema_id != RETAINED_CLEANUP_DISPATCH_REQUEST_SCHEMA)
+        || owned != (request.cleanup.schema_id == OWNED_CLEANUP_TICKET_SCHEMA)
+        || owned != (live.schema_id == OWNED_CLEANUP_PROJECTION_SCHEMA)
         || request.dispatch_id.is_empty()
         || request.sequence == 0
         || request.issued_at_ms == 0
         || request.issued_at_ms > now_ms.saturating_add(2_000)
-        || now_ms.saturating_sub(request.issued_at_ms) > 30_000
+        || !owned && now_ms.saturating_sub(request.issued_at_ms) > 30_000
         || request.target_peer_id != expected_executor_peer_id
         || request.target_peer_id != live.executor_peer_id
         || request.signer_key_id != expected_signer_key_id
@@ -384,7 +438,11 @@ pub fn verify_signed_retained_cleanup_request(
     let key = VerifyingKey::from_bytes(enrolled_signer_key)
         .map_err(|_| "cleanup enrolled signer key invalid".to_owned())?;
     key.verify_strict(&bytes, &Signature::from_bytes(&signature))
-        .map_err(|_| "cleanup dispatch signature invalid".to_owned())
+        .map_err(|_| "cleanup dispatch signature invalid".to_owned())?;
+    if owned && now_ms.saturating_sub(request.issued_at_ms) > authentication_validity_ms {
+        return Err(OWNED_CLEANUP_AUTHENTICATION_EXPIRED.into());
+    }
+    Ok(())
 }
 
 /// Verifies a v2 cleanup ticket against a freshly derived live projection.
@@ -402,12 +460,17 @@ pub fn verify_retained_cleanup_ticket(
     now_ms: u64,
 ) -> Result<(), &'static str> {
     let authority = &ticket.authority;
-    if ticket.schema_id != RETAINED_CLEANUP_TICKET_SCHEMA
-        || authority.schema_id != RETAINED_CLEANUP_PROJECTION_SCHEMA
-        || authority != live
-        || now_ms >= authority.expires_at_ms
-        || now_ms >= authority.requester_expires_at_ms
-        || authority.expires_at_ms > authority.requester_expires_at_ms
+    let owned = authority.schema_id == OWNED_CLEANUP_PROJECTION_SCHEMA;
+    if (if owned {
+        ticket.schema_id != OWNED_CLEANUP_TICKET_SCHEMA
+    } else {
+        ticket.schema_id != RETAINED_CLEANUP_TICKET_SCHEMA
+            || authority.schema_id != RETAINED_CLEANUP_PROJECTION_SCHEMA
+    }) || authority != live
+        || !owned
+            && (now_ms >= authority.expires_at_ms
+                || now_ms >= authority.requester_expires_at_ms
+                || authority.expires_at_ms > authority.requester_expires_at_ms)
         || authority.route_authority_revision == 0
         || authority.provider_epoch_id.is_empty()
         || authority.platform_runtime_spec_id.is_empty()
