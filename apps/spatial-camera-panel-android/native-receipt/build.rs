@@ -9,6 +9,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR must be set"));
     emit_environment_depth_owner_cfg();
     emit_embedded_duplex_fresh_build_policy();
+    emit_embedded_duplex_lifetime_policy();
     write_spatial_presentation_policy(&out_dir);
     write_own_capture_hold_contract(&out_dir);
     write_recorded_hand_replay_source(&out_dir);
@@ -1328,4 +1329,15 @@ fn emit_embedded_duplex_fresh_build_policy() {
     println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_SETUP_POLICY={selection}");
     println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_POLICY_SHA256={policy}");
     println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256={target}");
+}
+
+fn emit_embedded_duplex_lifetime_policy() {
+    const NAME: &str = "RUSTY_QUEST_SPATIAL_EMBEDDED_DUPLEX_LIFETIME_POLICY";
+    println!("cargo:rerun-if-env-changed={NAME}");
+    let selection = env::var(NAME).unwrap_or_else(|_| "finite".into());
+    assert!(
+        matches!(selection.as_str(), "finite" | "development-v1"),
+        "unsupported lifetime selection"
+    );
+    println!("cargo:rustc-env=RUSTY_QUEST_COMPILED_EMBEDDED_DUPLEX_LIFETIME_POLICY={selection}");
 }

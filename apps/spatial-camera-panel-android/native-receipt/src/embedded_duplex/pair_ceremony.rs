@@ -203,7 +203,7 @@ fn encode(host: &Host, kind: &str, ceremony_id: &str, payload: Value) -> Result<
         route_configuration_sha256: host.route_configuration_sha256.clone(),
         issued_at_ms: now.saturating_sub(ISSUE_BACKDATE_MS),
         expires_at_ms: now
-            .checked_add(FRAME_TTL_MS - ISSUE_BACKDATE_MS)
+            .checked_add(host.lifetime_horizon(FRAME_TTL_MS) - ISSUE_BACKDATE_MS)
             .ok_or("pair time overflow")?,
         payload,
     };
@@ -241,7 +241,8 @@ fn decode(
         || body.route_configuration_sha256 != host.route_configuration_sha256
         || body.issued_at_ms > now
         || body.expires_at_ms <= now
-        || body.expires_at_ms.saturating_sub(body.issued_at_ms) > FRAME_TTL_MS
+        || body.expires_at_ms.saturating_sub(body.issued_at_ms)
+            > host.lifetime_horizon(FRAME_TTL_MS)
         || expected_kind.is_some_and(|kind| kind != body.kind)
         || expected_id.is_some_and(|id| id != body.ceremony_id)
     {
@@ -344,7 +345,12 @@ fn fresh_effect_if_reserved(host: &Host, expected: Option<&str>) -> Result<(), S
 }
 
 fn prime(host: &Host, now: u64, suffix: &str) -> Result<(), String> {
-    prime_with_lifetime(host, now, suffix, PAIR_CREDENTIAL_TTL_MS)
+    prime_with_lifetime(
+        host,
+        now,
+        suffix,
+        host.lifetime_horizon(PAIR_CREDENTIAL_TTL_MS),
+    )
 }
 
 fn prime_with_lifetime(
@@ -472,7 +478,7 @@ fn prime_with_lifetime(
                 "trust_domain": "trust.morphospace.peer", "roles": ["observer", "rendezvous"]},
             "status": {"$schema": PEER_STATUS_SCHEMA, "peer_id": peer.peer_id,
                 "status_revision": 1, "observed_at_ms": now,
-                "expires_at_ms": now.checked_add(PAIR_STATUS_TTL_MS).ok_or("pair time overflow")?,
+                "expires_at_ms": now.checked_add(host.lifetime_horizon(PAIR_STATUS_TTL_MS)).ok_or("pair time overflow")?,
                 "availability": "ready", "capability_ids": [
                     "capability.rendezvous.ble", "capability.route.rust-direct-p2p",
                     "capability.topology.wifi-direct"]},
@@ -550,7 +556,7 @@ fn prepare(
         "responder": binding(host, &host.remote_peer_id, nonce_remote, "responder")?,
         "transport": transport(host)?, "coordinator_epoch": 1,
         "issued_at_ms": now.saturating_sub(ISSUE_BACKDATE_MS),
-        "expires_at_ms": now.checked_add(CONTEXT_TTL_MS - ISSUE_BACKDATE_MS)
+        "expires_at_ms": now.checked_add(host.lifetime_horizon(CONTEXT_TTL_MS) - ISSUE_BACKDATE_MS)
             .ok_or("pair time overflow")?
     }))
     .map_err(safe_decode)?;
@@ -766,7 +772,8 @@ fn checked_state(host: &Host, ceremony_id: &str, expected: Stage) -> Result<(), 
     let current = state(host)?;
     if current.stage != expected
         || current.ceremony_id.as_deref() != Some(ceremony_id)
-        || current.deadline_ms <= host.clock.now_ms()?
+        || (host.development_lifetime_policy.is_none()
+            && current.deadline_ms <= host.clock.now_ms()?)
     {
         return Err("pair ceremony state unavailable or expired".into());
     }
@@ -1139,7 +1146,10 @@ pub(super) fn status(host: &Host) -> Result<String, String> {
     let last_step = current.last_step.clone();
     let last_failure_code = current.last_failure_code;
     let last_failure_cause = current.last_failure_cause.clone();
-    let expired = current.deadline_ms != 0 && current.deadline_ms <= host.clock.now_ms()?;
+    let wait_warning = !matches!(stage, Stage::Idle | Stage::Completed | Stage::Failed)
+        && current.deadline_ms != 0
+        && current.deadline_ms <= host.clock.now_ms()?;
+    let expired = host.development_lifetime_policy.is_none() && wait_warning;
     drop(current);
     let native_current = if stage == Stage::Completed {
         let id = session_id.as_ref().ok_or("pair session absent")?;
@@ -1160,7 +1170,11 @@ pub(super) fn status(host: &Host) -> Result<String, String> {
             else if stage == Stage::Idle { "not_started" } else { "in_progress" },
         "session_id":session_id, "native_current_session":native_current,
         "last_step":last_step,"last_failure_code":last_failure_code,
+
         "route_current":false,"media_effect_proven":false, "renewal":pair_renewal::status(host)?});
+    if host.development_lifetime_policy.is_some() {
+        value["ceremony_wait_warning"] = json!(wait_warning);
+    }
     if host.authority.selected_fresh_pair_setup_policy()?.is_some() {
         value["$schema"] = json!("rusty.quest.embedded_duplex.pair_status.v2");
         value["last_failure_cause"] = json!(last_failure_cause);

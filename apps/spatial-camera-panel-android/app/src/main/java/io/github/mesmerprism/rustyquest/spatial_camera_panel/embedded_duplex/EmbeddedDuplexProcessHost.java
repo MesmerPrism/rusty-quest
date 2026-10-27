@@ -997,8 +997,17 @@ final class EmbeddedDuplexProcessHost {
 
     CompletableFuture<EmbeddedDuplexEnrollmentReview> reviewEnrollment(
             EmbeddedDuplexEnrollmentDraft draft) {
-        synchronized (attachmentGate) { pendingReview = null; }
         if (draft == null) return failed(new IllegalArgumentException("enrollment review draft"));
+        return reviewEnrollment(draft, false);
+    }
+
+    CompletableFuture<EmbeddedDuplexEnrollmentReview> reviewEnrollmentPolicyUpdate() {
+        return reviewEnrollment(null, true);
+    }
+
+    private CompletableFuture<EmbeddedDuplexEnrollmentReview> reviewEnrollment(
+            EmbeddedDuplexEnrollmentDraft draft, boolean policyUpdate) {
+        synchronized (attachmentGate) { pendingReview = null; }
         return submit(() -> {
             synchronized (attachmentGate) {
                 if (displayDetaching || closeInFlight || platform != null || resources != null
@@ -1012,7 +1021,8 @@ final class EmbeddedDuplexProcessHost {
                 throw new IllegalStateException("native process or staged route is not terminal");
             }
             EmbeddedDuplexEnrollmentReview review =
-                    EmbeddedDuplexEnrollmentResolver.review(applicationContext, draft);
+                    policyUpdate ? EmbeddedDuplexEnrollmentResolver.reviewPolicyUpdate(applicationContext)
+                            : EmbeddedDuplexEnrollmentResolver.review(applicationContext, draft);
             synchronized (attachmentGate) {
                 if (displayDetaching || closeInFlight || phase.get() != Phase.NEW) {
                     throw new IllegalStateException("process changed during enrollment review");

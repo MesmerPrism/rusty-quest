@@ -678,8 +678,37 @@ impl QuestBrokerRuntimeProvider {
         authority_wall_unix_ms: i64,
         authority_monotonic_elapsed_ns: u64,
     ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
+        self.initialize_with_lifetime_policy(
+            config_json,
+            expected_config_sha256,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            None,
+        )
+    }
+
+    /// Explicit trusted lifetime selection; the finite entrypoint remains unchanged.
+    pub fn initialize_with_lifetime_policy(
+        &mut self,
+        config_json: &str,
+        expected_config_sha256: &str,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
         let config: QuestBrokerRuntimeConfig =
             serde_json::from_str(config_json).map_err(QuestBrokerRuntimeError::Decode)?;
+        if config
+            .embedded_duplex
+            .as_ref()
+            .map_or(lifetime_policy.is_some(), |duplex| {
+                !duplex.require_lifetime_policy_selection(lifetime_policy)
+            })
+        {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
+        }
         let canonical = serde_json::to_vec(&config).map_err(QuestBrokerRuntimeError::Encode)?;
         let config_sha256 = sha256_hex(&canonical);
         if expected_config_sha256 != config_sha256 {
@@ -691,11 +720,13 @@ impl QuestBrokerRuntimeProvider {
             }
             return initialize_status(runtime, config_sha256, true);
         }
-        let runtime = QuestBrokerAuthorityRuntime::from_config(
+        let runtime = QuestBrokerAuthorityRuntime::from_config_retaining_with_lifetime_policy(
             config,
             provider_epoch_entropy_hex,
             authority_wall_unix_ms,
             authority_monotonic_elapsed_ns,
+            None,
+            lifetime_policy,
         )?;
         let status = initialize_status(&runtime, config_sha256.clone(), false)?;
         self.runtime = Some(runtime);
@@ -712,6 +743,28 @@ impl QuestBrokerRuntimeProvider {
         authority_wall_unix_ms: i64,
         authority_monotonic_elapsed_ns: u64,
         custody: &mut QuestBrokerConstructionCustody,
+    ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
+        self.initialize_retaining_construction_with_lifetime_policy(
+            config_json,
+            expected_config_sha256,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            custody,
+            None,
+        )
+    }
+
+    /// Explicit trusted lifetime selection; the finite entrypoint remains unchanged.
+    pub fn initialize_retaining_construction_with_lifetime_policy(
+        &mut self,
+        config_json: &str,
+        expected_config_sha256: &str,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        custody: &mut QuestBrokerConstructionCustody,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
     ) -> Result<QuestBrokerRuntimeInitializeStatus, QuestBrokerRuntimeError> {
         if self.runtime.is_some() || self.config_sha256.is_some() || custody.entered {
             return Err(QuestBrokerRuntimeError::RebindConfigMismatch);
@@ -732,12 +785,13 @@ impl QuestBrokerRuntimeProvider {
             return Err(QuestBrokerRuntimeError::PackagedConfigDigestMismatch);
         }
         custody.entered = true;
-        let actual = QuestBrokerAuthorityRuntime::from_config_retaining(
+        let actual = QuestBrokerAuthorityRuntime::from_config_retaining_with_lifetime_policy(
             config,
             provider_epoch_entropy_hex,
             authority_wall_unix_ms,
             authority_monotonic_elapsed_ns,
             Some(custody),
+            lifetime_policy,
         )?;
         // Publish ownership to this retained provider BEFORE fallible formatting.
         self.config_sha256 = Some(sha.clone());
@@ -1163,12 +1217,48 @@ impl QuestBrokerAuthorityRuntime {
         )
     }
 
+    /// Constructs selected delegated authority from independently trusted source policy.
+    pub fn from_config_with_lifetime_policy(
+        config: QuestBrokerRuntimeConfig,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
+        policy: &rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy,
+    ) -> Result<Self, QuestBrokerRuntimeError> {
+        Self::from_config_retaining_with_lifetime_policy(
+            config,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            None,
+            Some(policy),
+        )
+    }
+
     fn from_config_retaining(
         config: QuestBrokerRuntimeConfig,
         provider_epoch_entropy_hex: &str,
         authority_wall_unix_ms: i64,
         authority_monotonic_elapsed_ns: u64,
+        custody: Option<&mut QuestBrokerConstructionCustody>,
+    ) -> Result<Self, QuestBrokerRuntimeError> {
+        Self::from_config_retaining_with_lifetime_policy(
+            config,
+            provider_epoch_entropy_hex,
+            authority_wall_unix_ms,
+            authority_monotonic_elapsed_ns,
+            custody,
+            None,
+        )
+    }
+
+    fn from_config_retaining_with_lifetime_policy(
+        config: QuestBrokerRuntimeConfig,
+        provider_epoch_entropy_hex: &str,
+        authority_wall_unix_ms: i64,
+        authority_monotonic_elapsed_ns: u64,
         mut custody: Option<&mut QuestBrokerConstructionCustody>,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
     ) -> Result<Self, QuestBrokerRuntimeError> {
         if config.schema_id == LEGACY_QUEST_BROKER_RUNTIME_CONFIG_V1_SCHEMA {
             return Err(QuestBrokerRuntimeError::LegacyRuntimeConfigRequiresRebuild);
@@ -1178,6 +1268,15 @@ impl QuestBrokerAuthorityRuntime {
         }
         if config.admission.schema_id != QUEST_ADMISSION_CONFIG_SCHEMA {
             return Err(QuestBrokerRuntimeError::SchemaMismatch);
+        }
+        if config
+            .embedded_duplex
+            .as_ref()
+            .map_or(lifetime_policy.is_some(), |duplex| {
+                !duplex.require_lifetime_policy_selection(lifetime_policy)
+            })
+        {
+            return Err(QuestBrokerRuntimeError::MediaPeerRuntimeConfig);
         }
         for policy in &config.admission.snapshot.root_renewal_policies {
             let grant = config
@@ -1197,7 +1296,12 @@ impl QuestBrokerAuthorityRuntime {
                 .expires_at_ms
                 .checked_sub(now)
                 .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
-            if !(300_000..=3_600_000).contains(&policy.horizon_ms)
+            if !(300_000
+                ..=rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                    lifetime_policy,
+                    3_600_000,
+                ))
+                .contains(&policy.horizon_ms)
                 || policy.horizon_ms % 60_000 != 0
                 || grant.expires_at_ms > i64::MAX as u64
                 || remaining == 0
@@ -1224,7 +1328,11 @@ impl QuestBrokerAuthorityRuntime {
         validate_bridge_mode(&config.bridge_kind, &config.adapter_config.mode)?;
         let media_bindings = effective_media_bindings(&config);
         let provider_epoch_id = provider_epoch(provider_epoch_entropy_hex)?;
-        let peer_runtime_host = build_media_peer_runtime_host(&config, &provider_epoch_id)?;
+        let peer_runtime_host = build_media_peer_runtime_host_with_lifetime_policy(
+            &config,
+            &provider_epoch_id,
+            lifetime_policy,
+        )?;
         if let Some(held) = custody.as_deref_mut() {
             held.capture_peer(&peer_runtime_host);
         }
@@ -1296,12 +1404,12 @@ impl QuestBrokerAuthorityRuntime {
         }
         .ok_or(QuestBrokerRuntimeError::ControlLeaseBootstrap)?;
         let mut local_owner = Some(
-            rusty_manifold_broker_adapter::ManifoldBrokerUnpublishedConstruction::new(
-                provider_epoch_id.clone(),
-                adapter,
-                control,
-                config.admission.snapshot,
-            ),
+            match lifetime_policy {
+                Some(policy) => rusty_manifold_broker_adapter::ManifoldBrokerUnpublishedConstruction::new_with_lifetime_policy(
+                    provider_epoch_id.clone(), adapter, control, config.admission.snapshot, policy),
+                None => rusty_manifold_broker_adapter::ManifoldBrokerUnpublishedConstruction::new(
+                    provider_epoch_id.clone(), adapter, control, config.admission.snapshot),
+            },
         );
         let staging = match custody.as_deref_mut() {
             Some(held) => {
@@ -2369,6 +2477,14 @@ fn build_media_peer_runtime_host(
     config: &QuestBrokerRuntimeConfig,
     provider_epoch_id: &DottedId,
 ) -> Result<Option<Arc<RwLock<ManifoldPeerRuntimeHost>>>, QuestBrokerRuntimeError> {
+    build_media_peer_runtime_host_with_lifetime_policy(config, provider_epoch_id, None)
+}
+
+fn build_media_peer_runtime_host_with_lifetime_policy(
+    config: &QuestBrokerRuntimeConfig,
+    provider_epoch_id: &DottedId,
+    lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+) -> Result<Option<Arc<RwLock<ManifoldPeerRuntimeHost>>>, QuestBrokerRuntimeError> {
     if effective_media_bindings(config).is_empty() {
         return Ok(None);
     }
@@ -2543,11 +2659,16 @@ fn build_media_peer_runtime_host(
             direct_lane_runtime_lease_scope_id: DottedId::new("lease.direct-lane")
                 .expect("static direct lane scope"),
         });
+    if lifetime_policy.is_some() {
+        trust_policy.schema_id =
+            schema(rusty_manifold_peer_runtime_host::DEVELOPMENT_PEER_TRUST_POLICY_SCHEMA);
+    }
     trust_policy.fresh_setup_local_peer_id =
         duplex.and_then(|d| d.fresh_setup_local_peer_id.clone());
     trust_policy.fresh_setup_enrollment_selection =
         duplex.and_then(|d| d.fresh_setup_enrollment_selection.clone());
-    trust_policy.fresh_setup_policy = duplex.and_then(|d| d.selected_fresh_setup_build_policy());
+    trust_policy.fresh_setup_policy = duplex
+        .and_then(|d| d.selected_fresh_setup_build_policy_with_lifetime_policy(lifetime_policy));
     let mut media_command_ids = vec![
         MANIFOLD_MEDIA_SESSION_ACCEPT_COMMAND,
         rusty_manifold_media_session::MANIFOLD_MEDIA_SESSION_REVOKE_COMMAND,
@@ -2572,17 +2693,36 @@ fn build_media_peer_runtime_host(
     let peer_runtime_host_id = media_runtime_host_id.clone();
     let media_command_runtime =
         ManifoldRuntimeHostSnapshot::initial(media_runtime_host_id, media_commands, Vec::new());
-    let constructor = if trust_policy.fresh_setup_policy.is_some() {
-        ManifoldPeerRuntimeHost::new_with_fresh_pair_setup
-    } else {
-        ManifoldPeerRuntimeHost::new
-    };
-    let host = constructor(
-        peer_runtime_host_id,
-        trust_policy,
-        provider_epoch_id.clone(),
-        media_command_runtime,
-    )
+    let host = match (trust_policy.fresh_setup_policy.is_some(), lifetime_policy) {
+        (true, Some(policy)) => {
+            ManifoldPeerRuntimeHost::new_with_fresh_pair_setup_and_lifetime_policy(
+                peer_runtime_host_id,
+                trust_policy,
+                provider_epoch_id.clone(),
+                media_command_runtime,
+                policy,
+            )
+        }
+        (false, Some(policy)) => ManifoldPeerRuntimeHost::new_with_lifetime_policy(
+            peer_runtime_host_id,
+            trust_policy,
+            provider_epoch_id.clone(),
+            media_command_runtime,
+            policy,
+        ),
+        (true, None) => ManifoldPeerRuntimeHost::new_with_fresh_pair_setup(
+            peer_runtime_host_id,
+            trust_policy,
+            provider_epoch_id.clone(),
+            media_command_runtime,
+        ),
+        (false, None) => ManifoldPeerRuntimeHost::new(
+            peer_runtime_host_id,
+            trust_policy,
+            provider_epoch_id.clone(),
+            media_command_runtime,
+        ),
+    }
     .map_err(QuestBrokerRuntimeError::MediaPeerRuntime)?;
     Ok(Some(Arc::new(RwLock::new(host))))
 }
@@ -4126,6 +4266,98 @@ mod tests {
     }
 
     #[test]
+    fn development_constructor_preserves_legacy_literal_and_requires_trusted_selection() {
+        // Exact public literal shape predating lifetime selection: no new field.
+        let legacy = QuestEmbeddedDuplexAuthorityConfig {
+            fresh_setup_local_peer_id: None,
+            fresh_setup_enrollment_selection: None,
+            ongoing_media_policy: None,
+            schema_id: crate::QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA.into(),
+            runtime_host_id: id("host.quest.development"),
+            trusted_operator_ids: vec![id("operator.quest.peer-enrollment")],
+            trusted_key_fingerprints: vec![id("fingerprint.peer.quest-a")],
+            trusted_adapter_ids: vec![id("adapter.quest.embedded-duplex")],
+            trusted_media_revoker_ids: vec![id("operator.quest.media-revoker")],
+        };
+        let mut selected = config(
+            QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
+            vec![ManifoldBrokerFeature::MediaSession],
+            "command.media.session.start",
+            true,
+        )
+        .with_embedded_duplex(legacy)
+        .unwrap();
+        selected.embedded_duplex.as_mut().unwrap().schema_id =
+            crate::QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA.into();
+        selected.admission.snapshot.schema_id =
+            schema(rusty_manifold_admission::DEVELOPMENT_ADMISSION_SNAPSHOT_SCHEMA);
+        let policy = rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::source_owned_v1();
+        let entropy = "12".repeat(32);
+        assert!(QuestBrokerAuthorityRuntime::from_config(
+            selected.clone(),
+            &entropy,
+            1_000,
+            1_000_000
+        )
+        .is_err());
+        let runtime = QuestBrokerAuthorityRuntime::from_config_with_lifetime_policy(
+            selected.clone(),
+            &entropy,
+            1_000,
+            1_000_000,
+            policy,
+        )
+        .unwrap();
+        assert_eq!(
+            runtime
+                .runtime
+                .read()
+                .unwrap()
+                .development_lifetime_policy(),
+            Some(policy)
+        );
+        assert_eq!(
+            runtime
+                .peer_runtime_host
+                .as_ref()
+                .unwrap()
+                .read()
+                .unwrap()
+                .development_lifetime_policy(),
+            Some(policy)
+        );
+        let authority = runtime.embedded_duplex_authority().unwrap();
+        let retained = authority.snapshot_json().unwrap();
+        authority.restore_snapshot_json(&retained).unwrap();
+        assert_eq!(authority.snapshot_json().unwrap(), retained);
+        let json = serde_json::to_string(&selected).unwrap();
+        assert!(!json.contains("\"development_lifetime_policy\""));
+        let sha = canonical_runtime_config_sha256(&json).unwrap();
+        let mut provider = QuestBrokerRuntimeProvider::default();
+        assert!(provider
+            .initialize(&json, &sha, &entropy, 1_000, 1_000_000)
+            .is_err());
+        provider
+            .initialize_with_lifetime_policy(&json, &sha, &entropy, 1_000, 1_000_000, Some(policy))
+            .unwrap();
+        assert!(provider
+            .initialize(&json, &sha, &entropy, 1_000, 1_000_000)
+            .is_err());
+        let mut changed = policy.clone();
+        changed.delegated_authority_horizon_ms += 1;
+        assert!(provider
+            .initialize_with_lifetime_policy(
+                &json,
+                &sha,
+                &entropy,
+                1_000,
+                1_000_000,
+                Some(&changed)
+            )
+            .is_err());
+    }
+
+    #[test]
     fn embedded_duplex_enables_exact_mixed_authority_and_route_commands() {
         let mut runtime_config = config(
             QuestBrokerAuthorityBridgeKind::EmbeddedInProcessJni,
@@ -5658,6 +5890,16 @@ impl QuestEmbeddedDuplexAuthorityConfig {
     pub fn selected_fresh_setup_build_policy(
         &self,
     ) -> Option<rusty_manifold_peer::ManifoldFreshPairSetupPolicy> {
+        self.selected_fresh_setup_build_policy_with_lifetime_policy(None)
+    }
+    /// Derives the build policy only with exact trusted source lifetime selection.
+    pub fn selected_fresh_setup_build_policy_with_lifetime_policy(
+        &self,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> Option<rusty_manifold_peer::ManifoldFreshPairSetupPolicy> {
+        if !self.require_lifetime_policy_selection(lifetime_policy) {
+            return None;
+        }
         self.fresh_setup_local_peer_id.as_ref().map(|_| {
             rusty_manifold_peer::ManifoldFreshPairSetupPolicy {
                 schema_id: schema("rusty.manifold.peer.fresh_pair_setup_policy.v2"),
@@ -5666,7 +5908,11 @@ impl QuestEmbeddedDuplexAuthorityConfig {
                 revision: Revision::INITIAL,
                 authorization:
                     rusty_manifold_peer::ManifoldFreshPairSetupAuthorization::SourceBound,
-                credential_validity_ms: 300_000,
+                credential_validity_ms:
+                    rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                        lifetime_policy,
+                        300_000,
+                    ),
                 initial_status: rusty_manifold_peer::ManifoldFreshPairSetupInitialStatusTemplate {
                     schema_id: schema(
                         "rusty.manifold.peer.fresh_pair_setup_initial_status_template.v1",
@@ -5690,7 +5936,19 @@ impl QuestEmbeddedDuplexAuthorityConfig {
         })
     }
     pub fn fresh_setup_build_policy_projection(&self) -> Result<Option<serde_json::Value>, String> {
-        let Some(policy) = self.selected_fresh_setup_build_policy() else {
+        self.fresh_setup_build_policy_projection_with_lifetime_policy(None)
+    }
+    /// Canonical selected projection requires independently trusted source selection.
+    pub fn fresh_setup_build_policy_projection_with_lifetime_policy(
+        &self,
+        lifetime_policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> Result<Option<serde_json::Value>, String> {
+        if !self.require_lifetime_policy_selection(lifetime_policy) {
+            return Err("lifetime policy selection differs".into());
+        }
+        let Some(policy) =
+            self.selected_fresh_setup_build_policy_with_lifetime_policy(lifetime_policy)
+        else {
             if self.fresh_setup_enrollment_selection.is_some() {
                 return Err("unselected fresh config carries target".into());
             }
@@ -5769,6 +6027,28 @@ mod fresh_build_policy_projection_controls {
             .unwrap();
         let policy = config.selected_fresh_setup_build_policy().unwrap();
         assert_eq!(projection["policy"], serde_json::to_value(&policy).unwrap());
+        let mut development = config.clone();
+        let selected =
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::source_owned_v1().clone();
+        development.schema_id =
+            crate::QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA.into();
+        assert!(development.validate());
+        let long_policy = development
+            .selected_fresh_setup_build_policy_with_lifetime_policy(Some(&selected))
+            .unwrap();
+        assert_eq!(
+            long_policy.credential_validity_ms,
+            selected.delegated_authority_horizon_ms
+        );
+        assert!(long_policy.credential_validity_ms > i32::MAX as u64);
+        assert_ne!(
+            development
+                .fresh_setup_build_policy_projection_with_lifetime_policy(Some(&selected))
+                .unwrap()
+                .unwrap()["policy_sha256"],
+            projection["policy_sha256"]
+        );
+
         assert_eq!(
             policy.authorization,
             rusty_manifold_peer::ManifoldFreshPairSetupAuthorization::SourceBound

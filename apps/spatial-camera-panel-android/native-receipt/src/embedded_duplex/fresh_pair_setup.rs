@@ -524,10 +524,11 @@ fn phase<'a>(host: &'a Host, id: &'a str) -> Result<FreshSetupPhase<'a>, String>
 // Called only after a signed peer frame or verified signed request has joined
 // this exact phase, or for the local constructor of those authenticated views.
 fn authenticated_context_time(host: &Host, id: &str, issued: u64) -> Result<u64, String> {
-    crate::embedded_duplex::preparation_clock::authenticated_context_time(
+    crate::embedded_duplex::preparation_clock::authenticated_context_time_with_wait_policy(
         issued,
         || host.clock.now_ms(),
         || phase(host, id).map(|_| ()),
+        host.development_lifetime_policy.is_some(),
     )
 }
 enum IncomingPhysicalScope<'a> {
@@ -1462,7 +1463,7 @@ fn handle_frame_inner(host: &Host, input: &[u8]) -> Result<Vec<u8>, String> {
             let remote: ManifoldFreshPairSetupReceipt =
                 serde_json::from_value(b.payload["initiator_receipt"].clone())
                     .map_err(safe_decode)?;
-            rusty_manifold_peer_runtime_host::validate_fresh_pair_setup_receipt(&remote)
+            rusty_manifold_peer_runtime_host::validate_fresh_pair_setup_receipt_with_lifetime_policy(&remote, host.development_lifetime_policy.as_ref())
                 .map_err(|_| "fresh initiator setup receipt semantic proof")?;
             if remote.request != request || remote.local_peer_id.as_str() != host.remote_peer_id {
                 return Err("fresh initiator setup receipt differs".into());
@@ -1786,8 +1787,11 @@ fn finish_phase(
     )?;
     let remote_receipt: ManifoldFreshPairSetupReceipt =
         serde_json::from_value(committed["receipt"].clone()).map_err(safe_decode)?;
-    rusty_manifold_peer_runtime_host::validate_fresh_pair_setup_receipt(&remote_receipt)
-        .map_err(|_| "fresh remote setup receipt semantic proof")?;
+    rusty_manifold_peer_runtime_host::validate_fresh_pair_setup_receipt_with_lifetime_policy(
+        &remote_receipt,
+        host.development_lifetime_policy.as_ref(),
+    )
+    .map_err(|_| "fresh remote setup receipt semantic proof")?;
     if remote_receipt.request != request
         || remote_receipt.local_peer_id.as_str() != host.remote_peer_id
     {

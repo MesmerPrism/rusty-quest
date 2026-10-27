@@ -327,6 +327,11 @@ pub trait OwnerDispatchSigner: Send + Sync {
 
 /// Current authority verifier implemented over the live durable Runtime Host.
 pub trait OwnerDispatchAuthorityVerifier: Send + Sync {
+    /// Source-selected authentication window; request payloads cannot choose it.
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        Ok(MAX_OWNER_DISPATCH_REQUEST_AGE_MS)
+    }
+
     /// Authenticates key, peer, projection, ticket, and current time before effect.
     ///
     /// # Errors
@@ -341,6 +346,11 @@ pub trait OwnerDispatchAuthorityVerifier: Send + Sync {
 
 /// Target-side verifier for a signed full-product activation barrier.
 pub trait ProductActivationAuthorityVerifier: Send + Sync {
+    /// Source-selected authentication window; request payloads cannot choose it.
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        Ok(MAX_OWNER_DISPATCH_REQUEST_AGE_MS)
+    }
+
     /// Authenticates the source signer and current target-local C1 projection.
     ///
     /// # Errors

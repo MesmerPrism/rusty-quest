@@ -153,10 +153,14 @@ impl QuestBrokerRuntimeProvider {
             // Start's real admitted use also bounds the derivative media lease.
             // Keep it bounded by the authenticated product policy; Stop remains
             // a short mutation permit and cannot prolong the resource lifetime.
-            let command_ttl = match action {
-                QuestConcurrentPeerCommand::Start => 120_000,
-                QuestConcurrentPeerCommand::Stop => 5_000,
-            };
+            let command_ttl =
+                rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                    broker.development_lifetime_policy(),
+                    match action {
+                        QuestConcurrentPeerCommand::Start => 120_000,
+                        QuestConcurrentPeerCommand::Stop => 5_000,
+                    },
+                );
             let expiry = now_ms
                 .checked_add(command_ttl)
                 .ok_or(QuestBrokerRuntimeError::MediaPeerRuntimeTransitionRejected)?
