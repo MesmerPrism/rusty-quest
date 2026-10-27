@@ -59,6 +59,9 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,false,null).whenComplete(reconcile);
     }
     public static CompletableFuture<String> runStatus(Context context){return EmbeddedDuplexProcessHost.forApplication(context).runStatus();}
+    public static CompletableFuture<String> recoverColdPending(Context context,String runId,String priorRunId,String priorOriginalId){
+        return EmbeddedDuplexProcessHost.forApplication(context).recoverColdPending(runId,priorRunId,priorOriginalId);
+    }
     public static String selectedRunId(Context context){return EmbeddedDuplexProcessHost.operationalContext(context).runId;}
     public static <T>T withRunRequest(Context context,String runId,java.util.concurrent.Callable<T> request)throws Exception{
         return EmbeddedDuplexProcessHost.forApplication(context).withRunRequest(runId,request);

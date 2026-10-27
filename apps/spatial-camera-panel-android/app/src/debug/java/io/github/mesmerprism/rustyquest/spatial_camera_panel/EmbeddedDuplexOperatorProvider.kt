@@ -116,6 +116,9 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
             requireNotNull(request.requestSha256), requireNotNull(request.outcomeSha256),
             requireNotNull(request.consumerReceiptSha256))
       }
+      if (request.route == EmbeddedDuplexOperatorContract.Route.RECOVER_COLD_PENDING) {
+        return recoverColdPending(app, request, snapshot)
+      }
       if (request.route == EmbeddedDuplexOperatorContract.Route.BOOTSTRAP_REAL_PEER && request.originalId != null) {
         return EmbeddedDuplexRuntimeService.beginOriginal(app, request.originalId, method, request.challenge,
             EmbeddedDuplexOriginals.request(method, request.challenge, snapshot)) {
@@ -167,6 +170,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
       }
       when (request.route) {
         EmbeddedDuplexOperatorContract.Route.NEW_RUN, EmbeddedDuplexOperatorContract.Route.RESUME_RUN, EmbeddedDuplexOperatorContract.Route.RUN_STATUS,
+        EmbeddedDuplexOperatorContract.Route.RECOVER_COLD_PENDING,
         EmbeddedDuplexOperatorContract.Route.FRESH_PAIR_CONTINUE, EmbeddedDuplexOperatorContract.Route.PREPARE_PEER_START,
         EmbeddedDuplexOperatorContract.Route.PREPARED_PEER_START_STATUS, EmbeddedDuplexOperatorContract.Route.REESTABLISH_PEER_ROOTS,
         EmbeddedDuplexOperatorContract.Route.PEER_ROOT_STATUS, EmbeddedDuplexOperatorContract.Route.OPERATION_STOP,
@@ -305,6 +309,20 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         }
       }
     } catch (_: Exception) { closed() }
+  }
+
+  private fun recoverColdPending(app: android.content.Context, request: EmbeddedDuplexOperatorContract.Request,
+      snapshot: Bundle): Bundle {
+    val fields = Bundle(snapshot)
+    if (request.priorRunId == null) { fields.remove("prior_run_id"); fields.remove("prior_original_id") }
+    val canonical = EmbeddedDuplexOriginals.request("recover_cold_pending", request.challenge, fields)
+    return EmbeddedDuplexRuntimeService.beginOriginal(app, requireNotNull(request.originalId),
+        "recover_cold_pending", request.challenge, canonical) {
+      EmbeddedDuplexRuntimeService.recoverColdPending(app, requireNotNull(request.runId),
+          request.priorRunId, request.priorOriginalId).thenApply { receipt ->
+        Bundle().apply { header("observed"); putString("challenge", request.challenge); putString("receipt", receipt) }
+      }
+    }
   }
 
   private fun Bundle.header(status: String) {
