@@ -35,6 +35,7 @@ try {
     $sourceBankBuildInputs=@{enabled=$false};$NdkVersion='fixture';$RustStdLinkage='Static'
     $resolvedProjectionSurfaceUniformAbiVersion=1;$lockedFinalPresentationEnabled=$false;$resolvedDistortionSpeedScale=1.0
     $EnvironmentDepthOwner='disabled';$embeddedDuplexProductInputs=$null;$EmbeddedDuplexSetupHorizonMs=300000
+    $EmbeddedDuplexMediaPolicy='finite';$EmbeddedDuplexFreshSetupPolicy='none';$freshBuildSelection=$null
     function Observe-NativeIdentity {
         Invoke-Expression $assignments.nativeSourceSha256
         Invoke-Expression $assignments.privateNativeIdentity

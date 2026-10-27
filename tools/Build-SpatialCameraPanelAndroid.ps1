@@ -14,6 +14,8 @@ param(
     [ValidateSet("Bounded", "Retained",IgnoreCase=$false)][string]$WaitPolicy = "Bounded",
     [ValidateSet("DevFast", "Candidate")]
     [string]$BuildMode = "DevFast",
+    [ValidateSet('Full', 'JvmPreflight', IgnoreCase=$false)]
+    [string]$BuildStage = 'Full',
     [switch]$UseSourceCompositionVersionName,
     [ValidateSet("Static", "Dynamic")]
     [string]$RustStdLinkage = "Static",
@@ -90,6 +92,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if ($BuildStage -ceq 'JvmPreflight' -and [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)) {
+    throw 'JvmPreflight requires a selected Android component contract.'
+}
 $spatialPrerequisitesModule = Import-Module (Join-Path $PSScriptRoot "lib/SpatialCameraPanelBuildPrerequisites.psm1") -PassThru
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -Force
@@ -2060,9 +2065,58 @@ function Invoke-SpatialGradlePhase {
 }
 
 $androidJvmCompilation=[ordered]@{status='unverified';reason='no-selected-component-contract';runtime_authority=$false}
+if($BuildStage -ceq 'JvmPreflight' -and $null -eq $androidComponentSelection){
+    throw 'JvmPreflight requires a selected Android component contract.'
+}
 if($null -ne $androidComponentSelection){
     $androidJvmPreflight = Invoke-SpatialGradlePhase -Phase JvmPreflight -ComponentEvidenceDirectory (Join-Path $androidComponentEvidenceDir 'jvm-preflight')
     $androidJvmCompilation=$androidJvmPreflight.compilation
+}
+if($BuildStage -ceq 'JvmPreflight'){
+    Assert-QuestBuildSourceCompositionCurrent -Composition $sourceComposition -AllowWorkingTreeChanges:(-not [bool]$PublicationBuild)
+    $phaseReceiptPath = Join-Path $OutDir 'build-phase-receipts.json'
+    $phaseReceipt = [ordered]@{
+        schema = 'rusty.quest.spatial_camera_panel.build_phase_receipts.v1'
+        build_workflow_mode = $BuildMode.ToLowerInvariant()
+        started_at_utc = $buildStartedUtc.ToString('o')
+        completed_at_utc = [DateTimeOffset]::UtcNow.ToString('o')
+        total_duration_ms = [long]([DateTimeOffset]::UtcNow - $buildStartedUtc).TotalMilliseconds
+        streamed = $true
+        paths_recorded = $false
+        phases = @($phaseReceipts)
+    }
+    [void](Set-TextFileIfChanged -Path $phaseReceiptPath -Value ($phaseReceipt | ConvertTo-Json -Depth 20))
+    $jvmPreflightResult = [ordered]@{
+        schema = 'rusty.quest.spatial_camera_panel.jvm_preflight_result.v1'
+        status = 'phase-complete'
+        build_stage = 'JvmPreflight'
+        apk_produced = $false
+        runtime_authority = $false
+        product_id = $resolvedProductId
+        app_id = $resolvedAppId
+        build_type = $BuildType
+        android_jvm_compilation = $androidJvmCompilation
+        source_composition = [ordered]@{path=$sourceCompositionPath;sha256=(Get-FileSha256 -Path $sourceCompositionPath);fingerprint=$sourceComposition.fingerprint}
+        android_components = [ordered]@{
+            inventory = [ordered]@{path=$androidComponentInventoryPath;sha256=$androidComponentSelection.sha256}
+            jvm_inputs = [ordered]@{path=(Join-Path $androidComponentEvidenceDir 'jvm-preflight/gradle-inputs.json');sha256=$androidJvmCompilation.gradle_inputs_sha256}
+            jvm_compilation = [ordered]@{path=(Join-Path $androidComponentEvidenceDir 'jvm-preflight/compiled.json');sha256=$androidJvmCompilation.compiled_sha256}
+        }
+        build_phase_receipts = [ordered]@{path=$phaseReceiptPath;sha256=(Get-FileSha256 -Path $phaseReceiptPath)}
+    }
+    $jvmPreflightResultPath = Join-Path $OutDir 'jvm-preflight-result.json'
+    [void](Set-TextFileIfChanged -Path $jvmPreflightResultPath -Value ($jvmPreflightResult | ConvertTo-Json -Depth 20))
+    if ($buildLaneMutexOwned -and $null -ne $buildLaneMutex) {
+        $buildLaneMutex.ReleaseMutex()
+        $buildLaneMutexOwned = $false
+    }
+    if ($null -ne $buildLaneMutex) {
+        $buildLaneMutex.Dispose()
+        $buildLaneMutex = $null
+    }
+    Write-Host 'BUILD_CACHE serialized_lane_released=true'
+    Write-Output $jvmPreflightResultPath
+    return
 }
 
 $cargoCommand = Resolve-QuestSpatialApplication -Name cargo -Path $CargoPath
