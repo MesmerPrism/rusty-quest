@@ -1,6 +1,7 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 import android.os.SystemClock
+import java.util.concurrent.atomic.AtomicLong
 
 internal const val CAMERA_LATENCY_ENABLED_PROPERTY =
     "debug.rustyquest.spatial.camera_latency.enabled"
@@ -426,24 +427,77 @@ internal data class SpatialCameraLatencyDiagnosticBindings(
     val applyNative: (SpatialCameraLatencyDiagnosticSettings) -> Long,
     val recordViewerPose: (CameraHwbProjectionPlane, Long) -> Long,
     val marker: (String) -> Unit,
+    val configureOpenXr: (Long) -> Long,
+    val releaseOpenXr: (Long, Boolean) -> Long,
+    val elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
 )
 
 internal class SpatialCameraLatencyDiagnosticModule(
     private val bindings: SpatialCameraLatencyDiagnosticBindings
 ) {
+  private val ownerId = nextOwnerId.incrementAndGet().also { check(it > 0L) }
+  private var sdkReady = false
+  private var retired = false
+  private var ownerTouched = false
+  private var openXrRequested = false
   private var settings = SpatialCameraLatencyDiagnosticSettings()
   private var lastRevisionToken: String? = null
   private var lastPollMs = Long.MIN_VALUE
   private var frozenPlane: CameraHwbProjectionPlane? = null
 
+  @Synchronized
+  fun onSpatialReady() {
+    if (retired || sdkReady) return
+    sdkReady = true
+    maintainOpenXrLifetime()
+  }
+
+  @Synchronized
+  fun onSpatialShutdown() {
+    if (retired) return
+    // Fence reentrant and late polls before draining Native while the SDK is valid.
+    retired = true
+    sdkReady = false
+    if (ownerTouched) {
+      check(bindings.releaseOpenXr(ownerId, true) >= 0L) {
+        "Camera latency OpenXR owner retirement failed"
+      }
+      openXrRequested = false
+    }
+  }
+
+  private fun maintainOpenXrLifetime() {
+    if (retired || !sdkReady) return
+    val requested =
+        settings.enabled &&
+            settings.presentationPoseMode == SpatialCameraLatencyPresentationPoseMode.OpenXrLocateViews
+    if (requested) {
+      ownerTouched = true
+      openXrRequested = true
+      // Native reuses exact handles or reports busy without allocation. Retry on
+      // later polls even when the property revision has not changed.
+      check(bindings.configureOpenXr(ownerId) >= 0L) {
+        "Camera latency OpenXR owner configuration failed"
+      }
+    } else if (openXrRequested) {
+      check(bindings.releaseOpenXr(ownerId, false) >= 0L) {
+        "Camera latency OpenXR mode release failed"
+      }
+      openXrRequested = false
+    }
+  }
+
+  @Synchronized
   fun poll(reason: String, force: Boolean) {
-    val nowMs = SystemClock.elapsedRealtime()
+    if (retired) return
+    val nowMs = bindings.elapsedRealtimeMs()
     if (!force && lastPollMs != Long.MIN_VALUE && nowMs - lastPollMs < POLL_INTERVAL_MS) {
       return
     }
     lastPollMs = nowMs
     val revisionToken = bindings.readSystemProperty(CAMERA_LATENCY_REVISION_PROPERTY).trim()
     if (revisionToken == lastRevisionToken) {
+      maintainOpenXrLifetime()
       return
     }
     val values = CAMERA_LATENCY_DIAGNOSTIC_PROPERTIES.associateWith(bindings.readSystemProperty)
@@ -462,8 +516,9 @@ internal class SpatialCameraLatencyDiagnosticModule(
     if (requested.poseMode != settings.poseMode || !requested.enabled) {
       frozenPlane = null
     }
-    val nativeMask = runCatching { bindings.applyNative(requested) }.getOrDefault(0L)
     settings = requested
+    val nativeMask = runCatching { bindings.applyNative(requested) }.getOrDefault(0L)
+    maintainOpenXrLifetime()
     bindings.marker(
         "channel=camera-latency-diagnostic status=hotload-applied " +
             "reason=${activityMarkerToken(reason)} transport=android-system-property-revision-last " +
@@ -473,7 +528,9 @@ internal class SpatialCameraLatencyDiagnosticModule(
     )
   }
 
+  @Synchronized
   fun resetPoseCapture(reason: String) {
+    if (retired) return
     if (frozenPlane != null) {
       frozenPlane = null
       bindings.marker(
@@ -483,6 +540,7 @@ internal class SpatialCameraLatencyDiagnosticModule(
     }
   }
 
+  @Synchronized
   fun projectionPlane(currentPlane: () -> CameraHwbProjectionPlane): CameraHwbProjectionPlane {
     val livePlane = currentPlane()
     if (settings.enabled &&
@@ -513,6 +571,7 @@ internal class SpatialCameraLatencyDiagnosticModule(
     )
   }
 
+  @Synchronized
   fun markerFields(): String =
       settings.markerFields() +
           " cameraLatencyPoseFrozen=${frozenPlane != null} " +
@@ -524,6 +583,7 @@ internal class SpatialCameraLatencyDiagnosticModule(
           }
 
   companion object {
+    private val nextOwnerId = AtomicLong()
     const val MODULE_ID = "spatial-camera-latency-diagnostic-module"
     private const val POLL_INTERVAL_MS = 250L
   }

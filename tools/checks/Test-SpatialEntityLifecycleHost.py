@@ -69,6 +69,10 @@ if '  private fun adoptSurface(' in carrier_text:
     carrier_end=carrier_text.rfind('  @Synchronized',0,carrier_text.index('  private fun adoptSurface('))
 carrier_callbacks=carrier_text[carrier_text.index('  fun videoPanelBindings()'):carrier_end]
 (out / 'Shutdown.kt').write_text(shutdown)
+(out / 'Latency.kt').write_text((base / 'SpatialCameraLatencyDiagnosticModule.kt').read_text())
+(out / 'Clock.kt').write_text('''package android.os
+object SystemClock {fun elapsedRealtime()=System.nanoTime()/1000000;fun elapsedRealtimeNanos()=System.nanoTime()}
+''')
 (out / 'Controls.kt').write_text('''package io.github.mesmerprism.rustyquest.spatial_camera_panel
 import java.util.concurrent.*
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.*
@@ -99,7 +103,8 @@ class Pose(val t:Int=0,val q:Int=0){constructor(v:Vector3,q:Quaternion):this()}
 class Transform(val pose:Pose)
 class PanelSceneObject(val surface:Surface=Surface(),val model:Model?=null){fun destroy(){model?.requireLive()}}
 typealias AndroidSurface=Surface
-class CameraHwbProjectionPlane
+data class CameraHwbProjectionPlane(val center:Vector3=Vector3(0f),val targetDistanceMeters:Float=1f,val projectionWidthMeters:Float=1f,val projectionHeightMeters:Float=1f)
+fun activityVectorMarker(v:Vector3)="fixture"
 class SpatialVideoProjectionSettings
 class CameraHwbProjectionVideoPanelBindings(val adoptSurface:(Surface)->Unit,val settings:(Any?)->Unit,val adoptPanel:(PanelSceneObject)->Unit,val planeForPlacement:()->CameraHwbProjectionPlane,val updateLayer:(CameraHwbProjectionPlane)->String,val currentProjectionMarkerFields:()->String,val projectionMarkerFields:(CameraHwbProjectionPlane?)->String,val stereoMarkerFields:()->String,val videoProjectionMarkerFields:()->String,val startCarrier:(String)->Unit,val emitMarker:(String)->Unit)
 object CameraHwbProjectionModule {fun scenePanelCarrierDestroyedMarker(reason:String,nativeStopped:Boolean,entityDestroyed:Boolean,sceneObjectDestroyed:Boolean,carrier:String,cleanupStatus:String)="fixture"}
@@ -185,6 +190,11 @@ open class ModelSdkActivity(val model:Model) {
  fun finishingStop(){onSpatialShutdown();model.live=false}
 }
 class SpatialCameraPanelActivity(model:Model,room:Boolean=false,skybox:Boolean=false,staged:Boolean=false,carrier:Boolean=false):ModelSdkActivity(model) {
+ private val cameraLatencyDiagnosticModule=SpatialCameraLatencyDiagnosticModule(SpatialCameraLatencyDiagnosticBindings(
+   readSystemProperty={when(it){CAMERA_LATENCY_ENABLED_PROPERTY->"true";CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY->"openxr-locate-views";else->""}},
+   applyNative={0L},recordViewerPose={_,_->0L},marker={},
+   configureOpenXr={model.requireLive();0L},releaseOpenXr={_,_->model.requireLive();1L}))
+ init{cameraLatencyDiagnosticModule.onSpatialReady();cameraLatencyDiagnosticModule.poll("fixture",true)}
  var embeddedDuplexActivityDestroying=false;var embeddedDuplexDiagnosticFuture:CompletableFuture<Unit>?=null
  var embeddedDuplexAttachmentGeneration=0L;var embeddedDuplexRuntimeFuture:CompletableFuture<Unit>?=null
  var embeddedDuplexDiagnosticFinished=false
