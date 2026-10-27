@@ -32,6 +32,71 @@ public final class EmbeddedDuplexOriginalsHostTest {
     static JSONObject request()throws Exception{return EmbeddedDuplexOriginals.request("start",CHALLENGE,new Bundle());}
     static String outcome(Bundle query)throws Exception{return observe(query).getString("outcome_sha256");}
     static String requestHash(Bundle query)throws Exception{return observe(query).getString("request_sha256");}
+    static void appAdmissionControls()throws Exception {
+        EmbeddedDuplexAppAdmission.ProcessSource process=()->new EmbeddedDuplexProcessIncarnation.Identity("00112233-4455-6677-8899-aabbccddeeff",42,10042,123456);
+        EmbeddedDuplexAppAdmission.Snapshot unavailable=EmbeddedDuplexAppAdmission.activity(true,false,false,true,0,true,true,true,null,null);
+        EmbeddedDuplexAppAdmission.Snapshot open=EmbeddedDuplexAppAdmission.activity(true,false,false,true,7,true,true,true,null,null);
+        yes(open.bootstrapGateOpen);yes(!unavailable.bootstrapGateOpen);denied(()->EmbeddedDuplexAppAdmission.refuse(open,process));
+        for(String mode:new String[]{"queued","rejected"}) {
+            Actor actor=new Actor();actor.retained=false; // No Native settlement is supplied by this local branch.
+            File root=Files.createTempDirectory("original-app-admission-").toFile();
+            EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});
+            CompletableFuture<Bundle> result=new CompletableFuture<>();java.util.concurrent.atomic.AtomicReference<Runnable> posted=new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicReference<EmbeddedDuplexOriginals.Record> held=new java.util.concurrent.atomic.AtomicReference<>();
+            AtomicInteger serviceEntries=new AtomicInteger();
+            JSONObject request=EmbeddedDuplexOriginals.request("bootstrap_real_peer",CHALLENGE,new Bundle());
+            store.begin(ID,"bootstrap_real_peer",CHALLENGE,request,()->{
+                held.set(EmbeddedDuplexOriginals.capture());
+                boolean accepted=EmbeddedDuplexOriginals.post(()->{
+                    try{
+                        result.completeExceptionally(EmbeddedDuplexAppAdmission.refuse(unavailable,process));
+                        yes("pending".equals(store.queryJoin(ID,CHALLENGE).getString("status")));
+                        denied(()->store.acknowledge(ID,CHALLENGE,requestHash(store.query(ID,CHALLENGE)),outcome(store.query(ID,CHALLENGE)),HASH));
+                    }catch(Exception e){throw new IllegalStateException(e);}
+                },callback->{if(mode.equals("queued")){posted.set(callback);return true;}return false;});
+                if(!accepted){
+                    yes(held.get().commands==0);yes(posted.get()==null);
+                    try{result.completeExceptionally(EmbeddedDuplexAppAdmission.refuse(EmbeddedDuplexAppAdmission.dispatchRejected(),process));}
+                    catch(Exception e){throw new IllegalStateException(e);}
+                }
+                return result;
+            });
+            if(posted.get()!=null){yes(held.get().commands==1);posted.get().run();}
+            yes(serviceEntries.get()==0);yes(held.get().commands==0);
+            Bundle observation=store.query(ID,CHALLENGE);JSONObject row=observe(observation);
+            yes("observed".equals(observation.getString("status")));yes("not_entered".equals(row.getString("effect_state")));
+            yes("app_refusal".equals(row.getJSONObject("response").getString("kind")));
+            Bundle joined=store.queryJoin(ID,CHALLENGE);yes("joined".equals(joined.getString("status")));
+            JSONObject proof=new JSONObject(joined.getString("join_observation_json"));
+            yes(EmbeddedDuplexAppAdmission.JOIN.equals(proof.getString("schema")));yes(!proof.getBoolean("service_entered"));
+            yes(!proof.has("physical_retirement_sha256"));yes(!held.get().boundActor);
+            store.begin(ID,"bootstrap_real_peer",CHALLENGE,request,()->{throw new AssertionError("local refusal replayed");});
+            denied(()->new EmbeddedDuplexOriginals(root,actor,()->{}).acknowledge(ID,CHALLENGE,requestHash(observation),outcome(observation),HASH));
+            denied(()->store.acknowledge(ID,CHALLENGE,HASH,outcome(observation),HASH));
+            store.acknowledge(ID,CHALLENGE,requestHash(observation),outcome(observation),HASH);
+            yes("compacted".equals(store.query(ID,CHALLENGE).getString("status")));
+            yes("joined".equals(new EmbeddedDuplexOriginals(root,actor,()->{}).queryJoin(ID,CHALLENGE).getString("status")));
+        }
+        // A throwing poster may have queued it; no refusal or reservation release is inferred.
+        Actor actor=new Actor();File root=Files.createTempDirectory("original-post-ambiguous-").toFile();
+        EmbeddedDuplexOriginals ambiguous=new EmbeddedDuplexOriginals(root,actor,()->{});
+        java.util.concurrent.atomic.AtomicReference<Runnable> queued=new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicReference<EmbeddedDuplexOriginals.Record> held=new java.util.concurrent.atomic.AtomicReference<>();
+        AtomicInteger calls=new AtomicInteger();
+        ambiguous.begin(ID,"bootstrap_real_peer",CHALLENGE,EmbeddedDuplexOriginals.request("bootstrap_real_peer",CHALLENGE,new Bundle()),()->{
+            held.set(EmbeddedDuplexOriginals.capture());
+            EmbeddedDuplexOriginals.post(()->calls.incrementAndGet(),callback->{queued.set(callback);throw new IllegalStateException("posted then threw");});
+            throw new AssertionError("throwing poster returned");
+        });
+        yes(held.get().commands==1);yes("unknown".equals(ambiguous.query(ID,CHALLENGE).getString("status")));
+        yes("pending".equals(ambiguous.queryJoin(ID,CHALLENGE).getString("status")));queued.get().run();
+        yes(calls.get()==1&&held.get().commands==0);yes("unknown".equals(ambiguous.query(ID,CHALLENGE).getString("status")));
+        // A response-shaped value alone is not the source-owned refusal capability.
+        EmbeddedDuplexOriginals forged=new EmbeddedDuplexOriginals(Files.createTempDirectory("original-app-forged-").toFile(),actor,()->{});
+        Bundle value=EmbeddedDuplexAppAdmission.refusalBundle(CHALLENGE,EmbeddedDuplexAppAdmission.refuse(unavailable,process));
+        denied(()->forged.begin(ID,"bootstrap_real_peer",CHALLENGE,EmbeddedDuplexOriginals.request("bootstrap_real_peer",CHALLENGE,new Bundle()),()->CompletableFuture.completedFuture(value)));
+        denied(()->forged.query(ID,CHALLENGE));
+    }
     static void failureAndPendingControls() throws Exception {
         Actor actor=new Actor();
         for (String schema : new String[]{"v1","v2","v3"}) {
@@ -270,6 +335,7 @@ public final class EmbeddedDuplexOriginalsHostTest {
         failureAndPendingControls();
         configurationReceiptControls();
         productionCallerControls();
+        appAdmissionControls();
         System.out.println("Production Original custody controls passed: "+checks+"; exact Host submit/actor and RuntimeService Original facade bodies executed; OS/Native/resource leaves modeled.");
     }
 }

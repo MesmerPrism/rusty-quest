@@ -16,6 +16,7 @@ import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.Emb
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPairStatus
 import java.util.concurrent.TimeUnit
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexPeerAction
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission
 
 /** Explicit shell operator calls share the panel's app-owned status/review/confirm service. */
 class EmbeddedDuplexOperatorProvider : ContentProvider() {
@@ -30,6 +31,14 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     val request=try { EmbeddedDuplexOperatorContract.parseCall(method,argument,snapshot) } catch(_:Exception){closed()}
     val app=requireNotNull(context).applicationContext
     return try {
+      if(request.route == EmbeddedDuplexOperatorContract.Route.BOOTSTRAP_ADMISSION_STATUS) {
+        val receipt=EmbeddedDuplexRuntimeService.bootstrapReadiness(app,request.runId).get(10,TimeUnit.SECONDS)
+        return Bundle().apply {
+          putString("schema",if(request.runId==null) "rusty.quest.embedded_duplex.operator_transport.v1" else EmbeddedDuplexOperatorContract.RUN_SCHEMA)
+          putString("status","observed");putString("challenge",request.challenge);putString("receipt",receipt)
+          request.runId?.let { putString("run_id",it) }
+        }
+      }
       if(request.route in setOf(EmbeddedDuplexOperatorContract.Route.NEW_RUN,EmbeddedDuplexOperatorContract.Route.RESUME_RUN,EmbeddedDuplexOperatorContract.Route.RUN_STATUS)) {
         val action=when(request.route){
           EmbeddedDuplexOperatorContract.Route.NEW_RUN -> EmbeddedDuplexRuntimeService.newRun(app,requireNotNull(request.runId),request.legacyWholeOriginalId)
@@ -43,7 +52,17 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
       else if(request.route in setOf(EmbeddedDuplexOperatorContract.Route.STATUS,EmbeddedDuplexOperatorContract.Route.REVIEW,EmbeddedDuplexOperatorContract.Route.CONFIRM)) {
         require(request.runId==null) { "persistent-identity-route-is-not-run-scoped" };dispatchCall(method,argument,snapshot)
       } else EmbeddedDuplexRuntimeService.withRunRequest(app,request.runId) { dispatchCall(method,argument,snapshot) }
-      if(request.runId!=null) { response.putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);response.putString("run_id",request.runId) }
+      if(request.runId!=null) {
+        if(response.getString("schema")==EmbeddedDuplexAppAdmission.RESULT) {
+          return Bundle().apply {
+            putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);putString("run_id",request.runId)
+            putString("status","observed");putString("challenge",request.challenge)
+            putString("receipt",io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexCanonicalJson.encode(
+                EmbeddedDuplexOriginals.bundleObject(response)))
+          }
+        }
+        response.putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);response.putString("run_id",request.runId)
+      }
       response
     } catch(_:SecurityException){closed()} catch(_:Exception){closed()}
   }
@@ -94,6 +113,15 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         return EmbeddedDuplexRuntimeService.acknowledgeOriginal(app, requireNotNull(request.originalId), request.challenge,
             requireNotNull(request.requestSha256), requireNotNull(request.outcomeSha256),
             requireNotNull(request.consumerReceiptSha256))
+      }
+      if (request.route == EmbeddedDuplexOperatorContract.Route.BOOTSTRAP_REAL_PEER && request.originalId != null) {
+        return EmbeddedDuplexRuntimeService.beginOriginal(app, request.originalId, method, request.challenge,
+            EmbeddedDuplexOriginals.request(method, request.challenge, snapshot)) {
+          EmbeddedDuplexRuntimeService.bootstrapRealPeerCommand(app).handle { state, failure ->
+            if (failure == null) EmbeddedDuplexAppAdmission.serviceBundle(request.challenge, state)
+            else EmbeddedDuplexAppAdmission.refusalBundle(request.challenge, failure)
+          }
+        }
       }
       if (request.route == EmbeddedDuplexOperatorContract.Route.PAIR_SESSION && request.originalId != null) {
         return EmbeddedDuplexRuntimeService.beginOriginal(app, request.originalId, method, request.challenge,
@@ -238,8 +266,11 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         EmbeddedDuplexOperatorContract.Route.RUNTIME_STATUS ->
           runtimeBundle(request.challenge, EmbeddedDuplexRuntimeService.status(app).get(10, TimeUnit.SECONDS))
         EmbeddedDuplexOperatorContract.Route.BOOTSTRAP_REAL_PEER ->
-          runtimeBundle(request.challenge,
-              EmbeddedDuplexDiagnosticActivityGate.requestRealPeerBootstrap().get(120, TimeUnit.SECONDS))
+          EmbeddedDuplexRuntimeService.bootstrapRealPeerCommand(app).handle { state, failure ->
+            if (failure == null) EmbeddedDuplexAppAdmission.serviceBundle(request.challenge, state)
+            else EmbeddedDuplexAppAdmission.refusalBundle(request.challenge, failure)
+          }.get(120, TimeUnit.SECONDS)
+        EmbeddedDuplexOperatorContract.Route.BOOTSTRAP_ADMISSION_STATUS -> closed()
         EmbeddedDuplexOperatorContract.Route.CLOSE_NO_MEDIA -> {
           val closed = EmbeddedDuplexDiagnosticActivityGate.requestNoMediaClose().get(120, TimeUnit.SECONDS)
           require(closed == "no-media-closed" || closed == "uninitialized-display-detached" ||

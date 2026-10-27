@@ -14,8 +14,9 @@ object EmbeddedDuplexDiagnosticActivityGate {
   // Pure bookkeeping may complete while paused; this weak reference grants no effect/foreground authority.
   @Volatile private var bookkeeping: WeakReference<SpatialCameraPanelActivity>? = null
   private val main = Handler(Looper.getMainLooper())
-  private fun postOriginal(action: () -> Unit): Boolean = main.post(
-      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOriginals.carry(Runnable { action() }))
+  private fun postOriginal(action: () -> Unit): Boolean =
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexOriginals.post(
+          Runnable { action() }, java.util.function.Predicate { main.post(it) })
 
   fun resumed(activity: SpatialCameraPanelActivity) {
     bookkeeping = WeakReference(activity)
@@ -66,18 +67,43 @@ object EmbeddedDuplexDiagnosticActivityGate {
   @JvmStatic
   fun requestRealPeerBootstrap(): CompletableFuture<EmbeddedDuplexRuntimeStatus> {
     val result = CompletableFuture<EmbeddedDuplexRuntimeStatus>()
-    if (!BuildConfig.DEBUG || !postOriginal {
+    if (!BuildConfig.DEBUG) return CompletableFuture.failedFuture(
+        io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.refuse(
+            io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.debugDisabled()))
+    if (!postOriginal {
+        try {
           val activity = resumed?.get()
           if (activity == null) {
-            result.completeExceptionally(IllegalStateException("resumed Activity unavailable"))
+            result.completeExceptionally(
+                io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.refuse(
+                    io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.noActivity()))
           } else {
             activity.runEmbeddedDuplexRealPeerBootstrap().whenComplete { status, failure ->
               if (failure == null) result.complete(status) else result.completeExceptionally(failure)
             }
           }
+        } catch (failure: Throwable) {
+          // An unavailable actor/read cannot mint a refusal proof or escape the actual callback.
+          result.completeExceptionally(failure)
+        }
         }) {
-      result.completeExceptionally(IllegalStateException("Activity dispatch unavailable"))
+      result.completeExceptionally(
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.refuse(
+              io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.dispatchRejected()))
     }
+    return result
+  }
+
+  @JvmStatic
+  fun requestBootstrapReadiness(): CompletableFuture<String> {
+    val result = CompletableFuture<String>()
+    if (!main.post {
+      runCatching {
+        (resumed?.get()?.embeddedDuplexBootstrapReadiness()
+            ?: io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.noActivity()).json()
+      }.onSuccess { result.complete(it) }.onFailure { result.completeExceptionally(it) }
+    }) result.complete(
+        io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.dispatchRejected().json())
     return result
   }
 

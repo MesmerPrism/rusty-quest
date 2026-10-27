@@ -1626,12 +1626,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @Volatile private var embeddedDuplexRuntimeFuture: CompletableFuture<io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus>? = null
   private var embeddedDuplexAttachmentFailureReported = false
 
+  /** Current app-owned facts; every effect evaluates its guard again. */
+  fun embeddedDuplexBootstrapReadiness(observeAttachment: Boolean = true): io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.Snapshot {
+    val inputs = BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED
+    val destroying = embeddedDuplexActivityDestroying
+    val finished = embeddedDuplexDiagnosticFinished
+    if (!observeAttachment) return io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.bootstrapOnly(
+        inputs, destroying, finished, embeddedDuplexAttachmentGeneration, spatialSceneReady,
+        embeddedDuplexDiagnosticFuture, embeddedDuplexRuntimeFuture)
+    val route: Boolean? = if (inputs && !destroying && !finished)
+      io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected() else null
+    val carrier = cameraHwbProjectionRawCarrierCoordinator.sourceCarrierReadiness()
+    return io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.activity(
+        inputs, destroying, finished, route, embeddedDuplexAttachmentGeneration, spatialSceneReady,
+        carrier.fencePresent, carrier.surfaceValid, embeddedDuplexDiagnosticFuture, embeddedDuplexRuntimeFuture)
+  }
+
   private fun attachEmbeddedDuplexDisplayWhenReady() {
     if (!BuildConfig.EMBEDDED_DUPLEX_PRODUCT_INPUTS_ENABLED || embeddedDuplexActivityDestroying ||
-        embeddedDuplexDiagnosticFinished ||
-        !io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.captureRouteSelected() ||
-        embeddedDuplexAttachmentGeneration != 0L || !spatialSceneReady ||
-        cameraHwbProjectionRawCarrierCoordinator.sourceCarrierContext() == null) return
+        embeddedDuplexDiagnosticFinished) return
+    if (!embeddedDuplexBootstrapReadiness().attachmentGateOpen) return
     val activity = java.lang.ref.WeakReference(this)
     runCatching {
           io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
@@ -1735,12 +1749,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   /** Shared human/typed transport entry; enrollment and session values come from the app. */
   fun runEmbeddedDuplexRealPeerBootstrap(): CompletableFuture<
       io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus> {
+    return io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.bootstrapRealPeerFromActivity(this) {
     val generation = embeddedDuplexAttachmentGeneration
-    if (generation == 0L || embeddedDuplexActivityDestroying ||
-        embeddedDuplexDiagnosticFuture != null || embeddedDuplexRuntimeFuture != null) {
-      return CompletableFuture<io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeStatus>().apply {
-        completeExceptionally(IllegalStateException("real-peer display unavailable"))
-      }
+    val readiness = embeddedDuplexBootstrapReadiness(false)
+    if (!readiness.bootstrapGateOpen) {
+      return@bootstrapRealPeerFromActivity CompletableFuture.failedFuture(
+          io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexAppAdmission.refuse(readiness))
     }
     val result = io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
         .EmbeddedDuplexRuntimeService.bootstrapRealPeer(this, generation)
@@ -1751,7 +1765,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             if (failure == null) "real-peer-bootstrap-route-unverified" else "real-peer-bootstrap-pending-cleanup")
       }
     }
-    return result
+    result
+    }
   }
 
   /** Explicit app quit entry; callers finish only after this actual owner completes. */
