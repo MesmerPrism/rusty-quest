@@ -85,6 +85,30 @@ the original raw inventory to actual JVM class output with `verify-compiled`.
 It needs no APK or DEX. Its receipt has scope `jvm-compilation-only` and grants
 no runtime authority. Callers without a selected contract remain unverified.
 
+The same canonical builder accepts `-BuildStage Full|JvmPreflight` (exact spelling,
+default `Full`). `JvmPreflight` requires an explicit selected component contract
+and stops after that existing JVM phase, before rustup setup, native compilation,
+assembly or APK handoff. It retains normal product/feature/asset selection,
+source locks, composition and layout checks, prerequisites and environment
+projection. In particular, source composition still resolves the selected Cargo
+metadata graph; supply its supported sibling layout explicitly. This stage may
+configure Gradle, resolve dependencies, prepare permitted managed sources and
+resources, compile Java/Kotlin, and write the normal caches and evidence. The
+graph guard does not sandbox configuration-time plugin code.
+
+On success the builder releases its serialized build-cache lane and returns only
+the path to `OutDir/jvm-preflight-result.json`. Its schema is
+`rusty.quest.spatial_camera_panel.jvm_preflight_result.v1`, with
+`status: phase-complete`, `build_stage: JvmPreflight`, `apk_produced: false` and
+`runtime_authority: false`. `android_jvm_compilation` retains the existing phase
+summary; `source_composition`, `android_components.inventory`,
+`android_components.jvm_inputs`, `android_components.jvm_compilation` and
+`build_phase_receipts` reference the original files and SHA-256 values. The last
+reference uses the existing `build-phase-receipts.json` schema and records only
+phases actually completed. This result creates no APK, build manifest or run
+capsule and supplies no native, DEX, runtime or deployment proof. Failures retain
+their original error and restore the phase environment and build-cache lane.
+
 The early aggregate depends on the selected variant's real Kotlin and Java
 compiler tasks. Actual SDK bootclasspath, compiler classpaths, generated source
 files and class directories are observed from Gradle. A typed dependency and
@@ -137,8 +161,18 @@ Focused checks:
 ```powershell
 python tools/checks/test_android_component_closure.py
 pwsh -NoProfile -File tools/checks/Test-AndroidComponentBuildSeam.ps1
+pwsh -NoProfile -File tools/checks/Test-SpatialJvmPreflightStageHost.ps1
 pwsh -NoProfile -File tools/checks/Test-AndroidNativeSourcePaths.ps1
 ```
+
+`Test-SpatialJvmPreflightStageHost.ps1` runs the actual canonical dispatch,
+environment projection/finally, result writer and failure trap with trapped
+compiler/native leaves. It checks default and exact stage selection, selected
+contract refusal, success/failure cleanup, original evidence references and the
+stop before native setup. Together with `Test-SpatialArtifactPreflightHost.ps1`,
+it covers the caller with absent optional native roots. These host controls do
+not qualify an actual product's Meta/AGP graph; exercise its ordinary selected
+producer through `JvmPreflight` for that integration evidence.
 
 `Test-AndroidComponentWarmCompile.py` accepts explicit Gradle/Java/cache/D8/android.jar paths and
 uses one fresh JVM fixture project for initial/add/change/unchanged builds,

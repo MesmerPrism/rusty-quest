@@ -102,6 +102,11 @@ The same contract includes bounded ordered property transport and a
 receipt-bound recovery entrypoint for a process interrupted after entering a
 run transaction; it has no generic package or shell authority.
 
+The canonical Spatial Camera Panel builder also exposes a fixed
+[`-BuildStage JvmPreflight`](docs/ANDROID_COMPONENT_CLOSURE.md) stop after its
+selected JVM compilation phase. It requires a component contract and returns
+existing compiler evidence without producing an APK; the default stage is `Full`.
+
 ## Device Link Contracts
 
 `tools/diagnostics/quest-shell-capabilities` is a bounded Android 14 diagnostic

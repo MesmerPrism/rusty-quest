@@ -1,5 +1,15 @@
 # Rusty Quest Validation
 
+The canonical Spatial builder's fixed `Full|JvmPreflight` stage has a focused
+host gate: `pwsh -NoProfile -File tools/checks/Test-SpatialJvmPreflightStageHost.ps1`.
+It executes the actual parameter selection, JVM dispatch/environment/finally,
+result writer and failure trap with compiler/native leaves trapped. It checks
+the stop before native setup, contract refusal, original evidence references,
+default Full continuation and cleanup. See [selected component closure](ANDROID_COMPONENT_CLOSURE.md).
+This gate performs no Gradle/Cargo build or device operation and does not qualify
+the actual product's Meta/AGP graph. That requires its normal selected producer's
+`JvmPreflight` execution; APK and device claims require their own later evidence.
+
 External Spatial artifact preflight has a focused host gate:
 `pwsh -NoProfile -File tools/checks/Test-SpatialArtifactPreflightHost.ps1`.
 It executes the actual caller and directory guard with default or explicit
