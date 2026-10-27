@@ -42,6 +42,9 @@ class AndroidJvmTaskClosure {
             'com.android.build.gradle.internal.res.GenerateLibraryRFileTask',
             'com.android.build.gradle.internal.res.ParseLibraryResourcesTask',
             'com.android.build.gradle.internal.res.LinkApplicationAndroidResourcesTask',
+            // Meta Spatial SDK 0.13.2's producer-backed XML -> Java/resource chain.
+            'com.meta.spatial.plugin.ResolveComponentXmlsTask',
+            'com.meta.spatial.plugin.schematizedcomponents.GenerateSchematizedComponentsTask',
             'org.jetbrains.kotlin.gradle.plugin.diagnostics.CheckKotlinGradlePluginConfigurationErrors'
         ] as Set
         def hierarchy = types(task)
