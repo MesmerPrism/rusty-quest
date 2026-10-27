@@ -101,6 +101,7 @@ def main():
  private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;
  private CompletableFuture<Void> wholeCallbackMarker;private EmbeddedDuplexPlatform wholeCallbackPlatform;
  boolean harnessJoinWhole(EmbeddedDuplexPlatform value)throws Exception{return joinWholeCallbackOwner(value);}
+ String harnessNativeHandoff()throws Exception{return processFence.nativeOperationalRunHandoff();}
  int fixtureWrites;CompletableFuture<EmbeddedDuplexEnrollment> fixtureWrite;
  CompletableFuture<EmbeddedDuplexEnrollment> replaceEnrollment(EmbeddedDuplexEnrollmentDraft draft){synchronized(attachmentGate){if(!phase.compareAndSet(Phase.NEW,Phase.PROVISIONING))return failed(new IllegalStateException("provisioning phase busy"));fixtureWrites++;fixtureWrite=new CompletableFuture<>();return fixtureWrite;}}
  void harnessFinishFixture(){phase.set(Phase.NEW);fixtureWrite.complete(null);}
@@ -162,10 +163,11 @@ def main():
     if hashlib.sha256(raw).hexdigest()!=item[key]['sha256']:raise ValueError('Retained legacy '+key+' changed')
     pair.append(str(path))
    run('legacy-fileonly-'+str(index),argv+['legacy-files']+pair)
+   run('legacy-select-'+str(index),argv+['legacy-select']+pair)
    for key,path in zip(['row','join'],pair):
     if hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()!=item[key]['sha256']:raise ValueError('Retained input mutated')
    retained.append(item)
-  retained={'manifest_sha256':hashlib.sha256(manifest.read_bytes()).hexdigest(),'cases':retained,'scope':'Exact saved row/join bytes through read-only production codec under JVM write/delete/exec/network traps. No current actor/Native/resource authority.'}
+  retained={'manifest_sha256':hashlib.sha256(manifest.read_bytes()).hexdigest(),'cases':retained,'scope':'Exact saved row/join codec under JVM write/delete/exec/network traps; actual Java selectRun and retained callback separately execute with modeled Native eligibility/claim. Original input bytes remain exact; no current hardware authority.'}
 
  if any(hashlib.sha256((root/x).read_bytes()).hexdigest()!=h for x,h in pins.items()):raise ValueError('Inputs changed during controls')
  result={'status':'passed','retained_legacy':retained,'source_pins':pins,'scope':'Actual run selector/store/fence/Original/service bodies and real filesystem/Future; Native/Android/current-resource leaves modeled. Existing 76 Original assertions retained.','limits':['No Native runtime/hardware/private enrollment byte claim; separate actual Native controls and Android composition required.'],'generated_pins':{str(x.relative_to(out)):hashlib.sha256(x.read_bytes()).hexdigest() for x in generated},'extracted_methods':[{'signature':x[:x.index('{')].strip(),'sha256':hashlib.sha256(x.encode()).hexdigest()} for x in methods+service_methods]}

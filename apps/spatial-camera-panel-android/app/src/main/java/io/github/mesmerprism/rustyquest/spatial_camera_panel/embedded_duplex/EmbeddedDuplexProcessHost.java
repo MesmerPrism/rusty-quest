@@ -87,10 +87,16 @@ final class EmbeddedDuplexProcessHost {
                 if(!"rusty.quest.embedded_duplex.operational_run_native.v1".equals(nativeStatus.getString("$schema"))
                     ||!nativeStatus.getBoolean("globally_eligible"))throw new IllegalStateException("actual Native owner unresolved");
                 if(runContext.legacy()&&(!processFence.newlyInitialized()||!nativeStatus.isNull("native_generation"))){
-                    JSONObject whole=terminalWholeReceipt==null?EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(
-                        runContext.root,legacyWholeOriginalId,applicationContext.getPackageName()).getJSONObject("physical_retirement")
-                        :new JSONObject(terminalWholeReceipt).getJSONObject("peer_lifecycle");
-                    EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(whole);
+                    JSONObject whole;
+                    if(terminalWholeReceipt==null){
+                        // The versioned read already validates physical invariants. Keep its original
+                        // legacy proof for the Native hash join; do not parse it as a current DTO again.
+                        whole=EmbeddedDuplexOriginals.closedLegacyV2WholeHandoff(runContext.root,legacyWholeOriginalId,
+                            applicationContext.getPackageName()).getJSONObject("physical_retirement");
+                    }else{
+                        whole=new JSONObject(terminalWholeReceipt).getJSONObject("peer_lifecycle");
+                        EmbeddedDuplexWholeCloseRollover.requireTerminalPhysical(whole);
+                    }
                     requireLegacyWholeActor(whole,nativeStatus,processFence.generation());
                 }
                 EmbeddedDuplexRunContext next=create?runSelection.newRun(id,release):runSelection.resumeRun(id);

@@ -38,6 +38,32 @@ public final class EmbeddedDuplexRunContextHostTest {
   yes(Arrays.equals(sourceRow,Files.readAllBytes(java.nio.file.Path.of(rowPath))));yes(Arrays.equals(sourceJoin,Files.readAllBytes(java.nio.file.Path.of(joinPath))));
   System.out.println("Saved legacy Whole FILEONLY reader passed; no current Native eligibility claimed.");
  }
+ static void savedLegacySelection(String rowPath,String joinPath)throws Exception{
+  byte[] original=Files.readAllBytes(java.nio.file.Path.of(rowPath)),joined=Files.readAllBytes(java.nio.file.Path.of(joinPath));
+  org.json.JSONObject row=EmbeddedDuplexCanonicalJson.readOwned(original),join=EmbeddedDuplexCanonicalJson.readOwned(joined);
+  String id=row.getString("original_id"),packageId=row.getJSONObject("actor_binding").getString("package_id");
+  org.json.JSONObject physical=new org.json.JSONObject(row.getJSONObject("response").getString("receipt")).getJSONObject("peer_lifecycle");
+  File app=Files.createTempDirectory("legacy-select-caller-").toFile(),directory=new File(app,"operator-originals-v1");yes(directory.mkdir());
+  File copiedRow=new File(directory,id+".json"),copiedJoin=new File(directory,id+".joined.json");Files.write(copiedRow.toPath(),original);Files.write(copiedJoin.toPath(),joined);
+  // Real Java fence lifetimes; the Native status/claim leaf below is deliberately modeled.
+  File replay=new File(app,"embedded-duplex-replay");yes(replay.mkdir());
+  for(long i=0;i<physical.getLong("app_process_generation")+2;i++)try(EmbeddedDuplexProcessFence idle=EmbeddedDuplexProcessFence.acquire(replay,null,null,()->{})){}
+  android.content.Context context=new android.content.Context(){public File getNoBackupFilesDir(){return app;}public String getPackageName(){return packageId;}};
+  EmbeddedDuplexNative.eligible=true;EmbeddedDuplexNative.actualRun=null;
+  long counter=row.getJSONObject("actor_binding").getLong("native_generation");EmbeddedDuplexNative.nativeGeneration=counter+1;
+  String next="b".repeat(32);
+  rejectFuture(EmbeddedDuplexRuntimeService.newRun(context,next,id));yes(EmbeddedDuplexRuntimeService.selectedRunId(context)==null);
+  EmbeddedDuplexNative.nativeGeneration=counter;
+  org.json.JSONObject selected=new org.json.JSONObject(EmbeddedDuplexRuntimeService.newRun(context,next,id).get(5,java.util.concurrent.TimeUnit.SECONDS));
+  yes(next.equals(selected.getString("run_id")));yes(selected.getJSONObject("native").isNull("operational_run_id"));
+  EmbeddedDuplexProcessHost host=EmbeddedDuplexProcessHost.forApplication(context);
+  org.json.JSONObject actualCallback=new org.json.JSONObject(host.harnessNativeHandoff());
+  yes(EmbeddedDuplexCanonicalJson.sha256(actualCallback.getJSONObject("physical_retirement")).equals(join.getString("physical_retirement_sha256")));
+  yes(actualCallback.getJSONObject("physical_retirement").has("authority_clock_read"));yes(actualCallback.getJSONObject("physical_retirement").has("owner_transport_attempt"));
+  yes(Arrays.equals(original,Files.readAllBytes(copiedRow.toPath())));yes(Arrays.equals(joined,Files.readAllBytes(copiedJoin.toPath())));
+  yes(Arrays.equals(original,Files.readAllBytes(java.nio.file.Path.of(rowPath))));yes(Arrays.equals(joined,Files.readAllBytes(java.nio.file.Path.of(joinPath))));
+  System.out.println("Actual saved Whole selectRun/callback caller passed; Native eligibility/claim modeled, original proof retained.");
+ }
  static void legacyWitnessControls()throws Exception{
   File root=Files.createTempDirectory("legacy-release").toFile();String id="9".repeat(32),challenge="8".repeat(32),hash="7".repeat(64);
   EmbeddedDuplexOriginalsHostTest.Actor actor=new EmbeddedDuplexOriginalsHostTest.Actor();actor.generation=1;
@@ -271,6 +297,7 @@ public final class EmbeddedDuplexRunContextHostTest {
  }
  public static void main(String[] args)throws Exception{
   if(args.length>0&&args[0].equals("legacy-files")){savedLegacyWhole(args[1],args[2]);return;}
+  if(args.length>0&&args[0].equals("legacy-select")){savedLegacySelection(args[1],args[2]);return;}
   if(args.length>0&&args[0].equals("caller")){legacyWitnessControls();callerControls();activityCacheControls();return;}
   File app=Files.createTempDirectory("run-host").toFile();
   byte[] identity="real retained identity bytes".getBytes();Files.write(new File(app,"identity").toPath(),identity);
