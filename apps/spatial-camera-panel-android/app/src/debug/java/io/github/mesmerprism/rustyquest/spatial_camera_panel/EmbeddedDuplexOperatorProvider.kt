@@ -52,7 +52,17 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
       else if(request.route in setOf(EmbeddedDuplexOperatorContract.Route.STATUS,EmbeddedDuplexOperatorContract.Route.REVIEW,EmbeddedDuplexOperatorContract.Route.CONFIRM)) {
         require(request.runId==null) { "persistent-identity-route-is-not-run-scoped" };dispatchCall(method,argument,snapshot)
       } else EmbeddedDuplexRuntimeService.withRunRequest(app,request.runId) { dispatchCall(method,argument,snapshot) }
-      if(request.runId!=null) { response.putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);response.putString("run_id",request.runId) }
+      if(request.runId!=null) {
+        if(response.getString("schema")==EmbeddedDuplexAppAdmission.RESULT) {
+          return Bundle().apply {
+            putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);putString("run_id",request.runId)
+            putString("status","observed");putString("challenge",request.challenge)
+            putString("receipt",io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexCanonicalJson.encode(
+                EmbeddedDuplexOriginals.bundleObject(response)))
+          }
+        }
+        response.putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);response.putString("run_id",request.runId)
+      }
       response
     } catch(_:SecurityException){closed()} catch(_:Exception){closed()}
   }

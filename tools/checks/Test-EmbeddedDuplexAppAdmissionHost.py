@@ -117,6 +117,9 @@ public final class Bridge {
  public static void select(android.content.Context context,String id)throws Exception{new EmbeddedDuplexRunSelectionStore(context.getNoBackupFilesDir(),new EmbeddedDuplexRunSelectionStore.DirectorySync(){public void sync(java.io.File ignored){}public void privateMode(java.io.File ignored,boolean directory){}}).newRun(id);}
  public static EmbeddedDuplexRuntimeStatus ready(){return new EmbeddedDuplexRuntimeStatus("bootstrapped_route_unverified",true,"a".repeat(64),"b".repeat(64));}
  public static String kind()throws Exception{return row().getJSONObject("response").getString("kind");}
+ public static void initialiseRun(android.content.Context c,String id)throws Exception{EmbeddedDuplexRunSelectionStore store=new EmbeddedDuplexRunSelectionStore(c.getNoBackupFilesDir(),new EmbeddedDuplexRunSelectionStore.DirectorySync(){public void sync(java.io.File ignored){}public void privateMode(java.io.File ignored,boolean directory){}});EmbeddedDuplexRunContext run=store.newRun(id);EmbeddedDuplexProcessHost host=EmbeddedDuplexProcessHost.forApplication(c);java.lang.reflect.Field f=EmbeddedDuplexProcessHost.class.getDeclaredField("runContext");f.setAccessible(true);f.set(host,run);}
+ public static void requireUnion(JSONObject value,String challenge)throws Exception{EmbeddedDuplexAppAdmission.requireResult("bootstrap_real_peer",challenge,value);}
+
  static byte[] originalStat;
  public static void advanceProcess()throws Exception{java.nio.file.Path p=java.nio.file.Paths.get(System.getProperty("host.proc"),"42","stat");originalStat=java.nio.file.Files.readAllBytes(p);String v=new String(originalStat,java.nio.charset.StandardCharsets.UTF_8);java.nio.file.Files.write(p,v.replace("123456","123457").getBytes(java.nio.charset.StandardCharsets.UTF_8));}
  public static void breakProcessObservation()throws Exception{java.nio.file.Path p=java.nio.file.Paths.get(System.getProperty("host.proc"),"42","stat");originalStat=java.nio.file.Files.readAllBytes(p);java.nio.file.Files.writeString(p,"unavailable actor observation");}
@@ -126,6 +129,40 @@ public final class Bridge {
 
  public static void requireServiceUnion()throws Exception{android.os.Bundle b=EmbeddedDuplexAppAdmission.serviceBundle("a".repeat(32),ready());JSONObject value=new JSONObject();for(String k:b.keySet())value.put(k,b.get(k));EmbeddedDuplexAppAdmission.requireResult("bootstrap_real_peer","a".repeat(32),value);}
  public static boolean noNativeJoin()throws Exception{try{ack();return false;}catch(IllegalStateException expected){return true;}}
+}''')
+    provider_name='EmbeddedDuplexOperatorProvider.kt'
+    contract=root/'apps/spatial-camera-panel-android/app/src/debug/java'/pkg.replace('.','/')/'EmbeddedDuplexOperatorContract.kt'
+    provider=root/'apps/spatial-camera-panel-android/app/src/debug/java'/pkg.replace('.','/')/provider_name
+    before.pop(str(base/provider_name),None);before[str(provider)]=sha(provider);before[str(contract)]=sha(contract)
+    provider_raw=provider.read_text(encoding='utf-8');call=mod.extract_method(provider_raw,'  override fun call(')
+    extracts.append({'source':str(provider.relative_to(root)),'signature':'override fun call','sha256':hashlib.sha256(call.encode()).hexdigest(),'bytes':len(call.encode())})
+    write('extracts/provider-call.txt',call)
+    write('EmbeddedDuplexOperatorContract.kt',contract.read_bytes())
+    write('Provider.kt','package '+pkg+'\nimport android.os.Bundle\nimport android.os.Binder\nimport java.util.concurrent.TimeUnit\nimport '+epkg+'.EmbeddedDuplexOriginals\nimport '+epkg+'.EmbeddedDuplexAppAdmission\nimport '+epkg+'.ProviderRuntimeService as EmbeddedDuplexRuntimeService\nabstract class ProviderBase { abstract fun call(method:String, argument:String?, extras:Bundle?):Bundle }\nclass EmbeddedDuplexOperatorProvider(val context:android.content.Context):ProviderBase(){\nlateinit var response:Bundle\nprivate fun dispatchCall(method:String,argument:String?,extras:Bundle?):Bundle=response\nprivate fun closed():Nothing=throw SecurityException("closed")\n'+call+'\n}\n')
+    write('Bundle.java','''package android.os;
+public class Bundle {
+ private final java.util.HashMap<String,Object> values=new java.util.HashMap<>();
+ public Bundle(){} public Bundle(Bundle other){for(String k:other.keySet())values.put(k,other.get(k));}
+ public java.util.Set<String> keySet(){return values.keySet();}public Object get(Object k){return values.get(k);}public Object put(String k,Object v){return values.put(k,v);}
+ public void putString(String k,String v){values.put(k,v);}public String getString(String k){return (String)values.get(k);}
+ public void putBoolean(String k,boolean v){values.put(k,v);}public boolean getBoolean(String k){return (Boolean)values.get(k);}
+ public void putLong(String k,long v){values.put(k,v);}public long getLong(String k){return ((Number)values.get(k)).longValue();}
+ public void putInt(String k,int v){values.put(k,v);}public int getInt(String k){return ((Number)values.get(k)).intValue();}
+ public void putFloat(String k,float v){values.put(k,v);}public float getFloat(String k){return ((Number)values.get(k)).floatValue();}
+ public boolean containsKey(String k){return values.containsKey(k);}public void remove(String k){values.remove(k);}
+}''')
+    write('Binder.java','package android.os; public class Binder { public static int getCallingUid(){return 2000;} }')
+    write('Process.java','package android.os; public final class Process {public static final int SHELL_UID=2000;public static int myPid(){return 42;}public static int myUid(){return 10001;} }')
+    write('ProviderRuntimeService.java','package '+epkg+''';
+import android.content.Context;import android.os.Bundle;import java.util.concurrent.*;
+public final class ProviderRuntimeService {
+ public static String expectedRun;
+ public static <T>T withRunRequest(Context c,String run,Callable<T> request)throws Exception{if(!java.util.Objects.equals(run,expectedRun))throw new IllegalStateException("modeled run guard");return request.call();}
+ public static CompletableFuture<String> bootstrapReadiness(Context c,String run){throw new AssertionError("unexercised readiness");}
+ public static CompletableFuture<String> newRun(Context c,String run,String old){throw new AssertionError("unexercised selection");}
+ public static CompletableFuture<String> resumeRun(Context c,String run){throw new AssertionError("unexercised selection");}
+ public static CompletableFuture<String> runStatus(Context c){throw new AssertionError("unexercised status");}
+ public static Bundle queryOriginal(Context c,String run,String id,String challenge){throw new AssertionError("unexercised query");}
 }''')
     write('Controls.kt','package '+pkg+'\nimport java.util.concurrent.CompletableFuture\nimport '+epkg+'''.*
 import org.json.JSONObject
@@ -151,6 +188,18 @@ object AdmissionControls {
   check(EmbeddedDuplexRuntimeService.calls==0);Bridge.ack();check(Bridge.row().getString("retention")=="compacted")
  }
  @JvmStatic fun main(args:Array<String>){
+  for(kind in listOf("service_result","app_refusal"))test("actual Provider.call preserves explicit-run final bootstrap union "+kind){
+   val a=activity();val run="f".repeat(32);val challenge="e".repeat(32);Bridge.initialiseRun(a,run)
+   val raw=if(kind=="service_result")EmbeddedDuplexAppAdmission.serviceBundle(challenge,Bridge.ready())else{
+    a.embeddedDuplexAttachmentGeneration=0;val f=EmbeddedDuplexRuntimeService.bootstrapRealPeerCommand(a);Bridge.capture(a);Handler.drain();EmbeddedDuplexAppAdmission.refusalBundle(challenge,failure(f))
+   }
+   val provider=EmbeddedDuplexOperatorProvider(a);provider.response=raw;ProviderRuntimeService.expectedRun=run
+   val extras=android.os.Bundle();extras.putString("run_id",run);val result=provider.call("bootstrap_real_peer",challenge,extras)
+   check(result.getString("schema")==EmbeddedDuplexOperatorContract.RUN_SCHEMA&&result.getString("run_id")==run)
+   check(result.keySet()==setOf("schema","status","challenge","run_id","receipt"))
+   val union=JSONObject(result.getString("receipt"));Bridge.requireUnion(union,challenge);check(union.getString("kind")==kind&&raw.getString("schema")==EmbeddedDuplexAppAdmission.RESULT)
+   ProviderRuntimeService.expectedRun=null;val legacy=provider.call("bootstrap_real_peer",challenge,android.os.Bundle());check(legacy.getString("schema")==EmbeddedDuplexAppAdmission.RESULT)
+  }
   test("actual read-only Service/Gate constructs no ProcessHost and creates no selector files"){
    val a=activity();val before=a.directory.walkTopDown().filter{it.isFile}.map{it.relativeTo(a.directory).path}.toList()
    check(Bridge.hostAbsent()&&Bridge.originalAbsent());val f=EmbeddedDuplexRuntimeService.bootstrapReadiness(a,null);check(!f.isDone);Handler.drain()
