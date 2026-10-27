@@ -302,7 +302,23 @@ public final class EmbeddedDuplexOriginalsHostTest {
   denied(()->new EmbeddedDuplexNativeOperationFailure(new JSONObject(unknown).put("session_id","invented").toString()).validatedFailure());
   denied(()->new EmbeddedDuplexNativeOperationFailure(new JSONObject(unknown).put("code","invented").toString()).validatedFailure());
  }
+    static void ceremonyWaitWarningCompletion()throws Exception{
+        for(String operation:new String[]{"pair_session","fresh_pair_continue"})for(Object warning:new Object[]{null,Boolean.TRUE,Boolean.FALSE,"true",1}){
+            File root=Files.createTempDirectory("original-ceremony-warning-").toFile();Actor actor=new Actor();
+            EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});Bundle response=new Bundle();
+            response.putString("schema","rusty.quest.embedded_duplex.operator_transport.v1");response.putString("status","observed");response.putString("challenge",CHALLENGE);
+            response.putString("pair_state","peer_session_current_route_unverified");response.put("local_session_current",true);response.put("remote_session_current",true);
+            response.put("local_session_expires_at_ms",1000L);response.put("peer_route_proven",false);response.put("media_effect_proven",false);
+            if(warning instanceof Boolean)response.put("ceremony_wait_warning",(Boolean)warning);else if(warning instanceof String)response.putString("ceremony_wait_warning",(String)warning);else if(warning instanceof Integer)response.put("ceremony_wait_warning",(Integer)warning);
+            JSONObject request=EmbeddedDuplexOriginals.request(operation,CHALLENGE,new Bundle());boolean accepted=warning==null||warning instanceof Boolean;
+            if(!accepted){denied(()->{store.begin(ID,operation,CHALLENGE,request,()->CompletableFuture.completedFuture(response));store.query(ID,CHALLENGE);});continue;}
+            store.begin(ID,operation,CHALLENGE,request,()->CompletableFuture.completedFuture(response));JSONObject row=observe(store.query(ID,CHALLENGE));
+            yes(row.getString("state").equals("succeeded"));
+            if(accepted){yes(row.getJSONObject("response").has("ceremony_wait_warning")== (warning!=null));if(warning!=null)yes(row.getJSONObject("response").getBoolean("ceremony_wait_warning")==((Boolean)warning));}
+        }
+    }
     public static void main(String[] args)throws Exception{
+        ceremonyWaitWarningCompletion();
         File root=Files.createTempDirectory("original-custody-").toFile();Actor actor=new Actor();
         EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});
         AtomicInteger calls=new AtomicInteger();CompletableFuture<Bundle> actual=new CompletableFuture<>();Runnable[] command=new Runnable[1];
