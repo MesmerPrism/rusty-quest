@@ -13,13 +13,14 @@ internal class EndpointRouteCandidate(
 ) {
   interface NativeReader {
     fun canonicalBinding(json: String): String
-    fun validate(route: String, profile: String, bindings: List<String>): String
+    fun validate(documents: Map<String, String>, profile: SpatialPeerNetworkProfileSelection, profileJson: String): String
   }
 
   data class Selection(
       val profile: SpatialPeerNetworkProfileSelection,
       val documents: Map<String, String>,
       val nativeReadback: String,
+      val profileJson: String,
   )
 
   private val base = baseline.toMap()
@@ -79,10 +80,6 @@ internal class EndpointRouteCandidate(
           .put("connect_host", sink.media.host).put("connect_port", sink.media.port)
       documents[name] = native.canonicalBinding(binding.toString())
     }
-    // This is the actual production route/binding reader, not a duplicated validator.
-    val readback = native.validate(documents.getValue("route-configuration.json"),
-        base.getValue("packed-stereo-profile.json"), bindings.map(documents::getValue))
-
     // Regenerate the host candidate's closure coherently. Production still pins the original manifest.
     val manifest = JSONObject(base.getValue("product-input-manifest.json"))
     val directions = manifest.getJSONArray("directional_bindings")
@@ -108,7 +105,10 @@ internal class EndpointRouteCandidate(
     }
     manifest.put("closure_sha256", sha256(closure.joinToString("\n")))
     documents["product-input-manifest.json"] = manifest.toString()
-    val accepted = Selection(selected, Collections.unmodifiableMap(documents), readback)
+    // The selected reader receives the complete snapshot before any accepted state changes.
+    val profileJson = String(bytes, Charsets.UTF_8)
+    val readback = native.validate(Collections.unmodifiableMap(documents), selected, profileJson)
+    val accepted = Selection(selected, Collections.unmodifiableMap(documents), readback, profileJson)
     current = accepted
     return accepted
   }

@@ -2,6 +2,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
 
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.EndpointRouteCandidate
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraControlProfileTest
+import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialPeerNetworkProfileSelection
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -43,9 +44,12 @@ internal object EndpointRouteDerivationHost {
     val reader = object : EndpointRouteCandidate.NativeReader {
       override fun canonicalBinding(json: String) = native(JSONObject()
           .put("action", "canonicalize_binding").put("binding", json)).getString("binding")
-      override fun validate(route: String, profile: String, bindings: List<String>) = native(JSONObject()
-          .put("action", "validate_route").put("route", route).put("profile", profile)
-          .put("bindings", JSONArray(bindings)).put("expected", expected)).toString()
+      override fun validate(documents: Map<String, String>, profile: SpatialPeerNetworkProfileSelection, profileJson: String) = native(JSONObject()
+          .put("action", "validate_route").put("route", documents.getValue("route-configuration.json"))
+          .put("profile", documents.getValue("packed-stereo-profile.json"))
+          .put("bindings", JSONArray(listOf(documents.getValue("peer_a_to_peer_b.media-binding.json"),
+              documents.getValue("peer_b_to_peer_a.media-binding.json"))))
+          .put("expected", expected)).toString()
     }
     fun loader(documents: Map<String, String>, expectedSha: String): EmbeddedDuplexPackagedInputs {
       val source = object : EmbeddedDuplexPackagedInputs.AssetReader {
@@ -182,8 +186,9 @@ internal object EndpointRouteDerivationHost {
     check(activeRefusal == "configuration_frozen_for_bootstrap")
     check(candidate.current === second)
     // Incompatible derivation must not secretly admit a route-only endpoint override.
-    val staleBindings = listOf(base.getValue("peer_a_to_peer_b.media-binding.json"), base.getValue("peer_b_to_peer_a.media-binding.json"))
-    rejected { reader.validate(second.documents.getValue("route-configuration.json"), base.getValue("packed-stereo-profile.json"), staleBindings) }
+    val staleBindings = second.documents.toMutableMap()
+    for (name in listOf("peer_a_to_peer_b.media-binding.json", "peer_b_to_peer_a.media-binding.json")) staleBindings[name] = base.getValue(name)
+    rejected { reader.validate(staleBindings, second.profile, second.profileJson) }
     val result = JSONObject().put("passed", true).put("source_manifest_sha256", originalManifestSha)
         .put("candidate_manifest_sha256", candidateSha).put("first", JSONObject(first.nativeReadback))
         .put("second", JSONObject(second.nativeReadback)).put("profile_sha256", second.profile.profileSha256)

@@ -206,6 +206,24 @@ the regenerated manifest in the fixture is a separate candidate-input test,
 not evidence that the installed APK accepts it. No Android FileObserver,
 installed enrollment store, media runtime or headset effect is exercised.
 
+`tools/checks/Test-EndpointAuthorityHost.py` closes the subsequent native
+authority model boundary. It imports the unchanged production packaged-config,
+route and source-policy modules, uses owner libraries compiled directly from
+the matching selected source, and executes real broker construction, token
+issuance and capability-use authorization. Endpoint A and B keep separate
+effective-route digests under the same immutable base hashes and compiled
+development policy. A foreign caller is refused without changing accepted
+admission state. The synthetic candidate manifest is excluded from this
+authority request; base artifact and endpoint-containment checks precede
+assembly. The full derived snapshot validates before its `current` changes.
+
+This remains a host-only API prototype. Binder identity, clock, entropy and
+trust context are fixed host fixtures; each validation creates fresh temporary
+broker authority. It does not exercise installed package authentication,
+private enrollment persistence, production shared-input consumer wiring,
+native process-fence/peer-session admission, socket binding or media effects.
+No live runtime is replaced and no enabling APK is selected by these tests.
+
 ## Named Panel Profile Library
 
 The fixed **Profiles** page saves and restores complete low-rate panel tuning
