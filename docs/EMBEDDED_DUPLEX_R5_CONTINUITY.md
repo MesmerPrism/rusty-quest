@@ -521,6 +521,19 @@ source-owner check and local leaf retirement share the existing lifecycle lock.
 Local resource retirement grants no remote Stop readback or transaction result.
 A failed or ambiguous logical Whole preserves the same Original and UNKNOWN.
 
+Retained cleanup registries acquire their existing transaction admission before
+checking durable uncertainty, carrying forward the ordering from `2c984675`.
+Another thread's live persistence is joined; a failed commit remains refused
+after admission. Same-thread callback reentry still returns `runtime busy`.
+Construction snapshots and fresh-setup observations retain nonwaiting
+`try_enter()` admission and check uncertainty only after acquisition, so a failed
+writer cannot release stale state to an observer. The admission primitive,
+durable-before-effect extent and existing authority checks remain unchanged.
+`Test-RetainedOriginalEnrollmentHost.ps1` exercises the production registry,
+persistence/state gates and actual admission primitive with deterministic
+interleavings; JSON, durable Java callbacks, authority and providers are modeled.
+These controls establish source ordering, not an installed storage-failure cause.
+
 Native current-root lookup is separate from ordinary operation admission.
 Whole validates the current carried Whole Original. Incoming owner dispatch
 verifies the signed exact target before classifying Stop or retained

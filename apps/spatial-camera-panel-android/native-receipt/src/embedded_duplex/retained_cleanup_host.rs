@@ -155,17 +155,17 @@ impl Cleanup {
 
     // Actual unpublished constructor owner only; no cleanup outcome inferred.
     pub(super) fn construction_snapshot(&self) -> Result<Value, String> {
-        self.require_state()?;
-        let serial = self
+        let _serial = self
             .serial
             .try_enter()
-            .map_err(|_| "construction cleanup serial busy")?;
-        if serial.is_none()
-            || self
-                .requester
-                .try_lock()
-                .map_err(|_| "construction cleanup requester busy")?
-                .is_some()
+            .map_err(|_| "construction cleanup serial busy")?
+            .ok_or("construction cleanup requester active")?;
+        self.require_state()?;
+        if self
+            .requester
+            .try_lock()
+            .map_err(|_| "construction cleanup requester busy")?
+            .is_some()
         {
             return Err("construction cleanup requester active".into());
         }
@@ -192,10 +192,6 @@ impl Cleanup {
         replay: &RetainedCleanupReplaySnapshot,
         trace: &NativeTrace<'_>,
     ) -> Result<(), String> {
-        trace.mark(NativeGuard::CleanupState, NativeReason::CallFailed);
-        self.require_state()?;
-        trace.mark(NativeGuard::CleanupPublicKey, NativeReason::CallFailed);
-        let public_key = self.callbacks.local_public_key()?;
         trace.mark(NativeGuard::CleanupSerial, NativeReason::CallFailed);
         let serial = self
             .serial
@@ -204,6 +200,10 @@ impl Cleanup {
         if serial.is_none() {
             return Err("fresh cleanup mutation checked out".into());
         }
+        trace.mark(NativeGuard::CleanupState, NativeReason::CallFailed);
+        self.require_state()?;
+        trace.mark(NativeGuard::CleanupPublicKey, NativeReason::CallFailed);
+        let public_key = self.callbacks.local_public_key()?;
         trace.mark(NativeGuard::CleanupStateLock, NativeReason::CallFailed);
         let state = self
             .state
@@ -721,8 +721,10 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
         ticket: &AndroidMediaExecutionTicket,
         mode: AndroidMediaExecutionMode,
     ) -> Result<AuthenticatedOwnerEffect, String> {
-        self.cleanup.require_state()?;
+        // A live writer sets poisoned during persistence. Join its transaction
+        // before distinguishing that interval from a genuinely failed commit.
         let _mutation = self.cleanup.serial.enter()?;
+        self.cleanup.require_state()?;
         // Abort carriers retain operation=Start, but Stop/Cleanup must never
         // replace the forward ticket/projection needed to authenticate cleanup.
         let retain_forward = ticket.operation == MediaStreamPlatformOperation::Start
