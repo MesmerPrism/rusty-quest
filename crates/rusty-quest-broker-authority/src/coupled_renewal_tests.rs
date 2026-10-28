@@ -1,5 +1,6 @@
 // Optional immutable vectors from the actual coupled production-owner seam.
 // These are not device lifecycle or fresh Java/frame observations.
+include!("development_media_lifetime_tests.rs");
 fn export_ongoing_owner_vector(name: &str, value: &serde_json::Value) {
     if let Ok(directory) = std::env::var("RQ_ONGOING_OWNER_VECTOR_OUTPUT") {
         use std::io::Write;
@@ -20,6 +21,20 @@ fn bootstrap_continuous_peer(
     key: &SigningKey,
     ordinal: u64,
 ) {
+    bootstrap_continuous_peer_with_expiry(
+        authority, peer, key_id, fingerprint, key, ordinal, 301000,
+    );
+}
+
+fn bootstrap_continuous_peer_with_expiry(
+    authority: &QuestEmbeddedDuplexAuthority,
+    peer: &str,
+    key_id: &str,
+    fingerprint: &str,
+    key: &SigningKey,
+    ordinal: u64,
+    expires_at_ms: u64,
+) {
     let status = ManifoldPeerStatusProposal {
         schema_id: schema(PEER_PROPOSAL_SCHEMA),
         proposal_id: authority
@@ -39,7 +54,7 @@ fn bootstrap_continuous_peer(
             peer_id: id(peer),
             status_revision: Revision::INITIAL,
             observed_at_ms: 1_000,
-            expires_at_ms: 301000,
+            expires_at_ms,
             availability: ManifoldPeerAvailability::Ready,
             capability_ids: vec![
                 id("capability.rendezvous.ble"),
@@ -81,7 +96,7 @@ fn bootstrap_continuous_peer(
                 public_key_hex: public_hex,
                 public_key_sha256: format!("sha256:{}", sha256_hex(&public)),
                 valid_from_ms: 1_000,
-                expires_at_ms: 301000,
+                expires_at_ms,
                 status: ManifoldPeerCredentialStatus::Active,
                 replaced_by_key_id: None,
             },
@@ -285,6 +300,32 @@ fn run_coupled_owner_graph_with_history_mode(
     ongoing: bool,
     generic_history: bool,
 ) {
+    run_coupled_owner_graph_with_selected_lifetime(
+        retained_abort,
+        cross_authority_probe,
+        renewed_probe,
+        restart_after_prefix,
+        distinct_revokers,
+        expire_signer_before_cleanup,
+        root_horizon_ms,
+        ongoing,
+        generic_history,
+        false,
+    );
+}
+
+fn run_coupled_owner_graph_with_selected_lifetime(
+    retained_abort: bool,
+    cross_authority_probe: bool,
+    renewed_probe: usize,
+    restart_after_prefix: bool,
+    distinct_revokers: bool,
+    expire_signer_before_cleanup: bool,
+    root_horizon_ms: u64,
+    ongoing: bool,
+    generic_history: bool,
+    selected_development: bool,
+) {
     struct FailStopOnce {
         inner: DeterministicAndroidMediaOwnerExecutor,
         failed: bool,
@@ -391,6 +432,13 @@ fn run_coupled_owner_graph_with_history_mode(
         grant.expires_at_ms = 301000;
     }
     runtime_config.admission.snapshot.max_token_ttl_ms = 120000;
+    if selected_development {
+        runtime_config.embedded_duplex.as_mut().unwrap().schema_id =
+            crate::QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA.to_owned();
+        runtime_config.admission.snapshot.schema_id =
+            schema(rusty_manifold_admission::DEVELOPMENT_ADMISSION_SNAPSHOT_SCHEMA);
+        runtime_config.admission.snapshot.max_token_ttl_ms = root_horizon_ms;
+    }
     for lease in &mut runtime_config.initial_leases {
         lease.expires_at_ms = 301000;
     }
@@ -463,13 +511,20 @@ fn run_coupled_owner_graph_with_history_mode(
             serde_json::from_str(&encoded.replace("grant.quest.runtime", "grant.quest.peer-b"))
                 .unwrap();
     }
-    let mut runtime = QuestBrokerAuthorityRuntime::from_config(
-        runtime_config,
-        &"09".repeat(32),
-        1_000,
-        1_000_000_000,
-    )
-    .expect("duplex runtime");
+    let construct = |config: QuestBrokerRuntimeConfig, entropy: &str| {
+        if selected_development {
+            QuestBrokerAuthorityRuntime::from_config_with_lifetime_policy(
+                config,
+                entropy,
+                1_000,
+                1_000_000_000,
+                rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::source_owned_v1(),
+            )
+        } else {
+            QuestBrokerAuthorityRuntime::from_config(config, entropy, 1_000, 1_000_000_000)
+        }
+    };
+    let mut runtime = construct(runtime_config, &"09".repeat(32)).expect("duplex runtime");
     let snapshot: serde_json::Value = serde_json::from_str(
         &runtime
             .embedded_duplex_authority()
@@ -483,13 +538,7 @@ fn run_coupled_owner_graph_with_history_mode(
         serde_json::json!(["peer_status", "enrollment", "rendezvous", "media_session"])
     );
     assert_eq!(snapshot["host_id"], "host.quest-a.media-runtime");
-    let mut peer_b = QuestBrokerAuthorityRuntime::from_config(
-        peer_b_config,
-        &"0a".repeat(32),
-        1_000,
-        1_000_000_000,
-    )
-    .expect("second duplex runtime");
+    let mut peer_b = construct(peer_b_config, &"0a".repeat(32)).expect("second duplex runtime");
     let peer_b_snapshot: serde_json::Value = serde_json::from_str(
         &peer_b
             .embedded_duplex_authority()
@@ -504,22 +553,30 @@ fn run_coupled_owner_graph_with_history_mode(
     let authority_b = peer_b.embedded_duplex_authority().expect("authority b");
     let alpha = SigningKey::from_bytes(&[41; 32]);
     let beta = SigningKey::from_bytes(&[42; 32]);
+    let pair_expires_at_ms = if selected_development {
+        1000 + root_horizon_ms
+    } else {
+        240000
+    };
+    let peer_expires_at_ms = if selected_development { pair_expires_at_ms } else { 301000 };
     for authority in [&authority_a, &authority_b] {
-        bootstrap_continuous_peer(
+        bootstrap_continuous_peer_with_expiry(
             authority,
             "peer.quest-a",
             "key.peer.quest-a.1",
             "fingerprint.peer.quest-a",
             &alpha,
             1,
+            peer_expires_at_ms,
         );
-        bootstrap_continuous_peer(
+        bootstrap_continuous_peer_with_expiry(
             authority,
             "peer.quest-b",
             "key.peer.quest-b.1",
             "fingerprint.peer.quest-b",
             &beta,
             2,
+            peer_expires_at_ms,
         );
     }
     let request_a = renewal_reciprocal_request(
@@ -528,7 +585,7 @@ fn run_coupled_owner_graph_with_history_mode(
         &alpha,
         &beta,
         1300,
-        240000,
+        pair_expires_at_ms,
         1,
     );
     let request_b = renewal_reciprocal_request(
@@ -537,7 +594,7 @@ fn run_coupled_owner_graph_with_history_mode(
         &alpha,
         &beta,
         1300,
-        240000,
+        pair_expires_at_ms,
         5,
     );
     assert_ne!(
@@ -586,7 +643,7 @@ fn run_coupled_owner_graph_with_history_mode(
             id("capability.topology.wifi-direct"),
         ],
         transport: common_lan_transport('5'),
-        expires_at_ms: 240000,
+        expires_at_ms: pair_expires_at_ms,
     };
     let (_, topology_a) = authority_a
         .apply_common_lan_session(&proposal("host-a"), &receipt_a, 1_500)
@@ -623,7 +680,7 @@ fn run_coupled_owner_graph_with_history_mode(
         provider
             .issue_concurrent_peer_route(&id("session.peer.quest-a-b"), 4050, &"82".repeat(32))
             .expect("initial actual concurrent route");
-        if index == 0 {
+        if index == 0 || selected_development {
             provider
                 .install_media_owner_executor(Box::new(
                     DeterministicAndroidMediaOwnerExecutor::new(9).unwrap(),
@@ -664,6 +721,17 @@ fn run_coupled_owner_graph_with_history_mode(
         } else {
             completed.unwrap();
         }
+    }
+    if selected_development {
+        return run_coupled_fixture_stage(|| {
+            selected_development_media_lifetime_lifecycle(
+                provider_a,
+                provider_b,
+                authority_a,
+                authority_b,
+                pair_expires_at_ms,
+            );
+        });
     }
     let capture_original = |provider: &QuestBrokerRuntimeProvider,
                             authority: &QuestEmbeddedDuplexAuthority,

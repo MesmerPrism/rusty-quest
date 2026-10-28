@@ -57,6 +57,15 @@ Only the resulting
 `platform_effect_completed=true`. Start advances through receivers-armed to
 sources-started. Stop is terminal; implicit restart is rejected.
 
+An explicitly selected source-owned development lifetime policy also applies
+to the Broker-derived inner media Runtime Host lease. Its 30-day horizon stays
+bounded by the consumed admitted use and the live outer authority; selecting
+the policy cannot bypass expiry or revocation. The unselected compatibility
+path keeps its finite 120-second cap. Longer authority grants no SDK completion
+evidence: ordinary Stop still needs all seven owner effects and terminal route
+cleanup before the owners may accept a fresh Start. Host coupled controls model
+those resource callbacks and do not establish native preparation eligibility.
+
 ## Android boundary
 
 `GenericMediaSessionPlatformAdapter` reports the prepared Rust action as
