@@ -1072,7 +1072,8 @@ fn process_idle_for_enrollment() -> bool {
         return false;
     };
     if state.initializing
-        || state.closing
+        // Never-initialized retirement keeps execution fenced while metadata enrollment is idle.
+        || (state.closing && state.initialization_attempt != 0)
         || state.host.is_some()
         || state.partial_construction.is_some()
         || state.host_leases != 0
@@ -2851,6 +2852,42 @@ mod no_media_close_tests {
         process().lock().unwrap().lease_integrity_failed = true;
         assert!(fence.close(SHA).is_err());
         assert!(prepared_route().lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn cold_retirement_latch_allows_enrollment_before_native_run_adoption() {
+        let _serial = TEST_GATE.lock().unwrap();
+        *process().lock().unwrap() = ProcessState::default();
+        *prepared_route().lock().unwrap() = None;
+        retire_never_claimed_process_gate().unwrap();
+        {
+            let state = process().lock().unwrap();
+            assert!(state.closing);
+            assert!(operational_run_state_refusal(&state, false).is_none());
+        }
+        assert!(process_idle_for_enrollment());
+        // Enrollment observes idleness; it cannot unlatch Native execution exclusion.
+        assert!(process().lock().unwrap().closing);
+
+        process().lock().unwrap().initialization_attempt = 1;
+        assert!(!process_idle_for_enrollment());
+        process().lock().unwrap().initialization_attempt = 0;
+        for busy in [
+            |state: &mut ProcessState| state.initializing = true,
+            |state: &mut ProcessState| state.host_leases = 1,
+            |state: &mut ProcessState| state.lease_integrity_failed = true,
+        ] {
+            let mut state = ProcessState::default();
+            state.closing = true;
+            busy(&mut state);
+            *process().lock().unwrap() = state;
+            assert!(!process_idle_for_enrollment());
+        }
+        reset_with_staged_route();
+        process().lock().unwrap().closing = true;
+        assert!(!process_idle_for_enrollment());
+        *process().lock().unwrap() = ProcessState::default();
+        *prepared_route().lock().unwrap() = None;
     }
 
     #[test]
