@@ -71,11 +71,12 @@ def main():
     models = {
         'android/os/Bundle.java': 'package android.os; public class Bundle extends java.util.HashMap<String,Object>{ public Bundle(){} public Bundle(Bundle b){super(b);} public void putString(String k,String v){put(k,v);} public String getString(String k){return (String)get(k);} public void putFloat(String k,float v){put(k,v);} }',
         'android/content/Context.java': 'package android.content; public abstract class Context { public Context getApplicationContext(){return this;} public abstract java.io.File getNoBackupFilesDir(); public String getPackageName(){return "fixture.package";} }',
-        'android/system/Os.java': 'package android.system; public final class Os {public static void chmod(String p,int v){} public static java.io.FileDescriptor open(String p,int f,int v){return new java.io.FileDescriptor();} public static void fsync(java.io.FileDescriptor f){} public static void close(java.io.FileDescriptor f){} }',
-        'android/system/OsConstants.java': 'package android.system; public final class OsConstants {public static final int O_RDONLY=0,O_CLOEXEC=0,O_NOFOLLOW=0;}',
         'android/os/Process.java': 'package android.os; public final class Process { public static int myPid(){return Integer.getInteger("host.pid",42);} public static int myUid(){return Integer.getInteger("host.uid",10001);} }',
         'io/github/mesmerprism/rustyquest/spatial_camera_panel/BuildConfig.java': 'package io.github.mesmerprism.rustyquest.spatial_camera_panel; public final class BuildConfig { public static final String APPLICATION_ID="fixture.package"; }',
     }
+    system_models = sorted((fixture.parent / 'android-system-host/android/system').glob('*.java'))
+    for path in system_models:
+        models['android/system/' + path.name] = path.read_text(encoding='utf-8')
     host_source = (production / 'EmbeddedDuplexProcessHost.java').read_text(encoding='utf-8')
     service_source = (production / 'EmbeddedDuplexRuntimeService.java').read_text(encoding='utf-8')
     host_methods = [extract_method(host_source, signature) for signature in (
@@ -180,7 +181,7 @@ def main():
         sources.append(production / 'EmbeddedDuplexConstructionClosure.java')
     for name in ('EmbeddedDuplexFreshLifecycle.java', 'EmbeddedDuplexNativeOperationFailure.java', 'EmbeddedDuplexAppAdmission.java'):
         if (production / name).exists(): sources.append(production / name)
-    source_paths = sources + [production / name for name in ('EmbeddedDuplexProcessHost.java', 'EmbeddedDuplexRuntimeService.java', 'EmbeddedDuplexProcessIncarnation.java')] + [pathlib.Path(__file__).resolve()]
+    source_paths = sources + [production / name for name in ('EmbeddedDuplexProcessHost.java', 'EmbeddedDuplexRuntimeService.java', 'EmbeddedDuplexProcessIncarnation.java')] + system_models + [pathlib.Path(__file__).resolve()]
     source_pins = {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in source_paths}
     command = [str(java_home / 'bin/javac.exe'), '--release', '17', '-encoding', 'UTF-8', '-cp', os.pathsep.join([str(jar), args.support_classpath]) if args.support_classpath else str(jar), '-d', str(classes)] + model_paths + [str(p) for p in sources]
     with (out / 'compile.log').open('wb') as stream:

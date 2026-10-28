@@ -28,13 +28,17 @@ public final class EmbeddedDuplexProcessFenceHostTest {
     }
     // Read only the held descriptor: opening another descriptor can release fcntl locks on Linux.
     static String heldRecord(EmbeddedDuplexProcessFence fence) throws Exception {
-        java.lang.reflect.Field field = EmbeddedDuplexProcessFence.class.getDeclaredField("channel");
+        java.lang.reflect.Field field = EmbeddedDuplexProcessFence.class.getDeclaredField("descriptor");
         field.setAccessible(true);
-        java.nio.channels.FileChannel channel = (java.nio.channels.FileChannel) field.get(fence);
-        java.nio.ByteBuffer bytes = java.nio.ByteBuffer.allocate((int) channel.size());
-        channel.position(0);
-        while (bytes.hasRemaining()) if (channel.read(bytes) < 0) throw new AssertionError("record truncated");
-        return new String(bytes.array(), StandardCharsets.US_ASCII);
+        java.io.FileDescriptor descriptor = (java.io.FileDescriptor) field.get(fence);
+        byte[] bytes = new byte[(int) android.system.Os.fstat(descriptor).st_size];
+        int offset = 0;
+        while (offset < bytes.length) {
+            int count = android.system.Os.pread(descriptor, bytes, offset, bytes.length - offset, offset);
+            if (count <= 0) throw new AssertionError("record truncated");
+            offset += count;
+        }
+        return new String(bytes, StandardCharsets.US_ASCII);
     }
     static EmbeddedDuplexProcessIncarnation.Identity identity(long ticks) {
         return new EmbeddedDuplexProcessIncarnation.Identity("00112233-4455-6677-8899-aabbccddeeff", 42, 10001, ticks);
@@ -64,9 +68,9 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         rejects(()->recovered.afterVerifiedNoMediaCleanup(null,null));
         rejects(()->recovered.afterVerifiedWholeProductCleanup(null,null,"a".repeat(64)));
         // Corrupt the already-held inode through its retained descriptor; never reopen the fcntl inode.
-        var field=EmbeddedDuplexProcessFence.class.getDeclaredField("channel");field.setAccessible(true);
-        var channel=(java.nio.channels.FileChannel)field.get(recovered);
-        channel.position(0);channel.write(java.nio.ByteBuffer.wrap("x".getBytes(StandardCharsets.US_ASCII)));channel.force(true);
+        var field=EmbeddedDuplexProcessFence.class.getDeclaredField("descriptor");field.setAccessible(true);
+        var descriptor=(java.io.FileDescriptor)field.get(recovered);
+        android.system.Os.pwrite(descriptor,"x".getBytes(StandardCharsets.US_ASCII),0,1,0);android.system.Os.fsync(descriptor);
         rejects(()->inspectionDirectory(recovered));
         recovered.close();rejects(()->inspectionDirectory(recovered));
         System.out.println("Cold Pending inspection controls passed; actual writer verified, all effect gates retained.");

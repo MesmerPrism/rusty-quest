@@ -31,6 +31,7 @@ $javac = if ($JavaHome) { Join-Path $JavaHome 'bin/javac.exe' } else { (Get-Comm
 $java = Join-Path (Split-Path $javac -Parent) 'java.exe'
 $sources = @('EmbeddedDuplexProcessFence.java', 'EmbeddedDuplexProcessIncarnation.java', 'EmbeddedDuplexCanonicalJson.java') | ForEach-Object { Join-Path $main $_ }
 $testSources = @('EmbeddedDuplexProcessFenceHostTest.java', 'EmbeddedDuplexProcessIncarnationHostTest.java') | ForEach-Object { Join-Path $tests $_ }
+$testSources += @(Get-ChildItem -LiteralPath (Join-Path $tests 'android-system-host/android/system') -Filter '*.java' -File | ForEach-Object FullName)
 $classes = Join-Path $output 'host'
 & $javac '--release' '17' '-encoding' 'UTF-8' '-cp' $HostJsonJar '-d' $classes @sources @testSources *> (Join-Path $output 'host-javac.log')
 if ($LASTEXITCODE -ne 0) { Get-Content (Join-Path $output 'host-javac.log'); throw 'Process identity/fence host compilation failed' }

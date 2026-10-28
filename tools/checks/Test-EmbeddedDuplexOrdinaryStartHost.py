@@ -75,13 +75,13 @@ def main():
     models = {path.relative_to(original_out / 'models').as_posix(): path.read_text(encoding='utf-8')
               for path in (original_out / 'models').rglob('*.java')}
     key = package + '/EmbeddedDuplexProcessHost.java'
-    generated = models[key].replace('private Object platform,resources;', 'private Platform platform; private Object resources;')
-    generated = generated.replace('platform=new Object();', 'platform=new Platform();')
+    generated = models[key]
     leaves = r'''
       private final Object attachmentGate=new Object();
       private long attachmentGeneration=7;
-      private boolean localFixture,displayDetaching,closeInFlight;
-      private String runtimeConfigSha256="b".repeat(64),enrollmentRecordSha256="c".repeat(64),ownFeatureLockSha256="f".repeat(64);
+      private boolean localFixture;
+      private String enrollmentRecordSha256="c".repeat(64),ownFeatureLockSha256="f".repeat(64);
+      {runtimeConfigSha256="b".repeat(64);}
       private final EmbeddedDuplexStartIntentSlot startIntent=new EmbeddedDuplexStartIntentSlot();
       private final Display display=new Display();
       private static final class Display { boolean cleanupPending(){return false;} }
@@ -130,6 +130,9 @@ def main():
         });
       }
     '''
+    # The current Originals model already owns the typed platform and lifecycle fields.
+    platform_key = package + '/EmbeddedDuplexPlatform.java'
+    models[platform_key] = models[platform_key][:-1] + extract(leaves, 'void requirePreparedNativeStatus(') + '\n}'
     models[key] = generated[:-1] + leaves + '\n' + '\n'.join(methods) + '\n}'
     service_key = package + '/EmbeddedDuplexRuntimeService.java'
     service_methods = [extract(service, signature) for signature in (

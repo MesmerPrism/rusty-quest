@@ -17,7 +17,14 @@ public final class Os {
  public static boolean awaitRead()throws InterruptedException{return readEntered.await(5,java.util.concurrent.TimeUnit.SECONDS);}
  public static void releaseRead(){readReleased.set(true);}
  private static final Map<FileDescriptor,RandomAccessFile> FILES=Collections.synchronizedMap(new IdentityHashMap<>());
+ private static final Set<FileDescriptor> DIRECTORIES=Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
+ // Existing host fixture permissions/directory fsync are modeled, not executed.
+ public static void chmod(String path,int mode){}
+ public static void fchmod(FileDescriptor fd,int mode){}
  public static FileDescriptor open(String path,int flags,int mode)throws IOException{
+  if((flags==(OsConstants.O_RDONLY|OsConstants.O_CLOEXEC|OsConstants.O_NOFOLLOW)||flags==(OsConstants.O_RDONLY|OsConstants.O_CLOEXEC))&&mode==0&&Files.isDirectory(Path.of(path),LinkOption.NOFOLLOW_LINKS)){
+   FileDescriptor fd=new FileDescriptor();DIRECTORIES.add(fd);return fd;
+  }
   if(flags!=(OsConstants.O_RDWR|OsConstants.O_CLOEXEC|OsConstants.O_NOFOLLOW)||mode!=0)throw new IOException("host requires no-create/no-truncate/nofollow flags");
   Path p=Path.of(path);if(!Files.isRegularFile(p,LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(p))throw new FileNotFoundException("host no-follow regular file required");
   RandomAccessFile f=new RandomAccessFile(path,"rw");FileDescriptor fd=f.getFD();FILES.put(fd,f);lastOpened=fd;return fd;
@@ -35,6 +42,6 @@ public final class Os {
   if(failWrite){failWrite=false;throw new IOException("modeled pwrite IO failure");}
   RandomAccessFile f=file(fd);synchronized(f){f.seek(position);f.write(data,offset,count);return count;}}
  public static void ftruncate(FileDescriptor fd,long length)throws IOException{file(fd).setLength(length);}
- public static void fsync(FileDescriptor fd)throws IOException{file(fd).getFD().sync();}
- public static void close(FileDescriptor fd)throws IOException{file(fd).close();FILES.remove(fd);}
+ public static void fsync(FileDescriptor fd)throws IOException{if(!DIRECTORIES.contains(fd))file(fd).getFD().sync();}
+ public static void close(FileDescriptor fd)throws IOException{if(!DIRECTORIES.remove(fd)){file(fd).close();FILES.remove(fd);}}
 }
