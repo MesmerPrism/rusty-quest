@@ -725,6 +725,42 @@ impl AuthenticatedOwnerRegistry for RetainingRegistry {
         // before distinguishing that interval from a genuinely failed commit.
         let _mutation = self.cleanup.serial.enter()?;
         self.cleanup.require_state()?;
+        if let Some(original) = authority.filter(|a| {
+            a.authority_peer_id == self.cleanup.local && a.executor_peer_id == self.cleanup.local
+        }) {
+            // The local projection was sampled before waiting. Reborrow its
+            // actual shared Broker owner through the existing C1 source, which
+            // retains the ordinary Stop fallback. A receiving remote original
+            // instead keeps its independent enrollment admission below.
+            let now = self.cleanup.clock.now_ms()?;
+            let source = rusty_quest_broker_authority::QuestEmbeddedDuplexProjectionSource::new(
+                self.cleanup.authority.clone(),
+                serde_json::from_value(json!(original.route_grant_id)).map_err(safe_decode)?,
+                serde_json::from_value(json!(original.authority_peer_id)).map_err(safe_decode)?,
+            );
+            let current = source.current_projection(ticket, &self.cleanup.local, mode, now)?;
+            // Observation receipt digests include their sampling time. Match
+            // semantic authority and bounded held expiry, never extend it.
+            if original.schema_id != current.schema_id
+                || original.authority_peer_id != current.authority_peer_id
+                || original.executor_peer_id != current.executor_peer_id
+                || original.peer_session_id != current.peer_session_id
+                || original.route_grant_id != current.route_grant_id
+                || original.route_authority_revision != current.route_authority_revision
+                || original.authority_runtime_host_id != current.authority_runtime_host_id
+                || original.authority_provider_epoch_id != current.authority_provider_epoch_id
+                || original.platform_runtime_spec_id != current.platform_runtime_spec_id
+                || original.authority_client_id != current.authority_client_id
+                || original.authority_runtime_lease_id != current.authority_runtime_lease_id
+                || original.signed_topology_sha256 != current.signed_topology_sha256
+                || original.route_configuration_sha256 != current.route_configuration_sha256
+                || original.authorization_kind != current.authorization_kind
+                || original.expires_at_ms <= now
+                || original.expires_at_ms > current.expires_at_ms
+            {
+                return Err("cleanup admission current authority differs".into());
+            }
+        }
         // Abort carriers retain operation=Start, but Stop/Cleanup must never
         // replace the forward ticket/projection needed to authenticate cleanup.
         let retain_forward = ticket.operation == MediaStreamPlatformOperation::Start

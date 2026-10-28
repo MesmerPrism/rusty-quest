@@ -534,6 +534,18 @@ persistence/state gates and actual admission primitive with deterministic
 interleavings; JSON, durable Java callbacks, authority and providers are modeled.
 These controls establish source ordering, not an installed storage-failure cause.
 
+After that wait, a local C1 registry reborrows the current projection through
+the existing shared Broker owner and samples the current clock before any
+retained write or provider effect. Semantic route, session, epoch, client, lease,
+topology and configuration bindings must still match. The held expiry must be
+live and no later than the current bound; it is never rewritten or extended.
+A time-dependent observation-receipt digest may change without changing that
+authority. This restores the post-admission local check from `2c984675` using
+today's projection source and its existing Stop-only retained-cleanup fallback.
+Receiving remote originals retain their post-wait enrollment check and never
+borrow the receiver's distinct local Broker as their source. Recipient-generation
+checks and owned-cleanup authentication remain unchanged.
+
 Native current-root lookup is separate from ordinary operation admission.
 Whole validates the current carried Whole Original. Incoming owner dispatch
 verifies the signed exact target before classifying Stop or retained
