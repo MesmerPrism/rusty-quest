@@ -567,7 +567,7 @@ impl<'a> QuestBrokerAndroidMediaOwnerProvider<'a> {
             action,
             owner_action,
             self.sequence,
-            self.executor.executor_generation(),
+            self.executor.executor_generation_for(action, owner_action)?,
             self.capability.clone(),
         )
         .map_err(|error| error.to_string())?;
@@ -616,7 +616,7 @@ impl MediaStreamTrustedOwnerProvider for QuestBrokerAndroidMediaOwnerProvider<'_
                     action,
                     owner_action,
                     self.sequence,
-                    self.executor.executor_generation(),
+                    ticket.executor_generation,
                     self.capability.clone(),
                 )
                 .as_ref()
@@ -3643,6 +3643,10 @@ mod tests {
         QuestAndroidBinderCaller, QUEST_ADMISSION_OPERATION_SCHEMA,
     };
     use rusty_quest_media_stream_android::DeterministicAndroidMediaOwnerExecutor;
+
+    mod recipient_generation {
+        include!("recipient_generation_tests.rs");
+    }
 
     fn id(value: &str) -> DottedId {
         DottedId::new(value).expect("id")

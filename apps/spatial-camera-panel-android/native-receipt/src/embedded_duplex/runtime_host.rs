@@ -135,9 +135,19 @@ struct ConfiguredProjectionSource {
     route_grant_id: Arc<Mutex<String>>,
     authority_peer_id: String,
     route_configuration_sha256: String,
+    local_executor_generation: u64,
 }
 
 impl CurrentOwnerProjectionSource for ConfiguredProjectionSource {
+    fn target_executor_generation(&self, target_peer_id: &str) -> Result<u64, String> {
+        prepared_start::target_executor_generation(
+            &self.authority_peer_id,
+            target_peer_id,
+            self.local_executor_generation,
+            &self.route_configuration_sha256,
+        )
+    }
+
     fn current_projection(
         &self,
         ticket: &AndroidMediaExecutionTicket,
@@ -1584,6 +1594,7 @@ fn build_host(
         route_grant_id: route_grant_binding.clone(),
         authority_peer_id: bootstrap.local_peer_id.clone(),
         route_configuration_sha256: bootstrap.route_configuration_sha256.clone(),
+        local_executor_generation: capability.generation,
     };
     let executor = CompositeAndroidMediaOwnerExecutor::new(
         capability.generation,
@@ -2024,11 +2035,16 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
                     else { require_general_host_admission(&host, false) }
                 })
                 .map_err(|error| {
+                    // Fixed-size observation of the exact original UTF-8 error;
+                    // no arbitrary error/payload text crosses this log boundary.
+                    let error_sha256 = rusty_quest_broker_authority::packaged_json_sha256(&error);
+                    let error_bytes = error.len();
                     let stage = match error.as_str() {
                         "dispatch frame bounds"|"dispatch frame bounds or magic"|"dispatch frame lengths"|
                         "metadata length"|"payload length"|"payload digest mismatch"|"invalid dispatch request metadata"|
                         "invalid ticket payload"|"invalid dispatch request" => "FRAME_DECODE",
                         "dispatch request binding mismatch" => "TICKET_TARGET_BINDING",
+                        "authenticated owner executor differs" => "TARGET_EXECUTOR_GENERATION",
                         "dispatch request is not currently fresh"|"owner dispatch request is not currently fresh" => "FRESHNESS",
                         "dispatch signer is not currently enrolled"|"dispatch signature"|"request signature"|
                         "invalid enrolled key"|"invalid Ed25519 signature base64 length"|
@@ -2048,7 +2064,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
                         _ => "FRAME_OR_DISPATCH_BOUNDARY",
                     };
                     if let Ok(mut failed)=host.owner_dispatch_failure.lock(){if failed.is_none(){*failed=Some(stage);}}
-                    crate::camera_hwb_marker::log_camera_hwb_marker(format!("status=owner-dispatch-rejected stage={stage} code=PRE_EFFECT_OR_RECEIPT_REJECTED"));
+                    crate::camera_hwb_marker::log_camera_hwb_marker(format!("status=owner-dispatch-rejected stage={stage} code=PRE_EFFECT_OR_RECEIPT_REJECTED error_sha256={error_sha256} error_bytes={error_bytes}"));
                     "owner dispatch rejected".to_owned()
                 })
         };

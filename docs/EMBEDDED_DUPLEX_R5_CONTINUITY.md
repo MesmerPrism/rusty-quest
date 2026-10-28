@@ -175,6 +175,40 @@ they preserve the original operation result and never establish completion.
 `peer_status.native_owner_dispatch_failure` carries the code through its
 existing field. The Java diagnostic parser and cleanup authority remain unchanged.
 
+Ordinary remote owner ticket issuance consumes the current actor's privately held
+prepared decoder receipt, whose sole writer authenticates the signed remote
+view and validates the exact decoder request before preparation completes.
+The lookup joins local Native generation, peers, immutable route configuration
+and held preparation actor. It selects recipient placement identity only; current
+media authority and the receiver's Native/Java registry checks remain separate.
+Retained cleanup keeps its local source carrier and independently target-authored
+Stop, including after prepared metadata retirement.
+
+At the existing Native rejection log, `TARGET_EXECUTOR_GENERATION` identifies the
+exact authenticated-recipient generation refusal. Each rejection also records
+`error_sha256` and `error_bytes` from the original UTF-8 error before generic
+mapping. These fixed-size observations permit offline comparison with source
+literals even for a residual stage; arbitrary error, ticket, key or payload text
+is not logged. The first-failure latch and generic caller rejection remain.
+Ordinary JNI exchange failures have the finite `ORDINARY_JAVA_EXCHANGE_REJECTED`
+code, separate from owner callback rejection. None of these observations supplies
+completion, cleanup or admission evidence.
+
+The first-error latch also emits `status=owner-effect-failed` with that finite
+stage and original error fingerprint on Android, after releasing its diagnostic
+mutex. This preserves local pre-dispatch proof failures for offline comparison
+when no incoming dispatch boundary runs. Later compensation failures cannot
+replace or relog that first cause. Host builds retain the same return/latch
+behavior without requiring an Android logger.
+
+The broker's `recipient_generation` controls join actual ticket issuance,
+Composite placement, authenticated prepared metadata and signed remote dispatch
+against asymmetric registry generations. The existing
+`Test-RetainedOwnerDiagnosticsHost.py` additionally accepts `--host-deps` naming
+provisioned host dependencies to exercise exact held-generation, retained-carrier
+and rejection-log bodies. These controls model enclosing Native/resource owners;
+they do not typecheck the Android native application or qualify device effects.
+
 `tools/checks/Test-RetainedPrepareDiagnosticHost.ps1` executes the exact outgoing
 production preparation block and latch with explicitly modeled platform seams.
 The focused broker-authority test

@@ -413,6 +413,15 @@ pub trait OwnerDispatchClock: Send + Sync {
 
 /// Broker-owned source of a freshly live-validated remote projection.
 pub trait CurrentOwnerProjectionSource: Send + Sync {
+    /// Returns the recipient's installed generation from authenticated preparation.
+    /// Route authority alone does not identify a remote Native registry.
+    ///
+    /// # Errors
+    /// Returns an error when that exact peer has no held authenticated target binding.
+    fn target_executor_generation(&self, _target_peer_id: &str) -> Result<u64, String> {
+        Err("authenticated target executor generation unavailable".into())
+    }
+
     /// Produces a current projection for the exact ticket and target peer.
     ///
     /// # Errors
@@ -605,6 +614,31 @@ pub struct CompositeAndroidMediaOwnerExecutor {
 }
 
 impl CompositeAndroidMediaOwnerExecutor {
+    fn target(
+        &self,
+        owner_kind: rusty_quest_media_stream::MediaStreamOwnerKind,
+        owner_id: &str,
+        provider_kind: &str,
+        resource_id: &str,
+    ) -> Result<&AndroidMediaOwnerPlacementTarget, String> {
+        self.placements
+            .get(&(owner_kind, owner_id.into(), provider_kind.into(), resource_id.into()))
+            .ok_or_else(|| "owner placement absent".to_owned())
+    }
+
+    fn target_generation(&self, target: &AndroidMediaOwnerPlacementTarget) -> Result<u64, String> {
+        let generation = match target {
+            AndroidMediaOwnerPlacementTarget::Local => self.generation,
+            AndroidMediaOwnerPlacementTarget::Remote { peer_id } => {
+                self.projections.target_executor_generation(peer_id)?
+            }
+        };
+        if generation == 0 {
+            return Err("authenticated target executor generation unavailable".into());
+        }
+        Ok(generation)
+    }
+
     /// Creates a complete executor and rejects missing/duplicate owner families.
     ///
     /// # Errors
@@ -671,25 +705,34 @@ impl crate::AndroidMediaOwnerExecutor for CompositeAndroidMediaOwnerExecutor {
         self.generation
     }
 
+    fn executor_generation_for(
+        &self,
+        _action: &rusty_quest_media_stream::MediaStreamPlatformAction,
+        owner: &rusty_quest_media_stream::MediaStreamOwnerAction,
+    ) -> Result<u64, String> {
+        let selection = &owner.selection;
+        self.target_generation(self.target(
+            selection.owner_kind,
+            &selection.owner_id,
+            &selection.provider_kind,
+            &selection.resource_id,
+        )?)
+    }
+
     fn execute(
         &mut self,
         ticket: &AndroidMediaExecutionTicket,
         mode: AndroidMediaExecutionMode,
     ) -> Result<AndroidMediaOwnerReadback, String> {
-        if ticket.executor_generation != self.generation {
+        let target = self.target(
+            ticket.owner_kind,
+            &ticket.owner_id,
+            &ticket.provider_kind,
+            &ticket.resource_id,
+        )?.clone();
+        if ticket.executor_generation != self.target_generation(&target)? {
             return Err("executor generation mismatch".to_owned());
         }
-        let key = (
-            ticket.owner_kind,
-            ticket.owner_id.clone(),
-            ticket.provider_kind.clone(),
-            ticket.resource_id.clone(),
-        );
-        let target = self
-            .placements
-            .get(&key)
-            .ok_or_else(|| "owner placement absent".to_owned())?
-            .clone();
         let now_ms = self.clock.now_ms()?;
         let target_peer_id = match &target {
             AndroidMediaOwnerPlacementTarget::Local => self.local_peer_id.clone(),
@@ -1943,6 +1986,10 @@ mod tests {
     }
     struct TestProjection;
     impl CurrentOwnerProjectionSource for TestProjection {
+        fn target_executor_generation(&self, _target_peer_id: &str) -> Result<u64, String> {
+            Ok(7)
+        }
+
         fn current_projection(
             &self,
             _ticket: &AndroidMediaExecutionTicket,
