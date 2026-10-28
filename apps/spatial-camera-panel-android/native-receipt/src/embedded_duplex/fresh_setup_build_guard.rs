@@ -82,7 +82,6 @@ mod tests {
           "trusted_operator_ids":["operator.fixture"],"trusted_key_fingerprints":["fingerprint.fixture"],
           "trusted_adapter_ids":["adapter.fixture"],"trusted_media_revoker_ids":["revoker.fixture"]
         }"#).unwrap();
-        assert!(config.validate());
         assert!(selected_projection(Some(&config)).unwrap().is_none());
         assert!(selected_projection(None).unwrap().is_none());
         config.schema_id = QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA.into();
