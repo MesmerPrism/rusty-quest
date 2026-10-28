@@ -95,6 +95,59 @@ public final class EmbeddedDuplexWholePublicationHostTest {
         join.put("outcome_sha256",changedRow.getString("outcome_sha256")).put("physical_retirement_sha256",EmbeddedDuplexCanonicalJson.sha256(changed));Files.writeString(joinFile.toPath(),EmbeddedDuplexCanonicalJson.encode(join));
         denied(()->EmbeddedDuplexOriginals.closedWholeHandoff(root,ID,"fixture.package"));
     }
+    static void otherDirectFamilies()throws Exception{
+        for(String family:new String[]{"v1","v3"})for(String damage:new String[]{"none","barrier_pending","unrecognized","native_actor"}){
+            JSONObject receipt=whole();
+            EmbeddedDuplexProcessHost.RetainedNoMediaClose owner=held(receipt);
+            if(family.equals("v1")){
+                receipt.put("$schema","rusty.quest.embedded_duplex.no_media_whole_retirement.v1").remove("config_sha256");
+                receipt.put("native_retirement",new JSONObject().put("$schema","rusty.quest.embedded_duplex.no_media_retirement.v1")
+                    .put("native_runtime_binding","not_initialized").put("disposition","uninitialized_fence_closed")
+                    .put("app_process_generation",7).put("app_record_sha256",HASH).put("native_executor_generation",9));
+            }else{
+                receipt.put("$schema",EmbeddedDuplexConstructionClosure.WHOLE);
+                receipt.put("native_retirement",new JSONObject().put("$schema",EmbeddedDuplexConstructionClosure.NATIVE)
+                    .put("native_runtime_binding","partial_construction").put("disposition","partial_construction_closed")
+                    .put("app_process_generation",7).put("app_record_sha256",HASH).put("native_executor_generation",9)
+                    .put("config_sha256",HASH).put("construction_disposition","not_committed").put("closure_body_sha256","sha256:"+HASH)
+                    .put("durable_closure",JSONObject.NULL).put("provider_entered",false).put("new_media_starts",0)
+                    .put("old_outcomes_preserved",true).put("future_writable_restore","owner_factory_not_entered"));
+                owner.pendingFresh=false;owner.configurationContext=null;
+            }
+            if(damage.equals("barrier_pending"))receipt.put("whole_app_physical_cleanup","pending");
+            if(damage.equals("unrecognized"))receipt.put("$schema","rusty.quest.embedded_duplex.no_media_whole_retirement.v99");
+            // The v1 contract validates terminality only; the v3 retained owner also validates its Native actor.
+            if(damage.equals("native_actor")){
+                if(family.equals("v1"))continue;
+                receipt.getJSONObject("native_retirement").put("native_executor_generation",10);
+            }
+            owner.proof=new JSONObject(receipt.toString());
+            File root=Files.createTempDirectory("whole-"+family+"-").toFile();
+            EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,new EmbeddedDuplexOriginalsHostTest.Actor(),()->{});
+            CompletableFuture<Bundle> future=new CompletableFuture<>();EmbeddedDuplexOriginals.Record[] actual=new EmbeddedDuplexOriginals.Record[1];
+            AtomicInteger effects=new AtomicInteger();JSONObject request=EmbeddedDuplexOriginals.request("whole_app_close",CHALLENGE,new Bundle());
+            store.begin(ID,"whole_app_close",CHALLENGE,request,()->{
+                effects.incrementAndGet();actual[0]=EmbeddedDuplexOriginals.capture();actual[0].retainedCleanupOwner=owner;return future;
+            });
+            byte[] pending=Files.readAllBytes(new File(root,"operator-originals-v1/"+ID+".json").toPath());
+            future.complete(response(receipt));
+            if(!damage.equals("none")){
+                denied(()->store.query(ID,CHALLENGE));
+                yes(actual[0].persistenceFailure!=null&&actual[0].callbackJoined,"bad direct family must refuse publication: "+family+damage);
+                yes(java.util.Arrays.equals(pending,Files.readAllBytes(new File(root,"operator-originals-v1/"+ID+".json").toPath())),"failed publication rewrote pending checkpoint");
+                continue;
+            }
+            Bundle query=store.query(ID,CHALLENGE);JSONObject row=observation(query);
+            yes("observed".equals(query.getString("status"))&&"succeeded".equals(row.getString("state")),"direct "+family+" Whole must publish through production complete");
+            yes(actual[0].persistenceFailure==null&&actual[0].callbackJoined,"direct "+family+" callback must publish and join");
+            yes(EmbeddedDuplexCanonicalJson.sha256(row.getJSONObject("response")).equals(row.getString("response_sha256")),"direct receipt bytes must remain bound");
+            byte[] published=Files.readAllBytes(new File(root,"operator-originals-v1/"+ID+".json").toPath());
+            yes("observed".equals(new EmbeddedDuplexOriginals(root,new EmbeddedDuplexOriginalsHostTest.Actor(),()->{}).query(ID,CHALLENGE).getString("status")),"direct family retrieval must survive process-local owner loss");
+            yes(java.util.Arrays.equals(published,Files.readAllBytes(new File(root,"operator-originals-v1/"+ID+".json").toPath())),"retrieval rewrote published checkpoint");
+            store.begin(ID,"whole_app_close",CHALLENGE,request,()->{throw new AssertionError("Whole replayed");});
+            yes(effects.get()==1,"direct family query/repeat must preserve once semantics");
+        }
+    }
     static void invalidDirectControls()throws Exception{
         for(String damage:new String[]{"owner_absent","callback_pending","callback_failed","outbound_pending","barrier_pending","native_actor","constructor_binding","unrecognized"}){
             JSONObject receipt=whole();EmbeddedDuplexProcessHost.RetainedNoMediaClose owner=held(receipt);
@@ -134,7 +187,7 @@ public final class EmbeddedDuplexWholePublicationHostTest {
         }
     }
     public static void main(String[] args)throws Exception{
-        directWholeControls();invalidDirectControls();wrapperControls();
+        directWholeControls();otherDirectFamilies();invalidDirectControls();wrapperControls();
         System.out.println("Whole publication controls passed: "+checks+"; actual complete/store/retrieval and exact Host predicates; physical observations modeled.");
     }
 }

@@ -515,8 +515,10 @@ public final class EmbeddedDuplexOriginals {
                 } else {
                     actual = validateResponse(record, response);
                     JSONObject receipt = new JSONObject(actual.getString("receipt"));
-                    if (operation.equals("whole_app_close")
-                            && EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2.equals(receipt.optString("$schema")))
+                    if (operation.equals("whole_app_close") && Set.of(
+                            "rusty.quest.embedded_duplex.no_media_whole_retirement.v1",
+                            EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2,
+                            EmbeddedDuplexConstructionClosure.WHOLE).contains(receipt.optString("$schema")))
                         pending = nativePending(record, operation, actual) != null;
                     else pending = nativePending(operation, actual);
                 }
