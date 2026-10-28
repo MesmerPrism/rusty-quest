@@ -120,7 +120,8 @@ final class EmbeddedDuplexProcessIncarnation {
         Path path=phasePath(directory,EmbeddedDuplexProcessFence.digest(record));
         if(!Files.exists(path,LinkOption.NOFOLLOW_LINKS)){
             Set<OpenOption> options=Set.of(StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS);
-            java.nio.file.attribute.FileAttribute<?>[] permissions=Files.getFileStore(directory.toPath()).supportsFileAttributeView("posix")
+            // Provider capabilities need no privileged per-mount FileStore inspection on Android.
+            java.nio.file.attribute.FileAttribute<?>[] permissions=directory.toPath().getFileSystem().supportedFileAttributeViews().contains("posix")
                 ?new java.nio.file.attribute.FileAttribute<?>[]{java.nio.file.attribute.PosixFilePermissions.asFileAttribute(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))}
                 :new java.nio.file.attribute.FileAttribute<?>[0];
             Path staged=new File(directory,path.getFileName()+"."+java.util.UUID.randomUUID()+".new").toPath();

@@ -150,6 +150,10 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         }
     }
     public static void main(String[] args) throws Exception {
+        if (args.length == 1 && args[0].equals("file-store-denied")) {
+            coldAcquisitionWithoutFileStore();
+            return;
+        }
         if (args.length > 0) {
             EmbeddedDuplexProcessFence fence = acquire(Path.of(args[1]));
             if (Boolean.parseBoolean(args[2])) fence.beforeRuntimeEffects(null, null);
@@ -162,6 +166,7 @@ public final class EmbeddedDuplexProcessFenceHostTest {
         runControls();
         inspectionControls();
         predecessorPublicationCuts();
+        coldAcquisitionWithoutFileStore();
         Path directory = Files.createTempDirectory("duplex-fence-test");
         EmbeddedDuplexProcessFence first = acquire(directory);
         if (first.generation() != 1) throw new AssertionError("initial generation");
@@ -292,6 +297,39 @@ public final class EmbeddedDuplexProcessFenceHostTest {
                 if(!"partial predecessor".equals(Files.readString(orphan)))throw new AssertionError("orphan bytes changed");
             }
         }
+    }
+
+    @SuppressWarnings("removal")
+    static void coldAcquisitionWithoutFileStore() throws Exception {
+        Path global=Files.createTempDirectory("duplex-no-filestore-global"),replay=Files.createTempDirectory("duplex-no-filestore-owner");
+        String run="e".repeat(32),checkpoint="checkpoint exact\n",evidence="evidence exact\n",prior;
+        Path checkpointFile=replay.resolve("start-checkpoint.v1.json"),evidenceFile=replay.resolve("recovery-evidence.v1.json");
+        Files.writeString(checkpointFile,checkpoint);Files.writeString(evidenceFile,evidence);
+        try(EmbeddedDuplexProcessFence initial=EmbeddedDuplexProcessFence.acquire(global.toFile(),null,null,()->{},run,replay.toFile())){
+            initial.bindIncarnation(identity(101));initial.beforeRuntimeEffects(checkpoint,evidence);prior=initial.nativeInspectionRecord();
+        }
+        byte[] companion=Files.readAllBytes(replay.resolve("process-incarnation.v1.json"));
+        SecurityManager previous=System.getSecurityManager();
+        System.setSecurityManager(new SecurityManager(){
+            @Override public void checkPermission(java.security.Permission permission){
+                if(permission.getName().equals("getFileStoreAttributes"))throw new SecurityException("fixture FileStore inspection denied");
+            }
+        });
+        try {
+            try { Files.getFileStore(replay);throw new AssertionError("FileStore denial fixture inactive"); }
+            catch(SecurityException expected){ /* Android rejects this privileged store query. */ }
+            try(EmbeddedDuplexProcessFence recovered=EmbeddedDuplexProcessFence.acquire(global.toFile(),checkpoint,evidence,()->{},run,replay.toFile())){
+                if(recovered.generation()!=2||!recovered.effectsPending()||!recovered.recoveryOnly())throw new AssertionError("cold acquisition changed Pending disposition");
+                rejects(recovered::requireFresh);
+                Path witness=replay.resolve("process-incarnation.phase."+EmbeddedDuplexProcessFence.digest(prior)+".record");
+                if(!prior.equals(Files.readString(witness))||!prior.equals(recovered.acquisitionRecordForRecovery()))throw new AssertionError("exact predecessor lost");
+                if(replay.getFileSystem().supportedFileAttributeViews().contains("posix")
+                        &&!Files.getPosixFilePermissions(witness).equals(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")))throw new AssertionError("predecessor permissions differ");
+                if(!checkpoint.equals(Files.readString(checkpointFile))||!evidence.equals(Files.readString(evidenceFile))
+                        ||!java.util.Arrays.equals(companion,Files.readAllBytes(replay.resolve("process-incarnation.v1.json"))))throw new AssertionError("retained journal or companion bytes changed");
+            }
+        } finally { System.setSecurityManager(previous); }
+        System.out.println("Cold Pending acquisition passed with FileStore denied; exact predecessor and journal bytes retained.");
     }
 
 }
