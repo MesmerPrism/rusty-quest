@@ -44,7 +44,38 @@ public final class PreparedReceiverWaitHost {
             ((CountDownLatch) get(r, "ready")).countDown();
         }
     }
+    private static void localStartQualification()throws Exception {
+        PackedStereoMediaReceiver r=receiver(true);CountDownLatch release=new CountDownLatch(1);
+        Thread worker=new Thread(()->{try{release.await();}catch(InterruptedException ignored){}});
+        HandlerThread callback=new HandlerThread("qualification-callback");callback.hostRelease=release;
+        worker.setDaemon(true);callback.setDaemon(true);worker.start();callback.start();
+        java.net.ServerSocket listener=new java.net.ServerSocket(); // Unbound modeled listener; no port/network work.
+        try {
+            Class<?> unsafeClass=Class.forName("sun.misc.Unsafe");Field singleton=unsafeClass.getDeclaredField("theUnsafe");singleton.setAccessible(true);
+            Object codec=unsafeClass.getMethod("allocateInstance",Class.class).invoke(singleton.get(null),android.media.MediaCodec.class);
+            set(r,"decoder",codec);set(r,"worker",worker);set(r,"renderThread",callback);set(r,"incomingListener",listener);
+            set(r,"preparedConnection",1L);set(r,"connectionGeneration",1L);set(r,"state","prepared_decoder_ready");
+            require(r.preparedDecoderStartable()&&r.preparedDecoderHeld(),"same dormant prepared decoder refused");
+            set(r,"preparedDeliveryOpen",true);set(r,"liveRequested",true);
+            for(String state:new String[]{"receiver_armed","receiving"}){
+                set(r,"state",state);require(r.preparedDecoderStartable()&&!r.preparedDecoderHeld(),"same incoming active decoder refused");
+            }
+            for(String state:new String[]{"failed","stopping","stopped","new","preparing_decoder"}){
+                set(r,"state",state);require(!r.preparedDecoderStartable(),"unqualified receiver state accepted: "+state);
+            }
+            set(r,"state","receiving");set(r,"stopRequested",true);require(!r.preparedDecoderStartable(),"stopped prepared receiver accepted");set(r,"stopRequested",false);
+            set(r,"failure","modeled actual failure");require(!r.preparedDecoderStartable(),"failed prepared receiver accepted");set(r,"failure","");
+            set(r,"firstFailureCode","STREAM_EOF");require(!r.preparedDecoderStartable(),"retained actual transport failure accepted");set(r,"firstFailureCode","NONE");
+            set(r,"connectionGeneration",2L);require(!r.preparedDecoderStartable(),"foreign connection accepted");set(r,"connectionGeneration",1L);
+            set(r,"liveRequested",false);require(!r.preparedDecoderStartable(),"unrequested open gate accepted");set(r,"liveRequested",true);
+            set(r,"decoder",null);require(!r.preparedDecoderStartable(),"missing decoder accepted");set(r,"decoder",codec);
+            set(r,"worker",null);require(!r.preparedDecoderStartable(),"missing worker accepted");set(r,"worker",worker);
+            set(r,"renderThread",null);require(!r.preparedDecoderStartable(),"missing callback owner accepted");set(r,"renderThread",callback);
+            require((boolean)get(r,"preparedDeliveryOpen")&&!(boolean)get(r,"stopRequested"),"read-only qualification changed delivery/Stop");
+        } finally {release.countDown();worker.join(1000);callback.join(1000);listener.close();}
+    }
     public static void main(String[] args) throws Exception {
+        localStartQualification();
         PackedStereoMediaReceiver delayed = receiver(true);
         Call start = new Call(() -> delayed.start(() -> true)); pending(start);
         require((boolean)get(delayed,"preparedDeliveryOpen"), "same prepared delivery not opened");

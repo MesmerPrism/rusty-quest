@@ -13,6 +13,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ('sdk-command', 'json-jar', 'junit-jar', 'hamcrest-jar', 'output'):
         p.add_argument('--' + name, required=True)
+    p.add_argument('--receiver-only',action='store_true')
     a = p.parse_args()
     root = pathlib.Path(__file__).resolve().parents[2]
     out = pathlib.Path(a.output).resolve()
@@ -39,6 +40,7 @@ def main():
         return {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
     receiver_fixture = root / 'crates/rusty-quest-media-stream-android/android/library/src/test/java/io/github/mesmerprism/rustyquest/media/PreparedReceiverWaitHost.java'
     sources = [gate, coordinator, receiver, test, receiver_fixture, fixtures / 'OwnedDisplayWaitHost.kt', pathlib.Path(__file__)]
+    if a.receiver_only:sources=[receiver,receiver_fixture,pathlib.Path(__file__)]
     before = [pin(x) for x in sources]
     dependency_files = {pathlib.Path(x) for x in (dependencies + os.pathsep + compiler).split(os.pathsep) if pathlib.Path(x).is_file()}
     for directory in support:
@@ -64,6 +66,7 @@ def main():
     }
     generated = []
     for name, text in seams.items():
+        if a.receiver_only and name=='GateControlsMain.java':continue
         path = out / name
         path.write_text(text, encoding='utf-8')
         generated.append(path)
@@ -74,14 +77,16 @@ def main():
         (out / (name + '.stdout')).write_bytes(result.stdout)
         (out / (name + '.stderr')).write_bytes(result.stderr)
         return result.returncode
-    assert run('java', [javac, '--release', '17', '-cp', cp, '-d', classes, *generated, gate, receiver, receiver_fixture, test]) == 0, 'Java compile; see retained streams'
-    assert run('kotlin', [java, '-cp', compiler, 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect', '-jvm-target', '17', '-classpath', cp, '-Xfriend-paths=' + ','.join(support), '-d', classes, coordinator, fixtures / 'OwnedDisplayWaitHost.kt']) == 0, 'Kotlin compile; see retained streams'
-    gate_exit = run('gate-controls', [java, '-cp', cp, 'GateControlsMain'])
-    display_exit = run('display-controls', [java, '-cp', cp, 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.OwnedDisplayWaitHost'])
+    assert run('java', [javac, '--release', '17', '-cp', cp, '-d', classes, *generated, *([receiver,receiver_fixture] if a.receiver_only else [gate,receiver,receiver_fixture,test])]) == 0, 'Java compile; see retained streams'
+    gate_exit=display_exit=0
+    if not a.receiver_only:
+        assert run('kotlin', [java, '-cp', compiler, 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler', '-no-stdlib', '-no-reflect', '-jvm-target', '17', '-classpath', cp, '-Xfriend-paths=' + ','.join(support), '-d', classes, coordinator, fixtures / 'OwnedDisplayWaitHost.kt']) == 0, 'Kotlin compile; see retained streams'
+        gate_exit = run('gate-controls', [java, '-cp', cp, 'GateControlsMain'])
+        display_exit = run('display-controls', [java, '-cp', cp, 'io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.OwnedDisplayWaitHost'])
     receiver_exit = run('receiver-controls', [java, '-cp', cp, 'io.github.mesmerprism.rustyquest.media.PreparedReceiverWaitHost'])
     for row in before + dependency_pins:
         assert pin(row['path']) == row, 'source changed during check'
-    result = {'passed': gate_exit == display_exit == receiver_exit == 0, 'gate_exit': gate_exit, 'display_exit': display_exit, 'receiver_exit': receiver_exit, 'source_pins': before,
+    result = {'passed': gate_exit == display_exit == receiver_exit == 0, 'receiver_only':a.receiver_only, 'gate_exit': None if a.receiver_only else gate_exit, 'display_exit': None if a.receiver_only else display_exit, 'receiver_exit': receiver_exit, 'source_pins': before,
               'input_pins': [pin(x) for x in [a.sdk_command, java, javac, a.json_jar, a.junit_jar, a.hamcrest_jar]],
               'generated_pins': [pin(x) for x in generated], 'limits': __doc__}
     result['dependency_pins'] = dependency_pins

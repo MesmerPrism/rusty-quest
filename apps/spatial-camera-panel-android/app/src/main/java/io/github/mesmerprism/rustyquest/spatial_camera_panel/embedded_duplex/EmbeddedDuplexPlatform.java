@@ -486,6 +486,10 @@ final class EmbeddedDuplexPlatform {
         EmbeddedDuplexPreparedStart held=preparedStart;if(held==null)throw new IllegalStateException("actual prepared registry owner absent");
         held.requireNativeStatus(receipt,ready);
     }
+    void requirePreparedNativeStatusForLocalStart(JSONObject receipt)throws Exception {
+        EmbeddedDuplexPreparedStart held=preparedStart;if(held==null)throw new IllegalStateException("actual prepared registry owner absent");
+        held.requireNativeStatusForLocalStart(receipt);
+    }
     private void stopPreparedOriginal(EmbeddedDuplexOriginals.Record actual) {
         EmbeddedDuplexPreparedStart held=preparedStart;if(held!=null&&held.ownedBy(actual))held.requestStop(actual);
     }

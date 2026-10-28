@@ -187,6 +187,14 @@ public final class PackedStereoMediaReceiver implements AutoCloseable {
             && worker!=null && worker.isAlive() && renderThread!=null && renderThread.isAlive()
             && incomingListener!=null && !incomingListener.isClosed() && receivedPackets==0 && inputsQueued==0 && renderedFrames==0;}
     }
+    /** Same live prepared decoder may already serve the authenticated incoming direction. */
+    public boolean preparedDecoderStartable() {
+        synchronized(lock) {
+            if(!preparedDecoderOwned() || preparedConnection<=0L || !failure.isEmpty() || !"NONE".equals(firstFailureCode))return false;
+            if(!preparedDeliveryOpen)return ("prepared_decoder_ready".equals(state)||"receiver_armed".equals(state))&&preparedDecoderHeld();
+            return liveRequested && ("receiver_armed".equals(state)||"receiving".equals(state));
+        }
+    }
 
     /** Arms a bounded connection worker without waiting for the remote sender. */
     public void arm() {

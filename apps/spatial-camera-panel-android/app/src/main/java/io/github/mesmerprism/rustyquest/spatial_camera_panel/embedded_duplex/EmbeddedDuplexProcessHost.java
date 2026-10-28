@@ -816,7 +816,7 @@ final class EmbeddedDuplexProcessHost {
             return submit(() -> {
                 requireOrdinaryStartContext(expectedGeneration, challenge, currentActivity);
                 JSONObject prepared = new JSONObject(EmbeddedDuplexNative.runtimeCommand("prepared_peer_start_status", "{}"));
-                platform.requirePreparedNativeStatus(prepared, true);
+                platform.requirePreparedNativeStatusForLocalStart(prepared);
                 return challenge;
             }).thenCompose(ownedContinuation(selected ->
                 prepareStartPreflight(expectedGeneration).thenCompose(ownedContinuation(decision -> {

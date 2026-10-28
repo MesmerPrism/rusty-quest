@@ -178,6 +178,7 @@ final class EmbeddedDuplexResources implements EmbeddedDuplexActivationGate.Targ
     boolean preparedDeliveryOpened(){return (pipeline!=null&&pipeline.preparedDeliveryOpened())||incoming.preparedDeliveryOpened();}
     boolean preparedSenderClosed(){return pipeline!=null&&pipeline.preparedDeliveryClosed();}
     boolean preparedDecoderClosed(){return incoming.preparedDecoderClosed();}
+    boolean preparedDecoderStartable(String id){return incoming.preparedDecoderStartable(id);}
     String preparedSenderHandle(){return pipeline.handleId();}
     String preparedDecoderHandle(){return incoming.snapshot().providerHandleId();}
     void requestPreparedStop(){if(pipeline!=null)pipeline.requestPreparedStop();incoming.requestPreparedStop();}

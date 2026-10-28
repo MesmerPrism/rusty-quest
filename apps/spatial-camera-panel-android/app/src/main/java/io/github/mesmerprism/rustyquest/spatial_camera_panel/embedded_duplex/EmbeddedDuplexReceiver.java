@@ -28,6 +28,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         default void prepareDormantDecoder(org.json.JSONObject format)throws Exception {throw new IllegalStateException("dormant decoder unavailable");}
         default boolean preparedDecoderHeld(){return false;}
         default boolean preparedDecoderOwned(){return false;}
+        default boolean preparedDecoderStartable(){return false;}
         default boolean preparedDeliveryOpened(){return false;}
         default long preparedPeerDeliveryCount(){throw new IllegalStateException("prepared delivery counter unavailable");}
         default void requestPreparedStop(){throw new IllegalStateException("prepared Stop unavailable");}
@@ -130,6 +131,12 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         dormantPreparationId=null;dormantRendererReadback=null;dormantPrepared=false;
     }
     boolean preparedDecoderOwned(){ReceiverRuntime held=receiver;return dormantPrepared&&held!=null&&held.preparedDecoderOwned();}
+    synchronized boolean preparedDecoderStartable(String id){
+        ReceiverRuntime held=receiver;
+        return id!=null&&id.equals(dormantPreparationId)&&dormantPrepared&&!surfaceReleased&&!projectionRetired
+            &&staged!=null&&held!=null&&("dormant_prepared".equals(preparationState)||"prepared".equals(preparationState))
+            &&held.preparedDecoderStartable();
+    }
     boolean preparedDeliveryOpened(){ReceiverRuntime held=receiver;return dormantPrepared&&held!=null&&held.preparedDeliveryOpened();}
     long preparedPeerDeliveryCount(){ReceiverRuntime held=receiver;return held==null?0L:held.preparedPeerDeliveryCount();}
     void requestPreparedStop(){ReceiverRuntime held=receiver;if(dormantPrepared&&held!=null)held.requestPreparedStop();}
@@ -590,6 +597,7 @@ public final class EmbeddedDuplexReceiver implements MediaOwnerProvider {
         @Override public MediaOwnerProvider provider() { return receiver.provider(); }
         @Override public void prepareDormantDecoder(org.json.JSONObject format)throws Exception{receiver.prepareDormantDecoder(format);}
         @Override public boolean preparedDecoderHeld(){return receiver.preparedDecoderHeld();}
+        @Override public boolean preparedDecoderStartable(){return receiver.preparedDecoderStartable();}
         @Override public boolean preparedDecoderOwned(){return receiver.preparedDecoderOwned();}
         @Override public boolean preparedDeliveryOpened(){return receiver.preparedDeliveryOpened();}
         @Override public long preparedPeerDeliveryCount(){return receiver.preparedPeerDeliveryCount();}

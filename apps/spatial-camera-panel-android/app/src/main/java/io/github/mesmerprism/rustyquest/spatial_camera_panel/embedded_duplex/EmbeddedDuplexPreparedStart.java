@@ -165,6 +165,12 @@ final class EmbeddedDuplexPreparedStart {
         &&transportEntered &&resources.preparedTransportConnected()
         &&resources.preparedSenderOwned() &&resources.preparedDecoderOwned();}
     synchronized void requireNativeStatus(JSONObject status,boolean requireReady)throws Exception {
+        requireNativeStatus(status,requireReady,false);
+    }
+    synchronized void requireNativeStatusForLocalStart(JSONObject status)throws Exception {
+        requireNativeStatus(status,true,true);
+    }
+    private void requireNativeStatus(JSONObject status,boolean requireReady,boolean localStart)throws Exception {
         EmbeddedDuplexPeerRoots.keys(status,"$schema","preparation_id","original_id","app_process_generation","app_record_sha256",
             "native_executor_generation","config_sha256","request_sha256","resource_target_sha256","owner","remote_decoder","state","local_start_consumed","media_authority_granted");
         if(!"rusty.quest.embedded_duplex.prepared_peer_start_status.v1".equals(status.getString("$schema"))
@@ -185,8 +191,9 @@ final class EmbeddedDuplexPreparedStart {
                 throw new IllegalStateException("Native prepared status detached from actual SDK owner");
         } else if(requireReady)throw new IllegalStateException("actual ready Native owner absent");
         if(requireReady &&(!"ready".equals(status.getString("state")) ||status.getBoolean("local_start_consumed")
-            ||status.isNull("remote_decoder")||!ready()||!resources.preparedSenderClosed()||!resources.preparedDecoderClosed()))
-            throw new IllegalStateException("actual bilateral gated preparation not ready");
+            ||status.isNull("remote_decoder")||!ready()||!resources.preparedSenderClosed()
+            ||!(localStart?resources.preparedDecoderStartable(id()):resources.preparedDecoderClosed())))
+            throw new IllegalStateException(localStart?"actual bilateral preparation not ready for local Start":"actual bilateral gated preparation not ready");
     }
     synchronized JSONObject status(String actualId)throws Exception {
         if(!id().equals(actualId))throw new IllegalStateException("foreign prepared incarnation");
