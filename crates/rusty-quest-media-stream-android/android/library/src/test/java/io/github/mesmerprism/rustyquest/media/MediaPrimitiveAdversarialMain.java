@@ -15,6 +15,7 @@ public final class MediaPrimitiveAdversarialMain {
     public static void main(String[] args) throws Exception {
         blockedWriterClosesAndTerminates();
         queueAndByteLimitsRejectWithoutRetainingCallerBuffer();
+        capacityWaitProgressAndCancellation();
         trackerReleasesRejectedAndOutOfOrderExpiryExactlyOnce();
         rmanvidBoundsAndIdentityFailClosed();
         System.out.println("rusty.quest.android.media.primitive-adversarial.v1:pass");
@@ -81,6 +82,44 @@ public final class MediaPrimitiveAdversarialMain {
                     && size.maxPacketBytes==4 && size.queuedPackets==-1 && size.queuedBytes==-1
                     && size.closed==null && size.failure==null,"unlocked size decision must not invent queue status");
         } finally { sizePump.close(); }
+    }
+
+    private static void capacityWaitProgressAndCancellation() throws Exception {
+        // Exact required wakeups: capacity, owner cancellation, close, interruption, writer failure.
+        for (int mode=0; mode<5; mode++) {
+            final boolean failWrite=mode==4;
+            CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1),done=new CountDownLatch(1);
+            java.util.List<Integer> delivered=java.util.Collections.synchronizedList(new java.util.ArrayList<Integer>());
+            OutputStream output=new OutputStream(){
+                public void write(int value)throws IOException{
+                    entered.countDown();try{release.await();}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException(e);}
+                    if(failWrite)throw new IOException("controlled writer failure");delivered.add(value);
+                }
+                public void close(){release.countDown();}
+            };
+            // Count remains below capacity; only the unchanged queued-byte bound causes this wait.
+            BoundedPacketPump pump=new BoundedPacketPump(output,2,4,4,"capacity-wakeup-test");
+            java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<Object> result=new java.util.concurrent.atomic.AtomicReference<Object>();
+            Thread producer=new Thread(()->{try{result.set(pump.offerAwaitCapacity(new byte[]{6},cancelled::get));}catch(Throwable e){result.set(e);}finally{done.countDown();}},"capacity-producer");
+            try {
+                require(pump.offer(new byte[]{1})&&entered.await(2,TimeUnit.SECONDS),"writer seeded");
+                require(pump.offer(new byte[]{2,3,4,5}),"byte bound filled");producer.start();
+                long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+                while(done.getCount()!=0&&producer.getState()!=Thread.State.WAITING&&System.nanoTime()<end)Thread.yield();
+                require(done.getCount()!=0&&producer.getState()==Thread.State.WAITING,"producer must wait at the byte bound");
+                require(!pump.offer(new byte[]{7}),"other callers remain nonblocking at the same bound");
+                if(mode==0||mode==4)release.countDown();
+                else if(mode==1){cancelled.set(true);pump.signalCapacityWaiters();}
+                else if(mode==2)pump.close();
+                else producer.interrupt();
+                require(done.await(2,TimeUnit.SECONDS),"capacity wait did not wake");
+                if(mode==0){require(Boolean.TRUE.equals(result.get()),"capacity progress refused");end=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);while(delivered.size()<6&&System.nanoTime()<end)Thread.yield();require(delivered.toString().equals("[1, 2, 3, 4, 5, 6]"),"accepted encoded bytes changed order");}
+                else if(mode==3)require(result.get() instanceof InterruptedException,"interrupt did not terminate waiting producer");
+                else require(Boolean.FALSE.equals(result.get()),"terminal/cancelled wait accepted a packet");
+                if(mode==4)require(pump.failure()!=null,"real writer failure was lost");
+            } finally {release.countDown();pump.close();producer.interrupt();producer.join(2000);require(!producer.isAlive()&&pump.isTerminated(),"capacity owners not joined");}
+        }
     }
 
     private static void trackerReleasesRejectedAndOutOfOrderExpiryExactlyOnce() {

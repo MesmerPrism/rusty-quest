@@ -6,6 +6,7 @@ import java.io.OutputStream;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 /** Bounded socket writer. Encoder/render callbacks only enqueue copied packets. */
 public final class BoundedPacketPump implements Closeable {
@@ -24,6 +25,7 @@ public final class BoundedPacketPump implements Closeable {
     private volatile boolean closed;
     private volatile IOException failure;
     private long queuedBytes;
+    private boolean writerFinished;
     private final AtomicReference<OfferRejection> firstRejection = rejectionReference();
 
     private static AtomicReference<OfferRejection> rejectionReference() {
@@ -31,7 +33,7 @@ public final class BoundedPacketPump implements Closeable {
         catch (Throwable ignored) { return null; }
     }
 
-    enum RejectionReason { PACKET_SIZE, RETAINED_FAILURE, CLOSED, QUEUE_COUNT, QUEUE_BYTES }
+    enum RejectionReason { PACKET_SIZE, RETAINED_FAILURE, CLOSED, QUEUE_COUNT, QUEUE_BYTES, WRITER_TERMINATED }
     static final class OfferRejection {
         final RejectionReason reason;
         final int packetBytes, queuedPackets, capacity, maxPacketBytes;
@@ -48,10 +50,14 @@ public final class BoundedPacketPump implements Closeable {
     OfferRejection firstOfferRejection() { return firstRejection == null ? null : firstRejection.get(); }
     // Inner decisions call with the existing queue lock held. Size decisions deliberately do not.
     private void recordRejection(int packetBytes, boolean sizeDecision) {
+        recordRejection(packetBytes, sizeDecision, false);
+    }
+    private void recordRejection(int packetBytes, boolean sizeDecision, boolean finishedDecision) {
         try {
             if (firstRejection != null && firstRejection.get() == null) firstRejection.compareAndSet(null,
                     new OfferRejection(sizeDecision ? RejectionReason.PACKET_SIZE : failure != null
                             ? RejectionReason.RETAINED_FAILURE : closed ? RejectionReason.CLOSED
+                            : finishedDecision ? RejectionReason.WRITER_TERMINATED
                             : queue.size() >= capacity ? RejectionReason.QUEUE_COUNT : RejectionReason.QUEUE_BYTES,
                             packetBytes, sizeDecision ? -1 : queue.size(), sizeDecision ? -1L : queuedBytes,
                             capacity, maxPacketBytes, maxQueuedBytes, sizeDecision ? null : closed,
@@ -101,6 +107,33 @@ public final class BoundedPacketPump implements Closeable {
             return true;
         }
     }
+    // Source codec-output owner only. Other callers retain the nonblocking offer contract.
+    boolean offerAwaitCapacity(byte[] packet, BooleanSupplier cancelled) throws InterruptedException {
+        if (packet == null || packet.length == 0) throw new IllegalArgumentException("packet");
+        if (cancelled == null) throw new IllegalArgumentException("cancellation");
+        if (packet.length > maxPacketBytes) {
+            recordRejection(packet.length, true);
+            return false;
+        }
+        synchronized (lock) {
+            while (true) {
+                if (Thread.interrupted()) throw new InterruptedException("packet capacity wait interrupted");
+                if (cancelled.getAsBoolean()) return false;
+                if (closed || failure != null || writerFinished) {
+                    recordRejection(packet.length, false, writerFinished);
+                    return false;
+                }
+                if (queue.size() < capacity && queuedBytes + packet.length <= maxQueuedBytes) {
+                    queue.addLast(packet.clone());
+                    queuedBytes += packet.length;
+                    lock.notifyAll();
+                    return true;
+                }
+                lock.wait();
+            }
+        }
+    }
+    void signalCapacityWaiters() { synchronized (lock) { lock.notifyAll(); } }
     private void run() {
         try {
             while (true) {
@@ -110,6 +143,7 @@ public final class BoundedPacketPump implements Closeable {
                     if (closed) return;
                     packet = queue.removeFirst();
                     queuedBytes -= packet.length;
+                    lock.notifyAll();
                 }
                 output.write(packet); output.flush();
             }
@@ -124,6 +158,7 @@ public final class BoundedPacketPump implements Closeable {
                 lock.notifyAll();
             }
         } finally {
+            synchronized (lock) { writerFinished = true; lock.notifyAll(); }
             closeOutput();
         }
     }
@@ -155,6 +190,7 @@ public final class BoundedPacketPump implements Closeable {
     private void recordFailure(IOException error) {
         synchronized (lock) {
             if (failure == null) failure = error;
+            lock.notifyAll();
         }
     }
 }

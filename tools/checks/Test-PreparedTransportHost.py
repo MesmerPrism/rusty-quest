@@ -39,7 +39,7 @@ def main():
     media_before=ref(media_classes);receipt_before=ref(media_receipt)
     assert media_before['sha256']==json.loads(media_receipt.read_text())['classes_jar_sha256'],'actual retained media receipt differs'
     whole=out/'whole-media-android-classes';whole.mkdir()
-    run('whole-media-android-api',['javac','--release','17','-encoding','UTF-8','-cp',a.android_jar+os.pathsep+str(media_classes),'-d',str(whole),str(media/'PackedStereoMediaSourceRuntime.java')])
+    run('whole-media-android-api',['javac','--release','17','-encoding','UTF-8','-cp',a.android_jar+os.pathsep+str(media_classes),'-d',str(whole),str(media/'BoundedPacketPump.java'),str(media/'PackedStereoMediaSourceRuntime.java')])
     run('whole-media-Pipeline-javap',['javap','-p','-s','-v','-classpath',str(whole),'io.github.mesmerprism.rustyquest.media.PackedStereoMediaSourceRuntime$Pipeline'])
     for tag,jar in [('host',a.json_jar),('android-api',a.android_jar)]:
         classes=out/(tag+'-classes');classes.mkdir()
@@ -61,7 +61,7 @@ def main():
     code=code.replace('mod codec;','pub mod codec;')
     (jni/'src/lib.rs').write_text(code,encoding='utf-8')
     run('jni-api-typecheck',['cargo','check','--offline','--manifest-path',str(jni/'Cargo.toml'),'--target-dir',str(out/'jni-cargo')])
-    refs=[template,pathlib.Path(__file__).resolve(),java/'EmbeddedDuplexPreparedStart.java',java/'EmbeddedDuplexPlatform.java',java/'EmbeddedDuplexResources.java',java/'EmbeddedDuplexCanonicalJson.java',media/'PackedStereoMediaSourceRuntime.java',media/'PackedStereoLanTransport.java',native/'java_bridge.rs']
+    refs=[template,pathlib.Path(__file__).resolve(),java/'EmbeddedDuplexPreparedStart.java',java/'EmbeddedDuplexPlatform.java',java/'EmbeddedDuplexResources.java',java/'EmbeddedDuplexCanonicalJson.java',media/'BoundedPacketPump.java',media/'PackedStereoMediaSourceRuntime.java',media/'PackedStereoLanTransport.java',native/'java_bridge.rs']
     assert media_before==ref(media_classes) and receipt_before==ref(media_receipt),'borrowed dependency changed'
     binary=pathlib.Path('io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex')
     result=dict(passed=True,checks=checks,source_pins=[ref(x) for x in refs],generated=[ref(x) for x in sources if x.is_relative_to(out)],dependency_refs=[media_before,receipt_before],compiled_api_witnesses=[ref(out/'android-api-classes'/binary/(n+'.class')) for n in ['EmbeddedDuplexPreparedStart','EmbeddedDuplexPlatform','EmbeddedDuplexResources']]+[ref(whole/'io/github/mesmerprism/rustyquest/media/PackedStereoMediaSourceRuntime$Pipeline.class')],witness_scope='Whole production PreparedStart and shared SourceRuntime/Pipeline against real Android34. Platform/Resources exact method bodies with modeled surrounding host leaves. Baseline media jar supplies unchanged dependencies only; no APK compiler/DEX/runtime claim.',limits=__doc__)

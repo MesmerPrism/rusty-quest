@@ -317,3 +317,23 @@ precedence over closed when both are present; the original acceptance predicate
 and count-before-byte order remain unchanged. Later rejection/cleanup cannot
 overwrite the immutable record. Snapshot failures remain diagnostic unavailable
 and never change offer results. Only the existing sender marker consumes it.
+
+The source codec-output owner now uses a package-private cancellable capacity
+wait on the same packet pump. Count/byte fullness waits for downstream progress;
+the public `offer` contract remains nonblocking. The existing 48-packet source
+capacity, 8MiB packet and 32MiB queued-byte bounds do not change. Benign pressure
+keeps encoded packets ordered on the same connection without discard or replay.
+The codec output index stays with the sole source thread and releases in its
+existing finally block. Pressure can reach the encoder input worker and its
+single latest-raw-input mailbox; the independent Own capture path adds no wait.
+
+The capacity wait has no timeout and holds only the pump monitor, which releases
+during wait. Dequeue, close, writer failure and writer-loop termination wake it.
+Owner Stop and asynchronous source failure publish cancellation and notify the
+exact registered wait pump before transport/encoder joins; Stop does not interrupt
+the sole codec-drain owner. Cancellation skips pending delivery and retains the
+existing physical drain/Whole barriers. An explicitly interrupted caller restores
+its interrupt flag and follows existing connection retirement. Existing LAN I/O
+deadlines/failure handling remain. No larger buffers, connection replay or authority
+relaxation is introduced. Hardware codec depth, shared pool pressure and the
+existing 64-pair metadata bound remain device-qualification limits.

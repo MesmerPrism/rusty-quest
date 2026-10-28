@@ -185,7 +185,7 @@ public final class PackedStereoMediaSourceRuntime {
         }
         public void requestPreparedStop() {
             Runtime held=preparedRuntime;if(held==null ||runtime!=held)return;
-            held.stopRequested=true;
+            held.stopRequested=true;held.cancelPacketCapacityWait();
             synchronized(held.preparationMonitor){held.preparationMonitor.notifyAll();}
             closeQuietly(held.serverSocket);closeQuietly(held.socket);
             if(held.lanTransport!=null)held.lanTransport.requestStop();
@@ -472,6 +472,7 @@ public final class PackedStereoMediaSourceRuntime {
         volatile Socket socket;
         volatile OutputStream output;
         volatile BoundedPacketPump packetPump;
+        private volatile BoundedPacketPump capacityWaitPump;
         volatile DetachedConnection retiredConnection;
         volatile DetachedConnection unresolvedConnection;
         final ReconnectKeyframeGate reconnectGate = new ReconnectKeyframeGate();
@@ -661,6 +662,7 @@ public final class PackedStereoMediaSourceRuntime {
             closeReason = "gpu_compositor_failure";
             state = "failed";
             stopRequested = true;
+            cancelPacketCapacityWait();
         }
 
         private static String failureFingerprint(Throwable failure) {
@@ -844,6 +846,7 @@ public final class PackedStereoMediaSourceRuntime {
                 // Surface submission. Stop callers may time out as Pending but
                 // must not remove the drain needed to reach the real barrier.
                 stopRequested = true;
+                cancelPacketCapacityWait();
                 fenceSharedEncoder();
                 finishSourceStop();
             }
@@ -914,6 +917,7 @@ public final class PackedStereoMediaSourceRuntime {
                 closeReason = "camera2_terminal";
                 state = "failed";
                 stopRequested = true;
+                cancelPacketCapacityWait();
                 closeQuietly(serverSocket);
             }
         }
@@ -1184,7 +1188,8 @@ public final class PackedStereoMediaSourceRuntime {
                 synchronized (outputLock) {
                     if (unresolvedConnection == null) unresolvedConnection=detached;
                 }
-                stopRequested=true;
+                stopRequested = true;
+                cancelPacketCapacityWait();
                 state="failed";
             }
         }
@@ -1254,7 +1259,15 @@ public final class PackedStereoMediaSourceRuntime {
                 ByteArrayOutputStream packet = new ByteArrayOutputStream(
                         32 + PackedStereoStreamMetadata.PAIR_EXTENSION_BYTES + payload.length);
                 writePacketTo(packet, ptsUs, flags, pair, payload, sourceElapsedNs, sourceUnixNs);
-                if (!pump.offer(packet.toByteArray())) {
+                boolean accepted;
+                capacityWaitPump = pump;
+                try {
+                    accepted = pump.offerAwaitCapacity(packet.toByteArray(), () -> stopRequested);
+                } finally {
+                    capacityWaitPump = null;
+                }
+                if (!accepted) {
+                    if (stopRequested) return;
                     IOException rejected = new IOException("bounded packet pump full");
                     try {
                         BoundedPacketPump.OfferRejection decision = pump.firstOfferRejection();
@@ -1266,10 +1279,16 @@ public final class PackedStereoMediaSourceRuntime {
                     throw rejected;
                 }
             } catch (Throwable failure) {
+                if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
                 error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);
                 // Detach in constant time. The accept/control worker performs close and join.
                 retireConnection(pump);
             }
+        }
+
+        private void cancelPacketCapacityWait() {
+            BoundedPacketPump waiting = capacityWaitPump;
+            if (waiting != null) waiting.signalCapacityWaiters();
         }
 
         void writePacketTo(
@@ -1415,7 +1434,8 @@ public final class PackedStereoMediaSourceRuntime {
                 error="packed source freshness deadline expired";
                 closeReason="source_freshness_expired";
                 state="failed";
-                stopRequested=true;
+                stopRequested = true;
+                cancelPacketCapacityWait();
                 closeQuietly(serverSocket);
                 return true;
             }
@@ -1424,6 +1444,7 @@ public final class PackedStereoMediaSourceRuntime {
 
         ServerSocket requestOwnedLocalStop(String reason) {
             stopRequested = true;
+            cancelPacketCapacityWait();
             synchronized(preparationMonitor){preparationMonitor.notifyAll();}
             PackedStereoLanTransport transport = lanTransport;
             if (transport != null) transport.stop();
