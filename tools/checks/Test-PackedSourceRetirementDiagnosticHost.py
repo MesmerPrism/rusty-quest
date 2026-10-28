@@ -32,6 +32,8 @@ def main():
                         ('void writePacket(', 'void retireConnection(', 'private void logClosedSourceFailure('))
     if 'private static String failureFingerprint(' in source.read_text():
         methods += '\n' + module.extract_method(source.read_text(), 'private static String failureFingerprint(')
+    if 'private void emitClosedSourceFailure(' in source.read_text():
+        methods += '\n' + module.extract_method(source.read_text(), 'private void emitClosedSourceFailure(')
     generated = out / 'models' / package / 'PackedSourceRetirementDiagnosticHost.java'
     generated.parent.mkdir(parents=True)
     template = r'''
@@ -78,6 +80,11 @@ public final class PackedSourceRetirementDiagnosticHost {
    require(android.util.Log.events.indexOf("diagnostic")>=0&&android.util.Log.events.indexOf("diagnostic")<android.util.Log.events.indexOf("interrupt"),"original marker must precede interrupt overwrite");
    if(!loggerFailure){require(android.util.Log.messages.size()==1,"one finite marker");String marker=android.util.Log.messages.get(0);
     require(marker.contains("stage="+(writerFailure?"PACKET_PUMP_FAILED":"PACKET_OFFER_REJECTED")),"closed original classification");
+    require(marker.contains("pumpRejection="+(writerFailure?"RETAINED_FAILURE":"QUEUE_COUNT")),"actual branch reason captured at rejection");
+    require(marker.contains("pumpPacketBytes=1")&&marker.contains("pumpCapacity=1")&&marker.contains("pumpMaxPacketBytes=4")&&marker.contains("pumpMaxQueuedBytes=4"),"immutable rejection counts and limits");
+    BoundedPacketPump.OfferRejection decision=pump.firstOfferRejection();
+    require(decision.failure==(writerFailure?pump.failure():null),"exception captured at decision, not sampled after retirement");
+    require(marker.contains("pumpClosed="+writerFailure)&&marker.contains("pumpRetainedFailure="+writerFailure),"closed and failure conditions remain distinct");
     require(marker.contains("operation=PACKET_OFFER")&&marker.contains("cause=IO")&&marker.contains("code=SOURCE_EFFECT_UNCERTAIN"),"existing closed diagnostic shape");
     if(writerFailure){
      require(marker.contains("failure0Class=java.io.IOException")&&marker.contains("failure1Class=java.net.SocketException"),"actual retained wrapper and cause classes before retirement");

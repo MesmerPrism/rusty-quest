@@ -308,3 +308,12 @@ retirement: class (up to 160 characters), original message character count,
 hashed UTF8 byte count and SHA256 of at most the first 1024 message characters.
 Explicit truncation/cycle fields distinguish bounded prefixes from complete
 messages and cause chains. No message characters or stacks are emitted.
+The package-private pump snapshot records the first recorded rejection decision:
+packet size, retained writer failure, closed pump, queue count or queued-byte
+bound. It includes packet length, configured bounds and locked queue/closed
+observations. The original unlocked size decision records queue state as unknown;
+no extra queue lock or later status guess is introduced. Failure takes diagnostic
+precedence over closed when both are present; the original acceptance predicate
+and count-before-byte order remain unchanged. Later rejection/cleanup cannot
+overwrite the immutable record. Snapshot failures remain diagnostic unavailable
+and never change offer results. Only the existing sender marker consumes it.

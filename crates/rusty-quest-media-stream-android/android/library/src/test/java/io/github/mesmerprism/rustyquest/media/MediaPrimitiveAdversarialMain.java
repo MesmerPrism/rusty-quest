@@ -34,6 +34,10 @@ public final class MediaPrimitiveAdversarialMain {
         require(pump.isTerminated(), "blocked writer survived close");
         require(pump.failure() == null, "orderly close reported a write failure");
         require(!pump.offer(new byte[] {2}), "closed pump accepted a packet");
+        BoundedPacketPump.OfferRejection closed=pump.firstOfferRejection();
+        require(closed.reason==BoundedPacketPump.RejectionReason.CLOSED && closed.closed
+                && closed.failure==null && closed.queuedPackets==0 && closed.queuedBytes==0,
+                "closed rejection must record its actual decision");
     }
 
     private static void queueAndByteLimitsRejectWithoutRetainingCallerBuffer() throws Exception {
@@ -46,8 +50,14 @@ public final class MediaPrimitiveAdversarialMain {
         require(output.writeEntered.await(2, TimeUnit.SECONDS), "first packet was not dequeued");
         require(pump.offer(new byte[] {2, 3, 4, 5}), "bounded queued packet rejected");
         require(!pump.offer(new byte[] {6}), "full queue accepted another packet");
+        BoundedPacketPump.OfferRejection counted=pump.firstOfferRejection();
+        require(counted.reason==BoundedPacketPump.RejectionReason.QUEUE_COUNT && !counted.closed
+                && counted.queuedPackets==1 && counted.queuedBytes==4 && counted.packetBytes==1,
+                "count takes diagnostic precedence when both count and byte bounds reject");
         require(!pump.offer(new byte[] {1, 2, 3, 4, 5}), "oversize packet accepted");
         pump.close();
+        require(pump.firstOfferRejection()==counted && !counted.closed && counted.queuedBytes==4,
+                "later rejection and cleanup must not overwrite the immutable first record");
         require(output.firstByte == 1, "pump retained the caller's mutable packet");
 
         BlockingOutputStream byteOutput = new BlockingOutputStream();
@@ -58,7 +68,19 @@ public final class MediaPrimitiveAdversarialMain {
                 "byte-limit seed packet was not dequeued");
         require(bytePump.offer(new byte[] {2, 3, 4, 5}), "byte-limit packet rejected");
         require(!bytePump.offer(new byte[] {6}), "queued byte limit accepted another packet");
+        BoundedPacketPump.OfferRejection bytes=bytePump.firstOfferRejection();
+        require(bytes.reason==BoundedPacketPump.RejectionReason.QUEUE_BYTES && bytes.queuedPackets==1
+                && bytes.capacity==2 && bytes.queuedBytes==4 && bytes.maxQueuedBytes==4,
+                "byte rejection must record the original locked counts");
         bytePump.close();
+        BoundedPacketPump sizePump=new BoundedPacketPump(new ByteArrayOutputStream(),1,4,4,"packet-size-test");
+        try {
+            require(!sizePump.offer(new byte[5]),"oversize packet accepted by fresh pump");
+            BoundedPacketPump.OfferRejection size=sizePump.firstOfferRejection();
+            require(size.reason==BoundedPacketPump.RejectionReason.PACKET_SIZE && size.packetBytes==5
+                    && size.maxPacketBytes==4 && size.queuedPackets==-1 && size.queuedBytes==-1
+                    && size.closed==null && size.failure==null,"unlocked size decision must not invent queue status");
+        } finally { sizePump.close(); }
     }
 
     private static void trackerReleasesRejectedAndOutOfOrderExpiryExactlyOnce() {

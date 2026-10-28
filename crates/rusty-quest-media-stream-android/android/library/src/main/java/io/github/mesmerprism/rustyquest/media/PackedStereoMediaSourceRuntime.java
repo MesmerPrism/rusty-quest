@@ -702,6 +702,11 @@ public final class PackedStereoMediaSourceRuntime {
 
         private void logClosedSourceFailure(String stage, PackedSourceFailureCode.Operation operation,
                 Throwable failure) {
+            emitClosedSourceFailure(stage, operation, failure, null);
+        }
+
+        private void emitClosedSourceFailure(String stage, PackedSourceFailureCode.Operation operation,
+                Throwable failure, BoundedPacketPump.OfferRejection rejection) {
             long nowMs = SystemClock.elapsedRealtime();
             PackedStereoCaptureOwner capture = sharedCapture;
             PackedStereoEncoderWorker worker = encoderWorker;
@@ -737,7 +742,16 @@ public final class PackedStereoMediaSourceRuntime {
                     + " packetCount=" + packetCount + " keyframeCount=" + keyframeCount
                     + " consumerAcceptCount=" + consumerAcceptCount
                     + (("PACKET_PUMP_FAILED".equals(stage) || "PACKET_OFFER_REJECTED".equals(stage))
-                            ? failureFingerprint(failure) : "")
+                            ? failureFingerprint(failure) + (rejection == null ? " pumpRejection=UNAVAILABLE"
+                                    : " pumpRejection=" + rejection.reason.name()
+                                    + " pumpPacketBytes=" + rejection.packetBytes
+                                    + " pumpQueuedPackets=" + rejection.queuedPackets
+                                    + " pumpQueuedBytes=" + rejection.queuedBytes
+                                    + " pumpCapacity=" + rejection.capacity
+                                    + " pumpMaxPacketBytes=" + rejection.maxPacketBytes
+                                    + " pumpMaxQueuedBytes=" + rejection.maxQueuedBytes
+                                    + " pumpClosed=" + (rejection.closed == null ? "UNKNOWN" : rejection.closed)
+                                    + " pumpRetainedFailure=" + (rejection.failure != null)) : "")
                     + " code=SOURCE_EFFECT_UNCERTAIN");
         }
 
@@ -1243,10 +1257,11 @@ public final class PackedStereoMediaSourceRuntime {
                 if (!pump.offer(packet.toByteArray())) {
                     IOException rejected = new IOException("bounded packet pump full");
                     try {
-                        IOException retained = pump.failure();
-                        logClosedSourceFailure(retained != null ? "PACKET_PUMP_FAILED" : "PACKET_OFFER_REJECTED",
+                        BoundedPacketPump.OfferRejection decision = pump.firstOfferRejection();
+                        IOException retained = decision == null ? null : decision.failure;
+                        emitClosedSourceFailure(retained != null ? "PACKET_PUMP_FAILED" : "PACKET_OFFER_REJECTED",
                                 PackedSourceFailureCode.Operation.PACKET_OFFER,
-                                retained != null ? retained : rejected);
+                                retained != null ? retained : rejected, decision);
                     } catch (Throwable ignored) { /* Diagnostics never bypass the existing retirement. */ }
                     throw rejected;
                 }

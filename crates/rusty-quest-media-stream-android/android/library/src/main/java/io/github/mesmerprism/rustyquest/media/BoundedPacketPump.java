@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Bounded socket writer. Encoder/render callbacks only enqueue copied packets. */
 public final class BoundedPacketPump implements Closeable {
@@ -23,6 +24,40 @@ public final class BoundedPacketPump implements Closeable {
     private volatile boolean closed;
     private volatile IOException failure;
     private long queuedBytes;
+    private final AtomicReference<OfferRejection> firstRejection = rejectionReference();
+
+    private static AtomicReference<OfferRejection> rejectionReference() {
+        try { return new AtomicReference<>(); }
+        catch (Throwable ignored) { return null; }
+    }
+
+    enum RejectionReason { PACKET_SIZE, RETAINED_FAILURE, CLOSED, QUEUE_COUNT, QUEUE_BYTES }
+    static final class OfferRejection {
+        final RejectionReason reason;
+        final int packetBytes, queuedPackets, capacity, maxPacketBytes;
+        final long queuedBytes, maxQueuedBytes;
+        final Boolean closed;
+        final IOException failure;
+        OfferRejection(RejectionReason reason, int packetBytes, int queuedPackets, long queuedBytes,
+                int capacity, int maxPacketBytes, long maxQueuedBytes, Boolean closed, IOException failure) {
+            this.reason=reason; this.packetBytes=packetBytes; this.queuedPackets=queuedPackets;
+            this.queuedBytes=queuedBytes; this.capacity=capacity; this.maxPacketBytes=maxPacketBytes;
+            this.maxQueuedBytes=maxQueuedBytes; this.closed=closed; this.failure=failure;
+        }
+    }
+    OfferRejection firstOfferRejection() { return firstRejection == null ? null : firstRejection.get(); }
+    // Inner decisions call with the existing queue lock held. Size decisions deliberately do not.
+    private void recordRejection(int packetBytes, boolean sizeDecision) {
+        try {
+            if (firstRejection != null && firstRejection.get() == null) firstRejection.compareAndSet(null,
+                    new OfferRejection(sizeDecision ? RejectionReason.PACKET_SIZE : failure != null
+                            ? RejectionReason.RETAINED_FAILURE : closed ? RejectionReason.CLOSED
+                            : queue.size() >= capacity ? RejectionReason.QUEUE_COUNT : RejectionReason.QUEUE_BYTES,
+                            packetBytes, sizeDecision ? -1 : queue.size(), sizeDecision ? -1L : queuedBytes,
+                            capacity, maxPacketBytes, maxQueuedBytes, sizeDecision ? null : closed,
+                            sizeDecision ? null : failure));
+        } catch (Throwable ignored) { /* A diagnostic cannot change offer's result. */ }
+    }
 
     public BoundedPacketPump(OutputStream output, int capacity, String threadName) {
         this(output, capacity, DEFAULT_MAX_PACKET_BYTES, DEFAULT_MAX_QUEUED_BYTES, threadName);
@@ -49,10 +84,17 @@ public final class BoundedPacketPump implements Closeable {
     }
     public boolean offer(byte[] packet) {
         if (packet == null || packet.length == 0) throw new IllegalArgumentException("packet");
-        if (packet.length > maxPacketBytes) return false;
+        if (packet.length > maxPacketBytes) {
+            // This original early decision takes no queue lock. Do not invent queue observations.
+            recordRejection(packet.length, true);
+            return false;
+        }
         synchronized (lock) {
             if (closed || failure != null || queue.size() >= capacity
-                    || queuedBytes + packet.length > maxQueuedBytes) return false;
+                    || queuedBytes + packet.length > maxQueuedBytes) {
+                recordRejection(packet.length, false);
+                return false;
+            }
             queue.addLast(packet.clone());
             queuedBytes += packet.length;
             lock.notifyAll();
