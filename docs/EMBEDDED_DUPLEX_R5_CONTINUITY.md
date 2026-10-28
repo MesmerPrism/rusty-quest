@@ -22,11 +22,23 @@ private inode with a retained `flock` descriptor. These locks have separate
 owners and must not share an inode: reopening Java's lock file in native code
 would change the Java lock's process semantics.
 
-Native admission reads the live app-held channel. Its opaque capability binds
+Native admission reads the live app-held descriptor. Its opaque capability binds
 the app generation and exact admission-record digest to a monotonically
 allocated native executor generation. Runtime callbacks check that capability
 before and after external work. Enrollment primitives remain available before
 runtime admission; an enrollment signature is not runtime execution authority.
+
+The app opens that one no-create/no-follow descriptor and borrows its channel
+only for the writer lock. Held-record reads and writes use Android `Os` positioned
+I/O, truncate and sync on the same descriptor, carrying forward `3449872d` and
+the explicit descriptor-ownership correction `94d6c579`. Callback interruption
+does not close the held lock through interruptible channel data I/O. The fence
+closes its borrowed stream view and its owned raw descriptor on release/unwind;
+real I/O errors still refuse use. Current run-aware v2 record, incarnation,
+FileStore and recovery rules are unchanged. `Test-ProcessFenceInterruptHost.py`
+executes the whole current Java fence with real host locks and child-process
+death, explicit modeled Android syscall leaves and optional Android API compile.
+It establishes no Android runtime or prior device failure cause.
 
 Initialization publishes a Host only after construction and the final live
 capability check succeed. An unwind guard clears only the initialization gate
