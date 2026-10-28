@@ -22,13 +22,13 @@ final class EmbeddedDuplexColdRecovery {
     static final String[] LOCAL={"java_own_capture_cleanup","java_peer_resources_cleanup","java_renderer_cleanup","java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup"};
     interface LocalOwner {void requireTerminal()throws Exception;JSONObject physicalReceipt()throws Exception;}
     static final class Plan {
-        final EmbeddedDuplexProcessFence fence;final EmbeddedDuplexOriginals.Record original;final File root;
+        final EmbeddedDuplexProcessFence fence;final EmbeddedDuplexOriginals.Record original;final File root,sourceRoot;
         final String run,priorRun,priorOriginal,record,link,clearRecord,packageId;
         final long counter,generation;final EmbeddedDuplexProcessIncarnation.Identity old,current;
         final String basis;LocalOwner local;String completed;
-        Plan(EmbeddedDuplexProcessFence f,EmbeddedDuplexOriginals.Record o,File root,String run,String priorRun,String priorOriginal,
+        Plan(EmbeddedDuplexProcessFence f,EmbeddedDuplexOriginals.Record o,File root,File sourceRoot,String run,String priorRun,String priorOriginal,
                 long counter,String record,JSONObject link,EmbeddedDuplexProcessIncarnation.Identity old,EmbeddedDuplexProcessIncarnation.Identity current,String basis,String packageId)throws Exception{
-            this.fence=f;this.original=o;this.root=root;this.run=run;this.priorRun=priorRun;this.priorOriginal=priorOriginal;this.counter=counter;
+            this.fence=f;this.original=o;this.root=root;this.sourceRoot=sourceRoot;this.run=run;this.priorRun=priorRun;this.priorOriginal=priorOriginal;this.counter=counter;
             this.record=record;this.link=EmbeddedDuplexCanonicalJson.encode(link);this.clearRecord=EmbeddedDuplexProcessFence.recordedPhase(record,"clear");
             this.generation=f.generation();this.old=old;this.current=current;this.basis=basis;this.packageId=packageId;
         }
@@ -36,6 +36,7 @@ final class EmbeddedDuplexColdRecovery {
         String evidence()throws Exception{
             requireCurrentProcess(this);
             requireJournals(root,new JSONObject(link));
+            if(!sourceRoot.equals(root))requireSourceWitness(sourceRoot,new JSONObject(link));
             if(local==null)throw new IllegalStateException("actual local recovery owner not armed");
             local.requireTerminal();requirePhysical(local.physicalReceipt(),false);
             if(!basis.equals(EmbeddedDuplexProcessIncarnation.retirementBasis(old,current)))throw new IllegalStateException("old process retirement observation changed");
@@ -50,16 +51,17 @@ final class EmbeddedDuplexColdRecovery {
         EmbeddedDuplexRunSelectionStore selection=new EmbeddedDuplexRunSelectionStore(context.getNoBackupFilesDir(),dir->{throw new IllegalStateException("recovery source reader is inert");});
         EmbeddedDuplexRunContext selected=selection.current();
         if(selected.runId==null||!selected.runId.equals(fence.operationalRunId())||!selected.runId.equals(currentFields[6]))throw new IllegalStateException("selected recovery scope differs");
-        EmbeddedDuplexProcessIncarnation.RecoveryBinding last=EmbeddedDuplexProcessIncarnation.readForRecovery(new File(selected.root,"embedded-duplex-replay"),fence.acquisitionRecordForRecovery());
-        String[] lastFields=fields(last.phaseRecord);
-        boolean interrupted=publicationPending(selected.root);
-        if(!lastFields[6].equals(selected.runId)||Long.parseLong(lastFields[1])>=fence.generation())throw new IllegalStateException("last writable recovery phase unsupported");
         EmbeddedDuplexProcessIncarnation.Identity now=EmbeddedDuplexProcessIncarnation.current(Process.myPid(),Process.myUid());
         JSONObject nativeOwner=new JSONObject(EmbeddedDuplexNative.readColdPendingOwner(fence));
         keys(nativeOwner,"$schema","native_generation","native_record_sha256","owner");
         if(!"rusty.quest.embedded_duplex.cold_pending_native_owner.v1".equals(nativeOwner.getString("$schema"))||nativeOwner.getLong("native_generation")!=counter)
             throw new IllegalStateException("actual Native recovery counter changed");
         hash(nativeOwner.getString("native_record_sha256"));
+        Witness witness=sourceWitness(selection,selected,fence,nativeOwner);
+        EmbeddedDuplexProcessIncarnation.RecoveryBinding last=witness.last;
+        String[] lastFields=fields(last.phaseRecord);
+        boolean interrupted=publicationPending(selected.root);
+        if(Long.parseLong(lastFields[1])>=fence.generation())throw new IllegalStateException("last writable recovery phase unsupported");
         EmbeddedDuplexProcessIncarnation.Identity old;String sourceRecord;JSONObject source;
         if(!nativeOwner.isNull("owner")){
             if(priorRun!=null)throw new IllegalArgumentException("durable Native owner needs no legacy IDs");
@@ -91,9 +93,47 @@ final class EmbeddedDuplexColdRecovery {
             .put("native_owner",source).put("last_writable_record",last.phaseRecord).put("last_incarnation_json",last.exact)
             .put("old_process_identity",old.json()).put("current_process_identity",now.json()).put("old_process_retirement",basis)
             .put("journal_snapshot",journalSnapshot(selected.root,currentFields,lastFields));
-        Plan plan=new Plan(fence,original,selected.root,selected.runId,priorRun,priorOriginal,counter,record,link,old,now,basis,context.getPackageName());
+        Plan plan=new Plan(fence,original,selected.root,witness.root,selected.runId,priorRun,priorOriginal,counter,record,link,old,now,basis,context.getPackageName());
         EmbeddedDuplexOriginals.bindActualActor(new JSONObject().put("package_id",context.getPackageName()).put("app_record_sha256",EmbeddedDuplexProcessFence.digest(record)).put("native_generation",JSONObject.NULL),fence.generation());
         original.retainedCleanupOwner=plan;return plan;
+    }
+    private static final class Witness {
+        final File root;final EmbeddedDuplexProcessIncarnation.RecoveryBinding last;
+        Witness(File root,EmbeddedDuplexProcessIncarnation.RecoveryBinding last){this.root=root;this.last=last;}
+    }
+    /** A never-entered selected run has no companion. Only the actual durable Native owner chooses its source. */
+    private static Witness sourceWitness(EmbeddedDuplexRunSelectionStore selection,EmbeddedDuplexRunContext selected,
+            EmbeddedDuplexProcessFence fence,JSONObject nativeOwner)throws Exception{
+        File replay=new File(selected.root,"embedded-duplex-replay");
+        if(EmbeddedDuplexProcessIncarnation.present(replay))
+            return new Witness(selected.root,EmbeddedDuplexProcessIncarnation.readForRecovery(replay,fence.acquisitionRecordForRecovery()));
+        if(fence.recoveryOnly()||fence.effectsPending()||nativeOwner.isNull("owner"))throw new IllegalStateException("selected recovery companion absent");
+        JSONObject owner=nativeOwner.getJSONObject("owner");
+        if(owner.getLong("counter")!=nativeOwner.getLong("native_generation"))throw new IllegalStateException("Native source counter differs");
+        if(owner.has("retirement"))throw new IllegalStateException("retired Native owner cannot supply a missing selected companion");
+        String[] source=fields(owner.getString("app_record"));
+        if(!source[0].endsWith(".v2")||!source[3].equals("pending")||source[6].equals(selected.runId))throw new IllegalStateException("Native source run does not explain missing companion");
+        EmbeddedDuplexRunContext prior=selection.retained(source[6]);
+        EmbeddedDuplexProcessIncarnation.RecoveryBinding last=EmbeddedDuplexProcessIncarnation.readForRecovery(new File(prior.root,"embedded-duplex-replay"));
+        String[] phase=fields(last.phaseRecord);
+        if(!source[6].equals(phase[6])||!source[1].equals(phase[1])||!source[2].equals(phase[2])
+                ||Long.parseLong(phase[1])>=fence.generation()
+                ||!last.binding.owner.binding().equals(EmbeddedDuplexProcessIncarnation.Identity.read(owner.getJSONObject("process_identity")).binding()))
+            throw new IllegalStateException("Native source companion owner differs");
+        requireSourceJournals(prior.root,phase);
+        return new Witness(prior.root,last);
+    }
+    private static void requireSourceJournals(File root,String[] phase)throws Exception{
+        String checkpoint=readJournal(root,"start-checkpoint.v1.json",256*1024),evidence=readJournal(root,"recovery-evidence.v1.json",8*1024*1024);
+        if(!phase[4].equals(EmbeddedDuplexProcessFence.digest(checkpoint))||!phase[5].equals(EmbeddedDuplexProcessFence.digest(evidence)))
+            throw new IllegalStateException("Native source journal bytes changed");
+        if(checkpoint!=null)EmbeddedDuplexStartJournal.phase(checkpoint);
+        if(evidence!=null)EmbeddedDuplexRecoveryEvidenceJournal.validate(evidence);
+    }
+    private static void requireSourceWitness(File root,JSONObject link)throws Exception{
+        EmbeddedDuplexProcessIncarnation.RecoveryBinding last=EmbeddedDuplexProcessIncarnation.readForRecovery(new File(root,"embedded-duplex-replay"));
+        if(!last.exact.equals(link.getString("last_incarnation_json"))||!last.phaseRecord.equals(link.getString("last_writable_record")))throw new IllegalStateException("Native source companion changed during recovery");
+        requireSourceJournals(root,fields(last.phaseRecord));
     }
     static void arm(Plan plan,LocalOwner local)throws Exception{
         if(plan.local!=null&&plan.local!=local||plan.completed())throw new IllegalStateException("cold recovery owner replacement refused");
@@ -130,6 +170,7 @@ final class EmbeddedDuplexColdRecovery {
         if(plan==null||!plan.completed())throw new IllegalStateException("actual cold recovery completion absent");
         requireCurrentProcess(plan);plan.local.requireTerminal();requirePhysical(plan.local.physicalReceipt(),false);
         requireJournals(plan.root,new JSONObject(plan.link));
+        if(!plan.sourceRoot.equals(plan.root))requireSourceWitness(plan.sourceRoot,new JSONObject(plan.link));
         if(plan.fence.recoveryOnly()||plan.fence.effectsPending()||!plan.clearRecord.equals(plan.fence.nativeInspectionRecord()))throw new IllegalStateException("actual cold recovery fence changed");
         if(!EmbeddedDuplexCanonicalJson.encode(read(new File(directory(plan.root,false),plan.originalId()+".json")).getJSONObject("receipt")).equals(plan.completed))throw new IllegalStateException("retained recovery receipt differs");
     }
@@ -178,8 +219,16 @@ final class EmbeddedDuplexColdRecovery {
         if(nativeStatus.getBoolean("globally_eligible")||nativeStatus.isNull("native_generation"))return false;
         if(nativeStatus.getLong("native_generation")<=0||fence.effectsPending())return false;
         File companion=new File(root,"embedded-duplex-replay");
-        if(!EmbeddedDuplexProcessIncarnation.present(companion))return false;
-        EmbeddedDuplexProcessIncarnation.RecoveryBinding last=EmbeddedDuplexProcessIncarnation.readForRecovery(companion,fence.acquisitionRecordForRecovery());
+        EmbeddedDuplexProcessIncarnation.RecoveryBinding last;
+        if(!EmbeddedDuplexProcessIncarnation.present(companion)){
+            JSONObject owner=new JSONObject(EmbeddedDuplexNative.readColdPendingOwner(fence));
+            keys(owner,"$schema","native_generation","native_record_sha256","owner");
+            if(!"rusty.quest.embedded_duplex.cold_pending_native_owner.v1".equals(owner.getString("$schema"))
+                    ||owner.getLong("native_generation")!=nativeStatus.getLong("native_generation"))throw new IllegalStateException("Native source inspection changed");
+            hash(owner.getString("native_record_sha256"));
+            EmbeddedDuplexRunSelectionStore selection=new EmbeddedDuplexRunSelectionStore(root.getParentFile().getParentFile(),dir->{throw new IllegalStateException("source lookup is read-only");});
+            last=sourceWitness(selection,selection.current(),fence,owner).last;
+        }else last=EmbeddedDuplexProcessIncarnation.readForRecovery(companion,fence.acquisitionRecordForRecovery());
         if(Long.parseLong(fields(last.phaseRecord)[1])>=fence.generation())return false;
         EmbeddedDuplexProcessIncarnation.Identity current=EmbeddedDuplexProcessIncarnation.current(Process.myPid(),Process.myUid());
         if(last.binding.owner.binding().equals(current.binding()))return false;

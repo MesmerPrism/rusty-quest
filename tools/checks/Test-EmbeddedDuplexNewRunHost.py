@@ -72,7 +72,7 @@ def native_controls(root,out,abi=False):
 
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--root',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parents[2]);p.add_argument('--output',type=pathlib.Path);p.add_argument('--scratch-root',type=pathlib.Path);p.add_argument('--java-home',type=pathlib.Path);p.add_argument('--json-jar',type=pathlib.Path);p.add_argument('--support-classpath',default=os.environ.get('RUSTY_QUEST_APP_TEST_CLASSPATH',''));p.add_argument('--smoke',action='store_true');p.add_argument('--native-controls',action='store_true');p.add_argument('--native-result',type=pathlib.Path);p.add_argument('--cold-recovery',action='store_true');p.add_argument('--recovery-witness-manifest',type=pathlib.Path);p.add_argument('--legacy-whole-manifest',type=pathlib.Path);a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--root',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parents[2]);p.add_argument('--output',type=pathlib.Path);p.add_argument('--scratch-root',type=pathlib.Path);p.add_argument('--java-home',type=pathlib.Path);p.add_argument('--json-jar',type=pathlib.Path);p.add_argument('--support-classpath',default=os.environ.get('RUSTY_QUEST_APP_TEST_CLASSPATH',''));p.add_argument('--smoke',action='store_true');p.add_argument('--native-controls',action='store_true');p.add_argument('--native-result',type=pathlib.Path);p.add_argument('--cold-recovery',action='store_true');p.add_argument('--source-root-manifest',type=pathlib.Path);p.add_argument('--recovery-witness-manifest',type=pathlib.Path);p.add_argument('--legacy-whole-manifest',type=pathlib.Path);a=p.parse_args()
  if not a.support_classpath:raise ValueError('Select current source-compiled app helpers with --support-classpath or RUSTY_QUEST_APP_TEST_CLASSPATH')
  root=a.root.resolve();out=(a.output or root/'target'/('new-run-'+uuid.uuid4().hex)).resolve()
  permitted=a.scratch_root.resolve() if a.scratch_root else root/'target'
@@ -112,8 +112,8 @@ def main():
  fields="""
  private final EmbeddedDuplexRunSelectionStore runSelection;
  private final Object runRequestGate=new Object();private int runRequests;private final Object attachmentGate=new Object();private String diagnosticChallenge;
- private boolean closeInFlight,displayDetaching;private String runtimeConfigSha256,terminalWholeChallenge;
- private Object wholeCloseRollover,wholeLocalDrain,retainedWholeNativeReceipt,lastClosedActorProof,noMediaClose;private RetainedWholeClose retainedWholeClose;private static final class RetainedWholeClose{EmbeddedDuplexOriginals.Record original;}
+ private String terminalWholeChallenge;
+ private Object wholeCloseRollover,wholeLocalDrain,retainedWholeNativeReceipt,lastClosedActorProof;private RetainedWholeClose retainedWholeClose;private static final class RetainedWholeClose{EmbeddedDuplexOriginals.Record original;}
  private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;
  private CompletableFuture<Void> wholeCallbackMarker;private EmbeddedDuplexPlatform wholeCallbackPlatform;
  boolean harnessJoinWhole(EmbeddedDuplexPlatform value)throws Exception{return joinWholeCallbackOwner(value);}
@@ -130,12 +130,12 @@ def main():
  if a.cold_recovery:
   body=body.replace('private String checkpointSnapshot(){return null;}',extract(host,'private String checkpointSnapshot(')).replace('private String evidenceSnapshot(){return null;}',extract(host,'private String evidenceSnapshot('))
   body=body.replace('private Object platform,resources;','private EmbeddedDuplexPlatform platform;private EmbeddedDuplexResources resources;').replace('platform=new Object();resources=new Object();','platform=new EmbeddedDuplexPlatform();resources=new EmbeddedDuplexResources();')
+  body=body.replace('private EmbeddedDuplexPlatform platform;private Object resources;','private EmbeddedDuplexPlatform platform;private EmbeddedDuplexResources resources;').replace('platform=new PhysicalPlatform();resources=new Object();','platform=new PhysicalPlatform();resources=new EmbeddedDuplexResources();')
   body=body.replace('private ColdPendingLocal coldPendingRecovery;private static final class ColdPendingLocal{EmbeddedDuplexColdRecovery.Plan plan;EmbeddedDuplexOriginals.Record original;long appGeneration;}','')
-  fields=fields.replace('retainedWholeNativeReceipt,lastClosedActorProof,noMediaClose','retainedWholeNativeReceipt,noMediaClose').replace('private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;','private EmbeddedDuplexRuntimeConfigurationBinding.Context nativeConfigurationContext;private Object setupCredentials,pendingReview,lastBootstrapFailure;private JSONObject lastClosedActorProof;')
+  fields=fields.replace('retainedWholeNativeReceipt,lastClosedActorProof','retainedWholeNativeReceipt').replace('private Object nativeConfigurationContext,setupCredentials,pendingReview,lastBootstrapFailure;','private EmbeddedDuplexRuntimeConfigurationBinding.Context nativeConfigurationContext;private Object setupCredentials,pendingReview,lastBootstrapFailure;private JSONObject lastClosedActorProof;')
   fields=fields.replace('private final Display display=', 'private final Display display=').replace('void detachAfterCleanup(long generation,Runnable close){','Runnable retainOwnedProjectionStopTarget(long generation){return ()->{};}void detachAfterCleanup(long generation,Runnable close){')
   fields+='''
  private String enrollmentRecordSha256;private boolean localFixture;private final StartIntent startIntent=new StartIntent();private static final class StartIntent{void afterVerifiedCleanup(){}}
- private static final class RetainedNoMediaClose{JSONObject proof;CompletableFuture<String> completion=new CompletableFuture<>();}
  EmbeddedDuplexProcessFence harnessFence()throws Exception{ensureProcessFence();return processFence;}
  void harnessWholePhysicalLeaf(JSONObject physical,JSONObject actor,String wrapper)throws Exception{processFence.afterVerifiedWholeProductCleanup(null,null,EmbeddedDuplexCanonicalJson.sha256(physical));originalClosedActor=actor;lastClosedActorProof=physical;terminalWholeReceipt=wrapper;nativeExecutorGeneration=0;nativeAppRecordSha256=null;platform=null;resources=null;phase.set(Phase.NEW);}
  '''
@@ -182,13 +182,13 @@ def main():
  static String inspectOperationalRun(Object source)throws Exception{return new org.json.JSONObject().put("$schema","rusty.quest.embedded_duplex.operational_run_native.v1")
  .put("globally_eligible",eligible).put("operational_run_id",actualRun==null?org.json.JSONObject.NULL:actualRun).put("native_generation",nativeGeneration==null?org.json.JSONObject.NULL:nativeGeneration).toString();}static String readColdPendingOwner(Object source){throw new UnsupportedOperationException("cold owner outside run-selection controls");}}
  """
- models[pkg+'/EmbeddedDuplexPlatform.java']='package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;final class EmbeddedDuplexPlatform{final java.util.concurrent.CompletableFuture<Void> retired=new java.util.concurrent.CompletableFuture<>();int retirementCalls,controlCloses;void closeControlAfterProductCleanup(){controlCloses++;}java.util.concurrent.CompletableFuture<Void> retireProcessCallbacksAsync(){retirementCalls++;return retired;}}'
+ models[pkg+'/EmbeddedDuplexPlatform.java']='package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;class EmbeddedDuplexPlatform{final java.util.concurrent.CompletableFuture<Void> retired=new java.util.concurrent.CompletableFuture<>();int retirementCalls,controlCloses;boolean originalExchangesJoined(EmbeddedDuplexOriginals.Record r){return true;}void closeControlAfterProductCleanup(){controlCloses++;}java.util.concurrent.CompletableFuture<Void> retireProcessCallbacksAsync(){retirementCalls++;return retired;}}'
  models[pkg+'/OwnStereoCaptureRuntime.java']='package io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex;final class OwnStereoCaptureRuntime{static OwnStereoCaptureRuntime currentForApplication(){return null;}String physicalCleanupState(){throw new AssertionError("unmodeled Own owner");}}'
  if a.cold_recovery:
   del models[pkg+'/EmbeddedDuplexNative.java']
   models['android/system/Os.java']=models['android/system/Os.java'].replace('public static void fsync(', 'public static void fchmod(java.io.FileDescriptor f,int mode){} public static void fsync(')
   models['android/util/AtomicFile.java']='package android.util;public final class AtomicFile{private final java.io.File base;public AtomicFile(java.io.File file){base=file;}public java.io.File getBaseFile(){return base;}public java.io.FileInputStream openRead()throws java.io.IOException{return new java.io.FileInputStream(base);}public java.io.FileOutputStream startWrite(){throw new UnsupportedOperationException("journal writes outside admission controls");}public void finishWrite(java.io.FileOutputStream out){throw new UnsupportedOperationException();}public void failWrite(java.io.FileOutputStream out){throw new UnsupportedOperationException();}}'
-  models[pkg+'/EmbeddedDuplexPlatform.java']='package '+pkg.replace('/','.')+';final class EmbeddedDuplexPlatform{final java.util.concurrent.CompletableFuture<Void> retired=java.util.concurrent.CompletableFuture.completedFuture(null);int retirementCalls,controlCloses;void closeControlAfterProductCleanup(){controlCloses++;}void closeControlForNoMedia(){controlCloses++;}java.util.concurrent.CompletableFuture<Void> retireProcessCallbacksAsync(){retirementCalls++;return retired;}boolean actualOutboundExchangesJoined(){return true;}boolean originalExchangesJoined(EmbeddedDuplexOriginals.Record r){return true;}}'
+  models[pkg+'/EmbeddedDuplexPlatform.java']='package '+pkg.replace('/','.')+';class EmbeddedDuplexPlatform{final java.util.concurrent.CompletableFuture<Void> retired=java.util.concurrent.CompletableFuture.completedFuture(null);int retirementCalls,controlCloses;void closeControlAfterProductCleanup(){controlCloses++;}void closeControlForNoMedia(){controlCloses++;}java.util.concurrent.CompletableFuture<Void> retireProcessCallbacksAsync(){retirementCalls++;return retired;}boolean actualOutboundExchangesJoined(){return true;}boolean originalExchangesJoined(EmbeddedDuplexOriginals.Record r){return true;}}'
   models[pkg+'/OwnStereoCaptureRuntime.java']='package '+pkg.replace('/','.')+';final class OwnStereoCaptureRuntime{static OwnStereoCaptureRuntime currentForApplication(){return null;}String physicalCleanupState(){return "not_created";}org.json.JSONObject physicalRetirementObservation(){return new org.json.JSONObject().put("state","not_created");}void requestStopOwn(){}}'
   models[pkg+'/EmbeddedDuplexResources.java']='package '+pkg.replace('/','.')+';final class EmbeddedDuplexResources{void closeUnstartedAndVerify(){}boolean productResourcesTerminal(){return true;}}'
   models[pkg+'/EmbeddedDuplexRendererRetirement.java']='package '+pkg.replace('/','.')+';final class EmbeddedDuplexRendererRetirement{static boolean currentTerminal(){return EmbeddedDuplexNative.renderer;}}'
@@ -217,6 +217,13 @@ def main():
  if a.cold_recovery:
   cold_argv=argv[:1]+['-Dhost.native.abi='+native_result['abi_binary']]+argv[1:-1]+[pkg.replace('/','.')+'.ColdPendingRecoveryHostTest',str(out/'samples')]
   run('cold-caller',cold_argv)
+  if a.source_root_manifest:
+   captured_source=json.loads(a.source_root_manifest.read_text(encoding='utf-8'))
+   source_files=[x for x in pathlib.Path(captured_source['root']).rglob('*') if x.is_file()]+[pathlib.Path(captured_source['native_owner']),a.source_root_manifest]
+   source_pins={str(x):hashlib.sha256(x.read_bytes()).hexdigest() for x in source_files}
+   run('captured-owner-source',cold_argv+[str(a.source_root_manifest.resolve()),'source-root'])
+   if any(hashlib.sha256(pathlib.Path(x).read_bytes()).hexdigest()!=pin for x,pin in source_pins.items()):raise ValueError('Captured owner/source input mutated')
+   (out/'captured-source-input-pins.json').write_text(json.dumps(source_pins,indent=2)+'\n')
   if a.recovery_witness_manifest:
    witness_manifest=json.loads(a.recovery_witness_manifest.read_text(encoding='utf-8-sig'));witness_refs=[]
    for peer in ['Q','W']:

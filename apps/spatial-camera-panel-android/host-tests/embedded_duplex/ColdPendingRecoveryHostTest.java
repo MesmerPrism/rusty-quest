@@ -18,7 +18,7 @@ public final class ColdPendingRecoveryHostTest {
     static void denied(Checked action)throws Exception{checks++;try{action.run();}catch(Exception expected){return;}throw new AssertionError("expected refusal");}
     static JSONObject json(Bundle value)throws Exception{return new JSONObject(value.getString("observation_json"));}
     static final class Fixture {
-        File app,root,prior;Context context;EmbeddedDuplexProcessHost host;byte[] priorBytes,markerBytes;String sourceRecord;
+        File app,root,prior;Context context;EmbeddedDuplexProcessHost host;byte[] priorBytes,markerBytes;String sourceRecord;boolean sourceRootRouting;
         final Map<Path,byte[]> preserved=new LinkedHashMap<>();
     }
     static Fixture fresh()throws Exception{return fresh(false);}
@@ -142,15 +142,16 @@ public final class ColdPendingRecoveryHostTest {
     static void save(File output,String name,JSONObject value)throws Exception{Files.createDirectories(output.toPath());Files.writeString(new File(output,name+".json").toPath(),EmbeddedDuplexCanonicalJson.encode(value));}
     static void success(File output,boolean durable)throws Exception{success(output,durable,fresh());}
     static void success(File output,boolean durable,Fixture f)throws Exception{
+        long expectedCounter=EmbeddedDuplexNative.nativeGeneration;
         if(durable)EmbeddedDuplexNative.maintained=true;
         JSONObject before=new JSONObject(EmbeddedDuplexRuntimeService.runStatus(f.context).get(5,TimeUnit.SECONDS));
         yes(before.getString("app_fence_disposition").equals("recovery_required"),"cold Pending inspection");
         if(!EmbeddedDuplexNative.eligible)yes(before.getJSONObject("native").getString("refusal_reason").equals("native_prior_process_owner_unreconciled"),"modeled Native refusal omitted actual producer reason");
-        denied(()->f.host.harnessAdmission());
+        if(!f.sourceRootRouting)denied(()->f.host.harnessAdmission()); // An ordinary admission stamps a new companion; current-state recovery precedes any such attempt.
         Bundle dispatch=recover(f,durable);yes(dispatch.getString("schema").equals(EmbeddedDuplexOriginals.RUN_TRANSPORT),"outer v3");
         Bundle queried=await(f);JSONObject row=json(queried);yes(row.getString("state").equals("succeeded"),"actual completion failed: "+row);
         JSONObject receipt=new JSONObject(row.getJSONObject("response").getString("receipt"));
-        yes(receipt.getLong("prior_native_generation")==3&&receipt.getString("old_process_retirement").equals("not_running"),"retirement subject");
+        yes(receipt.getLong("prior_native_generation")==expectedCounter&&receipt.getString("old_process_retirement").equals("not_running"),"retirement subject");
         yes(row.getJSONObject("actor_binding").isNull("native_generation"),"invented live Native actor");
         EmbeddedDuplexOriginals store=EmbeddedDuplexOriginals.forApplication(f.context);Bundle joined=null;
         for(int i=0;i<100;i++){joined=store.queryJoin(ID,CH);if(joined.getString("status").equals("joined"))break;Thread.sleep(10);}
@@ -161,24 +162,25 @@ public final class ColdPendingRecoveryHostTest {
         JSONObject after=new JSONObject(EmbeddedDuplexRuntimeService.runStatus(f.context).get(5,TimeUnit.SECONDS));
         yes(after.getString("app_fence_disposition").equals("clear"),"clear publication disposition");
         f.host.harnessFence().requireIncarnation(EmbeddedDuplexProcessIncarnation.current(android.os.Process.myPid(),android.os.Process.myUid()));
-        yes(EmbeddedDuplexNative.retirements==1&&EmbeddedDuplexNative.nativeGeneration==3,"counter advanced during cleanup");
+        yes(EmbeddedDuplexNative.retirements==1&&EmbeddedDuplexNative.nativeGeneration==expectedCounter,"counter advanced during cleanup");
         recover(f,durable);yes(EmbeddedDuplexNative.retirements==1,"once replay");
         if(f.priorBytes!=null)yes(Arrays.equals(f.priorBytes,Files.readAllBytes(new File(f.prior,"operator-originals-v1/"+PRIOR+".json").toPath())),"old transaction changed");
         yes(Arrays.equals(f.markerBytes,Files.readAllBytes(new File(f.root,"run.v1.json").toPath())),"old release marker relabeled");
-        JSONObject handoff=EmbeddedDuplexColdRecovery.latestHandoff(f.root,f.context.getPackageName());yes(handoff.getLong("prior_native_generation")==3,"new durable handoff missing");
+        JSONObject handoff=EmbeddedDuplexColdRecovery.latestHandoff(f.root,f.context.getPackageName());yes(handoff.getLong("prior_native_generation")==expectedCounter,"new durable handoff missing");
         save(output,"before-status",before);save(output,"dispatch",new JSONObject(dispatch));save(output,"original",row);save(output,"receipt",receipt);save(output,"join",join);save(output,"after-status",after);
         Bundle ack=store.acknowledge(ID,CH,row.getString("request_sha256"),row.getString("outcome_sha256"),"9".repeat(64));yes(ack.getString("status").equals("compacted"),"actual ACK");
         close(f);f.host=EmbeddedDuplexProcessHost.forApplication(f.context);
         JSONObject restarted=new JSONObject(EmbeddedDuplexRuntimeService.runStatus(f.context).get(5,TimeUnit.SECONDS));yes(restarted.getString("app_fence_disposition").equals("clear"),"restart after persisted completion");save(output,"restart-status",restarted);
         JSONObject selected=new JSONObject(EmbeddedDuplexRuntimeService.newRun(f.context,C,null).get(5,TimeUnit.SECONDS));
         JSONObject nextMarker=new JSONObject(Files.readString(new File(f.app,"embedded-duplex-runs-v1/"+C+"/run.v1.json").toPath()));
-        yes(nextMarker.getJSONObject("release_source").getLong("prior_native_generation")==3,"selector inherited Native2 instead of actual3");
-        f.host.harnessAdmission();yes(EmbeddedDuplexNative.nativeGeneration==4,"ordinary admission did not allocate successor4");
+        yes(nextMarker.getJSONObject("release_source").getLong("prior_native_generation")==expectedCounter,"selector inherited stale Native generation");
+        f.host.harnessAdmission();yes(EmbeddedDuplexNative.nativeGeneration==expectedCounter+1,"ordinary admission did not allocate successor");
         save(output,"next-selection",selected);save(output,"next-marker",nextMarker);close(f);
     }
     public static void main(String[] args)throws Exception{
         File out=new File(args[0]);
-        if(args.length==3){success(new File(out,args[2]),false,captured(new File(args[1]),args[2]));}
+        if(args.length==3&&args[2].equals("source-root")){capturedSourceRoot(out,new File(args[1]));}
+        else if(args.length==3){success(new File(out,args[2]),false,captured(new File(args[1]),args[2]));}
         else{
             success(new File(out,"legacy"),false);success(new File(out,"durable"),true);
             success(new File(out,"clear-legacy"),false,fresh(true));
@@ -189,6 +191,51 @@ public final class ColdPendingRecoveryHostTest {
             populatedCrashBeforePrepare(new File(out,"before-prepare-restart"),false);populatedCrashBeforePrepare(new File(out,"tampered-predecessor"),true);
         }
         System.out.println("Actual combined recovery/Original/query/join/ACK/restart/selector/admission controls: "+checks+" PASS; Native/kernel/platform leaves modeled, no hardware credit");
+    }
+    static void capturedSourceRoot(File output,File manifest)throws Exception{
+        JSONObject input=new JSONObject(Files.readString(manifest.toPath()));Path original=Path.of(input.getString("root"));
+        Path nativeFile=Path.of(input.getString("native_owner"));byte[] nativeBytes=Files.readAllBytes(nativeFile);
+        yes(EmbeddedDuplexProcessFence.digest(new String(nativeBytes,java.nio.charset.StandardCharsets.UTF_8)).equals(input.getString("native_owner_sha256")),"captured Native file pin");
+        String[] nativeLines=new String(nativeBytes,java.nio.charset.StandardCharsets.UTF_8).split("\n",-1);
+        yes(nativeLines.length==4&&nativeLines[0].equals("rusty.quest.embedded_duplex.native_process_fence.v2")
+            &&nativeLines[2].equals(EmbeddedDuplexProcessFence.digest(nativeLines[0]+"\n"+nativeLines[1]+"\n")),"captured Native owner checksum");
+        JSONObject actualOwner=new JSONObject(nativeLines[1]);
+        String previousA=A,previousB=B;Path proc=Path.of(System.getProperty("host.proc")),boot=proc.resolve("sys/kernel/random/boot_id");String previousBoot=Files.readString(boot),previousUid=System.getProperty("host.uid");
+        try{
+            for(String damage:new String[]{"none","counter","owner_run","owner_identity","companion","source_journal","retirement","live_owner"}){
+                Fixture f=new Fixture();f.sourceRootRouting=true;f.app=Files.createTempDirectory("captured-source-owner-").toFile();
+                try(var paths=Files.walk(original)){for(Path source:paths.toList()){
+                    if(Files.isSymbolicLink(source))throw new AssertionError("captured fixture link");Path target=f.app.toPath().resolve(original.relativize(source));
+                    if(Files.isDirectory(source))Files.createDirectories(target);else Files.copy(source,target);
+                }}
+                f.context=new Context(){public File getNoBackupFilesDir(){return f.app;}};
+                EmbeddedDuplexRunSelectionStore selection=new EmbeddedDuplexRunSelectionStore(f.app,dir->{});EmbeddedDuplexRunContext selected=selection.current();B=selected.runId;f.root=selected.root;
+                f.sourceRecord=actualOwner.getString("app_record");String[] sourceFields=f.sourceRecord.split("\n",-1);A=sourceFields[6];f.prior=selection.retained(A).root;
+                EmbeddedDuplexProcessIncarnation.Identity old=EmbeddedDuplexProcessIncarnation.Identity.read(actualOwner.getJSONObject("process_identity"));
+                Files.writeString(boot,old.boot+"\n");System.setProperty("host.uid",Integer.toString(old.uid));
+                File replay=new File(f.root,"embedded-duplex-replay"),global=new File(f.app,"embedded-duplex-replay");Files.createDirectories(replay.toPath());Files.createDirectories(global.toPath());
+                yes(!EmbeddedDuplexProcessIncarnation.present(replay),"captured selected run unexpectedly has a companion");
+                for(int n=0;n<Long.parseLong(sourceFields[1])+1;n++)try(EmbeddedDuplexProcessFence ignored=EmbeddedDuplexProcessFence.acquire(global,null,null,()->{},B,replay)){}
+                EmbeddedDuplexNative.reset(f.sourceRecord,old.json(),actualOwner.getLong("counter"));EmbeddedDuplexNative.owner=new JSONObject(actualOwner.toString());EmbeddedDuplexNative.maintained=true;EmbeddedDuplexNative.eligible=false;EmbeddedDuplexNative.nativeDigest=input.getString("native_owner_sha256");
+                if(damage.equals("counter"))EmbeddedDuplexNative.owner.put("counter",actualOwner.getLong("counter")+1);
+                if(damage.equals("owner_run"))EmbeddedDuplexNative.owner.put("app_record",EmbeddedDuplexProcessFence.recordedPhase(Files.readString(new File(global,"process-fence.v1.lock").toPath()),"pending"));
+                if(damage.equals("owner_identity"))EmbeddedDuplexNative.owner.getJSONObject("process_identity").put("start_ticks",old.ticks+1);
+                if(damage.equals("companion"))Files.writeString(new File(f.prior,"embedded-duplex-replay/process-incarnation.v1.json").toPath(),"{}");
+                if(damage.equals("source_journal"))Files.writeString(new File(f.prior,"embedded-duplex-replay/recovery-evidence.v1.json.new").toPath(),"unpublished");
+                if(damage.equals("retirement"))EmbeddedDuplexNative.owner.put("retirement",new JSONObject());
+                Path live=proc.resolve(Integer.toString(old.pid));
+                if(damage.equals("live_owner")){
+                    yes(!Files.exists(live),"modeled old process already present");Files.createDirectory(live);
+                    Files.writeString(live.resolve("stat"),Files.readString(proc.resolve("42/stat")).replaceFirst("^42",Integer.toString(old.pid)).replace(" 123456 "," "+old.ticks+" "));
+                }
+                try(var paths=Files.walk(f.app.toPath())){for(Path path:paths.filter(Files::isRegularFile).toList())
+                    if(!path.startsWith(global.toPath())&&!(damage.equals("none")&&path.equals(new File(f.app,"embedded-duplex-runs-v1/selection.v1.json").toPath())))f.preserved.put(path,Files.readAllBytes(path));}
+                f.markerBytes=Files.readAllBytes(new File(f.root,"run.v1.json").toPath());f.host=EmbeddedDuplexProcessHost.forApplication(f.context);
+                if(damage.equals("none")){success(new File(output,"actual-source-root"),true,f);requirePreserved(f);}
+                else{recover(f,true);JSONObject row=json(await(f));yes(row.getString("state").equals("unknown"),"damaged owner source accepted: "+damage);yes(EmbeddedDuplexNative.retirements==0,"damaged source reached Native retirement");requirePreserved(f);close(f);}
+                if(damage.equals("live_owner")){Files.delete(live.resolve("stat"));Files.delete(live);}
+            }
+        }finally{A=previousA;B=previousB;Files.writeString(boot,previousBoot);if(previousUid==null)System.clearProperty("host.uid");else System.setProperty("host.uid",previousUid);}
     }
     static void zeroNativeWholeRetainsJoinWithoutHandoff()throws Exception{
         Fixture f=fresh();long generation=f.host.harnessFence().generation();String hash="7".repeat(64),id="8".repeat(32);
@@ -317,7 +364,13 @@ final class EmbeddedDuplexNative {
     static void reset(String record,JSONObject identity){reset(record,identity,3L);}
     static void reset(String record,JSONObject identity,long counter){sourceRecord=record;nativeDigest=null;owner=new JSONObject().put("counter",counter).put("app_record",record).put("process_identity",identity);maintained=false;nativeGeneration=counter;actualRun=null;eligible=true;renderer=true;retirements=0;}
     static String inspectOperationalRun(Object fence){JSONObject value=new JSONObject().put("$schema","rusty.quest.embedded_duplex.operational_run_native.v1").put("globally_eligible",eligible).put("operational_run_id",actualRun==null?JSONObject.NULL:actualRun).put("native_generation",nativeGeneration);if(!eligible)value.put("refusal_reason","native_prior_process_owner_unreconciled");return value.toString();}
-    static String readColdPendingOwner(Object fence)throws Exception{return new JSONObject().put("$schema","rusty.quest.embedded_duplex.cold_pending_native_owner.v1").put("native_generation",nativeGeneration).put("native_record_sha256",nativeDigest==null?EmbeddedDuplexProcessFence.digest(sourceRecord):nativeDigest).put("owner",maintained?owner:JSONObject.NULL).toString();}
+    static String readColdPendingOwner(Object fence)throws Exception{
+        String body=maintained?"rusty.quest.embedded_duplex.native_process_fence.v2\n"+EmbeddedDuplexCanonicalJson.encode(owner)+"\n"
+                :"rusty.quest.embedded_duplex.native_process_fence.v1\n"+nativeGeneration+"\n";
+        String digest=EmbeddedDuplexProcessFence.digest(body+EmbeddedDuplexProcessFence.digest(body)+"\n");
+        return new JSONObject().put("$schema","rusty.quest.embedded_duplex.cold_pending_native_owner.v1").put("native_generation",nativeGeneration)
+                .put("native_record_sha256",nativeDigest==null?digest:nativeDigest).put("owner",maintained?owner:JSONObject.NULL).toString();
+    }
     static boolean localCameraQuiescent(){return true;}
     static String retireColdPendingLocal(Object source)throws Exception{
         EmbeddedDuplexProcessFence fence=(EmbeddedDuplexProcessFence)source;String record=fence.nativeColdRecoveryRecord(),exact=fence.nativeColdRecoveryEvidence();JSONObject link=new JSONObject(exact);
@@ -331,7 +384,8 @@ final class EmbeddedDuplexNative {
         sourceRecord=record;owner=new JSONObject().put("counter",nativeGeneration+1).put("app_record",record).put("process_identity",EmbeddedDuplexProcessIncarnation.current(android.os.Process.myPid(),android.os.Process.myUid()).json());maintained=true;return new JSONObject().put("$schema","rusty.quest.embedded_duplex.native_fence_admitted.v1").put("app_generation",fence.generation()).put("app_record_sha256",EmbeddedDuplexProcessFence.digest(record)).put("executor_generation",++nativeGeneration).toString();
     }
     static JSONObject actualProjection(JSONObject request)throws Exception{
-        java.lang.Process producer=new ProcessBuilder("wsl.exe","--",System.getProperty("host.native.abi")).start();
+        String executable=System.getProperty("host.native.abi");
+        java.lang.Process producer=(executable.endsWith(".exe")?new ProcessBuilder(executable):new ProcessBuilder("wsl.exe","--",executable)).start();
         try(OutputStream input=producer.getOutputStream()){input.write(request.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}
         String raw=new String(producer.getInputStream().readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);
         if(producer.waitFor()!=0)throw new IllegalStateException("actual Native ABI projection/validation failed: "+new String(producer.getErrorStream().readAllBytes()));
