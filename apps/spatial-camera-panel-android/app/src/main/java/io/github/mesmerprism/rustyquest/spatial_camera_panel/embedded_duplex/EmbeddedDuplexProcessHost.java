@@ -1418,6 +1418,22 @@ final class EmbeddedDuplexProcessHost {
         current.processFence.requireLive(generation);
         current.processFence.requireIncarnation(EmbeddedDuplexProcessIncarnation.current(
                 android.os.Process.myPid(), android.os.Process.myUid()));
+        RetainedNoMediaClose noMedia=current.noMediaClose;
+        if(current.phase.get()==Phase.NEW && current.platform==null && current.resources==null
+                && current.runtimeConfigSha256==null && current.nativeExecutorGeneration==0L
+                && !current.processFence.effectsPending() && !current.displayDetaching && !current.closeInFlight
+                && noMedia!=null && noMedia.original!=null && noMedia.appGeneration==generation
+                && noMedia.original.retainedCleanupOwner==noMedia
+                && noMedia.nativeGeneration==actor.getLong("native_generation")
+                && noMedia.appRecord.equals(actor.getString("app_record_sha256"))
+                && noMedia.original.appGeneration==generation
+                && "whole_app_close".equals(noMedia.original.row.getString("operation"))
+                && EmbeddedDuplexCanonicalJson.sameValue(actor,noMedia.original.row.getJSONObject("actor_binding"))
+                && !noMedia.original.row.isNull("response")){
+            JSONObject receipt=new JSONObject(noMedia.original.row.getJSONObject("response").getString("receipt"));
+            requireCompletedNoMediaOriginal(noMedia.original,receipt);
+            return true;
+        }
         boolean retained = current.phase.get() == Phase.READY && current.platform != null && current.resources != null
                 && EmbeddedDuplexCanonicalJson.sameValue(originalActor(), actor);
         JSONObject closed = current.originalClosedActor;
@@ -2638,7 +2654,8 @@ final class EmbeddedDuplexProcessHost {
                 "java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup","app_process_fence_cleanup"})
             if(!"terminal".equals(receipt.getString(key)))throw new IllegalStateException("actual no-media barrier receipt pending");
         verifyNoMediaNative(held,receipt.getJSONObject("native_retirement"));
-        if(!java.util.Arrays.asList(EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2,EmbeddedDuplexConstructionClosure.WHOLE).contains(receipt.getString("$schema")))
+        if(!java.util.Arrays.asList("rusty.quest.embedded_duplex.no_media_whole_retirement.v1",
+                EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2,EmbeddedDuplexConstructionClosure.WHOLE).contains(receipt.getString("$schema")))
             throw new IllegalStateException("selected configured whole schema differs");
     }
     private void scheduleNoMedia(RetainedNoMediaClose held){

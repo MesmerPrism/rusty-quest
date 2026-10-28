@@ -102,12 +102,21 @@ def main():
       private EmbeddedDuplexRunSelectionStore runSelection;
       private volatile EmbeddedDuplexProcessFence processFence;
       private long nativeExecutorGeneration;
-      private String nativeAppRecordSha256,terminalWholeReceipt;
+      private String nativeAppRecordSha256,terminalWholeReceipt,runtimeConfigSha256;
       private JSONObject originalClosedActor;
       private RetainedWholeClose retainedWholeClose;private static final class RetainedWholeClose{EmbeddedDuplexOriginals.Record original;}
       private ColdPendingLocal coldPendingRecovery;private static final class ColdPendingLocal{EmbeddedDuplexColdRecovery.Plan plan;EmbeddedDuplexOriginals.Record original;long appGeneration;}
       private EmbeddedDuplexOriginals.Record activeCommandOriginal;
       private Object platform,resources;
+      private boolean displayDetaching,closeInFlight;
+      private RetainedNoMediaClose noMediaClose;
+      static final class PhysicalPlatform {boolean joined=true;boolean actualOutboundExchangesJoined(){return joined;}}
+      static final class RetainedNoMediaClose {
+        String config,appRecord;long appGeneration,nativeGeneration;boolean pendingFresh;Object resources;
+        EmbeddedDuplexOriginals.Record original;
+        EmbeddedDuplexRuntimeConfigurationBinding.Context configurationContext;PhysicalPlatform platform;
+        JSONObject proof;final CompletableFuture<String> completion=new CompletableFuture<>();CompletableFuture<Void> callbackMarker;
+      }
       private final AtomicReference<Phase> phase=new AtomicReference<>(Phase.NEW);
       private EmbeddedDuplexProcessHost(Context context){applicationContext=context;runContext=new EmbeddedDuplexRunContext(context.getNoBackupFilesDir(),context.getNoBackupFilesDir(),null,0);}
       private String checkpointSnapshot(){return null;}
@@ -117,19 +126,12 @@ def main():
       void harnessReady(String hash,long generation){nativeAppRecordSha256=hash;nativeExecutorGeneration=generation;platform=new Object();resources=new Object();phase.set(Phase.READY);}
       void harnessNativeGeneration(long generation){nativeExecutorGeneration=generation;}
       void harnessDropResources(){resources=null;}
+      void harnessNoMedia(RetainedNoMediaClose held){noMediaClose=held;platform=null;resources=null;runtimeConfigSha256=null;nativeExecutorGeneration=0;nativeAppRecordSha256=null;phase.set(Phase.NEW);}
       void harnessClose()throws Exception{commands.shutdown();if(!commands.awaitTermination(5,TimeUnit.SECONDS))throw new AssertionError("command lane did not settle");if(processFence!=null)processFence.close();}
     """
     original_source = (production / 'EmbeddedDuplexOriginals.java').read_text(encoding='utf-8')
     if args.whole_publication:
         # Resource/Future facts are explicit leaves; both owner predicates above remain exact.
-        host_leaves += '''
-      static final class PhysicalPlatform {boolean joined=true;boolean actualOutboundExchangesJoined(){return joined;}}
-      static final class RetainedNoMediaClose {
-        String config,appRecord;long appGeneration,nativeGeneration;boolean pendingFresh;Object resources;
-        EmbeddedDuplexRuntimeConfigurationBinding.Context configurationContext;PhysicalPlatform platform;
-        JSONObject proof;final CompletableFuture<String> completion=new CompletableFuture<>();CompletableFuture<Void> callbackMarker;
-      }
-    '''
         config_key = 'io/github/mesmerprism/rustyquest/spatial_camera_panel/BuildConfig.java'
         models[config_key] = models[config_key][:-2] + ''' public static final String EMBEDDED_DUPLEX_FRESH_SETUP_POLICY="source-bound-v2";
           public static final String EMBEDDED_DUPLEX_FRESH_POLICY_SHA256="",EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256="",

@@ -46,11 +46,14 @@ public final class EmbeddedDuplexWholePublicationHostTest {
     }
     static EmbeddedDuplexProcessHost.RetainedNoMediaClose held(JSONObject receipt)throws Exception{
         EmbeddedDuplexProcessHost.RetainedNoMediaClose held=new EmbeddedDuplexProcessHost.RetainedNoMediaClose();
-        held.config=HASH;held.appRecord=HASH;held.appGeneration=7;held.nativeGeneration=9;held.pendingFresh=true;
+        held.config=receipt.has("config_sha256")?HASH:null;held.appRecord=HASH;held.appGeneration=receipt.getLong("app_process_generation");held.nativeGeneration=9;
+        held.pendingFresh=EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2.equals(receipt.getString("$schema"));
         held.platform=new EmbeddedDuplexProcessHost.PhysicalPlatform();held.proof=new JSONObject(receipt.toString());
         // Fixture setup supplies constructor witness data. The production Context.require and requireNative execute unchanged.
-        var constructor=EmbeddedDuplexRuntimeConfigurationBinding.Context.class.getDeclaredConstructor(JSONObject.class);constructor.setAccessible(true);
-        held.configurationContext=constructor.newInstance(receipt.getJSONObject("native_retirement").getJSONObject("configuration_binding"));
+        if(held.pendingFresh){
+            var constructor=EmbeddedDuplexRuntimeConfigurationBinding.Context.class.getDeclaredConstructor(JSONObject.class);constructor.setAccessible(true);
+            held.configurationContext=constructor.newInstance(receipt.getJSONObject("native_retirement").getJSONObject("configuration_binding"));
+        }
         held.completion.complete("no-media-closed");held.callbackMarker=CompletableFuture.completedFuture(null);return held;
     }
     static void directWholeControls()throws Exception{
@@ -186,8 +189,75 @@ public final class EmbeddedDuplexWholePublicationHostTest {
             if(!state.equals("terminal")){JSONObject row=observation(query);denied(()->store.acknowledge(ID,CHALLENGE,row.getString("request_sha256"),row.getString("outcome_sha256"),HASH));}
         }
     }
+    static void noMediaAcknowledgementControls()throws Exception{
+        for(String family:new String[]{"v1","v2","v3"}){
+            File root=Files.createTempDirectory("whole-ack-"+family+"-").toFile();
+            android.content.Context context=new android.content.Context(){public File getNoBackupFilesDir(){return root;}};
+            var singleton=EmbeddedDuplexProcessHost.class.getDeclaredField("instance");singleton.setAccessible(true);singleton.set(null,null);
+            EmbeddedDuplexProcessHost host=EmbeddedDuplexProcessHost.forApplication(context);
+            try{
+                host.harnessSubmit(()->null).get();long generation=EmbeddedDuplexProcessHost.currentAppGeneration();
+                var fenceField=EmbeddedDuplexProcessHost.class.getDeclaredField("processFence");fenceField.setAccessible(true);
+                ((EmbeddedDuplexProcessFence)fenceField.get(host)).bindIncarnation(
+                    EmbeddedDuplexProcessIncarnation.current(android.os.Process.myPid(),android.os.Process.myUid()));
+                JSONObject receipt=whole().put("app_process_generation",generation);
+                JSONObject nativeProof=receipt.getJSONObject("native_retirement").put("app_process_generation",generation);
+                nativeProof.getJSONObject("configuration_binding").put("app_process_generation",generation);
+                nativeProof.getJSONObject("durable_closure").put("app_process_generation",generation);
+                if(family.equals("v1")){
+                    receipt.put("$schema","rusty.quest.embedded_duplex.no_media_whole_retirement.v1").remove("config_sha256");
+                    receipt.put("native_retirement",new JSONObject().put("$schema","rusty.quest.embedded_duplex.no_media_retirement.v1")
+                        .put("native_runtime_binding","not_initialized").put("disposition","uninitialized_fence_closed")
+                        .put("app_process_generation",generation).put("app_record_sha256",HASH).put("native_executor_generation",9));
+                }else if(family.equals("v3")){
+                    receipt.put("$schema",EmbeddedDuplexConstructionClosure.WHOLE);
+                    receipt.put("native_retirement",new JSONObject().put("$schema",EmbeddedDuplexConstructionClosure.NATIVE)
+                        .put("native_runtime_binding","partial_construction").put("disposition","partial_construction_closed")
+                        .put("app_process_generation",generation).put("app_record_sha256",HASH).put("native_executor_generation",9)
+                        .put("config_sha256",HASH).put("construction_disposition","not_committed").put("closure_body_sha256","sha256:"+HASH)
+                        .put("durable_closure",JSONObject.NULL).put("provider_entered",false).put("new_media_starts",0)
+                        .put("old_outcomes_preserved",true).put("future_writable_restore","owner_factory_not_entered"));
+                }
+                EmbeddedDuplexProcessHost.RetainedNoMediaClose owner=held(receipt);
+                EmbeddedDuplexOriginalsHostTest.Actor source=new EmbeddedDuplexOriginalsHostTest.Actor();source.generation=generation;
+                EmbeddedDuplexOriginals.ActorSource actor=new EmbeddedDuplexOriginals.ActorSource(){
+                    public JSONObject snapshot()throws Exception{return source.snapshot();}public long appGeneration(){return generation;}
+                    public boolean settled(JSONObject value,long captured)throws Exception{return EmbeddedDuplexProcessHost.originalActorSettled(value,captured);}
+                };
+                EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});CompletableFuture<Bundle> future=new CompletableFuture<>();
+                store.begin(ID,"whole_app_close",CHALLENGE,EmbeddedDuplexOriginals.request("whole_app_close",CHALLENGE,new Bundle()),()->{
+                    owner.original=EmbeddedDuplexOriginals.capture();owner.original.retainedCleanupOwner=owner;
+                    try{EmbeddedDuplexOriginals.bindActualActor(actor.snapshot(),generation);}catch(Exception failure){throw new IllegalStateException(failure);}
+                    host.harnessNoMedia(owner);return future;
+                });future.complete(response(receipt));
+                JSONObject row=observation(store.query(ID,CHALLENGE));JSONObject captured=actor.snapshot();
+                yes(EmbeddedDuplexProcessHost.originalActorSettled(captured,generation),"same retained no-media owner must settle "+family);
+                denied(()->{if(!EmbeddedDuplexProcessHost.originalActorSettled(captured,generation+1))throw new IllegalStateException();});
+                yes(!EmbeddedDuplexProcessHost.originalActorSettled(new JSONObject(captured.toString()).put("native_generation",10),generation),"changed actor must not settle");
+                byte[] published=Files.readAllBytes(new File(root,"operator-originals-v1/"+ID+".json").toPath());
+                for(String damage:new String[]{"generation","wrong_owner","completion","completion_failed","callback","callback_failed","barrier","native_binding"}){
+                    EmbeddedDuplexProcessHost.RetainedNoMediaClose changed=held(receipt);changed.original=owner.original;owner.original.retainedCleanupOwner=changed;
+                    if(damage.equals("generation"))changed.appGeneration++;
+                    else if(damage.equals("wrong_owner"))owner.original.retainedCleanupOwner=owner;
+                    else if(damage.startsWith("completion")){
+                        CompletableFuture<String> completion=new CompletableFuture<>();if(damage.endsWith("failed"))completion.completeExceptionally(new IllegalStateException("fixture"));
+                        var field=changed.getClass().getDeclaredField("completion");field.setAccessible(true);field.set(changed,completion);
+                    }else if(damage.equals("callback"))changed.callbackMarker=new CompletableFuture<>();
+                    else if(damage.equals("callback_failed"))changed.callbackMarker=CompletableFuture.failedFuture(new IllegalStateException("fixture"));
+                    else if(damage.equals("barrier"))changed.proof.put("java_renderer_cleanup","pending");
+                    else changed.proof.getJSONObject("native_retirement").put("native_executor_generation",10);
+                    host.harnessNoMedia(changed);
+                    denied(()->store.acknowledge(ID,CHALLENGE,row.getString("request_sha256"),row.getString("outcome_sha256"),HASH));
+                    yes(java.util.Arrays.equals(published,Files.readAllBytes(new File(root,"operator-originals-v1/"+ID+".json").toPath())),"refused ACK changed durable Original");
+                }
+                owner.original.retainedCleanupOwner=owner;host.harnessNoMedia(owner);
+                Bundle ack=store.acknowledge(ID,CHALLENGE,row.getString("request_sha256"),row.getString("outcome_sha256"),HASH);
+                yes("compacted".equals(ack.getString("status")),"actual ACK must compact only earned no-media owner "+family);
+            }finally{host.harnessClose();singleton.set(null,null);}
+        }
+    }
     public static void main(String[] args)throws Exception{
-        directWholeControls();otherDirectFamilies();invalidDirectControls();wrapperControls();
+        directWholeControls();otherDirectFamilies();invalidDirectControls();wrapperControls();noMediaAcknowledgementControls();
         System.out.println("Whole publication controls passed: "+checks+"; actual complete/store/retrieval and exact Host predicates; physical observations modeled.");
     }
 }
