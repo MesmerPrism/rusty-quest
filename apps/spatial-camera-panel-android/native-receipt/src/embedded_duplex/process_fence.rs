@@ -694,7 +694,65 @@ struct Writer {
     counter: AtomicU64,
     poisoned: AtomicBool,
 }
+// Closed classifications only. Arbitrary errors are fingerprinted, never logged.
+fn fence_failure_category(cause: &str) -> &'static str {
+    match cause {
+        "native fence path unavailable" => "NATIVE_PATH_UNAVAILABLE",
+        "native fence private path invalid" => "NATIVE_PRIVATE_PATH_INVALID",
+        "native directory stat failed" => "NATIVE_DIRECTORY_STAT",
+        "native fence directory changed" => "NATIVE_DIRECTORY_CHANGED",
+        "native witness read failed" => "NATIVE_WITNESS_READ",
+        "native fence witness changed" => "NATIVE_WITNESS_CHANGED",
+        "native writer mutex poisoned" => "NATIVE_WRITER_MUTEX",
+        "native file stat failed" | "native fence stat failed" => "NATIVE_FILE_STAT",
+        "native writer lease unavailable" => "NATIVE_WRITER_LEASE",
+        "native incarnation journal differs" => "NATIVE_JOURNAL_COUNTER",
+        "native incarnation journal corrupt" => "NATIVE_JOURNAL_CORRUPT",
+        "native fence state missing or corrupt" => "NATIVE_JOURNAL_SIZE",
+        "native fence seek failed" => "NATIVE_JOURNAL_SEEK",
+        "native fence read failed" => "NATIVE_JOURNAL_READ",
+        "native fence state encoding invalid" => "NATIVE_JOURNAL_UTF8",
+        "native generation seek failed" => "NATIVE_GENERATION_SEEK",
+        "native generation write failed" => "NATIVE_GENERATION_WRITE",
+        "native generation truncate failed" => "NATIVE_GENERATION_TRUNCATE",
+        "native generation sync failed" => "NATIVE_GENERATION_SYNC",
+        "native generation directory sync failed" => "NATIVE_GENERATION_DIRECTORY_SYNC",
+        "native app channel attach failed" => "APP_ATTACH_UNAVAILABLE",
+        "native app fence callback unavailable" => "APP_CALLBACK_UNAVAILABLE",
+        "native app fence callback failed" => "APP_CALLBACK_FAILED",
+        "native app fence callback type" => "APP_CALLBACK_TYPE",
+        "native app fence callback absent" => "APP_CALLBACK_ABSENT",
+        "native app fence callback encoding" => "APP_CALLBACK_ENCODING",
+        "native app fence callback bounds" => "APP_CALLBACK_BOUNDS",
+        "native admission requires pending app fence" => "APP_PENDING_REQUIRED",
+        "native app fence binding invalid or recovery unsupported" => "APP_RECORD_INVALID",
+        "native app generation invalid" => "APP_GENERATION_INVALID",
+        "app generation changed" => "APP_GENERATION_CHANGED",
+        "app operational run changed" => "APP_RUN_CHANGED",
+        "app checkpoint changed" => "APP_CHECKPOINT_CHANGED",
+        "app evidence changed" => "APP_EVIDENCE_CHANGED",
+        "app record digest changed" => "APP_RECORD_DIGEST_CHANGED",
+        _ => "UNKNOWN_FAILURE",
+    }
+}
+fn emit_fence_failure(operation: &str, cause: &str, generation: u64) {
+    // Evidence cannot replace the existing refusal, including a failed log sink.
+    let _ = std::panic::catch_unwind(|| {
+        #[cfg(target_os = "android")]
+        crate::camera_hwb_marker::log_camera_hwb_marker(format!(
+            "status=native-fence-first-failure operation={operation} cause={} writer_generation={generation} error_sha256={} error_bytes={}",
+            fence_failure_category(cause), digest(cause), cause.len()
+        ));
+    });
+}
 impl Writer {
+    fn poison(&self, operation: &'static str, cause: &str) {
+        // Publish the same fail-closed state before telemetry. The existing
+        // atomic chooses one immutable first marker without another lock.
+        if !self.poisoned.swap(true, Ordering::SeqCst) {
+            emit_fence_failure(operation, cause, self.counter.load(Ordering::SeqCst));
+        }
+    }
     fn open(
         directory_path: &Path,
         app_source: Arc<dyn AppFenceSource>,
@@ -806,7 +864,7 @@ impl Writer {
         if self.poisoned.load(Ordering::SeqCst) {
             return Err("native writer poisoned".into());
         }
-        let result = (|| {
+        let result: Result<(), String> = (|| {
             let directory = private_metadata(&self.directory_path, true)?;
             if !same_inode(
                 &directory,
@@ -843,8 +901,9 @@ impl Writer {
             }
             Ok(())
         })();
-        if result.is_err() {
-            self.poisoned.store(true, Ordering::SeqCst);
+        if let Err(cause) = &result {
+            // The file guard in the observation closure has already dropped.
+            self.poison("OBSERVE", cause);
         }
         result
     }
@@ -894,7 +953,8 @@ impl Writer {
             Ok::<(), String>(())
         })();
         if let Err(reason) = committed {
-            self.poisoned.store(true, Ordering::SeqCst);
+            // The commit guard has dropped; no diagnostic I/O under its mutex.
+            self.poison("ALLOCATE", &reason);
             return Err(reason);
         }
         self.counter.store(next, Ordering::SeqCst);
@@ -1353,13 +1413,34 @@ impl NativeCapability {
         }
         self.writer.observe()?;
         // No native mutex is held across the live app-channel callback.
+        let mut operation = "APP_RECORD_PARSE";
         let observed = self
             .writer
             .app_source
             .record()
+            .map_err(|error| {
+                operation = "APP_CALLBACK";
+                error
+            })
             .and_then(|record| AppBinding::parse(&record));
         if observed.as_ref() != Ok(&self.binding) {
-            self.writer.poisoned.store(true, Ordering::SeqCst);
+            match &observed {
+                Err(cause) => self.writer.poison(operation, cause),
+                Ok(binding) => self.writer.poison(
+                    "APP_BINDING",
+                    if binding.generation != self.binding.generation {
+                        "app generation changed"
+                    } else if binding.operational_run_id != self.binding.operational_run_id {
+                        "app operational run changed"
+                    } else if binding.checkpoint_sha256 != self.binding.checkpoint_sha256 {
+                        "app checkpoint changed"
+                    } else if binding.evidence_sha256 != self.binding.evidence_sha256 {
+                        "app evidence changed"
+                    } else {
+                        "app record digest changed"
+                    },
+                ),
+            }
             return Err("native app record or lease changed".into());
         }
         if self.retired.load(Ordering::SeqCst) {
@@ -2107,15 +2188,13 @@ mod operational_run_tests {
         let binding = AppBinding::parse(&current).unwrap();
         let mut changed = link.clone();
         changed["journal_snapshot"]["evidence_sha256"] = serde_json::json!("0".repeat(64));
-        assert!(
-            validate_cold_link(
-                &canonical_handoff_json(&changed).unwrap(),
-                &binding,
-                &native_record,
-                4
-            )
-            .is_err()
-        );
+        assert!(validate_cold_link(
+            &canonical_handoff_json(&changed).unwrap(),
+            &binding,
+            &native_record,
+            4
+        )
+        .is_err());
         let registry = NativeFenceRegistry::default();
         let raw = registry
             .retire_cold_pending_local(&path, &current, &canonical_handoff_json(&link).unwrap())
@@ -2391,11 +2470,9 @@ mod operational_run_tests {
             Some("native_prior_process_owner_unreconciled")
         );
         assert!(restarted.claim_selected_run(&path, source.clone()).is_err());
-        assert!(
-            restarted
-                .claim_selected_run_after_completed_close(&path, source)
-                .is_err()
-        );
+        assert!(restarted
+            .claim_selected_run_after_completed_close(&path, source)
+            .is_err());
         assert_eq!(fs::read(path.join(LOCK_NAME)).unwrap(), original);
     }
 

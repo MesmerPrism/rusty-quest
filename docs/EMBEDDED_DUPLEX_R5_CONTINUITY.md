@@ -40,6 +40,28 @@ executes the whole current Java fence with real host locks and child-process
 death, explicit modeled Android syscall leaves and optional Android API compile.
 It establishes no Android runtime or prior device failure cause.
 
+The first Native writer poison transition emits `status=native-fence-first-failure`
+through the existing Native owner marker. Its closed operation/cause distinguishes
+file observation, allocation commit, app callback, app-record parsing and changed
+binding fields; only the error length/hash crosses the boundary. Poison remains
+latched before logging, operation-local file guards have dropped, and later
+refusals cannot replace the first marker. Diagnostic failure changes no refusal,
+counter, binding, admission or recovery predicate.
+
+Each captured live app-record source separately preserves its first thrown Java
+exception as `status=native-fence-callback-failure`. Inspection/directory failures
+consume no live-source marker. JNI retains the pending Throwable before the
+existing clear, then reads its base message/cause fields outside ownership locks;
+it invokes no overridden Throwable method. The summary bounds the cause chain to
+four entries, class names to 160 UTF16 units and message hashes to a 1024-unit
+prefix converted with UTF8 replacement for unpaired surrogates. It includes
+original message length and truncation indicators, never message plaintext.
+Local references and secondary diagnostic exceptions are cleared independently
+of the original fixed refusal. `Test-NativeFenceFailureHost.py` runs extracted
+Native gates with modeled OS/app/logging leaves; `Test-NativeFenceCallbackHost.py`
+runs extracted JNI producers against an installed host JVM and warmed crates.
+These controls establish neither ART behavior nor an earlier device failure cause.
+
 Initialization publishes a Host only after construction and the final live
 capability check succeed. An unwind guard clears only the initialization gate
 on errors or panic. It preserves the staged route and every retained cleanup

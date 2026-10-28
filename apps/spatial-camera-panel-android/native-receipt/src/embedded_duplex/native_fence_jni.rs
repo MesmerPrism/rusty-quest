@@ -8,6 +8,7 @@ use jni::objects::{GlobalRef, JClass, JObject, JString};
 use jni::sys::jstring;
 use jni::{JNIEnv, JavaVM};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 static REGISTRY: OnceLock<NativeFenceRegistry> = OnceLock::new();
@@ -27,6 +28,7 @@ struct JavaAppFenceSource {
     vm: JavaVM,
     callback: GlobalRef,
     record_method: &'static str,
+    first_record_failure: AtomicBool,
 }
 impl AppFenceSource for JavaAppFenceSource {
     fn record(&self) -> Result<String, String> {
@@ -34,7 +36,13 @@ impl AppFenceSource for JavaAppFenceSource {
             .vm
             .attach_current_thread()
             .map_err(|_| "native app channel attach failed")?;
-        callback_string(&mut env, self.callback.as_obj(), self.record_method, 512)
+        callback_string_observed(
+            &mut env,
+            self.callback.as_obj(),
+            self.record_method,
+            512,
+            Some(&self.first_record_failure),
+        )
     }
     fn inspection_record(&self) -> Result<String, String> {
         let mut env = self
@@ -119,6 +127,7 @@ fn capture_source(
     }
     Ok(Arc::new(JavaAppFenceSource {
         record_method: "nativeAdmissionRecord",
+        first_record_failure: AtomicBool::new(false),
         vm: env
             .get_java_vm()
             .map_err(|_| "native app fence VM failed")?,
@@ -264,15 +273,148 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     })();
     super::runtime_host::return_string(&mut env, result)
 }
+// Read only a bounded UTF16 prefix; never copy an arbitrary Throwable message.
+fn bounded_fence_string(
+    env: &mut JNIEnv<'_>,
+    string: &JString<'_>,
+    limit: usize,
+) -> jni::errors::Result<(usize, String)> {
+    if string.is_null() || limit > 1024 {
+        return Err(jni::errors::Error::NullPtr("fence diagnostic string"));
+    }
+    let raw = env.get_raw();
+    // The object is a live JNI String and the fixed prefix buffer is large
+    // enough for every requested code unit. No critical/string pin is retained.
+    let table = unsafe { &**raw };
+    let length = unsafe {
+        table
+            .GetStringLength
+            .ok_or(jni::errors::Error::NullPtr("GetStringLength"))?(raw, string.as_raw())
+    };
+    if env.exception_check()? || length < 0 {
+        return Err(jni::errors::Error::JavaException);
+    }
+    let count = (length as usize).min(limit);
+    let mut units = [0u16; 1024];
+    unsafe {
+        table
+            .GetStringRegion
+            .ok_or(jni::errors::Error::NullPtr("GetStringRegion"))?(
+            raw,
+            string.as_raw(),
+            0,
+            count as i32,
+            units.as_mut_ptr(),
+        )
+    };
+    if env.exception_check()? {
+        return Err(jni::errors::Error::JavaException);
+    }
+    Ok((length as usize, String::from_utf16_lossy(&units[..count])))
+}
+fn fence_exception_summary(
+    env: &mut JNIEnv<'_>,
+    throwable: &JObject<'_>,
+) -> jni::errors::Result<String> {
+    if throwable.is_null() {
+        return Err(jni::errors::Error::NullPtr("fence diagnostic exception"));
+    }
+    env.with_local_frame(40, |env| {
+        // Resolve fields on Throwable itself: a subclass cannot shadow them or
+        // execute overridden getMessage/getCause/toString application code.
+        let message_field = env.get_field_id("java/lang/Throwable", "detailMessage", "Ljava/lang/String;")?;
+        let cause_field = env.get_field_id("java/lang/Throwable", "cause", "Ljava/lang/Throwable;")?;
+        let mut current = env.new_local_ref(throwable)?;
+        let mut seen = Vec::with_capacity(4);
+        let mut summary = String::from("fingerprint=AVAILABLE message_encoding=UTF8_LOSSY_UTF16_PREFIX");
+        let mut count = 0;
+        let mut cycle = false;
+        while !current.is_null() && count < 4 {
+            if seen.iter().any(|old| env.is_same_object(old, &current).unwrap_or(false)) {
+                cycle = true;
+                break;
+            }
+            let class = env.get_object_class(&current)?;
+            // java.lang.Class is final; this VM method executes no Throwable override.
+            let name = env.call_method(&class, "getName", "()Ljava/lang/String;", &[])?.l()?;
+            let (name_chars, name) = bounded_fence_string(env, &JString::from(name), 160)?;
+            let safe_name: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.'|'_'|'$'|'['|']'|'/') { c } else { '_' }).collect();
+            let message = env.get_field_unchecked(&current, message_field, jni::signature::ReturnType::Object)?.l()?;
+            let (chars, prefix) = if message.is_null() { (-1_i64, String::new()) } else {
+                let (chars, prefix) = bounded_fence_string(env, &JString::from(message), 1024)?;
+                (chars as i64, prefix)
+            };
+            summary.push_str(&format!(
+                " cause{count}_class={safe_name} cause{count}_class_truncated={} cause{count}_message_chars={chars} cause{count}_hashed_bytes={} cause{count}_message_sha256={} cause{count}_message_truncated={}",
+                name_chars > 160, prefix.len(), rusty_quest_broker_authority::packaged_json_sha256(&prefix), chars > 1024
+            ));
+            count += 1;
+            let next = env.get_field_unchecked(&current, cause_field, jni::signature::ReturnType::Object)?.l()?;
+            // Throwable's uninitialized cause is itself, meaning no nested cause.
+            if env.is_same_object(&current, &next)? { current = JObject::null(); break; }
+            seen.push(current);
+            current = next;
+        }
+        summary.push_str(&format!(" cause_count={count} cause_cycle={cycle} causes_truncated={}", !current.is_null() && !cycle));
+        Ok(summary)
+    })
+}
+fn emit_fence_callback_failure(method: &str, summary: &str) {
+    let method = match method {
+        "nativeAdmissionRecord" => "ADMISSION_RECORD",
+        "nativeInspectionRecord" => "INSPECTION_RECORD",
+        "nativeFenceDirectory" => "ADMISSION_DIRECTORY",
+        "nativeInspectionDirectory" => "INSPECTION_DIRECTORY",
+        "nativeColdRecoveryEvidence" => "COLD_RECOVERY_EVIDENCE",
+        _ => "OTHER_FIXED_CALLBACK",
+    };
+    #[cfg(target_os = "android")]
+    crate::camera_hwb_marker::log_camera_hwb_marker(format!(
+        "status=native-fence-callback-failure operation=APP_CALLBACK method={method} {summary}"
+    ));
+}
 fn callback_string(
     env: &mut JNIEnv<'_>,
     callback: &JObject<'_>,
     method: &str,
     max: usize,
 ) -> Result<String, String> {
+    callback_string_observed(env, callback, method, max, None)
+}
+fn callback_string_observed(
+    env: &mut JNIEnv<'_>,
+    callback: &JObject<'_>,
+    method: &str,
+    max: usize,
+    first_failure: Option<&AtomicBool>,
+) -> Result<String, String> {
     let result = env.call_method(callback, method, "()Ljava/lang/String;", &[]);
     if env.exception_check().unwrap_or(true) {
+        let first = first_failure.is_some_and(|slot| !slot.swap(true, Ordering::SeqCst));
+        // Retain the actual pending object before the existing clear. All field
+        // inspection happens afterward, outside app/Native ownership locks.
+        let pending = if first {
+            env.exception_occurred()
+                .ok()
+                .map(|exception| env.auto_local(exception))
+        } else {
+            None
+        };
         let _ = env.exception_clear();
+        if first {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let summary = pending
+                    .as_ref()
+                    .and_then(|exception| fence_exception_summary(env, exception).ok())
+                    .unwrap_or_else(|| "fingerprint=UNAVAILABLE".to_owned());
+                emit_fence_callback_failure(method, &summary);
+            }));
+            // Only diagnostic JNI work can have raised a secondary exception.
+            // It must not replace the original fixed refusal or escape to Java.
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
+            }
+        }
         return Err("native app fence callback unavailable".into());
     }
     let object = result
@@ -363,6 +505,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         super::runtime_host::retire_never_claimed_process_gate()?;
         let source = Arc::new(JavaAppFenceSource {
             record_method: "nativeAdmissionRecord",
+            first_record_failure: AtomicBool::new(false),
             vm: env.get_java_vm().map_err(|_| "never-claimed app VM")?,
             callback: env
                 .new_global_ref(callback)
