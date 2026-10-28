@@ -303,3 +303,8 @@ overwrite the mutable error. `PACKET_PUMP_FAILED` classifies a retained writer
 exception; `PACKET_OFFER_REJECTED` reports rejection without claiming a queue-full
 cause. The marker uses closed codes and counters, never exception text or media
 payload. Logging failure cannot bypass the existing throw/retirement path.
+These two packet markers fingerprint up to four Throwable cause nodes before
+retirement: class (up to 160 characters), original message character count,
+hashed UTF8 byte count and SHA256 of at most the first 1024 message characters.
+Explicit truncation/cycle fields distinguish bounded prefixes from complete
+messages and cause chains. No message characters or stacks are emitted.

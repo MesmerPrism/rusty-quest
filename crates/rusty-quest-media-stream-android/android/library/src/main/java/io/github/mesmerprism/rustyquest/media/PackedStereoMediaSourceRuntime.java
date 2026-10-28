@@ -663,6 +663,43 @@ public final class PackedStereoMediaSourceRuntime {
             stopRequested = true;
         }
 
+        private static String failureFingerprint(Throwable failure) {
+            try {
+                StringBuilder result = new StringBuilder();
+                Throwable[] seen = new Throwable[4];
+                int count = 0;
+                while (failure != null && count < seen.length) {
+                    for (int i = 0; i < count; i++) {
+                        if (seen[i] == failure) return result + " failureCauseCycle=true failureCount=" + count;
+                    }
+                    seen[count] = failure;
+                    String prefix = " failure" + count;
+                    String type = failure.getClass().getName();
+                    String message = failure.getMessage();
+                    int chars = message == null ? -1 : message.length();
+                    byte[] bytes = (message == null ? "" : message.substring(0, Math.min(chars, 1024)))
+                            .getBytes(StandardCharsets.UTF_8);
+                    byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+                    StringBuilder hex = new StringBuilder(64);
+                    for (byte value : digest) {
+                        hex.append(Character.forDigit((value >> 4) & 15, 16));
+                        hex.append(Character.forDigit(value & 15, 16));
+                    }
+                    result.append(prefix).append("Class=").append(type.substring(0, Math.min(type.length(), 160)))
+                            .append(prefix).append("ClassTruncated=").append(type.length() > 160)
+                            .append(prefix).append("MessageChars=").append(chars)
+                            .append(prefix).append("HashedBytes=").append(bytes.length)
+                            .append(prefix).append("MessageSha256=").append(hex)
+                            .append(prefix).append("MessageTruncated=").append(chars > 1024);
+                    count++;
+                    failure = failure.getCause();
+                }
+                return result + " failureCount=" + count + " failureCausesTruncated=" + (failure != null);
+            } catch (Throwable ignored) {
+                return " failureFingerprint=UNAVAILABLE";
+            }
+        }
+
         private void logClosedSourceFailure(String stage, PackedSourceFailureCode.Operation operation,
                 Throwable failure) {
             long nowMs = SystemClock.elapsedRealtime();
@@ -698,7 +735,10 @@ public final class PackedStereoMediaSourceRuntime {
                     + " freshnessLimitMs=" + SOURCE_FRESHNESS_TIMEOUT_MS
                     + " encodedFrames=" + encodedFrames
                     + " packetCount=" + packetCount + " keyframeCount=" + keyframeCount
-                    + " consumerAcceptCount=" + consumerAcceptCount + " code=SOURCE_EFFECT_UNCERTAIN");
+                    + " consumerAcceptCount=" + consumerAcceptCount
+                    + (("PACKET_PUMP_FAILED".equals(stage) || "PACKET_OFFER_REJECTED".equals(stage))
+                            ? failureFingerprint(failure) : "")
+                    + " code=SOURCE_EFFECT_UNCERTAIN");
         }
 
         void sourceLoop() {
