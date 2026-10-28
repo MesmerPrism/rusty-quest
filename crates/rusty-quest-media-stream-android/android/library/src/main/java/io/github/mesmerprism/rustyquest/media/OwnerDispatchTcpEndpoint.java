@@ -64,9 +64,10 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
     }
     private static final class ExchangeTrace {
         private final ExchangeObserver observer;
+        private final String correlation;
         private Phase phase = Phase.TARGET_BINDING;
         private volatile boolean deadlineExpired;
-        ExchangeTrace(ExchangeObserver observer) { this.observer = observer; }
+        ExchangeTrace(ExchangeObserver observer,byte[] frame) { this.observer = observer;correlation=frameCorrelation(frame); }
         void enter(Phase value) { phase = value; publish(Outcome.IN_PROGRESS, Failure.NONE); }
         void publish(Outcome outcome, Failure failure) {
             if (observer != null) try { observer.observe(phase, outcome, failure); }
@@ -85,6 +86,7 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
                     : error instanceof FrameBoundsException ? Failure.FRAME_BOUNDS
                     : error instanceof IOException ? Failure.IO : Failure.CALLBACK_REJECTED;
             publish(Outcome.FAILED, cause);
+            logFailure("OUTBOUND",phase.name(),cause,error,correlation);
         }
     }
     private static final class FrameBoundsException extends IOException {
@@ -173,10 +175,13 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
     }
 
     private void serve(Socket socket) {
+        InboundPhase phase=InboundPhase.READ_REQUEST;
+        String correlation="NONE";
         try {
             socket.setSoTimeout(IO_TIMEOUT_MS);
             socket.setTcpNoDelay(true);
             byte[] request = readFrame(socket);
+            correlation=frameCorrelation(request);
             if (stopping) return;
             // Incomplete unauthenticated input retains its finite framing policy. A fully received
             // native-dispatched original is retained while its actual handler finishes.
@@ -186,11 +191,20 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
                 socketDeadlines.put(socket,deadlines.schedule(()->warnPending("same owner handler remains Pending"),IO_TIMEOUT_MS,TimeUnit.MILLISECONDS));
             }
             // No endpoint monitor is held across native authority or platform work.
+            phase=InboundPhase.HANDLE_REQUEST;
             byte[] response = handler.handle(request);
+            phase=InboundPhase.WRITE_RESPONSE;
             writeFrame(new DataOutputStream(socket.getOutputStream()), response);
         } catch (Exception failed) {
             // A lost reply is uncertainty. Native replay state retains the obligation;
             // transport must never synthesize a successful owner receipt.
+            Failure reason=phase==InboundPhase.HANDLE_REQUEST?Failure.CALLBACK_REJECTED
+                    :failed instanceof FrameBoundsException?Failure.FRAME_BOUNDS
+                    :failed instanceof EOFException?Failure.EOF
+                    :stopping && failed instanceof IOException?Failure.DESIRED_STOP
+                    :failed instanceof SocketTimeoutException?Failure.DEADLINE
+                    :failed instanceof IOException?Failure.IO:Failure.CALLBACK_REJECTED;
+            logFailure("INBOUND",phase.name(),reason,failed,correlation);
         } finally { closeSocket(socket); }
     }
 
@@ -202,7 +216,7 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
     /** Finite local transport observation only; a returned frame is not an authenticated receipt. */
     public static byte[] exchange(InetAddress targetAddress, int targetPort, byte[] frame,
             ExchangeObserver observer) throws IOException {
-        ExchangeTrace trace = new ExchangeTrace(observer);
+        ExchangeTrace trace = new ExchangeTrace(observer,frame);
         try {
             trace.enter(Phase.TARGET_BINDING);
             if (targetAddress == null || targetPort <= 0 || targetPort > 65535) {
@@ -239,7 +253,7 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
     static byte[] exchangeOwnedObserved(InetAddress address,int port,byte[] frame,ExchangeObserver observer,ExchangeControl control,
             long connectEstimateMs,long frameEstimateMs,EstimatePublisher publisher)throws IOException{
         if(control==null || publisher==null || connectEstimateMs<0 || frameEstimateMs<0)throw new IllegalArgumentException("owned exchange control");
-        ExchangeTrace trace=new ExchangeTrace(observer);ScheduledThreadPoolExecutor estimates=deadlineExecutor();
+        ExchangeTrace trace=new ExchangeTrace(observer,frame);ScheduledThreadPoolExecutor estimates=deadlineExecutor();
         try(Socket socket=new Socket()){
             trace.enter(Phase.TARGET_BINDING);
             if(address==null || port<=0 || port>65535)throw new IllegalArgumentException("owner control target");
@@ -363,5 +377,26 @@ public final class OwnerDispatchTcpEndpoint implements AutoCloseable {
     }
     private static void warnPending(String label) {
         try { android.util.Log.w("RQSpatialCameraPanel", label); } catch (RuntimeException ignored) { }
+    }
+    private enum InboundPhase { READ_REQUEST, HANDLE_REQUEST, WRITE_RESPONSE }
+    /** Diagnostic correlation only. Never export frame bytes, exception text or a success claim. */
+    private static String frameCorrelation(byte[] frame) {
+        if(frame==null || frame.length==0 || frame.length>MAX_FRAME_BYTES)return "NONE";
+        try {
+            byte[] digest=java.security.MessageDigest.getInstance("SHA-256").digest(frame);
+            char[] hex="0123456789abcdef".toCharArray(),value=new char[digest.length*2];
+            for(int i=0;i<digest.length;i++){value[i*2]=hex[(digest[i]&255)>>>4];value[i*2+1]=hex[digest[i]&15];}
+            return new String(value);
+        }catch(Throwable unavailable){return "NONE";}
+    }
+    private static void logFailure(String direction,String phase,Failure reason,Exception error,String correlation) {
+        try {
+            String type=error instanceof EOFException?"EOF":error instanceof SocketTimeoutException?"SOCKET_TIMEOUT"
+                    :error instanceof SocketException?"SOCKET":error instanceof IOException?"IO"
+                    :error instanceof IllegalArgumentException?"ILLEGAL_ARGUMENT":error instanceof IllegalStateException?"ILLEGAL_STATE"
+                    :error instanceof SecurityException?"SECURITY":error instanceof InterruptedException?"INTERRUPTED":"OTHER";
+            android.util.Log.w("RQSpatialCameraPanel","channel=owner-dispatch direction="+direction+" phase="+phase
+                    +" failure="+reason.name()+" exception="+type+" frame_sha256="+correlation);
+        }catch(Throwable unavailable){/* Observation cannot replace the original failure or its cleanup. */}
     }
 }

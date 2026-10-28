@@ -119,6 +119,36 @@ hash-pinned `org.json` 20240303 jar, resolved from the local Gradle cache or
 dependencies. Each invocation preserves prior evidence in its own output
 capsule under the selected repository `target` directory.
 
+## Owner dispatch failure observations
+
+`OwnerDispatchTcpEndpoint` logs one bounded `channel=owner-dispatch` warning at
+an incoming framing/handler/response failure and at an outgoing exchange failure.
+The existing `RQSpatialCameraPanel` tag carries direction, finite phase, failure
+and exception categories, and a SHA256 correlation of the bounded request frame.
+It carries no frame contents, exception message/stack, peer address or key. A
+missing correlation is `NONE`; this digest is diagnostic, never authentication.
+The incoming digest is taken before invoking the handler. Log publication cannot
+replace the original exception, fabricate a response or alter endpoint joins.
+
+The app's `ownerFailureDiagnostic` snapshot only describes its provider callback
+path. `AVAILABLE`/`NONE` does not prove successful native validation, transport,
+dispatch, media or cleanup. A closed request task proves transport retirement,
+including a caught rejected handler, rather than successful owner execution.
+Absence of a log warning is likewise not success. These warnings become available
+only in artifacts containing this source; collect existing native and Java tags
+before an operation to avoid losing its first failure from the device ring.
+
+Run the focused real-loopback JVM check (Android Log is modeled):
+
+```powershell
+python tools/checks/Test-OwnerDispatchDiagnosticHost.py --java-home <jdk17> --output <repo>/target/owner-dispatch-diagnostic-check
+```
+
+It checks correlated handler rejection/source EOF, payload exclusion, owned
+exchange and endpoint joins, successful response preservation, and failed log
+publication. It builds no APK and proves no device, native-owner or cleanup
+acceptance. The existing endpoint/replay/cleanup rules are unchanged.
+
 ## Accepted embedded LAN placement
 
 The embedded packed-stereo executor keeps three endpoints distinct: the local
