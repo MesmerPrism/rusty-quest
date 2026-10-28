@@ -135,6 +135,54 @@ with
 requested, supported, and effective markers remain separate. ABI v1 and
 missing optional payloads keep both features ineffective.
 
+## Inert peer endpoint data pilot
+
+`SpatialPeerNetworkProfilePilot` is a host-tested data selection experiment,
+with no Activity, enrollment, socket or native-route consumer. The ordinary
+`active.profile.json` parser still refuses its additive field. Do not stage a
+pilot document as a live control update or treat its selection as effective
+network configuration.
+
+The explicit pilot consumer accepts a complete existing control profile with
+one additional root field, `peer_network_endpoints`. This is an array of exactly
+two objects, each containing `peer_id`, `media_endpoint` and `control_endpoint`.
+Each endpoint contains only `protocol`, `host` and `port`; media protocol is
+`rmanvid-v4-packed-stereo`, control protocol is `rqod1`, host is canonical
+unicast IPv4 (no DNS, loopback, unspecified or multicast address), and port is
+an exact integer in `1..65535`. IPv6 is outside this pilot. Both peer IDs must
+exactly cover the caller's current enrolled peer set; the caller, not profile
+data, supplies that set. Identity, device roles, keys, trust, camera and policy
+fields are not accepted endpoint inputs. Media/control collisions within a
+peer, and equal media or control endpoints across the peers, are rejected.
+
+The same existing strict byte ingress validates the whole bounded document
+before its endpoint field is extracted. The existing profile parser validates
+all remaining fields. A successful selection atomically replaces the resident
+pilot's in-memory `current` value, exposing the typed original visual profile,
+exact submitted-byte SHA-256 and immutable endpoint readback. Exceptions leave
+the preceding selection intact. There is no additional file watcher, receipt
+format, persistence path or new resource owner.
+
+One acceptance scenario selects peer A at `10.20.0.11:41000` (media) and
+`:41001` (control), then changes that same peer to `10.21.0.11:43000` and
+`:43001` at the next profile revision on the same resident selector, retaining
+peer B and all visual controls. A malformed update, a foreign peer or an
+unsupported protocol must retain the second accepted object. The focused host
+runner is `tools/checks/Test-SpatialPeerNetworkProfileHost.py`; its explicit
+JVM spec selects existing JDK/compiler/runtime jars and a stable snapshot of
+compiled app value types. It compiles the actual strict parser, profile parser,
+pilot and tests. It performs no Gradle/Cargo/Android build or socket effects.
+
+The smallest future adoption point is the product-owned input generator,
+before it finalizes route JSON, reciprocal media bindings, lifecycle digests
+and the packaged manifest. Today the complete route and manifest hashes also
+enter enrollment facts; media endpoints must match accepted binding transports.
+Runtime selection without repackaging therefore requires a separately reviewed
+effective-route contract, frozen before enrollment snapshot and bootstrap, and
+carried coherently through native staging, ceremonies and owner projections.
+This pilot adopts none of those changes. It changes no JNI ABI or compiled
+policy ceiling and removes no APK rebuild from the current product workflow.
+
 ## Named Panel Profile Library
 
 The fixed **Profiles** page saves and restores complete low-rate panel tuning
