@@ -4256,7 +4256,7 @@ unsafe fn render_peer_common_graph_resources(
             if let Some(imports) = stereo_source_imports.as_mut() {
                 imports.retire_after_fence(device)?;
                 crate::spatial_stereo_source_import::synchronize_peer_source()?;
-                imports.refresh(
+                if !imports.refresh(
                     device,
                     &memory_properties,
                     ahb_device,
@@ -4264,8 +4264,38 @@ unsafe fn render_peer_common_graph_resources(
                     CameraHwbProbeMode::RawColorProjection,
                     1_000_000_000,
                     crate::spatial_public_multistack_runtime::read_mask_policy().1,
-                )?;
+                )? {
+                    thread::yield_now();
+                    continue;
+                }
             }
+            let stereo_admission = if let Some(imports) = stereo_source_imports.as_ref() {
+                let (words, revision) =
+                    crate::spatial_public_multistack_runtime::read_control_policy();
+                let policy = crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
+                    region_origins: [words[0], words[1], words[2], words[3]],
+                    guide_origins: [words[4], words[5], 0, 0],
+                    source_state: [0, 0, 1, 0],
+                };
+                let mut prefixes = [0usize; 2];
+                for &origin in &words[..4] {
+                    prefixes[origin as usize] = 6;
+                }
+                for &origin in &words[4..] {
+                    if origin < 2 {
+                        prefixes[origin as usize] = 6;
+                    }
+                }
+                match imports.recording_admission(policy, revision, frame_fence)? {
+                    Some(admission) => Some((admission, prefixes)),
+                    None => {
+                        thread::yield_now();
+                        continue;
+                    }
+                }
+            } else {
+                None
+            };
             device
                 .reset_fences(&[frame_fence])
                 .map_err(|error| format!("peer-reset-fence-{error:?}"))?;
@@ -4296,30 +4326,12 @@ unsafe fn render_peer_common_graph_resources(
             );
             let normalized_images = normalizer.images();
             let video_settings = spatial_video_projection_settings();
-            let stereo_inputs = if let Some(imports) = stereo_source_imports.as_mut() {
-                let (words, revision) =
-                    crate::spatial_public_multistack_runtime::read_control_policy();
-                let policy = crate::stereo_bank_transport_v1::StereoBankPolicyUniformV1 {
-                    region_origins: [words[0], words[1], words[2], words[3]],
-                    guide_origins: [words[4], words[5], 0, 0],
-                    source_state: [0, 0, 1, 0],
-                };
-                // Conservative neutral demand covers every selected guide stage;
-                // private effect demand may later reduce this prefix explicitly.
-                let mut prefixes = [0usize; 2];
-                for &origin in &words[..4] {
-                    prefixes[origin as usize] = 6;
-                }
-                for &origin in &words[4..] {
-                    if origin < 2 {
-                        prefixes[origin as usize] = 6;
-                    }
-                }
+            let stereo_inputs = if let (Some(imports), Some((admission, prefixes))) =
+                (stereo_source_imports.as_mut(), stereo_admission)
+            {
                 Some(imports.recording_inputs(
-                    policy,
-                    revision,
+                    admission,
                     prefixes,
-                    frame_fence,
                     u64::from(frames_presented) + 1,
                     surface_generation,
                 )?)
