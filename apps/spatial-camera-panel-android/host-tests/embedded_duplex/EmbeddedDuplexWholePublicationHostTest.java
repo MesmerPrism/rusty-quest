@@ -256,8 +256,93 @@ public final class EmbeddedDuplexWholePublicationHostTest {
             }finally{host.harnessClose();singleton.set(null,null);}
         }
     }
+    static void lifecycleHandoff(JSONObject receipt,JSONObject sourceResponse,String packageId,boolean captured)throws Exception{
+        String id="77".repeat(16),challenge=sourceResponse.getString("challenge");
+        long generation=receipt.getLong("app_process_generation"),nativeGeneration=receipt.getLong("native_executor_generation");
+        String appRecord=receipt.getString("app_record_sha256");
+        File root=Files.createTempDirectory("whole-lifecycle-").toFile();
+        EmbeddedDuplexOriginals.ActorSource actor=new EmbeddedDuplexOriginals.ActorSource(){
+            public JSONObject snapshot()throws Exception{return new JSONObject().put("package_id",packageId).put("app_record_sha256",appRecord).put("native_generation",nativeGeneration);}
+            public long appGeneration(){return generation;}
+            public boolean settled(JSONObject value,long actual)throws Exception{return actual==generation&&EmbeddedDuplexCanonicalJson.sameValue(value,snapshot());}
+        };
+        EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});
+        EmbeddedDuplexProcessHost.RetainedNoMediaClose owner=held(receipt);
+        owner.appGeneration=generation;owner.nativeGeneration=nativeGeneration;owner.appRecord=appRecord;
+        owner.config=receipt.has("config_sha256")?receipt.getString("config_sha256"):null;
+        CompletableFuture<Bundle> future=new CompletableFuture<>();EmbeddedDuplexOriginals.Record[] original=new EmbeddedDuplexOriginals.Record[1];Runnable[] command=new Runnable[1];
+        store.begin(id,"whole_app_close",challenge,EmbeddedDuplexOriginals.request("whole_app_close",challenge,new Bundle()),()->{
+            original[0]=EmbeddedDuplexOriginals.capture();owner.original=original[0];original[0].retainedCleanupOwner=owner;
+            try{EmbeddedDuplexOriginals.bindActualActor(actor.snapshot(),generation);}catch(Exception failure){throw new IllegalStateException(failure);}
+            command[0]=EmbeddedDuplexOriginals.carry(()->{
+                try{store.actualClosedAppOwnerJoined(generation,nativeGeneration,appRecord,receipt,owner);}catch(Exception failure){throw new IllegalStateException(failure);}
+                Bundle response=new Bundle();for(String key:sourceResponse.keySet())response.putString(key,sourceResponse.getString(key));
+                future.complete(response);
+                yes(!new File(root,"operator-originals-v1/latest-whole.v1.json").exists(),"command still entered cannot publish Whole handoff");
+            });return future;
+        });
+        command[0].run();
+        yes(original[0].joinPublicationFailure==null,"actual pending callback must wait without poisoning join publication");
+        yes(new File(root,"operator-originals-v1/"+id+".joined.json").isFile(),"real finite completion/command return must publish join");
+        JSONObject handoff=EmbeddedDuplexOriginals.latestWholeHandoff(root,packageId);
+        yes(handoff!=null&&handoff.getLong("prior_native_generation")==nativeGeneration,"latest Whole must survive file-only reload");
+        yes(EmbeddedDuplexCanonicalJson.sameValue(handoff.getJSONObject("physical_retirement"),receipt),"complete captured physical DTO changed");
+        yes(handoff.getString("physical_retirement_sha256").equals(EmbeddedDuplexCanonicalJson.sha256(receipt)),"exact complete proof digest lost");
+        JSONObject row=observation(store.query(id,challenge));
+        store.acknowledge(id,challenge,row.getString("request_sha256"),row.getString("outcome_sha256"),HASH);
+        yes(EmbeddedDuplexCanonicalJson.sameValue(handoff,EmbeddedDuplexOriginals.latestWholeHandoff(root,packageId)),"ACK must preserve joined handoff bytes");
+        denied(()->EmbeddedDuplexOriginals.closedWholeHandoff(root,id,"other.package"));
+        readerNegatives(root,id,packageId);
+        if(captured){
+            File exported=new File(System.getProperty("host.handoff.output"));
+            Files.writeString(exported.toPath(),EmbeddedDuplexCanonicalJson.encode(handoff));
+            System.out.println("Captured response exact physical receipt roundtrip passed; new modeled lifecycle only: "+exported);
+        }
+    }
+    static void readerNegatives(File root,String id,String packageId)throws Exception{
+        File rowFile=new File(root,"operator-originals-v1/"+id+".json"),joinFile=new File(root,"operator-originals-v1/"+id+".joined.json");
+        byte[] rowBytes=Files.readAllBytes(rowFile.toPath()),joinBytes=Files.readAllBytes(joinFile.toPath());
+        var outcome=EmbeddedDuplexOriginals.class.getDeclaredMethod("outcome",JSONObject.class);outcome.setAccessible(true);
+        for(String damage:new String[]{"java_own_capture_cleanup","java_peer_resources_cleanup","java_renderer_cleanup","java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup","app_process_fence_cleanup","schema","native_schema","native_owner","malformed"}){
+            JSONObject row=new JSONObject(new String(rowBytes,java.nio.charset.StandardCharsets.UTF_8)),join=new JSONObject(new String(joinBytes,java.nio.charset.StandardCharsets.UTF_8));
+            JSONObject response=row.getJSONObject("response"),physical=new JSONObject(response.getString("receipt"));
+            if(damage.equals("schema"))physical.put("$schema","rusty.quest.embedded_duplex.no_media_whole_retirement.v99");
+            else if(damage.equals("native_schema"))physical.getJSONObject("native_retirement").put("$schema","foreign");
+            else if(damage.equals("native_owner"))physical.getJSONObject("native_retirement").put("native_executor_generation",99);
+            else if(damage.equals("malformed"))physical.put("native_retirement",new JSONObject());
+            else physical.put(damage,"pending");
+            response.put("receipt",EmbeddedDuplexCanonicalJson.encode(physical));row.put("response_sha256",EmbeddedDuplexCanonicalJson.sha256(response));
+            row.put("outcome_sha256",EmbeddedDuplexCanonicalJson.sha256((JSONObject)outcome.invoke(null,row)));
+            join.put("outcome_sha256",row.getString("outcome_sha256")).put("physical_retirement_schema",physical.getString("$schema")).put("physical_retirement_sha256",EmbeddedDuplexCanonicalJson.sha256(physical));
+            Files.writeString(rowFile.toPath(),EmbeddedDuplexCanonicalJson.encode(row));Files.writeString(joinFile.toPath(),EmbeddedDuplexCanonicalJson.encode(join));
+            denied(()->EmbeddedDuplexOriginals.closedWholeHandoff(root,id,packageId));
+        }
+        Files.write(rowFile.toPath(),rowBytes);Files.write(joinFile.toPath(),joinBytes);
+        yes(EmbeddedDuplexOriginals.latestWholeHandoff(root,packageId)!=null,"negative controls must restore exact test fixture");
+    }
+    static void lifecycleControls()throws Exception{
+        JSONObject v2=whole();
+        lifecycleHandoff(v2,new JSONObject(response(v2)),"fixture.package",false);
+        JSONObject finite=new JSONObject(v2.toString()).put("$schema","rusty.quest.embedded_duplex.no_media_whole_retirement.v1");finite.remove("config_sha256");
+        finite.put("native_retirement",new JSONObject().put("$schema","rusty.quest.embedded_duplex.no_media_retirement.v1")
+            .put("native_runtime_binding","not_initialized").put("disposition","uninitialized_fence_closed")
+            .put("app_process_generation",7).put("app_record_sha256",HASH).put("native_executor_generation",9));
+        lifecycleHandoff(finite,new JSONObject(response(finite)),"fixture.package",false);
+        JSONObject finiteConfigured=new JSONObject(finite.toString()).put("config_sha256",HASH);
+        finiteConfigured.getJSONObject("native_retirement").put("config_sha256",HASH).put("native_runtime_binding","configured").put("disposition","runtime_config_closed")
+            .put("native_close",new JSONObject().put("$schema","rusty.quest.embedded_duplex.no_media_closed.v1").put("config_sha256",HASH).put("disposition","closed"));
+        lifecycleHandoff(finiteConfigured,new JSONObject(response(finiteConfigured)),"fixture.package",false);
+        String capturedPath=System.getProperty("host.captured.whole");
+        if(capturedPath!=null){
+            byte[] bytes=Files.readAllBytes(java.nio.file.Path.of(capturedPath));JSONObject captured=new JSONObject(new String(bytes,java.nio.charset.StandardCharsets.UTF_8));
+            JSONObject row=captured.has("original")?captured.getJSONObject("original"):captured;
+            JSONObject response=row.getJSONObject("response"),receipt=new JSONObject(response.getString("receipt"));
+            lifecycleHandoff(receipt,response,row.getJSONObject("actor_binding").getString("package_id"),true);
+            yes(java.util.Arrays.equals(bytes,Files.readAllBytes(java.nio.file.Path.of(capturedPath))),"captured Original evidence must remain byte exact");
+        }
+    }
     public static void main(String[] args)throws Exception{
-        directWholeControls();otherDirectFamilies();invalidDirectControls();wrapperControls();noMediaAcknowledgementControls();
+        directWholeControls();otherDirectFamilies();invalidDirectControls();wrapperControls();noMediaAcknowledgementControls();lifecycleControls();
         System.out.println("Whole publication controls passed: "+checks+"; actual complete/store/retrieval and exact Host predicates; physical observations modeled.");
     }
 }

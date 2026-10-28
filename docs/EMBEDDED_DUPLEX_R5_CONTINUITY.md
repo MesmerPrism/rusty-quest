@@ -68,6 +68,24 @@ nor physical cleanup/recovery. A dead old process does not need to join an old
 in-memory callback, but any new local recovery must establish its own actual
 retirement facts and preserve persistent counter lineage and remote UNKNOWNs.
 
+Finite no-media Whole completion publishes its joined receipt and latest-Whole
+pointer only after the actual Original callback, command stages and outbound
+exchanges have returned. File-only restart readers version-dispatch closed
+no-media v1/v2/v3 proofs, preserving exact physical bytes, actor joins and Native
+counter floors. The production Native handoff parser independently checks the
+same versions and terminal barriers. A retained source-run companion may support
+cold recovery only when it matches the exact unretired structured Native owner;
+the independently held current run remains the recovery output subject.
+
+`Test-EmbeddedDuplexOriginalsHost.py --whole-publication` exercises completion,
+join publication, ACK and reload with modeled physical owners. Its optional
+`--captured-whole-row` reads captured evidence without rewriting it and runs
+that exact response through a new modeled lifecycle. `Test-OperationalHandoffHost.py`
+uses an explicit existing host dependency directory to compile the production
+JSON/owner/handoff validators with real serde JSON and SHA-256, including an
+optional Java-exported handoff. Kernel identity and physical commit remain
+modeled leaves; these controls confer no historical ACK or device credit.
+
 ## Validation boundaries
 
 ### Prepared media readiness and retirement estimates
