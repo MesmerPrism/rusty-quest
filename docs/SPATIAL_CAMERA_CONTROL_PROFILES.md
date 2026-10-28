@@ -183,6 +183,29 @@ carried coherently through native staging, ceremonies and owner projections.
 This pilot adopts none of those changes. It changes no JNI ABI or compiled
 policy ceiling and removes no APK rebuild from the current product workflow.
 
+An optional host-only continuation now exercises that boundary end to end:
+`tools/checks/Test-EndpointRouteDerivationHost.py`. It uses sibling atomic
+replacement of the same `control-profiles/active.profile.json` file, the existing
+strict/profile parser and an unadopted `EndpointRouteCandidate` under
+`host-tests/embedded_duplex/`. It derives reciprocal endpoint leaves and their
+canonical runtime/lifecycle/manifest digests, then invokes the actual native
+`packaged_route.rs` reader and Java packaged-input reader. The Java bootstrap
+projection checker is also executed; its native runtime-authority assembler
+body is explicitly modeled, so this proves neither runtime-authority admission
+nor physical bootstrap. Existing compiled JVM/Rust dependencies are reused;
+the probe does not run Gradle or Cargo or build an APK.
+
+One compiled host probe selects endpoint A then B from file replacements,
+checks production reader readback, verifies non-endpoint identity/policy fields
+remain equal, and irreversibly freezes its candidate snapshot for bootstrap.
+Incompatible data and edits after freeze retain the accepted snapshot. Crucially,
+the changed assets fail against the original manifest hash, the original
+bootstrap projection refuses the changed route, and the existing enrollment
+equality check refuses changed route facts with the same key identity. Admitting
+the regenerated manifest in the fixture is a separate candidate-input test,
+not evidence that the installed APK accepts it. No Android FileObserver,
+installed enrollment store, media runtime or headset effect is exercised.
+
 ## Named Panel Profile Library
 
 The fixed **Profiles** page saves and restores complete low-rate panel tuning
