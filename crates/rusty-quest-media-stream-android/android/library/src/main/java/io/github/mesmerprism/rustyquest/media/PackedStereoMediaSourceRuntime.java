@@ -1201,7 +1201,14 @@ public final class PackedStereoMediaSourceRuntime {
                         32 + PackedStereoStreamMetadata.PAIR_EXTENSION_BYTES + payload.length);
                 writePacketTo(packet, ptsUs, flags, pair, payload, sourceElapsedNs, sourceUnixNs);
                 if (!pump.offer(packet.toByteArray())) {
-                    throw new IOException("bounded packet pump full");
+                    IOException rejected = new IOException("bounded packet pump full");
+                    try {
+                        IOException retained = pump.failure();
+                        logClosedSourceFailure(retained != null ? "PACKET_PUMP_FAILED" : "PACKET_OFFER_REJECTED",
+                                PackedSourceFailureCode.Operation.PACKET_OFFER,
+                                retained != null ? retained : rejected);
+                    } catch (Throwable ignored) { /* Diagnostics never bypass the existing retirement. */ }
+                    throw rejected;
                 }
             } catch (Throwable failure) {
                 error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);

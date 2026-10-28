@@ -296,3 +296,10 @@ Run `tools/checks/Test-ReceiverStageTraceHost.ps1` with an explicit JDK, the exi
 pinned host JSON dependency, API34 Android jar and create-new output under `target`.
 The pure clock/generation controls and Android receiver typecheck do not establish
 headset, transport, codec or duplex readiness.
+
+When a sender packet offer is rejected, its existing `packed-source` diagnostic
+is emitted before connection retirement can interrupt the accept worker and
+overwrite the mutable error. `PACKET_PUMP_FAILED` classifies a retained writer
+exception; `PACKET_OFFER_REJECTED` reports rejection without claiming a queue-full
+cause. The marker uses closed codes and counters, never exception text or media
+payload. Logging failure cannot bypass the existing throw/retirement path.
