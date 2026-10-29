@@ -85,9 +85,9 @@ try {
         $execution=Invoke-AndroidComponentGradlePhase @invocation -Arguments @('--no-daemon')
         $expectedTask=":app:assemble$variant"
         $actualArguments=[IO.File]::ReadAllText($capturedArguments).Trim()
+        $actualTasks=@([regex]::Matches($actualArguments,'(?:^|\s)"?(:[^"\s]+)"?(?=\s|$)') | ForEach-Object {$_.Groups[1].Value})
         if($execution.phase -cne 'Assemble' -or $execution.task -cne $expectedTask -or
-            $actualArguments -notmatch ('(?:^|\s)'+[regex]::Escape($expectedTask)+'$') -or
-            [regex]::Matches($actualArguments,':app:').Count -ne 1){
+            $actualTasks.Count -ne 1 -or $actualTasks[0] -cne $expectedTask){
             throw 'Actual component phase did not dispatch its one selected assemble task.'
         }
     }
