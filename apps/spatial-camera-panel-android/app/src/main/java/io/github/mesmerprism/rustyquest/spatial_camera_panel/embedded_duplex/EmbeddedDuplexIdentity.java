@@ -74,6 +74,21 @@ final class EmbeddedDuplexIdentity {
 
     private EmbeddedDuplexIdentity() {}
 
+    /** Metadata review must never create replacement identity material. */
+    static Identity loadExisting(Context context) throws Exception {
+        if (context == null) throw new IllegalArgumentException("context is required");
+        File noBackup = context.getNoBackupFilesDir();
+        if (noBackup == null || !noBackup.isDirectory())
+            throw new IllegalStateException("no-backup directory is unavailable");
+        File directory = new File(noBackup, DIRECTORY_NAME);
+        rejectSymbolicLink(directory);
+        if (!directory.isDirectory()) throw new IllegalStateException("existing identity is required");
+        int mode = Os.lstat(directory.getAbsolutePath()).st_mode;
+        if ((mode & (OsConstants.S_IRWXG | OsConstants.S_IRWXO)) != 0)
+            throw new IllegalStateException("identity directory is accessible outside its owner");
+        return load(new File(directory, RECORD_NAME));
+    }
+
     static Identity loadOrCreate(Context context) throws Exception {
         if (context == null) {
             throw new IllegalArgumentException("context is required");
@@ -417,6 +432,8 @@ final class EmbeddedDuplexIdentity {
     static boolean hasSupportedAuthorityDomain(byte[] value) {
         return startsWith(value, "rusty.quest.android.media.retained_cleanup_dispatch.v2\0request\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 || startsWith(value, "rusty.quest.android.media.retained_cleanup_dispatch.v2\0response\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                || startsWith(value, "rusty.quest.android.media.retained_cleanup_dispatch.v3\0request\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                || startsWith(value, "rusty.quest.android.media.retained_cleanup_dispatch.v3\0response\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 || startsWith(value, "rusty.quest.android.media.retained_cleanup_prepare.v1\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 || startsWith(value, "rusty.quest.android.media.retained_abort_prepare.v2\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))
                 || startsWith(value, "rusty.quest.android.media.retained_cleanup_prepare.v3\0".getBytes(java.nio.charset.StandardCharsets.UTF_8))

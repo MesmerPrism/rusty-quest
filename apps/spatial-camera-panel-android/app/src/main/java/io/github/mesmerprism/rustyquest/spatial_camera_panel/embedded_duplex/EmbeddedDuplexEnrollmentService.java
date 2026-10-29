@@ -17,6 +17,11 @@ public final class EmbeddedDuplexEnrollmentService {
         return EmbeddedDuplexProcessHost.forApplication(context).reviewEnrollment(draft);
     }
 
+    /** Reviews a source-selected TTL update while preserving actual enrolled keys and identities. */
+    public static CompletableFuture<EmbeddedDuplexEnrollmentReview> reviewPolicyUpdate(Context context) {
+        return EmbeddedDuplexProcessHost.forApplication(context).reviewEnrollmentPolicyUpdate();
+    }
+
     public static CompletableFuture<EmbeddedDuplexEnrollment> confirm(
             Context context, EmbeddedDuplexEnrollmentReview review) {
         return EmbeddedDuplexProcessHost.forApplication(context).confirmEnrollment(review);

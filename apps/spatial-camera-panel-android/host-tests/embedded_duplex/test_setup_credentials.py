@@ -26,14 +26,21 @@ class SetupCredentials(unittest.TestCase):
                 f = out / name
                 f.write_text("package " + package + ";\n" + text, encoding="utf-8")
                 sources.append(str(f))
-            stub("BuildConfig.java", PACKAGE, "public final class BuildConfig { public static final long EMBEDDED_DUPLEX_SETUP_HORIZON_MS=Long.getLong(\"fixture.setup.horizon\",1800000L); }")
+            stub("BuildConfig.java", PACKAGE, """public final class BuildConfig {
+ public static final long EMBEDDED_DUPLEX_SETUP_HORIZON_MS=Long.getLong("fixture.setup.horizon",1800000L);
+ public static final String EMBEDDED_DUPLEX_DEVELOPMENT_LIFETIME_JSON=Boolean.getBoolean("fixture.development")
+   ? "{\\\"$schema\\\":\\\"rusty.manifold.development.lifetime_policy.v1\\\",\\\"policy_id\\\":\\\"policy.manifold.development-lifetime.v1\\\",\\\"delegated_authority_horizon_ms\\\":"+EMBEDDED_DUPLEX_SETUP_HORIZON_MS+"}" : "";
+ public static final String EMBEDDED_DUPLEX_MEDIA_POLICY="finite", EMBEDDED_DUPLEX_FRESH_SETUP_POLICY="none";
+ public static final String EMBEDDED_DUPLEX_FRESH_POLICY_SHA256="", EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_SHA256="",
+   EMBEDDED_DUPLEX_FRESH_ENROLLMENT_TARGET_RAW_SHA256="", EMBEDDED_DUPLEX_FRESH_ENROLLMENT_SELECTION_BASE64="";
+}""")
             stub("OwnPackedPoolNative.java", PACKAGE, "public final class OwnPackedPoolNative { public static boolean selected; public static boolean captureRouteSelected(){return selected;} }")
             sub = PACKAGE + ".embedded_duplex"
             stub("EmbeddedDuplexEnrollment.java", sub, """import org.json.JSONObject;
 final class EmbeddedDuplexEnrollment {
  boolean localFixture; long maxTokenTtlMs=240000;
- String runtimeHostId="host.fixture",trustedOperatorId="operator.fixture",remoteKeyId="key.fixture",adapterId="adapter.fixture",mediaRevokerId="revoker.fixture",admissionAuthorityId="authority.fixture";
- final Installed installed=new Installed(); static final class Installed {String roleId="peer_a";}
+ String runtimeHostId="host.fixture",trustedOperatorId="operator.fixture",remoteKeyId="key.fixture",remotePublicKeyHex="",adapterId="adapter.fixture",mediaRevokerId="revoker.fixture",admissionAuthorityId="authority.fixture";
+ final Installed installed=new Installed(); static final class Installed {String roleId="peer_a",localPeerId="peer.a",remotePeerId="peer.b",localKeyId="key.local",localPublicKeyHex="";}
  JSONObject startupJson(String id)throws Exception{return new JSONObject().put("route_grant_id",id);}
 }""")
             stub("Context.java", "android.content", "public class Context { public android.content.pm.PackageManager getPackageManager(){throw new UnsupportedOperationException();} public String getPackageName(){throw new UnsupportedOperationException();} public android.content.res.AssetManager getAssets(){throw new UnsupportedOperationException();} }")
@@ -58,13 +65,17 @@ public final class SetupHost {
    deny(()->EmbeddedDuplexSetupCredentials.issue(false,300000,Long.MAX_VALUE-299999));
    deny(()->EmbeddedDuplexSetupCredentials.issue(true,1800000,100));
    long expected=io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_SETUP_HORIZON_MS;
+   boolean development=EmbeddedDuplexSetupCredentials.developmentPolicy()!=null;
+   long ceiling=development?expected:3600000;
+   yes(EmbeddedDuplexSetupCredentials.selectedHorizon(3600000)==ceiling);
+   deny(()->EmbeddedDuplexSetupCredentials.issue(false,3660000,100));
    EmbeddedDuplexEnrollment e=new EmbeddedDuplexEnrollment();
    EmbeddedDuplexSessionInputs a=EmbeddedDuplexSessionInputs.createRealPeer(e);
    yes(a.runtimeBindings.getLong("setup_credential_horizon_ms")==expected && a.setupCredentials.horizonMs==expected && a.runtimeBindings.getLong("grant_expires_at_ms")==a.setupCredentials.expiresAtMs);
-   yes(a.runtimeBindings.getLong("lease_expires_at_ms")==a.setupCredentials.expiresAtMs && a.runtimeBindings.getLong("max_token_ttl_ms")==60000);
+   yes(a.runtimeBindings.getLong("lease_expires_at_ms")==a.setupCredentials.expiresAtMs && a.runtimeBindings.getLong("max_token_ttl_ms")== (development?e.maxTokenTtlMs:60000));
    io.github.mesmerprism.rustyquest.spatial_camera_panel.OwnPackedPoolNative.selected=true;
    EmbeddedDuplexSessionInputs b=EmbeddedDuplexSessionInputs.createRealPeer(e);
-   yes(b.runtimeBindings.getLong("max_token_ttl_ms")==120000);
+   yes(b.runtimeBindings.getLong("max_token_ttl_ms")== (development?e.maxTokenTtlMs:120000));
    e.localFixture=true;
    EmbeddedDuplexSessionInputs f=EmbeddedDuplexSessionInputs.createLocalDiagnostic(e);
    yes(f.setupCredentials.horizonMs==300000 && f.runtimeBindings.getLong("max_token_ttl_ms")==60000);
@@ -92,7 +103,11 @@ public final class SetupHost {
        JSONObject old=packaged.packagedConfigRequest(legacy);yes(!old.has("setup_credential_horizon_ms"));
        if(args.length>1)java.nio.file.Files.writeString(java.nio.file.Path.of(args[1]).resolve("LEGACY_300000.request.json"),old.toString(),java.nio.file.StandardOpenOption.CREATE_NEW);
      }
-     for(Object bad:new Object[]{"1800000",1800000.0,300001L,3600001L,JSONObject.NULL}) {
+     for(long accepted:new long[]{300000,1800000,3600000,ceiling}) {
+       JSONObject edited=new JSONObject(a.runtimeBindings.toString()).put("setup_credential_horizon_ms",accepted);
+       yes(packaged.packagedConfigRequest(edited).getLong("setup_credential_horizon_ms")==accepted);
+     }
+     for(Object bad:new Object[]{"1800000",1800000.0,300001L,3600001L,299999L,ceiling+60000,JSONObject.NULL}) {
        JSONObject edited=new JSONObject(a.runtimeBindings.toString()).put("setup_credential_horizon_ms",bad);
        boolean denied=false;try{packaged.packagedConfigRequest(edited);}catch(IllegalArgumentException ex){denied=true;}yes(denied);
      }
@@ -103,13 +118,14 @@ public final class SetupHost {
    System.out.println("Actual finite issuance, input token caps, fixture closure and status readback PASS; Android facts modeled");
  }
 }""")
-            sources += [str(MAIN / "embedded_duplex" / f) for f in ["EmbeddedDuplexSetupCredentials.java", "EmbeddedDuplexSessionInputs.java", "EmbeddedDuplexRuntimeStatus.java", "EmbeddedDuplexPackagedInputs.java"]]
+            sources += [str(MAIN / "embedded_duplex" / f) for f in ["EmbeddedDuplexSetupCredentials.java", "EmbeddedDuplexSessionInputs.java", "EmbeddedDuplexRuntimeStatus.java", "EmbeddedDuplexPackagedInputs.java", "EmbeddedDuplexMediaPolicy.java", "EmbeddedDuplexFreshSetupPolicy.java", "EmbeddedDuplexCanonicalJson.java"]]
             subprocess.run([javac,"--release","17","-encoding","UTF-8","-cp",str(jars[-1]),"-d",folder,*sources],check=True)
             java = str(pathlib.Path(javac).with_name("java.exe"))
             fixture_args = [str(fixture)] + ([str(output)] if output else []) if transfer else []
             subprocess.run([java,"-cp",folder+os.pathsep+str(jars[-1]),sub+".SetupHost",*fixture_args],check=True)
             if transfer:
                 subprocess.run([java,"-Dfixture.setup.horizon=300000","-cp",folder+os.pathsep+str(jars[-1]),sub+".SetupHost",*fixture_args],check=True)
+            subprocess.run([java,"-Dfixture.development=true","-Dfixture.setup.horizon=2592000000","-cp",folder+os.pathsep+str(jars[-1]),sub+".SetupHost",*fixture_args],check=True)
             # Bind the production public build parameter without executing any build body.
             ps = out / "parameter-controls.ps1"
             ps.write_text("""param([string]$Builder)

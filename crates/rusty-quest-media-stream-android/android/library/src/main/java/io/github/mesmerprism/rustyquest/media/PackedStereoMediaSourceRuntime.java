@@ -185,7 +185,7 @@ public final class PackedStereoMediaSourceRuntime {
         }
         public void requestPreparedStop() {
             Runtime held=preparedRuntime;if(held==null ||runtime!=held)return;
-            held.stopRequested=true;
+            held.stopRequested=true;held.cancelPacketCapacityWait();
             synchronized(held.preparationMonitor){held.preparationMonitor.notifyAll();}
             closeQuietly(held.serverSocket);closeQuietly(held.socket);
             if(held.lanTransport!=null)held.lanTransport.requestStop();
@@ -273,6 +273,28 @@ public final class PackedStereoMediaSourceRuntime {
         public void stopAndVerify(String reason) {
             runtime.stop(reason);
             requireStopped();
+        }
+        /** One owned local Stop request; the same actual drain owner and
+         * callbacks retain cleanup beyond the ordinary observation interval. */
+        public void stopOwnedLocalResources(String reason) {
+            Runtime held=runtime;
+            held.requestOwnedLocalStop(reason);
+            long warningAt=System.nanoTime()+10_000_000_000L;
+            while(!held.resourcesReleased()) {
+                held.continueOwnedLocalStop();
+                if(runtime!=held)throw new IllegalStateException("owned local source incarnation changed");
+                if(System.nanoTime()>=warningAt){
+                    System.err.println("packed owned local source cleanup remains Pending");
+                    warningAt=System.nanoTime()+10_000_000_000L;
+                }
+                try{Thread.sleep(50L);}catch(InterruptedException stopped){
+                    Thread.currentThread().interrupt();throw new IllegalStateException("owned local source cleanup interrupted",stopped);
+                }
+            }
+            if(runtime!=held)throw new IllegalStateException("owned local source incarnation changed");
+            // This is a newly observed local resource fact, independent of the
+            // previous bounded Stop observation or any transaction outcome.
+            held.terminal=true;if(!"failed".equals(held.state))held.state="stopped";
         }
         public void requireStopped() {
             if (!runtime.isFullyStopped()) {
@@ -450,6 +472,7 @@ public final class PackedStereoMediaSourceRuntime {
         volatile Socket socket;
         volatile OutputStream output;
         volatile BoundedPacketPump packetPump;
+        private volatile BoundedPacketPump capacityWaitPump;
         volatile DetachedConnection retiredConnection;
         volatile DetachedConnection unresolvedConnection;
         final ReconnectKeyframeGate reconnectGate = new ReconnectKeyframeGate();
@@ -639,10 +662,53 @@ public final class PackedStereoMediaSourceRuntime {
             closeReason = "gpu_compositor_failure";
             state = "failed";
             stopRequested = true;
+            cancelPacketCapacityWait();
+        }
+
+        private static String failureFingerprint(Throwable failure) {
+            try {
+                StringBuilder result = new StringBuilder();
+                Throwable[] seen = new Throwable[4];
+                int count = 0;
+                while (failure != null && count < seen.length) {
+                    for (int i = 0; i < count; i++) {
+                        if (seen[i] == failure) return result + " failureCauseCycle=true failureCount=" + count;
+                    }
+                    seen[count] = failure;
+                    String prefix = " failure" + count;
+                    String type = failure.getClass().getName();
+                    String message = failure.getMessage();
+                    int chars = message == null ? -1 : message.length();
+                    byte[] bytes = (message == null ? "" : message.substring(0, Math.min(chars, 1024)))
+                            .getBytes(StandardCharsets.UTF_8);
+                    byte[] digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes);
+                    StringBuilder hex = new StringBuilder(64);
+                    for (byte value : digest) {
+                        hex.append(Character.forDigit((value >> 4) & 15, 16));
+                        hex.append(Character.forDigit(value & 15, 16));
+                    }
+                    result.append(prefix).append("Class=").append(type.substring(0, Math.min(type.length(), 160)))
+                            .append(prefix).append("ClassTruncated=").append(type.length() > 160)
+                            .append(prefix).append("MessageChars=").append(chars)
+                            .append(prefix).append("HashedBytes=").append(bytes.length)
+                            .append(prefix).append("MessageSha256=").append(hex)
+                            .append(prefix).append("MessageTruncated=").append(chars > 1024);
+                    count++;
+                    failure = failure.getCause();
+                }
+                return result + " failureCount=" + count + " failureCausesTruncated=" + (failure != null);
+            } catch (Throwable ignored) {
+                return " failureFingerprint=UNAVAILABLE";
+            }
         }
 
         private void logClosedSourceFailure(String stage, PackedSourceFailureCode.Operation operation,
                 Throwable failure) {
+            emitClosedSourceFailure(stage, operation, failure, null);
+        }
+
+        private void emitClosedSourceFailure(String stage, PackedSourceFailureCode.Operation operation,
+                Throwable failure, BoundedPacketPump.OfferRejection rejection) {
             long nowMs = SystemClock.elapsedRealtime();
             PackedStereoCaptureOwner capture = sharedCapture;
             PackedStereoEncoderWorker worker = encoderWorker;
@@ -676,7 +742,19 @@ public final class PackedStereoMediaSourceRuntime {
                     + " freshnessLimitMs=" + SOURCE_FRESHNESS_TIMEOUT_MS
                     + " encodedFrames=" + encodedFrames
                     + " packetCount=" + packetCount + " keyframeCount=" + keyframeCount
-                    + " consumerAcceptCount=" + consumerAcceptCount + " code=SOURCE_EFFECT_UNCERTAIN");
+                    + " consumerAcceptCount=" + consumerAcceptCount
+                    + (("PACKET_PUMP_FAILED".equals(stage) || "PACKET_OFFER_REJECTED".equals(stage))
+                            ? failureFingerprint(failure) + (rejection == null ? " pumpRejection=UNAVAILABLE"
+                                    : " pumpRejection=" + rejection.reason.name()
+                                    + " pumpPacketBytes=" + rejection.packetBytes
+                                    + " pumpQueuedPackets=" + rejection.queuedPackets
+                                    + " pumpQueuedBytes=" + rejection.queuedBytes
+                                    + " pumpCapacity=" + rejection.capacity
+                                    + " pumpMaxPacketBytes=" + rejection.maxPacketBytes
+                                    + " pumpMaxQueuedBytes=" + rejection.maxQueuedBytes
+                                    + " pumpClosed=" + (rejection.closed == null ? "UNKNOWN" : rejection.closed)
+                                    + " pumpRetainedFailure=" + (rejection.failure != null)) : "")
+                    + " code=SOURCE_EFFECT_UNCERTAIN");
         }
 
         void sourceLoop() {
@@ -768,6 +846,7 @@ public final class PackedStereoMediaSourceRuntime {
                 // Surface submission. Stop callers may time out as Pending but
                 // must not remove the drain needed to reach the real barrier.
                 stopRequested = true;
+                cancelPacketCapacityWait();
                 fenceSharedEncoder();
                 finishSourceStop();
             }
@@ -838,6 +917,7 @@ public final class PackedStereoMediaSourceRuntime {
                 closeReason = "camera2_terminal";
                 state = "failed";
                 stopRequested = true;
+                cancelPacketCapacityWait();
                 closeQuietly(serverSocket);
             }
         }
@@ -1108,7 +1188,8 @@ public final class PackedStereoMediaSourceRuntime {
                 synchronized (outputLock) {
                     if (unresolvedConnection == null) unresolvedConnection=detached;
                 }
-                stopRequested=true;
+                stopRequested = true;
+                cancelPacketCapacityWait();
                 state="failed";
             }
         }
@@ -1178,14 +1259,36 @@ public final class PackedStereoMediaSourceRuntime {
                 ByteArrayOutputStream packet = new ByteArrayOutputStream(
                         32 + PackedStereoStreamMetadata.PAIR_EXTENSION_BYTES + payload.length);
                 writePacketTo(packet, ptsUs, flags, pair, payload, sourceElapsedNs, sourceUnixNs);
-                if (!pump.offer(packet.toByteArray())) {
-                    throw new IOException("bounded packet pump full");
+                boolean accepted;
+                capacityWaitPump = pump;
+                try {
+                    accepted = pump.offerAwaitCapacity(packet.toByteArray(), () -> stopRequested);
+                } finally {
+                    capacityWaitPump = null;
+                }
+                if (!accepted) {
+                    if (stopRequested) return;
+                    IOException rejected = new IOException("bounded packet pump full");
+                    try {
+                        BoundedPacketPump.OfferRejection decision = pump.firstOfferRejection();
+                        IOException retained = decision == null ? null : decision.failure;
+                        emitClosedSourceFailure(retained != null ? "PACKET_PUMP_FAILED" : "PACKET_OFFER_REJECTED",
+                                PackedSourceFailureCode.Operation.PACKET_OFFER,
+                                retained != null ? retained : rejected, decision);
+                    } catch (Throwable ignored) { /* Diagnostics never bypass the existing retirement. */ }
+                    throw rejected;
                 }
             } catch (Throwable failure) {
+                if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
                 error = failure.getClass().getSimpleName() + ": " + safeMessage(failure);
                 // Detach in constant time. The accept/control worker performs close and join.
                 retireConnection(pump);
             }
+        }
+
+        private void cancelPacketCapacityWait() {
+            BoundedPacketPump waiting = capacityWaitPump;
+            if (waiting != null) waiting.signalCapacityWaiters();
         }
 
         void writePacketTo(
@@ -1331,15 +1434,17 @@ public final class PackedStereoMediaSourceRuntime {
                 error="packed source freshness deadline expired";
                 closeReason="source_freshness_expired";
                 state="failed";
-                stopRequested=true;
+                stopRequested = true;
+                cancelPacketCapacityWait();
                 closeQuietly(serverSocket);
                 return true;
             }
             return false;
         }
 
-        void stop(String reason) {
+        ServerSocket requestOwnedLocalStop(String reason) {
             stopRequested = true;
+            cancelPacketCapacityWait();
             synchronized(preparationMonitor){preparationMonitor.notifyAll();}
             PackedStereoLanTransport transport = lanTransport;
             if (transport != null) transport.stop();
@@ -1355,13 +1460,34 @@ public final class PackedStereoMediaSourceRuntime {
             requestCameraClose(leftCamera);
             requestCameraClose(rightCamera);
             ensureStopDrainOwner();
+            Thread accept=acceptThread;HandlerThread camera=cameraThread;
+            if(accept!=null)accept.interrupt();if(camera!=null)camera.quitSafely();
+            if(serverSocket==server&&(server==null||server.isClosed()))serverSocket=null;
+            return server;
+        }
+
+        void continueOwnedLocalStop() {
+            if(!stopRequested)throw new IllegalStateException("owned local Stop not requested");
+            closeRetiredConnection();retryUnresolvedConnection();
+            ServerSocket server=serverSocket;
+            closeQuietly(server);
+            if(serverSocket==server&&(server==null||server.isClosed()))serverSocket=null;
+            ensureStopDrainOwner();
+            synchronized (lifecycleLock) {
+                Thread source=sourceThread;
+                // Keep the source-owner check and leaf retirement atomic with
+                // ensureStopDrainOwner, which publishes the sole codec drain.
+                if(source==null||!source.isAlive())releaseLocalResources();
+            }
+        }
+
+        void stop(String reason) {
+            ServerSocket server=requestOwnedLocalStop(reason);
             Thread source = sourceThread;
             Thread accept = acceptThread;
             HandlerThread camera = cameraThread;
             // sourceLoop owns the codec drain through positive encoder input
             // retirement. Interrupting it here can strand a blocked submission.
-            if (accept != null) accept.interrupt();
-            if (camera != null) camera.quitSafely();
             join(source);
             join(accept);
             join(camera);
@@ -1369,7 +1495,7 @@ public final class PackedStereoMediaSourceRuntime {
             if (source != null && !source.isAlive()) sourceThread = null;
             if (accept != null && !accept.isAlive()) acceptThread = null;
             if (camera != null && !camera.isAlive()) cameraThread = null;
-            if (server == null || server.isClosed()) serverSocket = null;
+            if (serverSocket==server && (server == null || server.isClosed())) serverSocket = null;
             terminal = resourcesReleased();
             if (!terminal) markStopFailure("pipeline resources did not stop within deadline");
             else if (!"failed".equals(state)) state = "stopped";

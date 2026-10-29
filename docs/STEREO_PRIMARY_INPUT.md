@@ -61,6 +61,23 @@ These become retired-frame observations only through existing exact retirement.
 The five-pixel diagnostic strip remains an input-layer diagnostic; neither it
 nor recorded guide completion proves final-stack pixels or wearer output.
 
+The renderer carries forward the frame-control guarantee from `98256d2b` through
+the current import and recording interfaces. A source/mask revision advance or
+processing change during retired refresh defers the frame. Both loops release
+the retired imports and retry before resetting the frame fence or acquiring a
+swapchain image. Successful refresh retains the full processing snapshot that
+produced those imported/normalized bytes. Admission and recording use that
+snapshot even if live processing controls change later; the next refresh adopts
+the new policy. A source/mask revision advance before admission may defer that
+selection as well. No acquired image is abandoned for a control update.
+
+Pending submission ownership starts at the existing recording point. Invalid
+revisions, inconsistent imported snapshots and actual import or GPU errors
+remain fatal. `Test-SourceImportRevisionHost.py` executes the production guards,
+cleanup, snapshot and loop boundaries with modeled GPU leaves. Its controls
+cover revision and processing changes, exact fatal-error propagation and fence
+ownership; they supply no Android, device rendering or driver-cleanup evidence.
+
 Primary requires an additional bank allocation and one raw draw plus five guide
 passes when enabled. No performance or memory equivalence is asserted without
 measurement. Host controls model Vulkan calls; native Android compilation and

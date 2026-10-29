@@ -12,6 +12,9 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
     private final long generation;
     private final MediaProductBinding binding;
     private final CancellationHandle cancellation;
+    private final CancellationHandle forwardCancellation;
+    private boolean ownedCleanupOnly;
+    private int executingForward;
     private final ConcurrentHashMap<String, Execution> executions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> issuedReceipts = new ConcurrentHashMap<>();
     private final Semaphore executionSlots = new Semaphore(MAX_IN_FLIGHT_EXECUTIONS);
@@ -24,6 +27,7 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
         this.generation = generation;
         this.binding = binding;
         this.cancellation = new CancellationHandle(generation);
+        this.forwardCancellation = new CancellationHandle(generation);
     }
 
     @Override public String execute(String ticketJson, boolean compensate) {
@@ -34,11 +38,25 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
         }
         MediaOwnerProvider provider = binding.provider(action);
         if (provider == null) throw new IllegalStateException("undeclared media provider binding");
+        // Mechanical cleanup classification comes from the parsed action, not
+        // the caller's compensation flag. Native owns authority/signature/once.
+        boolean forward=!("stop".equals(action.actionKind())||"cleanup".equals(action.actionKind()));
+        CancellationHandle effectCancellation=forward?forwardCancellation:cancellation;
         String key = action.executionKey(compensate);
         Execution mine = new Execution();
         synchronized (lifecycleGate) {
             if (noMediaClosed) throw new IllegalStateException("no-media registry closed");
-            Execution existing = executions.putIfAbsent(key, mine);
+            Execution existing=executions.get(key);
+            if(existing!=null&&existing.completed!=null)return existing.completed;
+            if(ownedCleanupOnly&&forward)throw new IllegalStateException("registry owns terminal cleanup");
+            if(ownedCleanupOnly&&!forward){
+                try{while(executingForward!=0){
+                    lifecycleGate.wait(10_000L);
+                    if(executingForward!=0)System.err.println("owned cleanup is waiting for actual forward callbacks");
+                }}catch(InterruptedException stopped){Thread.currentThread().interrupt();throw new IllegalStateException("owned cleanup forward join interrupted",stopped);}
+            }
+            cancellation.requireCurrent(action.executorGeneration());effectCancellation.requireCurrent(action.executorGeneration());
+            existing = executions.putIfAbsent(key, mine);
             if (existing != null) {
                 String completed = existing.completed;
                 if (completed != null) return completed;
@@ -51,13 +69,14 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
             // Set before entering a provider: an empty registry after a failed or
             // verified effect is never evidence that no owner effect was tried.
             anyOwnerEffectAttempted = true;
+            if(forward)executingForward++;
         }
         try {
             // No registry/provider monitor is held across this platform callback.
             MediaProviderReadback readback = compensate
-                    ? provider.compensate(action, cancellation)
-                    : provider.execute(action, cancellation);
-            cancellation.requireCurrent(action.executorGeneration());
+                    ? provider.compensate(action, effectCancellation)
+                    : provider.execute(action, effectCancellation);
+            cancellation.requireCurrent(action.executorGeneration());effectCancellation.requireCurrent(action.executorGeneration());
             if (readback == null || readback.action() != action) {
                 throw new IllegalStateException("provider returned foreign readback");
             }
@@ -72,6 +91,8 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
         } catch (Exception failure) {
             if (executions.remove(key, mine)) executionSlots.release();
             throw new IllegalStateException("media provider execution failed", failure);
+        } finally {
+            if(forward)synchronized(lifecycleGate){executingForward--;lifecycleGate.notifyAll();}
         }
     }
 
@@ -145,7 +166,19 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
     /** Observation of the actual lifetime dispatch latch and outstanding verified-effect rows. */
     public boolean noOwnerEffectEverAttempted(){synchronized(lifecycleGate){return !anyOwnerEffectAttempted;}}
     public boolean ownerEffectsQuiescent(){synchronized(lifecycleGate){return executions.isEmpty() && issuedReceipts.isEmpty();}}
-    @Override public void close() { cancellation.cancel(); }
+    /** One-way local lifetime fence. It grants no remote or transaction authority. */
+    public void beginOwnedCleanup(){synchronized(lifecycleGate){ownedCleanupOnly=true;forwardCancellation.cancel();}}
+    /** Join only current executing creators, never historical/uncertain rows. */
+    public void awaitOwnedForwardEffectsJoined()throws InterruptedException{
+        synchronized(lifecycleGate){
+            if(!ownedCleanupOnly)throw new IllegalStateException("owned cleanup was not fenced");
+            while(executingForward!=0){
+                lifecycleGate.wait(10_000L);
+                if(executingForward!=0)System.err.println("actual forward callback join remains Pending");
+            }
+        }
+    }
+    @Override public void close() { cancellation.cancel();forwardCancellation.cancel(); }
     /** One-way no-effect barrier. A provider callback cannot start after this succeeds. */
     public void closeIfNeverAttempted() {
         synchronized (lifecycleGate) {
@@ -153,7 +186,7 @@ public final class PackagedAndroidMediaOwnerRegistry implements AndroidMediaOwne
                 throw new IllegalStateException("owner effect was attempted or remains in flight");
             }
             noMediaClosed = true;
-            cancellation.cancel();
+            cancellation.cancel();forwardCancellation.cancel();
         }
     }
     private static final class Execution { volatile String completed; }

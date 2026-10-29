@@ -785,6 +785,44 @@ pub(super) fn held(host: &Host) -> Result<Arc<Arena>, String> {
     }
     Ok(a.clone())
 }
+
+/// Read only the current actor's privately held, already authenticated receipt.
+/// Its sole writer validates the signed remote view and exact decoder request
+/// before preparation can complete. This supplies placement identity, not media authority.
+pub(super) fn target_executor_generation(
+    source_peer_id: &str,
+    target_peer_id: &str,
+    source_generation: u64,
+    route_configuration_sha256: &str,
+) -> Result<u64, String> {
+    let host = process()
+        .lock()
+        .map_err(|_| "prepared target actor slot poisoned")?
+        .host
+        .clone()
+        .ok_or("prepared target actor absent")?;
+    if host.local_peer_id != source_peer_id
+        || host.remote_peer_id != target_peer_id
+        || host.capability.generation != source_generation
+        || host.route_configuration_sha256 != route_configuration_sha256
+    {
+        return Err("prepared target actor binding differs".into());
+    }
+    let a = held(&host)?;
+    if !a.completed.load(Ordering::SeqCst) {
+        return Err("authenticated target executor generation unavailable".into());
+    }
+    let generation = a
+        .remote_decoder
+        .lock()
+        .map_err(|_| "prepared remote receipt poisoned")?
+        .as_ref()
+        .map(|receipt| receipt.executor_generation)
+        .filter(|generation| *generation > 0)
+        .ok_or_else(|| "authenticated target executor generation unavailable".to_owned())?;
+    Ok(generation)
+}
+
 impl Arena {
     pub(super) fn permits_general_operation(&self) -> bool {
         self.local_start_consumed.load(Ordering::SeqCst)

@@ -119,6 +119,36 @@ hash-pinned `org.json` 20240303 jar, resolved from the local Gradle cache or
 dependencies. Each invocation preserves prior evidence in its own output
 capsule under the selected repository `target` directory.
 
+## Owner dispatch failure observations
+
+`OwnerDispatchTcpEndpoint` logs one bounded `channel=owner-dispatch` warning at
+an incoming framing/handler/response failure and at an outgoing exchange failure.
+The existing `RQSpatialCameraPanel` tag carries direction, finite phase, failure
+and exception categories, and a SHA256 correlation of the bounded request frame.
+It carries no frame contents, exception message/stack, peer address or key. A
+missing correlation is `NONE`; this digest is diagnostic, never authentication.
+The incoming digest is taken before invoking the handler. Log publication cannot
+replace the original exception, fabricate a response or alter endpoint joins.
+
+The app's `ownerFailureDiagnostic` snapshot only describes its provider callback
+path. `AVAILABLE`/`NONE` does not prove successful native validation, transport,
+dispatch, media or cleanup. A closed request task proves transport retirement,
+including a caught rejected handler, rather than successful owner execution.
+Absence of a log warning is likewise not success. These warnings become available
+only in artifacts containing this source; collect existing native and Java tags
+before an operation to avoid losing its first failure from the device ring.
+
+Run the focused real-loopback JVM check (Android Log is modeled):
+
+```powershell
+python tools/checks/Test-OwnerDispatchDiagnosticHost.py --java-home <jdk17> --output <repo>/target/owner-dispatch-diagnostic-check
+```
+
+It checks correlated handler rejection/source EOF, payload exclusion, owned
+exchange and endpoint joins, successful response preservation, and failed log
+publication. It builds no APK and proves no device, native-owner or cleanup
+acceptance. The existing endpoint/replay/cleanup rules are unchanged.
+
 ## Accepted embedded LAN placement
 
 The embedded packed-stereo executor keeps three endpoints distinct: the local
@@ -266,3 +296,44 @@ Run `tools/checks/Test-ReceiverStageTraceHost.ps1` with an explicit JDK, the exi
 pinned host JSON dependency, API34 Android jar and create-new output under `target`.
 The pure clock/generation controls and Android receiver typecheck do not establish
 headset, transport, codec or duplex readiness.
+
+When a sender packet offer is rejected, its existing `packed-source` diagnostic
+is emitted before connection retirement can interrupt the accept worker and
+overwrite the mutable error. `PACKET_PUMP_FAILED` classifies a retained writer
+exception; `PACKET_OFFER_REJECTED` reports rejection without claiming a queue-full
+cause. The marker uses closed codes and counters, never exception text or media
+payload. Logging failure cannot bypass the existing throw/retirement path.
+These two packet markers fingerprint up to four Throwable cause nodes before
+retirement: class (up to 160 characters), original message character count,
+hashed UTF8 byte count and SHA256 of at most the first 1024 message characters.
+Explicit truncation/cycle fields distinguish bounded prefixes from complete
+messages and cause chains. No message characters or stacks are emitted.
+The package-private pump snapshot records the first recorded rejection decision:
+packet size, retained writer failure, closed pump, queue count or queued-byte
+bound. It includes packet length, configured bounds and locked queue/closed
+observations. The original unlocked size decision records queue state as unknown;
+no extra queue lock or later status guess is introduced. Failure takes diagnostic
+precedence over closed when both are present; the original acceptance predicate
+and count-before-byte order remain unchanged. Later rejection/cleanup cannot
+overwrite the immutable record. Snapshot failures remain diagnostic unavailable
+and never change offer results. Only the existing sender marker consumes it.
+
+The source codec-output owner now uses a package-private cancellable capacity
+wait on the same packet pump. Count/byte fullness waits for downstream progress;
+the public `offer` contract remains nonblocking. The existing 48-packet source
+capacity, 8MiB packet and 32MiB queued-byte bounds do not change. Benign pressure
+keeps encoded packets ordered on the same connection without discard or replay.
+The codec output index stays with the sole source thread and releases in its
+existing finally block. Pressure can reach the encoder input worker and its
+single latest-raw-input mailbox; the independent Own capture path adds no wait.
+
+The capacity wait has no timeout and holds only the pump monitor, which releases
+during wait. Dequeue, close, writer failure and writer-loop termination wake it.
+Owner Stop and asynchronous source failure publish cancellation and notify the
+exact registered wait pump before transport/encoder joins; Stop does not interrupt
+the sole codec-drain owner. Cancellation skips pending delivery and retains the
+existing physical drain/Whole barriers. An explicitly interrupted caller restores
+its interrupt flag and follows existing connection retirement. Existing LAN I/O
+deadlines/failure handling remain. No larger buffers, connection replay or authority
+relaxation is introduced. Hardware codec depth, shared pool pressure and the
+existing 64-pair metadata bound remain device-qualification limits.

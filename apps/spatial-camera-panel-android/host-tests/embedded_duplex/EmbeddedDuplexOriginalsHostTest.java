@@ -32,6 +32,44 @@ public final class EmbeddedDuplexOriginalsHostTest {
     static JSONObject request()throws Exception{return EmbeddedDuplexOriginals.request("start",CHALLENGE,new Bundle());}
     static String outcome(Bundle query)throws Exception{return observe(query).getString("outcome_sha256");}
     static String requestHash(Bundle query)throws Exception{return observe(query).getString("request_sha256");}
+    static JSONObject failedRow(Throwable failure)throws Exception{
+        Actor actor=new Actor();EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(Files.createTempDirectory("original-failure-v2-").toFile(),actor,()->{});
+        CompletableFuture<Bundle> actual=new CompletableFuture<>();store.begin(ID,"start",CHALLENGE,request(),()->actual);actual.completeExceptionally(failure);
+        JSONObject row=observe(store.query(ID,CHALLENGE));yes(row.getString("state").equals("unknown")&&row.getString("effect_state").equals("uncertain"));return row;
+    }
+    static void failureV2Controls()throws Exception{
+        Throwable[] failures={new java.util.concurrent.CompletionException(new IllegalArgumentException("secret session/key/payload")),new java.util.concurrent.ExecutionException(new java.io.IOException("secret")),new IllegalStateException("secret"),new IllegalArgumentException("secret"),new SecurityException("secret"),new java.util.concurrent.CancellationException("secret"),new InterruptedException("secret"),new java.util.concurrent.TimeoutException("secret"),new java.io.IOException("secret"),new LinkageError("secret"),new EmbeddedDuplexNativeOperationFailure("secret native payload"),new EmbeddedDuplexOwnProjectionFailure(EmbeddedDuplexOwnProjectionFailure.Reason.SUPERSEDED),new Exception("secret")};
+        String[] families={"completion","execution","state","argument","security","cancelled","interrupted","timeout","io","linkage","native_operation","own_projection","other"};
+        JSONObject example=null;
+        for(int i=0;i<failures.length;i++){
+            JSONObject row=failedRow(failures[i]),failure=row.getJSONObject("failure");example=row;
+            yes(failure.keySet().equals(java.util.Set.of("schema","code","operation","original_id","stage","throwable_family","cause_category")));
+            yes(failure.getString("schema").equals("rusty.quest.embedded_duplex.original_failure.v2")&&failure.getString("code").equals("actual_future_failed"));
+            yes(failure.getString("operation").equals("start")&&failure.getString("original_id").equals(ID)&&failure.getString("stage").equals("actual_future_completion"));
+            yes(failure.getString("throwable_family").equals(families[i]));
+            yes(failure.getString("cause_category").equals(i==0?"argument":i==1?"io":families[i]));
+            yes(!failure.toString().contains("secret")&&!failure.toString().contains("Exception")&&!failure.toString().contains("Error"));
+        }
+        Exception left=new Exception("sensitive left"),right=new Exception("sensitive right");left.initCause(right);right.initCause(left);
+        yes(failedRow(left).getJSONObject("failure").getString("cause_category").equals("unavailable"));
+        Throwable deep=new IllegalStateException("sensitive bottom");for(int i=0;i<16;i++)deep=new java.util.concurrent.CompletionException(deep);
+        yes(failedRow(deep).getJSONObject("failure").getString("cause_category").equals("unavailable"));
+        JSONObject legacy=new JSONObject(example.toString()).put("failure",new JSONObject().put("schema","rusty.quest.embedded_duplex.original_failure.v1").put("code","actual_future_failed"));
+        File legacyRoot=Files.createTempDirectory("original-failure-v1-read-").toFile();rewriteFailureRow(legacyRoot,legacy);PathHolder legacyPath=new PathHolder(legacyRoot);
+        byte[] exact=Files.readAllBytes(legacyPath.path);String outcome=legacy.getString("outcome_sha256");
+        JSONObject restored=observe(new EmbeddedDuplexOriginals(legacyRoot,new Actor(),()->{}).query(ID,CHALLENGE));
+        yes(restored.getJSONObject("failure").getString("schema").endsWith(".v1")&&restored.getString("outcome_sha256").equals(outcome)&&java.util.Arrays.equals(exact,Files.readAllBytes(legacyPath.path)));
+        for(String damage:new String[]{"extra","operation","original_id","stage","throwable_family","cause_category"}){
+            JSONObject bad=new JSONObject(example.toString()),body=bad.getJSONObject("failure");
+            if(damage.equals("extra"))body.put("message","sensitive");else body.put(damage,damage.equals("operation")?"whole_app_close":damage.equals("original_id")?"9".repeat(32):"unrecognized");
+            File root=Files.createTempDirectory("original-failure-v2-closed-").toFile();rewriteFailureRow(root,bad);denied(()->new EmbeddedDuplexOriginals(root,new Actor(),()->{}).query(ID,CHALLENGE));
+        }
+    }
+    static final class PathHolder {final java.nio.file.Path path;PathHolder(File root){path=new File(root,"operator-originals-v1/"+ID+".json").toPath();}}
+    static void rewriteFailureRow(File root,JSONObject row)throws Exception{
+        new EmbeddedDuplexOriginals(root,new Actor(),()->{});java.lang.reflect.Method method=EmbeddedDuplexOriginals.class.getDeclaredMethod("outcome",JSONObject.class);method.setAccessible(true);row.put("outcome_sha256",EmbeddedDuplexCanonicalJson.sha256((JSONObject)method.invoke(null,row)));
+        Files.writeString(new PathHolder(root).path,EmbeddedDuplexCanonicalJson.encode(row));
+    }
     static void appAdmissionControls()throws Exception {
         EmbeddedDuplexAppAdmission.ProcessSource process=()->new EmbeddedDuplexProcessIncarnation.Identity("00112233-4455-6677-8899-aabbccddeeff",42,10042,123456);
         EmbeddedDuplexAppAdmission.Snapshot unavailable=EmbeddedDuplexAppAdmission.activity(true,false,false,true,0,true,true,true,null,null);
@@ -264,7 +302,23 @@ public final class EmbeddedDuplexOriginalsHostTest {
   denied(()->new EmbeddedDuplexNativeOperationFailure(new JSONObject(unknown).put("session_id","invented").toString()).validatedFailure());
   denied(()->new EmbeddedDuplexNativeOperationFailure(new JSONObject(unknown).put("code","invented").toString()).validatedFailure());
  }
+    static void ceremonyWaitWarningCompletion()throws Exception{
+        for(String operation:new String[]{"pair_session","fresh_pair_continue"})for(Object warning:new Object[]{null,Boolean.TRUE,Boolean.FALSE,"true",1}){
+            File root=Files.createTempDirectory("original-ceremony-warning-").toFile();Actor actor=new Actor();
+            EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});Bundle response=new Bundle();
+            response.putString("schema","rusty.quest.embedded_duplex.operator_transport.v1");response.putString("status","observed");response.putString("challenge",CHALLENGE);
+            response.putString("pair_state","peer_session_current_route_unverified");response.put("local_session_current",true);response.put("remote_session_current",true);
+            response.put("local_session_expires_at_ms",1000L);response.put("peer_route_proven",false);response.put("media_effect_proven",false);
+            if(warning instanceof Boolean)response.put("ceremony_wait_warning",(Boolean)warning);else if(warning instanceof String)response.putString("ceremony_wait_warning",(String)warning);else if(warning instanceof Integer)response.put("ceremony_wait_warning",(Integer)warning);
+            JSONObject request=EmbeddedDuplexOriginals.request(operation,CHALLENGE,new Bundle());boolean accepted=warning==null||warning instanceof Boolean;
+            if(!accepted){denied(()->{store.begin(ID,operation,CHALLENGE,request,()->CompletableFuture.completedFuture(response));store.query(ID,CHALLENGE);});continue;}
+            store.begin(ID,operation,CHALLENGE,request,()->CompletableFuture.completedFuture(response));JSONObject row=observe(store.query(ID,CHALLENGE));
+            yes(row.getString("state").equals("succeeded"));
+            if(accepted){yes(row.getJSONObject("response").has("ceremony_wait_warning")== (warning!=null));if(warning!=null)yes(row.getJSONObject("response").getBoolean("ceremony_wait_warning")==((Boolean)warning));}
+        }
+    }
     public static void main(String[] args)throws Exception{
+        ceremonyWaitWarningCompletion();
         File root=Files.createTempDirectory("original-custody-").toFile();Actor actor=new Actor();
         EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});
         AtomicInteger calls=new AtomicInteger();CompletableFuture<Bundle> actual=new CompletableFuture<>();Runnable[] command=new Runnable[1];
@@ -336,6 +390,7 @@ public final class EmbeddedDuplexOriginalsHostTest {
         configurationReceiptControls();
         productionCallerControls();
         appAdmissionControls();
+        failureV2Controls();
         System.out.println("Production Original custody controls passed: "+checks+"; exact Host submit/actor and RuntimeService Original facade bodies executed; OS/Native/resource leaves modeled.");
     }
 }

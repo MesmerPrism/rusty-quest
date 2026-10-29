@@ -15,6 +15,7 @@ public final class MediaPrimitiveAdversarialMain {
     public static void main(String[] args) throws Exception {
         blockedWriterClosesAndTerminates();
         queueAndByteLimitsRejectWithoutRetainingCallerBuffer();
+        capacityWaitProgressAndCancellation();
         trackerReleasesRejectedAndOutOfOrderExpiryExactlyOnce();
         rmanvidBoundsAndIdentityFailClosed();
         System.out.println("rusty.quest.android.media.primitive-adversarial.v1:pass");
@@ -34,6 +35,10 @@ public final class MediaPrimitiveAdversarialMain {
         require(pump.isTerminated(), "blocked writer survived close");
         require(pump.failure() == null, "orderly close reported a write failure");
         require(!pump.offer(new byte[] {2}), "closed pump accepted a packet");
+        BoundedPacketPump.OfferRejection closed=pump.firstOfferRejection();
+        require(closed.reason==BoundedPacketPump.RejectionReason.CLOSED && closed.closed
+                && closed.failure==null && closed.queuedPackets==0 && closed.queuedBytes==0,
+                "closed rejection must record its actual decision");
     }
 
     private static void queueAndByteLimitsRejectWithoutRetainingCallerBuffer() throws Exception {
@@ -46,8 +51,14 @@ public final class MediaPrimitiveAdversarialMain {
         require(output.writeEntered.await(2, TimeUnit.SECONDS), "first packet was not dequeued");
         require(pump.offer(new byte[] {2, 3, 4, 5}), "bounded queued packet rejected");
         require(!pump.offer(new byte[] {6}), "full queue accepted another packet");
+        BoundedPacketPump.OfferRejection counted=pump.firstOfferRejection();
+        require(counted.reason==BoundedPacketPump.RejectionReason.QUEUE_COUNT && !counted.closed
+                && counted.queuedPackets==1 && counted.queuedBytes==4 && counted.packetBytes==1,
+                "count takes diagnostic precedence when both count and byte bounds reject");
         require(!pump.offer(new byte[] {1, 2, 3, 4, 5}), "oversize packet accepted");
         pump.close();
+        require(pump.firstOfferRejection()==counted && !counted.closed && counted.queuedBytes==4,
+                "later rejection and cleanup must not overwrite the immutable first record");
         require(output.firstByte == 1, "pump retained the caller's mutable packet");
 
         BlockingOutputStream byteOutput = new BlockingOutputStream();
@@ -58,7 +69,57 @@ public final class MediaPrimitiveAdversarialMain {
                 "byte-limit seed packet was not dequeued");
         require(bytePump.offer(new byte[] {2, 3, 4, 5}), "byte-limit packet rejected");
         require(!bytePump.offer(new byte[] {6}), "queued byte limit accepted another packet");
+        BoundedPacketPump.OfferRejection bytes=bytePump.firstOfferRejection();
+        require(bytes.reason==BoundedPacketPump.RejectionReason.QUEUE_BYTES && bytes.queuedPackets==1
+                && bytes.capacity==2 && bytes.queuedBytes==4 && bytes.maxQueuedBytes==4,
+                "byte rejection must record the original locked counts");
         bytePump.close();
+        BoundedPacketPump sizePump=new BoundedPacketPump(new ByteArrayOutputStream(),1,4,4,"packet-size-test");
+        try {
+            require(!sizePump.offer(new byte[5]),"oversize packet accepted by fresh pump");
+            BoundedPacketPump.OfferRejection size=sizePump.firstOfferRejection();
+            require(size.reason==BoundedPacketPump.RejectionReason.PACKET_SIZE && size.packetBytes==5
+                    && size.maxPacketBytes==4 && size.queuedPackets==-1 && size.queuedBytes==-1
+                    && size.closed==null && size.failure==null,"unlocked size decision must not invent queue status");
+        } finally { sizePump.close(); }
+    }
+
+    private static void capacityWaitProgressAndCancellation() throws Exception {
+        // Exact required wakeups: capacity, owner cancellation, close, interruption, writer failure.
+        for (int mode=0; mode<5; mode++) {
+            final boolean failWrite=mode==4;
+            CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1),done=new CountDownLatch(1);
+            java.util.List<Integer> delivered=java.util.Collections.synchronizedList(new java.util.ArrayList<Integer>());
+            OutputStream output=new OutputStream(){
+                public void write(int value)throws IOException{
+                    entered.countDown();try{release.await();}catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException(e);}
+                    if(failWrite)throw new IOException("controlled writer failure");delivered.add(value);
+                }
+                public void close(){release.countDown();}
+            };
+            // Count remains below capacity; only the unchanged queued-byte bound causes this wait.
+            BoundedPacketPump pump=new BoundedPacketPump(output,2,4,4,"capacity-wakeup-test");
+            java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicReference<Object> result=new java.util.concurrent.atomic.AtomicReference<Object>();
+            Thread producer=new Thread(()->{try{result.set(pump.offerAwaitCapacity(new byte[]{6},cancelled::get));}catch(Throwable e){result.set(e);}finally{done.countDown();}},"capacity-producer");
+            try {
+                require(pump.offer(new byte[]{1})&&entered.await(2,TimeUnit.SECONDS),"writer seeded");
+                require(pump.offer(new byte[]{2,3,4,5}),"byte bound filled");producer.start();
+                long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+                while(done.getCount()!=0&&producer.getState()!=Thread.State.WAITING&&System.nanoTime()<end)Thread.yield();
+                require(done.getCount()!=0&&producer.getState()==Thread.State.WAITING,"producer must wait at the byte bound");
+                require(!pump.offer(new byte[]{7}),"other callers remain nonblocking at the same bound");
+                if(mode==0||mode==4)release.countDown();
+                else if(mode==1){cancelled.set(true);pump.signalCapacityWaiters();}
+                else if(mode==2)pump.close();
+                else producer.interrupt();
+                require(done.await(2,TimeUnit.SECONDS),"capacity wait did not wake");
+                if(mode==0){require(Boolean.TRUE.equals(result.get()),"capacity progress refused");end=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);while(delivered.size()<6&&System.nanoTime()<end)Thread.yield();require(delivered.toString().equals("[1, 2, 3, 4, 5, 6]"),"accepted encoded bytes changed order");}
+                else if(mode==3)require(result.get() instanceof InterruptedException,"interrupt did not terminate waiting producer");
+                else require(Boolean.FALSE.equals(result.get()),"terminal/cancelled wait accepted a packet");
+                if(mode==4)require(pump.failure()!=null,"real writer failure was lost");
+            } finally {release.countDown();pump.close();producer.interrupt();producer.join(2000);require(!producer.isAlive()&&pump.isTerminated(),"capacity owners not joined");}
+        }
     }
 
     private static void trackerReleasesRejectedAndOutOfOrderExpiryExactlyOnce() {

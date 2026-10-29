@@ -32,7 +32,8 @@ use rusty_quest_media_stream_android::{
     OwnerDispatchAuthorizationKind, OwnerDispatchClock, OwnerDispatchRequest,
     ProductActivationAuthorityVerifier, ProductActivationRequest,
     RetainedCleanupAuthorityProjection, MAX_OWNER_DISPATCH_FUTURE_SKEW_MS,
-    MAX_OWNER_DISPATCH_REQUEST_AGE_MS, RETAINED_CLEANUP_PROJECTION_SCHEMA,
+    MAX_OWNER_DISPATCH_REQUEST_AGE_MS, OWNED_CLEANUP_PROJECTION_SCHEMA,
+    RETAINED_CLEANUP_PROJECTION_SCHEMA,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -174,7 +175,8 @@ pub struct QuestEmbeddedDuplexAuthorityConfig {
 impl QuestEmbeddedDuplexAuthorityConfig {
     /// Validates exact canonical sets and required trust roots.
     pub(crate) fn validate(&self) -> bool {
-        self.schema_id == QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA
+        matches!(self.schema_id.as_str(), QUEST_EMBEDDED_DUPLEX_AUTHORITY_CONFIG_SCHEMA
+            | QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA)
             && self.fresh_setup_local_peer_id.is_some()==self.fresh_setup_enrollment_selection.is_some()
             && self.fresh_setup_local_peer_id.as_ref().map_or(true, |id|
                 self.fresh_setup_enrollment_selection.as_ref().is_some_and(|selection|selection.keys.iter().any(|key|&key.peer_id==id)) && self.ongoing_media_policy.as_ref()==Some(&rusty_manifold_peer_runtime_host::ManifoldOngoingMediaPolicy::active_checkpoint_v2()))
@@ -191,7 +193,21 @@ impl QuestEmbeddedDuplexAuthorityConfig {
             && canonical_set(&self.trusted_adapter_ids)
             && canonical_set(&self.trusted_media_revoker_ids)
     }
+
+    pub(crate) fn require_lifetime_policy_selection(
+        &self,
+        policy: Option<&rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
+    ) -> bool {
+        self.validate()
+            && (self.schema_id == QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA)
+                == policy.is_some()
+            && policy.map_or(true, |value| value.is_source_owned_v1())
+    }
 }
+
+/// Selected config retains the legacy field shape and requires trusted constructor policy.
+pub const QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA: &str =
+    "rusty.quest.embedded_duplex.development_authority_config.v1";
 
 /// Product-selected portions of a common-LAN context. Authority revisions are
 /// always read from the current durable Runtime Host.
@@ -237,6 +253,12 @@ pub struct QuestRetainedOriginalEnrollment {
     valid_from_ms: u64,
     expires_at_ms: u64,
     accepted_at_ms: u64,
+}
+
+#[derive(Clone, Copy)]
+enum CleanupProjectionVersion {
+    LeasedV2,
+    OwnedV3,
 }
 
 impl QuestEmbeddedDuplexAuthority {
@@ -771,6 +793,40 @@ impl QuestEmbeddedDuplexAuthority {
         requester_lease_id: &DottedId,
         now_ms: u64,
     ) -> Result<QuestRetainedCleanupTarget, String> {
+        self.retained_cleanup_target_inner(
+            grant_id,
+            requester_id,
+            requester_lease_id,
+            now_ms,
+            CleanupProjectionVersion::LeasedV2,
+        )
+    }
+
+    /// Derive an owned cleanup target from the exact terminal route and retained
+    /// requester identity. Deadlines do not revoke the duty to retire resources.
+    pub fn owned_retained_cleanup_target(
+        &self,
+        grant_id: &DottedId,
+        requester_id: &DottedId,
+        requester_lease_id: &DottedId,
+        now_ms: u64,
+    ) -> Result<QuestRetainedCleanupTarget, String> {
+        self.retained_cleanup_target_inner(
+            grant_id,
+            requester_id,
+            requester_lease_id,
+            now_ms,
+            CleanupProjectionVersion::OwnedV3,
+        )
+    }
+    fn retained_cleanup_target_inner(
+        &self,
+        grant_id: &DottedId,
+        requester_id: &DottedId,
+        requester_lease_id: &DottedId,
+        now_ms: u64,
+        version: CleanupProjectionVersion,
+    ) -> Result<QuestRetainedCleanupTarget, String> {
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
         let route = snapshot
@@ -795,16 +851,27 @@ impl QuestEmbeddedDuplexAuthority {
             .iter()
             .find(|lease| lease.lease_id == *requester_lease_id)
             .ok_or_else(|| "cleanup requester lease is absent".to_owned())?;
-        let trusted_revoker = current_cleanup_requester(
-            &route.authority_client_id,
-            &route.authority_runtime_lease_id,
-            requester_id,
-            requester_lease_id,
-            lease,
-            &snapshot.trust_policy.media_runtime_lease_scope_id,
-            &snapshot.trust_policy.trusted_media_revoker_ids,
-            now_ms,
-        )?;
+        let trusted_revoker = match version {
+            CleanupProjectionVersion::LeasedV2 => current_cleanup_requester(
+                &route.authority_client_id,
+                &route.authority_runtime_lease_id,
+                requester_id,
+                requester_lease_id,
+                lease,
+                &snapshot.trust_policy.media_runtime_lease_scope_id,
+                &snapshot.trust_policy.trusted_media_revoker_ids,
+                now_ms,
+            )?,
+            CleanupProjectionVersion::OwnedV3 => cleanup_requester_identity(
+                &route.authority_client_id,
+                &route.authority_runtime_lease_id,
+                requester_id,
+                requester_lease_id,
+                lease,
+                &snapshot.trust_policy.media_runtime_lease_scope_id,
+                &snapshot.trust_policy.trusted_media_revoker_ids,
+            )?,
+        };
         let target = (
             &route.grant_id,
             &route.authority_client_id,
@@ -851,6 +918,7 @@ impl QuestEmbeddedDuplexAuthority {
             executor_peer_id,
             now_ms,
             false,
+            CleanupProjectionVersion::LeasedV2,
         )
     }
 
@@ -872,9 +940,62 @@ impl QuestEmbeddedDuplexAuthority {
             local_peer_id,
             now_ms,
             true,
+            CleanupProjectionVersion::LeasedV2,
         )
     }
 
+    /// Cleanup entitlement is timeless; only remote authentication uses the
+    /// accepted source-owned delegated horizon (finite when omitted).
+    pub fn owned_cleanup_authentication_validity_ms(&self) -> Result<u64, String> {
+        let peer = read_peer(&self.peer)?;
+        Ok(
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                peer.development_lifetime_policy(),
+                rusty_quest_media_stream_android::DEFAULT_OWNED_CLEANUP_AUTHENTICATION_VALIDITY_MS,
+            ),
+        )
+    }
+    /// Durable cleanup of an exact retained remote target, with renewable wire authentication.
+    pub fn owned_retained_cleanup_projection(
+        &self,
+        grant: &DottedId,
+        requester: &DottedId,
+        lease: &DottedId,
+        authority_peer: &DottedId,
+        executor_peer: &DottedId,
+        now: u64,
+    ) -> Result<RetainedCleanupAuthorityProjection, String> {
+        self.retained_cleanup_projection_inner(
+            grant,
+            requester,
+            lease,
+            authority_peer,
+            executor_peer,
+            now,
+            false,
+            CleanupProjectionVersion::OwnedV3,
+        )
+    }
+    /// Same owned entitlement for the actual local registry; never a new media Start.
+    pub fn owned_retained_local_cleanup_projection(
+        &self,
+        grant: &DottedId,
+        requester: &DottedId,
+        lease: &DottedId,
+        local_peer: &DottedId,
+        now: u64,
+    ) -> Result<RetainedCleanupAuthorityProjection, String> {
+        self.retained_cleanup_projection_inner(
+            grant,
+            requester,
+            lease,
+            local_peer,
+            local_peer,
+            now,
+            true,
+            CleanupProjectionVersion::OwnedV3,
+        )
+    }
     fn retained_cleanup_projection_inner(
         &self,
         grant_id: &DottedId,
@@ -884,9 +1005,19 @@ impl QuestEmbeddedDuplexAuthority {
         executor_peer_id: &DottedId,
         now_ms: u64,
         local: bool,
+        version: CleanupProjectionVersion,
     ) -> Result<RetainedCleanupAuthorityProjection, String> {
-        let target =
-            self.retained_cleanup_target(grant_id, requester_id, requester_lease_id, now_ms)?;
+        let owned_authentication_validity = match version {
+            CleanupProjectionVersion::OwnedV3 => self.owned_cleanup_authentication_validity_ms()?,
+            CleanupProjectionVersion::LeasedV2 => 0,
+        };
+        let target = self.retained_cleanup_target_inner(
+            grant_id,
+            requester_id,
+            requester_lease_id,
+            now_ms,
+            version,
+        )?;
         let broker = read_broker(&self.broker)?;
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
@@ -911,12 +1042,17 @@ impl QuestEmbeddedDuplexAuthority {
             || target.terminal_route_sha256 != typed_sha256(route)?
             || target.provider_epoch_id != snapshot.provider_epoch_id
             || target.platform_runtime_spec_id != route.platform_runtime_spec_id
-            || target.requester_expires_at_ms <= now_ms
+            || matches!(version, CleanupProjectionVersion::LeasedV2)
+                && target.requester_expires_at_ms <= now_ms
         {
             return Err("retained cleanup source authority differs".to_owned());
         }
         Ok(RetainedCleanupAuthorityProjection {
-            schema_id: RETAINED_CLEANUP_PROJECTION_SCHEMA.to_owned(),
+            schema_id: match version {
+                CleanupProjectionVersion::LeasedV2 => RETAINED_CLEANUP_PROJECTION_SCHEMA,
+                CleanupProjectionVersion::OwnedV3 => OWNED_CLEANUP_PROJECTION_SCHEMA,
+            }
+            .to_owned(),
             authority_peer_id: authority_peer_id.to_string(),
             executor_peer_id: executor_peer_id.to_string(),
             peer_session_id: route.peer_session_id.to_string(),
@@ -934,10 +1070,14 @@ impl QuestEmbeddedDuplexAuthority {
             signed_topology_sha256: typed_sha256(topology)?,
             historical_topology_expires_at_ms: topology.expires_at_ms,
             requester_expires_at_ms: target.requester_expires_at_ms,
-            expires_at_ms: retained_cleanup_projection_expiry(
-                target.requester_expires_at_ms,
-                now_ms,
-            ),
+            expires_at_ms: match version {
+                CleanupProjectionVersion::LeasedV2 => {
+                    retained_cleanup_projection_expiry(target.requester_expires_at_ms, now_ms)
+                }
+                CleanupProjectionVersion::OwnedV3 => {
+                    now_ms.saturating_add(owned_authentication_validity)
+                }
+            },
         })
     }
 
@@ -1057,6 +1197,10 @@ impl QuestEmbeddedDuplexAuthority {
         renewals: &[QuestRetainedCleanupSessionRenewal],
         retained_enrollment: Option<&QuestRetainedOriginalEnrollment>,
     ) -> Result<(), String> {
+        let owned = cleanup.schema_id == OWNED_CLEANUP_PROJECTION_SCHEMA;
+        if owned && retained_enrollment.is_none() {
+            return Err("owned cleanup original enrollment witness absent".into());
+        }
         let peer = read_peer(&self.peer)?;
         let snapshot = peer.snapshot();
         let credential = snapshot
@@ -1110,7 +1254,7 @@ impl QuestEmbeddedDuplexAuthority {
         };
         if original.schema_id != QUEST_C1_OWNER_PROJECTION_SCHEMA
             || original.authorization_kind != OwnerDispatchAuthorizationKind::CurrentRoute
-            || cleanup.schema_id != RETAINED_CLEANUP_PROJECTION_SCHEMA
+            || !owned && cleanup.schema_id != RETAINED_CLEANUP_PROJECTION_SCHEMA
             || cleanup.authority_peer_id != original.authority_peer_id
             || cleanup.executor_peer_id != original.executor_peer_id
             || cleanup.authority_peer_id == cleanup.executor_peer_id
@@ -1138,10 +1282,11 @@ impl QuestEmbeddedDuplexAuthority {
             || !valid_sha256(&cleanup.terminal_route_sha256)
             || !parties
             || now_ms == 0
-            || cleanup.expires_at_ms <= now_ms
-            || cleanup.requester_expires_at_ms <= now_ms
-            || cleanup.expires_at_ms > cleanup.requester_expires_at_ms
-            || cleanup.expires_at_ms > now_ms.saturating_add(30_000)
+            || !owned
+                && (cleanup.expires_at_ms <= now_ms
+                    || cleanup.requester_expires_at_ms <= now_ms
+                    || cleanup.expires_at_ms > cleanup.requester_expires_at_ms
+                    || cleanup.expires_at_ms > now_ms.saturating_add(30_000))
         {
             return Err("remote cleanup retained source differs".into());
         }
@@ -1344,14 +1489,12 @@ impl QuestEmbeddedDuplexAuthority {
             *peer = restored;
             return Ok(receipt);
         }
-        let (restored, receipt) =
-            ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
-                snapshot_json,
-                &expected_trust,
-                &expected_epoch,
-                &broker,
-            )
-            .map_err(host_error)?;
+        let (restored, receipt) = match peer.development_lifetime_policy() {
+            Some(policy) => ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime_and_lifetime_policy(
+                snapshot_json, &expected_trust, &expected_epoch, &broker, policy),
+            None => ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
+                snapshot_json, &expected_trust, &expected_epoch, &broker),
+        }.map_err(host_error)?;
         *peer = restored;
         Ok(receipt)
     }
@@ -1498,7 +1641,23 @@ impl QuestOwnerDispatchAuthorityVerifier {
     }
 }
 
+impl QuestOwnerDispatchAuthorityVerifier {
+    fn selected_authentication_validity_ms(&self) -> Result<u64, String> {
+        let peer = read_peer(&self.authority.peer)?;
+        Ok(
+            rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+                peer.development_lifetime_policy(),
+                MAX_OWNER_DISPATCH_REQUEST_AGE_MS,
+            ),
+        )
+    }
+}
+
 impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        self.selected_authentication_validity_ms()
+    }
+
     fn verify_current(
         &self,
         request: &OwnerDispatchRequest,
@@ -1508,7 +1667,8 @@ impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
         let now_ms = self.clock.now_ms()?;
         if now_ms == 0
             || request.issued_at_ms > now_ms.saturating_add(MAX_OWNER_DISPATCH_FUTURE_SKEW_MS)
-            || now_ms.saturating_sub(request.issued_at_ms) > MAX_OWNER_DISPATCH_REQUEST_AGE_MS
+            || now_ms.saturating_sub(request.issued_at_ms)
+                > self.selected_authentication_validity_ms()?
         {
             return Err("owner dispatch request is not currently fresh".to_owned());
         }
@@ -1526,6 +1686,10 @@ impl OwnerDispatchAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
 }
 
 impl ProductActivationAuthorityVerifier for QuestOwnerDispatchAuthorityVerifier {
+    fn authentication_validity_ms(&self) -> Result<u64, String> {
+        self.selected_authentication_validity_ms()
+    }
+
     fn verify_activation(
         &self,
         request: &ProductActivationRequest,
@@ -1702,12 +1866,33 @@ fn current_cleanup_requester(
     trusted_revoker_ids: &[DottedId],
     now_ms: u64,
 ) -> Result<bool, String> {
+    if lease.expires_at_ms <= now_ms {
+        return Err("cleanup requester lease is not current".to_owned());
+    }
+    cleanup_requester_identity(
+        original_client_id,
+        original_lease_id,
+        requester_id,
+        requester_lease_id,
+        lease,
+        required_scope,
+        trusted_revoker_ids,
+    )
+}
+fn cleanup_requester_identity(
+    original_client_id: &DottedId,
+    original_lease_id: &DottedId,
+    requester_id: &DottedId,
+    requester_lease_id: &DottedId,
+    lease: &ManifoldRuntimeLease,
+    required_scope: &DottedId,
+    trusted_revoker_ids: &[DottedId],
+) -> Result<bool, String> {
     if lease.lease_id != *requester_lease_id
         || lease.holder_id != *requester_id
         || lease.scope != *required_scope
-        || lease.expires_at_ms <= now_ms
     {
-        return Err("cleanup requester lease is not current".to_owned());
+        return Err("cleanup requester identity/scope differs".into());
     }
     if original_client_id == requester_id && original_lease_id == requester_lease_id {
         return Ok(false);

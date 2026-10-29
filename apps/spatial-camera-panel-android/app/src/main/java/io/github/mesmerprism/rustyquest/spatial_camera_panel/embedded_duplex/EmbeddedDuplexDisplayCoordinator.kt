@@ -12,6 +12,7 @@ import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialVideoSourceR
 import io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialVideoSourceStage
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 internal class EmbeddedDuplexDisplayCoordinator(
     private val routing: SpatialVideoSourceRoutingCoordinator,
@@ -299,6 +300,27 @@ internal class EmbeddedDuplexDisplayCoordinator(
       try { result.complete(action()) }
       catch (failure: Throwable) { result.completeExceptionally(failure) }
     }) { "Activity lifecycle is already fenced" }
-    return result.get(30, TimeUnit.SECONDS)
+    val estimate = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+    var warned = false
+    var interrupted = false
+    try {
+      while (true) {
+        try {
+          if (warned) return result.get()
+          return result.get(maxOf(1L, estimate - System.nanoTime()), TimeUnit.NANOSECONDS)
+        } catch (_: TimeoutException) {
+          warned = true
+          try { android.util.Log.w("RQSpatialCameraPanel", "same lifecycle action remains Pending") }
+          catch (_: RuntimeException) { /* Diagnostics cannot abandon dispatched ownership. */ }
+        } catch (_: InterruptedException) {
+          // Dispatch already transferred an action to the lifecycle owner. Keep
+          // this caller joined to that exact future; interruption cannot cancel
+          // its queued effects or let its caller free their SDK resources.
+          interrupted = true
+        }
+      }
+    } finally {
+      if (interrupted) Thread.currentThread().interrupt()
+    }
   }
 }

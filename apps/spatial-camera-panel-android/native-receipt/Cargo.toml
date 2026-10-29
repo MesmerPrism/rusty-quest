@@ -14,6 +14,7 @@ name = "spatial_camera_panel_native_receipt"
 crate-type = ["cdylib"]
 
 [dependencies]
+rusty-manifold-admission = { path = "../../../../rusty-manifold/crates/rusty-manifold-admission" }
 rusty-manifold-model = { path = "../../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }
 rusty-manifold-peer-runtime-host = { path = "../../../../rusty-manifold/crates/rusty-manifold-peer-runtime-host" }
 sha2 = "0.10"

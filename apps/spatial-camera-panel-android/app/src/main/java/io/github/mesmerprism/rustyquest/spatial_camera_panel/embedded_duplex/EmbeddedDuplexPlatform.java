@@ -63,6 +63,11 @@ final class EmbeddedDuplexPlatform {
             requireProcessCallback();EmbeddedDuplexOriginals.bindFreshSetupOriginal(setupRequestId);
         }
     }
+    public String currentWholeCleanupOriginalId()throws Exception{
+        try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
+            requireProcessCallback();return EmbeddedDuplexProcessHost.currentWholeCleanupOriginalId(this);
+        }
+    }
     public String currentOperatorOriginalId()throws Exception{
         try(EmbeddedDuplexProcessFence.CallbackLease ignored=enterProcessCallback()){
             requireProcessCallback();String actual=EmbeddedDuplexOriginals.currentOriginalId();
@@ -275,6 +280,20 @@ final class EmbeddedDuplexPlatform {
     private final AtomicFile cleanupPreparationsFile;
     private final boolean localFixture;
     private volatile PackagedAndroidMediaOwnerRegistry registry;
+    private boolean owningWholeCleanup;
+    void fenceOwnedForwardEffects()throws Exception{
+        requireProcessCallback();EmbeddedDuplexOriginals.Record original=EmbeddedDuplexOriginals.capture();
+        if(original==null||!"whole_app_close".equals(original.row.getString("operation")))throw new IllegalStateException("actual Whole registry owner absent");
+        EmbeddedDuplexProcessHost.requireCurrentOriginalStopActor(original);
+        synchronized(this){owningWholeCleanup=true;if(registry!=null)registry.beginOwnedCleanup();}
+    }
+    void awaitOwnedForwardEffectsJoined()throws Exception{
+        requireProcessCallback();PackagedAndroidMediaOwnerRegistry actual;
+        synchronized(this){if(!owningWholeCleanup)throw new IllegalStateException("Whole registry not fenced");actual=registry;}
+        if(actual!=null)actual.awaitOwnedForwardEffectsJoined();
+        requireProcessCallback();
+    }
+
     private volatile OwnerDispatchTcpEndpoint endpoint;
     private volatile EmbeddedDuplexResources resources;
     private volatile EmbeddedDuplexPreparedStart preparedStart;
@@ -466,6 +485,10 @@ final class EmbeddedDuplexPlatform {
     void requirePreparedNativeStatus(JSONObject receipt,boolean ready)throws Exception {
         EmbeddedDuplexPreparedStart held=preparedStart;if(held==null)throw new IllegalStateException("actual prepared registry owner absent");
         held.requireNativeStatus(receipt,ready);
+    }
+    void requirePreparedNativeStatusForLocalStart(JSONObject receipt)throws Exception {
+        EmbeddedDuplexPreparedStart held=preparedStart;if(held==null)throw new IllegalStateException("actual prepared registry owner absent");
+        held.requireNativeStatusForLocalStart(receipt);
     }
     private void stopPreparedOriginal(EmbeddedDuplexOriginals.Record actual) {
         EmbeddedDuplexPreparedStart held=preparedStart;if(held!=null&&held.ownedBy(actual))held.requestStop(actual);
@@ -666,7 +689,12 @@ final class EmbeddedDuplexPlatform {
     /** Called once with resource tuples derived by Rust from packaged bindings. */
     void installRegistry(long generation, MediaProductBinding binding) {
         if (registry != null || endpoint != null) throw new IllegalStateException("registry already installed");
-        registry = new PackagedAndroidMediaOwnerRegistry(generation, binding);
+        PackagedAndroidMediaOwnerRegistry created=new PackagedAndroidMediaOwnerRegistry(generation,binding);
+        synchronized(this){
+            if(registry!=null)throw new IllegalStateException("registry already installed");
+            if(owningWholeCleanup)created.beginOwnedCleanup();
+            registry=created;
+        }
     }
 
     /** Installs the exact resource closure returned by the embedded Runtime Host. */
@@ -976,10 +1004,11 @@ final class EmbeddedDuplexPlatform {
         stage = OwnerStage.PROJECTION_BINDING;
         JSONObject authority = new JSONObject(authorityJson);
         ticket = MediaOwnerAction.parse(ticketJson);
-        if (!"rusty.quest.android.media.retained_cleanup_projection.v2".equals(authority.getString("$schema"))
+        boolean ownedCleanup="rusty.quest.android.media.retained_cleanup_projection.v3".equals(authority.getString("$schema"));
+        if ((!ownedCleanup&&!"rusty.quest.android.media.retained_cleanup_projection.v2".equals(authority.getString("$schema")))
                 || !localPeerId.equals(authority.getString("executor_peer_id"))
-                || authority.getLong("expires_at_ms") <= System.currentTimeMillis()
-                || authority.getLong("requester_expires_at_ms") <= System.currentTimeMillis()
+                || !ownedCleanup&&(authority.getLong("expires_at_ms") <= System.currentTimeMillis()
+                    || authority.getLong("requester_expires_at_ms") <= System.currentTimeMillis())
                 || !ticket.authorityEpochId().equals(authority.getString("provider_epoch_id"))
                 || !ticket.clientId().equals(authority.getString("target_client_id"))
                 || !ticket.leaseId().equals(authority.getString("target_runtime_lease_id"))

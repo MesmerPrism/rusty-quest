@@ -48,7 +48,7 @@ pub struct AndroidMediaExecutionTicket {
     pub schema_id: String,
     /// Opaque capability retained by the native in-flight execution.
     pub capability: String,
-    /// Registry generation. Replacement invalidates all older tickets.
+    /// Recipient registry generation. Replacement invalidates its older tickets.
     pub executor_generation: u64,
     /// Exact prepared action identity.
     pub action_id: String,
@@ -132,8 +132,21 @@ pub struct AndroidMediaOwnerReadback {
 /// Process-local owner executor. Implementations must authenticate readback
 /// against their own retained registry; caller JSON never implements this trait.
 pub trait AndroidMediaOwnerExecutor: Send {
-    /// Current nonzero registry generation.
+    /// Current nonzero source executor generation, also used for local custody.
     fn executor_generation(&self) -> u64;
+
+    /// Selects the recipient generation before issuing an owner ticket.
+    /// Local-only executors retain their installed registry generation.
+    ///
+    /// # Errors
+    /// Returns an error if the exact selected recipient has no authenticated binding.
+    fn executor_generation_for(
+        &self,
+        _action: &MediaStreamPlatformAction,
+        _owner: &MediaStreamOwnerAction,
+    ) -> Result<u64, String> {
+        Ok(self.executor_generation())
+    }
 
     /// Executes or compensates one exact ticket and reads provider state back.
     ///

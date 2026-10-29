@@ -51,7 +51,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
       }
       val response = if(request.route == EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY && request.runId != null)
         EmbeddedDuplexRuntimeService.queryOriginal(app,request.runId,requireNotNull(request.originalId),request.challenge)
-      else if(request.route in setOf(EmbeddedDuplexOperatorContract.Route.STATUS,EmbeddedDuplexOperatorContract.Route.REVIEW,EmbeddedDuplexOperatorContract.Route.CONFIRM)) {
+      else if(request.route in setOf(EmbeddedDuplexOperatorContract.Route.STATUS,EmbeddedDuplexOperatorContract.Route.REVIEW,EmbeddedDuplexOperatorContract.Route.REVIEW_POLICY_UPDATE,EmbeddedDuplexOperatorContract.Route.CONFIRM)) {
         require(request.runId==null) { "persistent-identity-route-is-not-run-scoped" };dispatchCall(method,argument,snapshot)
       } else EmbeddedDuplexRuntimeService.withRunRequest(app,request.runId) { dispatchCall(method,argument,snapshot) }
       if(request.runId!=null) {
@@ -242,9 +242,12 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
             status.recordSha256?.let { putString("record_sha256", it) }
           }
         }
-        EmbeddedDuplexOperatorContract.Route.REVIEW -> synchronized(gate) {
+        EmbeddedDuplexOperatorContract.Route.REVIEW,
+        EmbeddedDuplexOperatorContract.Route.REVIEW_POLICY_UPDATE -> synchronized(gate) {
           pending.clear()
-          val review = EmbeddedDuplexEnrollmentService.review(app, requireNotNull(request.draft)).get()
+          val policyUpdate = request.route == EmbeddedDuplexOperatorContract.Route.REVIEW_POLICY_UPDATE
+          val review = if (policyUpdate) EmbeddedDuplexEnrollmentService.reviewPolicyUpdate(app).get()
+            else EmbeddedDuplexEnrollmentService.review(app, requireNotNull(request.draft)).get()
           pending.install(request.challenge, review.reviewSha256, review)
           Bundle().apply {
             header("reviewed")
@@ -252,6 +255,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
             putString("review_sha256", review.reviewSha256)
             putString("remote_key_id", review.remoteKeyId)
             putString("review_details", review.details)
+            if (policyUpdate) putString("receipt", EmbeddedDuplexOperatorContract.policyReviewReceipt(review))
           }
         }
         EmbeddedDuplexOperatorContract.Route.CONFIRM -> {
@@ -370,6 +374,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         header("observed")
         putString("challenge", challenge)
         putString("pair_state", state.state)
+        state.ceremonyWaitWarning?.let { putBoolean("ceremony_wait_warning", it) }
         state.sessionId?.let { putString("session_id", it) }
         putBoolean("local_session_current", state.localSessionCurrent)
         putBoolean("remote_session_current", state.remoteSessionCurrent)

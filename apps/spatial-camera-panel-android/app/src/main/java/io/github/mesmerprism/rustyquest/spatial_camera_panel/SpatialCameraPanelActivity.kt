@@ -1341,7 +1341,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private val cameraLatencyDiagnosticModule by lazy(LazyThreadSafetyMode.NONE) {
+  private val cameraLatencyDiagnosticModule =
     SpatialCameraLatencyDiagnosticModule(
         SpatialCameraLatencyDiagnosticBindings(
             readSystemProperty = ::activityReadSystemProperty,
@@ -1402,9 +1402,40 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
             },
             marker = ::marker,
+            configureOpenXr = { ownerId ->
+              if (!nativeInteropCoordinator.receiptLibraryLoaded) {
+                0L
+              } else {
+                check(spatialSceneReady) { "Camera latency OpenXR configuration requires a live Scene" }
+                val openXrProbe = SpatialNativeInteropProbe.capture(scene)
+                val timingMask =
+                    nativeConfigureCameraLatencyOpenXrHandles(
+                        ownerId,
+                        openXrProbe.openXrInstanceHandle,
+                        openXrProbe.openXrSessionHandle,
+                        openXrProbe.openXrGetInstanceProcAddrHandle,
+                    )
+                marker(
+                    "channel=camera-latency-diagnostic status=openxr-handles-configured " +
+                        "nativeUpdateMask=$timingMask openXrInstanceHandleNonZero=" +
+                        "${openXrProbe.openXrInstanceHandle != 0L} openXrSessionHandleNonZero=" +
+                        "${openXrProbe.openXrSessionHandle != 0L} " +
+                        "openXrGetInstanceProcAddrHandleNonZero=" +
+                        "${openXrProbe.openXrGetInstanceProcAddrHandle != 0L} " +
+                        "frameLoopAuthority=spatial-sdk sidecarWaitFrame=false"
+                )
+                timingMask
+              }
+            },
+            releaseOpenXr = { ownerId, retiring ->
+              if (!nativeInteropCoordinator.receiptLibraryLoaded) {
+                0L
+              } else {
+                nativeReleaseCameraLatencyOpenXrHandles(ownerId, retiring)
+              }
+            },
         )
     )
-  }
   private val spatialVideoProjectionProbeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialVideoProjectionProbeCoordinator(
         SpatialVideoProjectionProbeBindings(
@@ -3171,6 +3202,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     scene.setReferenceSpace(ReferenceSpace.LOCAL_FLOOR)
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
     spatialSceneReady = true
+    cameraLatencyDiagnosticModule.onSpatialReady()
     passthroughReasonAggregator.reconcile("scene-ready-always-on")
     if (directImmersiveVideoPanelRequested()) {
       marker(immersiveVideoPanelCoordinator.routePolicyMarker())
@@ -3736,6 +3768,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onSpatialShutdown() {
+    cameraLatencyDiagnosticModule.onSpatialShutdown()
     // VrActivity reaches this before DataModel.destroy, from finishing onStop or
     // onDestroy. The later lifecycle worker may release codecs, but cannot own
     // Entity deletion after the SDK has invalidated the model's native pointer.
@@ -3749,6 +3782,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    cameraLatencyDiagnosticModule.onSpatialShutdown()
     EmbeddedDuplexDiagnosticActivityGate.paused(this)
     embeddedDuplexActivityDestroying = true
     io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex
@@ -4227,24 +4261,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ) {
     privateLayerControlCoordinator.clearNativeLayerOverrideLifecycle()
     cameraLatencyDiagnosticModule.poll("camera-hwb-projection-pre-run", force = true)
-    if (nativeInteropCoordinator.receiptLibraryLoaded) {
-      val openXrProbe = SpatialNativeInteropProbe.capture(scene)
-      val timingMask =
-          nativeConfigureCameraLatencyOpenXrHandles(
-              openXrProbe.openXrInstanceHandle,
-              openXrProbe.openXrSessionHandle,
-              openXrProbe.openXrGetInstanceProcAddrHandle,
-          )
-      marker(
-          "channel=camera-latency-diagnostic status=openxr-handles-configured " +
-              "nativeUpdateMask=$timingMask openXrInstanceHandleNonZero=" +
-              "${openXrProbe.openXrInstanceHandle != 0L} openXrSessionHandleNonZero=" +
-              "${openXrProbe.openXrSessionHandle != 0L} " +
-              "openXrGetInstanceProcAddrHandleNonZero=" +
-              "${openXrProbe.openXrGetInstanceProcAddrHandle != 0L} " +
-              "frameLoopAuthority=spatial-sdk sidecarWaitFrame=false"
-      )
-    }
     cameraLatencyDiagnosticModule.resetPoseCapture("camera-hwb-projection-pre-run")
     check(cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run") == "destroyed") {
       "SDK projection cleanup remains Pending before new launch"
@@ -5432,9 +5448,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Long
 
   private external fun nativeConfigureCameraLatencyOpenXrHandles(
+      ownerId: Long,
       openXrInstanceHandle: Long,
       openXrSessionHandle: Long,
       openXrGetInstanceProcAddrHandle: Long,
+  ): Long
+
+  private external fun nativeReleaseCameraLatencyOpenXrHandles(
+      ownerId: Long,
+      retiring: Boolean,
   ): Long
 
   private external fun nativeUpdateCameraLatencyViewerPose(

@@ -14,13 +14,22 @@ public final class EmbeddedDuplexEnrollmentReview {
     final EmbeddedDuplexEnrollmentDraft draft;
     final EmbeddedDuplexEnrollmentFence fence;
     final long expiresAtElapsedMs;
+    final boolean policyMetadataOnly;
     public final String remoteKeyId;
     public final String reviewSha256;
     public final String details;
+    public final long priorRevision, proposedMaxTokenTtlMs;
+    public final String priorRecordSha256;
 
     EmbeddedDuplexEnrollmentReview(EmbeddedDuplexEnrollmentRequest installed,
             EmbeddedDuplexEnrollmentDraft draft, EmbeddedDuplexEnrollmentFence fence)
             throws Exception {
+        this(installed, draft, fence, false);
+    }
+
+    EmbeddedDuplexEnrollmentReview(EmbeddedDuplexEnrollmentRequest installed,
+            EmbeddedDuplexEnrollmentDraft draft, EmbeddedDuplexEnrollmentFence fence,
+            boolean policyMetadataOnly) throws Exception {
         if (installed == null || draft == null || fence == null
                 || !installed.roleId.equals(draft.roleId)) {
             throw new IllegalArgumentException("enrollment review inputs");
@@ -28,6 +37,10 @@ public final class EmbeddedDuplexEnrollmentReview {
         this.installed = installed;
         this.draft = draft;
         this.fence = fence;
+        this.policyMetadataOnly = policyMetadataOnly;
+        this.priorRevision = fence.revision;
+        this.priorRecordSha256 = fence.recordSha256;
+        this.proposedMaxTokenTtlMs = draft.maxTokenTtlMs;
         this.remoteKeyId = fence.remoteKeyId;
         this.details = "Role: " + draft.roleId + "\nPackage: " + installed.packageId
                 + "\nSigner SHA-256: " + installed.signerSha256
@@ -78,5 +91,7 @@ public final class EmbeddedDuplexEnrollmentReview {
         reviewSha256 = hex.toString();
     }
 
-    boolean expired() { return SystemClock.elapsedRealtime() >= expiresAtElapsedMs; }
+    public boolean waitWarning() { return SystemClock.elapsedRealtime() >= expiresAtElapsedMs; }
+
+    boolean expired() { return EmbeddedDuplexSetupCredentials.developmentPolicy() == null && waitWarning(); }
 }

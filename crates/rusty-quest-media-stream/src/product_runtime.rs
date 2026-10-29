@@ -1129,16 +1129,10 @@ impl MediaStreamSessionProductRuntime {
             if peer_snapshot.provider_epoch_id.as_str() != snapshot.provider_epoch_id {
                 return Err(MediaStreamProductRuntimeError::AcceptedProviderEpochMismatch);
             }
-            let json = host
-                .snapshot_json()
-                .map_err(|_| MediaStreamProductRuntimeError::AuthorityProviderUnavailable)?;
-            ManifoldPeerRuntimeHost::restart_from_json_with_live_broker_runtime(
-                &json,
-                &peer_snapshot.trust_policy,
-                &peer_snapshot.provider_epoch_id,
-                &broker_guard,
-            )
-            .map_err(|_| MediaStreamProductRuntimeError::AcceptedSessionNotCurrent)?;
+            // Validate this admitted owner, retaining its explicit source policy
+            // context. A finite-default JSON round trip cannot validate a selected owner.
+            host.validate_owned_state_with_live_broker(&broker_guard)
+                .map_err(|_| MediaStreamProductRuntimeError::AcceptedSessionNotCurrent)?;
             host.validate_media_session_with_live_broker_runtime(
                 &broker_guard,
                 &decision_id,

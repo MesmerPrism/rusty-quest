@@ -1,10 +1,185 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class SpatialCameraLatencyDiagnosticModuleTest {
+  private class LifetimeFixture {
+    val properties = mutableMapOf<String, String>()
+    val configuredOwners = mutableListOf<Long>()
+    val releases = mutableListOf<Pair<Long, Boolean>>()
+    var sdkLive = true
+    var applies = 0
+    var configures = 0
+    var nowMs = 0L
+    var beforeConfigure: () -> Unit = {}
+    var beforeRelease: () -> Unit = {}
+    var configureResult = 0L
+    var releaseResult = 1L
+    val module = SpatialCameraLatencyDiagnosticModule(
+        SpatialCameraLatencyDiagnosticBindings(
+            readSystemProperty = { properties[it] ?: "" },
+            applyNative = { applies++; 0L },
+            recordViewerPose = { _, _ -> error("unexpected viewer pose") },
+            marker = {},
+            configureOpenXr = { owner ->
+              check(sdkLive)
+              beforeConfigure()
+              configures++
+              configuredOwners += owner
+              configureResult
+            },
+            releaseOpenXr = { owner, retiring ->
+              check(sdkLive)
+              beforeRelease()
+              releases += owner to retiring
+              releaseResult
+            },
+            elapsedRealtimeMs = { nowMs },
+        )
+    )
+
+    fun mode(enabled: Boolean, presentation: String, revision: Int) {
+      properties[CAMERA_LATENCY_ENABLED_PROPERTY] = enabled.toString()
+      properties[CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY] = presentation
+      properties[CAMERA_LATENCY_REVISION_PROPERTY] = revision.toString()
+      module.poll("fixture", force = true)
+    }
+  }
+
+  @Test
+  fun fallbackModesNeverAcquireOptionalOpenXrLifetime() {
+    val fallbackModes = listOf(
+        false to "openxr-locate-views",
+        true to "scene-tick-latest",
+        true to "scene-extrapolated",
+    )
+    for ((enabled, mode) in fallbackModes) {
+      val f = LifetimeFixture()
+      f.module.onSpatialReady()
+      f.mode(enabled, mode, 1)
+      f.module.onSpatialShutdown()
+      f.sdkLive = false
+      f.module.poll("late", force = true)
+      f.module.onSpatialReady()
+      f.module.onSpatialShutdown()
+      check(f.configures == 0 && f.releases.isEmpty() && f.applies == 1)
+    }
+  }
+
+  @Test
+  fun selectedModeWaitsForSdkAndCanClearAndReenableSameOwner() {
+    val f = LifetimeFixture()
+    f.mode(true, "openxr-locate-views", 1)
+    check(f.configures == 0)
+    f.module.onSpatialReady()
+    check(f.configures == 1) // reprojection defaults to off; presentation still needs the locator.
+    f.mode(true, "scene-tick-latest", 2)
+    check(f.releases.single().second == false)
+    f.mode(true, "openxr-locate-views", 3)
+    check(f.configures == 2 && f.configuredOwners.distinct().size == 1)
+    f.module.onSpatialShutdown()
+    check(f.releases.last() == (f.configuredOwners.singleOwner() to true))
+    f.sdkLive = false
+    f.module.poll("late", force = true)
+    f.module.onSpatialShutdown()
+    check(f.configures == 2 && f.releases.size == 2)
+    val next = LifetimeFixture()
+    next.module.onSpatialReady()
+    next.mode(true, "openxr-locate-views", 1)
+    check(next.configuredOwners.single() > f.configuredOwners.first())
+    f.module.onSpatialReady()
+    f.module.onSpatialShutdown()
+    f.module.poll("late-old-after-new-owner", force = true)
+    check(f.configures == 2 && f.releases.size == 2)
+    next.module.onSpatialShutdown()
+    check(next.releases.single().first == next.configuredOwners.single())
+  }
+
+  private fun List<Long>.singleOwner(): Long = distinct().single()
+
+  @Test
+  fun unchangedRevisionRetriesBusyConfigurationAfterPollThrottle() {
+    val f = LifetimeFixture()
+    f.module.onSpatialReady()
+    f.configureResult = 3L // native busy/no configured bit; no allocation has happened.
+    f.mode(true, "openxr-locate-views", 1)
+    f.module.poll("throttled", force = false)
+    check(f.configures == 1)
+    f.nowMs = 250L
+    f.module.poll("retry", force = false)
+    check(f.configures == 2 && f.applies == 1)
+    f.module.onSpatialShutdown()
+  }
+
+  @Test
+  fun nativeLifetimeFailuresAreVisibleAndRetirementPrecedesCallback() {
+    val f = LifetimeFixture()
+    f.module.onSpatialReady()
+    f.configureResult = -1L
+    check(runCatching { f.mode(true, "openxr-locate-views", 1) }.isFailure)
+    f.beforeRelease = { f.module.poll("reentrant-late", force = true) }
+    f.releaseResult = -1L
+    check(runCatching { f.module.onSpatialShutdown() }.isFailure)
+    check(f.configures == 1 && f.releases.size == 1 && f.applies == 1)
+    f.sdkLive = false
+    f.module.onSpatialShutdown()
+    f.module.poll("late", force = true)
+    check(f.configures == 1 && f.releases.size == 1)
+  }
+
+  @Test
+  fun modeReleaseFailureRetriesAndFinalRetirementStillClosesTouchedOwner() {
+    val f = LifetimeFixture()
+    f.module.onSpatialReady()
+    f.mode(true, "openxr-locate-views", 1)
+    f.releaseResult = -1L
+    check(runCatching { f.mode(false, "scene-tick-latest", 2) }.isFailure)
+    check(f.applies == 2)
+    f.releaseResult = 1L
+    f.module.poll("mode-release-retry", force = true)
+    check(f.releases.size == 2 && f.releases.none { it.second })
+    f.module.poll("mode-clear-is-idempotent", force = true)
+    check(f.releases.size == 2)
+    f.module.onSpatialShutdown()
+    check(f.releases.size == 3 && f.releases.last().second)
+  }
+
+  @Test
+  fun shutdownDrainsInFlightConfigureBeforeSdkInvalidation() {
+    val f = LifetimeFixture()
+    f.module.onSpatialReady()
+    val entered = CountDownLatch(1)
+    val proceed = CountDownLatch(1)
+    val shutdownStarted = CountDownLatch(1)
+    val shutdownDone = CountDownLatch(1)
+    val failure = AtomicReference<Throwable?>()
+    f.beforeConfigure = { entered.countDown(); check(proceed.await(2, TimeUnit.SECONDS)) }
+    val poll = Thread { try { f.mode(true, "openxr-locate-views", 1) } catch (t: Throwable) { failure.set(t) } }
+    val shutdown = Thread {
+      try {
+        shutdownStarted.countDown()
+        f.module.onSpatialShutdown()
+        f.sdkLive = false
+      } catch (t: Throwable) { failure.set(t) } finally { shutdownDone.countDown() }
+    }
+    poll.start()
+    check(entered.await(2, TimeUnit.SECONDS))
+    shutdown.start()
+    check(shutdownStarted.await(2, TimeUnit.SECONDS))
+    check(!shutdownDone.await(50, TimeUnit.MILLISECONDS))
+    proceed.countDown()
+    poll.join(2000); shutdown.join(2000)
+    check(!poll.isAlive && !shutdown.isAlive && failure.get() == null)
+    check(f.releases.single().second && !f.sdkLive)
+    f.module.poll("late", force = true)
+    check(f.configures == 1)
+  }
+
   @Test
   fun validFrozenNonBlockingProfileIsAccepted() {
     val parsed =

@@ -41,19 +41,41 @@ function Assert-FreshSetupNoDuplicateJson {
         foreach($p in $Element.EnumerateObject()){if(-not$seen.Add($p.Name)){throw 'Duplicate fresh target JSON key.'};Assert-FreshSetupNoDuplicateJson $p.Value}
     }elseif($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array){foreach($v in $Element.EnumerateArray()){Assert-FreshSetupNoDuplicateJson $v}}
 }
+# Resolve the public semantic contract from the actual Cargo source composition.
+# No command supplies a policy document or an arbitrary development horizon.
+function Resolve-EmbeddedDuplexDevelopmentLifetime {
+    param([string]$Selection, $SourceComposition, [long]$FiniteHorizonMs)
+    if($Selection -ceq 'finite') {
+        if($FiniteHorizonMs -lt 300000 -or $FiniteHorizonMs -gt 3600000 -or $FiniteHorizonMs % 60000 -ne 0){throw 'Finite setup horizon must be whole minutes in 300000..3600000 ms.'}
+        return [pscustomobject]@{horizon_ms=$FiniteHorizonMs;policy=$null;policy_json='';policy_base64=''}
+    }
+    if($Selection -cne 'development-v1'){throw 'Unsupported lifetime selection.'}
+    $contracts=@($SourceComposition.repositories | Where-Object {$_.role -ceq 'path-dependency'} | ForEach-Object {
+        $candidate=Join-Path ([string]$_.repository) 'crates/rusty-manifold-admission/contracts/development-lifetime-policy.v1.json'
+        if(Test-Path -LiteralPath $candidate -PathType Leaf){$candidate}
+    })
+    if($contracts.Count -ne 1){throw 'Development lifetime requires one actual Manifold policy source dependency.'}
+    $policy=Get-Content -LiteralPath $contracts[0] -Raw | ConvertFrom-Json -Depth 8
+    Assert-FreshSetupProperties $policy @('$schema','policy_id','delegated_authority_horizon_ms')
+    $horizon=$policy.delegated_authority_horizon_ms
+    if($policy.'$schema' -cne 'rusty.manifold.development.lifetime_policy.v1' -or $policy.policy_id -cne 'policy.manifold.development-lifetime.v1' -or
+        $horizon -isnot [long] -and $horizon -isnot [int] -or [long]$horizon -le 3600000 -or [long]$horizon % 60000 -ne 0){throw 'Invalid source-owned development lifetime contract.'}
+    $canonical=ConvertTo-FreshSetupCanonicalJson $policy
+    return [pscustomobject]@{horizon_ms=[long]$horizon;policy=$policy;policy_json=$canonical;policy_base64=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($canonical))}
+}
 function Get-EmbeddedDuplexFreshSetupPolicy {
-    param([string]$Selection)
+    param([string]$Selection,[AllowNull()]$DevelopmentLifetimePolicy)
     if($Selection -ceq 'none'){return $null}
     if($Selection -cne 'source-bound-v2'){throw 'Unsupported explicit fresh setup build policy.'}
     return [ordered]@{
         '$schema'='rusty.manifold.peer.fresh_pair_setup_policy.v2';policy_id='policy.quest.embedded-duplex.fresh-setup.v2';revision=1L;authorization='source_bound'
         initial_status=[ordered]@{'$schema'='rusty.manifold.peer.fresh_pair_setup_initial_status_template.v1';trust_domain='trust.morphospace.peer';roles=@('observer','rendezvous');capability_ids=@('capability.rendezvous.ble','capability.route.rust-direct-p2p','capability.topology.wifi-direct')}
-        credential_validity_ms=300000L
+        credential_validity_ms=$(if($null -eq $DevelopmentLifetimePolicy){300000L}else{[long]$DevelopmentLifetimePolicy.delegated_authority_horizon_ms})
     }
 }
 function Resolve-EmbeddedDuplexFreshSetupBuildSelection {
-    param([string]$Selection,[string]$MediaPolicy,$ValidatedProductInputs,[string]$EnrollmentSelectionPath,[string]$ExpectedEnrollmentSelectionSha256)
-    $policy=Get-EmbeddedDuplexFreshSetupPolicy $Selection
+    param([string]$Selection,[string]$MediaPolicy,$ValidatedProductInputs,[string]$EnrollmentSelectionPath,[string]$ExpectedEnrollmentSelectionSha256,[AllowNull()]$DevelopmentLifetimePolicy)
+    $policy=Get-EmbeddedDuplexFreshSetupPolicy $Selection $DevelopmentLifetimePolicy
     if($null-eq$policy){
         if($EnrollmentSelectionPath-or$ExpectedEnrollmentSelectionSha256){throw 'Unselected fresh build cannot carry enrollment target inputs.'}
         return $null
@@ -114,4 +136,4 @@ function Set-EmbeddedDuplexFreshSetupPolicyDescriptor {
         product_input_manifest_sha256=$ResolvedSelection.product_input_manifest_sha256
     }
 }
-Export-ModuleMember -Function Get-EmbeddedDuplexFreshSetupPolicy,Resolve-EmbeddedDuplexFreshSetupBuildSelection,Set-EmbeddedDuplexFreshSetupPolicyDescriptor,ConvertTo-FreshSetupCanonicalJson,Get-FreshSetupDomainSha256
+Export-ModuleMember -Function Resolve-EmbeddedDuplexDevelopmentLifetime,Get-EmbeddedDuplexFreshSetupPolicy,Resolve-EmbeddedDuplexFreshSetupBuildSelection,Set-EmbeddedDuplexFreshSetupPolicyDescriptor,ConvertTo-FreshSetupCanonicalJson,Get-FreshSetupDomainSha256

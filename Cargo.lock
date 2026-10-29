@@ -607,6 +607,7 @@ name = "rusty-manifold-peer"
 version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
+ "rusty-manifold-admission",
  "rusty-manifold-media-session",
  "rusty-manifold-model",
  "rusty-manifold-runtime-host",
@@ -1130,6 +1131,7 @@ dependencies = [
  "libc",
  "ndk-sys",
  "openxr-sys",
+ "rusty-manifold-admission",
  "rusty-manifold-model",
  "rusty-manifold-peer",
  "rusty-manifold-peer-runtime-host",

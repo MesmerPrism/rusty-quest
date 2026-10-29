@@ -127,7 +127,7 @@ jobs:
           lfs: false
           path: rusty-manifold
           persist-credentials: false
-          ref: f012f438372a4f940e1bf696d0cba832837d0df8
+          ref: 58e32fa1f098b58819a25e7d1fb51e22671a79db
           repository: MesmerPrism/rusty-manifold
           submodules: false
 

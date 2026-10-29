@@ -241,7 +241,8 @@ final class EmbeddedDuplexPackagedInputs {
                 throw new IllegalArgumentException("setup horizon must be an exact integer");
             long horizon = ((Number) value).longValue();
             if (horizon < EmbeddedDuplexSetupCredentials.MIN_HORIZON_MS
-                    || horizon > EmbeddedDuplexSetupCredentials.MAX_HORIZON_MS
+                    || horizon > EmbeddedDuplexSetupCredentials.selectedHorizon(
+                            EmbeddedDuplexSetupCredentials.MAX_HORIZON_MS)
                     || horizon % 60_000L != 0L)
                 throw new IllegalArgumentException("setup horizon bounds");
         }

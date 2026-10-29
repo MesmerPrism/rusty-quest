@@ -18,7 +18,7 @@ final class EmbeddedDuplexFreshSetupPolicy {
             .put("initial_status",new JSONObject().put("$schema","rusty.manifold.peer.fresh_pair_setup_initial_status_template.v1")
                 .put("trust_domain","trust.morphospace.peer").put("roles",new JSONArray().put("observer").put("rendezvous"))
                 .put("capability_ids",new JSONArray().put("capability.rendezvous.ble").put("capability.route.rust-direct-p2p").put("capability.topology.wifi-direct")))
-            .put("credential_validity_ms",300000L);
+            .put("credential_validity_ms",EmbeddedDuplexSetupCredentials.selectedHorizon(300000L));
     }
     static String digest(String domain,Object value) throws Exception {
         return "sha256:"+EmbeddedDuplexCanonicalJson.sha256Bytes((domain+'\0'+EmbeddedDuplexCanonicalJson.encode(value)).getBytes(StandardCharsets.UTF_8));

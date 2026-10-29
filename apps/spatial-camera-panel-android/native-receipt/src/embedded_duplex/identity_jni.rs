@@ -3,7 +3,7 @@
 use ed25519_dalek::{Signer, SigningKey};
 
 const MAX_AUTHORITY_BYTES: usize = 131_142;
-const SIGNING_DOMAINS: [&[u8]; 17] = [
+const SIGNING_DOMAINS: [&[u8]; 19] = [
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0request\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0terminal_response\0",
     b"rusty.quest.android.media.owner_dispatch_envelope.v1\0product_activation\0",
@@ -17,6 +17,8 @@ const SIGNING_DOMAINS: [&[u8]; 17] = [
     b"rusty.manifold.peer.fresh_phase_prepare_authorization.v2\0",
     b"rusty.quest.android.media.retained_cleanup_dispatch.v2\0request\0",
     b"rusty.quest.android.media.retained_cleanup_dispatch.v2\0response\0",
+    b"rusty.quest.android.media.retained_cleanup_dispatch.v3\0request\0",
+    b"rusty.quest.android.media.retained_cleanup_dispatch.v3\0response\0",
     b"rusty.quest.android.media.retained_cleanup_prepare.v1\0",
     b"rusty.quest.android.media.retained_abort_prepare.v2\0",
     b"rusty.quest.android.media.retained_cleanup_prepare.v3\0",

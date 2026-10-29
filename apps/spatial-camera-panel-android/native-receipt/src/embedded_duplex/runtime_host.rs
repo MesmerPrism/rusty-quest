@@ -135,9 +135,19 @@ struct ConfiguredProjectionSource {
     route_grant_id: Arc<Mutex<String>>,
     authority_peer_id: String,
     route_configuration_sha256: String,
+    local_executor_generation: u64,
 }
 
 impl CurrentOwnerProjectionSource for ConfiguredProjectionSource {
+    fn target_executor_generation(&self, target_peer_id: &str) -> Result<u64, String> {
+        prepared_start::target_executor_generation(
+            &self.authority_peer_id,
+            target_peer_id,
+            self.local_executor_generation,
+            &self.route_configuration_sha256,
+        )
+    }
+
     fn current_projection(
         &self,
         ticket: &AndroidMediaExecutionTicket,
@@ -165,6 +175,8 @@ impl CurrentOwnerProjectionSource for ConfiguredProjectionSource {
 
 #[derive(Clone)]
 struct Host {
+    development_lifetime_policy:
+        Option<rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy>,
     capability: Arc<NativeCapability>,
     provider: Arc<Mutex<Option<QuestBrokerRuntimeProvider>>>,
     server: Arc<Mutex<Option<DispatchServer>>>,
@@ -195,6 +207,12 @@ struct Host {
 }
 
 impl Host {
+    fn lifetime_horizon(&self, finite_ms: u64) -> u64 {
+        rusty_manifold_admission::ManifoldDevelopmentLifetimePolicy::selected_horizon(
+            self.development_lifetime_policy.as_ref(),
+            finite_ms,
+        )
+    }
     fn current_grant_id(&self) -> Result<String, String> {
         self.route_grant_id
             .lock()
@@ -798,6 +816,25 @@ fn host() -> Result<HostLease, String> {
 
 fn host_for_setup(setup_or_observation: bool) -> Result<HostLease, String> {
     let mut state = process().lock().map_err(|_| "process state poisoned")?;
+    require_general_host_gate(&state, setup_or_observation)?;
+    let host = state
+        .host
+        .clone()
+        .ok_or("embedded runtime not initialized")?;
+    state.host_leases = state
+        .host_leases
+        .checked_add(1)
+        .ok_or("runtime host lease overflow")?;
+    drop(state);
+    let lease = HostLease(host);
+    lease.capability.require_live()?;
+    Ok(lease)
+}
+
+fn require_general_host_gate(
+    state: &ProcessState,
+    setup_or_observation: bool,
+) -> Result<(), String> {
     if state.closing {
         return Err("embedded runtime closing".into());
     }
@@ -814,18 +851,46 @@ fn host_for_setup(setup_or_observation: bool) -> Result<HostLease, String> {
     if state.fresh_setup_request.is_some() && !setup_or_observation {
         return Err("fresh setup original remains pending".into());
     }
-    let host = state
-        .host
-        .clone()
-        .ok_or("embedded runtime not initialized")?;
-    state.host_leases = state
+    Ok(())
+}
+
+/// Lookup is not execution admission. Cleanup handlers still authenticate the
+/// exact retained target/signature/once before any registry or SDK effect.
+fn host_for_cleanup_lookup() -> Result<HostLease, String> {
+    let mut p = process()
+        .lock()
+        .map_err(|_| "cleanup lookup gate poisoned")?;
+    if p.initializing
+        || p.lease_integrity_failed
+        || p.root_reestablishment.is_some()
+        || p.closing && !(p.root_terminal_custody.is_some() && p.retired_fresh_owner_fenced)
+    {
+        return Err("cleanup current root unavailable".into());
+    }
+    let host = p.host.clone().ok_or("cleanup current Host absent")?;
+    p.host_leases = p
         .host_leases
         .checked_add(1)
-        .ok_or("runtime host lease overflow")?;
-    drop(state);
+        .ok_or("cleanup host lease overflow")?;
+    drop(p);
     let lease = HostLease(host);
     lease.capability.require_live()?;
     Ok(lease)
+}
+
+fn require_general_host_admission(host: &Host, setup_or_observation: bool) -> Result<(), String> {
+    let p = process()
+        .lock()
+        .map_err(|_| "general admission gate poisoned")?;
+    if !p.host.as_ref().is_some_and(|current| {
+        Arc::ptr_eq(&current.capability, &host.capability)
+            && Arc::ptr_eq(&current.peer_lifecycle, &host.peer_lifecycle)
+    }) {
+        return Err("general admission current root changed".into());
+    }
+    require_general_host_gate(&p, setup_or_observation)?;
+    drop(p);
+    host.capability.require_live()
 }
 
 fn slot_present<T>(slot: &Arc<Mutex<Option<T>>>) -> Result<(), String> {
@@ -1017,7 +1082,8 @@ fn process_idle_for_enrollment() -> bool {
         return false;
     };
     if state.initializing
-        || state.closing
+        // Never-initialized retirement keeps execution fenced while metadata enrollment is idle.
+        || (state.closing && state.initialization_attempt != 0)
         || state.host.is_some()
         || state.partial_construction.is_some()
         || state.host_leases != 0
@@ -1437,7 +1503,7 @@ fn build_host(
             .ok_or("constructor provider checked out")?;
         let status = if let Some(held) = &partial {
             held.enter_provider()?;
-            provider.initialize_retaining_construction(
+            provider.initialize_retaining_construction_with_lifetime_policy(
                 &config_json,
                 &expected_sha,
                 &entropy,
@@ -1447,14 +1513,26 @@ fn build_host(
                     .broker
                     .lock()
                     .map_err(|_| "construction Broker custody poisoned")?,
+                config
+                    .embedded_duplex
+                    .as_ref()
+                    .map(super::development_lifetime_policy::for_config)
+                    .transpose()?
+                    .flatten(),
             )
         } else {
-            provider.initialize(
+            provider.initialize_with_lifetime_policy(
                 &config_json,
                 &expected_sha,
                 &entropy,
                 i64::try_from(clock.now_ms()?).map_err(|_| "authority clock overflow")?,
                 monotonic_ns()?,
+                config
+                    .embedded_duplex
+                    .as_ref()
+                    .map(super::development_lifetime_policy::for_config)
+                    .transpose()?
+                    .flatten(),
             )
         }
         .map_err(|error| provider_initialization_reason(&error))?;
@@ -1516,6 +1594,7 @@ fn build_host(
         route_grant_id: route_grant_binding.clone(),
         authority_peer_id: bootstrap.local_peer_id.clone(),
         route_configuration_sha256: bootstrap.route_configuration_sha256.clone(),
+        local_executor_generation: capability.generation,
     };
     let executor = CompositeAndroidMediaOwnerExecutor::new(
         capability.generation,
@@ -1624,6 +1703,13 @@ fn build_host(
     // of that retention arena while final capability/publication can still fail.
     Ok((
         Host {
+            development_lifetime_policy: config
+                .embedded_duplex
+                .as_ref()
+                .map(super::development_lifetime_policy::for_config)
+                .transpose()?
+                .flatten()
+                .cloned(),
             capability,
             provider: provider_slot.clone(),
             server: server_slot,
@@ -1880,13 +1966,15 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             return prepared_start::handle_frame(&bytes);
         }
         let fresh = pair_ceremony::is_fresh_frame(&bytes);
-        let host = host_for_setup(fresh)?;
+        let host = host_for_cleanup_lookup()?;
         if fresh {
+            require_general_host_admission(&host, true)?;
             let result = pair_ceremony::fresh_frame(&host, &bytes);
             host.capability.require_live()?;
             return result;
         }
         if bytes.starts_with(pair_ceremony::FRAME_MAGIC) {
+            require_general_host_admission(&host, false)?;
             let result = pair_ceremony::handle_frame(&host, &bytes);
             host.capability.require_live()?;
             return result;
@@ -1927,6 +2015,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         }
         host.owner_effect_attempted.store(true, Ordering::SeqCst);
         let result = if decode_product_activation_request(&bytes).is_ok() {
+            require_general_host_admission(&host, false)?;
             Checkout::take(host.activation_server.clone())?
                 .get()
                 .handle_frame(&bytes)
@@ -1934,13 +2023,28 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         } else {
             Checkout::take(host.server.clone())?
                 .get()
-                .handle_frame(&bytes)
+                .handle_frame_with_admission(&bytes, |authenticated| {
+                    use rusty_quest_media_stream_android::{AndroidMediaExecutionMode, OwnerDispatchAuthorizationKind};
+                    if authenticated.ticket.executor_generation != host.capability.generation {
+                        return Err("authenticated owner executor differs".into());
+                    }
+                    let cleanup = matches!(authenticated.ticket.operation, rusty_quest_media_stream::MediaStreamPlatformOperation::Stop)
+                        || authenticated.mode == AndroidMediaExecutionMode::CompensateUncertain
+                        && authenticated.authority.authorization_kind == OwnerDispatchAuthorizationKind::RetainedCleanup;
+                    if cleanup { host.capability.require_live() }
+                    else { require_general_host_admission(&host, false) }
+                })
                 .map_err(|error| {
+                    // Fixed-size observation of the exact original UTF-8 error;
+                    // no arbitrary error/payload text crosses this log boundary.
+                    let error_sha256 = rusty_quest_broker_authority::packaged_json_sha256(&error);
+                    let error_bytes = error.len();
                     let stage = match error.as_str() {
                         "dispatch frame bounds"|"dispatch frame bounds or magic"|"dispatch frame lengths"|
                         "metadata length"|"payload length"|"payload digest mismatch"|"invalid dispatch request metadata"|
                         "invalid ticket payload"|"invalid dispatch request" => "FRAME_DECODE",
                         "dispatch request binding mismatch" => "TICKET_TARGET_BINDING",
+                        "authenticated owner executor differs" => "TARGET_EXECUTOR_GENERATION",
                         "dispatch request is not currently fresh"|"owner dispatch request is not currently fresh" => "FRESHNESS",
                         "dispatch signer is not currently enrolled"|"dispatch signature"|"request signature"|
                         "invalid enrolled key"|"invalid Ed25519 signature base64 length"|
@@ -1960,7 +2064,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
                         _ => "FRAME_OR_DISPATCH_BOUNDARY",
                     };
                     if let Ok(mut failed)=host.owner_dispatch_failure.lock(){if failed.is_none(){*failed=Some(stage);}}
-                    crate::camera_hwb_marker::log_camera_hwb_marker(format!("status=owner-dispatch-rejected stage={stage} code=PRE_EFFECT_OR_RECEIPT_REJECTED"));
+                    crate::camera_hwb_marker::log_camera_hwb_marker(format!("status=owner-dispatch-rejected stage={stage} code=PRE_EFFECT_OR_RECEIPT_REJECTED error_sha256={error_sha256} error_bytes={error_bytes}"));
                     "owner dispatch rejected".to_owned()
                 })
         };
@@ -2079,7 +2183,9 @@ fn complete_start(host: &Host, input: &str) -> Result<String, String> {
             schema_id: PRODUCT_ACTIVATION_REQUEST_SCHEMA.to_owned(),
             activation_id: pending.activation_id.clone(),
             issued_at_ms: now,
-            expires_at_ms: authority.expires_at_ms.min(now.saturating_add(30_000)),
+            expires_at_ms: authority
+                .expires_at_ms
+                .min(now.saturating_add(host.lifetime_horizon(30_000))),
             target_peer_id: host.remote_peer_id.clone(),
             authority,
             proof: proof.clone(),
@@ -2129,14 +2235,15 @@ fn sign_common_lan(host: &Host, input: &str, now: u64) -> Result<String, String>
         &live.enrolled,
         &context,
         CommonLanSigningPolicy {
+            development_lifetime_policy: host.development_lifetime_policy.as_ref(),
             local_peer_id: &host.local_peer_id,
             trust_policy_id: &live.trust_policy_id,
             trust_policy_revision: live.trust_policy_revision,
             network_scope_id: &host.packaged_route.network_scope_id,
             now_ms: now,
-            max_context_age_ms: 30_000,
+            max_context_age_ms: host.lifetime_horizon(30_000),
             max_future_skew_ms: 0,
-            max_context_ttl_ms: 240_000,
+            max_context_ttl_ms: host.lifetime_horizon(240_000),
         },
     )?;
     // Snapshot and route are owned local values. No host, provider, peer, or
@@ -2761,6 +2868,42 @@ mod no_media_close_tests {
         process().lock().unwrap().lease_integrity_failed = true;
         assert!(fence.close(SHA).is_err());
         assert!(prepared_route().lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn cold_retirement_latch_allows_enrollment_before_native_run_adoption() {
+        let _serial = TEST_GATE.lock().unwrap();
+        *process().lock().unwrap() = ProcessState::default();
+        *prepared_route().lock().unwrap() = None;
+        retire_never_claimed_process_gate().unwrap();
+        {
+            let state = process().lock().unwrap();
+            assert!(state.closing);
+            assert!(operational_run_state_refusal(&state, false).is_none());
+        }
+        assert!(process_idle_for_enrollment());
+        // Enrollment observes idleness; it cannot unlatch Native execution exclusion.
+        assert!(process().lock().unwrap().closing);
+
+        process().lock().unwrap().initialization_attempt = 1;
+        assert!(!process_idle_for_enrollment());
+        process().lock().unwrap().initialization_attempt = 0;
+        for busy in [
+            |state: &mut ProcessState| state.initializing = true,
+            |state: &mut ProcessState| state.host_leases = 1,
+            |state: &mut ProcessState| state.lease_integrity_failed = true,
+        ] {
+            let mut state = ProcessState::default();
+            state.closing = true;
+            busy(&mut state);
+            *process().lock().unwrap() = state;
+            assert!(!process_idle_for_enrollment());
+        }
+        reset_with_staged_route();
+        process().lock().unwrap().closing = true;
+        assert!(!process_idle_for_enrollment());
+        *process().lock().unwrap() = ProcessState::default();
+        *prepared_route().lock().unwrap() = None;
     }
 
     #[test]
@@ -3603,7 +3746,10 @@ fn constructor_configuration_binding(
     let Some(duplex) = config.embedded_duplex.as_ref() else {
         return Ok(None);
     };
-    let Some(projection) = duplex.fresh_setup_build_policy_projection()? else {
+    let Some(projection) = duplex.fresh_setup_build_policy_projection_with_lifetime_policy(
+        super::development_lifetime_policy::for_config(duplex)?,
+    )?
+    else {
         return Ok(None);
     };
     if duplex
@@ -3674,7 +3820,7 @@ fn host_for_root_terminal_cleanup() -> Result<HostLease, String> {
         .map_err(|_| "terminal root cleanup process poisoned")?;
     if p.root_terminal_custody.is_none() {
         drop(p);
-        return host();
+        return host_for_cleanup_lookup();
     }
     if !p.closing
         || !p.retired_fresh_owner_fenced

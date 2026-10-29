@@ -113,7 +113,7 @@ final class EmbeddedDuplexProcessHost {
                 installRunHandoff(next.runId,next.releaseSourceJson);
                 EmbeddedDuplexOriginals.selectedRunChanged();
                 originalClosedActor=null;terminalWholeReceipt=null;terminalWholeChallenge=null;wholeCloseRollover=null;
-                retainedWholeNativeReceipt=null;lastClosedActorProof=null;retainedWholeClose=null;noMediaClose=null;coldPendingRecovery=null;
+                retainedWholeNativeReceipt=null;lastClosedActorProof=null;retainedWholeClose=null;wholeLocalDrain=null;noMediaClose=null;coldPendingRecovery=null;
                 wholeCallbackMarker=null;wholeCallbackPlatform=null;
                 nativeConfigurationContext=null;setupCredentials=null;pendingReview=null;lastBootstrapFailure=null;diagnosticChallenge=null;
                 result.complete(runStatusOnLane());
@@ -816,7 +816,7 @@ final class EmbeddedDuplexProcessHost {
             return submit(() -> {
                 requireOrdinaryStartContext(expectedGeneration, challenge, currentActivity);
                 JSONObject prepared = new JSONObject(EmbeddedDuplexNative.runtimeCommand("prepared_peer_start_status", "{}"));
-                platform.requirePreparedNativeStatus(prepared, true);
+                platform.requirePreparedNativeStatusForLocalStart(prepared);
                 return challenge;
             }).thenCompose(ownedContinuation(selected ->
                 prepareStartPreflight(expectedGeneration).thenCompose(ownedContinuation(decision -> {
@@ -997,8 +997,17 @@ final class EmbeddedDuplexProcessHost {
 
     CompletableFuture<EmbeddedDuplexEnrollmentReview> reviewEnrollment(
             EmbeddedDuplexEnrollmentDraft draft) {
-        synchronized (attachmentGate) { pendingReview = null; }
         if (draft == null) return failed(new IllegalArgumentException("enrollment review draft"));
+        return reviewEnrollment(draft, false);
+    }
+
+    CompletableFuture<EmbeddedDuplexEnrollmentReview> reviewEnrollmentPolicyUpdate() {
+        return reviewEnrollment(null, true);
+    }
+
+    private CompletableFuture<EmbeddedDuplexEnrollmentReview> reviewEnrollment(
+            EmbeddedDuplexEnrollmentDraft draft, boolean policyUpdate) {
+        synchronized (attachmentGate) { pendingReview = null; }
         return submit(() -> {
             synchronized (attachmentGate) {
                 if (displayDetaching || closeInFlight || platform != null || resources != null
@@ -1012,7 +1021,8 @@ final class EmbeddedDuplexProcessHost {
                 throw new IllegalStateException("native process or staged route is not terminal");
             }
             EmbeddedDuplexEnrollmentReview review =
-                    EmbeddedDuplexEnrollmentResolver.review(applicationContext, draft);
+                    policyUpdate ? EmbeddedDuplexEnrollmentResolver.reviewPolicyUpdate(applicationContext)
+                            : EmbeddedDuplexEnrollmentResolver.review(applicationContext, draft);
             synchronized (attachmentGate) {
                 if (displayDetaching || closeInFlight || phase.get() != Phase.NEW) {
                     throw new IllegalStateException("process changed during enrollment review");
@@ -1408,6 +1418,22 @@ final class EmbeddedDuplexProcessHost {
         current.processFence.requireLive(generation);
         current.processFence.requireIncarnation(EmbeddedDuplexProcessIncarnation.current(
                 android.os.Process.myPid(), android.os.Process.myUid()));
+        RetainedNoMediaClose noMedia=current.noMediaClose;
+        if(current.phase.get()==Phase.NEW && current.platform==null && current.resources==null
+                && current.runtimeConfigSha256==null && current.nativeExecutorGeneration==0L
+                && !current.processFence.effectsPending() && !current.displayDetaching && !current.closeInFlight
+                && noMedia!=null && noMedia.original!=null && noMedia.appGeneration==generation
+                && noMedia.original.retainedCleanupOwner==noMedia
+                && noMedia.nativeGeneration==actor.getLong("native_generation")
+                && noMedia.appRecord.equals(actor.getString("app_record_sha256"))
+                && noMedia.original.appGeneration==generation
+                && "whole_app_close".equals(noMedia.original.row.getString("operation"))
+                && EmbeddedDuplexCanonicalJson.sameValue(actor,noMedia.original.row.getJSONObject("actor_binding"))
+                && !noMedia.original.row.isNull("response")){
+            JSONObject receipt=new JSONObject(noMedia.original.row.getJSONObject("response").getString("receipt"));
+            requireCompletedNoMediaOriginal(noMedia.original,receipt);
+            return true;
+        }
         boolean retained = current.phase.get() == Phase.READY && current.platform != null && current.resources != null
                 && EmbeddedDuplexCanonicalJson.sameValue(originalActor(), actor);
         JSONObject closed = current.originalClosedActor;
@@ -1446,6 +1472,77 @@ final class EmbeddedDuplexProcessHost {
     private EmbeddedDuplexOriginals.Record activeWholeNativeOriginal;
     private EmbeddedDuplexRuntimeConfigurationBinding.Context nativeConfigurationContext;
     private volatile RetainedWholeClose retainedWholeClose;
+    // Physical work is entered once, outside the command lane needed by its
+    // callbacks. Pending keeps this same Future and all exact owner references.
+    private volatile RetainedWholeLocalDrain wholeLocalDrain;
+    private static final class RetainedWholeLocalDrain {
+        final EmbeddedDuplexOriginals.Record original;
+        final EmbeddedDuplexResources resources; final EmbeddedDuplexPlatform platform;
+        final OwnStereoCaptureRuntime own;
+        final long appGeneration,nativeGeneration,attachment;
+        final String config; final CompletableFuture<Void> completion=new CompletableFuture<>();
+        RetainedWholeLocalDrain(EmbeddedDuplexOriginals.Record original,EmbeddedDuplexResources resources,
+                EmbeddedDuplexPlatform platform,long app,long nativeGeneration,long attachment,String config){
+            this.original=original;this.resources=resources;this.platform=platform;this.own=OwnStereoCaptureRuntime.currentForApplication();this.appGeneration=app;
+            this.nativeGeneration=nativeGeneration;this.attachment=attachment;this.config=config;
+        }
+    }
+    private void requireWholeLocalDrain(RetainedWholeLocalDrain held)throws Exception{
+        if(wholeLocalDrain!=held || EmbeddedDuplexOriginals.capture()!=held.original
+                || phase.get()!=Phase.CLOSING || resources!=held.resources || platform!=held.platform
+                || OwnStereoCaptureRuntime.currentForApplication()!=held.own
+                || nativeExecutorGeneration!=held.nativeGeneration || attachmentGeneration!=held.attachment
+                || !java.util.Objects.equals(runtimeConfigSha256,held.config))
+            throw new IllegalStateException("retained Whole local owner changed");
+        processFence.requireLive(held.appGeneration);requireCurrentOriginalStopActor(held.original);
+    }
+    private void awaitWholeLocalTerminal(RetainedWholeLocalDrain held)throws Exception{
+        long warningAt=System.nanoTime()+10_000_000_000L;
+        while(true){
+            requireWholeLocalDrain(held);
+            String own=held.own==null?"not_created":held.own.physicalRetirementObservation().getString("state");
+            if(java.util.Arrays.asList("retired","not_created").contains(own)
+                    && EmbeddedDuplexRendererRetirement.currentTerminal() && EmbeddedDuplexNative.localCameraQuiescent())return;
+            if(System.nanoTime()>=warningAt){
+                System.err.println("embedded Whole local physical joins remain Pending");warningAt=System.nanoTime()+10_000_000_000L;
+            }
+            try{Thread.sleep(50L);}catch(InterruptedException stopped){Thread.currentThread().interrupt();throw stopped;}
+        }
+    }
+    private CompletableFuture<Void> drainWholeLocalResources(long attachment){
+        return submit(()->{
+            EmbeddedDuplexOriginals.Record original=EmbeddedDuplexOriginals.capture();
+            if(original==null || !"whole_app_close".equals(original.row.getString("operation")))
+                throw new IllegalStateException("actual Whole local Original absent");
+            if(wholeLocalDrain!=null){
+                requireWholeLocalDrain(wholeLocalDrain);return wholeLocalDrain.completion;
+            }
+            // No constructed media owners is handled by the existing absence path.
+            if(resources==null)return CompletableFuture.<Void>completedFuture(null);
+            requireCurrentOriginalStopActor(original);
+            if(localFixture || closeInFlight || attachmentGeneration!=attachment || phase.get()!=Phase.READY && phase.get()!=Phase.FAILED && phase.get()!=Phase.BOOTSTRAPPING)
+                throw new IllegalStateException("actual Whole local resources unavailable");
+            processFence.beforeNativeAbsenceRetirement(checkpointSnapshot(),evidenceSnapshot());
+            RetainedWholeLocalDrain held=new RetainedWholeLocalDrain(original,resources,platform,
+                processFence.generation(),nativeExecutorGeneration,attachment,runtimeConfigSha256);
+            wholeLocalDrain=held;original.retainedCleanupOwner=held;phase.set(Phase.CLOSING);
+            if(held.platform!=null)held.platform.fenceOwnedForwardEffects();
+            Runnable entered=EmbeddedDuplexOriginals.carryActual(original,()->{
+                try{
+                    requireWholeLocalDrain(held);
+                    if(held.platform!=null)held.platform.awaitOwnedForwardEffectsJoined();
+                    requireWholeLocalDrain(held);
+                    held.resources.retireOwnedLocalResources();
+                    display.requestWholeProjectionStop();
+                    awaitWholeLocalTerminal(held);
+                    held.completion.complete(null);
+                }catch(Throwable failure){held.completion.completeExceptionally(failure);}
+            });
+            try{Thread worker=new Thread(entered,"embedded-whole-local-drain");worker.start();}
+            catch(Throwable failure){held.completion.completeExceptionally(failure);throw failure;}
+            return held.completion;
+        }).thenCompose(next->next);
+    }
     static final class RetainedWholeClose {
         final String challenge, epoch, config, feature, apk, initialReceipt;
         final long appGeneration, executorGeneration, attachment;
@@ -1716,14 +1813,15 @@ final class EmbeddedDuplexProcessHost {
             // it need not renew a media pair or fabricate an ARM solely to retire no-media resources.
             try{if(processFence!=null)processFence.requireLive(processFence.generation());requestDesiredStopOutsideCommandLane(true);}
             catch(Exception failure){return failed(failure);}
-            return submit(()->{
+            return drainWholeLocalResources(actualAttachment).thenCompose(ownedContinuation(drained->submit(()->{
+                if(wholeLocalDrain!=null)requireWholeLocalDrain(wholeLocalDrain);
                 synchronized(attachmentGate){if(attachmentGeneration!=actualAttachment || localFixture)
                     throw new IllegalStateException("whole close attachment superseded");}
                 JSONObject classifier=new JSONObject(EmbeddedDuplexNative.noMediaRetirementStatus());
                 if(!"rusty.quest.embedded_duplex.no_media_retirement_status.v1".equals(classifier.getString("$schema")))
                     throw new IllegalStateException("whole close native classifier schema");
                 return classifier.getString("classification");
-            }).thenCompose(ownedContinuation(classification->{
+            }))).thenCompose(ownedContinuation(classification->{
                 if(java.util.Arrays.asList("busy","pending_fresh_setup","configured_no_media_candidate","staged_no_media_candidate",
                         "configured_closed","never_claimed","uninitialized_capability","partial_construction_candidate","pending_peer_root_reestablishment","pending_prepared_peer_start").contains(classification)){
                     EmbeddedDuplexOriginals.Record actual=EmbeddedDuplexOriginals.capture();
@@ -1914,8 +2012,11 @@ final class EmbeddedDuplexProcessHost {
                     } else {
                         if (own != null) own.requestStopOwn();
                         display.requestWholeProjectionStop();
-                        EmbeddedDuplexResources retained = resources;
-                        if (retained != null) retained.closeUnusedIncomingForWholeProduct();
+                        RetainedWholeLocalDrain drain=wholeLocalDrain;
+                        if(resources!=null){
+                            if(drain==null)throw new IllegalStateException("actual Whole local drain absent");
+                            requireWholeLocalDrain(drain);drain.completion.join();
+                        }
                     }
                 }
                 if (peerAction == EmbeddedDuplexPeerAction.START && beforeStart != null) beforeStart.run();
@@ -2077,6 +2178,15 @@ final class EmbeddedDuplexProcessHost {
             throw new IllegalStateException("actual sole whole Native Original absent");
         requireCurrentOriginalStopActor(actual);activeWholeNativeOriginal=actual;
         try{return operation.call();}finally{activeWholeNativeOriginal=null;}
+    }
+    static String currentWholeCleanupOriginalId(EmbeddedDuplexPlatform actual)throws Exception {
+        EmbeddedDuplexProcessHost host=instance;
+        EmbeddedDuplexOriginals.Record original=EmbeddedDuplexOriginals.capture();
+        if(host==null||host.platform!=actual||original==null||host.activeWholeNativeOriginal!=original
+                ||!"whole_app_close".equals(original.row.getString("operation"))
+                ||!(host.phase.get()==Phase.READY||host.phase.get()==Phase.CLOSING))
+            throw new IllegalStateException("actual Whole cleanup owner span absent");
+        requireCurrentOriginalStopActor(original);return original.id();
     }
     static void requireCurrentWholeNativeClosure(EmbeddedDuplexPlatform platform,JSONObject body)throws Exception {
         EmbeddedDuplexProcessHost host=instance;EmbeddedDuplexOriginals.Record actual=EmbeddedDuplexOriginals.capture();
@@ -2403,7 +2513,10 @@ final class EmbeddedDuplexProcessHost {
             }
             Phase current=phase.get();
             if(expectedGeneration<=0 || attachmentGeneration!=expectedGeneration || closeInFlight
-                    || !(current==Phase.NEW || current==Phase.FAILED || current==Phase.READY || current==Phase.BOOTSTRAPPING))
+                    || !(current==Phase.NEW || current==Phase.FAILED || current==Phase.READY || current==Phase.BOOTSTRAPPING
+                        || current==Phase.CLOSING && wholeLocalDrain!=null
+                        && wholeLocalDrain.original==EmbeddedDuplexOriginals.capture()
+                        && wholeLocalDrain.completion.isDone() && !wholeLocalDrain.completion.isCompletedExceptionally()))
                 return failed(new IllegalStateException("no-media close owner unavailable"));
             closeInFlight=true;phase.set(Phase.CLOSING);
         }
@@ -2541,7 +2654,8 @@ final class EmbeddedDuplexProcessHost {
                 "java_control_cleanup","java_callback_cleanup","command_lane_barrier","whole_app_physical_cleanup","app_process_fence_cleanup"})
             if(!"terminal".equals(receipt.getString(key)))throw new IllegalStateException("actual no-media barrier receipt pending");
         verifyNoMediaNative(held,receipt.getJSONObject("native_retirement"));
-        if(!java.util.Arrays.asList(EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2,EmbeddedDuplexConstructionClosure.WHOLE).contains(receipt.getString("$schema")))
+        if(!java.util.Arrays.asList("rusty.quest.embedded_duplex.no_media_whole_retirement.v1",
+                EmbeddedDuplexRuntimeConfigurationBinding.WHOLE_V2,EmbeddedDuplexConstructionClosure.WHOLE).contains(receipt.getString("$schema")))
             throw new IllegalStateException("selected configured whole schema differs");
     }
     private void scheduleNoMedia(RetainedNoMediaClose held){
@@ -2744,6 +2858,7 @@ final class EmbeddedDuplexProcessHost {
     private static android.os.Bundle pairOriginalBundle(String challenge,EmbeddedDuplexPairStatus state) {
         android.os.Bundle value=new android.os.Bundle();value.putString("schema","rusty.quest.embedded_duplex.operator_transport.v1");
         value.putString("status","observed");value.putString("challenge",challenge);value.putString("pair_state",state.state);
+        if(state.ceremonyWaitWarning!=null)value.putBoolean("ceremony_wait_warning",state.ceremonyWaitWarning);
         if(state.sessionId!=null)value.putString("session_id",state.sessionId);
         value.putBoolean("local_session_current",state.localSessionCurrent);value.putBoolean("remote_session_current",state.remoteSessionCurrent);
         value.putLong("local_session_expires_at_ms",state.localSessionExpiresAtMs);value.putBoolean("peer_route_proven",state.routeCurrent);

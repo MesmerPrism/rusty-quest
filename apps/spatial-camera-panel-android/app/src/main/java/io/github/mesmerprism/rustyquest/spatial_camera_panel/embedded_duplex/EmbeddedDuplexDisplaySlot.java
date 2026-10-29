@@ -101,9 +101,16 @@ final class EmbeddedDuplexDisplaySlot implements EmbeddedDuplexDisplay {
 
     private void awaitIdle() throws InterruptedException {
         long remaining = TimeUnit.SECONDS.toNanos(10);
+        boolean warned = false;
         while (inFlight != 0) {
-            if (remaining <= 0L) throw new IllegalStateException("display barrier pending");
-            remaining = idle.awaitNanos(remaining);
+            if (!warned && remaining <= 0L) {
+                System.err.println("embedded-duplex display callback barrier remains Pending generation="+generation+" inFlight="+inFlight);
+                warned = true;
+            }
+            // Time is advisory. Keep this exact generation/callback barrier;
+            // interruption retains the attachment and never frees an SDK owner.
+            if (warned) idle.await();
+            else remaining = idle.awaitNanos(remaining);
         }
     }
 

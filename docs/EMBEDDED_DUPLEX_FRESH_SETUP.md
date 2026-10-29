@@ -37,6 +37,30 @@ accepted media ticket can open delivery. Preparation metadata is not a media
 Start grant. Competing Local/Peer source construction cannot bypass the actual
 renderer reservation, and Stop remains available.
 
+Ordinary local Start also accepts the same prepared incoming decoder after an
+authenticated opposite-direction Start has opened its delivery gate. This is
+the existing Native contract: the local preparation remains unconsumed and its
+current owner, actor/config/ARM, remote decoder and connected sender must still
+match. The local sender stays gated. Java uses a separate local-Start readiness
+mode over the same exact status validator; initial preparation, transport
+finalization and cleanup retain their closed-gate requirements.
+
+The receiver qualification is read-only under the existing receiver lock. It
+requires the same live prepared codec/worker/callback/connection, no Stop or
+failure, and either the dormant closed gate or the already-requested incoming
+`receiver_armed`/`receiving` state. The app additionally joins its exact retained
+preparation ID and unreleased projection. Missing, foreign, failed, stopped or
+locally consumed preparation remains refused. This changes no Native consume,
+signature/session check, serialized DTO or media-authority grant.
+
+`tools/checks/Test-PreparedLocalStartHost.py` executes the complete production
+holder, actual ordinaryStart-to-Platform qualification call, common identity
+validators and exact receiver/resource forwarding predicates with SDK/Original
+resource leaves modeled. `Test-OwnedMediaWaitsHost.py -h` exposes a receiver-only
+mode for the complete shared receiver and its existing wait/Stop/interrupt
+controls against retained warm JVM inputs. These are source/host checks, not
+evidence of an APK, device media, performance or physical cleanup result.
+
 Fresh eligibility joins actual NeverStarted or earned normal FullyStopped
 state with current process, authority, pending dispatch, cleanup replay,
 physical resource and renderer facts. Peer payload custody follows real

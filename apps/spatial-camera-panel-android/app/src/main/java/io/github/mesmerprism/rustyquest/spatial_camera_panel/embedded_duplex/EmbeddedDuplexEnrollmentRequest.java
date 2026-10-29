@@ -39,6 +39,16 @@ public final class EmbeddedDuplexEnrollmentRequest {
     /** This factory checks installed APK bytes and signer before exposing any route facts. */
     public static EmbeddedDuplexEnrollmentRequest localSnapshot(Context context, String roleId)
             throws Exception {
+        return localSnapshot(context, roleId, false);
+    }
+
+    static EmbeddedDuplexEnrollmentRequest existingSnapshot(Context context, String roleId)
+            throws Exception {
+        return localSnapshot(context, roleId, true);
+    }
+
+    private static EmbeddedDuplexEnrollmentRequest localSnapshot(Context context, String roleId,
+            boolean existingOnly) throws Exception {
         if (context == null || context.getApplicationContext() == null) {
             throw new IllegalArgumentException("application context required");
         }
@@ -60,7 +70,8 @@ public final class EmbeddedDuplexEnrollmentRequest {
         if (local == null || remote == null) {
             throw new IllegalStateException("installed role has no exact route peers");
         }
-        EmbeddedDuplexIdentity.Identity identity = EmbeddedDuplexIdentity.loadOrCreate(app);
+        EmbeddedDuplexIdentity.Identity identity = existingOnly
+                ? EmbeddedDuplexIdentity.loadExisting(app) : EmbeddedDuplexIdentity.loadOrCreate(app);
         return new EmbeddedDuplexEnrollmentRequest(role.id,
                 packagedIdentity.getString("application_id"),
                 packagedIdentity.getString("signing_certificate_sha256"),

@@ -28,6 +28,7 @@ public final class PreparedCaptureReadinessHost {
   PRODUCTION_RUNTIME_METHODS
   void startCodec(){encoder=new Object();state="codec_started";}
   void startProcessor(){encoderWorker=new PackedStereoEncoderWorker();state="processor_started";}
+  void cancelPacketCapacityWait(){/* No packet-capacity wait exists in this readiness fixture. */}
   void acceptLoop(){try{while(!stopRequested)Thread.sleep(1);}catch(InterruptedException expected){Thread.currentThread().interrupt();}}
   void sourceLoop(){try{publicationGate.await();
    PRODUCTION_STREAMING_PUBLICATION
