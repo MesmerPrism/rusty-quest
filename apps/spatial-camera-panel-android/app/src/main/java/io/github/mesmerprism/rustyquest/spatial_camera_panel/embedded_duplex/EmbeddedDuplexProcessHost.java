@@ -1485,13 +1485,13 @@ final class EmbeddedDuplexProcessHost {
                 String originalId = original.id();
                 if (originalId != null && originalId.matches("[0-9a-f]{32}")) id = originalId;
             }
-            String family = failure instanceof IllegalStateException ? "state"
+            String family = failure instanceof java.util.concurrent.CancellationException ? "cancelled"
+                    : failure instanceof IllegalStateException ? "state"
                     : failure instanceof IllegalArgumentException ? "argument"
                     : failure instanceof SecurityException ? "security"
                     : failure instanceof java.io.IOException ? "io"
                     : failure instanceof InterruptedException ? "interrupted"
                     : failure instanceof java.util.concurrent.CompletionException ? "completion"
-                    : failure instanceof java.util.concurrent.CancellationException ? "cancelled"
                     : failure instanceof Error ? "error" : "other";
             android.util.Log.w("RQSpatialCameraPanel", "channel=embedded-duplex status=failed seam=submit phase="
                     + phase.get().name() + " stage=" + stage + " operation=" + operation + " original_id=" + id + " error=" + family);
