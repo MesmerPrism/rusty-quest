@@ -56,7 +56,9 @@ def main():
  assert 'installed.install(trace);' in host and 'trace.captureFailure(failure);\n                lastBootstrapFailure = trace.failure();' in host
  assert host.index('Failure.RESOURCE_CONSTRUCT')<host.index('EmbeddedDuplexResources installed =')<host.index('resources = installed;')<host.index('installed.install(trace);')<host.index('Failure.RESOURCE_REGISTRY')<host.index('callbacks.installResources(installed);')
  for reason in ('CAPTURE_UNAVAILABLE','FRESHNESS_PENDING','CARRIER_NOT_READY','SUPERSEDED','INTERRUPTED'):assert 'EmbeddedDuplexOwnProjectionFailure.Reason.'+reason in coordinator
- assert 'TimeUnit.SECONDS.toNanos(10)' in coordinator and 'return result.get(30, TimeUnit.SECONDS)' in coordinator
+ # Serialized lifecycle custody is exercised by Test-OwnedMediaWaitsHost.py;
+ # its warning estimate must not abandon the dispatched action's Future.
+ assert 'TimeUnit.SECONDS.toNanos(10)' in coordinator
  actual='\n'.join(block(bootstrap,marker) for marker in ('    enum Failure {','    static final class Trace {','    static void mark('))
  install=block(resources,'    void install(EmbeddedDuplexBootstrap.Trace trace)')
  # Replace only the modeled owner class's qualified spelling; production

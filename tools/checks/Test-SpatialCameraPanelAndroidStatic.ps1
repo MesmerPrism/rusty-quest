@@ -1590,7 +1590,7 @@ Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProj
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "private var startMask = 0L"
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "fun videoPanelBindings(): CameraHwbProjectionVideoPanelBindings"
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "fun run(readerMaxImages: Int, videoSettings: SpatialVideoProjectionSettings)"
-Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "if (!bindings.routeEnabled())"
+Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "if (sceneRetired || !bindings.routeEnabled())"
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "CameraHwbProjectionPanelCarrierModule.createVideoSurfacePanelEntity("
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "CameraHwbProjectionPanelCarrierModule.createManualCustomMeshPanel("
 Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "private fun startIfReady(reason: String)"
