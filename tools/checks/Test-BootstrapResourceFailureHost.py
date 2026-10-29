@@ -169,6 +169,12 @@ public final class SubmitFailureHarness {
   @Override public synchronized Throwable getCause(){privateReads++;throw new AssertionError("cause inspected");}
   @Override public String toString(){privateReads++;throw new AssertionError("throwable rendered");}
  }
+ static class SecretCancelled extends CancellationException {
+  SecretCancelled(){super("PRIVATE signed-ticket /private/path");}
+  @Override public String getMessage(){privateReads++;throw new AssertionError("message inspected");}
+  @Override public synchronized Throwable getCause(){privateReads++;throw new AssertionError("cause inspected");}
+  @Override public String toString(){privateReads++;throw new AssertionError("throwable rendered");}
+ }
  static class EmbeddedDuplexRunContext {void requireSame(EmbeddedDuplexRunContext current)throws Exception{hit("run_selection");}}
  static class EmbeddedDuplexProcessIncarnation {static Object current(int pid,int uid){check(pid==123&&uid==456);return new Object();}}
  static class Row {String operation="bootstrap_real_peer";String optString(String key,String fallback){return operation;}}
@@ -191,19 +197,24 @@ SUBMIT_TESTS=r'''
  static void reset(){failAt="";primary=null;actionCalls=bindCalls=actorCalls=privateReads=0;android.util.Log.fail=false;android.util.Log.lines.clear();EmbeddedDuplexOriginals.current.remove();}
  static Throwable error(CompletableFuture<?> future){return future.handle((value,failure)->failure).join();}
  static void failure(String stage,boolean record,boolean badTokens,boolean brokenLog)throws Exception{
-  reset();failAt=stage;primary=new SecretState();EmbeddedDuplexOriginals.Record original=new EmbeddedDuplexOriginals.Record();
+  failure(stage,record,badTokens,brokenLog,new SecretState(),"state");
+ }
+ static void failure(String stage,boolean record,boolean badTokens,boolean brokenLog,Throwable injected,String family)throws Exception{
+  reset();failAt=stage;primary=injected;EmbeddedDuplexOriginals.Record original=new EmbeddedDuplexOriginals.Record();
   if(badTokens){original.row.operation="private_ticket";original.id="PRIVATE /path/ticket";}
   if(record)EmbeddedDuplexOriginals.current.set(original);
   SubmitFailureHarness host=new SubmitFailureHarness();android.util.Log.fail=brokenLog;
   try{
-   Throwable observed=error(host.submit(()->{actionCalls++;hit("action_body");return "ok";}));host.drain();
+   CompletableFuture<String> future=host.submit(()->{actionCalls++;hit("action_body");return "ok";});
+   Throwable observed=error(future);host.drain();
    check(observed==primary);check(privateReads==0);check(host.phase.get()==Phase.BOOTSTRAPPING);check(host.activeCommandOriginal==null);
+   if(primary instanceof CancellationException)check(future.isCancelled());
    check(actionCalls==("action_body".equals(stage)?1:0));
    if("bind_incarnation".equals(stage)){check(bindCalls==1);check(actorCalls==0);}
    if(brokenLog){check(android.util.Log.lines.isEmpty());return;}
    check(android.util.Log.lines.size()==1);String line=android.util.Log.lines.get(0);
    check(line.startsWith("RQSpatialCameraPanel channel=embedded-duplex status=failed seam=submit "));
-   check(line.contains("phase=BOOTSTRAPPING stage="+stage+" "));check(line.endsWith("error=state"));check(line.length()<320);
+   check(line.contains("phase=BOOTSTRAPPING stage="+stage+" "));check(line.endsWith("error="+family));check(line.length()<320);
    check(line.contains("operation="+(record?(badTokens?"other":"bootstrap_real_peer"):"none")+" "));
    check(line.contains("original_id="+(record&&!badTokens?"a".repeat(32):"none")+" "));
    check(!line.contains("PRIVATE")&&!line.contains("ticket")&&!line.contains("/path"));
@@ -213,6 +224,7 @@ SUBMIT_TESTS=r'''
   // The actual38 seam fails before actor binding and the action body.
   for(String stage:new String[]{"bind_incarnation","run_selection","process_fence","bind_original_actor","action_body"})failure(stage,true,false,false);
   failure("process_fence",false,false,false);failure("bind_incarnation",true,true,false);failure("bind_incarnation",true,false,true);
+  failure("action_body",true,false,false,new SecretCancelled(),"cancelled");
   reset();SubmitFailureHarness overlap=new SubmitFailureHarness();EmbeddedDuplexOriginals.Record prior=new EmbeddedDuplexOriginals.Record();
   overlap.activeCommandOriginal=prior;EmbeddedDuplexOriginals.current.set(new EmbeddedDuplexOriginals.Record());
   try{Throwable failure=error(overlap.submit(()->{actionCalls++;return "bad";}));overlap.drain();check(failure instanceof IllegalStateException);check(actionCalls==0);check(overlap.activeCommandOriginal==prior);check(android.util.Log.lines.size()==1);check(android.util.Log.lines.get(0).contains("stage=command_overlap "));}finally{overlap.close();}
