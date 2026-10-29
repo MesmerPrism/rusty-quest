@@ -426,6 +426,23 @@ final class EmbeddedDuplexProcessFence implements AutoCloseable {
         }
         return bytes;
     }
+    /** Incarnation/witness reads use the same non-channel positioned I/O as the
+     * held record. Never open the writer-lock inode through this helper. */
+    static byte[] readCompanionRecord(java.nio.file.Path path, int bound) throws Exception {
+        FileDescriptor opened = Os.open(path.toString(),
+                OsConstants.O_RDONLY | OsConstants.O_CLOEXEC | OsConstants.O_NOFOLLOW, 0);
+        try {
+            android.system.StructStat stat = Os.fstat(opened);
+            if (!OsConstants.S_ISREG(stat.st_mode) || stat.st_size < 0 || stat.st_size > bound)
+                throw new IllegalStateException("incarnation record unavailable");
+            byte[] bytes = readRecord(opened, (int) stat.st_size, "incarnation record truncated");
+            if (Os.fstat(opened).st_size != bytes.length)
+                throw new IllegalStateException("incarnation record changed while reading");
+            return bytes;
+        } finally {
+            Os.close(opened);
+        }
+    }
     private static void closeDescriptor(FileOutputStream view, FileDescriptor descriptor) throws Exception {
         // Android's public FileOutputStream(fd) borrows fd. The fence owns it.
         try { if (view != null) view.close(); }

@@ -216,7 +216,7 @@ final class EmbeddedDuplexProcessIncarnation {
     private static byte[] readBytes(Path path, int bound) throws Exception {
         if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path) || Files.size(path) > bound)
             throw new IllegalStateException("incarnation record unavailable");
-        return Files.readAllBytes(path);
+        return EmbeddedDuplexProcessFence.readCompanionRecord(path, bound);
     }
     private static Set<String> keys(JSONObject value) {
         Set<String> result = new java.util.HashSet<>();

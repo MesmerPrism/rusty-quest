@@ -25,9 +25,10 @@ public final class Os {
   if((flags==(OsConstants.O_RDONLY|OsConstants.O_CLOEXEC|OsConstants.O_NOFOLLOW)||flags==(OsConstants.O_RDONLY|OsConstants.O_CLOEXEC))&&mode==0&&Files.isDirectory(Path.of(path),LinkOption.NOFOLLOW_LINKS)){
    FileDescriptor fd=new FileDescriptor();DIRECTORIES.add(fd);return fd;
   }
-  if(flags!=(OsConstants.O_RDWR|OsConstants.O_CLOEXEC|OsConstants.O_NOFOLLOW)||mode!=0)throw new IOException("host requires no-create/no-truncate/nofollow flags");
+  boolean readOnly=flags==(OsConstants.O_RDONLY|OsConstants.O_CLOEXEC|OsConstants.O_NOFOLLOW);
+  if(!readOnly&&flags!=(OsConstants.O_RDWR|OsConstants.O_CLOEXEC|OsConstants.O_NOFOLLOW)||mode!=0)throw new IOException("host requires no-create/no-truncate/nofollow flags");
   Path p=Path.of(path);if(!Files.isRegularFile(p,LinkOption.NOFOLLOW_LINKS)||Files.isSymbolicLink(p))throw new FileNotFoundException("host no-follow regular file required");
-  RandomAccessFile f=new RandomAccessFile(path,"rw");FileDescriptor fd=f.getFD();FILES.put(fd,f);lastOpened=fd;return fd;
+  RandomAccessFile f=new RandomAccessFile(path,readOnly?"r":"rw");FileDescriptor fd=f.getFD();FILES.put(fd,f);lastOpened=fd;return fd;
  }
  private static RandomAccessFile file(FileDescriptor fd)throws IOException{RandomAccessFile f=FILES.get(fd);if(f==null||!fd.valid())throw new IOException("host descriptor closed");return f;}
  public static StructStat fstat(FileDescriptor fd)throws IOException{return new StructStat(file(fd).length());}
