@@ -798,7 +798,8 @@ pub(super) fn target_executor_generation(
     let host = process()
         .lock()
         .map_err(|_| "prepared target actor slot poisoned")?
-        .host.clone()
+        .host
+        .clone()
         .ok_or("prepared target actor absent")?;
     if host.local_peer_id != source_peer_id
         || host.remote_peer_id != target_peer_id
@@ -811,7 +812,8 @@ pub(super) fn target_executor_generation(
     if !a.completed.load(Ordering::SeqCst) {
         return Err("authenticated target executor generation unavailable".into());
     }
-    let generation = a.remote_decoder
+    let generation = a
+        .remote_decoder
         .lock()
         .map_err(|_| "prepared remote receipt poisoned")?
         .as_ref()

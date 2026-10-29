@@ -39,9 +39,11 @@ fn selected_projection(
     config: Option<&rusty_quest_broker_authority::QuestEmbeddedDuplexAuthorityConfig>,
 ) -> Result<Option<Value>, String> {
     Ok(config
-        .map(|c| c.fresh_setup_build_policy_projection_with_lifetime_policy(
-            super::super::development_lifetime_policy::for_config(c)?,
-        ))
+        .map(|c| {
+            c.fresh_setup_build_policy_projection_with_lifetime_policy(
+                super::super::development_lifetime_policy::for_config(c)?,
+            )
+        })
         .transpose()?
         .flatten())
 }
@@ -76,7 +78,10 @@ mod tests {
 
     #[test]
     fn actual_projection_preserves_compiled_lifetime_selection() {
-        use rusty_quest_broker_authority::{QuestEmbeddedDuplexAuthorityConfig, QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA};
+        use rusty_quest_broker_authority::{
+            QuestEmbeddedDuplexAuthorityConfig,
+            QUEST_EMBEDDED_DUPLEX_DEVELOPMENT_AUTHORITY_CONFIG_SCHEMA,
+        };
         let mut config: QuestEmbeddedDuplexAuthorityConfig = serde_json::from_str(r#"{
           "$schema":"rusty.quest.embedded_duplex.authority_config.v1","runtime_host_id":"host.fixture",
           "trusted_operator_ids":["operator.fixture"],"trusted_key_fingerprints":["fingerprint.fixture"],

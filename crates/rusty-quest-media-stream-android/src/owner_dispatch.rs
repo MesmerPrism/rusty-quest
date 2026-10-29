@@ -622,7 +622,12 @@ impl CompositeAndroidMediaOwnerExecutor {
         resource_id: &str,
     ) -> Result<&AndroidMediaOwnerPlacementTarget, String> {
         self.placements
-            .get(&(owner_kind, owner_id.into(), provider_kind.into(), resource_id.into()))
+            .get(&(
+                owner_kind,
+                owner_id.into(),
+                provider_kind.into(),
+                resource_id.into(),
+            ))
             .ok_or_else(|| "owner placement absent".to_owned())
     }
 
@@ -724,12 +729,14 @@ impl crate::AndroidMediaOwnerExecutor for CompositeAndroidMediaOwnerExecutor {
         ticket: &AndroidMediaExecutionTicket,
         mode: AndroidMediaExecutionMode,
     ) -> Result<AndroidMediaOwnerReadback, String> {
-        let target = self.target(
-            ticket.owner_kind,
-            &ticket.owner_id,
-            &ticket.provider_kind,
-            &ticket.resource_id,
-        )?.clone();
+        let target = self
+            .target(
+                ticket.owner_kind,
+                &ticket.owner_id,
+                &ticket.provider_kind,
+                &ticket.resource_id,
+            )?
+            .clone();
         if ticket.executor_generation != self.target_generation(&target)? {
             return Err("executor generation mismatch".to_owned());
         }

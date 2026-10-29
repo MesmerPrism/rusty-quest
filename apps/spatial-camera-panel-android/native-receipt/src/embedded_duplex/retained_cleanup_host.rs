@@ -897,16 +897,22 @@ impl AndroidMediaOwnerExecutor for Executor {
         action: &rusty_quest_media_stream::MediaStreamPlatformAction,
         owner: &rusty_quest_media_stream::MediaStreamOwnerAction,
     ) -> Result<u64, String> {
-        let retained_requester = self.cleanup.requester.lock()
-            .map_err(|_| "cleanup requester poisoned")?.is_some();
+        let retained_requester = self
+            .cleanup
+            .requester
+            .lock()
+            .map_err(|_| "cleanup requester poisoned")?
+            .is_some();
         // Same closed branch as execute below. Retained cleanup issues a local
         // source carrier; the recipient separately authors/signs its actual Stop.
         let retained_action = action.operation == MediaStreamPlatformOperation::Stop
             || (action.operation == MediaStreamPlatformOperation::Start
                 && action.action_id.ends_with(".abort")
-                && matches!(owner.action_kind,
+                && matches!(
+                    owner.action_kind,
                     rusty_quest_media_stream::MediaStreamOwnerActionKind::Stop
-                    | rusty_quest_media_stream::MediaStreamOwnerActionKind::Cleanup));
+                        | rusty_quest_media_stream::MediaStreamOwnerActionKind::Cleanup
+                ));
         if retained_requester && retained_action {
             Ok(self.cleanup.generation)
         } else {

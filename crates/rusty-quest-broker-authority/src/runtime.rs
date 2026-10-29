@@ -567,7 +567,8 @@ impl<'a> QuestBrokerAndroidMediaOwnerProvider<'a> {
             action,
             owner_action,
             self.sequence,
-            self.executor.executor_generation_for(action, owner_action)?,
+            self.executor
+                .executor_generation_for(action, owner_action)?,
             self.capability.clone(),
         )
         .map_err(|error| error.to_string())?;

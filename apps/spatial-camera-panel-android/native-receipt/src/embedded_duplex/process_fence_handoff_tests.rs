@@ -1,5 +1,5 @@
 use super::*;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 fn app_record(run: &str, generation: u64, phase: &str) -> String {
     let body = format!(
         "{APP_RUN_SCHEMA}\n{generation}\n01234567-89ab-cdef-0123-456789abcdef\n{phase}\n-\n-\n{run}\n"
@@ -87,8 +87,8 @@ fn no_media_versions_dispatch_through_production_operational_validator() {
                 }
                 "owner" => wrong["physical_retirement"]["app_process_generation"] = json!(19),
                 "native_owner" => {
-                    wrong["physical_retirement"]["native_retirement"]["native_executor_generation"] =
-                        json!(7)
+                    wrong["physical_retirement"]["native_retirement"]
+                        ["native_executor_generation"] = json!(7)
                 }
                 "barrier" => {
                     wrong["physical_retirement"]["java_renderer_cleanup"] = json!("pending")
@@ -196,15 +196,13 @@ fn cross_run_link() -> (String, String, Value) {
 fn retained_source_run_companion_is_checked_against_exact_unretired_native_owner() {
     let (app, native, link) = cross_run_link();
     let binding = AppBinding::parse(&app).unwrap();
-    assert!(
-        validate_cold_link(
-            &canonical_handoff_json(&link).unwrap(),
-            &binding,
-            &native,
-            6
-        )
-        .is_ok()
-    );
+    assert!(validate_cold_link(
+        &canonical_handoff_json(&link).unwrap(),
+        &binding,
+        &native,
+        6
+    )
+    .is_ok());
     for damage in [
         "source_run",
         "source_generation",
@@ -285,15 +283,13 @@ fn configured_finite_pending_fresh_and_entered_partial_variants_keep_their_disti
         .as_object_mut()
         .unwrap()
         .remove("configuration_binding");
-    assert!(
-        validate_operational_run_handoff(
-            &envelope(finite, &binding).to_string(),
-            &binding,
-            true,
-            6
-        )
-        .is_ok()
-    );
+    assert!(validate_operational_run_handoff(
+        &envelope(finite, &binding).to_string(),
+        &binding,
+        true,
+        6
+    )
+    .is_ok());
     let mut fresh = physical(2);
     let native = &mut fresh["native_retirement"];
     native.as_object_mut().unwrap().remove("native_close");
@@ -333,8 +329,8 @@ fn configured_finite_pending_fresh_and_entered_partial_variants_keep_their_disti
     let h = envelope(partial, &binding);
     assert!(validate_operational_run_handoff(&h.to_string(), &binding, true, 6).is_ok());
     let mut wrong = h.clone();
-    wrong["physical_retirement"]["native_retirement"]["durable_closure"]["native_executor_generation"] =
-        json!(5);
+    wrong["physical_retirement"]["native_retirement"]["durable_closure"]
+        ["native_executor_generation"] = json!(5);
     rehash(&mut wrong);
     assert!(validate_operational_run_handoff(&wrong.to_string(), &binding, true, 6).is_err());
 }
