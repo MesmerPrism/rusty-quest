@@ -33,6 +33,7 @@ $strobeGradle = Read-RequiredText 'apps\spatial-vr-strobe-android\app\build.grad
 $strobeManifest = Read-RequiredText 'apps\spatial-vr-strobe-android\app\src\main\AndroidManifest.xml'
 $strobeActivity = Read-RequiredText 'apps\spatial-vr-strobe-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_vr_strobe\SpatialVrStrobeActivity.kt'
 $cameraBuild = Read-RequiredText 'tools\Build-SpatialCameraPanelAndroid.ps1'
+$componentClosure = Read-RequiredText 'tools\lib\AndroidComponentClosure.psm1'
 $strobeBuild = Read-RequiredText 'tools\Build-SpatialVrStrobeAndroid.ps1'
 
 Require-Text 'settings' $settings 'include\(":app"\)'
@@ -51,8 +52,14 @@ Reject-Text 'Strobe manifest' $strobeManifest 'android\.permission\.CAMERA|HEADS
 Reject-Text 'Camera Activity' $cameraActivity 'VrStrobe|vrStrobe|spatial-vr-strobe|spatial_vr_strobe'
 Reject-Text 'Strobe Activity' $strobeActivity 'SpatialCameraPanel|cameraHwb|privateLayer|SPATIAL_CAMERA'
 Reject-Text 'Camera Gradle' $cameraGradle 'RUSTY_QUEST_SPATIAL_PRODUCT_ID|spatial-vr-strobe'
-Require-Text 'Camera build' $cameraBuild ':app:assemble\$BuildType'
+# Assembly is delegated; the component seam exercises actual task dispatch.
+Require-Text 'Camera component import' $cameraBuild ([regex]::Escape('Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force'))
+Require-Text 'Camera assemble phase' $cameraBuild ([regex]::Escape('$gradleRun = Invoke-SpatialGradlePhase -Phase Assemble -ComponentEvidenceDirectory $androidComponentEvidenceDir'))
+Require-Text 'Camera component dispatch' $cameraBuild ([regex]::Escape('$execution=Invoke-AndroidComponentGradlePhase @phaseArguments -Phase Assemble'))
+Require-Text 'Camera component task' $componentClosure ([regex]::Escape('$task=if($Phase -ceq ''JvmPreflight''){'':app:verifySelectedAndroidJvmCompilation''}else{":app:assemble$BuildType"}'))
+Require-Text 'Camera component task dispatch' $componentClosure ([regex]::Escape('$effectiveArguments=@($selected)+@($Arguments)+@(''--gradle-user-home'',$GradleUserHome,''-p'',$ProjectDirectory,$task)'))
 Reject-Text 'Camera build' $cameraBuild ':strobe-app:assemble'
+Reject-Text 'Camera component task owner' $componentClosure ':strobe-app:assemble'
 Require-Text 'Strobe build' $strobeBuild ':strobe-app:testDebugUnitTest'
 Require-Text 'Strobe build' $strobeBuild ':strobe-app:assembleDebug'
 Reject-Text 'Strobe build' $strobeBuild 'Build-SpatialCameraPanelAndroid\.ps1'

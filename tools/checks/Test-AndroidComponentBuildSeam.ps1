@@ -10,6 +10,7 @@ foreach($name in @('Get-FileSha256','Get-StringSha256','Get-DirectorySha256','Ge
     Invoke-Expression $definition.Extent.Text
 }
 Import-Module (Join-Path $RepoRoot 'tools/lib/AndroidComponentClosure.psm1') -Force
+Import-Module (Join-Path $RepoRoot 'tools/EmbeddedDuplexFreshSetupPolicy.psm1') -Force
 $actualGradlePhaseCommand=(Get-Command Invoke-AndroidComponentGradlePhase).ScriptBlock
 $assignments=@{}
 foreach($node in $ast.FindAll({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst]},$true)){
@@ -35,6 +36,9 @@ try {
     $sourceBankBuildInputs=@{enabled=$false};$NdkVersion='fixture';$RustStdLinkage='Static'
     $resolvedProjectionSurfaceUniformAbiVersion=1;$lockedFinalPresentationEnabled=$false;$resolvedDistortionSpeedScale=1.0
     $EnvironmentDepthOwner='disabled';$embeddedDuplexProductInputs=$null;$EmbeddedDuplexSetupHorizonMs=300000
+    $EmbeddedDuplexLifetimePolicy='finite';$EmbeddedDuplexMediaPolicy='finite';$EmbeddedDuplexFreshSetupPolicy='none'
+    $developmentLifetime=Resolve-EmbeddedDuplexDevelopmentLifetime -Selection $EmbeddedDuplexLifetimePolicy -FiniteHorizonMs $EmbeddedDuplexSetupHorizonMs
+    $freshBuildSelection=Resolve-EmbeddedDuplexFreshSetupBuildSelection -Selection $EmbeddedDuplexFreshSetupPolicy -MediaPolicy $EmbeddedDuplexMediaPolicy -DevelopmentLifetimePolicy $developmentLifetime.policy
     function Observe-NativeIdentity {
         Invoke-Expression $assignments.nativeSourceSha256
         Invoke-Expression $assignments.privateNativeIdentity
@@ -72,6 +76,22 @@ try {
         catch{if($_.Exception.Message -notlike '*component-gradle-arguments*'){throw}}
         if(Test-Path -LiteralPath $sentinel){throw 'Rejected argument still dispatched its child.'}
     }
+    # Actual phase/task composition, modeled transport only: no Gradle or APK.
+    $capturedArguments=Join-Path $scratch 'assemble-arguments.txt'
+    [IO.File]::WriteAllText($fakeGradle,"@echo off`necho %*> `"$capturedArguments`"`nexit /b 0`n")
+    $invocation.ExpectedGradleSha256=Get-FileSha256 $fakeGradle
+    foreach($variant in @('Debug','Release')){
+        $invocation.BuildType=$variant
+        $execution=Invoke-AndroidComponentGradlePhase @invocation -Arguments @('--no-daemon')
+        $expectedTask=":app:assemble$variant"
+        $actualArguments=[IO.File]::ReadAllText($capturedArguments).Trim()
+        if($execution.phase -cne 'Assemble' -or $execution.task -cne $expectedTask -or
+            $actualArguments -notmatch ('(?:^|\s)'+[regex]::Escape($expectedTask)+'$') -or
+            [regex]::Matches($actualArguments,':app:').Count -ne 1){
+            throw 'Actual component phase did not dispatch its one selected assemble task.'
+        }
+    }
+    $invocation.BuildType='Debug'
     $invocation.ExpectedGradleSha256='0'*64
     try{$null=Invoke-AndroidComponentGradlePhase @invocation -Arguments @('--no-daemon');throw 'Changed Gradle executable accepted.'}
     catch{if($_.Exception.Message -notlike '*component-gradle-tool-changed*'){throw}}

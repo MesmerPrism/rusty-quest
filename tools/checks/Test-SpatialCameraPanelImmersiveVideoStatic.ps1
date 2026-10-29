@@ -74,6 +74,7 @@ $stageTool = Read-RequiredText "tools\Stage-SpatialCameraPanelImmersiveVideo.ps1
 $packTool = Read-RequiredText "tools\New-SpatialCameraPanelOfflineMediaPack.ps1"
 $installPackTool = Read-RequiredText "tools\Install-SpatialCameraPanelOfflineMediaPack.ps1"
 $buildTool = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
+$componentClosure = Read-RequiredText "tools\lib\AndroidComponentClosure.psm1"
 $styles = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\res\values\styles.xml"
 
 Assert-Contains "Spatial SDK version catalog" $catalog 'spatialsdk = "0.13.2"'
@@ -445,7 +446,13 @@ Assert-NotContains "Offline pack installer" $installPackTool "kill-server"
 Assert-NotContains "Offline pack installer" $installPackTool "start-server"
 
 Assert-Contains "Spatial Camera Panel build tool" $buildTool '[ValidateSet("Debug", "Release")]'
-Assert-Contains "Spatial Camera Panel build tool" $buildTool '":app:assemble$BuildType"'
+# The component phase owner composes the task; Test-AndroidComponentBuildSeam.ps1
+# exercises its actual Debug/Release task selection with a modeled transport.
+Assert-Contains "Spatial Camera Panel component import" $buildTool 'Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force'
+Assert-Contains "Spatial Camera Panel assemble phase" $buildTool '$gradleRun = Invoke-SpatialGradlePhase -Phase Assemble -ComponentEvidenceDirectory $androidComponentEvidenceDir'
+Assert-Contains "Spatial Camera Panel component dispatch" $buildTool '$execution=Invoke-AndroidComponentGradlePhase @phaseArguments -Phase Assemble'
+Assert-Contains "Android component assemble task" $componentClosure '$task=if($Phase -ceq ''JvmPreflight''){'':app:verifySelectedAndroidJvmCompilation''}else{":app:assemble$BuildType"}'
+Assert-Contains "Android component task dispatch" $componentClosure '$effectiveArguments=@($selected)+@($Arguments)+@(''--gradle-user-home'',$GradleUserHome,''-p'',$ProjectDirectory,$task)'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'spatial_sdk_version = "0.13.2"'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'media3_version = "1.4.1"'
 Assert-Contains "Spatial Camera Panel build tool" $buildTool 'immersive_video_media_packaged = $offlineMediaPackagedAssets'
