@@ -1448,20 +1448,54 @@ final class EmbeddedDuplexProcessHost {
         CompletableFuture<T> result = new CompletableFuture<>();
         final EmbeddedDuplexRunContext capturedRun=runContext;
         commands.execute(EmbeddedDuplexOriginals.carry(() -> {
+            String submitStage = "run_selection";
             try {
                 capturedRun.requireSame(runContext);
+                submitStage = "process_fence";
                 ensureProcessFence();
                 if (EmbeddedDuplexOriginals.hasCurrent()) {
+                    submitStage = "bind_incarnation";
                     processFence.bindIncarnation(EmbeddedDuplexProcessIncarnation.current(
                             android.os.Process.myPid(), android.os.Process.myUid()));
+                    submitStage = "bind_original_actor";
                     EmbeddedDuplexOriginals.bindActualActor(originalActor(), processFence.generation());
                 }
+                submitStage = "command_overlap";
                 if (activeCommandOriginal != null) throw new IllegalStateException("command Original overlap");
                 activeCommandOriginal = EmbeddedDuplexOriginals.capture();
+                submitStage = "action_body";
                 try { result.complete(action.run()); } finally { activeCommandOriginal = null; }
-            } catch (Throwable failure) { result.completeExceptionally(failure); }
+            } catch (Throwable failure) {
+                logSubmitFailure(submitStage, failure);
+                result.completeExceptionally(failure);
+            }
         }));
         return result;
+    }
+    /** Observation only: never inspect Throwable payload or alter its Future outcome. */
+    private void logSubmitFailure(String stage, Throwable failure) {
+        try {
+            String operation = "none", id = "none";
+            EmbeddedDuplexOriginals.Record original = EmbeddedDuplexOriginals.capture();
+            if (original != null) {
+                String selected = original.row.optString("operation", "");
+                operation = java.util.Set.of("bootstrap_real_peer", "pair_session", "fresh_pair_continue", "start",
+                        "prepare_peer_start", "concurrent_arm", "policy_update", "blend_update", "peer_stop",
+                        "peer_revoke", "whole_app_close", "close_no_media", "recover_cold_pending").contains(selected) ? selected : "other";
+                String originalId = original.id();
+                if (originalId != null && originalId.matches("[0-9a-f]{32}")) id = originalId;
+            }
+            String family = failure instanceof IllegalStateException ? "state"
+                    : failure instanceof IllegalArgumentException ? "argument"
+                    : failure instanceof SecurityException ? "security"
+                    : failure instanceof java.io.IOException ? "io"
+                    : failure instanceof InterruptedException ? "interrupted"
+                    : failure instanceof java.util.concurrent.CompletionException ? "completion"
+                    : failure instanceof java.util.concurrent.CancellationException ? "cancelled"
+                    : failure instanceof Error ? "error" : "other";
+            android.util.Log.w("RQSpatialCameraPanel", "channel=embedded-duplex status=failed seam=submit phase="
+                    + phase.get().name() + " stage=" + stage + " operation=" + operation + " original_id=" + id + " error=" + family);
+        } catch (Throwable ignoredDiagnostic) { /* Logging cannot replace the primary failure. */ }
     }
     private static <T> CompletableFuture<T> failed(Throwable failure) {
         CompletableFuture<T> result = new CompletableFuture<>();
