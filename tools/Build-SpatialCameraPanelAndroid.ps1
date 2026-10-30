@@ -15,6 +15,7 @@ param(
     [ValidateSet("DevFast", "Candidate")]
     [string]$BuildMode = "DevFast",
     [switch]$UseSourceCompositionVersionName,
+    [switch]$UseSourceRuntimeStamp,
     [ValidateSet("Static", "Dynamic")]
     [string]$RustStdLinkage = "Static",
     [switch]$AllowNonDeployableDynamicStdBenchmark,
@@ -91,6 +92,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$buildLaneMutex = $null
+$buildLaneMutexOwned = $false
+$buildLaneMutexAbandoned = $false
+$buildLaneMutexWaitMs = 0L
+$apkInspectionCopy = $null
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
+$sourceRuntimeStampEnabled=Resolve-SpatialSourceRuntimeStampSelection -Requested:$UseSourceRuntimeStamp -SourceVersionEnabled:$UseSourceCompositionVersionName -BuildMode $BuildMode -BuildType $BuildType -PublicationBuild:$PublicationBuild
 $spatialPrerequisitesModule = Import-Module (Join-Path $PSScriptRoot "lib/SpatialCameraPanelBuildPrerequisites.psm1") -PassThru
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -Force
@@ -103,11 +111,6 @@ if ($null -ne $selectedEmbeddedDuplexMediaPolicy -and [string]::IsNullOrWhiteSpa
 
 $SharedSpatialSignerSha256 = "722f1f3dcb921918d2e02f39f1b1bd8f9ff2812e07757c5fc665f6b8f7ee32a8"
 $SharedSpatialAppId = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
-$buildLaneMutex = $null
-$buildLaneMutexOwned = $false
-$buildLaneMutexAbandoned = $false
-$buildLaneMutexWaitMs = 0L
-$apkInspectionCopy = $null
 
 trap {
     $caughtBuildError = $_
@@ -1342,9 +1345,7 @@ $embeddedMediaBuildInputs = [ordered]@{
 }
 $embeddedMediaBuildInputsJson = $embeddedMediaBuildInputs | ConvertTo-Json -Depth 12
 $embeddedMediaBuildInputsSha256 = Get-StringSha256 -Value $embeddedMediaBuildInputsJson
-Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
 $sourceVersionMetadata=New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) -Enabled:$UseSourceCompositionVersionName
-$sourceRuntimeStampEnabled=[bool]($UseSourceCompositionVersionName -and $BuildMode -eq 'DevFast' -and $buildTypeLower -ceq 'debug' -and -not $PublicationBuild)
 if($sourceRuntimeStampEnabled){$sourceVersionMetadata['runtime_stamp_mode']='java-resource-nonconstant-v1'}
 $buildInputDescriptor = [ordered]@{
     android_components = $androidComponentInputs

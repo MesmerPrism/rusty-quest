@@ -1,5 +1,12 @@
 Set-StrictMode -Version Latest
 
+function Resolve-SpatialSourceRuntimeStampSelection {
+    param([bool]$Requested,[bool]$SourceVersionEnabled,[string]$BuildMode,[string]$BuildType,[bool]$PublicationBuild)
+    if(-not$Requested){return $false}
+    if(-not$SourceVersionEnabled-or$BuildMode-ne'DevFast'-or$BuildType-ne'Debug'-or$PublicationBuild){throw 'UseSourceRuntimeStamp requires source-composition version naming, DevFast debug and non-publication.'}
+    return $true
+}
+
 function New-SpatialSourceVersionMetadata {
     param([Parameter(Mandatory)][string]$SourceCompositionFingerprint,[switch]$Enabled)
     if($SourceCompositionFingerprint-cnotmatch'^[a-f0-9]{64}\z'){throw 'Exact resolved source composition fingerprint required'}
@@ -50,4 +57,4 @@ function Assert-SpatialSourceVersionResource {
         } finally {$archive.Dispose()}
     } finally {$stream.Dispose()}
 }
-Export-ModuleMember -Function New-SpatialSourceVersionMetadata,Assert-SpatialSourceVersionBadging,Assert-SpatialSourceVersionResource
+Export-ModuleMember -Function New-SpatialSourceVersionMetadata,Assert-SpatialSourceVersionBadging,Assert-SpatialSourceVersionResource,Resolve-SpatialSourceRuntimeStampSelection

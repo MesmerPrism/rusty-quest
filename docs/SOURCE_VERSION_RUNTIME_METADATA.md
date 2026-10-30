@@ -5,10 +5,13 @@ It is not product, Android class-loader or performance qualification. The full
 composition fingerprint, source locks, installed `0.1.0+src.<64hex>` versionName,
 badging assertion, APK digest and runtime admission retain their meanings.
 
-The public producer selects `rqDeveloperSourceRuntimeStamp=true` only for
-opted-in source-version stamping in non-publication DevFast debug. It passes
-explicit false otherwise. Default, release and publication paths retain
-ordinary literal version fields and no experiment Java resource. Other
+The public producer selects `rqDeveloperSourceRuntimeStamp=true` only with the
+separate, default-off `-UseSourceRuntimeStamp` switch. It requires
+`-UseSourceCompositionVersionName`, DevFast debug and non-publication; other
+requested combinations fail before build preparation. Source-version stamping
+alone retains its existing literal field. The producer always passes explicit
+true or false, overriding ambient Gradle selection. Default, release and
+publication paths retain ordinary literal version fields and no experiment Java resource. Other
 BuildConfig policy, enrollment, product and default fields remain unchanged.
 
 Supported AGP variant APIs carry a lazy fingerprint Provider into output
