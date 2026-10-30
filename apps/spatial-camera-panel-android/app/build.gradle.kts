@@ -310,8 +310,19 @@ fun sourceCompositionVersionName(fingerprint: String?): String {
   }
   return "0.1.0+src.$fingerprint"
 }
-val spatialSourceVersionName = sourceCompositionVersionName(
+val spatialSourceRuntimeStamp = providers.gradleProperty("rqDeveloperSourceRuntimeStamp")
+  .orElse("false").get().toBooleanStrict()
+val spatialSourceVersionName = if (spatialSourceRuntimeStamp) "0.1.0" else sourceCompositionVersionName(
   providers.gradleProperty("rqDeveloperSourceCompositionFingerprint").orNull)
+if (spatialSourceRuntimeStamp) {
+  androidComponents.onVariants(androidComponents.selector().withBuildType("debug")) { variant ->
+    requireNotNull(variant.buildConfigFields).put("VERSION_NAME", com.android.build.api.variant.BuildConfigField(
+      "String",
+      "io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialSourceVersion.read(BuildConfig.class.getClassLoader())",
+      "Exact packaged source version; deliberately not a compile-time constant.",
+    ))
+  }
+}
 
 android {
   namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
@@ -584,6 +595,8 @@ android {
   }
   kotlinOptions { jvmTarget = "17" }
 }
+
+apply(from = rootProject.file("../../tools/gradle/spatial-source-version.gradle"))
 
 val embeddedMediaBuildDir = providers.gradleProperty("mediaBuildDir").orNull
   ?.let { file(it) }

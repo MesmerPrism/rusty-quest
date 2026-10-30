@@ -87,7 +87,7 @@ function Assert-AndroidComponentGradleArguments {
     $paired=@('--project-cache-dir','--init-script')
     $properties=@('kotlin.project.persistent.dir','kotlin.project.persistent.dir.gradle.disableWrite',
         'android.aapt2FromMavenOverride','rqCmakeStagingDirectory','androidJar','mediaBuildDir',
-        'rqSourceBanksForeignOwnership','rqDeveloperSourceCompositionFingerprint','kotlin.compiler.execution.strategy')
+        'rqSourceBanksForeignOwnership','rqDeveloperSourceCompositionFingerprint','rqDeveloperSourceRuntimeStamp','kotlin.compiler.execution.strategy')
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     for($index=0;$index -lt $Arguments.Count;$index++){
         $argument=[string]$Arguments[$index]

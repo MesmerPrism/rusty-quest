@@ -1344,6 +1344,8 @@ $embeddedMediaBuildInputsJson = $embeddedMediaBuildInputs | ConvertTo-Json -Dept
 $embeddedMediaBuildInputsSha256 = Get-StringSha256 -Value $embeddedMediaBuildInputsJson
 Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
 $sourceVersionMetadata=New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) -Enabled:$UseSourceCompositionVersionName
+$sourceRuntimeStampEnabled=[bool]($UseSourceCompositionVersionName -and $BuildMode -eq 'DevFast' -and $buildTypeLower -ceq 'debug' -and -not $PublicationBuild)
+if($sourceRuntimeStampEnabled){$sourceVersionMetadata['runtime_stamp_mode']='java-resource-nonconstant-v1'}
 $buildInputDescriptor = [ordered]@{
     android_components = $androidComponentInputs
     embedded_duplex_development_lifetime_policy = $developmentLifetime.policy
@@ -1482,6 +1484,7 @@ $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | Conver
 
 $shellIdentityInputs = [ordered]@{
     component_observer = Join-Path $PSScriptRoot 'gradle/android-component-closure.gradle'
+    source_version_packaging = Join-Path $PSScriptRoot 'gradle/spatial-source-version.gradle'
     settings_gradle = Join-Path $appRoot "settings.gradle.kts"
     root_build_gradle = Join-Path $appRoot "build.gradle.kts"
     version_catalog = Join-Path $appRoot "gradle\libs.versions.toml"
@@ -1873,7 +1876,7 @@ function Invoke-SpatialGradlePhase {
         )
         # Explicit empty default prevents ambient Gradle properties from choosing metadata.
         $versionProperty=if($UseSourceCompositionVersionName){$sourceVersionMetadata.source_composition_fingerprint}else{''}
-        $gradleArguments=@("-PrqDeveloperSourceCompositionFingerprint=$versionProperty")+$gradleArguments
+        $gradleArguments=@("-PrqDeveloperSourceCompositionFingerprint=$versionProperty","-PrqDeveloperSourceRuntimeStamp=$($sourceRuntimeStampEnabled.ToString().ToLowerInvariant())")+$gradleArguments
         if ($BuildMode -eq "Candidate") {
             $gradleArguments = @("--init-script", $gradleTimingInitPath) + $gradleArguments
         }
@@ -2504,6 +2507,8 @@ $badging = @(& $shortAapt2 "dump" "badging" $apkInspectionPath 2>&1)
 if ($LASTEXITCODE -ne 0) { throw "Produced APK failed AAPT2 badging inspection." }
 $badgingText = $badging -join "`n"
 $observedSourceVersion=Assert-SpatialSourceVersionBadging -BadgingText $badgingText -PackageName $resolvedAppId -Metadata $sourceVersionMetadata
+$observedRuntimeStamp=Assert-SpatialSourceVersionResource -ApkPath $apkInspectionPath -Metadata $sourceVersionMetadata -RuntimeStampEnabled:$sourceRuntimeStampEnabled
+if($sourceRuntimeStampEnabled){$observedSourceVersion['runtime_stamp']=$observedRuntimeStamp}
 if ($badgingText -notmatch ("package:\s+name='" + [regex]::Escape($resolvedAppId) + "'") -or
     $badgingText -notmatch "sdkVersion:'34'" -or
     $badgingText -notmatch "targetSdkVersion:'34'" -or
