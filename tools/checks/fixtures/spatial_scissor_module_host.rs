@@ -73,6 +73,24 @@ fn selection_metadata_retires_without_unloading_resident_code() {
  assert!(h.project(1920,1080,[0.,0.,1.,1.]).is_some());
 }
 #[test]
+fn held_reader_does_not_accumulate_metadata_across_static_and_retained_selections() {
+ let files=images();let h=Adapter::new();let profile="a".repeat(64);
+ h.activate(&files[0].path,&files[0].sha,1,false,&profile).unwrap();
+ let before=h.snapshot();
+ h.test_with_held_selection(||{
+  for n in 0..4000 {
+   if n%2==0 {h.disable(&profile).unwrap();assert!(h.project(1920,1080,[0.,0.,1.,1.]).is_none());}
+   else {h.select_retained(1,&profile).unwrap();assert!(h.project(1920,1080,[0.,0.,1.,1.]).is_some());}
+   let state=h.snapshot();assert_eq!(state.revision,before.revision+n+1);
+   if n%2==1 {let computed=state.last.unwrap();assert_eq!(computed.generation,state.generation);assert_eq!(computed.revision,state.revision);}
+   assert!(h.test_live_records()<=2,"paused reader retained unrelated selection records: {}",h.test_live_records());
+  }
+ });
+ h.select_retained(1,&profile).unwrap();assert_eq!(h.test_live_records(),1,"released reader safely reclaimed on next publication");
+ assert_eq!(h.snapshot().retained,1,"metadata reclamation never unloads code");
+ assert!(h.project(1920,1080,[0.,0.,1.,1.]).is_some());
+}
+#[test]
 fn concurrent_renderer_reads_and_selection_keep_a_coherent_actual_result() {
  use std::sync::{Arc,Barrier};
  let files=images();let h=Arc::new(Adapter::new());let profile="a".repeat(64);

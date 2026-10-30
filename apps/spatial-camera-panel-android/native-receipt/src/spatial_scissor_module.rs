@@ -16,6 +16,7 @@ const CONTRACT: u64 = 0x5251534349535331;
 const MAX_IMAGE: u64 = 4 * 1024 * 1024;
 const MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ATTEMPTS: u64 = 64;
+const READ_SLOTS: usize = 64;
 const PENDING: u8 = 0;
 const CANCELLED: u8 = 1;
 const PUBLISHED: u8 = 2;
@@ -165,7 +166,7 @@ impl Snapshot {
 pub(crate) struct Adapter {
     control: Mutex<Control>,
     active: AtomicPtr<Selected>,
-    readers: AtomicU64,
+    readers: [SelectionSlot; READ_SLOTS],
     busy: AtomicBool,
     calls: AtomicU64,
     retained: AtomicU64,
@@ -176,21 +177,28 @@ pub(crate) struct Adapter {
     #[cfg(test)]
     live_records: Arc<AtomicU64>,
 }
+struct SelectionSlot {
+    claimed: AtomicBool,
+    pointer: AtomicPtr<Selected>,
+}
 struct SelectionRead<'a> {
-    owner: &'a Adapter,
+    slot: &'a SelectionSlot,
     pointer: *mut Selected,
 }
 impl std::ops::Deref for SelectionRead<'_> {
     type Target = Selected;
     fn deref(&self) -> &Selected {
-        // current/retired Arcs keep this immutable record alive until every SC reader
-        // leaves. The record is never exposed to module code or retained by a caller.
+        // This slot's SC hazard protects the revalidated immutable record. The
+        // record is never exposed to module code or retained by a caller.
         unsafe { &*self.pointer }
     }
 }
 impl Drop for SelectionRead<'_> {
     fn drop(&mut self) {
-        self.owner.readers.fetch_sub(1, Ordering::SeqCst);
+        self.slot
+            .pointer
+            .store(std::ptr::null_mut(), Ordering::SeqCst);
+        self.slot.claimed.store(false, Ordering::Release);
     }
 }
 impl Adapter {
@@ -198,7 +206,10 @@ impl Adapter {
         Self {
             control: Mutex::new(Control::default()),
             active: AtomicPtr::new(std::ptr::null_mut()),
-            readers: AtomicU64::new(0),
+            readers: std::array::from_fn(|_| SelectionSlot {
+                claimed: AtomicBool::new(false),
+                pointer: AtomicPtr::new(std::ptr::null_mut()),
+            }),
             busy: AtomicBool::new(false),
             calls: AtomicU64::new(0),
             retained: AtomicU64::new(0),
@@ -222,20 +233,56 @@ impl Adapter {
     pub fn test_live_records(&self) -> u64 {
         self.live_records.load(Ordering::SeqCst)
     }
+    #[cfg(test)]
+    pub fn test_with_held_selection(&self, body: impl FnOnce()) {
+        let held = self.selected().unwrap();
+        let before = (
+            held.generation,
+            held.revision,
+            held.profile.clone(),
+            held.artifact.clone(),
+        );
+        body();
+        assert_eq!(
+            (
+                held.generation,
+                held.revision,
+                held.profile.clone(),
+                held.artifact.clone()
+            ),
+            before
+        );
+    }
     fn selected(&self) -> Option<SelectionRead<'_>> {
         if self.active.load(Ordering::SeqCst).is_null() {
             return None;
         }
-        self.readers.fetch_add(1, Ordering::SeqCst);
-        let p = self.active.load(Ordering::SeqCst);
-        if p.is_null() {
-            self.readers.fetch_sub(1, Ordering::SeqCst);
-            None
-        } else {
-            Some(SelectionRead {
-                owner: self,
-                pointer: p,
-            })
+        // Fixed capacity, no registration/allocation, mutex or waiting for another
+        // reader. Exhaustion uses the existing compiled fallback for this call.
+        let slot = self.readers.iter().find(|slot| {
+            slot.claimed
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        })?;
+        let mut held = SelectionRead {
+            slot,
+            pointer: std::ptr::null_mut(),
+        };
+        loop {
+            let pointer = self.active.load(Ordering::SeqCst);
+            if pointer.is_null() {
+                return None;
+            }
+            slot.pointer.store(pointer, Ordering::SeqCst);
+            let observed = self.active.load(Ordering::SeqCst);
+            if pointer == observed {
+                // Use the second load's provenance as well as its address, including
+                // when the allocator has reused a previously reclaimed address.
+                held.pointer = observed;
+                return Some(held);
+            }
+            // No dereference before validation. A concurrent publication may have
+            // reclaimed the first pointer; retry using its new active record.
         }
     }
     pub fn begin(&self) -> Result<u64, &'static str> {
@@ -321,12 +368,20 @@ impl Adapter {
         if let Some(previous) = previous {
             c.retired.push(previous);
         }
-        // SC reader entry precedes its pointer read. After this publication,
-        // zero readers means no old pointer can still be borrowed; later readers
-        // see this or a newer pointer. Only Rust metadata is reclaimed, never code.
-        if self.readers.load(Ordering::SeqCst) == 0 {
-            c.retired.clear();
-        }
+        // A reader publishes its SC hazard before revalidating active. Either this
+        // scan sees that hazard, or revalidation sees this publication and cannot
+        // dereference the retired record. The control mutex prevents another active
+        // publication during this scan. Capture each slot exactly once: a reader may
+        // move its hazard while the scan runs, but this fixed snapshot has at most
+        // READ_SLOTS pointers. Only metadata is reclaimed; code remains resident.
+        let protected = self
+            .readers
+            .each_ref()
+            .map(|slot| slot.pointer.load(Ordering::SeqCst));
+        c.retired.retain(|record| {
+            let pointer = Arc::as_ptr(record) as *mut Selected;
+            protected.contains(&pointer)
+        });
         c.revision = revision;
         Ok(())
     }
@@ -638,7 +693,10 @@ impl Adapter {
             busy: self.busy.load(Ordering::Acquire),
             ..Snapshot::default()
         };
-        if let Some(s) = self.selected() {
+        // Snapshot readers own an Arc rather than occupying a frame hazard slot.
+        // Release the control mutex before allocating/copying any receipt fields.
+        let selected = self.control.lock().ok().and_then(|c| c.current.clone());
+        if let Some(s) = selected {
             result.generation = s.generation;
             result.revision = s.revision;
             result.profile = s.profile.clone();

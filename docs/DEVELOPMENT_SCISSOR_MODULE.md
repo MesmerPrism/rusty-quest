@@ -60,7 +60,15 @@ preserve the previous selection. Every successfully opened image stays resident
 until process exit, including rejected or cancelled candidates. There is no
 `dlclose`/`FreeLibrary`. Admission is bounded to 64 load attempts and 64 MiB of
 charged image bytes per process. These limits apply only to this optional
-adapter. Rust selection metadata retires after its readers leave.
+adapter. Metadata publication retains only records announced in 64 fixed frame
+hazard slots: at most 64 retired records and one current record survive a
+publication, independent of the number of selections. A paused reader retains
+its own record, not every intervening selection. Unprotected records retire on
+the next publication. An in-flight snapshot owns its current record separately
+and releases the control mutex before copying receipt fields. Snapshots never
+occupy frame slots. If all 64 frame read sections are occupied, that call uses
+the compiled fallback without waiting for a reader. Pointer revalidation may
+retry under concurrent publication; this is not a hard wait-free guarantee.
 
 The exact future's cancellation and native pointer publication share one
 linearization point. Cancellation before publication prevents later publication,
