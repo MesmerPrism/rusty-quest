@@ -538,13 +538,7 @@ android {
       }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR").orNull
         ?.takeIf { it.isNotBlank() }
-        ?.let {
-          java.srcDir(it)
-          // Resident observation API/loader only; implementation payloads stay external.
-          java.srcDir(rootProject.file("../../android/development-feedback/src/main/java"))
-          java.srcDir(rootProject.file("../../android/development-feedback/src/android/java"))
-          java.exclude("org/rusty/quest/feedback/NativeFeedbackBridge.java")
-        }
+        ?.let { java.srcDir(it) }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { assets.srcDir(it) }
@@ -662,6 +656,28 @@ spatial {
   allowUsageDataCollection.set(false)
   shaders {
     sources.add(project.layout.projectDirectory.dir("src/shaders"))
+  }
+}
+
+// Resident API/loader files only. AndroidSourceDirectorySet has no exclusion API;
+// attach the exact same seven files to the actual Kotlin and Java compiler tasks.
+if (providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR").orNull
+    ?.isNotBlank() == true) {
+  val feedbackRoot = rootProject.file("../../android/development-feedback/src")
+  val feedbackSources = files(listOf(
+    "main/java/org/rusty/quest/feedback/api/FeedbackModule.java",
+    "main/java/org/rusty/quest/feedback/ArtifactStore.java",
+    "main/java/org/rusty/quest/feedback/DexDefinitions.java",
+    "main/java/org/rusty/quest/feedback/GenerationLoader.java",
+    "main/java/org/rusty/quest/feedback/ModuleHost.java",
+    "main/java/org/rusty/quest/feedback/ConnectionObservationController.java",
+    "android/java/org/rusty/quest/feedback/AndroidDexLoader.java",
+  ).map { feedbackRoot.resolve(it) })
+  tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {
+    source(feedbackSources)
+  }
+  tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    source(feedbackSources)
   }
 }
 
