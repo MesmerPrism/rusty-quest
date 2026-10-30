@@ -31,6 +31,8 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
     val request=try { EmbeddedDuplexOperatorContract.parseCall(method,argument,snapshot) } catch(_:Exception){closed()}
     val app=requireNotNull(context).applicationContext
     return try {
+      if(request.route == EmbeddedDuplexOperatorContract.Route.CACHED_EFFECTIVE_INPUTS)
+        return cachedEffectiveInputs(request)
       if(request.route == EmbeddedDuplexOperatorContract.Route.BOOTSTRAP_ADMISSION_STATUS) {
         val receipt=EmbeddedDuplexRuntimeService.bootstrapReadiness(app,request.runId).get(10,TimeUnit.SECONDS)
         return Bundle().apply {
@@ -172,7 +174,7 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         }
       }
       when (request.route) {
-        EmbeddedDuplexOperatorContract.Route.NEW_RUN, EmbeddedDuplexOperatorContract.Route.RESUME_RUN, EmbeddedDuplexOperatorContract.Route.RUN_STATUS,
+        EmbeddedDuplexOperatorContract.Route.CACHED_EFFECTIVE_INPUTS, EmbeddedDuplexOperatorContract.Route.NEW_RUN, EmbeddedDuplexOperatorContract.Route.RESUME_RUN, EmbeddedDuplexOperatorContract.Route.RUN_STATUS,
         EmbeddedDuplexOperatorContract.Route.RECOVER_COLD_PENDING,
         EmbeddedDuplexOperatorContract.Route.FRESH_PAIR_CONTINUE, EmbeddedDuplexOperatorContract.Route.PREPARE_PEER_START,
         EmbeddedDuplexOperatorContract.Route.PREPARED_PEER_START_STATUS, EmbeddedDuplexOperatorContract.Route.REESTABLISH_PEER_ROOTS,
@@ -316,6 +318,17 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         }
       }
     } catch (_: Exception) { closed() }
+  }
+
+  private fun cachedEffectiveInputs(request: EmbeddedDuplexOperatorContract.Request): Bundle {
+    val actor=requireNotNull(request.cachedInputActor)
+    val receipt=EmbeddedDuplexRuntimeService.cachedEffectiveInputs(request.challenge,requireNotNull(request.runId),
+        actor.pid,actor.uid,actor.startTicks,actor.bootId)
+    return Bundle().apply {
+      putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA)
+      putString("status","observed");putString("challenge",request.challenge);putString("run_id",request.runId)
+      putString("receipt_base64",android.util.Base64.encodeToString(receipt.toByteArray(Charsets.UTF_8),android.util.Base64.NO_WRAP))
+    }
   }
 
   /** Caller UID and the closed typed request were checked on Binder ingress.

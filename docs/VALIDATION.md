@@ -1,5 +1,12 @@
 # Rusty Quest Validation
 
+The cached effective-input debug read has a focused offline gate:
+`python tools/checks/Test-CachedEffectiveInputsHost.py --output target/cached-input-read --java-home <jdk17> --stdlib <kotlin-stdlib.jar> --json-jar <json.jar> --compiler-classpath <retained-kotlin-compiler-jars>`.
+It exercises the exact cache/run join, sanitized readback, parser/provider
+bridge and one-shot caller with modeled Android/process leaves; no device,
+APK, enrollment or socket behavior is attested. See
+[the read contract](CACHED_EFFECTIVE_INPUTS.md).
+
 The default-off JVM/native compilation overlap has two focused process gates:
 `pwsh -NoProfile -File tools/checks/Test-SpatialCompilationOverlapHost.ps1 -OutputRoot <fresh-output>`
 and `pwsh -NoProfile -File tools/checks/Test-SpatialCompilationOverlapSeam.ps1 -OutputRoot <fresh-output>`.

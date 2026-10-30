@@ -49,6 +49,20 @@ final class EmbeddedDuplexProcessHost {
                 effectiveInputOwner.observation(), effectiveInputRunContext);
     }
 
+    /** Pure peek: no forApplication, selector, Native call, disk store or command submission. */
+    static EmbeddedDuplexCachedInputs.Snapshot cachedEffectiveInputs(String expectedRunId) {
+        EmbeddedDuplexProcessHost current=instance;
+        if(current==null)return new EmbeddedDuplexCachedInputs.Snapshot(null,0,null);
+        EmbeddedDuplexRunContext run=current.runContext;
+        if(run==null || !java.util.Objects.equals(expectedRunId,run.runId))
+            throw new IllegalStateException("cached_input_selected_run_differs");
+        EmbeddedDuplexEffectiveInputOwner.Observation snapshot=current.effectiveInputObservationSnapshot;
+        String payload=snapshot==null?null:snapshot.forRun(run);
+        if(current!=instance || run!=current.runContext || snapshot!=current.effectiveInputObservationSnapshot)
+            throw new IllegalStateException("cached_input_observation_changed");
+        return new EmbeddedDuplexCachedInputs.Snapshot(run.runId,run.selectionGeneration,payload);
+    }
+
     private void releaseEffectiveInputsAfterVerifiedCleanup() {
         effectiveInputObservationSnapshot = null;
         effectiveInputOwner.releaseAfterVerifiedCleanup();

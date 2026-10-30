@@ -20,6 +20,8 @@ internal object EmbeddedDuplexOperatorContract {
   const val METHOD_REVIEW_POLICY_UPDATE = "review_policy_update"
   const val METHOD_CONFIRM = "confirm"
   const val METHOD_RUNTIME_STATUS = "runtime_status"
+  const val METHOD_CACHED_EFFECTIVE_INPUTS = "cached_effective_inputs"
+  data class CachedInputActor(val pid: Int, val uid: Int, val startTicks: String, val bootId: String)
   const val METHOD_OWNER_FAILURE_DIAGNOSTIC = "owner_failure_diagnostic"
   const val METHOD_OWN_CAPTURE_DIAGNOSTIC = "own_capture_diagnostic"
   const val METHOD_STREAM_DROPOUT_DIAGNOSTIC = "stream_dropout_diagnostic"
@@ -53,7 +55,7 @@ internal object EmbeddedDuplexOperatorContract {
   private val reviewKeys = setOf(KEY_ROLE, KEY_REMOTE_KEY, KEY_RUNTIME_HOST,
       KEY_TRUSTED_OPERATOR, KEY_ADAPTER, KEY_MEDIA_REVOKER, KEY_ADMISSION_AUTHORITY, KEY_TTL)
 
-  enum class Route { NEW_RUN, RESUME_RUN, RUN_STATUS, RECOVER_COLD_PENDING, STATUS, REVIEW, REVIEW_POLICY_UPDATE, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER, BOOTSTRAP_ADMISSION_STATUS,
+  enum class Route { CACHED_EFFECTIVE_INPUTS, NEW_RUN, RESUME_RUN, RUN_STATUS, RECOVER_COLD_PENDING, STATUS, REVIEW, REVIEW_POLICY_UPDATE, CONFIRM, RUNTIME_STATUS, BOOTSTRAP_REAL_PEER, BOOTSTRAP_ADMISSION_STATUS,
     CLOSE_NO_MEDIA, PAIR_STATUS, PAIR_SESSION, START_PREFLIGHT, CONCURRENT_ARM, CONCURRENT_STATUS, OWNER_FAILURE_DIAGNOSTIC, OWN_CAPTURE_DIAGNOSTIC, STREAM_DROPOUT_DIAGNOSTIC, POLICY_READ, POLICY_UPDATE, BLEND_READ, BLEND_UPDATE, START, ORDINARY_START, RENEW_AUTHORITY, PEER_STOP, PEER_REVOKE, PEER_STATUS, WHOLE_APP_CLOSE, OPERATION_QUERY, OPERATION_ACK,
     FRESH_PAIR_CONTINUE, PREPARE_PEER_START, PREPARED_PEER_START_STATUS, REESTABLISH_PEER_ROOTS, PEER_ROOT_STATUS,
     OPERATION_STOP, OPERATION_JOIN_STATUS, OPERATION_CONTINUATION_STATUS, OPERATION_CONTINUATION_HANDOFF, PAIR_SETUP_RECOVERY_STATUS }
@@ -76,6 +78,7 @@ internal object EmbeddedDuplexOperatorContract {
       val legacyWholeOriginalId: String? = null,
       val priorRunId: String? = null,
       val guard: Guard? = null,
+      val cachedInputActor: CachedInputActor? = null,
   )
 
   /** Typed output of the actual source-owned metadata review; it grants no authority. */
@@ -95,6 +98,19 @@ internal object EmbeddedDuplexOperatorContract {
 
   internal fun parseFields(method: String, argument: String?, fields: Map<String, Any?>): Request {
     require(argument != null && nonce.matches(argument)) { "operator-challenge-invalid" }
+    if (method == METHOD_CACHED_EFFECTIVE_INPUTS) {
+      require(fields.keys == setOf(KEY_RUN_ID, "expected_pid", "expected_uid", "expected_start_ticks", "expected_boot_id")) { "operator-fields-invalid" }
+      val run = fields[KEY_RUN_ID] as? String
+      val pid = fields["expected_pid"] as? Int
+      val uid = fields["expected_uid"] as? Int
+      val ticks = fields["expected_start_ticks"] as? String
+      val boot = fields["expected_boot_id"] as? String
+      require(run != null && nonce.matches(run) && pid != null && pid > 0 && uid != null && uid >= 0 &&
+          ticks != null && Regex("[1-9][0-9]{0,19}").matches(ticks) && boot != null &&
+          Regex("[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}").matches(boot)) { "operator-cached-input-actor-invalid" }
+      return Request(Route.CACHED_EFFECTIVE_INPUTS, argument, runId=run,
+          cachedInputActor=CachedInputActor(pid,uid,ticks,boot))
+    }
     if (method.startsWith("guarded_")) {
       val logical = method.removePrefix("guarded_")
       require(logical in guardedMethods && fields.keys.containsAll(guardKeys)) { "operator-guarded-route-invalid" }
@@ -231,7 +247,7 @@ internal object EmbeddedDuplexOperatorContract {
       else -> throw IllegalArgumentException("operator-method-invalid")
     }
     val expected = when (route) {
-      Route.NEW_RUN, Route.RESUME_RUN, Route.RUN_STATUS, Route.RECOVER_COLD_PENDING, Route.FRESH_PAIR_CONTINUE, Route.PREPARE_PEER_START, Route.PREPARED_PEER_START_STATUS,
+      Route.CACHED_EFFECTIVE_INPUTS, Route.NEW_RUN, Route.RESUME_RUN, Route.RUN_STATUS, Route.RECOVER_COLD_PENDING, Route.FRESH_PAIR_CONTINUE, Route.PREPARE_PEER_START, Route.PREPARED_PEER_START_STATUS,
       Route.REESTABLISH_PEER_ROOTS, Route.PEER_ROOT_STATUS, Route.OPERATION_STOP, Route.OPERATION_JOIN_STATUS,
       Route.OPERATION_CONTINUATION_STATUS, Route.OPERATION_CONTINUATION_HANDOFF, Route.PAIR_SETUP_RECOVERY_STATUS,
       Route.OPERATION_QUERY, Route.OPERATION_ACK, Route.ORDINARY_START -> throw IllegalArgumentException("operator-original-route-invalid")
