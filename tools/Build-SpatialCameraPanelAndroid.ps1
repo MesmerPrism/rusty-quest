@@ -1883,6 +1883,7 @@ function Invoke-SpatialGradlePhase {
             Arguments=$gradleArguments;InventoryPath=$androidComponentInventoryPath;
             ExpectedInventorySha256=$(if($null -eq $androidComponentSelection){''}else{[string]$androidComponentSelection.sha256});
             EvidenceDirectory=$ComponentEvidenceDirectory;PythonPath=$PythonPath}
+        if($androidComponentInventoryPath){$phaseArguments.WorkingEvidenceDirectory=Join-Path $cacheLaneRoot ("android-components\{0}" -f $Phase.ToLowerInvariant())}
         if($Phase -ceq 'JvmPreflight'){
             $compilation=Invoke-AndroidComponentJvmCompilation @phaseArguments
             $summary=[ordered]@{status=$compilation.status;scope=$compilation.scope;runtime_authority=$false;
