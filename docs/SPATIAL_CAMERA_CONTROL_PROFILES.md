@@ -351,7 +351,8 @@ The hotloader is disabled on a normal launch. Explicit diagnostic runs enable
 before launching the app; only then does the app watch this app-specific
 external-files location:
 
-`control-profiles/active.profile.json`
+`control-profiles/active.profile.json` and the optional module-only
+`control-profiles/active.modules.json` described below.
 
 The absolute device path is normally:
 
@@ -403,6 +404,91 @@ matching application receipt is a failure.
 The current helper is an ADB fallback for manual development. File Manager or
 Manifold can later publish the same Quest-owned file contract without changing
 the app-side parser.
+
+## Module-only development delivery
+
+The same opt-in watcher accepts a separate, closed envelope at the fixed
+`control-profiles/active.modules.json` path. This route requires the existing
+hotload property before a fresh Activity `onCreate` arms that watcher. Enabling
+the property on an already running Activity does not arm it. Existing files
+are snapshotted without replay on arm. This adds no provider, worker, SDK
+generation or runtime readiness transition.
+
+```json
+{
+  "schema": "rusty.quest.spatial_camera_panel.development_modules.v1",
+  "profile_id": "module-status",
+  "revision": 1,
+  "development_observation_module": {"mode": "status"},
+  "development_scissor_module": {"mode": "status"}
+}
+```
+
+Only these five root fields are allowed. The id uses the control profile id
+syntax; revision is a nonnegative signed JSON integer. At least one directive
+is required. Both directives reuse the existing closed mode/generation/hash/
+policy parser. Duplicate keys, null directives, unsupported fields and files
+over 64 KiB fail before dispatch. Visual controls, desktop preview and network
+endpoints cannot be included, applied or deferred through this envelope.
+Module delivery calls the existing optional private extension and consumer
+owners even when the visual native lifecycle is unavailable. Omitted consumers
+receive no command. Existing owner queue bounds, pending work, retained images,
+rollback and cancellation remain authoritative.
+
+Arbitration is per consumer and independent of file event order. If the legacy
+full profile contains that consumer's directive, a new module-only directive
+for it is rejected. A new legacy directive is likewise retired if the
+module-only file contains a directive for that consumer. A malformed or
+unreadable competing file blocks module dispatch conservatively. All affected
+requests retain the prior selection; no source wins by mtime or event order.
+Removing a competing file does not replay a rejected or retired publication.
+Resolve the competing content and publish a fresh file generation explicitly.
+Consumers without a competing directive can still dispatch independently.
+Legacy visual controls keep their full parsing/context validation and native
+visual readiness gate. A retired legacy module directive never replays when
+its pending visual controls later become eligible. Startup endpoint capture
+still reads only the full profile before enrollment; this file is not an
+endpoint input.
+
+`module-watch-receipt.json` identifies the armed watcher UUID, process PID and
+process start ticks. Activity shutdown marks it retired. Each existing fixed
+`last-development-{observation,scissor}-module-receipt.json` also binds that
+identity, consumer, raw SHA-256, id, revision, mode, source file and observed
+publication length/mtime. `watched` means dispatched with a pending future;
+`observed` / `consumer_readback` carries the actual nested consumer receipt.
+Only that nested receipt proves acceptance or rejection. Scissor use requires
+the consumer's actual computed generation **and** selection revision; a
+successful transport, accepted selection, status request or zero renderer
+calls proves no use. Shutdown writes `retired` for pending receipt futures and
+suppresses their late completions. Receipts never manufacture acceptance or
+renderer activity. `last-modules-apply-receipt.json` is transport diagnostics,
+not consumer adoption evidence.
+
+The installer selects this fixed route only with `-ReceiptMode ModulesOnly`:
+
+```powershell
+pwsh -NoProfile -File tools/Install-SpatialCameraPanelControlProfile.ps1 `
+  -Serial <exact-adb-serial> -Package <exact-package> `
+  -ProfilePath <modules.json> -ReceiptMode ModulesOnly `
+  -ExpectedWatcherId <current-watcher-uuid> -ExpectedOwnerPid <current-pid> `
+  -ExpectedOwnerStartTicks <current-process-start-ticks> -OutPath <receipt.json>
+```
+
+Supply identity from the current actor/Activity observation and its armed
+watcher receipt. The helper requires that identity before publication, uses
+the existing atomic fixed-file transfer, and joins every requested consumer's
+readback to the exact publication signature and identity. It reports
+`observed`, leaving acceptance/use in the nested consumer receipt. Watched-only,
+stale, unavailable, failed or retired readback cannot satisfy it. Unknown or
+timed-out ingress remains published; there is no automatic retry, removal or
+fallback to the full-profile path. Default `VisualControls` mode continues to
+wait for the existing visual application receipt.
+
+Focused checks are `tools/checks/Test-ControlProfileHotloaderHost.py` (explicit
+retained JVM recipe, actual parser/hotloader with modeled Android leaves) and
+`tools/checks/Test-InstallSpatialCameraPanelControlProfileHost.ps1` (actual
+installer with modeled serial-scoped ADB). They do not prove Android file
+observer delivery, installed consumer admission, ART/native loading or use.
 
 ## Compatibility Rules
 

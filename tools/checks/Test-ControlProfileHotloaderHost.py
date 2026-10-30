@@ -7,6 +7,7 @@ a=parser.parse_args();root=pathlib.Path(__file__).resolve().parents[2];ref=a.ref
 j=json.loads((ref/'java.command.json').read_text());k=json.loads((ref/'kotlin.command.json').read_text());behavior=json.loads((ref/'resident-jvm.command.json').read_text());cp=str(classes)+os.pathsep+j[j.index('-cp')+1]
 leaves={
 'android/content/Context.java':'package android.content; import java.io.File; public class Context {private final File root; public Context(File root){this.root=root;} public File getExternalFilesDir(String ignored){return root;} public File getFilesDir(){return root;}}',
+'android/os/Process.java':'package android.os; public class Process {public static int myPid(){return 123;}}',
 'android/os/Looper.java':'package android.os; public class Looper {public static Looper getMainLooper(){return new Looper();}}',
 'android/os/Handler.java':'package android.os; import java.util.ArrayDeque; public class Handler {private static final ArrayDeque<Runnable> queued=new ArrayDeque<>(); public Handler(Looper ignored){} public boolean post(Runnable r){queued.add(r);return true;} public static void drain(){while(!queued.isEmpty())queued.remove().run();}}',
 'android/os/FileObserver.java':'package android.os; import java.io.File; public abstract class FileObserver {public static final int CLOSE_WRITE=8,CREATE=256,DELETE=512,MOVED_FROM=64,MOVED_TO=128; public FileObserver(File ignored,int events){} public abstract void onEvent(int event,String path); public void startWatching(){} public void stopWatching(){}}',
@@ -16,7 +17,7 @@ js=[]
 for name,content in leaves.items():
  f=out/'leaves'/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(content);js.append(f)
 pkg='io/github/mesmerprism/rustyquest/spatial_camera_panel'
-sources=[root/('apps/spatial-camera-panel-android/app/src/main/java/'+pkg+'/'+n+'.kt') for n in ('SpatialCameraControlProfile','SpatialPeerNetworkProfilePilot','SpatialDevelopmentModuleDirective','SpatialDevelopmentModuleDirectiveContract','SpatialCameraControlProfileHotloader')]+[root/'apps/spatial-camera-panel-android/host-tests/control_profile/ProfileHotloaderHost.kt']
+sources=[root/('apps/spatial-camera-panel-android/app/src/main/java/'+pkg+'/'+n+'.kt') for n in ('SpatialCameraControlProfile','SpatialPeerNetworkProfilePilot','SpatialDevelopmentModuleDirective','SpatialDevelopmentModuleDirectiveContract','SpatialDevelopmentModuleProfile','SpatialCameraControlProfileHotloader')]+[root/'apps/spatial-camera-panel-android/host-tests/control_profile/ProfileHotloaderHost.kt']
 kc=[v for v in k if not v.endswith('.kt')];kc[kc.index('-classpath')+1]=cp;kc[kc.index('-d')+1]=str(classes);kc.extend(map(str,sources))
 commands=[('leaves',[j[0],'--release','17','-d',str(classes),*map(str,js)]),('kotlin',kc),('behavior',[behavior[0],'-cp',cp,'io.github.mesmerprism.rustyquest.spatial_camera_panel.ProfileHotloaderHostKt',str(out/'files')])]
 start=time.monotonic();checks=[]

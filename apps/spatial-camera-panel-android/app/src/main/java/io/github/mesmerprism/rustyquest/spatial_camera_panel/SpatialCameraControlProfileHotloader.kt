@@ -44,17 +44,28 @@ internal class SpatialCameraControlProfileHotloader(
       File(directory, SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE)
   private val applyReceipt =
       File(directory, SpatialCameraControlProfileContract.APPLY_RECEIPT_FILE)
+  private val moduleProfile = File(directory, SpatialDevelopmentModuleProfileContract.ACTIVE_FILE)
+  private var observedModuleSignature: FileSignature? = null
+  private val retiredLegacyModules = mutableMapOf<String, FileSignature>()
+  private val watcherId by lazy { java.util.UUID.randomUUID().toString() }
+  private val ownerPid by lazy { android.os.Process.myPid() }
+  private val ownerStartTicks by lazy {
+    runCatching { File("/proc/self/stat").readText().substringAfterLast(") ").split(' ')[19] }
+        .getOrDefault("unavailable")
+  }
   private var armed = false
   private var observedSignature: FileSignature? = null
   private var pendingSignature: FileSignature? = null
   private val mainHandler = Handler(Looper.getMainLooper())
   private var fileObserver: FileObserver? = null
   private val directiveTickets = mutableMapOf<String, Any>()
+  private val pendingModuleReceipts = mutableMapOf<String, JSONObject>()
 
   fun arm() {
     if (armed) return
     directory.mkdirs()
     observedSignature = signature()
+    observedModuleSignature = signature(moduleProfile)
     pendingSignature = null
     armed = true
     fileObserver =
@@ -64,15 +75,21 @@ internal class SpatialCameraControlProfileHotloader(
                 CLOSE_WRITE or CREATE or DELETE or MOVED_FROM or MOVED_TO,
             ) {
           override fun onEvent(event: Int, path: String?) {
-            if (path != SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE) return
+            if (path != SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE &&
+                path != SpatialDevelopmentModuleProfileContract.ACTIVE_FILE) return
             mainHandler.post { poll(force = true) }
           }
         }
     fileObserver?.startWatching()
+    writeReceiptAt(File(directory, "module-watch-receipt.json"), ownerFields(JSONObject())
+        .put("schema", "rusty.quest.spatial_camera_panel.development_module_watch.v1")
+        .put("phase", "armed").put("armed_unix_ms", System.currentTimeMillis()))
     marker(
         "channel=control-profile-hotload status=armed " +
             "schema=${SpatialCameraControlProfileContract.SCHEMA} " +
             "profilePath=external-files/${SpatialCameraControlProfileContract.PROFILE_DIRECTORY}/${SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE} " +
+            "watcherId=$watcherId ownerPid=$ownerPid ownerStartTicks=$ownerStartTicks " +
+            "moduleProfilePath=external-files/control-profiles/${SpatialDevelopmentModuleProfileContract.ACTIVE_FILE} " +
             "staleProfileApplied=false changeDetection=file-observer sceneTickPolling=false"
     )
   }
@@ -80,6 +97,7 @@ internal class SpatialCameraControlProfileHotloader(
   fun poll(force: Boolean = false) {
     if (!armed) return
     if (!force) return
+    pollModules()
     val current = signature()
     if (current == observedSignature) {
       pendingSignature = null
@@ -155,8 +173,8 @@ internal class SpatialCameraControlProfileHotloader(
     writeReceipt(receipt)
     observedSignature = current
     pendingSignature = null
-    dispatchModule("observation", profile.developmentObservationModule, digest, applyObservationModule)
-    dispatchModule("scissor", profile.developmentScissorModule, digest, applyScissorModule)
+    dispatchLegacyModule("observation", profile.developmentObservationModule, digest, profile, current, applyObservationModule)
+    dispatchLegacyModule("scissor", profile.developmentScissorModule, digest, profile, current, applyScissorModule)
     marker(
         "channel=control-profile-hotload status=applied " +
             "profileId=${activityMarkerToken(profile.profileId)} revision=${profile.revision} " +
@@ -173,22 +191,147 @@ internal class SpatialCameraControlProfileHotloader(
   }
 
   fun close() {
+    if (!armed) return
     armed = false
     fileObserver?.stopWatching()
     fileObserver = null
+    for ((consumer, receipt) in pendingModuleReceipts) {
+      writeReceiptAt(moduleReceiptFile(consumer), receipt.put("status", "retired")
+          .put("phase", "retired").put("observed_unix_ms", System.currentTimeMillis()))
+    }
+    pendingModuleReceipts.clear()
     directiveTickets.clear()
+    writeReceiptAt(File(directory, "module-watch-receipt.json"), ownerFields(JSONObject())
+        .put("schema", "rusty.quest.spatial_camera_panel.development_module_watch.v1")
+        .put("phase", "retired").put("retired_unix_ms", System.currentTimeMillis()))
+  }
+
+  private fun ownerFields(json: JSONObject): JSONObject = json.put("watcher_id", watcherId)
+      .put("owner_process_pid", ownerPid).put("owner_process_start_ticks", ownerStartTicks)
+
+  private fun moduleReceiptFile(consumer: String) = File(directory, "last-development-$consumer-module-receipt.json")
+
+  private fun moduleReceipt(consumer: String, directive: SpatialDevelopmentModuleDirective,
+      digest: String, id: String, revision: Long, source: String, status: String,
+      publication: FileSignature): JSONObject =
+      ownerFields(JSONObject())
+          .put("schema", "rusty.quest.spatial_camera_panel.development_module_receipt.v1")
+          .put("consumer", consumer).put("profile_sha256", digest).put("profile_id", id)
+          .put("revision", revision).put("source_file", source)
+          .put("source_length", publication.length).put("source_modified_unix_ms", publication.modifiedMs)
+          .put("mode", directive.mode).put("status", status)
+          .put("phase", if (status == "watched") "watched" else "transport_rejected")
+          .put("observed_unix_ms", System.currentTimeMillis())
+
+  private fun readBounded(file: File): ByteArray = file.inputStream().use {
+    val bytes = ByteArray(SpatialCameraControlProfileContract.MAX_PROFILE_BYTES + 1)
+    var count = 0
+    while (count < bytes.size) {
+      val read = it.read(bytes, count, bytes.size - count)
+      if (read < 0) break
+      count += read
+    }
+    require(count <= SpatialCameraControlProfileContract.MAX_PROFILE_BYTES) { "profile_too_large" }
+    bytes.copyOf(count)
+  }
+
+  /** Both files share one owner. Presence of a competing directive never establishes precedence. */
+  private fun pollModules() {
+    val current = signature(moduleProfile)
+    val legacySignature = signature()
+    val moduleResult = if (current != null) runCatching {
+      val bytes = readBounded(moduleProfile)
+      val profile = SpatialDevelopmentModuleProfileContract.parse(bytes)
+      check(signature(moduleProfile) == current) { "module_profile_changed_during_read" }
+      profile to sha256(bytes)
+    } else null
+    val legacyResult = if (legacySignature != null) runCatching {
+      val profile = SpatialCameraControlProfileContract.parse(readBounded(activeProfile))
+      check(signature() == legacySignature) { "legacy_profile_changed_during_read" }
+      profile
+    } else null
+    val modules = moduleResult?.getOrNull()?.first
+    fun moduleDirective(consumer: String) = if (consumer == "observation") modules?.observation else modules?.scissor
+    fun legacyDirective(consumer: String) = legacyResult?.getOrNull()?.let {
+      if (consumer == "observation") it.developmentObservationModule else it.developmentScissorModule
+    }
+    // Retire a pending legacy directive even while its visual route is unavailable. Later removal
+    // of the competing file must not resurrect it when the visual route eventually becomes ready.
+    if (legacySignature != null && legacySignature != observedSignature && current != null) {
+      for (consumer in listOf("observation", "scissor")) {
+        if (moduleResult?.isFailure == true || moduleDirective(consumer) != null) {
+          retiredLegacyModules[consumer] = legacySignature
+        }
+      }
+    }
+    if (current == observedModuleSignature) return
+    observedModuleSignature = current // Every new publication is consumed once, including rejection.
+    if (current == null) return
+    val summary = ownerFields(JSONObject()).put("schema", SpatialDevelopmentModuleProfileContract.RECEIPT_SCHEMA)
+        .put("source_file", SpatialDevelopmentModuleProfileContract.ACTIVE_FILE)
+        .put("observed_unix_ms", System.currentTimeMillis())
+    val parsed = moduleResult?.getOrNull()
+    if (parsed == null) {
+      writeReceiptAt(File(directory, SpatialDevelopmentModuleProfileContract.RECEIPT_FILE),
+          summary.put("status", "rejected").put("error_code", "module_profile_validation_failed"))
+      return
+    }
+    val (profile, digest) = parsed
+    summary.put("profile_sha256", digest).put("profile_id", profile.profileId).put("revision", profile.revision)
+    var conflict = false
+    for (consumer in listOf("observation", "scissor")) {
+      val directive = moduleDirective(consumer) ?: continue
+      if (signature() != legacySignature || signature(moduleProfile) != current ||
+          legacyResult?.isFailure == true || legacyDirective(consumer) != null) {
+        conflict = true
+        writeReceiptAt(moduleReceiptFile(consumer), moduleReceipt(consumer, directive, digest,
+            profile.profileId, profile.revision, SpatialDevelopmentModuleProfileContract.ACTIVE_FILE, "rejected", current)
+            .put("error_code", "competing_profile_directive"))
+      } else {
+        dispatchModule(consumer, directive, digest, profile.profileId, profile.revision,
+            SpatialDevelopmentModuleProfileContract.ACTIVE_FILE, current,
+            if (consumer == "observation") applyObservationModule else applyScissorModule)
+      }
+    }
+    writeReceiptAt(File(directory, SpatialDevelopmentModuleProfileContract.RECEIPT_FILE),
+        summary.put("status", if (conflict) "conflict" else "watched")
+            .put("applied_scope", "development_modules_only").put("visual_controls_applied", false))
+  }
+
+  private fun dispatchLegacyModule(consumer: String, directive: SpatialDevelopmentModuleDirective?,
+      digest: String, profile: SpatialCameraControlProfile, signature: FileSignature,
+      apply: (SpatialDevelopmentModuleDirective, String) -> CompletableFuture<String>?) {
+    if (directive == null) return
+    // The visual callback may run application code. Recheck the competing file after that
+    // callback so publication during visual application cannot bypass the shared arbitration.
+    val competingSignature = signature(moduleProfile)
+    val competitorBlocks = competingSignature != null && runCatching {
+      val module = SpatialDevelopmentModuleProfileContract.parse(readBounded(moduleProfile))
+      check(signature(moduleProfile) == competingSignature)
+      if (consumer == "observation") module.observation != null else module.scissor != null
+    }.getOrDefault(true)
+    if (retiredLegacyModules[consumer] == signature || competitorBlocks || signature() != signature) {
+      retiredLegacyModules[consumer] = signature
+      writeReceiptAt(moduleReceiptFile(consumer), moduleReceipt(consumer, directive, digest,
+          profile.profileId, profile.revision, SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE, "rejected", signature)
+          .put("error_code", "competing_profile_directive"))
+      return
+    }
+    dispatchModule(consumer, directive, digest, profile.profileId, profile.revision,
+        SpatialCameraControlProfileContract.ACTIVE_PROFILE_FILE, signature, apply)
   }
 
   private fun dispatchModule(consumer: String, directive: SpatialDevelopmentModuleDirective?,
-      profileSha256: String, apply: (SpatialDevelopmentModuleDirective, String) -> CompletableFuture<String>?) {
+      profileSha256: String, id: String, revision: Long, source: String, publication: FileSignature,
+      apply: (SpatialDevelopmentModuleDirective, String) -> CompletableFuture<String>?) {
     if (directive == null) return
     val ticket = Any()
     directiveTickets[consumer] = ticket
-    val target = File(directory, "last-development-$consumer-module-receipt.json")
-    fun receipt(status: String) = JSONObject()
-        .put("schema", "rusty.quest.spatial_camera_panel.development_module_receipt.v1")
-        .put("consumer", consumer).put("profile_sha256", profileSha256)
-        .put("mode", directive.mode).put("status", status)
+    val target = moduleReceiptFile(consumer)
+    val baseReceipt = moduleReceipt(consumer, directive, profileSha256, id, revision, source, "watched", publication)
+    fun receipt(status: String) = JSONObject(baseReceipt.toString()).put("status", status)
+        .put("observed_unix_ms", System.currentTimeMillis())
+    pendingModuleReceipts.remove(consumer)
     val future = runCatching { apply(directive, profileSha256) }.getOrElse {
       writeReceiptAt(target, receipt("failed").put("error_code", "consumer_dispatch_failed"))
       return
@@ -197,16 +340,20 @@ internal class SpatialCameraControlProfileHotloader(
       writeReceiptAt(target, receipt("unavailable").put("error_code", "optional_consumer_unavailable"))
       return
     }
+    val watched = receipt("watched")
+    pendingModuleReceipts[consumer] = watched
+    writeReceiptAt(target, watched)
     future.whenComplete { value, failure ->
       mainHandler.post {
         // A fresh ticket is required even for A->B->the same raw A bytes.
         if (!armed || directiveTickets[consumer] !== ticket) return@post
+        pendingModuleReceipts.remove(consumer)
         val output = if (failure != null || value == null) {
           receipt("failed").put("error_code", "consumer_completion_failed")
         } else runCatching {
           val raw = value.toByteArray(Charsets.UTF_8)
           require(raw.size <= SpatialCameraControlProfileContract.MAX_PROFILE_BYTES) { "module_receipt_bounds" }
-          receipt("observed").put("consumer_receipt", StrictJsonByteIngress.parseObject(raw))
+          receipt("observed").put("phase", "consumer_readback").put("consumer_receipt", StrictJsonByteIngress.parseObject(raw))
         }.getOrElse { receipt("failed").put("error_code", "consumer_receipt_invalid") }
         writeReceiptAt(target, output)
       }
@@ -247,9 +394,9 @@ internal class SpatialCameraControlProfileHotloader(
     )
   }
 
-  private fun signature(): FileSignature? =
-      if (activeProfile.isFile) {
-        FileSignature(activeProfile.length(), activeProfile.lastModified())
+  private fun signature(file: File = activeProfile): FileSignature? =
+      if (file.isFile) {
+        FileSignature(file.length(), file.lastModified())
       } else {
         null
       }
