@@ -1,0 +1,12 @@
+package connectionfeedback;
+import org.rusty.quest.feedback.api.FeedbackModule;
+public final class Policy implements FeedbackModule {
+    public int abiVersion() { return @ABI@; }
+    public String generationId() { return "@GENERATION@"; }
+    public long compute(long input, long counter, byte[] scratch) {
+        if ((input & ~511L) != 0) throw new IllegalArgumentException("Unexpected scalar fields");
+        @FAULT@
+        int event = (int)(input & 255);
+        return event == 2 @EXTRA@ ? 1 : 0;
+    }
+}

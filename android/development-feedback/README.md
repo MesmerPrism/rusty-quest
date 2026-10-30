@@ -85,3 +85,68 @@ duplicated parent interface. These are host preparation/conformance results.
 
 See [the owner programme guide](../../docs/DEVELOPMENT_FEEDBACK_MODULES.md)
 for the native seam and the remaining runtime evidence boundary.
+
+## Optional connection observation candidate
+
+`ConnectionObservationController` is a passive resident consumer of the same
+host and parent-loaded interface. It is exercised by an independent JVM
+consumer; no application selects it automatically and no APK includes an
+enabled product route through this change. It owns no sockets, keys, commands,
+timers, Futures or lifecycle state.
+
+Its fixed scalar meanings are:
+
+| Input/output | Meaning |
+| --- | --- |
+| Input 1 / 2 / 3 | Poll due / observation failed / observation received |
+| Input bit 256 | Resident reports unresolved work; read-only status remains possible |
+| Input 0 | Independent activation probe, not a delivered event |
+| Output 0 / 1 | WAIT / REQUEST_STATUS |
+
+Only the event and unresolved flag reach replaceable code. Owner, operation and
+sample tokens remain resident, along with current/closed/cancellation/in-flight
+flags and monotonic polling times. The resident controller enforces a 500ms
+polling floor before calling the module. Neither output can issue or replay a
+command, complete a Future, assert cleanup, or resolve UNKNOWN. A module may
+change which eligible events nominate a read-only refresh, using helper classes
+without changing the parent interface.
+
+Take a `Snapshot` under the product's existing owner gate, then call `evaluate`
+outside that gate. On completion, under the same gate, take a fresh snapshot,
+call `claimStatus` and atomically mark the query in flight/update last-poll time.
+Dispatch the existing read-only observation after releasing the gate. The
+caller must advance tokens whenever its owner/operation/sample changes. This
+value projection does not establish authority or freshness by itself.
+
+Acceptance performs no callbacks or lock acquisition. A private one-use
+decision plus a fresh atomic identity for every selection attempt rejects
+replay, replacement races and stale owner/operation/sample/timing observations.
+Even rejected activation invalidates outstanding proposals. A replacement
+after a successful claim cannot undo a query already accepted by the resident.
+Activation and computation serialize outside product locks; a hung module can
+still block those calls and retained selection. There is no timeout or sandbox.
+
+Runtime exceptions, linkage failures and unrecognized outputs become visible
+WAIT decisions. Other fatal errors are not contained. Failed computation
+leaves ModuleHost state unchanged; an invalid returned value has already
+completed a successful host computation. Neither case automatically rolls
+back code. `selectRetained` explicitly changes future code and invalidates
+proposals while preserving the host counter/buffer. Resident keys/resources,
+pending operations and durable authority must never be stored in that buffer.
+
+Run the additional focused consumer with an installed JDK17 and a fresh ignored
+output directory:
+
+```powershell
+python tools/Test-ConnectionObservationFeedback.py --java-home <jdk17> --output <repository>/.local/<fresh-run>
+```
+
+The consumer compiles implementations against a JAR containing only
+`FeedbackModule`, then stages fresh A/B/A generations through the existing
+artifact store and loader. It checks changed helper behavior, explicit retained
+rollback, rejected ABI, throwing/malformed calls, concurrent one-use acceptance,
+acceptance while another computation is blocked,
+stale/cancelled observations and stable resident fixture state. The fixture's
+resource/key/Future/UNKNOWN values are not physical resources or a durable
+product store. This proof establishes neither Android/ART execution nor product
+integration, cleanup, lifetime or feedback performance.
