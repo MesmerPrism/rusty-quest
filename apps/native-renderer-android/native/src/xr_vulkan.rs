@@ -3027,7 +3027,8 @@ unsafe fn run_projection_frames(
                 let was_pointer_pressed = alternate_pointer.interaction_pressed();
                 let (owner, pointer_pressed, changed) = if alternate_panel_pointer_enabled {
                     if original_product_mesh_panel {
-                        alternate_pointer.update_interaction(
+                        alternate_pointer.update_original_product_interaction(
+                            crate::experiment_control_mode::read().selected(),
                             controller_selected,
                             ray.is_some_and(|ray| ray.pressed),
                             ui_hand_sample,
@@ -3229,7 +3230,12 @@ unsafe fn run_projection_frames(
             if let Some(panel) = mesh_ui_panel.as_deref_mut() {
                 let was_pointer_pressed = alternate_pointer.interaction_pressed();
                 let (owner, pressed, changed) = if original_product_mesh_panel {
-                    alternate_pointer.update_interaction(false, false, ui_hand_sample)
+                    alternate_pointer.update_original_product_interaction(
+                        crate::experiment_control_mode::read().selected(),
+                        false,
+                        false,
+                        ui_hand_sample,
+                    )
                 } else {
                     alternate_pointer.update(false, ui_hand_sample)
                 };

@@ -176,6 +176,22 @@ impl AlternatePointer {
     pub(crate) fn interaction_pressed(&self) -> bool {
         self.pressed
     }
+    /// Selected experimenter panels use controller input only. Keeping the
+    /// source arbiter cancels an old hand capture and still requires a valid
+    /// controller release followed by a fresh trigger edge.
+    pub(crate) fn update_original_product_interaction(
+        &mut self,
+        controller_only: bool,
+        controller: bool,
+        controller_pressed: bool,
+        hand: Option<HandPointerSample>,
+    ) -> (PointerOwner, bool, bool) {
+        self.update_interaction(
+            controller,
+            controller_pressed,
+            if controller_only { None } else { hand },
+        )
+    }
     /// Controller priority. Ownership changes must cancel the previous UI capture first.
     /// A new/lost hand must first open its pinch before it can generate a down event.
     pub(crate) fn update(
@@ -607,9 +623,21 @@ mod tests {
             trigger: bool,
             hand: Option<HandPointerSample>,
         ) -> (PointerOwner, bool, bool) {
-            let result = self
-                .pointer
-                .update_interaction(controller_tracked, trigger, hand);
+            self.product_frame(false, controller_tracked, trigger, hand)
+        }
+        fn product_frame(
+            &mut self,
+            selected_experimenter: bool,
+            controller_tracked: bool,
+            trigger: bool,
+            hand: Option<HandPointerSample>,
+        ) -> (PointerOwner, bool, bool) {
+            let result = self.pointer.update_original_product_interaction(
+                selected_experimenter,
+                controller_tracked,
+                trigger,
+                hand,
+            );
             if result.2 {
                 if let Some((action, _)) = self.capture.update(false, false, None) {
                     self.actions.push(action);
@@ -642,6 +670,58 @@ mod tests {
             }
             result
         }
+    }
+    #[test]
+    fn selected_experimenter_cancels_hand_capture_then_accepts_controller_click() {
+        let mut f = InteractionFixture::default();
+        f.frame(false, false, Some(hand(0.05)));
+        f.frame(false, false, Some(hand(0.02)));
+        assert!(f.capture.captured());
+        assert_eq!(f.actions, [0]);
+        assert_eq!(
+            f.product_frame(true, true, false, Some(hand(0.02))),
+            (PointerOwner::None, false, true)
+        );
+        assert_eq!(f.actions, [0, 3]);
+        assert!(!f.capture.captured());
+        assert_eq!(
+            f.product_frame(true, true, false, Some(hand(0.02))).0,
+            PointerOwner::Controllers
+        );
+        assert_eq!(
+            f.product_frame(true, true, true, Some(hand(0.02))).0,
+            PointerOwner::Controllers
+        );
+        assert!(f.capture.captured());
+        f.product_frame(true, true, false, Some(hand(0.02)));
+        assert_eq!(f.actions, [0, 3, 0, 2]);
+    }
+
+    #[test]
+    fn selected_experimenter_never_falls_back_to_hands_or_replays_untracked_held_trigger() {
+        let mut f = InteractionFixture::default();
+        for distance in [0.05, 0.02, 0.05, 0.02] {
+            assert_eq!(
+                f.product_frame(true, false, true, Some(hand(distance))).0,
+                PointerOwner::None
+            );
+        }
+        assert!(f.actions.is_empty());
+        assert!(!f.product_frame(true, true, true, Some(hand(0.02))).1);
+        assert!(f.actions.is_empty());
+        f.product_frame(true, true, false, Some(hand(0.02)));
+        assert!(f.product_frame(true, true, true, Some(hand(0.02))).1);
+        assert_eq!(f.actions, [0]);
+        assert_eq!(
+            f.product_frame(true, false, true, Some(hand(0.02))),
+            (PointerOwner::None, false, true)
+        );
+        assert_eq!(f.actions, [0, 3]);
+        assert!(!f.product_frame(true, true, true, Some(hand(0.02))).1);
+        f.product_frame(true, true, false, Some(hand(0.02)));
+        f.product_frame(true, true, true, Some(hand(0.02)));
+        f.product_frame(true, true, false, Some(hand(0.02)));
+        assert_eq!(f.actions, [0, 3, 0, 2]);
     }
     #[test]
     fn admission_is_current_source_fresh_edge_only_not_held_or_competing() {
