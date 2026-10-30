@@ -179,6 +179,11 @@ existing explicit property is still required. Debug builds permit that opt-in
 with private locked input. File publication, native data validation, runtime
 adoption and physical endpoint readback remain separate evidence.
 
+The additive [cached effective-input read](CACHED_EFFECTIVE_INPUTS.md) exposes
+that existing cache through a closed debug observation without visual
+publication or first capture. It returns uninitialized when no matching cache
+exists; packaging that route is separate from earlier installed capabilities.
+
 The explicit pilot consumer accepts a complete existing control profile with
 one additional root field, `peer_network_endpoints`. This is an array of exactly
 two objects, each containing `peer_id`, `media_endpoint` and `control_endpoint`.
