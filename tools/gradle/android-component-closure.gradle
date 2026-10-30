@@ -109,7 +109,16 @@ abstract class ObserveAndroidComponentInputs extends DefaultTask {
             (a.root <=> b.root) ?: (a.path <=> b.path)
         }
         def expected = inventory.sources.sort { a, b -> (a.root <=> b.root) ?: (a.path <=> b.path) }
-        if (rows != expected) throw new GradleException('component-compiler-input-source-closure')
+        if (rows != expected) {
+            def identity = { row -> row.root + ':' + row.path }
+            def actualIds = rows.collect(identity) as Set
+            def expectedIds = expected.collect(identity) as Set
+            logger.error('component-source-difference ' + JsonOutput.toJson([
+                expected_count: expected.size(), actual_count: rows.size(),
+                missing: (expectedIds - actualIds).toList().sort().take(16),
+                unexpected: (actualIds - expectedIds).toList().sort().take(16)]))
+            throw new GradleException('component-compiler-input-source-closure')
+        }
         def observePath = { String value ->
             def path = new File(value)
             [path: path.canonicalPath, kind: path.isFile() ? 'file' : (path.isDirectory() ? 'directory' : 'not-yet-materialized'),

@@ -673,11 +673,15 @@ if (providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR")
     "main/java/org/rusty/quest/feedback/ConnectionObservationController.java",
     "android/java/org/rusty/quest/feedback/AndroidDexLoader.java",
   ).map { feedbackRoot.resolve(it) })
-  tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {
-    source(feedbackSources)
-  }
-  tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-    source(feedbackSources)
+  // AGP installs each task's source convention after task registration. Apply
+  // these additions after that setup and before the component observer binds it.
+  afterEvaluate {
+    tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {
+      source(feedbackSources)
+    }
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+      source(feedbackSources)
+    }
   }
 }
 
