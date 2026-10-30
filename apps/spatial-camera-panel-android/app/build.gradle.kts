@@ -538,7 +538,13 @@ android {
       }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR").orNull
         ?.takeIf { it.isNotBlank() }
-        ?.let { java.srcDir(it) }
+        ?.let {
+          java.srcDir(it)
+          // Resident observation API/loader only; implementation payloads stay external.
+          java.srcDir(rootProject.file("../../android/development-feedback/src/main/java"))
+          java.srcDir(rootProject.file("../../android/development-feedback/src/android/java"))
+          java.exclude("org/rusty/quest/feedback/NativeFeedbackBridge.java")
+        }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR").orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { assets.srcDir(it) }

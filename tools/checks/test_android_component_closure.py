@@ -7,6 +7,18 @@ spec = importlib.util.spec_from_file_location("closure", MODULE)
 closure = importlib.util.module_from_spec(spec); spec.loader.exec_module(closure)
 
 class SelectedSourceTests(unittest.TestCase):
+    def test_feedback_selection_is_exact_and_payload_sources_stay_out(self):
+        root=self.root/'feedback';root.mkdir()
+        for relative in closure.DEVELOPMENT_FEEDBACK_SOURCES:
+            path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('package fixture; class Selected {}')
+        for relative in ['host/java/HostUrlLoader.java','android/java/org/rusty/quest/feedback/NativeFeedbackBridge.java','fixtures/Policy.java']:
+            path=root/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('class Excluded {}')
+        rows=closure.inventory_sources({'development_feedback':root},'debug')
+        self.assertEqual(set(closure.DEVELOPMENT_FEEDBACK_SOURCES),{x['path'] for x in rows})
+        self.assertEqual(7,len(rows))
+        original=rows[0]['sha256'];(root/rows[0]['path']).write_text('class Changed {}')
+        changed=closure.inventory_sources({'development_feedback':root},'debug')
+        self.assertNotEqual(original,changed[0]['sha256'])
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name); self.sources = self.root / "private"; self.sources.mkdir()
