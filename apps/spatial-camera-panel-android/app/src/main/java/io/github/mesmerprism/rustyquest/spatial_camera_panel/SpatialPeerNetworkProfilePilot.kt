@@ -19,7 +19,7 @@ internal data class SpatialPeerNetworkProfileSelection(
     val peers: List<SpatialPeerNetworkSelection>,
 )
 
-/** Inert data pilot. No Activity, enrollment, native route or socket consumer yet. */
+/** Typed endpoint data for the frozen input candidate; this parser opens no resources. */
 internal class SpatialPeerNetworkProfilePilot(enrolledPeerIds: Set<String>) {
   private val peers = enrolledPeerIds.toSet()
 

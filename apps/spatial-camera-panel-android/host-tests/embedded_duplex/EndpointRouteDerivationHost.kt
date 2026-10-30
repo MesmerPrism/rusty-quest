@@ -174,7 +174,7 @@ internal object EndpointRouteDerivationHost {
         identity.getString("signing_certificate_sha256"), originalManifestSha, routeDigest,
         "host.fixture.same-key", "host.fixture.same-public-key", originalPeers.getJSONObject(0).getString("device_id"),
         originalPeers.getJSONObject(0).getString("peer_id"), originalPeers.getJSONObject(1).getString("device_id"),
-        originalPeers.getJSONObject(1).getString("peer_id")) as EmbeddedDuplexEnrollmentRequest
+        originalPeers.getJSONObject(1).getString("peer_id"), "{}") as EmbeddedDuplexEnrollmentRequest
     val priorEnrollment = enrollment(EndpointRouteCandidate.sha256(base.getValue("route-configuration.json")))
     val changedEnrollment = enrollment(candidateInputs.digest("route-configuration.json"))
     check(!priorEnrollment.sameFacts(changedEnrollment))

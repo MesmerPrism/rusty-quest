@@ -135,13 +135,39 @@ with
 requested, supported, and effective markers remain separate. ABI v1 and
 missing optional payloads keep both features ineffective.
 
-## Inert peer endpoint data pilot
+## Peer endpoint input candidate
 
-`SpatialPeerNetworkProfilePilot` is a host-tested data selection experiment,
-with no Activity, enrollment, socket or native-route consumer. The ordinary
-`active.profile.json` parser still refuses its additive field. Do not stage a
-pilot document as a live control update or treat its selection as effective
-network configuration.
+`SpatialPeerNetworkProfilePilot` validates the additive `peer_network_endpoints`
+selection and delegates all ordinary control fields to the existing profile
+parser. `FrozenEffectiveInputs.Selector` is the pre-bootstrap consumer candidate:
+it starts from the installed signer/manifest-verified base, asks native code to
+derive endpoint-only route/binding documents, and publishes one immutable
+snapshot only after complete validation. The base manifest is never regenerated
+or represented as a different installed artifact. Separate versioned lineage
+records original manifest/route, submitted profile and effective route hashes.
+
+The new pure native operation opens no sockets and stages no runtime authority.
+It checks peer coverage, supported unicast IPv4/protocol/port data and endpoint
+collisions, preserves nonendpoint documents, recomputes the owner runtime-spec
+digests and invokes the existing packaged-route validator. Identity keys, trust,
+policy and compiled ceilings are not profile parameters.
+
+The existing runtime generation owner must freeze the selector before enrollment
+or bootstrap. Those consumers require the exact current frozen object; an older
+selected object cannot be substituted even if its bytes happen to match. Invalid
+input/native results retain the prior accepted object. Once frozen, further
+selection is refused. A later endpoint edit or revert needs a new eligible
+generation under the existing cleanup/admission contract, rather than mutating
+live sockets, routes or authority. The default packaged-input path remains
+available without an override.
+
+The ordinary Activity `active.profile.json` parser still refuses this additive
+field. Automatic file selection and the pre-enrollment/process-holder/private
+provider association are separate integration work; this source candidate alone
+is not a claim that an installed app consumes it. Existing visual controls keep
+their supported route-active Activity/main-thread application boundary. File
+publication, native data validation, runtime adoption and physical endpoint
+readback must be reported separately.
 
 The explicit pilot consumer accepts a complete existing control profile with
 one additional root field, `peer_network_endpoints`. This is an array of exactly

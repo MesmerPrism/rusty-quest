@@ -223,6 +223,13 @@ final class EmbeddedDuplexPackagedInputs {
     String selectedRoleId() { return selectedRoleId; }
     String manifestJson() { return manifestJson; }
 
+    /** Exact immutable base only; derived endpoints never replace installed identity. */
+    Map<String, String> documentSnapshot() {
+        Map<String, String> copy = new HashMap<>(documents);
+        copy.put(MANIFEST, manifestJson);
+        return Collections.unmodifiableMap(copy);
+    }
+
     /** Transfers only the verified asset closure to the native config assembler. */
     JSONObject packagedConfigRequest(JSONObject runtimeBindings) throws Exception {
         String[] runtimeFields = {"adapter_id", "admission_authority_id", "grant_id",
