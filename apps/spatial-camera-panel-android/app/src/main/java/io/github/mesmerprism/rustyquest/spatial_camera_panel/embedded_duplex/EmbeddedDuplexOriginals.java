@@ -655,6 +655,22 @@ public final class EmbeddedDuplexOriginals {
         id(originalId);id(challenge);Record record=find(originalId);if(record==null)throw new IllegalStateException("original absent");
         return envelope(record,challenge);
     }
+
+    /** Observe this owner's actual publication callback, without starting or cancelling work.
+     * Restored rows have no live callback and retain query's unknown/tombstone semantics. */
+    public synchronized CompletableFuture<Bundle> observeCompletion(String originalId,String challenge)throws Exception {
+        id(originalId);id(challenge);Record record=find(originalId);
+        if(record==null)throw new IllegalStateException("original absent");
+        if(record.restored || record.future==null)return CompletableFuture.completedFuture(envelope(record,challenge));
+        // A dependent stage cannot cancel callbackTerminal or the actual operation Future.
+        // envelope rejects persistenceFailure even when the operation itself completed.
+        return record.callbackTerminal.thenApply(ignored->{
+            synchronized(this){
+                try{return envelope(record,challenge);}
+                catch(Exception failure){throw new java.util.concurrent.CompletionException(failure);}
+            }
+        });
+    }
     public synchronized Bundle acknowledge(String originalId,String challenge,String requestHash,String outcomeHash,String consumerHash)throws Exception {
         id(originalId);id(challenge);hash(requestHash);hash(outcomeHash);hash(consumerHash);requireWritable();
         Record record=find(originalId);

@@ -317,7 +317,68 @@ public final class EmbeddedDuplexOriginalsHostTest {
             if(accepted){yes(row.getJSONObject("response").has("ceremony_wait_warning")== (warning!=null));if(warning!=null)yes(row.getJSONObject("response").getBoolean("ceremony_wait_warning")==((Boolean)warning));}
         }
     }
+    static Bundle modeResponse(String operation)throws Exception{
+        Bundle value=response("active");
+        value.putString("receipt",new JSONObject().put("schema",operation.equals("blend_update")?
+                "rusty.quest.stereo.neutral_mask_receipt.v1":"rusty.quest.stereo.concurrent_qualification_receipt.v1")
+                .put("action",operation).put("challenge",CHALLENGE).toString());return value;
+    }
+    static void completionObservationControls()throws Exception{
+        for(String operation:new String[]{"policy_update","blend_update"}){
+            File root=Files.createTempDirectory("original-completion-").toFile();Actor actor=new Actor();
+            java.util.concurrent.atomic.AtomicBoolean failSync=new java.util.concurrent.atomic.AtomicBoolean();
+            EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{if(failSync.get())throw new java.io.IOException("sync unavailable");});
+            AtomicInteger effects=new AtomicInteger();CompletableFuture<Bundle> actual=new CompletableFuture<>();
+            JSONObject request=EmbeddedDuplexOriginals.request(operation,CHALLENGE,new Bundle());
+            Bundle registered=store.begin(ID,operation,CHALLENGE,request,()->{
+                effects.incrementAndGet();
+                try{EmbeddedDuplexOriginals.bindActualActor(actor.snapshot(),actor.generation);}
+                catch(Exception failure){throw new java.util.concurrent.CompletionException(failure);}
+                return actual;});
+            yes("pending".equals(registered.getString("status")));
+            CompletableFuture<Bundle> observation=store.observeCompletion(ID,CHALLENGE);
+            yes(!observation.isDone());
+            try{observation.get(0,java.util.concurrent.TimeUnit.SECONDS);throw new AssertionError("pending became terminal");}
+            catch(java.util.concurrent.TimeoutException expected){}
+            yes(!actual.isCancelled()&&effects.get()==1);
+            actual.complete(modeResponse(operation));Bundle terminal=observation.get();
+            yes("observed".equals(terminal.getString("status")));
+            JSONObject disk=EmbeddedDuplexCanonicalJson.readOwned(Files.readAllBytes(new File(root,"operator-originals-v1/"+ID+".json").toPath()));
+            yes(EmbeddedDuplexCanonicalJson.sameValue(disk,observe(terminal)));
+            store.begin(ID,operation,CHALLENGE,request,()->{throw new AssertionError("duplicate effect");});
+            yes(effects.get()==1);
+            // Observation is not consumer/ACK credit; actual ACK and independent query remain separate.
+            actor.retained=false;denied(()->store.acknowledge(ID,CHALLENGE,requestHash(terminal),outcome(terminal),HASH));actor.retained=true;
+            store.acknowledge(ID,CHALLENGE,requestHash(terminal),outcome(terminal),HASH);
+            yes("compacted".equals(store.query(ID,CHALLENGE).getString("status")));
+
+            File pendingRoot=Files.createTempDirectory("original-observer-cancel-").toFile();
+            EmbeddedDuplexOriginals pending=new EmbeddedDuplexOriginals(pendingRoot,actor,()->{});
+            CompletableFuture<Bundle> work=new CompletableFuture<>();pending.begin(ID,operation,CHALLENGE,request,()->work);
+            CompletableFuture<Bundle> cancelled=pending.observeCompletion(ID,CHALLENGE);yes(cancelled.cancel(false));
+            yes(!work.isCancelled());work.complete(modeResponse(operation));
+            yes("observed".equals(pending.query(ID,CHALLENGE).getString("status")));
+
+            EmbeddedDuplexOriginals uncertain=new EmbeddedDuplexOriginals(Files.createTempDirectory("original-actual-cancel-").toFile(),actor,()->{});
+            CompletableFuture<Bundle> cancelledWork=new CompletableFuture<>();uncertain.begin(ID,operation,CHALLENGE,request,()->cancelledWork);
+            CompletableFuture<Bundle> uncertainObservation=uncertain.observeCompletion(ID,CHALLENGE);cancelledWork.cancel(false);
+            yes("unknown".equals(uncertainObservation.get().getString("status")));
+
+            File restoredRoot=Files.createTempDirectory("original-completion-restored-").toFile();
+            EmbeddedDuplexOriginals live=new EmbeddedDuplexOriginals(restoredRoot,actor,()->{});
+            live.begin(ID,operation,CHALLENGE,request,CompletableFuture::new);
+            yes("unknown".equals(new EmbeddedDuplexOriginals(restoredRoot,actor,()->{}).observeCompletion(ID,CHALLENGE).get().getString("status")));
+
+            EmbeddedDuplexOriginals broken=new EmbeddedDuplexOriginals(Files.createTempDirectory("original-completion-sync-").toFile(),actor,
+                ()->{if(failSync.get())throw new java.io.IOException("actual terminal sync unavailable");});
+            CompletableFuture<Bundle> unsynced=new CompletableFuture<>();broken.begin(ID,operation,CHALLENGE,request,()->unsynced);
+            CompletableFuture<Bundle> brokenObservation=broken.observeCompletion(ID,CHALLENGE);failSync.set(true);unsynced.complete(modeResponse(operation));
+            denied(()->brokenObservation.get());denied(()->broken.query(ID,CHALLENGE));
+        }
+        System.out.println("PASS actual Original completion observation: persisted policy/mask outcomes, pending, timeout, restored uncertainty, cancellation, sync failure, actor/ACK and no replay; checks="+checks);
+    }
     public static void main(String[] args)throws Exception{
+        if(args.length==1&&args[0].equals("--completion-only")){completionObservationControls();return;}
         ceremonyWaitWarningCompletion();
         File root=Files.createTempDirectory("original-custody-").toFile();Actor actor=new Actor();
         EmbeddedDuplexOriginals store=new EmbeddedDuplexOriginals(root,actor,()->{});

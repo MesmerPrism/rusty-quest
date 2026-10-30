@@ -23,7 +23,7 @@ public class GuardedModeCallHost implements AutoCloseable {
     InstalledApkDigest installedApkDigest=new InstalledApkDigest();
     int nativeReads;
     void ensureProcessFence(){}
-    JSONObject originalActor(){return new JSONObject().put("package_id","fixture.app").put("native_generation",25).put("app_record_sha256",RECORD);}
+    static JSONObject originalActor(){return new JSONObject().put("package_id","fixture.app").put("native_generation",25).put("app_record_sha256",RECORD);}
     String runStatusOnLane(){nativeReads++;return new JSONObject().put("$schema","rusty.quest.embedded_duplex.run_status.v2")
         .put("run_id",RUN).put("selection_generation",26).put("app_process_generation",69).put("app_display_generation",1)
         .put("app_fence_disposition","effects_pending").put("native",new JSONObject().put("$schema","rusty.quest.embedded_duplex.operational_run_native.v1")

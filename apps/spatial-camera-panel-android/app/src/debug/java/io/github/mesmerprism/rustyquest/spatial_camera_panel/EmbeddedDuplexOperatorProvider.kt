@@ -334,14 +334,17 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
                 requireNotNull(request.requestSha256),requireNotNull(request.outcomeSha256),requireNotNull(request.consumerReceiptSha256)))
         EmbeddedDuplexOperatorContract.Route.BLEND_READ -> EmbeddedDuplexRuntimeService.concurrentMask(app,request.challenge,null)
             .thenApply { receipt -> Bundle().apply { header("observed");putString("challenge",request.challenge);putString("receipt",receipt) } }
-        EmbeddedDuplexOperatorContract.Route.POLICY_UPDATE, EmbeddedDuplexOperatorContract.Route.BLEND_UPDATE ->
-          java.util.concurrent.CompletableFuture.completedFuture(EmbeddedDuplexRuntimeService.beginOriginal(app,
-              requireNotNull(request.originalId),method,request.challenge,EmbeddedDuplexOriginals.request(method,request.challenge,fields)) {
+        EmbeddedDuplexOperatorContract.Route.POLICY_UPDATE, EmbeddedDuplexOperatorContract.Route.BLEND_UPDATE -> {
+          val originals=EmbeddedDuplexOriginals.forApplication(app)
+          val originalId=requireNotNull(request.originalId)
+          originals.begin(originalId,method,request.challenge,EmbeddedDuplexOriginals.request(method,request.challenge,fields)) {
             val future = if (request.route == EmbeddedDuplexOperatorContract.Route.POLICY_UPDATE)
               EmbeddedDuplexRuntimeService.concurrentPolicy(app,request.challenge,request.policy)
             else EmbeddedDuplexRuntimeService.concurrentMask(app,request.challenge,request.mask)
             future.thenApply { receipt -> Bundle().apply { header("observed");putString("challenge",request.challenge);putString("receipt",receipt) } }
-          })
+          }
+          originals.observeCompletion(originalId,request.challenge)
+        }
         else -> throw IllegalArgumentException("operator-guarded-route-invalid")
       }
       actual.thenApply { response -> response.apply {

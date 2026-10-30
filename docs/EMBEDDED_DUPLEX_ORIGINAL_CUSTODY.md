@@ -17,6 +17,13 @@ remain exact, and typed Float extras bind their raw Float32 bits. The
 different input is refused; exact repetition observes the same Original and
 never invokes its supplier again.
 
+`observeCompletion` is an observation of that same record's existing publication
+callback. It creates no operation, timer, executor, registry or storage schema.
+Its dependent Future checks the owner's publication failure before returning an
+envelope; cancelling this observation cannot cancel the actual work or callback.
+Restored records have no live callback and retain ordinary query semantics.
+This observation grants no semantic-consumer, acknowledgement or cleanup credit.
+
 ## Actual invocation and outcome
 
 The production store syncs its registered and entered records before invoking
