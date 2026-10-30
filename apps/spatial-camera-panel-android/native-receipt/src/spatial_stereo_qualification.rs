@@ -363,6 +363,11 @@ impl State {
     }
     fn blend_pixels(&mut self, ordinal: u64, surface: u64, samples: [[u8; 4]; 5]) {
         let Some(pixel) = self.pixel else { return };
+        let marker_supported = match samples[4] {
+            [77, 66, 1, 255] => true,
+            [77, 66, 2, 255] => pixel.frame.final_abi_version == 2 && pixel.frame.primary_prefix == 6,
+            _ => false,
+        };
         if pixel.frame.ordinal != ordinal
             || pixel.frame.surface != surface
             || pixel.frame.mask[0] & 0xc0000000 != 0xc0000000
@@ -375,7 +380,7 @@ impl State {
                 .any(|s| s.is_none_or(|s| s.prefix < 6))
             || crate::stereo_bank_mask_v1::validate(pixel.frame.mask) != Ok(true)
             || ![0, 255].contains(&samples[2][2])
-            || samples[4] != [77, 66, 1, 255]
+            || !marker_supported
             || samples.iter().any(|p| p[3] != 255)
         {
             return;
@@ -405,13 +410,21 @@ impl State {
             self.blend_strip
                 .filter(|(o, s, _)| *o == p.frame.ordinal && *s == p.frame.surface)
         });
+        let center_v2 = samples.is_some_and(|(_, _, rgba)| rgba[4] == [77, 66, 2, 255]);
+        let (sample_contract, sample_uv_contract) = if center_v2 {
+            ("diagnostic-input-layer-same-submission-row0-Own-Peer-signal-mask-packing-output-marker-unorm-v2",
+             "primary-texel-center-v2;signal-blue255=packed-base0.25,0.5;blue0=mono-base0.5,0.5;uv=(clamp(floor(base*extent),0,extent-1)+0.5)/extent;equal-banks-even-width")
+        } else {
+            ("diagnostic-input-layer-same-submission-row0-Own-Peer-signal-mask-packing-output-marker-unorm-v1",
+             "signal-blue255=bank-eye0-packed-uv0.25,0.5;blue0=mono-uv0.5,0.5")
+        };
         serde_json::json!({"schema":"rusty.quest.stereo.neutral_mask_readback.v1","version":1,
             "process_generation":self.process,"challenge_words":self.challenge.map(|word|word as i64),"arm_generation":self.generation,"armed":self.armed,
             "retired_frame":self.last.map(frame),"pixel_frame":self.pixel.map(|p|frame(p.frame)),
             "sample_status":if samples.is_some(){"available"}else{"unavailable"},
             "sample_rgba8":samples.map(|(_,_,p)|p),"pixel_format":self.pixel.map(|p|p.format),
-            "sample_contract":"diagnostic-input-layer-same-submission-row0-Own-Peer-signal-mask-packing-output-marker-unorm-v1",
-            "sample_uv_contract":"signal-blue255=bank-eye0-packed-uv0.25,0.5;blue0=mono-uv0.5,0.5",
+            "sample_contract":sample_contract,
+            "sample_uv_contract":sample_uv_contract,
             "scope":"camera-input-layer-not-final-stack-or-photons"}).to_string()
     }
     fn words(
@@ -1082,6 +1095,32 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&s.blend_json()).unwrap()["sample_status"],
             "unavailable"
         );
+    }
+    #[test]
+    fn versioned_center_strip_requires_retired_abi2_primary_and_reports_actual_contract() {
+        for (abi, prefix, marker, available) in [(1, 6, 2, false), (2, 5, 2, false), (2, 6, 3, false), (2, 6, 2, true)] {
+            let mut s = State::empty();
+            let generation = s.arm(7, [1, 2], 10);
+            let mut f = frame(generation, 1, Some(source(2, 1)));
+            f.final_abi_version = abi;
+            f.primary_prefix = prefix;
+            f.mask = crate::stereo_bank_mask_v1::pack(true, 0.0, 0.5, 0.5, false, true).unwrap();
+            let samples = [[255; 4], [102, 102, 102, 255], [255, 128, 255, 255],
+                [179, 179, 179, 255], [77, 66, marker, 255]];
+            s.record(f, 20);
+            s.retire(1, 8, 30);
+            s.pixel(1, 8, 31, 5, 123, 1, 16, 16, 0, 1);
+            s.blend_pixels(1, 8, samples);
+            let report: serde_json::Value = serde_json::from_str(&s.blend_json()).unwrap();
+            assert_eq!(report["sample_status"], if available { "available" } else { "unavailable" });
+            if available {
+                assert_eq!(report["sample_rgba8"][3], serde_json::json!([179, 179, 179, 255]));
+                assert_eq!(report["sample_contract"], "diagnostic-input-layer-same-submission-row0-Own-Peer-signal-mask-packing-output-marker-unorm-v2");
+                assert_eq!(report["sample_uv_contract"], "primary-texel-center-v2;signal-blue255=packed-base0.25,0.5;blue0=mono-base0.5,0.5;uv=(clamp(floor(base*extent),0,extent-1)+0.5)/extent;equal-banks-even-width");
+                // Actual State producer bytes for the paired independent host controls.
+                println!("MASK_TEXEL_CENTER_V2_WIRE {}", report);
+            }
+        }
     }
     #[test]
     fn partial_mask_banks_do_not_claim_sample_proof() {
