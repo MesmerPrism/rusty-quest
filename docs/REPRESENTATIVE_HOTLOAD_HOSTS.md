@@ -158,6 +158,35 @@ configuration alone does not prove a saved source edit. With the bundled source
 and input4, A/B/fresh-A produce deltas
 5/10/5 while retained cumulative state becomes 5/15/20. Probe expectations are
 13 for A and 19 for B; the native loader uses input5 and prior7 for its probe.
+
+The same builder has an explicit closed `-Contract Scissor` selection for the
+pure scissor leaf. Feedback remains the default with its original source,
+arguments, receipt shape and getter. Scissor binds only the owned common Header,
+scissor ABI, policy and plugin; `-PluginSource` is Feedback-only. Existing
+`-Generation` supplies a newly compiled source constant and `-Variant B` supplies
+the existing `phase_b` configuration (`inset_one_pixel`). No binary/header patch
+or reuse of old generation bytes occurs. Scissor's only allowed exported getter
+is `rq_scissor_api`; no caller-selected getter is accepted. Its ELF check requires
+ELF64 little-endian AArch64 DYN, the exact fresh SONAME, that single externally
+visible export and only the existing platform-library closure.
+
+Scissor receipts additionally bind the builder, generated wrapper, all four
+compiled source inputs, declared compiler/NDK tool inputs and unchanged hashes.
+`expected_header` is a source expectation (ABI1,32-byte table, contract
+`5251534349535331`, requested generation; WrongAbi deliberately expects99).
+`embedded_header_inspected=false` is explicit: ELF metadata checks do not inspect
+the table bytes or execute the getter. Independent embedded-header/behavior
+inspection and later actual process use remain separate evidence. A completed
+build is neither staging nor activation, and does not authorize either.
+
+Focused controls use `python -B tools/development_feedback/test_native_generation_builder.py`.
+They execute this actual helper with modeled compiler/ELF leaves, not an Android
+library build. They cover Feedback/default compatibility, Scissor generation3/B
+source selection, closed contract/plugin refusal, ELF/export/SONAME/platform
+refusals, source/tool drift and create-new output. Set
+`NATIVE_GENERATION_HOST_TEST_OUTPUT` to a fresh directory under `target/` to
+retain their fixtures and logs. Actual compiler/toolchain proof is separate;
+these controls add no ordinary product or device prerequisite.
 The SDK JNI lane uses the same modules and its process-owned bridge; DEX
 replacement remains a separate Java/DEX compilation and staging route.
 
