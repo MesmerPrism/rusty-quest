@@ -18,6 +18,7 @@ mod breath_capture;
 mod breath_composition_driver;
 mod breath_composition_runtime;
 mod breath_guidance;
+mod breath_monitor;
 mod breath_input_selection;
 
 #[cfg(target_os = "android")]

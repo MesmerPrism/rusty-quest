@@ -42,11 +42,13 @@ final class GatewayDedupeHarness {
  Delegate delegate=new Delegate();
  static void requireMain(){}
  JSONObject snapshot(){return new JSONObject();}
+ JSONObject monitorSnapshot(JSONObject body)throws Exception{return ExperimentSessionGatewayProtocol.monitorQuery(body);}
  ExperimentSessionBleServer.CommandRequest parse(JSONObject body)throws Exception{return new ExperimentSessionBleServer.CommandRequest(body.getString("id"));}
  __OWNER__
  static void check(boolean yes,String message){if(!yes)throw new AssertionError(message);}
  public static void main(String[]args)throws Exception{
   GatewayDedupeHarness h=new GatewayDedupeHarness();String id="1111111111111111";
+  check(h.ownerExchange("breath-monitor",new JSONObject().put("run","").put("after",0)).getString("operation").equals("breath-monitor")&&h.dispatches==0,"read-only monitor cannot dispatch experiment effects");
   JSONObject command=new JSONObject().put("id",id).put("op","save-next");
   JSONObject first=h.ownerExchange("command",command);check(first.getString("state").equals("pending")&&h.dispatches==1,"original pending receipt");
   h.ownerExchange("command",new JSONObject().put("op","save-next").put("id",id));check(h.dispatches==1,"object order cannot replay effects");
@@ -74,6 +76,7 @@ final class GatewayDedupeHarness {
   try{liveBias.ownerExchange("command",changedBias);throw new AssertionError("changed bias ID reused");}catch(SecurityException expected){}
   liveBias.carrier.updateReceipt(id,"confirmed","bias saved");check(liveBias.ownerExchange("receipt",new JSONObject().put("id",id)).getString("state").equals("confirmed"),"bias original durable acknowledgement");
   h.carrier.live=false;try{h.ownerExchange("command",command);throw new AssertionError("retired owner receipt accepted");}catch(SecurityException expected){}
+  try{h.ownerExchange("breath-monitor",new JSONObject().put("run","").put("after",0));throw new AssertionError("retired owner monitor accepted");}catch(SecurityException expected){}
   System.out.println("PASS production gateway owner admission: once-only dispatch, canonical ID binding, original pending/late confirmation, exact receipt, no capacity eviction, retired owner denial; inert handler callbacks");
  }
 }

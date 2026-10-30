@@ -950,6 +950,8 @@ impl BreathCompositionRuntime {
                 result.guidance,
                 measurement.source_clock_provenance,
             );
+            observe_breath_monitor(snapshot, BreathCompositionSource::PolarAcc, assessment,
+                result.unbiased_phase.map(|observation| observation.phase));
         }
         self.refresh_polar_state_diagnostics();
     }
@@ -1012,6 +1014,8 @@ impl BreathCompositionRuntime {
                 assessment,
                 snapshot,
             );
+            observe_breath_monitor(snapshot, BreathCompositionSource::PolarAcc, assessment,
+                result.unbiased_phase.map(|observation| observation.phase));
         }
     }
 
@@ -1270,7 +1274,28 @@ pub(crate) fn submit_assessment(
     drop(state);
     crate::breath_capture::record_assessment(source, assessment, snapshot);
     record_session_assessment(source, assessment, settings_revision, None, None, None);
+    observe_breath_monitor(snapshot, source, assessment, None);
     snapshot
+}
+
+fn monitor_tracking(snapshot: BreathCompositionSnapshot, source: BreathCompositionSource,
+    assessment: BreathAssessmentObservation) -> Option<&'static str> {
+    if snapshot.status != BreathCompositionStatus::Running
+        || !snapshot.effective.is_some_and(|selected| selected.source == source)
+        || snapshot.generation != Some(assessment.generation) { return None; }
+    Some(if snapshot.rejection == Some(rusty_quest_breath_contract::composition::BreathCompositionRejection::StaleAssessment) {
+        "stale"
+    } else { assessment.tracking.as_str() })
+}
+
+fn observe_breath_monitor(snapshot: BreathCompositionSnapshot, source: BreathCompositionSource,
+    assessment: BreathAssessmentObservation,
+    unbiased_phase: Option<rusty_quest_breath_contract::assessment::CommonBreathPhase>) {
+    let Some(tracking) = monitor_tracking(snapshot, source, assessment) else { return; };
+    let phase = unbiased_phase.unwrap_or(assessment.phase).as_str();
+    crate::experiment_session_runtime::observe_breath_monitor(source.as_str(), tracking,
+        if phase == "bad-tracking" { "unknown" } else { phase },
+        assessment.volume01.map(|v| v as f32), assessment.quality01 as f32, assessment.generation.get());
 }
 
 fn record_session_assessment(
@@ -2965,6 +2990,15 @@ mod tests {
         })
         .expect("valid assessment");
         runtime.submit_assessment(at, BreathCompositionSource::PolarAcc, valid);
+        let accepted = runtime.snapshot();
+        assert_eq!(monitor_tracking(accepted, BreathCompositionSource::PolarAcc, valid), Some("valid"));
+        assert_eq!(monitor_tracking(accepted, BreathCompositionSource::Controller, valid), None);
+        let mut previous = valid;
+        previous.generation = BreathGeneration::new(generation.get() + 1).unwrap();
+        assert_eq!(monitor_tracking(accepted, BreathCompositionSource::PolarAcc, previous), None);
+        let mut stale = accepted;
+        stale.rejection = Some(rusty_quest_breath_contract::composition::BreathCompositionRejection::StaleAssessment);
+        assert_eq!(monitor_tracking(stale, BreathCompositionSource::PolarAcc, valid), Some("stale"));
         assert_eq!(
             runtime.snapshot().output.and_then(|value| value.volume01),
             Some(0.75)
@@ -2980,6 +3014,8 @@ mod tests {
             Some(BreathTrackingState::Missing)
         );
         assert!(snapshot.output.is_none());
+        assert_eq!(monitor_tracking(snapshot, BreathCompositionSource::PolarAcc,
+            snapshot.latest_assessment.unwrap()), Some("missing"));
         assert!(runtime.polar_missing_reported);
 
         let received = snapshot.telemetry.received_assessment_count;

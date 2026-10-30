@@ -240,6 +240,28 @@ impl BreathGuidanceTimeline {
     pub(crate) fn audio_source_sha256(&self) -> &str {
         &self.audio_source_sha256
     }
+
+    /// A schematic normalized envelope for operator comparison, not lung volume.
+    /// Hold retains the preceding endpoint. Gaps remain absent from the projection.
+    pub(crate) fn monitor_segments(&self, start_ms: u64, end_ms: u64) -> Vec<Value> {
+        let mut level = 0.0_f32;
+        let mut result = Vec::new();
+        for segment in &self.segments {
+            let (from, to) = match segment.phase {
+                BreathGuidancePhase::Inhale => (0.0, 1.0),
+                BreathGuidancePhase::Exhale => (1.0, 0.0),
+                BreathGuidancePhase::Hold => (level, level),
+            };
+            level = to;
+            // The extra entry lets the caller reject an unsupported dense
+            // window explicitly instead of silently omitting the current target.
+            if segment.end_ms > start_ms && segment.start_ms <= end_ms && result.len() < 257 {
+                result.push(serde_json::json!([segment.start_ms, segment.end_ms,
+                    segment.phase.as_str(), from, to]));
+            }
+        }
+        result
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -332,6 +354,10 @@ mod tests {
         assert!(timeline.target_at(0,0).is_none()); // existing zero-bias contract unchanged
         assert!(timeline.phase_segment_at(20000).is_none());
         assert_eq!(timeline.phase_segment_at(15500),Some((3,12000,16000))); // seek/current only
+        let monitor = timeline.monitor_segments(4000, 16000);
+        assert_eq!(monitor[0], serde_json::json!([4000,8000,"hold",1.0,1.0]));
+        assert_eq!(monitor[1], serde_json::json!([8000,12000,"exhale",1.0,0.0]));
+        assert_eq!(monitor[2], serde_json::json!([12000,16000,"hold",0.0,0.0]));
     }
 
     #[test]
@@ -380,5 +406,15 @@ mod tests {
         )
         .unwrap_err()
         .contains("overlap"));
+    }
+
+    #[test]
+    fn dense_monitor_window_is_detectable_instead_of_silently_losing_the_target() {
+        let (bytes, identity) = fixture();
+        let mut timeline = BreathGuidanceTimeline::parse_exact(&bytes, identity, &"a".repeat(64)).unwrap();
+        timeline.segments = (0..300).map(|t| BreathGuidanceSegment {
+            start_ms: t, end_ms: t + 1, phase: BreathGuidancePhase::Inhale,
+        }).collect::<Vec<_>>().into_boxed_slice();
+        assert_eq!(timeline.monitor_segments(0, 300).len(), 257);
     }
 }

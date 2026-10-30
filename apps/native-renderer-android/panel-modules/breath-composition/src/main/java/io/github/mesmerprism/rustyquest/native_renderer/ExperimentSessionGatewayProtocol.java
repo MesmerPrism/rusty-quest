@@ -34,7 +34,7 @@ public final class ExperimentSessionGatewayProtocol {
                     || !controller.equals(request.opt("controller")) || !epoch.equals(request.opt("epoch")))
                 throw new SecurityException("controller-or-epoch-unavailable");
             nonce=string(request,"nonce"); action=string(request,"action"); payload=string(request,"payload");
-            if(!hex(nonce,32) || !("status".equals(action)||"command".equals(action)||"receipt".equals(action))
+            if(!hex(nonce,32) || !("status".equals(action)||"command".equals(action)||"receipt".equals(action)||"breath-monitor".equals(action))
                     || !constant(hmac(key,"RQG1|"+controller+"|"+epoch+"|"+nonce+"|"+action+"|"+payload),string(request,"mac")))
                 throw new SecurityException("authentication-failed");
             // Exhaustion requires a new native owner epoch; never evict replay protection.
@@ -51,6 +51,15 @@ public final class ExperimentSessionGatewayProtocol {
     }
     static String string(JSONObject value,String field)throws Exception {
         Object raw=value.opt(field);if(!(raw instanceof String))throw new IllegalArgumentException("string-required");return (String)raw;
+    }
+    static JSONObject monitorQuery(JSONObject body)throws Exception {
+        Object after=body.opt("after");String run=string(body,"run");
+        if(body.length()!=2 || !(after instanceof Integer || after instanceof Long)
+                || ((Number)after).longValue()<0 || ((Number)after).longValue()>9007199254740991L
+                || !run.matches("([1-9][0-9]{0,18}:[0-9]{1,20})?"))
+            throw new IllegalArgumentException("closed-monitor-cursor-required");
+        return new JSONObject().put("schema","rusty.quest.experiment_session.command.v1")
+            .put("operation","breath-monitor").put("run",run).put("after",after);
     }
     static boolean hex(String value,int length) {
         return value!=null && value.length()==length && value.matches("[0-9a-f]+");

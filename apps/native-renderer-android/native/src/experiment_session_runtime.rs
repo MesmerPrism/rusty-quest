@@ -356,14 +356,18 @@ impl Projection {
         self.response_json_clocks(command_status, reason_code, now_ns, now_ns)
     }
 
-    fn response_json_clocks(&self, command_status: &str, reason_code: &str, now_ns: Option<u64>, active_now_ns: Option<u64>) -> String {
-        let now_ns = self.recording_ended_ns.or(now_ns);
-        let active_time_ns = self.active_time_ns.saturating_add(
+    fn official_active_time_ns(&self, active_now_ns: Option<u64>) -> u64 {
+        self.active_time_ns.saturating_add(
             self.active_interval_started_ns.zip(active_now_ns)
                 .filter(|_| self.phase == SessionPhase::Active
                     && self.control_state == crate::experiment_session::ExperimentControlState::Running
                     && self.presentation == PresentationState::ImmersiveActive)
-                .map_or(0, |(start, now)| now.saturating_sub(start)));
+                .map_or(0, |(start, now)| now.saturating_sub(start)))
+    }
+
+    fn response_json_clocks(&self, command_status: &str, reason_code: &str, now_ns: Option<u64>, active_now_ns: Option<u64>) -> String {
+        let now_ns = self.recording_ended_ns.or(now_ns);
+        let active_time_ns = self.official_active_time_ns(active_now_ns);
         let recording_elapsed_ns = self.recording_started_ns.zip(now_ns)
             .map_or(0, |(start, now)| now.saturating_sub(start));
         let preparation_elapsed_ns = self.recording_started_ns.zip(self.official_started_ns.or(now_ns))
@@ -2079,6 +2083,7 @@ enum WorkerMessage {
 }
 
 pub(crate) struct ExperimentSessionRuntime {
+    breath_monitor: Mutex<crate::breath_monitor::History>,
     preparation_presentation_observation: Arc<AtomicU64>,
     runtime_epoch: u64,
     immersive_owner_identity: Arc<AtomicU64>,
@@ -2225,6 +2230,7 @@ impl ExperimentSessionRuntime {
             })
             .map_err(|error| format!("experiment-session-worker-spawn:{error}"))?;
         Ok(Self {
+            breath_monitor: Mutex::new(crate::breath_monitor::History::default()),
             preparation_presentation_observation,
             runtime_epoch,
             immersive_owner_identity: Arc::new(AtomicU64::new(0)),
@@ -2281,6 +2287,13 @@ impl ExperimentSessionRuntime {
     fn apply_command_json_with_fence(&self, raw: &str, local_terminal_fence: Option<LocalTerminalFence>) -> String {
         if raw.len() > MAX_COMMAND_BYTES {
             return self.cached(|cache| &cache.command_too_large);
+        }
+        if local_terminal_fence.is_none() {
+            if let Ok(value) = serde_json::from_str::<Value>(raw) {
+                if value.get("operation").and_then(Value::as_str) == Some("breath-monitor") {
+                    return self.breath_monitor_json(&value);
+                }
+            }
         }
         // A read-only query observes the current projection; a mutation queue
         // acknowledgement cannot establish that a status snapshot was read.
@@ -2377,6 +2390,76 @@ impl ExperimentSessionRuntime {
             },
             Err(_) => self.cached(|cache| &cache.accepted),
         }
+    }
+
+    fn monitor_clock(&self) -> Option<(u64, u64, bool, u64, &'static str)> {
+        let now = self.current_elapsed_realtime_ns()?;
+        let p = self.projection.try_read().ok()?;
+        let observed = p.observed_now(Some(now),
+            self.submitted_frame_generation.load(Ordering::Acquire),
+            self.submitted_frame_sequence.load(Ordering::Acquire),
+            self.submitted_frame_elapsed_ns.load(Ordering::Acquire));
+        let running = p.phase == SessionPhase::Active
+            && p.control_state == crate::experiment_session::ExperimentControlState::Running
+            && p.presentation == PresentationState::ImmersiveActive && observed == Some(now);
+        let active_ns = p.official_active_time_ns(observed);
+        Some((p.generation, active_ns / 1_000_000, running, now, phase_token(p.phase)))
+    }
+
+    fn observe_breath_monitor(&self, source: &'static str, tracking: &'static str,
+        phase: &'static str, volume: Option<f32>, quality: f32, input_generation: u64) {
+        let Some((generation, active_ms, true, observed_ns, _)) = self.monitor_clock() else { return; };
+        let Ok(mut history) = self.breath_monitor.try_lock() else { return; };
+        let run = format!("{}:{generation}", self.runtime_epoch);
+        history.observe(&run, crate::breath_monitor::Sample {
+            id: 0, active_ms, observed_ns, source, phase, tracking, input_generation,
+            volume: volume.filter(|v| tracking == "valid" && v.is_finite() && (0.0..=1.0).contains(v)),
+            quality: if quality.is_finite() { quality.clamp(0.0, 1.0) } else { 0.0 },
+        });
+    }
+
+    /// Isolated read-only projection; never queues commands or acquires composition ownership.
+    fn breath_monitor_json(&self, request: &Value) -> String {
+        use crate::breath_monitor::{HISTORY_MS, PREVIEW_MS};
+        let valid = request.as_object().is_some_and(|o| o.len() == 4)
+            && request["schema"].as_str() == Some(EXPERIMENT_SESSION_COMMAND_SCHEMA)
+            && request["run"].as_str().is_some_and(|s| s.len() <= 64)
+            && request["after"].as_u64().is_some_and(|v| v <= 9_007_199_254_740_991);
+        if !valid { return json!({"v":1,"available":false,"reason":"invalid-monitor-query"}).to_string(); }
+        if !self.worker.try_lock().ok().is_some_and(|worker| worker.as_ref().is_some_and(|w| !w.is_finished())) {
+            return json!({"v":1,"available":false,"reason":"monitor-owner-unavailable"}).to_string();
+        }
+        let Some((generation, active_ms, running, now, state)) = self.monitor_clock() else {
+            return json!({"v":1,"available":false,"reason":"monitor-busy"}).to_string();
+        };
+        let run = format!("{}:{generation}", self.runtime_epoch);
+        let Ok(history) = self.breath_monitor.try_lock() else {
+            return json!({"v":1,"available":false,"reason":"monitor-busy"}).to_string();
+        };
+        let latest = history.latest(&run);
+        let cursor = latest.map_or(0, |s| s.id);
+        let after = if request["run"].as_str() == Some(&run) {
+            request["after"].as_u64().unwrap().min(cursor)
+        } else { 0 };
+        let samples: Vec<Value> = history.read(&run, after).into_iter().map(|s|
+            json!([s.id, s.active_ms, s.volume.map(|v| (f64::from(v) * 1000.0).round() / 1000.0),
+                s.phase, s.tracking, (f64::from(s.quality) * 1000.0).round() / 1000.0, s.source])).collect();
+        let source = latest.map(|s| s.source);
+        let age_ms = latest.map(|s| now.saturating_sub(s.observed_ns) / 1_000_000);
+        drop(history);
+        let Ok(guidance) = self.active_breath_guidance.try_read() else {
+            return json!({"v":1,"available":false,"reason":"monitor-busy"}).to_string();
+        };
+        let segments = guidance.as_ref().filter(|g| g.generation == generation)
+            .map(|g| g.timeline.monitor_segments(active_ms.saturating_sub(HISTORY_MS), active_ms.saturating_add(PREVIEW_MS)))
+            .unwrap_or_default();
+        if segments.len() > 256 {
+            return json!({"v":1,"available":false,"reason":"target-window-too-dense"}).to_string();
+        }
+        json!({"v":1,"available":true,"epoch":self.runtime_epoch.to_string(),"run":run,
+            "active_ms":active_ms,"running":running,"state":state,"source":source,
+            "age_ms":age_ms,"cursor":cursor,"samples":samples,"segments":segments,
+            "history_ms":HISTORY_MS,"preview_ms":PREVIEW_MS}).to_string()
     }
 
     fn cached(&self, select: impl FnOnce(&ReadbackCache) -> &String) -> String {
@@ -3200,6 +3283,15 @@ pub(crate) fn apply_command_json(raw: &str) -> String {
 
 pub(crate) fn status_json() -> String {
     runtime().map_or_else(startup_failure_json, |runtime| runtime.status_json())
+}
+
+pub(crate) fn observe_breath_monitor(source: &'static str, tracking: &'static str,
+    phase: &'static str, volume: Option<f32>, quality: f32, input_generation: u64) {
+    if crate::experiment_control_mode::read().selected() {
+        if let Ok(runtime) = runtime() {
+            runtime.observe_breath_monitor(source, tracking, phase, volume, quality, input_generation);
+        }
+    }
 }
 
 pub(crate) fn try_offer_record(record: SessionRecord) -> OfferOutcome {
@@ -4890,6 +4982,57 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         panic!("status did not contain {needle}: {}", runtime.status_json());
+    }
+
+    #[test]
+    fn breath_monitor_query_is_read_only_clock_bound_and_unbiased() {
+        let root = temp_root("breath-monitor");
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        let query = json!({"schema":EXPERIMENT_SESSION_COMMAND_SCHEMA,
+            "operation":"breath-monitor","run":"","after":0});
+        let mut invalid = query.clone(); invalid["extra"] = json!(true);
+        let denied: Value = serde_json::from_str(&runtime.apply_command_json(&invalid.to_string())).unwrap();
+        assert_eq!(denied["reason"], "invalid-monitor-query");
+        {
+            let mut p = runtime.projection.write().unwrap();
+            p.generation = 9; p.phase = SessionPhase::Active;
+            p.control_state = crate::experiment_session::ExperimentControlState::Running;
+            p.presentation = PresentationState::ImmersiveActive;
+            p.active_time_ns = 2_000_000_000;
+            p.active_interval_started_ns = Some(1_000_000_000);
+        }
+        *runtime.monotonic_bridge.lock().unwrap() = Some((MonotonicNanos::new(1_000_000_000), Instant::now()));
+        runtime.submitted_frame_generation.store(9, Ordering::Release);
+        runtime.submitted_frame_sequence.store(1, Ordering::Release);
+        runtime.submitted_frame_elapsed_ns.store(1_000_000_000, Ordering::Release);
+        runtime.observe_breath_monitor("polar-acc", "valid", "exhale", Some(0.4), 0.9, 1);
+        let data: Value = serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
+        assert_eq!(data["available"], true);
+        assert_eq!(data["running"], true);
+        assert_eq!(data["samples"][0][2], 0.4);
+        assert_eq!(data["samples"][0][3], "exhale");
+        let time = data["active_ms"].as_u64().unwrap();
+        assert!((2000..2100).contains(&time));
+        *runtime.monotonic_bridge.lock().unwrap() = Some((MonotonicNanos::new(2_000_000_000), Instant::now()));
+        let stale: Value = serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
+        let official: Value = serde_json::from_str(&runtime.status_json()).unwrap();
+        assert_eq!(stale["active_ms"], official["readback"]["active_time_ms"]);
+        assert_eq!(stale["active_ms"], 2500);
+        assert_eq!(stale["running"], false);
+        {
+            let mut p = runtime.projection.write().unwrap();
+            p.control_state = crate::experiment_session::ExperimentControlState::Paused;
+            p.active_time_ns = time * 1_000_000; p.active_interval_started_ns = None;
+        }
+        runtime.observe_breath_monitor("polar-acc", "valid", "inhale", Some(0.9), 0.9, 1);
+        let paused: Value = serde_json::from_str(&runtime.apply_command_json(&query.to_string())).unwrap();
+        assert_eq!(paused["running"], false);
+        assert_eq!(paused["active_ms"], time);
+        assert_eq!(paused["samples"].as_array().unwrap().len(), 1);
+        assert_eq!(runtime.projection.read().unwrap().last_operation_id, None);
+        runtime.shutdown_for_test().unwrap();
+        if root.parent().unwrap().exists() { fs::remove_dir_all(root.parent().unwrap()).unwrap(); }
     }
 
     #[test]

@@ -28,6 +28,14 @@ public final class ExperimentSessionGatewayProtocolTest {
         denied(()->protocol.exchange(request("55555555555555555555555555555555","shell","{}")));
         denied(()->protocol.exchange(request("55555555555555555555555555555555","status","{}").put("v",1.0)));
         protocol.exchange(request("55555555555555555555555555555555","status","{}"));
+        JSONObject monitor=protocol.exchange(request("88888888888888888888888888888888","breath-monitor","{\"run\":\"\",\"after\":0}"));
+        if(!"breath-monitor".equals(monitor.getString("action")))throw new AssertionError("read-only monitor action unavailable");
+        if(!"breath-monitor".equals(ExperimentSessionGatewayProtocol.monitorQuery(new JSONObject().put("run","").put("after",0)).getString("operation")))throw new AssertionError("monitor query not closed");
+        denied(()->ExperimentSessionGatewayProtocol.monitorQuery(new JSONObject().put("run","").put("after",-1)));
+        denied(()->ExperimentSessionGatewayProtocol.monitorQuery(new JSONObject().put("run","").put("after",0.0)));
+        denied(()->ExperimentSessionGatewayProtocol.monitorQuery(new JSONObject().put("run","other").put("after",0)));
+        denied(()->ExperimentSessionGatewayProtocol.monitorQuery(new JSONObject().put("run","").put("after",0).put("operation","pause")));
+        denied(()->protocol.exchange(request("99999999999999999999999999999999","breath-monitor","{}").put("payload","{\"after\":1}")));
         protocol.retire();denied(()->protocol.exchange(request("66666666666666666666666666666666","status","{}")));
         // A process restart gets a new gateway epoch even if its native epoch repeats.
         ExperimentSessionGatewayProtocol restarted=new ExperimentSessionGatewayProtocol(CONTROLLER,KEY,DEVICE,43,(action,payload)->{calls++;return payload;});

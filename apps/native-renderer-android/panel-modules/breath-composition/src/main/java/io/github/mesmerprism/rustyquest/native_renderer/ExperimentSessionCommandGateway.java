@@ -231,6 +231,7 @@ public final class ExperimentSessionCommandGateway {
     private JSONObject ownerExchange(String action,JSONObject body)throws Exception {
         requireMain();if(protocol==null||!carrier.acceptsNativeOwner(identity,epoch))throw new SecurityException("native-owner-unavailable");
         if("status".equals(action)){if(body.length()!=0)throw new IllegalArgumentException("empty-status-required");return snapshot();}
+        if("breath-monitor".equals(action))return monitorSnapshot(body);
         if("receipt".equals(action)) {
             if(body.length()!=1||!ExperimentSessionBleProtocol.isLowerHex(body.optString("id"),16))throw new IllegalArgumentException("receipt-id-required");
             try{snapshot();}catch(Exception unavailable){/* An unavailable new observation cannot erase an original receipt. */}
@@ -257,8 +258,12 @@ public final class ExperimentSessionCommandGateway {
         // The existing projection owns the exact Polar wire field and capabilities.
         JSONObject projected=new JSONObject(new String(polar.projectBoundedStatus(status,polarOffer),java.nio.charset.StandardCharsets.UTF_8));
         ExperimentControlMode.Snapshot mode=controlMode.readSnapshot();
-        if(mode.selected)projected.put("control_mode",mode.wireName());
+        if(mode.selected)projected.put("control_mode",mode.wireName()).put("breath_monitor",1);
         return projected.put("v",1).put("m","gated");
+    }
+    private JSONObject monitorSnapshot(JSONObject body)throws Exception {
+        return new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
+            ExperimentSessionGatewayProtocol.monitorQuery(body).toString()));
     }
     private ExperimentSessionBleServer.CommandRequest parse(JSONObject body)throws Exception {
         if(body.has("mac")||body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length>240)throw new IllegalArgumentException("closed-command-required");
