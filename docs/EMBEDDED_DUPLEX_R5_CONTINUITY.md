@@ -288,13 +288,20 @@ These host tests do not prove JNI, exchange or physical cleanup.
 
 ### Additive guarded active-mode operator
 
-Debug packages include a bounded `embedded-duplex/operator-capabilities.json`
+Debug packages include a bounded `quest-debug/operator-capabilities.json`
 asset identifying `rusty.quest.embedded_duplex.guarded_mode.v1` and the four
 closed `guarded_policy_update`, `guarded_blend_update`, `guarded_blend_read` and
 `guarded_operation_ack` methods. It is in the debug source set beside the
 DUMP/shell-UID provider. A host must explicitly select actual packaged support;
 this metadata is not health, admission, cleanup or execution authority. Existing
 unprefixed methods and older packages remain compatible.
+
+The marker is outside the authenticated `embedded-duplex/` product directory.
+The exact default loader inventory is unchanged; extra entries in that directory
+remain rejected before any manifest read. `Test-GuardedModeAssetInventory.py`
+executes that production loader boundary against the candidate debug overlay,
+using explicit read-only Android/JSON/reference-class inputs. Its manifest-open
+sentinel proves only inventory admission, not full manifest or device validity.
 
 The variants accept explicit typed run/app generation/epoch, installed digest,
 Native actor record/generation and runtime-config bindings. The existing command

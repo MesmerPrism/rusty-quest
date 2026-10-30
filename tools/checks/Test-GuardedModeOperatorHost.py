@@ -99,7 +99,7 @@ public class EmbeddedDuplexRuntimeService {
         write('ProviderHost.kt',read(fixture_path).replace('// ACTUAL_PROVIDER_METHOD',helper).replace('// ACTUAL_PROVIDER_HEADER',header))
         run('provider-compile',[java,'-cp',a.compiler_classpath,'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler','-no-stdlib','-no-reflect','-jvm-target','17','-classpath',cp,'-d',classes,contract,out/'ProviderHost.kt'])
         run('provider-controls',[java,'-cp',cp,package.replace('/','.')+'.ProviderHostKt'])
-        marker=json.loads(read(src/'debug/assets/embedded-duplex/operator-capabilities.json'))
+        marker=json.loads(read(src/'debug/assets/quest-debug/operator-capabilities.json'))
         if marker!=dict(schema='rusty.quest.embedded_duplex.guarded_mode.v1',provider_class=package.replace('/','.')+'.EmbeddedDuplexOperatorProvider',
                 methods=['guarded_'+m for m in ('policy_update','blend_update','blend_read','operation_ack')],debug_only=True):raise ValueError('Debug packaged capability differs')
         import xml.etree.ElementTree as ET
