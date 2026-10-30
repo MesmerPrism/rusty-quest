@@ -319,6 +319,26 @@ hashes. Consumer verification and the separately issued exact ACK are retained;
 the ACK wrapper also earns fresh installed identity. Pending, body failure,
 missing capture and failed postcheck never authorize replay or legacy fallback.
 Stop/Whole/recovery/inactive query routes do not use this active-owner wrapper.
+
+The two guarded update routes compose the same Original owner's existing
+publication callback before returning its outcome envelope. They do not close
+the guarded response on a registered/pending envelope while the actual update
+is still running. Successful operation completion with unavailable persistence
+remains an error; an actual failed operation retains its stored unknown outcome.
+Legacy update routes still return their immediate Original observation.
+The provider's existing 30-second wait remains unchanged: timeout or lost reply
+does not cancel the actual operation, settle its Original, or authorize another
+send. A later exact query can observe that same retained work. No command/main
+executor blocks on this composition, and the consumer, ACK and independent
+post-ACK compaction query remain separate.
+
+Focused controls pair `Test-EmbeddedDuplexOriginalsHost.py --completion-only`
+with `Test-GuardedModeOperatorHost.py --originals-classes <fresh-owner-classes>`
+and the same explicit read-only `--support-classpath`. They compile the actual
+store and provider helper, execute persistence and pending/error controls,
+and exercise the unchanged real 30-second provider boundary. Android/Native
+facts remain modeled; these controls prove no installed latency improvement,
+APK execution or reduction in real device calls.
 Native ARM/config/expected-actor checks stay in their existing owners.
 
 `tools/checks/Test-GuardedModeOperatorHost.py --output <fresh-target-output>
