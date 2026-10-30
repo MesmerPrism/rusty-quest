@@ -120,6 +120,7 @@ Development feedback module preparation has independent CPU-only host checks:
 ```powershell
 pwsh -NoProfile -File tools/Test-DevelopmentFeedback.ps1
 pwsh -NoProfile -File examples/development-feedback-native/Run-Conformance.ps1 -Rustc <rustc>
+python examples/development-feedback-native/Run-ScissorConformance.py --rustc <rustc>
 ```
 
 See [Development Feedback Modules](DEVELOPMENT_FEEDBACK_MODULES.md) for the
