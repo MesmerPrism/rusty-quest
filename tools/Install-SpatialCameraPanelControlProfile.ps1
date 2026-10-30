@@ -8,6 +8,13 @@ param(
 
     [string]$Package = "io.github.mesmerprism.rustyquest.spatial_camera_panel",
 
+    [ValidateSet("VisualControls", "ModulesOnly")]
+    [string]$ReceiptMode = "VisualControls",
+
+    [string]$ExpectedWatcherId,
+    [int]$ExpectedOwnerPid,
+    [string]$ExpectedOwnerStartTicks,
+
     [ValidateRange(1, 60)]
     [int]$TimeoutSeconds = 15,
 
@@ -21,6 +28,32 @@ Set-StrictMode -Version Latest
 
 $expectedSchema = "rusty.quest.spatial_camera_panel.control_profile.v1"
 $expectedReceiptSchema = "rusty.quest.spatial_camera_panel.control_profile_apply_receipt.v1"
+$moduleOnly = $ReceiptMode -eq "ModulesOnly"
+if ($moduleOnly) {
+    $expectedSchema = "rusty.quest.spatial_camera_panel.development_modules.v1"
+    if ($ExpectedWatcherId -notmatch '^[0-9a-f-]{36}$' -or $ExpectedOwnerPid -le 0 -or
+        $ExpectedOwnerStartTicks -notmatch '^[1-9][0-9]*$') {
+        throw "ModulesOnly requires the current armed watcher id, owner PID and process start ticks."
+    }
+}
+
+function Assert-UniqueJsonKeys([System.Text.Json.JsonElement]$Element) {
+    if ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
+        $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($property in $Element.EnumerateObject()) {
+            if (-not $seen.Add($property.Name)) { throw "Duplicate JSON field: $($property.Name)" }
+            Assert-UniqueJsonKeys $property.Value
+        }
+    } elseif ($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
+        foreach ($value in $Element.EnumerateArray()) { Assert-UniqueJsonKeys $value }
+    }
+}
+
+function Test-ModuleOwner($Receipt) {
+    return [string]$Receipt.watcher_id -ceq $ExpectedWatcherId -and
+        [long]$Receipt.owner_process_pid -eq $ExpectedOwnerPid -and
+        [string]$Receipt.owner_process_start_ticks -ceq $ExpectedOwnerStartTicks
+}
 
 function Get-DeviceFileSignature {
     param(
@@ -73,14 +106,59 @@ if ($profileInfo.Length -gt 65536) {
     throw "Control profile exceeds the 64 KiB limit."
 }
 $profile = Get-Content -LiteralPath $resolvedProfile -Raw | ConvertFrom-Json
-if ([string]$profile.schema -ne $expectedSchema) {
+if ([string]$profile.schema -cne $expectedSchema) {
     throw "Unsupported control profile schema: $($profile.schema)"
 }
-if ([string]$profile.profile_id -notmatch '^[a-z0-9][a-z0-9._-]{1,63}$') {
+if ([string]$profile.profile_id -cnotmatch '^[a-z0-9][a-z0-9._-]{1,63}$') {
     throw "profile_id is invalid."
 }
-if ($null -eq $profile.quest_controls) {
+if (-not $moduleOnly -and $null -eq $profile.quest_controls) {
     throw "Control profile has no quest_controls object."
+}
+$moduleConsumers = @()
+if ($moduleOnly) {
+    $moduleText = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($resolvedProfile))
+    $document = [System.Text.Json.JsonDocument]::Parse($moduleText)
+    try {
+        $root = $document.RootElement
+        Assert-UniqueJsonKeys $root
+        if ($root.GetProperty("profile_id").ValueKind -ne [System.Text.Json.JsonValueKind]::String) { throw "Module-only profile id must be a string." }
+        $allowed = @("schema", "profile_id", "revision", "development_observation_module", "development_scissor_module")
+        foreach ($property in $root.EnumerateObject()) {
+            if ($allowed -cnotcontains $property.Name) { throw "Unsupported module-only field: $($property.Name)" }
+        }
+        [long]$revision = 0
+        if (-not $root.GetProperty("revision").TryGetInt64([ref]$revision) -or $revision -lt 0) {
+            throw "Module-only revision must be a nonnegative signed integer."
+        }
+        foreach ($consumer in @("observation", "scissor")) {
+            $field = "development_${consumer}_module"
+            if ($profile.PSObject.Properties.Name -cnotcontains $field) { continue }
+            $directive = $root.GetProperty($field)
+            $mode = $directive.GetProperty("mode").GetString()
+            $fields = @(switch -CaseSensitive ($mode) {
+                "status" { @("mode") }
+                "static" { @("mode") }
+                "select_retained" { @("mode", "generation") }
+                "activate" { if ($consumer -eq "scissor") { @("mode", "generation", "sha256", "policy") } else { @("mode", "generation", "sha256") } }
+                default { throw "Unsupported development module mode." }
+            })
+            $actualFields = @($directive.EnumerateObject() | ForEach-Object Name)
+            if ($actualFields.Count -ne $fields.Count -or @($actualFields | Where-Object { $fields -cnotcontains $_ }).Count) {
+                throw "Development module fields do not match its mode."
+            }
+            if ($fields -contains "generation") {
+                [long]$generation = 0
+                if (-not $directive.GetProperty("generation").TryGetInt64([ref]$generation) -or $generation -le 0) { throw "Invalid module generation." }
+            }
+            if ($mode -ceq "activate") {
+                if ($directive.GetProperty("sha256").GetString() -cnotmatch '^[0-9a-f]{64}$') { throw "Invalid module SHA256." }
+                if ($consumer -eq "scissor" -and @("product", "inset_one_pixel") -cnotcontains $directive.GetProperty("policy").GetString()) { throw "Invalid scissor policy." }
+            }
+            $moduleConsumers += $consumer
+        }
+        if ($moduleConsumers.Count -eq 0) { throw "Module-only envelope has no directives." }
+    } finally { $document.Dispose() }
 }
 $profileSha256 = (Get-FileHash -LiteralPath $resolvedProfile -Algorithm SHA256).Hash.ToLowerInvariant()
 
@@ -102,10 +180,20 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($model)) {
 }
 
 $deviceDirectory = "/sdcard/Android/data/$Package/files/control-profiles"
-$activePath = "$deviceDirectory/active.profile.json"
-$pendingPath = "$deviceDirectory/.pending-$($profileSha256.Substring(0, 16)).profile.json"
+$activeFile = if ($moduleOnly) { "active.modules.json" } else { "active.profile.json" }
+$activePath = "$deviceDirectory/$activeFile"
+$pendingPath = "$deviceDirectory/.pending-$($profileSha256.Substring(0, 16)).$activeFile"
 $receiptPath = "$deviceDirectory/last-apply-receipt.json"
 $startedUnixMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+if ($moduleOnly) {
+    $watchRaw = (& $adbPath -s $Serial shell cat "$deviceDirectory/module-watch-receipt.json" 2>$null) -join "`n"
+    if ($LASTEXITCODE -ne 0) { throw "Current module watcher receipt unavailable; nothing published." }
+    $watch = $watchRaw | ConvertFrom-Json
+    if ([string]$watch.schema -cne "rusty.quest.spatial_camera_panel.development_module_watch.v1" -or
+        [string]$watch.phase -cne "armed" -or -not (Test-ModuleOwner $watch)) {
+        throw "Current armed module watcher identity did not match; nothing published."
+    }
+}
 
 & $adbPath -s $Serial shell mkdir -p $deviceDirectory
 if ($LASTEXITCODE -ne 0) {
@@ -168,6 +256,37 @@ if ($null -ne $priorSignature -and [string]$publishedSignature.token -eq [string
 
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
 $effectiveReceipt = $null
+$moduleReceipts = [ordered]@{}
+if ($moduleOnly) {
+    do {
+        Start-Sleep -Milliseconds 250
+        foreach ($consumer in $moduleConsumers) {
+            $raw = (& $adbPath -s $Serial shell cat "$deviceDirectory/last-development-$consumer-module-receipt.json" 2>$null) -join "`n"
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) { continue }
+            $candidate = $null
+            try {
+                $read = $raw | ConvertFrom-Json
+                if ([string]$read.schema -ceq "rusty.quest.spatial_camera_panel.development_module_receipt.v1" -and
+                    (Test-ModuleOwner $read) -and [string]$read.consumer -ceq $consumer -and
+                    [string]$read.profile_sha256 -ceq $profileSha256 -and [string]$read.profile_id -ceq [string]$profile.profile_id -and
+                    [long]$read.revision -eq [long]$profile.revision -and [string]$read.source_file -ceq $activeFile -and
+                    [long]$read.source_length -eq [long]$profileInfo.Length -and
+                    [long]$read.source_modified_unix_ms -eq ([long]$publishedSignature.modified_unix_seconds * 1000L) -and
+                    [string]$read.mode -ceq [string]$profile."development_${consumer}_module".mode) { $candidate = $read }
+            } catch { continue }
+            if ($null -eq $candidate) { continue }
+            if ([string]$candidate.status -in @("rejected", "failed", "unavailable", "retired")) {
+                throw "Module transport returned $($candidate.status) for $consumer; publication is retained and must not be retried automatically."
+            }
+            if ([string]$candidate.status -ceq "observed" -and [string]$candidate.phase -ceq "consumer_readback" -and
+                $null -ne $candidate.consumer_receipt) { $moduleReceipts[$consumer] = $candidate }
+        }
+    } while ($moduleReceipts.Count -ne $moduleConsumers.Count -and [DateTimeOffset]::UtcNow -lt $deadline)
+    if ($moduleReceipts.Count -ne $moduleConsumers.Count) {
+        throw "Module consumer readback is unobserved; publication remains in place. Do not retry automatically."
+    }
+    $effectiveReceipt = $moduleReceipts
+} else {
 do {
     Start-Sleep -Milliseconds 250
     $rawReceipt = (& $adbPath -s $Serial shell cat $receiptPath 2>$null) -join "`n"
@@ -201,18 +320,20 @@ if ($null -eq $effectiveReceipt) {
 if ([string]$effectiveReceipt.status -ne "applied") {
     throw "The active app rejected the profile: $($effectiveReceipt.error_code) $($effectiveReceipt.error)"
 }
+}
 
 $result = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.control_profile_hotload_host_receipt.v1"
-    status = "pass"
+    status = $(if ($moduleOnly) { "observed" } else { "pass" })
+    receipt_mode = $ReceiptMode
     provider = "serial-scoped-adb-fallback"
     device_model = $model
     package = $Package
     profile_id = [string]$profile.profile_id
     profile_revision = [long]$profile.revision
     profile_sha256 = $profileSha256
-    device_profile_path = "external-files/control-profiles/active.profile.json"
-    app_receipt_path = "external-files/control-profiles/last-apply-receipt.json"
+    device_profile_path = "external-files/control-profiles/$activeFile"
+    app_receipt_path = $(if ($moduleOnly) { "external-files/control-profiles/last-development-{observation,scissor}-module-receipt.json" } else { "external-files/control-profiles/last-apply-receipt.json" })
     app_receipt = $effectiveReceipt
     publication_signature = [ordered]@{
         prior_present = ($null -ne $priorSignature)

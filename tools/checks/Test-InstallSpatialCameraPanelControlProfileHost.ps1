@@ -86,6 +86,7 @@ if ($verb -eq "push") {
         length = [long](Get-Item -LiteralPath $source).Length
         modified_unix_seconds = 1700000000L
         sha256 = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+        payload = (Get-Content -LiteralPath $source -Raw | ConvertFrom-Json -AsHashtable)
     }
     Save-State
     exit 0
@@ -166,11 +167,38 @@ switch ($command) {
             route_active = $true
             effective = [ordered]@{}
         }
+        if ($state.active.path.EndsWith('/active.modules.json')) {
+            $state.receipt = [ordered]@{
+                schema = 'rusty.quest.spatial_camera_panel.development_module_receipt.v1'
+                status = 'observed'; phase = 'consumer_readback'; consumer = 'observation'; mode = 'status'
+                profile_id = $state.active.payload.profile_id; revision = $state.active.payload.revision
+                profile_sha256 = $state.active.sha256; source_file = 'active.modules.json'
+                source_length = $state.active.length
+                source_modified_unix_ms = ([long]$state.active.modified_unix_seconds * 1000L)
+                watcher_id = '11111111-2222-3333-4444-555555555555'
+                owner_process_pid = 123; owner_process_start_ticks = '3456'
+                consumer_receipt = @{outcome='accepted'; renderer_calls=0}
+            }
+            switch ($state.module_case) {
+                'wrong_revision' { $state.receipt.revision = 999 }
+                'wrong_hash' { $state.receipt.profile_sha256 = 'f' * 64 }
+                'wrong_owner' { $state.receipt.owner_process_start_ticks = '3457' }
+                'watched' { $state.receipt.status = 'watched'; $state.receipt.phase = 'watched' }
+                'retired' { $state.receipt.status = 'retired'; $state.receipt.phase = 'retired' }
+            }
+        }
         Save-State
         exit 0
     }
     "cat" {
         $receipt = $state.receipt
+        if ([string]$args[4] -like '*/module-watch-receipt.json') {
+            $receipt = @{
+                schema='rusty.quest.spatial_camera_panel.development_module_watch.v1'; phase='armed'
+                watcher_id='11111111-2222-3333-4444-555555555555'
+                owner_process_pid=123; owner_process_start_ticks='3456'
+            }
+        }
         Save-State
         if ($null -eq $receipt) {
             exit 1
@@ -250,7 +278,52 @@ switch ($command) {
             [long]$second.publication_signature.modified_unix_seconds
     ) "Final active file signature does not match the second host receipt."
 
-    Write-Output "Spatial Camera Panel control-profile host publication tests passed."
+    $moduleProfilePath = Join-Path $tempRoot 'modules.json'
+    $moduleBytes = '{"schema":"rusty.quest.spatial_camera_panel.development_modules.v1","profile_id":"unit-modules","revision":42,"development_observation_module":{"mode":"status"}}'
+    [IO.File]::WriteAllText($moduleProfilePath, $moduleBytes)
+    $moduleArguments = @{
+        Serial='mock-serial'; ProfilePath=$moduleProfilePath; TimeoutSeconds=1; Adb=$fakeAdbPath
+        ReceiptMode='ModulesOnly'; ExpectedWatcherId='11111111-2222-3333-4444-555555555555'
+        ExpectedOwnerPid=123; ExpectedOwnerStartTicks='3456'
+    }
+    $env:RUSTY_QUEST_FAKE_ADB_STATE = $statePath
+    try {
+        foreach ($case in @('observed', 'wrong_revision', 'wrong_hash', 'wrong_owner', 'watched', 'retired')) {
+            $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
+            $state.module_case = $case
+            [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 20))
+            $failure = $null; $observed = $null
+            try { $observed = ((& $installerPath @moduleArguments) -join "`n") | ConvertFrom-Json } catch { $failure = $_ }
+            if ($case -eq 'observed') {
+                Assert-True ($null -eq $failure) "Module-only matching readback failed: $failure"
+                Assert-True ($observed.status -eq 'observed') 'Consumer readback was conflated with acceptance/use.'
+                Assert-True ($observed.device_profile_path -eq 'external-files/control-profiles/active.modules.json') 'Module-only publication escaped its fixed path.'
+                Assert-True ($observed.app_receipt.observation.consumer_receipt.renderer_calls -eq 0) 'Fixture unexpectedly attested use.'
+            } else { Assert-True ($null -ne $failure) "Module-only $case was accepted as current readback." }
+        }
+        $before = (Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json).commands.Count
+        foreach ($bad in @(
+            $moduleBytes.Replace('"revision":42', '"revision":42,"revision":43'),
+            $moduleBytes.Replace('"revision":42', '"revision":42,"quest_controls":{}'),
+            $moduleBytes.Replace('"revision":42', '"revision":42,"peer_network_endpoints":[]'),
+            $moduleBytes.Replace('"status"', '"unknown"'),
+            (' ' * 65537))) {
+            [IO.File]::WriteAllText($moduleProfilePath, $bad)
+            $failure = $null
+            try { & $installerPath @moduleArguments | Out-Null } catch { $failure = $_ }
+            Assert-True ($null -ne $failure) 'Invalid module-only input was published.'
+        }
+        Assert-True (((Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json).commands.Count) -eq $before) 'Invalid module-only input contacted ADB.'
+        [IO.File]::WriteAllText($moduleProfilePath, $moduleBytes)
+        $moduleArguments.ExpectedOwnerStartTicks = '3457'
+        $failure = $null
+        try { & $installerPath @moduleArguments | Out-Null } catch { $failure = $_ }
+        Assert-True ($null -ne $failure) 'A different owner passed watcher preflight.'
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        $newCommands = @($state.commands | Select-Object -Skip $before)
+        Assert-True (@($newCommands | Where-Object { $_ -match ' push | shell mv ' }).Count -eq 0) 'Owner mismatch published bytes.'
+    } finally { $env:RUSTY_QUEST_FAKE_ADB_STATE = $priorFakeState }
+    Write-Output "Control-profile host tests passed: legacy identical publication, module-only fixed path, owner/publication joins, watched/retired and invalid-input rejection."
 } finally {
     if (Test-Path -LiteralPath $tempRoot) {
         $resolvedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
