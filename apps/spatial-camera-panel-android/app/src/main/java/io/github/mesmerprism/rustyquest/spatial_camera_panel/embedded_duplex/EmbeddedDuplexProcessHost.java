@@ -34,19 +34,25 @@ final class EmbeddedDuplexProcessHost {
 
     private final Context applicationContext;
     private final EmbeddedDuplexEffectiveInputOwner effectiveInputOwner = new EmbeddedDuplexEffectiveInputOwner();
-    private volatile EmbeddedDuplexRunContext effectiveInputRunContext;
+    private EmbeddedDuplexRunContext effectiveInputRunContext;
+    private volatile EmbeddedDuplexEffectiveInputOwner.Observation effectiveInputObservationSnapshot;
 
     static String effectiveInputObservation() {
         EmbeddedDuplexProcessHost current = instance;
         if (current == null) return null;
-        String observation = current.effectiveInputOwner.observation();
-        EmbeddedDuplexRunContext selected = current.effectiveInputRunContext;
-        if (observation == null || selected == null) return null;
-        try {
-            selected.requireSame(current.runContext);
-            return new JSONObject(observation).put("operational_run_id",
-                    selected.runId == null ? JSONObject.NULL : selected.runId).toString();
-        } catch (Exception changed) { return null; }
+        EmbeddedDuplexEffectiveInputOwner.Observation snapshot = current.effectiveInputObservationSnapshot;
+        return snapshot == null ? null : snapshot.forRun(current.runContext);
+    }
+
+    private void publishEffectiveInputObservation() throws Exception {
+        effectiveInputObservationSnapshot = new EmbeddedDuplexEffectiveInputOwner.Observation(
+                effectiveInputOwner.observation(), effectiveInputRunContext);
+    }
+
+    private void releaseEffectiveInputsAfterVerifiedCleanup() {
+        effectiveInputObservationSnapshot = null;
+        effectiveInputOwner.releaseAfterVerifiedCleanup();
+        effectiveInputRunContext = null;
     }
 
     private FrozenEffectiveInputs effectiveInputs(EmbeddedDuplexPackagedInputs.InstalledRole role) throws Exception {
@@ -63,6 +69,7 @@ final class EmbeddedDuplexProcessHost {
         FrozenEffectiveInputs accepted = effectiveInputOwner.capture(base, generation,
                 FrozenEffectiveInputs.readActiveProfile(applicationContext), EmbeddedDuplexNative::deriveEffectiveInputs);
         effectiveInputRunContext = runContext;
+        publishEffectiveInputObservation();
         return accepted;
     }
     private final EmbeddedDuplexRunSelectionStore runSelection;
@@ -148,7 +155,7 @@ final class EmbeddedDuplexProcessHost {
                 retainedWholeNativeReceipt=null;lastClosedActorProof=null;retainedWholeClose=null;wholeLocalDrain=null;noMediaClose=null;coldPendingRecovery=null;
                 wholeCallbackMarker=null;wholeCallbackPlatform=null;
                 nativeConfigurationContext=null;setupCredentials=null;pendingReview=null;lastBootstrapFailure=null;diagnosticChallenge=null;
-                effectiveInputOwner.releaseAfterVerifiedCleanup();
+                releaseEffectiveInputsAfterVerifiedCleanup();
                 result.complete(runStatusOnLane());
             }}
         }catch(Throwable failure){
@@ -411,6 +418,7 @@ final class EmbeddedDuplexProcessHost {
                 originalClosedActor = null;
                 effectiveInputOwner.nativeConfigured(frozen, prepared.runtimeConfigSha256,
                         nativeExecutorGeneration, nativeAppRecordSha256);
+                publishEffectiveInputObservation();
                 phase.set(Phase.READY);
                 return initialized;
             } catch (Exception failure) {
@@ -1025,7 +1033,7 @@ final class EmbeddedDuplexProcessHost {
                 if (!EmbeddedDuplexNative.processIdleForEnrollment()) {
                     throw new IllegalStateException("native process or staged route is not terminal");
                 }
-                effectiveInputOwner.releaseAfterVerifiedCleanup();
+                releaseEffectiveInputsAfterVerifiedCleanup();
                 return EmbeddedDuplexEnrollmentResolver.replace(applicationContext, reviewedDraft,
                         effectiveInputs(EmbeddedDuplexPackagedInputs.InstalledRole.parse(reviewedDraft.roleId)));
             } finally {
@@ -1060,7 +1068,7 @@ final class EmbeddedDuplexProcessHost {
                 throw new IllegalStateException("native process or staged route is not terminal");
             }
             // A new explicit review at this existing terminal boundary is a new data selection.
-            effectiveInputOwner.releaseAfterVerifiedCleanup();
+            releaseEffectiveInputsAfterVerifiedCleanup();
             EmbeddedDuplexEnrollmentReview review =
                     policyUpdate ? EmbeddedDuplexEnrollmentResolver.reviewPolicyUpdate(applicationContext,
                             effectiveInputs(EmbeddedDuplexEnrollmentResolver.installedRole(applicationContext)))
@@ -1308,7 +1316,7 @@ final class EmbeddedDuplexProcessHost {
                 platform = null;
                 resources = null;
                 runtimeConfigSha256 = null;
-                effectiveInputOwner.releaseAfterVerifiedCleanup();
+                releaseEffectiveInputsAfterVerifiedCleanup();
                 nativeExecutorGeneration = 0L;
                 nativeAppRecordSha256 = null;
                 enrollmentRecordSha256 = null;
@@ -1392,7 +1400,7 @@ final class EmbeddedDuplexProcessHost {
         // Store the real outgoing actor only after the native/Java/display/fence barriers above.
         originalClosedActor = noMedia ? null : originalActor();
         platform = null; resources = null; runtimeConfigSha256 = null; nativeExecutorGeneration = 0L;
-        effectiveInputOwner.releaseAfterVerifiedCleanup();
+        releaseEffectiveInputsAfterVerifiedCleanup();
         nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; startIntent.afterVerifiedCleanup();
         ownNoMediaStopTarget = null;
         synchronized (attachmentGate) {
@@ -2554,7 +2562,7 @@ final class EmbeddedDuplexProcessHost {
             String appRecord=held.original.row.getJSONObject("actor_binding").getString("app_record_sha256");
             EmbeddedDuplexOriginals.forApplication(applicationContext).actualClosedAppOwnerJoined(held.appGeneration,0L,appRecord,held.receipt,held.plan);
             platform=null;resources=null;runtimeConfigSha256=null;nativeExecutorGeneration=0L;nativeAppRecordSha256=null;nativeConfigurationContext=null;
-            effectiveInputOwner.releaseAfterVerifiedCleanup();
+            releaseEffectiveInputsAfterVerifiedCleanup();
             enrollmentRecordSha256=null;startIntent.afterVerifiedCleanup();localFixture=false;
             synchronized(attachmentGate){attachmentGeneration=0L;displayDetaching=false;closeInFlight=false;phase.set(Phase.NEW);held.released=true;}
             held.completion.complete(held.receipt.toString());
@@ -2716,7 +2724,7 @@ final class EmbeddedDuplexProcessHost {
             proof.put("app_process_fence_cleanup","terminal");held.proof=proof;
             // These are actual joined owners. Native close does not certify outer process/source EOF.
             platform=null;resources=null;runtimeConfigSha256=null;nativeExecutorGeneration=0L;nativeAppRecordSha256=null;nativeConfigurationContext=null;
-            effectiveInputOwner.releaseAfterVerifiedCleanup();
+            releaseEffectiveInputsAfterVerifiedCleanup();
             enrollmentRecordSha256=null;startIntent.afterVerifiedCleanup();localFixture=false;
             synchronized(attachmentGate){attachmentGeneration=0L;displayDetaching=false;closeInFlight=false;phase.set(Phase.NEW);}
             lastClosedActorProof=proof;
@@ -2859,7 +2867,7 @@ final class EmbeddedDuplexProcessHost {
         originalClosedActor = noMedia ? null : originalActor();
         platform = null; resources = null; runtimeConfigSha256 = null; nativeExecutorGeneration = 0L;
         nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; startIntent.afterVerifiedCleanup();
-        effectiveInputOwner.releaseAfterVerifiedCleanup();
+        releaseEffectiveInputsAfterVerifiedCleanup();
         ownNoMediaStopTarget = null;
         synchronized (attachmentGate) {
             wholeCloseRollover = rollover; wholeCloseActivity = null;

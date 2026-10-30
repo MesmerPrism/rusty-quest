@@ -146,10 +146,31 @@ public final class FrozenEffectiveInputsHost {
         JSONObject nativeObserved=new JSONObject(owner.observation());
         check(nativeObserved.getString("phase").equals("native_configured")
             &&nativeObserved.getJSONObject("native_configuration").getString("runtime_config_sha256").equals(preparedA.runtimeConfigSha256),"owner readback joins actually configured projection");
+        java.io.File runRoot = active.getParent().toFile();
+        EmbeddedDuplexRunContext runA = new EmbeddedDuplexRunContext(runRoot, runRoot, "a".repeat(32), 1);
+        EmbeddedDuplexRunContext runB = new EmbeddedDuplexRunContext(runRoot, runRoot, "b".repeat(32), 2);
+        EmbeddedDuplexEffectiveInputOwner.Observation observedA =
+                new EmbeddedDuplexEffectiveInputOwner.Observation(owner.observation(), runA);
         owner.releaseAfterVerifiedCleanup();
         refuse(()->ownedA.packagedConfigRequest(runtime));
         check(owner.observation()==null,"terminal release retires old accepted observation");
         FrozenEffectiveInputs ownedB=owner.capture(base,62,b,nativeDeriver);
+        EmbeddedDuplexEffectiveInputOwner.Observation observedB =
+                new EmbeddedDuplexEffectiveInputOwner.Observation(owner.observation(), runB);
+        // Deterministic interleaving: a reader retains A, then B is selected/published
+        // before that reader checks the current run. It must never label A as B.
+        check(observedA.forRun(runB)==null,"retained A observation refuses newly selected B run");
+        JSONObject oldRun = new JSONObject(observedA.forRun(runA));
+        check(oldRun.getString("operational_run_id").equals(runA.runId)
+                &&oldRun.getJSONObject("native_configuration").getString("runtime_config_sha256").equals(preparedA.runtimeConfigSha256),
+                "immutable A payload always retains captured A run label");
+        JSONObject newRun = new JSONObject(observedB.forRun(runB));
+        check(newRun.getString("operational_run_id").equals(runB.runId)
+                &&newRun.getJSONObject("selection").getLong("generation")==62
+                &&newRun.isNull("native_configuration"),"new B readback retains B selection and phase");
+        check(observedB.forRun(runA)==null,"new B observation refuses old A run");
+        check(observedA.forRun(new EmbeddedDuplexRunContext(runRoot,runRoot,runA.runId,3))==null,
+                "same run id after another selection cannot revive old observation");
         check(!ownedA.digest("route-configuration.json").equals(ownedB.digest("route-configuration.json")),"next eligible generation accepts B");
         owner.releaseAfterVerifiedCleanup();
         FrozenEffectiveInputs ownedRestored=owner.capture(base,63,a,nativeDeriver);

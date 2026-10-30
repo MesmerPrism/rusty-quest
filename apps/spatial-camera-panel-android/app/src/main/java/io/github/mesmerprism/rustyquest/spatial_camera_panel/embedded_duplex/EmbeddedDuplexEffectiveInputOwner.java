@@ -5,6 +5,24 @@ import org.json.JSONObject;
 
 /** Data holder owned exclusively by ProcessHost's existing command lane. */
 final class EmbeddedDuplexEffectiveInputOwner {
+    /** One immutable cached payload/run join, published by the existing command lane. */
+    static final class Observation {
+        private final EmbeddedDuplexRunContext capturedRun;
+        private final String payload;
+
+        Observation(String observation, EmbeddedDuplexRunContext capturedRun) throws Exception {
+            if (observation == null || capturedRun == null)
+                throw new IllegalArgumentException("effective_input_observation_owner_unavailable");
+            this.capturedRun = capturedRun;
+            this.payload = new JSONObject(observation).put("operational_run_id",
+                    capturedRun.runId == null ? JSONObject.NULL : capturedRun.runId).toString();
+        }
+
+        String forRun(EmbeddedDuplexRunContext current) {
+            return capturedRun.same(current) ? payload : null;
+        }
+    }
+
     private FrozenEffectiveInputs.Selector selector;
     private FrozenEffectiveInputs current;
     private volatile String observation;

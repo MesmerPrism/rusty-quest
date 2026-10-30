@@ -55,7 +55,7 @@ def main():
         generated_java=[build_config]
         java_root=root/'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex'
         java_sources=[java_root/(name+'.java') for name in ('FrozenEffectiveInputs','EmbeddedDuplexNative',
-            'EmbeddedDuplexEffectiveInputOwner','EmbeddedDuplexEnrollment','EmbeddedDuplexEnrollmentDraft',
+            'EmbeddedDuplexEffectiveInputOwner','EmbeddedDuplexRunContext','EmbeddedDuplexEnrollment','EmbeddedDuplexEnrollmentDraft',
             'EmbeddedDuplexEnrollmentFence','EmbeddedDuplexEnrollmentReview','EmbeddedDuplexEnrollmentStatus','EmbeddedDuplexEnrollmentResolver')]
         java_sources.append(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/FrozenEffectiveInputsHost.java')
         old_behavior=json.loads(a.reference_behavior_command.read_text())
