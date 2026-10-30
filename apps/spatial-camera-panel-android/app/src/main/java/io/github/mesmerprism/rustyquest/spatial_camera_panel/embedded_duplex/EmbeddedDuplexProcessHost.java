@@ -206,6 +206,63 @@ final class EmbeddedDuplexProcessHost {
             .put("app_fence_disposition",EmbeddedDuplexColdRecovery.appDisposition(runContext.root,processFence,actual)).toString();
     }
     private final InstalledApkDigest installedApkDigest = new InstalledApkDigest();
+
+    /** One typed active-mode call. Never wait for a queued command on this lane.
+     * Original registration/outcomes and consumer ACK remain in their owners. */
+    CompletableFuture<android.os.Bundle> guardedModeCall(String runId,long appGeneration,String epoch,String apkSha,
+            long nativeGeneration,String appRecord,String runtimeSha,String method,String challenge,
+            java.util.function.Supplier<CompletableFuture<android.os.Bundle>> action) {
+        CompletableFuture<android.os.Bundle> result=new CompletableFuture<>();
+        final EmbeddedDuplexRunContext captured=runContext;
+        commands.execute(()->{
+            try {
+                if(!java.util.Set.of("policy_update","blend_update","blend_read","operation_ack").contains(method)
+                        ||challenge==null||!challenge.matches("[0-9a-f]{32}"))
+                    throw new IllegalArgumentException("guarded mode method/challenge");
+                captured.requireSame(runContext);ensureProcessFence();
+                JSONObject before=guardedModeObservation(runId,appGeneration,epoch,apkSha,nativeGeneration,appRecord,runtimeSha);
+                // The supplier invokes only the already validated existing handler.
+                // It may enqueue work here; compose its real Future without join/get.
+                java.util.Objects.requireNonNull(action.get()).whenComplete((response,failure)->{
+                    if(failure!=null){result.completeExceptionally(failure);return;}
+                    commands.execute(()->{try{
+                        captured.requireSame(runContext);
+                        JSONObject after=guardedModeObservation(runId,appGeneration,epoch,apkSha,nativeGeneration,appRecord,runtimeSha);
+                        JSONObject proof=new JSONObject().put("schema","rusty.quest.embedded_duplex.guarded_mode.v1")
+                                .put("method",method).put("challenge",challenge).put("run_id",runId).put("before",before)
+                                .put("response",EmbeddedDuplexOriginals.bundleObject(response)).put("after",after);
+                        android.os.Bundle envelope=new android.os.Bundle();
+                        envelope.putString("schema","rusty.quest.embedded_duplex.operator_transport.v3");
+                        envelope.putString("status","observed");envelope.putString("challenge",challenge);envelope.putString("run_id",runId);
+                        envelope.putString("guarded_json",EmbeddedDuplexCanonicalJson.encode(proof));result.complete(envelope);
+                    }catch(Throwable post){result.completeExceptionally(post);}});
+                });
+            }catch(Throwable pre){result.completeExceptionally(pre);}
+        });
+        return result;
+    }
+
+    private JSONObject guardedModeObservation(String runId,long appGeneration,String epoch,String apkSha,
+            long nativeGeneration,String appRecord,String runtimeSha)throws Exception {
+        if(phase.get()!=Phase.READY||localFixture||platform==null||resources==null
+                ||appGeneration<=0||nativeGeneration<=0||!java.util.Objects.equals(runContext.runId,runId)
+                ||processFence.generation()!=appGeneration||!processFence.epochId().equals(epoch)
+                ||nativeExecutorGeneration!=nativeGeneration||!java.util.Objects.equals(nativeAppRecordSha256,appRecord)
+                ||!java.util.Objects.equals(runtimeConfigSha256,runtimeSha))
+            throw new IllegalStateException("guarded active actor differs");
+        processFence.requireFresh();processFence.requireLive(appGeneration);
+        processFence.requireIncarnation(EmbeddedDuplexProcessIncarnation.current(android.os.Process.myPid(),android.os.Process.myUid()));
+        String apk=installedApkDigest.read(applicationContext);
+        if(!apk.equals(apkSha))throw new IllegalStateException("guarded installed APK differs");
+        JSONObject status=new JSONObject(runStatusOnLane());
+        JSONObject nativeStatus=status.getJSONObject("native");
+        if(!runId.equals(nativeStatus.getString("operational_run_id"))||nativeStatus.isNull("native_generation")
+                ||nativeStatus.getLong("native_generation")!=nativeGeneration)
+            throw new IllegalStateException("guarded Native run/actor differs");
+        // native_host_owned/effects_pending are legitimate for this active path.
+        return new JSONObject().put("status",status).put("actor_binding",originalActor())
+                .put("process_epoch_id",processFence.epochId()).put("apk_sha256",apk).put("runtime_config_sha256",runtimeConfigSha256);
+    }
     // Held for the lifetime of this singleton, including failed bootstrap/cleanup.
     private volatile EmbeddedDuplexProcessFence processFence;
     private long nativeExecutorGeneration;

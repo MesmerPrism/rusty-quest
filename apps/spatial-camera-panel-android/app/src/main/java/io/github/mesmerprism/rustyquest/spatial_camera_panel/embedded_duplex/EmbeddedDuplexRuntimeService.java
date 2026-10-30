@@ -69,6 +69,13 @@ public final class EmbeddedDuplexRuntimeService {
         return EmbeddedDuplexProcessHost.forApplication(context).selectRun(runId,false,null).whenComplete(reconcile);
     }
     public static CompletableFuture<String> runStatus(Context context){return EmbeddedDuplexProcessHost.forApplication(context).runStatus();}
+    /** Closed debug adapter; selected run request custody stays with the caller. */
+    public static CompletableFuture<Bundle> guardedModeCall(Context context,String runId,long appGeneration,
+            String epoch,String apkSha,long nativeGeneration,String appRecord,String runtimeSha,String method,String challenge,
+            Supplier<CompletableFuture<Bundle>> action) {
+        return EmbeddedDuplexProcessHost.forApplication(context).guardedModeCall(runId,appGeneration,
+                epoch,apkSha,nativeGeneration,appRecord,runtimeSha,method,challenge,action);
+    }
     public static CompletableFuture<String> recoverColdPending(Context context,String runId,String priorRunId,String priorOriginalId){
         return EmbeddedDuplexProcessHost.forApplication(context).recoverColdPending(runId,priorRunId,priorOriginalId);
     }
