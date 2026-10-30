@@ -135,11 +135,11 @@ with
 requested, supported, and effective markers remain separate. ABI v1 and
 missing optional payloads keep both features ineffective.
 
-## Peer endpoint input candidate
+## Shared endpoint input selection
 
 `SpatialPeerNetworkProfilePilot` validates the additive `peer_network_endpoints`
 selection and delegates all ordinary control fields to the existing profile
-parser. `FrozenEffectiveInputs.Selector` is the pre-bootstrap consumer candidate:
+parser. `FrozenEffectiveInputs.Selector` supplies the pre-bootstrap input:
 it starts from the installed signer/manifest-verified base, asks native code to
 derive endpoint-only route/binding documents, and publishes one immutable
 snapshot only after complete validation. The base manifest is never regenerated
@@ -161,13 +161,23 @@ generation under the existing cleanup/admission contract, rather than mutating
 live sockets, routes or authority. The default packaged-input path remains
 available without an override.
 
-The ordinary Activity `active.profile.json` parser still refuses this additive
-field. Automatic file selection and the pre-enrollment/process-holder/private
-provider association are separate integration work; this source candidate alone
-is not a claim that an installed app consumes it. Existing visual controls keep
-their supported route-active Activity/main-thread application boundary. File
-publication, native data validation, runtime adoption and physical endpoint
-readback must be reported separately.
+ProcessHost reads the bounded `active.profile.json` once before enrollment and
+retains one frozen snapshot for its role, process generation and operational run.
+Enrollment resolution/review/confirmation and native bootstrap consume that same
+object. An endpoint edit is selected only after the existing owner has earned a
+new eligible selection boundary; ordinary peer Stop does not mutate the frozen
+route. An explicit new enrollment review at the existing native-idle terminal
+boundary also retires the prior data selection. Cleanup invalidates old objects.
+
+The Activity parser accepts the endpoint field alongside visual controls. Visual
+application keeps its existing route-active/main-thread boundary and does not
+change a running route. `last-apply-receipt.json` reports `applied_scope` as
+`visual_controls`, the requested endpoints, and cached `effective_input_owner`
+observation. That observation distinguishes frozen selection from actual native
+configuration identity; it does not claim socket liveness. The hotloader's
+existing explicit property is still required. Debug builds permit that opt-in
+with private locked input. File publication, native data validation, runtime
+adoption and physical endpoint readback remain separate evidence.
 
 The explicit pilot consumer accepts a complete existing control profile with
 one additional root field, `peer_network_endpoints`. This is an array of exactly
@@ -188,6 +198,38 @@ pilot's in-memory `current` value, exposing the typed original visual profile,
 exact submitted-byte SHA-256 and immutable endpoint readback. Exceptions leave
 the preceding selection intact. There is no additional file watcher, receipt
 format, persistence path or new resource owner.
+
+## Optional development module directives
+
+The same strict profile envelope accepts `development_observation_module` and
+`development_scissor_module`. Omission issues no command. Each directive has a
+closed `mode`: `static` and `status` take no other fields; `select_retained`
+requires only a positive integer `generation`; `activate` requires that generation
+and lowercase 64-hex `sha256`. Scissor activation additionally requires `policy`
+as `product` or `inset_one_pixel`; observation never accepts policy. No path,
+class or trust setting is accepted. Invalid envelope/addon/context validation
+prevents both visual and module dispatch.
+
+After valid visual application, the existing private extension may dispatch each
+present directive to its real optional consumer. It borrows the existing debug
+module owner's bounded worker. A missing consumer is reported as unavailable.
+The fixed `last-development-observation-module-receipt.json` and
+`last-development-scissor-module-receipt.json` contain profile hash, requested
+mode, dispatch outcome and the actual nested consumer receipt. They do not infer
+adoption from successful file publication or visual application. Receipts use
+AtomicFile; completion tickets prevent an old A/B/A request from overwriting a
+later identical A, and extension shutdown cancels exact pending Native admission
+futures before retiring the shared debug owner. No code image unloading is claimed.
+
+Source/JVM checks cover the integrated parser, data holder, actual public source
+closure and hotloader with modeled Android leaves. Installed APK/Android event
+delivery, private Android key storage and physical sockets require their own
+runtime evidence.
+
+## Earlier host prototype evidence
+
+The following describes the preceding probes, whose limitations remain part of
+their evidence; it does not describe the shared production path above.
 
 One acceptance scenario selects peer A at `10.20.0.11:41000` (media) and
 `:41001` (control), then changes that same peer to `10.21.0.11:43000` and

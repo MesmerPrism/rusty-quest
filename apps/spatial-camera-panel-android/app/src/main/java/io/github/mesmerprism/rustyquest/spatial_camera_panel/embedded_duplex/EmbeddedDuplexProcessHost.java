@@ -33,6 +33,38 @@ final class EmbeddedDuplexProcessHost {
     }
 
     private final Context applicationContext;
+    private final EmbeddedDuplexEffectiveInputOwner effectiveInputOwner = new EmbeddedDuplexEffectiveInputOwner();
+    private volatile EmbeddedDuplexRunContext effectiveInputRunContext;
+
+    static String effectiveInputObservation() {
+        EmbeddedDuplexProcessHost current = instance;
+        if (current == null) return null;
+        String observation = current.effectiveInputOwner.observation();
+        EmbeddedDuplexRunContext selected = current.effectiveInputRunContext;
+        if (observation == null || selected == null) return null;
+        try {
+            selected.requireSame(current.runContext);
+            return new JSONObject(observation).put("operational_run_id",
+                    selected.runId == null ? JSONObject.NULL : selected.runId).toString();
+        } catch (Exception changed) { return null; }
+    }
+
+    private FrozenEffectiveInputs effectiveInputs(EmbeddedDuplexPackagedInputs.InstalledRole role) throws Exception {
+        if (processFence == null) throw new IllegalStateException("effective input process owner unavailable");
+        long generation = processFence.generation();
+        FrozenEffectiveInputs retained = effectiveInputOwner.retained(role, generation);
+        if (retained != null) {
+            if (effectiveInputRunContext == null) throw new IllegalStateException("effective input run owner unavailable");
+            effectiveInputRunContext.requireSame(runContext);
+            return retained;
+        }
+        EmbeddedDuplexPackagedInputs base = EmbeddedDuplexPackagedInputs.load(applicationContext,
+                io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256, role);
+        FrozenEffectiveInputs accepted = effectiveInputOwner.capture(base, generation,
+                FrozenEffectiveInputs.readActiveProfile(applicationContext), EmbeddedDuplexNative::deriveEffectiveInputs);
+        effectiveInputRunContext = runContext;
+        return accepted;
+    }
     private final EmbeddedDuplexRunSelectionStore runSelection;
     private volatile EmbeddedDuplexRunContext runContext;
     private final Object runRequestGate=new Object();
@@ -116,6 +148,7 @@ final class EmbeddedDuplexProcessHost {
                 retainedWholeNativeReceipt=null;lastClosedActorProof=null;retainedWholeClose=null;wholeLocalDrain=null;noMediaClose=null;coldPendingRecovery=null;
                 wholeCallbackMarker=null;wholeCallbackPlatform=null;
                 nativeConfigurationContext=null;setupCredentials=null;pendingReview=null;lastBootstrapFailure=null;diagnosticChallenge=null;
+                effectiveInputOwner.releaseAfterVerifiedCleanup();
                 result.complete(runStatusOnLane());
             }}
         }catch(Throwable failure){
@@ -304,6 +337,7 @@ final class EmbeddedDuplexProcessHost {
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 JSONObject runtime = new JSONObject(runtimeCopy);
                 JSONObject enrollment = new JSONObject(startupCopy);
+                FrozenEffectiveInputs frozen = effectiveInputs(role);
                 processFence.bindIncarnation(EmbeddedDuplexProcessIncarnation.current(
                         android.os.Process.myPid(),android.os.Process.myUid()));
                 processFence.beforeRuntimeEffects(checkpointSnapshot(), evidenceSnapshot());
@@ -319,7 +353,7 @@ final class EmbeddedDuplexProcessHost {
                 nativeAppRecordSha256 = recordSha;
                 EmbeddedDuplexOriginals.bindActualActor(originalActor());
                 EmbeddedDuplexBootstrap.Prepared prepared = EmbeddedDuplexBootstrap.prepare(
-                        applicationContext, role, runtime, trace);
+                        frozen, runtime, EmbeddedDuplexNative::assemblePackagedConfig, trace);
                 // Preparation stages this exact route in native process state.
                 // Retain its digest even if a later callback or JNI step fails.
                 runtimeConfigSha256 = prepared.runtimeConfigSha256;
@@ -375,6 +409,8 @@ final class EmbeddedDuplexProcessHost {
                 ownNoMediaCloseProof = null; ownNoMediaStopTarget = null;
                 terminalWholeReceipt = null; terminalWholeChallenge = null; retainedWholeNativeReceipt = null;
                 originalClosedActor = null;
+                effectiveInputOwner.nativeConfigured(frozen, prepared.runtimeConfigSha256,
+                        nativeExecutorGeneration, nativeAppRecordSha256);
                 phase.set(Phase.READY);
                 return initialized;
             } catch (Exception failure) {
@@ -749,7 +785,8 @@ final class EmbeddedDuplexProcessHost {
                 new EmbeddedDuplexRecoveryCoordinator(applicationContext).requireFreshBootstrap();
                 trace.mark(EmbeddedDuplexBootstrap.Failure.ENROLLMENT_RESOLVE);
                 EmbeddedDuplexEnrollment enrollment =
-                        EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
+                        EmbeddedDuplexEnrollmentResolver.resolve(applicationContext,
+                                effectiveInputs(EmbeddedDuplexEnrollmentResolver.installedRole(applicationContext)));
                 trace.mark(EmbeddedDuplexBootstrap.Failure.SESSION_INPUTS);
                 EmbeddedDuplexSessionInputs inputs =
                         EmbeddedDuplexSessionInputs.createRealPeer(enrollment);
@@ -988,7 +1025,9 @@ final class EmbeddedDuplexProcessHost {
                 if (!EmbeddedDuplexNative.processIdleForEnrollment()) {
                     throw new IllegalStateException("native process or staged route is not terminal");
                 }
-                return EmbeddedDuplexEnrollmentResolver.replace(applicationContext, reviewedDraft);
+                effectiveInputOwner.releaseAfterVerifiedCleanup();
+                return EmbeddedDuplexEnrollmentResolver.replace(applicationContext, reviewedDraft,
+                        effectiveInputs(EmbeddedDuplexPackagedInputs.InstalledRole.parse(reviewedDraft.roleId)));
             } finally {
                 phase.set(Phase.NEW);
             }
@@ -1020,9 +1059,13 @@ final class EmbeddedDuplexProcessHost {
             if (!EmbeddedDuplexNative.processIdleForEnrollment()) {
                 throw new IllegalStateException("native process or staged route is not terminal");
             }
+            // A new explicit review at this existing terminal boundary is a new data selection.
+            effectiveInputOwner.releaseAfterVerifiedCleanup();
             EmbeddedDuplexEnrollmentReview review =
-                    policyUpdate ? EmbeddedDuplexEnrollmentResolver.reviewPolicyUpdate(applicationContext)
-                            : EmbeddedDuplexEnrollmentResolver.review(applicationContext, draft);
+                    policyUpdate ? EmbeddedDuplexEnrollmentResolver.reviewPolicyUpdate(applicationContext,
+                            effectiveInputs(EmbeddedDuplexEnrollmentResolver.installedRole(applicationContext)))
+                            : EmbeddedDuplexEnrollmentResolver.review(applicationContext, draft,
+                            effectiveInputs(EmbeddedDuplexPackagedInputs.InstalledRole.parse(draft.roleId)));
             synchronized (attachmentGate) {
                 if (displayDetaching || closeInFlight || phase.get() != Phase.NEW) {
                     throw new IllegalStateException("process changed during enrollment review");
@@ -1037,7 +1080,9 @@ final class EmbeddedDuplexProcessHost {
         if (!("peer_a".equals(roleId) || "peer_b".equals(roleId))) {
             return failed(new IllegalArgumentException("installed role invalid"));
         }
-        return submit(() -> EmbeddedDuplexEnrollmentResolver.status(applicationContext, roleId));
+        return submit(() -> EmbeddedDuplexEnrollmentResolver.status(applicationContext, roleId,
+                processFence == null ? null : effectiveInputOwner.retained(
+                        EmbeddedDuplexPackagedInputs.InstalledRole.parse(roleId), processFence.generation())));
     }
 
     CompletableFuture<EmbeddedDuplexEnrollment> confirmEnrollment(
@@ -1058,7 +1103,8 @@ final class EmbeddedDuplexProcessHost {
                 if (review.expired() || !EmbeddedDuplexNative.processIdleForEnrollment()) {
                     throw new IllegalStateException("review expired or native process is not terminal");
                 }
-                return EmbeddedDuplexEnrollmentResolver.replaceReviewed(applicationContext, review);
+                return EmbeddedDuplexEnrollmentResolver.replaceReviewed(applicationContext, review,
+                        effectiveInputs(EmbeddedDuplexPackagedInputs.InstalledRole.parse(review.draft.roleId)));
             } finally {
                 phase.set(Phase.NEW);
             }
@@ -1119,9 +1165,11 @@ final class EmbeddedDuplexProcessHost {
         EmbeddedDuplexBootstrap.Trace trace = new EmbeddedDuplexBootstrap.Trace();
         CompletableFuture<String> bootstrap = submit(() -> {
             try {
+                requireFreshProcess();
                 trace.mark(EmbeddedDuplexBootstrap.Failure.ENROLLMENT_RESOLVE);
                 EmbeddedDuplexEnrollment enrollment =
-                        EmbeddedDuplexEnrollmentResolver.resolve(applicationContext);
+                        EmbeddedDuplexEnrollmentResolver.resolve(applicationContext,
+                                effectiveInputs(EmbeddedDuplexEnrollmentResolver.installedRole(applicationContext)));
                 enrollmentSha.set(enrollment.recordSha256);
                 trace.mark(EmbeddedDuplexBootstrap.Failure.FIXTURE_INPUTS);
                 EmbeddedDuplexSessionInputs fresh =
@@ -1260,6 +1308,7 @@ final class EmbeddedDuplexProcessHost {
                 platform = null;
                 resources = null;
                 runtimeConfigSha256 = null;
+                effectiveInputOwner.releaseAfterVerifiedCleanup();
                 nativeExecutorGeneration = 0L;
                 nativeAppRecordSha256 = null;
                 enrollmentRecordSha256 = null;
@@ -1343,6 +1392,7 @@ final class EmbeddedDuplexProcessHost {
         // Store the real outgoing actor only after the native/Java/display/fence barriers above.
         originalClosedActor = noMedia ? null : originalActor();
         platform = null; resources = null; runtimeConfigSha256 = null; nativeExecutorGeneration = 0L;
+        effectiveInputOwner.releaseAfterVerifiedCleanup();
         nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; startIntent.afterVerifiedCleanup();
         ownNoMediaStopTarget = null;
         synchronized (attachmentGate) {
@@ -2504,6 +2554,7 @@ final class EmbeddedDuplexProcessHost {
             String appRecord=held.original.row.getJSONObject("actor_binding").getString("app_record_sha256");
             EmbeddedDuplexOriginals.forApplication(applicationContext).actualClosedAppOwnerJoined(held.appGeneration,0L,appRecord,held.receipt,held.plan);
             platform=null;resources=null;runtimeConfigSha256=null;nativeExecutorGeneration=0L;nativeAppRecordSha256=null;nativeConfigurationContext=null;
+            effectiveInputOwner.releaseAfterVerifiedCleanup();
             enrollmentRecordSha256=null;startIntent.afterVerifiedCleanup();localFixture=false;
             synchronized(attachmentGate){attachmentGeneration=0L;displayDetaching=false;closeInFlight=false;phase.set(Phase.NEW);held.released=true;}
             held.completion.complete(held.receipt.toString());
@@ -2665,6 +2716,7 @@ final class EmbeddedDuplexProcessHost {
             proof.put("app_process_fence_cleanup","terminal");held.proof=proof;
             // These are actual joined owners. Native close does not certify outer process/source EOF.
             platform=null;resources=null;runtimeConfigSha256=null;nativeExecutorGeneration=0L;nativeAppRecordSha256=null;nativeConfigurationContext=null;
+            effectiveInputOwner.releaseAfterVerifiedCleanup();
             enrollmentRecordSha256=null;startIntent.afterVerifiedCleanup();localFixture=false;
             synchronized(attachmentGate){attachmentGeneration=0L;displayDetaching=false;closeInFlight=false;phase.set(Phase.NEW);}
             lastClosedActorProof=proof;
@@ -2807,6 +2859,7 @@ final class EmbeddedDuplexProcessHost {
         originalClosedActor = noMedia ? null : originalActor();
         platform = null; resources = null; runtimeConfigSha256 = null; nativeExecutorGeneration = 0L;
         nativeAppRecordSha256 = null; enrollmentRecordSha256 = null; startIntent.afterVerifiedCleanup();
+        effectiveInputOwner.releaseAfterVerifiedCleanup();
         ownNoMediaStopTarget = null;
         synchronized (attachmentGate) {
             wholeCloseRollover = rollover; wholeCloseActivity = null;

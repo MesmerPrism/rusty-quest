@@ -16,6 +16,9 @@ internal data class SpatialCameraControlProfile(
     val projectionSurfaceTiling: ProjectionSurfaceTiling,
     val projectionInnerAlpha: ProjectionInnerAlpha,
     val strengthCycleSpeedHz: Float = SpatialStrengthCycleControls.defaultSpeedHz,
+    val peerNetworkEndpoints: List<SpatialPeerNetworkSelection>? = null,
+    val developmentObservationModule: SpatialDevelopmentModuleDirective? = null,
+    val developmentScissorModule: SpatialDevelopmentModuleDirective? = null,
 )
 
 internal object SpatialCameraControlProfileContract {
@@ -39,6 +42,9 @@ internal object SpatialCameraControlProfileContract {
         "created_unix_ms",
         "quest_controls",
         "desktop_preview",
+        "peer_network_endpoints",
+        "development_observation_module",
+        "development_scissor_module",
     )
     require(root.requireString("schema") == SCHEMA) { "unsupported_profile_schema" }
     val profileId = root.requireString("profile_id")
@@ -95,6 +101,17 @@ internal object SpatialCameraControlProfileContract {
             } else {
               SpatialStrengthCycleControls.defaultSpeedHz
             },
+        peerNetworkEndpoints = if (root.has("peer_network_endpoints")) {
+          val endpoints = root.opt("peer_network_endpoints")
+          require(endpoints is JSONArray) { "peer_network_endpoints_must_be_array" }
+          SpatialPeerNetworkProfilePilot.parseEndpoints(endpoints)
+        } else null,
+        developmentObservationModule = if (root.has("development_observation_module")) {
+          SpatialDevelopmentModuleDirectiveContract.parse(root.requireObject("development_observation_module"), false)
+        } else null,
+        developmentScissorModule = if (root.has("development_scissor_module")) {
+          SpatialDevelopmentModuleDirectiveContract.parse(root.requireObject("development_scissor_module"), true)
+        } else null,
     )
   }
 

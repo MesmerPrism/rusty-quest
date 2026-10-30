@@ -137,6 +137,24 @@ public final class FrozenEffectiveInputsHost {
         check(calls[0]==before&&selector.current()==frozen,"frozen edit has no native call or accepted mutation");
         check(new JSONObject(selector.selectionReadback()).getJSONObject("lineage").getString("profile_sha256")
             .equals(new JSONObject(frozen.lineageJson).getString("profile_sha256")),"refused edit readback retains accepted profile");
+        EmbeddedDuplexEffectiveInputOwner owner=new EmbeddedDuplexEffectiveInputOwner();
+        FrozenEffectiveInputs ownedA=owner.capture(base,61,a,nativeDeriver);
+        check(owner.capture(base,61,b,nativeDeriver)==ownedA,"owner retains exact frozen inputs across file edits");
+        refuse(()->owner.retained(base.role(),62));
+        refuse(()->owner.retained(EmbeddedDuplexPackagedInputs.InstalledRole.PEER_B,61));
+        owner.nativeConfigured(ownedA,preparedA.runtimeConfigSha256,71,"c".repeat(64));
+        JSONObject nativeObserved=new JSONObject(owner.observation());
+        check(nativeObserved.getString("phase").equals("native_configured")
+            &&nativeObserved.getJSONObject("native_configuration").getString("runtime_config_sha256").equals(preparedA.runtimeConfigSha256),"owner readback joins actually configured projection");
+        owner.releaseAfterVerifiedCleanup();
+        refuse(()->ownedA.packagedConfigRequest(runtime));
+        check(owner.observation()==null,"terminal release retires old accepted observation");
+        FrozenEffectiveInputs ownedB=owner.capture(base,62,b,nativeDeriver);
+        check(!ownedA.digest("route-configuration.json").equals(ownedB.digest("route-configuration.json")),"next eligible generation accepts B");
+        owner.releaseAfterVerifiedCleanup();
+        FrozenEffectiveInputs ownedRestored=owner.capture(base,63,a,nativeDeriver);
+        check(ownedA.digest("route-configuration.json").equals(ownedRestored.digest("route-configuration.json")),"later eligible generation restores A");
+        refuse(()->owner.nativeConfigured(ownedA,preparedA.runtimeConfigSha256,71,"c".repeat(64)));
         System.out.println(new JSONObject().put("passed",true).put("controls",checks).put("resident_jvm",true)
                 .put("edit_revert_ms",editRevertNs/1000000.0).put("edit_revert_scope","three actual atomic profile publications and bounded reads, A->B->A native derivation/acceptance; one resident JVM")
                 .put("limits","Actual Java/native data path; Android Context, private enrollment, authority admission and sockets not entered."));

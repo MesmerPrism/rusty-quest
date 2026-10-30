@@ -29,7 +29,7 @@ class SpatialCameraControlProfileTest {
     assertEquals(43000, second.peers[0].media.port)
     assertEquals(43001, second.peers[0].control.port)
     assertEquals(8L, second.profile.revision)
-    assertEquals(accepted.profile.copy(revision = 8), second.profile)
+    assertEquals(accepted.profile.copy(revision = 8, peerNetworkEndpoints = second.peers), second.profile)
     assertFalse(accepted.profileSha256 == second.profileSha256)
     assertTrue(pilot.current === second)
     assertEquals("10.20.0.11", accepted.peers[0].media.host)
@@ -70,10 +70,12 @@ class SpatialCameraControlProfileTest {
   }
 
   @Test
-  fun endpointPilotDoesNotEnableExistingActivityParser() {
-    assertThrows(IllegalArgumentException::class.java) {
-      SpatialCameraControlProfileContract.parse(endpointProfile("10.20.0.11", 41000).toString().toByteArray())
-    }
+  fun sharedActivityParserCarriesTypedEndpointsWithoutChangingVisualControls() {
+    val selected = SpatialCameraControlProfileContract.parse(
+        endpointProfile("10.20.0.11", 41000).toString().toByteArray())
+    assertEquals("10.20.0.11", selected.peerNetworkEndpoints!![0].media.host)
+    assertEquals(41000, selected.peerNetworkEndpoints[0].media.port)
+    assertEquals(1.15f, selected.projectionScale)
     val original = SpatialCameraControlProfileContract.parse(validProfile().toString().toByteArray())
     assertEquals(1.15f, original.projectionScale)
   }

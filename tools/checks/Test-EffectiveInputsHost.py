@@ -54,7 +54,9 @@ def main():
         java_command=[str(build_config) if x.endswith('BuildConfig.java') else x for x in java_command]
         generated_java=[build_config]
         java_root=root/'apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/embedded_duplex'
-        java_sources=[java_root/(name+'.java') for name in ('FrozenEffectiveInputs','EmbeddedDuplexNative')]
+        java_sources=[java_root/(name+'.java') for name in ('FrozenEffectiveInputs','EmbeddedDuplexNative',
+            'EmbeddedDuplexEffectiveInputOwner','EmbeddedDuplexEnrollment','EmbeddedDuplexEnrollmentDraft',
+            'EmbeddedDuplexEnrollmentFence','EmbeddedDuplexEnrollmentReview','EmbeddedDuplexEnrollmentStatus','EmbeddedDuplexEnrollmentResolver')]
         java_sources.append(root/'apps/spatial-camera-panel-android/host-tests/embedded_duplex/FrozenEffectiveInputsHost.java')
         old_behavior=json.loads(a.reference_behavior_command.read_text())
         kotlin_classes=out/'kotlin-classes';kotlin_classes.mkdir()
@@ -63,7 +65,8 @@ def main():
         kotlin_command=[x for x in json.loads(kotlin_recipe.read_text()) if not x.endswith('.kt')]
         kotlin_command[kotlin_command.index('-d')+1]=str(kotlin_classes)
         kotlin_command[kotlin_command.index('-classpath')+1]=cp
-        kotlin_sources=[java_root.parent/'SpatialPeerNetworkProfilePilot.kt']
+        kotlin_sources=[java_root.parent/(name+'.kt') for name in ('SpatialPeerNetworkProfilePilot',
+            'SpatialCameraControlProfile','SpatialDevelopmentModuleDirective','SpatialDevelopmentModuleDirectiveContract')]
         kotlin_command.extend(str(x) for x in kotlin_sources)
         java_command[java_command.index('-cp')+1]=cp
         java_command.extend(str(x) for x in java_sources)

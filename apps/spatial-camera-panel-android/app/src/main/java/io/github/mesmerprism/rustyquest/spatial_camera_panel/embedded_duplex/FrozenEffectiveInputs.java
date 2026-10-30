@@ -11,10 +11,42 @@ import java.util.Map;
 import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import android.content.Context;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.ByteArrayOutputStream;
 
 /** One immutable data snapshot; it grants no enrollment, Native or socket authority. */
 final class FrozenEffectiveInputs {
     interface Deriver { String derive(String exactRequest) throws Exception; }
+
+    static byte[] readActiveProfile(Context context) throws Exception {
+        File root = context.getExternalFilesDir(null);
+        File directory = new File(root == null ? context.getFilesDir() : root, "control-profiles");
+        File active = new File(directory, "active.profile.json");
+        if (!active.exists()) return null;
+        try (FileInputStream input = new FileInputStream(active); ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
+            byte[] block = new byte[8192];
+            for (int count; (count = input.read(block)) != -1;) {
+                if (bytes.size() + count > 64 * 1024) throw new IllegalArgumentException("profile_byte_bounds");
+                bytes.write(block, 0, count);
+            }
+            return bytes.toByteArray();
+        }
+    }
+
+    static void validateVisualCandidate(Context context, byte[] profile) throws Exception {
+        io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraControlProfileContract.INSTANCE.parse(profile);
+        JSONObject root = new JSONObject(new String(profile, StandardCharsets.UTF_8));
+        if (!root.has("peer_network_endpoints")) return;
+        EmbeddedDuplexPackagedInputs base = EmbeddedDuplexPackagedInputs.load(context,
+                io.github.mesmerprism.rustyquest.spatial_camera_panel.BuildConfig.EMBEDDED_DUPLEX_PRODUCT_MANIFEST_SHA256,
+                EmbeddedDuplexPackagedInputs.InstalledRole.PEER_A);
+        Set<String> peers = new HashSet<>();
+        JSONArray routePeers = new JSONObject(base.json("route-configuration.json")).getJSONArray("peers");
+        for (int i = 0; i < routePeers.length(); i++) peers.add(routePeers.getJSONObject(i).getString("peer_id"));
+        new SpatialPeerNetworkProfilePilot(peers).select(profile);
+    }
     final EmbeddedDuplexPackagedInputs verifiedBase;
     final long generation;
     final String lineageJson;
@@ -98,6 +130,7 @@ final class FrozenEffectiveInputs {
         }
 
         synchronized FrozenEffectiveInputs freeze() { frozen = true; seal.snapshot = current; return current; }
+        synchronized void retire() { frozen = true; seal.snapshot = null; }
     }
 
     private static FrozenEffectiveInputs fromNative(EmbeddedDuplexPackagedInputs base, long generation,
@@ -107,10 +140,10 @@ final class FrozenEffectiveInputs {
         if (!"rusty.quest.embedded_duplex.effective_inputs_result.v1".equals(result.getString("$schema")))
             throw new IllegalStateException("effective input result schema differs");
         JSONObject encoded = result.getJSONObject("documents");
-        if (!encoded.keySet().equals(base.documentSnapshot().keySet()))
+        if (!keys(encoded).equals(base.documentSnapshot().keySet()))
             throw new IllegalStateException("effective input result inventory differs");
         Map<String, String> docs = new HashMap<>();
-        for (String name : encoded.keySet()) docs.put(name, encoded.getString(name));
+        for (String name : keys(encoded)) docs.put(name, encoded.getString(name));
         for (String name : new String[]{"product-input-manifest.json", "product-spec.json", "accepted-product-lock.json",
                 "client-lock.json", "planning-feature-lock.json", "packed-stereo-profile.json"}) {
             if (!base.documentSnapshot().get(name).equals(docs.get(name)))
@@ -155,8 +188,14 @@ final class FrozenEffectiveInputs {
         return new JSONObject().put("json", json(name)).put("sha256", digest(name));
     }
     private static void fields(JSONObject value, String... expected) {
-        if (!value.keySet().equals(new HashSet<>(Arrays.asList(expected))))
+        if (!keys(value).equals(new HashSet<>(Arrays.asList(expected))))
             throw new IllegalArgumentException("effective input fields differ");
+    }
+    private static Set<String> keys(JSONObject value) {
+        Set<String> result = new HashSet<>();
+        java.util.Iterator<String> names = value.keys();
+        while (names.hasNext()) result.add(names.next());
+        return result;
     }
     private static String sha256(String raw) throws Exception { return sha256(raw.getBytes(StandardCharsets.UTF_8)); }
     private static String sha256(byte[] bytes) throws Exception {

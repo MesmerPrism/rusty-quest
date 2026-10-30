@@ -10,6 +10,16 @@ import java.util.concurrent.CompletableFuture;
 public final class EmbeddedDuplexRuntimeService {
     private EmbeddedDuplexRuntimeService() {}
 
+    /** Pure shared-profile validation; no process/native owner or identity is created. */
+    public static void validateControlProfileAddons(Context context, byte[] profile) throws Exception {
+        FrozenEffectiveInputs.validateVisualCandidate(context, profile);
+    }
+
+    /** Cached accepted input/native-configuration observation, never a live authority proof. */
+    public static String effectiveInputObservation() {
+        return EmbeddedDuplexProcessHost.effectiveInputObservation();
+    }
+
     /** One bootstrap Original exists before enqueue or Activity pre-entry evaluation. */
     public static CompletableFuture<EmbeddedDuplexRuntimeStatus> bootstrapRealPeerCommand(Context context) {
         return bootstrapRealPeerFromActivity(context,()->
