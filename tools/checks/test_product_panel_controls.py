@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 from test_original_panel_preservation import methods
+from test_experiment_gateway_dedupe import method
 
 PKG = 'io.github.mesmerprism.rustyquest.native_renderer'
 
@@ -25,6 +26,9 @@ def main():
     panel = root / 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java' / PKG.replace('.', '/')
     actual = methods((panel / 'BreathCompositionPanelModule.java').read_text(encoding='utf-8'))
     body = 'package ' + PKG + ';\nimport org.json.*;\n' + '''
+class ExperimentControlMode {static final int CHOOSE=0,DIRECT=1,REMOTE=2;
+''' + method((panel / 'ExperimentControlMode.java').read_text(encoding='utf-8'), 'static final class Snapshot') + '''
+}
 class ExperimentSessionBleServer {
  static boolean selected=true; static boolean featurePackaged(Object o){return selected;}
  long generation=7,epoch=3;boolean live=true,open;String code="PRIVATE-PAIRING-FIXTURE";
@@ -45,6 +49,8 @@ class ControlPanelActivity {
 class BreathCompositionPanelModule {
  static final ExperimentSessionPanelCoordinator EXPERIMENT_SESSION_PANEL=new ExperimentSessionPanelCoordinator();
  final ExperimentSessionBleServer server=new ExperimentSessionBleServer();boolean available=true;int experimenterGuidanceBiasPercent=-1;
+ long nativeModePacked=9;
+ boolean localExperimentMutationAllowed(){return new ExperimentControlMode.Snapshot(nativeModePacked).localMutationsAllowed();}
  static class SliderControl{int value=25,calls;void setValue(double requested){value=(int)requested;calls++;}}
  SliderControl experimenterGuidanceBias=new SliderControl(),developerGuidanceBias=new SliderControl();
  void requireProductPanelOperator(){if(!available)throw new IllegalStateException("production-panel-owner-unavailable");}
@@ -76,6 +82,12 @@ class Harness {
   check(draft.getBoolean("admitted")&&draft.getInt("pending_bias_percent")==40&&draft.getInt("requested_bias_percent")==40);
   check(coordinator.calls==1&&module.experimenterGuidanceBiasPercent==40);
   check(module.experimenterGuidanceBias.value==40&&module.developerGuidanceBias.value==40&&module.experimenterGuidanceBias.calls==1&&module.developerGuidanceBias.calls==1);
+  for(long nativeMode:new long[]{20,30}){
+   module.nativeModePacked=nativeMode;int count=coordinator.calls;boolean denied=false;
+   try{module.updateProductPendingGuidanceBias(70);}catch(SecurityException expected){denied=true;}
+   check(denied&&coordinator.calls==count&&coordinator.pending==40);
+  }
+  module.nativeModePacked=29;
   coordinator.admit=false;draft=module.updateProductPendingGuidanceBias(80);
   check(!draft.getBoolean("admitted")&&coordinator.pending==40&&module.experimenterGuidanceBiasPercent==40&&coordinator.calls==2);
   check(module.experimenterGuidanceBias.value==40&&module.developerGuidanceBias.value==40&&module.experimenterGuidanceBias.calls==1&&module.developerGuidanceBias.calls==1);

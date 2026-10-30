@@ -47,6 +47,7 @@ mod environment_depth_projection_alignment;
 mod environment_depth_scene_map;
 #[cfg(any(test, not(target_os = "android")))]
 mod environment_depth_surface_support;
+mod experiment_control_mode;
 mod experiment_session;
 mod experiment_session_runtime;
 #[cfg(target_os = "android")]

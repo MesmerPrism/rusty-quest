@@ -495,6 +495,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     static void prepareExperimentSessionBleOwner(Context context) {
+        ExperimentControlMode.initialize(context);
         remoteContext = context.getApplicationContext();
         ExperimentSessionBleServer.process(remoteContext, REMOTE_DELEGATE);
         if(ExperimentSessionCommandGateway.featurePackaged(remoteContext))ExperimentSessionCommandGateway.process(remoteContext,REMOTE_DELEGATE);
@@ -921,6 +922,9 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                     return;
                 }
                 if ("open-polar".equals(request.operation)) {
+                    if(!controlMode.readSnapshot().localMutationsAllowed()){
+                        server.updateReceipt(request.id,"rejected","Polar setup panel requires Direct control. Remote sensor setup and status remain available.");return;
+                    }
                     remotePending = new RemotePending(request.id, "", "open-polar");
                     server.updateReceipt(request.id, "pending", "Opening Polar setup on Quest.");
                     if (panel != null && (panel.canRenderRemotePolarInPlace()
@@ -1083,6 +1087,9 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     private MeshPanelAttachment meshPanelAttachment;
     private boolean activityPanelResumed;
     private AutoCloseable productPanelOperatorRegistration;
+    private static final ExperimentControlMode controlMode=ExperimentControlMode.process();
+    private TextView controlModeSessionReadback;
+    private TextView controlModeNetworkReadback;
 
     private boolean productPanelOperatorAvailable(){
         return !experimentShellDestroyed&&!isFinishing()&&!isDestroyed()
@@ -1134,6 +1141,8 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             panelScrollView.scrollBy(0,parameters.getInt("delta_y"));rememberPanelScroll();
             return new JSONObject().put("status","observed").put("scroll_y",panelScrollView.getScrollY());
         }
+        if(("particle-patch".equals(action)||"pending-guidance-bias".equals(action))
+                &&!localExperimentMutationAllowed())throw new SecurityException("direct-control-mode-required");
         if("particle-patch".equals(action))return submitPrivateParticleCandidate(
             privateParticlePatchEnvelope(new JSONObject(parameters.getJSONObject("patch").toString())),false);
         if("ble-pairing-code".equals(action))return observeProductPairingCode();
@@ -1193,6 +1202,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
 
     private JSONObject updateProductPendingGuidanceBias(int requested) throws Exception {
         requireProductPanelOperator();
+        if(!localExperimentMutationAllowed())throw new SecurityException("direct-control-mode-required");
         if(requested<0||requested>100)throw new IllegalArgumentException("bias");
         boolean patternReady="pattern-ready".equals(ControlPanelActivity.conditionBreathGuidanceReadiness(
             ExperimentSessionPanelCoordinator.CONDITION_ONE))||"pattern-ready".equals(ControlPanelActivity.conditionBreathGuidanceReadiness(
@@ -1370,6 +1380,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        ExperimentControlMode.initialize(getApplicationContext());
         remoteContext = getApplicationContext();
         remotePanel = new WeakReference<BreathCompositionPanelModule>(this);
         liveApplyHandler = new Handler(Looper.getMainLooper());
@@ -1795,9 +1806,14 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
 
     private View buildBreathCompositionControlPanelView() {
         clearExperimenterProjectionViews();
+        controlModeSessionReadback=null;
+        controlModeNetworkReadback=null;
         renderedPanelRoute = panelRoute;
         renderedPanelTopic = breathCompositionPanelTopic;
         renderedExperimenterPage = experimenterNavigation.page();
+        ExperimentControlMode.Snapshot current=controlMode.readSnapshot();
+        if(current.selected&&current.mode!=ExperimentControlMode.DIRECT)
+            return buildExperimentControlModeView(current);
         if (PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)) {
             return buildExperimenterWorkflowView();
         }
@@ -1827,7 +1843,76 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         return scroll;
     }
 
+    private View buildExperimentControlModeView(final ExperimentControlMode.Snapshot current) {
+        ScrollView scroll=new ScrollView(this);panelScrollView=scroll;scroll.setBackgroundColor(PANEL_BG);
+        LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp(18),dp(18),dp(18),dp(18));scroll.addView(root);
+        root.addView(text(current.mode==ExperimentControlMode.CHOOSE?"Choose experiment control":"Remote experiment control",22,PANEL_FG));
+        root.addView(text(current.mode==ExperimentControlMode.CHOOSE
+            ?"Choose Direct for headset controls, or Remote for the enrolled LAN controller."
+            :"The LAN controller operates the experiment. Press B three times without grip to open or close this panel. A without grip recenters.",15,PANEL_MUTED));
+        Button direct=operatorButton(current.mode==ExperimentControlMode.CHOOSE?"Direct":"Switch to Direct");
+        direct.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){selectExperimentControlMode(current,ExperimentControlMode.DIRECT);}});
+        root.addView(direct);
+        if(current.mode==ExperimentControlMode.CHOOSE){
+            Button remote=operatorButton("Remote");remote.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){selectExperimentControlMode(current,ExperimentControlMode.REMOTE);}});root.addView(remote);
+        }else{
+            Button hide=operatorButton("Return to VR");hide.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){hideRemoteControlPanel();}});root.addView(hide);
+        }
+        root.addView(text("Changing control mode keeps the current experiment and recording unchanged.",13,PANEL_MUTED));
+        controlModeSessionReadback=text("",14,PANEL_FG);root.addView(controlModeSessionReadback);
+        root.addView(text("For Remote, join the phone's Wi-Fi hotspot from the headset. On the phone, use Same Wi-Fi in the browser controller and enter the headset address below.",14,PANEL_FG));
+        appendExperimenterNetworkControl(root);
+        status=text("",14,PANEL_MUTED);root.addView(status);
+        refreshControlModeReadback();
+        return scroll;
+    }
+
+    private void appendExperimentControlModeSwitch(LinearLayout root){
+        final ExperimentControlMode.Snapshot current=controlMode.readSnapshot();
+        if(!current.selected)return;
+        Button remote=operatorButton("Switch to Remote");
+        remote.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){selectExperimentControlMode(current,ExperimentControlMode.REMOTE);}});
+        root.addView(remote);
+    }
+
+    private void selectExperimentControlMode(ExperimentControlMode.Snapshot expected,int requested){
+        if(controlMode.readSnapshot().packed!=expected.packed){
+            replaceBreathCompositionPanelContent("home");
+            updateStatus("Control mode changed; use the current panel choice.");return;
+        }
+        ExperimentControlMode.Snapshot result=controlMode.select(expected,requested);
+        // A captured/stale button cannot turn another selection into a presentation action.
+        boolean accepted=result.selected&&result.mode==requested&&result.revision==expected.revision+1L;
+        if(accepted&&uiControlHandoff!=null&&uiControlHandoff.pending())uiControlHandoff.cancel();
+        if(accepted&&requested==ExperimentControlMode.REMOTE&&remotePending!=null&&"open-polar".equals(remotePending.operation))
+            rejectRemotePolarForMode(remotePending);
+        replaceBreathCompositionPanelContent("home");
+        if(!accepted){updateStatus("Control mode changed; use the current panel choice.");return;}
+        if(requested==ExperimentControlMode.REMOTE)hideRemoteControlPanel();
+    }
+
+    private void hideRemoteControlPanel(){
+        ExperimentControlMode.Snapshot current=controlMode.readSnapshot();
+        if(!current.selected||current.mode!=ExperimentControlMode.REMOTE)return;
+        if(!NativeMeshUiProducer.requestPanelVisibility(hostActivity(),false))
+            updateStatus("Remote selected; panel hide is waiting for the native presentation owner. Press B three times without grip to reopen setup.");
+    }
+
+    private boolean localExperimentMutationAllowed(){return controlMode.readSnapshot().localMutationsAllowed();}
+
+    private void refreshControlModeReadback(){
+        if(controlModeSessionReadback!=null)controlModeSessionReadback.setText(
+            ExperimentSessionPanelViewPolicy.project(EXPERIMENT_SESSION_PANEL.snapshot()).statusLine);
+        if(controlModeNetworkReadback!=null){
+            ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
+            try{controlModeNetworkReadback.setText("LAN status: "+(gateway==null?"uninitialized":gateway.productPanelReadback().optString("state"))+"\n"+(gateway==null?"":gateway.localAddresses()));}
+            catch(Exception unavailable){controlModeNetworkReadback.setText("LAN status unavailable");}
+        }
+    }
+
     private void appendBreathCompositionPanelHeader(LinearLayout root) {
+        appendExperimentControlModeSwitch(root);
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -1908,6 +1993,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private void appendExperimenterPanelHeader(LinearLayout root) {
+        appendExperimentControlModeSwitch(root);
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
@@ -2052,9 +2138,10 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         if(!ExperimentSessionCommandGateway.featurePackaged(this))return;
         final ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.process(this,REMOTE_DELEGATE);
         LinearLayout network=panelCard("Network control");
+        controlModeNetworkReadback=text("",13,PANEL_MUTED);network.addView(controlModeNetworkReadback);
         network.addView(text(gateway.enabled()?(gateway.trustedLanAllowed()?"Trusted LAN controller enrolled":"Encrypted relay controller enrolled; LAN off"):"Network control off",15,PANEL_FG));
         network.addView(text("Only enable on a trusted network. Local HTTP control is authenticated but unencrypted.",13,PANEL_MUTED));
-        Button enroll=button(gateway.enabled()?"Replace trusted controller":"Approve trusted LAN controller");
+        Button enroll=operatorButton(gateway.enabled()?"Replace trusted controller":"Approve trusted LAN controller");
         enroll.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
             panelDialogBuilder().setTitle("Approve trusted LAN control?")
                 .setMessage("This controller may operate the current app session. Local HTTP exposes traffic to this network. Continue only on a trusted LAN.")
@@ -2068,8 +2155,17 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                     }catch(Exception failure){updateStatus("Network enrollment unavailable.");}}
                 }).show();
         }});network.addView(enroll);
+        ExperimentControlMode.Snapshot current=controlMode.readSnapshot();
+        if(current.selected&&current.mode!=ExperimentControlMode.DIRECT){
+            if(gateway.enabled()){
+                Button revoke=operatorButton("Revoke network controller");
+                revoke.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){gateway.revokeFromHeadset();replaceBreathCompositionPanelContent("home");}});
+                network.addView(revoke);
+            }
+            root.addView(network);return;
+        }
         if(!gateway.relayOrigin().isEmpty()) {
-            Button encrypted=button("Approve encrypted relay controller only");encrypted.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
+            Button encrypted=operatorButton("Approve encrypted relay controller only");encrypted.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
                 panelDialogBuilder().setTitle("Approve encrypted relay control?")
                     .setMessage("Replace the enrolled controller and disable local HTTP control. The approved HTTPS relay can carry authenticated app commands after you enter its session details.")
                     .setNegativeButton("Cancel",null).setPositiveButton("Approve",new android.content.DialogInterface.OnClickListener(){@Override public void onClick(android.content.DialogInterface dialog,int which){try{
@@ -2083,20 +2179,20 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             if(gateway.trustedLanAllowed())network.addView(text(gateway.localAddresses(),13,PANEL_MUTED));
             if(gateway.trustedLanAllowed()&&ExperimentSessionDirectNetwork.featurePackaged(this)) {
                 for(final String route:new String[]{"hotspot","wifi_direct"}) {
-                    Button start=button("Create "+("hotspot".equals(route)?"temporary hotspot":"Wi-Fi Direct group"));
+                    Button start=operatorButton("Create "+("hotspot".equals(route)?"temporary hotspot":"Wi-Fi Direct group"));
                     start.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){try{
                         if(checkSelfPermission(ExperimentSessionDirectNetwork.requiredPermission())!=android.content.pm.PackageManager.PERMISSION_GRANTED){
                             ExperimentSessionDirectNetwork.requestPermissions(hostActivity(),9402);return;}
                         gateway.startDirectFromHeadset(route);updateStatus("Temporary network requested. Open join details after creation.");
                     }catch(Exception failure){updateStatus("Temporary network unavailable on this device.");}}});network.addView(start);
                 }
-                Button join=button("Show temporary network join details");join.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){try{
+                Button join=operatorButton("Show temporary network join details");join.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){try{
                     panelDialogBuilder().setTitle("Temporary network")
                         .setMessage(gateway.directJoinDetails().toString()+"\n"+gateway.localAddresses()).setPositiveButton("Done",null).show();
                 }catch(Exception failure){updateStatus("Network join details unavailable.");}}});network.addView(join);
             }
             if(!gateway.relayOrigin().isEmpty()) {
-                Button relay=button("Connect approved HTTPS relay");relay.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
+                Button relay=operatorButton("Connect approved HTTPS relay");relay.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
                     final android.widget.EditText sessionId=new PanelEditText();sessionId.setHint("Relay session ID");
                     final android.widget.EditText token=new PanelEditText();token.setHint("Device route token");
                     token.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -2108,9 +2204,9 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                         }).show();
                 }});network.addView(relay);
             }
-            Button stopRoutes=button("Stop relay and temporary networks");stopRoutes.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.stopRoutesFromHeadset();updateStatus("Optional network routes stopped.");}});network.addView(stopRoutes);
+            Button stopRoutes=operatorButton("Stop relay and temporary networks");stopRoutes.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.stopRoutesFromHeadset();updateStatus("Optional network routes stopped.");}});network.addView(stopRoutes);
 
-            Button revoke=button("Revoke network controller");revoke.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.revokeFromHeadset();replaceBreathCompositionPanelContent("home");}});network.addView(revoke);
+            Button revoke=operatorButton("Revoke network controller");revoke.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.revokeFromHeadset();replaceBreathCompositionPanelContent("home");}});network.addView(revoke);
         }
         root.addView(network);
     }
@@ -2118,10 +2214,11 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     private void handleRemoteOpenPolarIntent(Intent intent) {
         if (intent != null && intent.getBooleanExtra(EXTRA_REMOTE_OPEN_POLAR, false)) {
             intent.removeExtra(EXTRA_REMOTE_OPEN_POLAR);
-            replaceBreathCompositionPanelContent("polar");
             RemotePending pending = remotePending;
             String id = intent.getStringExtra("experiment_session_remote_command_id");
             intent.removeExtra("experiment_session_remote_command_id");
+            if(rejectRemotePolarForMode(pending!=null&&pending.browserId.equals(id)?pending:null))return;
+            replaceBreathCompositionPanelContent("polar");
             if (pending != null && "open-polar".equals(pending.operation)
                     && pending.browserId.equals(id)) observeRemotePolarRender(pending);
         }
@@ -2231,6 +2328,8 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             control.setEnabled(state.pendingOperationId.isEmpty() && ("start".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.ARMED:"pause".equals(operation)?state.phase==ExperimentSessionPanelState.Phase.RUNNING:state.phase==ExperimentSessionPanelState.Phase.PAUSED));
             control.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
                 try {
+                    final ExperimentControlMode.Snapshot operatorMode=controlMode.readSnapshot();
+                    controlMode.requireLocalDispatch(operatorMode);
                     if(!EXPERIMENT_SESSION_PANEL.snapshot().pendingOperationId.isEmpty())throw new SecurityException("session-operation-pending");
                     JSONObject n=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString())).getJSONObject("readback");
                     JSONObject b=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
@@ -2238,18 +2337,19 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                     ExperimentSessionControlCapability.Fence fence=new ExperimentSessionControlCapability.Fence("",n.getString("session_key"),n.getString("condition_id"),n.getString("non_audio_profile_sha256"),b.getString("activation_binding_sha256"),operation,n.getLong("generation"),n.getLong("runtime_epoch"),0,0,0);
                     JSONObject request=fence.nativeCommand("ui-session-"+ExperimentSessionBleProtocol.newHex(8),SystemClock.elapsedRealtimeNanos()).put("operator_origin","ui-session-v2");
                     if(uiControlHandoff!=null && uiControlHandoff.pending())throw new SecurityException("handoff-already-pending");
-                    if("pause".equals(operation)){ControlPanelActivity.applyExperimentSessionCommand(request.toString());requestExperimentSessionStatus();}
+                    if("pause".equals(operation)){controlMode.requireLocalDispatch(operatorMode);ControlPanelActivity.applyExperimentSessionCommand(request.toString());requestExperimentSessionStatus();}
                     else {
                         uiControlHandoff=new ExperimentSessionUiControlHandoff(new ExperimentSessionUiControlHandoff.Owner(){
                             @Override public JSONObject read() throws Exception {
+                                controlMode.requireLocalDispatch(operatorMode);
                                 JSONObject nativeState=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString())).getJSONObject("readback");
                                 JSONObject binding=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
                                 if(!Boolean.TRUE.equals(binding.opt("feature_lock_active")) || !Boolean.TRUE.equals(binding.opt("activation_binding_matches")))throw new SecurityException("feature-inactive");
                                 return nativeState.put("activation_binding_sha256",binding.getString("activation_binding_sha256"));
                             }
-                            @Override public void returnVr(){ControlPanelActivity.closePanelAndReturnToImmersive(hostActivity());}
+                            @Override public void returnVr(){controlMode.requireLocalDispatch(operatorMode);ControlPanelActivity.closePanelAndReturnToImmersive(hostActivity());}
                             @Override public boolean presentationReady(){return NativeMeshUiProducer.panelVisibilityConfirmed(hostActivity(),false);}
-                            @Override public void dispatch(JSONObject command) throws Exception {JSONObject admission=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));if(!"queued".equals(admission.optString("command_status")))throw new SecurityException("native-not-queued");}
+                            @Override public void dispatch(JSONObject command) throws Exception {controlMode.requireLocalDispatch(operatorMode);JSONObject admission=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(command.toString()));if(!"queued".equals(admission.optString("command_status")))throw new SecurityException("native-not-queued");}
                             @Override public void schedule(Runnable callback,long delay){new Handler(Looper.getMainLooper()).postDelayed(callback,delay);}
                             @Override public long nowMs(){return SystemClock.elapsedRealtime();}
                             @Override public long nowNs(){return SystemClock.elapsedRealtimeNanos();}
@@ -2472,7 +2572,18 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             remoteRenderView.getViewTreeObserver().removeOnDrawListener(remoteDrawListener);
         remoteRenderReceipt=null;remoteRenderView=null;remoteDrawListener=null;
     }
+    private boolean rejectRemotePolarForMode(RemotePending pending){
+        if(localExperimentMutationAllowed())return false;
+        ExperimentSessionBleServer server=remoteServer();
+        if(pending!=null&&"open-polar".equals(pending.operation)){
+            if(server!=null)server.updateReceiptForGeneration(pending.serverGeneration,pending.browserId,
+                "rejected","Polar setup panel requires Direct control. Remote sensor setup and status remain available.");
+            if(remotePending==pending)remotePending=null;
+        }
+        cancelRemotePolarRender();return true;
+    }
     private void observeRemotePolarRender(final RemotePending pending) {
+        if(rejectRemotePolarForMode(pending))return;
         cancelRemotePolarRender();
         final View content = currentPanelContent();
         if(content == null || pending.serverGeneration <= 0L) return;
@@ -2493,6 +2604,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                         if(remoteRenderReceipt==receipt) cancelRemotePolarRender();
                         return;
                     }
+                    if(rejectRemotePolarForMode(pending))return;
                     View current=currentPanelContent();
                     if(receipt.complete(pending.browserId,server.currentGeneration(),hostActivity(),
                             current,breathCompositionPanelNavigationEpoch,breathCompositionPanelTopic,true,
@@ -3204,6 +3316,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private void applyLslPanelOperation(String operation, JSONObject config, TextView readback) {
+        if(!localExperimentMutationAllowed()){readback.setText("Select Direct to change LSL settings.");return;}
         try {
             JSONObject current = readLslTransportStatusJson();
             JSONObject command = new JSONObject()
@@ -3878,6 +3991,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private void startExperimentSession(String condition) {
+        if(!localExperimentMutationAllowed())return;
         String audioReadiness = ControlPanelActivity.conditionAudioReadiness(condition);
         if (!"track-ready".equals(audioReadiness)) {
             updateStatus("Start rejected: " + audioReadiness + ".");
@@ -3899,6 +4013,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private void saveExperimentSessionAndPrepareNext() {
+        if(!localExperimentMutationAllowed())return;
         ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
         if (!ExperimentSessionPanelViewPolicy.canSaveAndPrepareNext(state)) {
             updateStatus("Wait for the current recording operation before preparing another run.");
@@ -3931,6 +4046,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         if (command == null) {
             return;
         }
+        if(!localExperimentMutationAllowed())return;
         EXPERIMENT_SESSION_SHELL.submit(command, start, this);
         refreshExperimenterAfterReadback();
     }
@@ -4064,14 +4180,17 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
 
     private void scheduleExperimenterProjectionRefresh() {
         cancelExperimenterProjectionRefresh();
+        ExperimentControlMode.Snapshot current=controlMode.readSnapshot();
         if (liveApplyHandler == null
-                || !PANEL_ROUTE_EXPERIMENTER.equals(panelRoute)
+                || (!(current.selected&&current.mode!=ExperimentControlMode.DIRECT)
+                    &&!PANEL_ROUTE_EXPERIMENTER.equals(panelRoute))
                 || !"home".equals(breathCompositionPanelTopic)) {
             return;
         }
         experimenterProjectionRefresh = new Runnable() {
             @Override
             public void run() {
+                refreshControlModeReadback();
                 refreshExperimenterPolarProjection();
                 refreshExperimenterProjectionViews();
                 EXPERIMENT_SESSION_SHELL.requestStatus(BreathCompositionPanelModule.this);
@@ -4273,6 +4392,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private void applyBreathCompositionCommand(JSONObject command, TextView readback) {
+        if(!localExperimentMutationAllowed()){readback.setText("Select Direct to change breath settings.");return;}
         try {
             String response = nativeApplyBreathCompositionCommand(command.toString());
             renderBreathCompositionResponse(response, readback);
@@ -4559,7 +4679,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private boolean isCurrentPrivateParticleControlSurface(long controlEpoch) {
-        return privateParticlePanelLiveApply
+        return localExperimentMutationAllowed()&&privateParticlePanelLiveApply
             && !privateParticleControlsHydrating
             && "particles".equals(breathCompositionPanelTopic)
             && controlEpoch >= 0L
@@ -4568,6 +4688,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private boolean admitPrivateParticleMaterialSelection(long controlEpoch, int position) {
+        if(!localExperimentMutationAllowed())return false;
         if (controlEpoch != privateParticleControlEpoch
                 || controlEpoch != breathCompositionPanelNavigationEpoch
                 || !"particles".equals(breathCompositionPanelTopic)
@@ -4646,6 +4767,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private JSONObject submitPrivateParticleCandidate(JSONObject candidate,boolean userVisible)throws Exception {
+            if(!localExperimentMutationAllowed())throw new SecurityException("direct-control-mode-required");
             if (!nativeBridgeLoaded) throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
             String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
             JSONObject response = new JSONObject(responseText);
@@ -5368,6 +5490,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
 
 
     private void handleDisplayCompositeIntent(Intent intent) {
+        if(!localExperimentMutationAllowed())return;
         if (intent == null || !ACTION_REQUEST_DISPLAY_COMPOSITE_CAPTURE.equals(intent.getAction())) {
             return;
         }
@@ -5392,6 +5515,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private void handlePolarSensorPanelCommandIntent(Intent intent) {
+        if(!localExperimentMutationAllowed())return;
         if (intent == null || !ACTION_POLAR_SENSOR_PANEL_COMMAND.equals(intent.getAction())) {
             return;
         }
@@ -5471,6 +5595,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private void handleBreathCompositionCommandIntent(Intent intent) {
+        if(!localExperimentMutationAllowed())return;
         if (intent == null || !ACTION_BREATH_COMPOSITION_PANEL_COMMAND.equals(intent.getAction())) {
             return;
         }
@@ -5583,6 +5708,10 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private void closePanelAndReturnToImmersive() {
+        ExperimentControlMode.Snapshot current=controlMode.readSnapshot();
+        if(current.selected&&current.mode!=ExperimentControlMode.DIRECT){
+            NativeMeshUiProducer.requestPanelVisibility(hostActivity(),false);return;
+        }
         ExperimentSessionPanelState state = EXPERIMENT_SESSION_PANEL.snapshot();
         if (state.hasActiveSession()
                 && !ExperimentSessionPanelViewPolicy.canReturnToImmersive(state)) {
@@ -5713,6 +5842,23 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private Button button(String value) {
+        Button button = new Button(this){
+            @Override public void setOnClickListener(final View.OnClickListener listener){
+                super.setOnClickListener(listener==null?null:new View.OnClickListener(){public void onClick(View view){
+                    if(localExperimentMutationAllowed())listener.onClick(view);
+                    else updateStatus("Select Direct to use local experiment controls.");
+                }});
+            }
+        };
+        button.setText(value);
+        button.setTextSize(12);
+        button.setAllCaps(false);
+        styleButton(button, false);
+        return button;
+    }
+
+    /** Mode choice and connection/enrollment remain available without local experiment control. */
+    private Button operatorButton(String value) {
         Button button = new Button(this);
         button.setText(value);
         button.setTextSize(12);
@@ -6186,7 +6332,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                 @Override
                 public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                     refresh();
-                    if (fromUser && SliderControl.this.onUserChange != null) {
+                    if (fromUser && localExperimentMutationAllowed() && SliderControl.this.onUserChange != null) {
                         SliderControl.this.onUserChange.run();
                     }
                 }

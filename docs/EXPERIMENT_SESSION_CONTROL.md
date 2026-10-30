@@ -29,6 +29,57 @@ The headset and browser show current bias separately from the requested slider v
 private settings keep their separate existing typed contracts; this table does
 not turn them into unrestricted session operations.
 
+## Direct and Remote operator modes in the original native panel
+
+The explicitly composed original native panel with the app command gateway
+shows a Direct/Remote choice on a fresh application process launch. Other
+compositions retain their existing Direct behavior. Mode is native-owned,
+process-local state, separate from recording phase and packaged preparation
+policy. Recreating or reopening the panel does not reset or change it.
+
+Direct retains the controller and panel operations above. Remote assigns
+experiment commands to the authenticated browser over the existing trusted-LAN
+gateway, including a phone-hosted Wi-Fi hotspot. Its scene controls are only A
+without grip to recenter and triple B without grip to open or close the panel.
+Session grip chords, the developer triple-trigger and other scene-changing
+controller shortcuts are inactive. Controller pose/sensor measurements and
+deliberate pointing/pressing in a reopened panel remain available.
+
+The panel offers an explicit Switch to Direct control while Remote is active,
+and Switch to Remote control while Direct is active. Opening the panel never
+changes mode. Explicit Remote selection hides the complete panel; triple B can
+reopen its LAN enrollment and connection-status view even before the network is
+ready. Hiding is not a claim that the phone is connected. Switching
+does not itself arm, start, pause, resume, save or replay an experiment action.
+A mode transition cancels partial controller gestures and requires neutral
+input before a fresh operator action. Connection loss does not select Direct
+or mutate the running recording.
+
+LAN status adds optional `control_mode` (`choose`, `direct`, `remote`) after the
+existing BLE projection. Legacy compositions omit it. Status and original
+receipts remain available in every mode; new LAN commands require Remote,
+checked again at the app's actual dispatch. Browsers with mode awareness block
+mutations for Direct, Choose or malformed mode values, while preserving
+legacy owners that omit the field. There is no browser mode-selection command.
+Authentication, session/epoch fences and original command receipts remain
+independent requirements.
+
+This mode selection does not configure the phone hotspot, enroll a controller,
+grant browser local-network permission or prove an attended reboot/hotspot
+qualification. Those remain the existing network setup and device checks.
+
+Focused host checks are the native package's `experiment_control_mode` tests
+and the actual Java adapter/dispatch/view consumers:
+
+```text
+cargo test -p rusty-quest-native-renderer-android-native --lib --locked experiment_control_mode
+python tools/checks/test_experiment_control_mode.py --json-jar <org-json-jar> --android-jar <android-platform-jar> --jdk-bin <jdk-bin-directory>
+```
+
+The Java harness substitutes only Android/JNI/view boundaries and records no
+headset effect. Full Android packaging checks the JNI exports and actual Java
+closure separately from physical input, rendering and hotspot operation.
+
 ## Packaged remote VR preparation
 
 `debug.rustyquest.native_renderer.experiment.preparation_mode` selects

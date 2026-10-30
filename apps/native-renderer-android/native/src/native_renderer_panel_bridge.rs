@@ -304,7 +304,9 @@ impl ControlPanelCommandPoller {
         else {
             return;
         };
-        if packaged_preparation_mode() == crate::experiment_session::PreparationMode::RemoteVr {
+        if !crate::experiment_control_mode::read().startup_panel_required(
+            packaged_preparation_mode() == crate::experiment_session::PreparationMode::RemoteVr,
+        ) {
             match consume_remote_preparation_launch(app, epoch, openxr_session_generation) {
                 Ok(true) => crate::marker("experiment-session-panel", format!(
                     "event=remote-vr-preparation status=launch-consumed launchEpoch={} submittedFrame={} panelOpened=false officialActiveTimeMs=0", epoch, submitted_frame)),

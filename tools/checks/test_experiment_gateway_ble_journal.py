@@ -68,7 +68,8 @@ def main():
         for path,body in stubs.items():
             f=out/path;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(body,encoding='utf-8')
         (out/'GatewayBleJournalTest.java').write_text(HARNESS,encoding='utf-8')
-        sources=list(out.rglob('*.java'))+[root/(name+'.java') for name in ['ExperimentSessionBleServer','ExperimentSessionBleNamePolicy','ExperimentSessionBleProtocol','ExperimentSessionControlCapability','ExperimentSessionCommandJournal','ExperimentSessionGatewayProtocol']]
+        sources=list(out.rglob('*.java'))+[root/(name+'.java') for name in ['ExperimentSessionBleServer','ExperimentSessionBleNamePolicy','ExperimentSessionBleProtocol','ExperimentSessionControlCapability','ExperimentSessionCommandJournal','ExperimentSessionGatewayProtocol','ExperimentSessionTerminalCorrelation','ExperimentSessionAndroidShell','ExperimentSessionPanelCoordinator','ExperimentSessionPanelState']]
+        sources.append(a.repo/'apps/native-renderer-android/src/main/java/io/github/mesmerprism/rustyquest/native_renderer/NativeRendererWriterAcknowledgedExitPolicy.java')
         subprocess.run(['javac','--release','8','-cp',str(a.json_jar),'-d',str(out),*map(str,sources)],check=True)
         subprocess.run(['java','-cp',str(out)+os.pathsep+str(a.json_jar),'io.github.mesmerprism.rustyquest.native_renderer.GatewayBleJournalTest'],check=True)
 

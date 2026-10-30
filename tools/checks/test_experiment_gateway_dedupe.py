@@ -24,12 +24,16 @@ def main():
     package = "io/github/mesmerprism/rustyquest/native_renderer"
     root = args.repo / "apps/native-renderer-android/panel-modules/breath-composition/src/main/java" / package
     source = (root / "ExperimentSessionCommandGateway.java").read_text(encoding="utf-8")
+    mode_source = (root / "ExperimentControlMode.java").read_text(encoding="utf-8")
     harness = '''package io.github.mesmerprism.rustyquest.native_renderer;
 import java.util.*;import org.json.JSONObject;
 final class ExperimentSessionBleServer {static final class CommandRequest{String id;CommandRequest(String i){id=i;}}}
+final class ExperimentControlMode {static final int CHOOSE=0,DIRECT=1,REMOTE=2;__MODE_SNAPSHOT__}
 final class GatewayDedupeHarness {
  Object protocol=new Object();long identity=1,epoch=7;int dispatches;
  ExperimentSessionCommandJournal journal=new ExperimentSessionCommandJournal();
+ class LegacyNativeMode {ExperimentControlMode.Snapshot readSnapshot(){return new ExperimentControlMode.Snapshot(9);}}
+ LegacyNativeMode controlMode=new LegacyNativeMode();
  class Carrier {boolean live=true;boolean acceptsNativeOwner(long i,long e){return live&&i==identity&&e==epoch;}
   JSONObject ownerReceipt(){return new JSONObject();}
   void updateReceipt(String id,String state,String detail){try{journal.observe(new JSONObject().put("id",id).put("state",state).put("detail",detail));}catch(Exception e){throw new RuntimeException(e);}}}
@@ -73,7 +77,7 @@ final class GatewayDedupeHarness {
   System.out.println("PASS production gateway owner admission: once-only dispatch, canonical ID binding, original pending/late confirmation, exact receipt, no capacity eviction, retired owner denial; inert handler callbacks");
  }
 }
-'''.replace("__OWNER__", method(source, "private JSONObject ownerExchange("))
+'''.replace("__OWNER__", method(source, "private JSONObject ownerExchange(")).replace("__MODE_SNAPSHOT__", method(mode_source, "static final class Snapshot"))
     with tempfile.TemporaryDirectory(prefix="rq-gateway-dedupe-") as temporary:
         output = Path(temporary)
         fixture = output / "GatewayDedupeHarness.java"

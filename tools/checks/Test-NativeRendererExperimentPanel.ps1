@@ -258,6 +258,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $mainRoot 'PanelImmersiveHandoffProofPolicy.java'),
         (Join-Path $panelRoot 'BreathCompositionCommandReceiver.java'),
         (Join-Path $panelRoot 'BreathCompositionPanelModule.java'),
+        (Join-Path $panelRoot 'ExperimentControlMode.java'),
         (Join-Path $panelRoot 'ExperimentSessionJsonCodec.java'),
         (Join-Path $panelRoot 'ExperimentSessionBleNamePolicy.java'),
         (Join-Path $panelRoot 'ExperimentSessionBleProtocol.java'),

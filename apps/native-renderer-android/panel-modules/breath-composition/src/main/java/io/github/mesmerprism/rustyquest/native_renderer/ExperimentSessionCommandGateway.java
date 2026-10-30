@@ -20,6 +20,7 @@ public final class ExperimentSessionCommandGateway {
     private final SharedPreferences preferences;
     private final ExperimentSessionBleServer.Delegate delegate;
     private final ExperimentSessionBleServer carrier;
+    private final ExperimentControlMode controlMode=ExperimentControlMode.process();
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExperimentSessionControlCapability session=new ExperimentSessionControlCapability();
     private final PolarStopBleCapability polar=new PolarStopBleCapability();
@@ -237,6 +238,8 @@ public final class ExperimentSessionCommandGateway {
         }
         String id=ExperimentSessionGatewayProtocol.string(body,"id");
         if(journal.known(body))return journal.original(id);
+        // This runs on the actual serialized owner, after any queued headset mode change.
+        controlMode.readSnapshot().requireRemoteCommands();
         ExperimentSessionBleServer.CommandRequest request=parse(body);
         if(!journal.reserve(body))return journal.original(id);
         carrier.updateReceipt(id,"accepted","Command admitted by authenticated app gateway.");
@@ -253,6 +256,8 @@ public final class ExperimentSessionCommandGateway {
         if(offer!=null&&polarOffer!=null){polar.shareReference(offer.getString("s"));polarOffer.put("s",offer.getString("s"));}
         // The existing projection owns the exact Polar wire field and capabilities.
         JSONObject projected=new JSONObject(new String(polar.projectBoundedStatus(status,polarOffer),java.nio.charset.StandardCharsets.UTF_8));
+        ExperimentControlMode.Snapshot mode=controlMode.readSnapshot();
+        if(mode.selected)projected.put("control_mode",mode.wireName());
         return projected.put("v",1).put("m","gated");
     }
     private ExperimentSessionBleServer.CommandRequest parse(JSONObject body)throws Exception {

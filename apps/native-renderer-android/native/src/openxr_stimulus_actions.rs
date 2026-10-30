@@ -16,6 +16,7 @@ use crate::{
     environment_depth_alignment_state::{
         EnvironmentDepthAlignmentInput, EnvironmentDepthAlignmentSettings,
     },
+    experiment_control_mode::{self, ControllerModeGate, ControllerModeInput},
     manifold_pose_publisher::{
         ManifoldPosePublisher, ManifoldPosePublisherConfig, ManifoldPoseSample,
         DEFAULT_MANIFOLD_POSE_CONTROLLER, DEFAULT_MANIFOLD_POSE_KIND,
@@ -76,6 +77,7 @@ fn right_thumbstick_binding_enabled(
 }
 
 pub(crate) struct StimulusVolumeActions {
+    control_mode_gate: ControllerModeGate,
     experiment_controls_enabled: bool,
     experiment_control_gesture: crate::experiment_session::ExperimentControlGesture,
     experiment_control_sequence: u64,
@@ -261,6 +263,7 @@ impl StimulusVolumeActions {
             .map_err(|error| format!("create stimulus randomize action: {error}"))?;
         let experiment_controls_enabled =
             same_apk_panel_action_settings.experimenter_profile_enabled();
+        let mode_selection_enabled = experiment_control_mode::read().selected();
         let right_experiment_grip = action_set
             .create_action::<f32>("right_experiment_grip", "Right Experiment Grip", &[])
             .map_err(|error| format!("create experiment grip action: {error}"))?;
@@ -428,7 +431,10 @@ impl StimulusVolumeActions {
                 if stimulus_randomize_binding_enabled {
                     bindings.push(xr::Binding::new(&right_primary_randomize, input));
                 }
-                if primary_recenter_binding_enabled || experiment_controls_enabled {
+                if primary_recenter_binding_enabled
+                    || experiment_controls_enabled
+                    || mode_selection_enabled
+                {
                     bindings.push(xr::Binding::new(&right_primary_reset, input));
                 }
             }
@@ -456,7 +462,10 @@ impl StimulusVolumeActions {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for secondary input {input_path}: {error}")
                 })?;
-                if right_secondary_binding_enabled || experiment_controls_enabled {
+                if right_secondary_binding_enabled
+                    || experiment_controls_enabled
+                    || mode_selection_enabled
+                {
                     bindings.push(xr::Binding::new(&right_secondary_action, input));
                 }
             }
@@ -493,7 +502,9 @@ impl StimulusVolumeActions {
                 }
             }
             // Grip squeeze exists on Touch profiles, not the simple-controller fallback.
-            if experiment_controls_enabled && profile.right_secondary_path.is_some() {
+            if (experiment_controls_enabled || mode_selection_enabled)
+                && profile.right_secondary_path.is_some()
+            {
                 let input = instance
                     .string_to_path("/user/hand/right/input/squeeze/value")
                     .map_err(|error| format!("create experiment grip path: {error}"))?;
@@ -637,6 +648,7 @@ impl StimulusVolumeActions {
         Ok(Some(Self {
             action_set,
             right_primary_randomize,
+            control_mode_gate: ControllerModeGate::new(experiment_control_mode::read()),
             experiment_controls_enabled,
             experiment_control_gesture: Default::default(),
             experiment_control_sequence: 0,
@@ -909,6 +921,8 @@ impl StimulusVolumeActions {
             self.apply_composition_controller_actions(observed_at);
         }
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
+            self.control_mode_gate
+                .update(experiment_control_mode::read(), None, dt_seconds);
             self.experiment_control_gesture = Default::default();
             self.pending_control_haptic = None;
             self.right_experiment_grip_pressed = false;
@@ -943,61 +957,93 @@ impl StimulusVolumeActions {
             events.mesh_ui_ray =
                 Some(self.mesh_ui_ray(session, reference_space, predicted_display_time));
         }
-        let control_haptic = self.poll_experiment_control(session, dt_seconds, frame_count);
-        let suppress_buttons = self.experiment_control_gesture.suppress_buttons();
-        events.stimulus_randomize_triggered =
-            !suppress_buttons && self.poll_primary_randomize(session, frame_count);
-        let (compatibility_trigger_toggle, developer_panel_triggered) =
-            self.poll_panel_toggle(session, frame_count, dt_seconds);
-        events.panel_toggle_triggered = compatibility_trigger_toggle;
-        events.developer_panel_triggered = developer_panel_triggered;
-        if events.panel_toggle_triggered {
-            events.panel_toggle_source = Some("right-trigger-or-select");
+        let mode_snapshot = experiment_control_mode::read();
+        let mode_input = mode_snapshot
+            .selected()
+            .then(|| self.controller_mode_input(session))
+            .flatten();
+        let mode_actions = self
+            .control_mode_gate
+            .update(mode_snapshot, mode_input, dt_seconds);
+        if mode_actions.clear_pending {
+            self.clear_pending_operator_gestures();
         }
-        if self.poll_primary_reset(session, frame_count) && !suppress_buttons {
-            if self.projection_target_settings.controls_enabled {
-                events
-                    .projection_target_inputs
-                    .push(ProjectionTargetInput::ResetBaseScale);
+        let mut control_haptic = false;
+        if mode_actions.direct_shortcuts {
+            control_haptic = self.poll_experiment_control(session, dt_seconds, frame_count);
+            let suppress_buttons = self.experiment_control_gesture.suppress_buttons();
+            events.stimulus_randomize_triggered =
+                !suppress_buttons && self.poll_primary_randomize(session, frame_count);
+            let (compatibility_trigger_toggle, developer_panel_triggered) =
+                self.poll_panel_toggle(session, frame_count, dt_seconds);
+            events.panel_toggle_triggered = compatibility_trigger_toggle;
+            events.developer_panel_triggered = developer_panel_triggered;
+            if events.panel_toggle_triggered {
+                events.panel_toggle_source = Some("right-trigger-or-select");
             }
-            if self.private_particle_recenter_enabled {
-                events.private_particle_recenter_triggered = true;
-                crate::marker(
-                    "private-particle-anchor",
-                    format!(
-                        "event=right-primary-recenter status=triggered frame={} privateParticleWorldAnchorRecenterRequested=true",
-                        frame_count
-                    ),
-                );
+            if self.poll_primary_reset(session, frame_count) && !suppress_buttons {
+                if self.projection_target_settings.controls_enabled {
+                    events
+                        .projection_target_inputs
+                        .push(ProjectionTargetInput::ResetBaseScale);
+                }
+                if self.private_particle_recenter_enabled {
+                    events.private_particle_recenter_triggered = true;
+                    crate::marker(
+                        "private-particle-anchor",
+                        format!(
+                            "event=right-primary-recenter status=triggered frame={} privateParticleWorldAnchorRecenterRequested=true",
+                            frame_count
+                        ),
+                    );
+                }
             }
-        }
-        let (secondary_panel_action, secondary_projection_input) = if suppress_buttons {
-            self.same_apk_panel_action.cancel_pending_sequence(true);
-            self.previous_right_secondary_pressed = true;
-            (None, None)
+            let (secondary_panel_action, secondary_projection_input) = if suppress_buttons {
+                self.same_apk_panel_action.cancel_pending_sequence(true);
+                self.previous_right_secondary_pressed = true;
+                (None, None)
+            } else {
+                self.poll_right_secondary_action(session, frame_count, dt_seconds)
+            };
+            if let Some(action) = secondary_panel_action {
+                match action {
+                    SameApkPanelActionTrigger::CompatibilityToggle => {
+                        events.panel_toggle_triggered = true;
+                        events.panel_toggle_source = Some("right-secondary-triple-press");
+                    }
+                    SameApkPanelActionTrigger::ExperimenterRestart => {
+                        events.experimenter_restart_triggered = true;
+                    }
+                }
+            }
+            if let Some(input) = secondary_projection_input {
+                events.projection_target_inputs.push(input);
+            }
+            if mode_actions.scene_sticks {
+                if let Some(input) = self.poll_thumbstick_y(session, frame_count, dt_seconds) {
+                    events.projection_target_inputs.push(input);
+                }
+                if let Some(input) =
+                    self.poll_depth_alignment_thumbstick(session, frame_count, dt_seconds)
+                {
+                    events.environment_depth_alignment_inputs.push(input);
+                }
+            }
         } else {
-            self.poll_right_secondary_action(session, frame_count, dt_seconds)
-        };
-        if let Some(action) = secondary_panel_action {
-            match action {
-                SameApkPanelActionTrigger::CompatibilityToggle => {
-                    events.panel_toggle_triggered = true;
-                    events.panel_toggle_source = Some("right-secondary-triple-press");
+            // Restricted modes bypass every legacy shortcut handler. Pose, raw
+            // thumbstick capture, breathing measurements and panel rays continue below.
+            if mode_actions.recenter {
+                if self.projection_target_settings.controls_enabled {
+                    events
+                        .projection_target_inputs
+                        .push(ProjectionTargetInput::ResetBaseScale);
                 }
-                SameApkPanelActionTrigger::ExperimenterRestart => {
-                    events.experimenter_restart_triggered = true;
-                }
+                events.private_particle_recenter_triggered = self.private_particle_recenter_enabled;
             }
-        }
-        if let Some(input) = secondary_projection_input {
-            events.projection_target_inputs.push(input);
-        }
-        if let Some(input) = self.poll_thumbstick_y(session, frame_count, dt_seconds) {
-            events.projection_target_inputs.push(input);
-        }
-        if let Some(input) = self.poll_depth_alignment_thumbstick(session, frame_count, dt_seconds)
-        {
-            events.environment_depth_alignment_inputs.push(input);
+            if mode_actions.panel_toggle {
+                events.panel_toggle_triggered = true;
+                events.panel_toggle_source = Some("right-secondary-triple-press");
+            }
         }
         events.right_grip_pose_active = match self
             .right_grip_pose
@@ -1219,6 +1265,74 @@ impl StimulusVolumeActions {
             );
         }
         events
+    }
+
+    fn clear_pending_operator_gestures(&mut self) {
+        self.experiment_control_gesture = Default::default();
+        self.pending_control_haptic = None;
+        self.control_haptic_cooldown = 0.0;
+        self.right_experiment_grip_pressed = false;
+        self.previous_right_primary_randomize_pressed = false;
+        self.previous_right_trigger_panel_toggle_pressed = false;
+        self.previous_right_select_panel_toggle_pressed = false;
+        self.previous_right_primary_reset_pressed = false;
+        self.previous_right_secondary_pressed = false;
+        self.same_apk_panel_action.cancel_pending_sequence(false);
+        self.same_apk_developer_action.cancel_pending_sequence();
+        let _ = self.breath_calibration_controller_action.update(0.0, false);
+    }
+
+    fn controller_mode_input<G>(&self, session: &xr::Session<G>) -> Option<ControllerModeInput> {
+        let button = |action: &xr::Action<bool>, require_active| {
+            let state = action.state(session, xr::Path::NULL).ok()?;
+            if require_active && !state.is_active {
+                return None;
+            }
+            Some(state.is_active && state.current_state)
+        };
+        let axis = |action: &xr::Action<f32>, require_active| {
+            let state = action.state(session, xr::Path::NULL).ok()?;
+            if require_active && !state.is_active {
+                return None;
+            }
+            if !state.is_active {
+                return Some((0.0, false));
+            }
+            state
+                .current_state
+                .is_finite()
+                .then_some((state.current_state, true))
+        };
+        let depth_sticks_enabled = self.environment_depth_alignment_settings.controls_enabled
+            && self
+                .environment_depth_alignment_settings
+                .joystick_controls_enabled;
+        let scene_stick = |action: &xr::Action<f32>, enabled| {
+            if !enabled {
+                return Some((true, true));
+            }
+            let (value, active) = axis(action, false)?;
+            // Optional controller absence cannot block right A/B. Its scene
+            // shortcut remains unarmed until it returns at neutral.
+            Some((!active || value.abs() <= 0.15, active))
+        };
+        let right = scene_stick(
+            &self.right_thumbstick_y,
+            self.projection_target_settings.controls_enabled
+                && self.projection_target_settings.joystick_controls_enabled,
+        )?;
+        let left_x = scene_stick(&self.left_thumbstick_x, depth_sticks_enabled)?;
+        let left_y = scene_stick(&self.left_thumbstick_y, depth_sticks_enabled)?;
+        Some(ControllerModeInput {
+            // An inactive required action does not prove physical release.
+            primary: button(&self.right_primary_reset, true)?,
+            secondary: button(&self.right_secondary_action, true)?,
+            grip: axis(&self.right_experiment_grip, true)?.0 > 0.55,
+            trigger: axis(&self.right_trigger_panel_toggle, true)?.0 > 0.35,
+            select: button(&self.right_select_panel_toggle, false)?,
+            sticks_neutral: right.0 && left_x.0 && left_y.0,
+            scene_sticks_available: right.1 && left_x.1 && left_y.1,
+        })
     }
 
     fn controller_readiness<G>(
