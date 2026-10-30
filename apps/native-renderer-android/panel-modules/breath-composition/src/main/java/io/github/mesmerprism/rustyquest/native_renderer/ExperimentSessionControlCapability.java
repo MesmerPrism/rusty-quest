@@ -44,6 +44,11 @@ final class ExperimentSessionControlCapability {
                 || !Boolean.TRUE.equals(nativeReadback.opt("profile_identity_bound"))
                 || !Boolean.TRUE.equals(nativeReadback.opt("audio_identity_bound"))
                 || !Boolean.FALSE.equals(status.opt("pending"))) { clear();return null; }
+        String state=string(nativeReadback,"control_state");
+        String nextAllowed="armed".equals(state)?"start":"running".equals(state)?"pause":"paused".equals(state)?"resume":"";
+        // The cached observer can still be IDLE/generation zero after native Arm settles.
+        // A phase mismatch has no optional grant; it must not make ordinary status unreadable.
+        if(nextAllowed.isEmpty() || !state.equalsIgnoreCase(string(status,"p"))) {clear();return null;}
         long generation=positive(nativeReadback,"generation"),epoch=positive(nativeReadback,"runtime_epoch");
         if(generation!=positive(status,"g")) {clear();return null;}
         String session=string(nativeReadback,"session_key"),condition=string(nativeReadback,"condition_id");
@@ -51,9 +56,6 @@ final class ExperimentSessionControlCapability {
         if(!session.matches("utc-ns-[0-9]{20}") || !condition.matches("condition-[ab]")
                 || !ExperimentSessionOpaqueIdentity.isLowerHex(profile,64)
                 || !ExperimentSessionOpaqueIdentity.isLowerHex(binding,64)) {clear();return null;}
-        String state=string(nativeReadback,"control_state");
-        String nextAllowed="armed".equals(state)?"start":"running".equals(state)?"pause":"paused".equals(state)?"resume":"";
-        if(nextAllowed.isEmpty() || !state.equalsIgnoreCase(string(status,"p"))) {clear();return null;}
         String nextTuple=server+"|"+owner+"|"+ownerEpoch+"|"+epoch+"|"+generation+"|"+session+"|"+condition+"|"+profile+"|"+binding+"|"+independentPolarTuple;
         if(!nextTuple.equals(tuple)){reference=ExperimentSessionOpaqueIdentity.newHex(16);tuple=nextTuple;}
         JSONObject guidance=nativeReadback.optJSONObject("breath_guidance");

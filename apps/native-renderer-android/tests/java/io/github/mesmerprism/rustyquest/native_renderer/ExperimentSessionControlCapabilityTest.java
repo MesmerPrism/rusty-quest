@@ -9,6 +9,34 @@ public final class ExperimentSessionControlCapabilityTest {
  static void deny(Checked f,String why)throws Exception{try{f.run();}catch(IllegalArgumentException|SecurityException e){return;}throw new AssertionError(why);}
  static JSONObject read()throws Exception{return new JSONObject().put("phase","active").put("profile_identity_bound",true).put("audio_identity_bound",true).put("generation",7L).put("runtime_epoch",3L).put("session_key","utc-ns-00000000000000000042").put("condition_id","condition-a").put("non_audio_profile_sha256",repeat("1",64)).put("activation_binding_sha256",repeat("2",64)).put("control_state","armed");}
  static String repeat(String s,int n){StringBuilder b=new StringBuilder();while(n-->0)b.append(s);return b.toString();}
+ static void armObservationTransition()throws Exception {
+  ExperimentSessionControlCapability cap=new ExperimentSessionControlCapability();
+  JSONObject nativeArmed=read().put("generation",1L).put("runtime_epoch",1L);
+  JSONObject observed=new JSONObject().put("g",1L).put("p","ARMED").put("pending",false);
+  String prior=cap.offer(observed,nativeArmed,9,11,1,1000).getString("s");
+  // Arm settles synchronously before the independent status observer catches up.
+  observed.put("g",0L).put("p","IDLE");
+  require(cap.offer(observed,nativeArmed,9,11,1,1002)==null,"cached IDLE generation zero remains readable after native Arm settles");
+  deny(()->cap.admit(prior,1,"start",1003,9,11,1),"unaligned observer retires any previous session grant");
+  observed.put("pending",true);
+  require(cap.offer(observed,nativeArmed,9,11,1,1003)==null,"pending Arm omits session grant");
+  observed.put("pending",false);
+  JSONObject bounded=new JSONObject(new String(new PolarStopBleCapability().projectBoundedStatus(observed,null),StandardCharsets.UTF_8));
+  require(bounded.getLong("g")==0&&bounded.getString("p").equals("IDLE")&&!bounded.has("q"),"transition publishes observed state without command capability");
+  observed.put("g",1L).put("p","ARMED");
+  JSONObject aligned=cap.offer(observed,nativeArmed,9,11,1,1004);
+  require(aligned!=null&&!prior.equals(aligned.getString("s")),"caught-up observer receives a fresh grant");
+  ExperimentSessionControlCapability.Fence fence=cap.admit(aligned.getString("s"),1,"start",1005,9,11,1);
+  require(fence.generation==1&&fence.epoch==1&&fence.operation.equals("start"),"fresh aligned grant keeps exact native fence");
+  deny(()->cap.admit(prior,1,"start",1005,9,11,1),"old grant cannot revive after observer catches up");
+  for(Object malformed:new Object[]{0L,-1L,1.0,"1",Boolean.TRUE}){
+   observed.put("g",malformed);
+   deny(()->cap.offer(observed,nativeArmed,9,11,1,1006),"aligned phase still rejects malformed projected generation");
+  }
+  observed.put("g",1L);
+  deny(()->cap.offer(observed,new JSONObject(nativeArmed.toString()).put("generation",1.0),9,11,1,1007),"native generation validation remains strict");
+  System.out.println("PASS Arm native/observer transition: IDLE g0 with native armed g1 omits optional grant, retires old reference, preserves status budget and restores only a fresh exact grant after catch-up");
+ }
  static JSONObject polar()throws Exception{return new JSONObject().put("closed",false).put("acc_requested",true).put("ecg_requested",false)
   .put("acc_pmd_ack_running",true).put("ecg_pmd_ack_running",false).put("acc_data_receiving_observed",true).put("ecg_data_receiving_observed",false)
   .put("pid",42).put("runtime_generation",1).put("owner_epoch",repeat("a",32))
@@ -132,6 +160,7 @@ public final class ExperimentSessionControlCapabilityTest {
   System.out.println("PASS live bias exact session/state capability, integer shape, HMAC percent tamper and bounded readback");
  }
  public static void main(String[]args)throws Exception{
+  armObservationTransition();
   liveBias();
   polarControls();
   ExperimentSessionControlCapability c=new ExperimentSessionControlCapability();JSONObject r=read();JSONObject status=new JSONObject().put("g",7L).put("p","ARMED").put("pending",false);
