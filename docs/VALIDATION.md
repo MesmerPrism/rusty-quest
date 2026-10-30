@@ -1,5 +1,14 @@
 # Rusty Quest Validation
 
+The default-off JVM/native compilation overlap has two focused process gates:
+`pwsh -NoProfile -File tools/checks/Test-SpatialCompilationOverlapHost.ps1 -OutputRoot <fresh-output>`
+and `pwsh -NoProfile -File tools/checks/Test-SpatialCompilationOverlapSeam.ps1 -OutputRoot <fresh-output>`.
+They exercise real owned child processes and the actual builder compile/join
+and terminal-cleanup seams, including environment snapshots, both output
+streams, sibling failures, original error retention, inherited-pipe EOF refusal
+and the unchanged serialized path. Modeled compiler children perform no APK,
+Gradle cache or device work and establish no build speedup.
+
 The stereo qualification mask-strip unit controls cover v1 compatibility and
 the explicitly versioned primary-texel-center strip. Marker `[77,66,2,255]`
 requires an actual retired final ABI2 frame with primary prefix6, current source

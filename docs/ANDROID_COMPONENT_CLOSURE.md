@@ -93,12 +93,36 @@ in-memory selection and validates its fingerprint. Rewriting the evidence file,
 even with a matching rewritten compiler receipt, cannot change the selected
 requirements while retaining the original build input binding.
 
-With a selected component contract, the canonical builder first calls
+With a selected component contract, the serialized default first calls
 `Invoke-AndroidComponentJvmCompilation` before Cargo setup or compilation. This
 owner API invokes only `:app:verifySelectedAndroidJvmCompilation`, then joins
 the original raw inventory to actual JVM class output with `verify-compiled`.
 It needs no APK or DEX. Its receipt has scope `jvm-compilation-only` and grants
 no runtime authority. Callers without a selected contract remain unverified.
+
+Explicit `-OverlapJvmNativeCompilation` requires that selected contract. After
+shared input/toolchain preparation it starts only Cargo compile/link in an owned
+child with a snapshot of the prepared native environment. The parent restores
+that projection before invoking the existing JVM phase. Both real results and
+both native output EOFs must succeed before symbol inspection, JNI publication
+or assembly. The cache lane stays serialized against other builds; the two
+Gradle phases remain sequential. Existing source/class/all-DEX and packaged
+native derivation checks remain mandatory.
+
+The opt-in retains raw `native-compilation/stdout.log` and `stderr.log` under
+the attempt output and emits them after the join. A JVM error cancels and reaps
+the live native process tree; an already failed native child retains its exit
+code alongside the original JVM error. The terminal trap also owns native
+cleanup before cache-lane release. An exited process with open inherited pipes
+fails bounded drain rather than claiming EOF. This is a source candidate, with
+no measured APK wall-time saving. CPU, memory and I/O contention may offset the
+available overlap.
+
+Manifest and phase receipts name `compilation_scheduling` as `serialized` or
+`jvm-native-overlap`; the opt-in input lock also binds that selection. In the
+overlap mode the native phase duration is the Cargo child's actual process
+lifetime. JVM and native intervals overlap and must not be added to infer total
+wall time. The serialized native phase retains its existing clock scope.
 
 The early aggregate depends on the selected variant's real Kotlin and Java
 compiler tasks. Actual SDK bootclasspath, compiler classpaths, generated source
