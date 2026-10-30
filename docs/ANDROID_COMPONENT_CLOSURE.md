@@ -67,13 +67,19 @@ Kotlin/Java source bytes. The applied
 `tools/gradle/android-component-closure.gradle` observes the actual selected
 KotlinCompile `sources`, JavaCompile `source` and their destination directories.
 It rejects a missing, stale or unexpected owned compiler input before compilation.
-The inventory is a content-sensitive compiler task input, so additions and changes
-invalidate compilation through Gradle's existing task model. It does not clear
-caches or disable incremental compilation. Explicit empty properties prevent an
-ambient Gradle property from silently enabling the route for compatibility callers.
-The canonical builder also pins the exact selected variant Kotlin/Java compiler
-task names; the shared observer's explicit JVM fixture overrides cannot redirect
-an Android build's observation.
+The full inventory is a mandatory input of the fresh observers; both real compiler
+tasks depend on the precompile observer. Gradle retains the compiler tasks' actual
+source, generated-source, classpath and option inputs. Inventory-only provenance
+changes therefore require fresh verification without redundantly forcing compiler
+work. Both observers still execute and join the current inventory and actual
+compiler inputs; postcompile source/class/ABI and final DEX checks remain intact.
+No caches are cleared or incremental compilation disabled. Explicit empty
+properties prevent an ambient Gradle property from silently enabling the route
+for compatibility callers. The canonical builder pins the exact selected variant
+Kotlin/Java task names without reading inventory bytes to select that graph; the
+fresh observers compare the inventory variant during execution. Direct callers
+missing task names retain the inventory-derived compatibility default. The shared
+observer's explicit JVM fixture overrides cannot redirect an Android observation.
 
 After compilation, the checker joins current source hashes, the actual compiler
 receipt, required JVM class definitions (including `SourceFile` and exact method

@@ -65,6 +65,7 @@ class AndroidJvmTaskClosure {
 abstract class ObserveAndroidComponentInputs extends DefaultTask {
     @InputFile @PathSensitive(PathSensitivity.NONE)
     abstract RegularFileProperty getInventoryFile()
+    @Input abstract Property<String> getCompilerVariant()
     @InputFiles @PathSensitive(PathSensitivity.ABSOLUTE)
     abstract ConfigurableFileCollection getCompilerSources()
     @Input abstract ListProperty<String> getClassRoots()
@@ -88,6 +89,9 @@ abstract class ObserveAndroidComponentInputs extends DefaultTask {
         def inventory = new JsonSlurper().parse(input)
         if (inventory.schema != 'rusty.quest.android_component_inventory.v1') {
             throw new GradleException('component-inventory-schema')
+        }
+        if (compilerVariant.get() && inventory.variant != compilerVariant.get()) {
+            throw new GradleException('component-compiler-variant')
         }
         def roots = inventory.roots.collectEntries { name, value ->
             [(name): new File(value as String).canonicalFile.toPath()]
@@ -148,9 +152,18 @@ if (componentInventory.isPresent() != componentEvidence.isPresent()) {
 if (componentInventory.isPresent()) {
     def expectedFile = file(componentInventory.get())
     def evidenceFile = file(componentEvidence.get()).toPath().resolve('gradle-inputs.json').toFile()
-    def variant = new JsonSlurper().parse(expectedFile).variant.capitalize()
-    def kotlinName = providers.gradleProperty('rqAndroidComponentKotlinTask').orElse('compile' + variant + 'Kotlin').get()
-    def javaName = providers.gradleProperty('rqAndroidComponentJavaTask').orElse('compile' + variant + 'JavaWithJavac').get()
+    // The canonical caller already pins both task names. Inventory bytes belong
+    // to fresh verification, not graph selection or compiler invalidation.
+    def kotlinName = providers.gradleProperty('rqAndroidComponentKotlinTask').orNull
+    def javaName = providers.gradleProperty('rqAndroidComponentJavaTask').orNull
+    if (kotlinName == null || javaName == null) {
+        // Preserve the direct-call compatibility default when no task was pinned.
+        def variant = new JsonSlurper().parse(expectedFile).variant.capitalize()
+        if (kotlinName == null) kotlinName = 'compile' + variant + 'Kotlin'
+        if (javaName == null) javaName = 'compile' + variant + 'JavaWithJavac'
+    }
+    def variantMatch = (kotlinName =~ /^compile(Debug|Release)Kotlin$/)
+    def compilerVariant = variantMatch.matches() ? variantMatch.group(1).toLowerCase(Locale.ROOT) : ''
     def earlyName = 'verifySelectedAndroidJvmCompilation'
     def earlyRequested = gradle.startParameter.taskNames.any { it == earlyName || it == project.path + ':' + earlyName }
     if (earlyRequested && gradle.startParameter.taskNames.size() != 1) {
@@ -170,6 +183,7 @@ if (componentInventory.isPresent()) {
         }
         def configureObservation = { ObserveAndroidComponentInputs task, File destination, String phase ->
             task.inventoryFile.set(expectedFile)
+            task.compilerVariant.set(compilerVariant)
             task.compilerSources.from(actualSources)
             task.classRoots.set(destinations)
             task.compilerTasks.set([kotlinTask, javaTask].findAll { it != null }.collect { compiler ->
@@ -195,8 +209,6 @@ if (componentInventory.isPresent()) {
             configureObservation(task, earlyRequested ? new File(evidenceFile.parentFile, 'gradle-precompile-inputs.json') : evidenceFile, 'pre-compile')
         }
         [kotlinTask, javaTask].findAll { it != null }.each { task ->
-            task.inputs.file(expectedFile).withPathSensitivity(PathSensitivity.NONE)
-                .withPropertyName('rqSelectedAndroidComponentInventory')
             task.dependsOn(observer)
         }
         def aggregate = tasks.register(earlyName, ObserveAndroidComponentInputs) { task ->

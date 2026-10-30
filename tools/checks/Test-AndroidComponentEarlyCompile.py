@@ -6,7 +6,7 @@ import argparse, importlib.util, json, os, pathlib, subprocess
 parser = argparse.ArgumentParser()
 for name in ('repo-root', 'output-root', 'gradle', 'java-home', 'android-home', 'gradle-user-home'):
     parser.add_argument('--' + name, type=pathlib.Path, required=True)
-parser.add_argument('--scenario', choices=('smoke', 'graph', 'all'), default='all')
+parser.add_argument('--scenario', choices=('smoke', 'graph', 'inventory', 'all'), default='all')
 args = parser.parse_args()
 root, output = args.repo_root.resolve(), args.output_root.resolve()
 if output.exists() or not output.is_relative_to(root / 'target'):
@@ -69,9 +69,10 @@ environment = os.environ.copy(); environment['JAVA_HOME'] = str(args.java_home)
 environment['ANDROID_HOME'] = str(args.android_home); environment['ANDROID_SDK_ROOT'] = str(args.android_home)
 environment['GRADLE_USER_HOME'] = str(args.gradle_user_home)
 results = []
+contract_indent = None
 
 def select():
-    contract.write_text(json.dumps({'schema':closure.SCHEMA,'components':[{'component_id':'owner','module_id':'owner','owner_lane':'fixture','definitions':definitions}]}), encoding='utf-8')
+    contract.write_text(json.dumps({'schema':closure.SCHEMA,'components':[{'component_id':'owner','module_id':'owner','owner_lane':'fixture','definitions':definitions}]}, indent=contract_indent), encoding='utf-8')
     value = closure.prepare(contract, lock, closure.file_sha(lock), {'application':app/'src', 'private':private}, 'debug')
     inventory_path.write_bytes(closure.canonical(value))
     return value
@@ -82,9 +83,14 @@ command = [str(args.gradle), '--no-daemon', '--configuration-cache', '--console=
     '-PrqAndroidComponentKotlinTask=compileDebugKotlin', '-PrqAndroidComponentJavaTask=compileDebugJavaWithJavac',
     ':app:verifySelectedAndroidJvmCompilation']
 
-def invoke(label, expected_error=None):
+def invoke(label, expected_error=None, expected_verification=None, after_select=None):
     inventory = select(); attempt = output / label; attempt.mkdir()
+    if after_select: after_select(inventory)
     (attempt / 'inventory.json').write_bytes(inventory_path.read_bytes())
+    # Prove both observers publish this invocation, even when compilers reuse output.
+    for name in ('gradle-inputs.json', 'gradle-precompile-inputs.json'):
+        path = evidence / name
+        if path.exists(): path.unlink()
     child = subprocess.run(command, capture_output=True, env=environment)
     (attempt / 'stdout.bin').write_bytes(child.stdout); (attempt / 'stderr.bin').write_bytes(child.stderr)
     (attempt / 'process.json').write_text(json.dumps({'exit_code':child.returncode,'argv':command,'java_home':str(args.java_home),'gradle_user_home':str(args.gradle_user_home)},indent=2),encoding='utf-8')
@@ -98,13 +104,29 @@ def invoke(label, expected_error=None):
     if child.returncode:
         raise AssertionError('Actual selected early Gradle compilation failed at ' + label + '; original logs retained')
     actual = closure.load(evidence / 'gradle-inputs.json')
-    compiled = closure.verify_compiled(inventory, actual, closure.file_sha(inventory_path))
+    before = closure.load(evidence / 'gradle-precompile-inputs.json')
+    assert before['observation_phase'] == 'pre-compile' and actual['observation_phase'] == 'post-compile'
+    assert before['inventory_sha256'] == actual['inventory_sha256'] == closure.file_sha(inventory_path)
+    assert b'> Task :app:verifySelectedAndroidComponentInputs' in child.stdout.splitlines()
+    assert b'> Task :app:verifySelectedAndroidJvmCompilation' in child.stdout.splitlines()
     (attempt / 'gradle-inputs.json').write_bytes((evidence / 'gradle-inputs.json').read_bytes())
+    (attempt / 'gradle-precompile-inputs.json').write_bytes((evidence / 'gradle-precompile-inputs.json').read_bytes())
+    try:
+        compiled = closure.verify_compiled(inventory, actual, closure.file_sha(inventory_path))
+    except ValueError as error:
+        if str(error) != expected_verification: raise
+        assert b':app:compileDebugKotlin UP-TO-DATE' in child.stdout and b':app:compileDebugJavaWithJavac UP-TO-DATE' in child.stdout
+        results.append({'step':label, 'exit_code':0, 'verification_error':str(error), 'fresh_observers':True,
+                        'kotlin_up_to_date':True, 'java_up_to_date':True})
+        return actual, child
+    assert expected_verification is None, 'Expected ABI closure refusal absent'
     (attempt / 'compiled.json').write_bytes(closure.canonical(compiled))
     if any(output.rglob('*.apk')) or (project / 'native-sentinel').exists():
         raise AssertionError('Early JVM fixture produced an APK/native effect')
     results.append({'step':label,'exit_code':0,'sources':len(actual['sources']),'class_outputs':compiled['class_outputs'],
                     'kotlin_up_to_date':b':app:compileDebugKotlin UP-TO-DATE' in child.stdout,
+                    'java_up_to_date':b':app:compileDebugJavaWithJavac UP-TO-DATE' in child.stdout,
+                    'fresh_observers':True,
                     'configuration_cache_reused':b'Reusing configuration cache' in child.stdout})
     return actual, child
 
@@ -113,6 +135,33 @@ assert {row['path'] for row in actual['compiler_tasks']} == {':app:compileDebugK
 assert any(pathlib.Path(row['path']).name == 'android.jar' and row['sha256'] == closure.file_sha(args.android_home/'platforms/android-34/android.jar') for row in actual['boot_classpath'])
 assert any(pathlib.Path(row['path']).name == 'BuildConfig.java' for row in actual['generated_sources'])
 assert actual['early_task_graph']
+if args.scenario == 'inventory':
+    # Whitespace changes contract/inventory provenance, not any compile input.
+    contract_indent = 2
+    _, metadata = invoke('inventory-metadata-only')
+    assert results[-1]['configuration_cache_reused'], 'Inventory metadata invalidated configuration'
+    assert results[-1]['kotlin_up_to_date'] and results[-1]['java_up_to_date'], 'Inventory metadata forced compiler work'
+    # A changed selected ABI must still be checked against fresh observations of reused classes.
+    definitions[0]['methods'][0]['descriptor'] = '()J'
+    invoke('inventory-invalid-abi', expected_verification='required-method-absent')
+    definitions[0]['methods'][0]['descriptor'] = '()I'
+    invoke('inventory-restored')
+    def wrong_variant(inventory):
+        inventory['variant'] = 'release'
+        inventory['fingerprint'] = closure.json_sha({k:v for k,v in inventory.items() if k != 'fingerprint'})
+        inventory_path.write_bytes(closure.canonical(inventory))
+    invoke('inventory-wrong-variant', 'component-compiler-variant', after_select=wrong_variant)
+    invoke('inventory-stale-source', 'component-compiler-input-source-closure',
+           after_select=lambda _: (private/'Owner.kt').write_text(owner_text+'\n// unselected bytes\n', encoding='utf-8'))
+    (private/'Owner.kt').write_text(owner_text, encoding='utf-8')
+    (java/'JavaBridge.java').write_text(java_text.replace('return BuildConfig.VALUE', 'return 1 + BuildConfig.VALUE'), encoding='utf-8')
+    invoke('inventory-real-source-change')
+    assert not results[-1]['java_up_to_date'], 'Genuine Java source change reused stale output'
+    support_file = support/'Api.java'; original_support = support_file.read_text(encoding='utf-8')
+    support_file.write_text('package support; public class Api { public static String value() { return "changed ABI"; } }', encoding='utf-8')
+    invoke('inventory-real-classpath-refusal', 'incompatible types')
+    support_file.write_text(original_support, encoding='utf-8')
+    invoke('inventory-classpath-restored')
 if args.scenario == 'all':
     (java/'JavaBridge.java').write_text(java_text.replace('object.keys().hasNext()', 'object.keySet().isEmpty()'), encoding='utf-8')
     invoke('java-sdk-refusal','cannot find symbol')
