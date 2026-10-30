@@ -1,5 +1,12 @@
 # Rusty Quest Validation
 
+The optional development scissor consumer has focused core and real JVM/JNI
+checks, using existing immutable image/dependency suppliers and fresh outputs:
+`python tools/checks/Test-SpatialScissorModuleHost.py --output target/scissor-core-proof --host-deps <deps> --module-manifest <manifest.tsv>` and
+`python tools/checks/Test-SpatialScissorFacadeHost.py --output target/scissor-facade-proof --host-deps <deps> --java-home <jdk17> --module-manifest <manifest.tsv>`.
+See [the adapter contract](DEVELOPMENT_SCISSOR_MODULE.md) for cancellation,
+renderer-used generation/readback and host/device proof boundaries.
+
 External Spatial artifact preflight has a focused host gate:
 `pwsh -NoProfile -File tools/checks/Test-SpatialArtifactPreflightHost.ps1`.
 It executes the actual caller and directory guard with default or explicit

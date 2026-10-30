@@ -1257,6 +1257,12 @@ unsafe fn create_shader_module(
 }
 
 fn target_rect_to_scissor(extent: vk::Extent2D, rect: [f32; 4]) -> vk::Rect2D {
+    if let Some(pixels) = crate::spatial_scissor_module::project_if_enabled(extent.width, extent.height, rect) {
+        return vk::Rect2D {
+            offset: vk::Offset2D { x: pixels.x, y: pixels.y },
+            extent: vk::Extent2D { width: pixels.width, height: pixels.height },
+        };
+    }
     let (x, width) = normalized_interval_to_pixels(extent.width, rect[0], rect[0] + rect[2]);
     let (y, height) = normalized_interval_to_pixels(extent.height, rect[1], rect[1] + rect[3]);
     vk::Rect2D {

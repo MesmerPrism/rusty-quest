@@ -1,5 +1,9 @@
 # Native CPU development feedback conformance example
 
+The optional app consumer and renderer readback are documented in
+[Development scissor module](../../docs/DEVELOPMENT_SCISSOR_MODULE.md).
+Its existing addon owner supplies transport and the bounded worker.
+
 This standalone, dependency-free Rust example exercises a synchronous native
 module seam. It is opt-in and owns no Android application, package, runtime
 profile, network endpoint or device. Its nested `[workspace]` keeps it outside

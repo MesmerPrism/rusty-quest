@@ -86,6 +86,8 @@ mod spatial_public_multistack_runtime;
     test
 ))]
 mod spatial_sdk_depth_handoff;
+#[cfg(any(target_os = "android", test))]
+mod spatial_scissor_module;
 #[cfg(target_os = "android")]
 mod spatial_video_projection;
 mod spatial_video_projection_marker;
