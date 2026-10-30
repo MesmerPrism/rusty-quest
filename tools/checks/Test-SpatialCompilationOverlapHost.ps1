@@ -23,6 +23,13 @@ elif mode=='gate':
     while not (root/'release').exists():
         if time.monotonic()>deadline: sys.exit(91)
         time.sleep(.01)
+elif mode=='pipeline-stop':
+    deadline=time.monotonic()+10
+    while not (root/'stop-issued').exists():
+        if time.monotonic()>deadline: sys.exit(92)
+        time.sleep(.01)
+    time.sleep(2)
+    (root/'natural-completion').write_text('natural')
 sys.exit(17 if mode=='fail' else 0)
 '@)
 $controls=[Collections.Generic.List[string]]::new()
@@ -76,6 +83,42 @@ try{
   try{throw 'fixture pre-join failure'}catch{try{& $trapBody}catch{$original=$_}}
   Check 'terminal_trap_retains_original_error_and_reaps_before_lane_release' ($original.Exception.Message -ceq 'fixture pre-join failure' -and $original.Exception.Data['native_execution'].reaped -and $nativeCargoChild.Completed -and -not(Get-Process -Id $nativePid,$descendant -ErrorAction SilentlyContinue))
  }finally{if(-not $f.Child.Completed){$null=Complete-SpatialCargoChild -Child $f.Child -Cancel}}
+ # Pipeline Stop bypasses catch but executes finally. Exercise the actual join
+ # in an interruptible runspace, with a real child that would finish naturally.
+ $f=StartFixture 'pipeline-stop' 'pipeline-stop';$runspace=$null;$pipeline=$null
+ try{
+  Ready $f.Root
+  $builderPath=Join-Path $PSScriptRoot '../Build-SpatialCameraPanelAndroid.ps1'
+  $builderText=[IO.File]::ReadAllText($builderPath)
+  $joinStart=$builderText.IndexOf('if($null -ne $nativeCargoChild){')
+  $joinEnd=$builderText.IndexOf('$nativeStopwatch.Stop()',$joinStart)
+  if($joinStart -lt 0 -or $joinEnd -lt $joinStart){throw 'Actual native/JVM join missing.'}
+  $join=$builderText.Substring($joinStart,$joinEnd-$joinStart)
+  $runspace=[RunspaceFactory]::CreateRunspace();$runspace.Open()
+  $runspace.SessionStateProxy.SetVariable('nativeCargoChild',$f.Child)
+  $runspace.SessionStateProxy.SetVariable('modulePath',$module)
+  $runspace.SessionStateProxy.SetVariable('jvmReadyPath',(Join-Path $f.Root 'jvm-ready'))
+  $pipeline=[PowerShell]::Create();$pipeline.Runspace=$runspace
+  $setup='Import-Module $modulePath; $cargoOutput=[Collections.Generic.List[string]]::new(); $invokeSelectedJvmCompilation={ [IO.File]::WriteAllText($jvmReadyPath,"ready"); Start-Sleep -Seconds 60 };'
+  [void]$pipeline.AddScript($setup+'try {'+$join+'} finally {$script:stopFinallyRan=$true}')
+  $pending=$pipeline.BeginInvoke()
+  $waitClock=[Diagnostics.Stopwatch]::StartNew()
+  while(-not(Test-Path (Join-Path $f.Root 'jvm-ready'))){if($waitClock.ElapsedMilliseconds -gt 10000){throw 'JVM readiness timeout'};Start-Sleep -Milliseconds 10}
+  [IO.File]::WriteAllText((Join-Path $f.Root 'stop-issued'),'stop')
+  $stopClock=[Diagnostics.Stopwatch]::StartNew();$pipeline.Stop();$stopClock.Stop()
+  $endError=$null;try{$null=$pipeline.EndInvoke($pending)}catch{$endError=$_}
+  $execution=$runspace.SessionStateProxy.GetVariable('nativeExecution')
+  $stopObservation=[ordered]@{execution_mode='actual-join-pipeline-stop-fixture';stop_elapsed_ms=$stopClock.ElapsedMilliseconds;
+   natural_completion_marker=(Test-Path (Join-Path $f.Root 'natural-completion'));finally_ran=$runspace.SessionStateProxy.GetVariable('stopFinallyRan');
+   native_cancelled=$execution.cancelled;native_reaped=$execution.reaped;native_exit_code=$execution.exit_code;
+   stdout_eof=$execution.stdout_eof;stderr_eof=$execution.stderr_eof;child_completed=$f.Child.Completed;
+   builder_sha256=(Get-FileHash $builderPath).Hash.ToLowerInvariant();end_error_type=$(if($endError){$endError.Exception.GetType().FullName}else{$null})}
+  $stopObservation|ConvertTo-Json -Depth 6|Set-Content (Join-Path $f.Root 'RESULT.json')
+  Check 'pipeline_stop_cancels_native_without_waiting_for_natural_completion' ($execution.cancelled -and $execution.reaped -and $execution.stdout_eof -and $execution.stderr_eof -and $f.Child.Completed -and -not $stopObservation.natural_completion_marker -and $stopObservation.finally_ran -and $null -ne $endError)
+ }finally{
+  if($null -ne $pipeline){$pipeline.Dispose()};if($null -ne $runspace){$runspace.Dispose()}
+  if(-not $f.Child.Completed){$null=Complete-SpatialCargoChild -Child $f.Child -Cancel}
+ }
 }finally{
  [Environment]::SetEnvironmentVariable('RUSTFLAGS',$oldFlags,'Process');[Environment]::SetEnvironmentVariable('RQ_OVERLAP_TEST',$oldPrivate,'Process')
 }

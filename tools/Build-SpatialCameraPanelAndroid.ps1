@@ -2364,14 +2364,15 @@ try {
     }
 }
 if($null -ne $nativeCargoChild){
-    $jvmError=$null;$nativeError=$null;$nativeExecution=$null
+    $jvmError=$null;$nativeError=$null;$nativeExecution=$null;$jvmSucceeded=$false
     try{
         # Parent native projection has been restored; only the owned Cargo child
         # keeps its snapshot. There is still exactly one Gradle invocation.
         $androidJvmCompilation=& $invokeSelectedJvmCompilation
+        $jvmSucceeded=$true
     }catch{$jvmError=$_}
     finally{
-        try{$nativeExecution=Complete-SpatialCargoChild -Child $nativeCargoChild -Cancel:($null -ne $jvmError)}catch{$nativeError=$_}
+        try{$nativeExecution=Complete-SpatialCargoChild -Child $nativeCargoChild -Cancel:(-not $jvmSucceeded)}catch{$nativeError=$_}
     }
     if($null -ne $nativeExecution){
         foreach($stream in @($nativeExecution.stdout,$nativeExecution.stderr)){
