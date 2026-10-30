@@ -1,5 +1,9 @@
 # APK Build And Run Isolation
 
+The isolated [development source-version metadata experiment](SOURCE_VERSION_RUNTIME_METADATA.md)
+describes the optional non-constant version field and its compatibility and
+Android evidence limits. It does not change installed source-version admission.
+
 Use this contract whenever multiple Rusty Quest projects build or launch APKs
 during the same session, especially when they share one headset.
 

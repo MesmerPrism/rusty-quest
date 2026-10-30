@@ -75,6 +75,7 @@ exit 0
         $env:RQ_INSPECTION_MUTATE = if ($case -ceq 'canonical-drift') { $apkOut } elseif ($case -ceq 'copy-drift') { 'copy' } else { '' }
         $normalizedExpectedSignerSha256 = if ($case -ceq 'wrong-signer') { 'c' * 64 } else { 'a' * 64 }
         $resolvedAppId = 'io.example.inspection'; $sourceVersionMetadata = New-SpatialSourceVersionMetadata -SourceCompositionFingerprint ('d' * 64)
+        $sourceRuntimeStampEnabled = $false
         $androidComponentClosure = $null; $androidJvmCompilation = $null
         $nativeReceiptJniLib = Join-Path $OutDir 'libreceipt.so'; [IO.File]::WriteAllText($nativeReceiptJniLib, 'modeled ELF tool input')
         $nativeReceiptApkEntry = 'lib/arm64-v8a/libreceipt.so'; $embeddedDuplexProductInputs = $null
