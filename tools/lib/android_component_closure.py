@@ -14,6 +14,7 @@ import struct
 import zipfile
 
 SCHEMA = "rusty.quest.android_component_contract.v1"
+DEVELOPMENT_FEEDBACK_SOURCES = ('main/java/org/rusty/quest/feedback/api/FeedbackModule.java', 'main/java/org/rusty/quest/feedback/ArtifactStore.java', 'main/java/org/rusty/quest/feedback/DexDefinitions.java', 'main/java/org/rusty/quest/feedback/GenerationLoader.java', 'main/java/org/rusty/quest/feedback/ModuleHost.java', 'main/java/org/rusty/quest/feedback/ConnectionObservationController.java', 'android/java/org/rusty/quest/feedback/AndroidDexLoader.java')
 
 
 def canonical(value):
@@ -70,6 +71,8 @@ def inventory_sources(roots, variant):
             if path.suffix not in (".kt", ".java"):
                 continue
             relative = path.relative_to(root).as_posix()
+            if key == "development_feedback" and relative not in DEVELOPMENT_FEEDBACK_SOURCES:
+                continue
             if key == "application" and relative.split("/")[0] not in ("main", variant):
                 continue
             path = owned(root, relative)
@@ -372,6 +375,7 @@ def main():
     for name in ("contract", "feature-lock", "expected-feature-lock-sha256", "private-root", "variant", "output"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--application-root")
+    p.add_argument("--development-feedback-root")
     p = commands.add_parser("verify-sources")
     for name in ("inventory", "expected-inventory-sha256", "output"):
         p.add_argument("--" + name, required=True)
@@ -389,7 +393,8 @@ def main():
     need(output is None or not output.exists(), "fresh-output-required")
     if args.command == "prepare":
         value = prepare(args.contract, args.feature_lock, args.expected_feature_lock_sha256,
-            {"application": args.application_root, "private": args.private_root}, args.variant)
+            {"application": args.application_root, "private": args.private_root,
+             "development_feedback": args.development_feedback_root}, args.variant)
     elif args.command == "verify-sources":
         need(file_sha(args.inventory) == args.expected_inventory_sha256, "prepared-inventory-changed")
         inventory = load(args.inventory)

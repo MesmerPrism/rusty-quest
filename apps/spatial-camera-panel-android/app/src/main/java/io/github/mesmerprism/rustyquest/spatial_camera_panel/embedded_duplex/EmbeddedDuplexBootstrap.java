@@ -157,6 +157,17 @@ final class EmbeddedDuplexBootstrap {
 
     static Prepared prepare(EmbeddedDuplexPackagedInputs inputs, JSONObject runtimeBindings,
             ConfigAssembler assembler, Trace trace) throws Exception {
+        if (inputs == null) throw new IllegalArgumentException("embedded bootstrap inputs");
+        return prepare(FrozenEffectiveInputs.packaged(inputs), runtimeBindings, assembler, trace);
+    }
+
+    static Prepared prepare(FrozenEffectiveInputs inputs, JSONObject runtimeBindings,
+            ConfigAssembler assembler) throws Exception {
+        return prepare(inputs, runtimeBindings, assembler, null);
+    }
+
+    static Prepared prepare(FrozenEffectiveInputs inputs, JSONObject runtimeBindings,
+            ConfigAssembler assembler, Trace trace) throws Exception {
         mark(trace, Failure.PACKAGED_REQUEST);
         if (inputs == null || runtimeBindings == null || assembler == null) {
             throw new IllegalArgumentException("embedded bootstrap inputs");

@@ -2,7 +2,11 @@ use crate::{
     abi::{self, Api, Header, Transform},
     digest, runtime,
 };
-use std::{ffi::c_void, fs, path::Path};
+use std::{
+    ffi::{c_void, CStr},
+    fs,
+    path::Path,
+};
 
 // Deliberately no Drop implementation and no FreeLibrary/dlclose call. Every
 // opened image, including rejected images, remains resident until process exit.
@@ -23,8 +27,8 @@ mod os {
         let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
         unsafe { LoadLibraryW(name.as_ptr()) }
     }
-    pub fn symbol(handle: *mut c_void) -> *mut c_void {
-        unsafe { GetProcAddress(handle, b"rm030_feedback_api\0".as_ptr()) }
+    pub fn symbol(handle: *mut c_void, name: &CStr) -> *mut c_void {
+        unsafe { GetProcAddress(handle, name.as_ptr().cast()) }
     }
 }
 
@@ -46,8 +50,24 @@ mod os {
         };
         unsafe { dlopen(name.as_ptr(), 2) } // RTLD_NOW | RTLD_LOCAL
     }
-    pub fn symbol(handle: *mut c_void) -> *mut c_void {
-        unsafe { dlsym(handle, c"rm030_feedback_api".as_ptr()) }
+    pub fn symbol(handle: *mut c_void, name: &CStr) -> *mut c_void {
+        unsafe { dlsym(handle, name.as_ptr()) }
+    }
+}
+
+impl Library {
+    pub fn open_verified(path: &Path, sha256: &str) -> Result<Self, &'static str> {
+        if digest::sha256(&fs::read(path).map_err(|_| "artifact read")?) != sha256 {
+            return Err("artifact SHA256");
+        }
+        let handle = os::open(path);
+        if handle.is_null() {
+            return Err("library load");
+        }
+        Ok(Self { handle })
+    }
+    pub fn symbol(&self, name: &CStr) -> *mut c_void {
+        os::symbol(self.handle, name)
     }
 }
 
@@ -77,17 +97,9 @@ impl ResidentHost {
     pub fn select(&mut self, candidate: Candidate<'_>) -> Result<(), &'static str> {
         // Reject a bad digest before loading any candidate code. Only trusted,
         // task-owned immutable images are supported: native loading is no sandbox.
-        let bytes = fs::read(candidate.path).map_err(|_| "artifact read")?;
-        if digest::sha256(&bytes) != candidate.sha256 {
-            return Err("artifact SHA256");
-        }
-        let handle = os::open(candidate.path);
-        if handle.is_null() {
-            return Err("library load");
-        }
-        self.libraries.push(Library { handle });
-        let handle = self.libraries.last().unwrap().handle;
-        let symbol = os::symbol(handle);
+        self.libraries
+            .push(Library::open_verified(candidate.path, candidate.sha256)?);
+        let symbol = self.libraries.last().unwrap().symbol(c"rm030_feedback_api");
         if symbol.is_null() {
             return Err("entry symbol");
         }

@@ -10,6 +10,86 @@ import org.junit.Test
 
 class SpatialCameraControlProfileTest {
   @Test
+  fun endpointPilotSelectsTwoProfilesOnOneResidentConfiguration() {
+    val pilot = SpatialPeerNetworkProfilePilot(setOf("peer.a", "peer.b"))
+    val first = endpointProfile("10.20.0.11", 41000)
+    val accepted = pilot.select(first.toString().toByteArray())
+    assertEquals("10.20.0.11", accepted.peers[0].media.host)
+    assertEquals(41000, accepted.peers[0].media.port)
+    assertEquals("peer.b", accepted.peers[1].peerId)
+    assertEquals(42001, accepted.peers[1].control.port)
+    assertEquals("artifact-test", accepted.profile.profileId)
+    assertEquals(7L, accepted.profile.revision)
+    assertEquals(1.15f, accepted.profile.projectionScale)
+    assertTrue(accepted.profileSha256.matches(Regex("[0-9a-f]{64}")))
+
+    val next = endpointProfile("10.21.0.11", 43000).put("revision", 8)
+    val second = pilot.select(next.toString().toByteArray())
+    assertEquals("10.21.0.11", second.peers[0].media.host)
+    assertEquals(43000, second.peers[0].media.port)
+    assertEquals(43001, second.peers[0].control.port)
+    assertEquals(8L, second.profile.revision)
+    assertEquals(accepted.profile.copy(revision = 8, peerNetworkEndpoints = second.peers), second.profile)
+    assertFalse(accepted.profileSha256 == second.profileSha256)
+    assertTrue(pilot.current === second)
+    assertEquals("10.20.0.11", accepted.peers[0].media.host)
+  }
+
+  @Test
+  fun endpointPilotRefusesMalformedAndUnsupportedUpdatesPreservingAcceptedSelection() {
+    val pilot = SpatialPeerNetworkProfilePilot(setOf("peer.a", "peer.b"))
+    pilot.select(endpointProfile("10.20.0.11", 41000).toString().toByteArray())
+    val accepted = pilot.select(endpointProfile("10.21.0.11", 43000).put("revision", 8).toString().toByteArray())
+    val invalidPort = endpointProfile("10.21.0.11", 43000)
+    invalidPort.getJSONArray("peer_network_endpoints").getJSONObject(1)
+        .getJSONObject("control_endpoint").put("port", 65536)
+    val foreignPeer = endpointProfile("10.21.0.11", 43000)
+    foreignPeer.getJSONArray("peer_network_endpoints").getJSONObject(1).put("peer_id", "peer.foreign")
+    val unsupported = endpointProfile("10.21.0.11", 43000)
+    unsupported.getJSONArray("peer_network_endpoints").getJSONObject(0)
+        .getJSONObject("media_endpoint").put("protocol", "new-protocol")
+    val authorityExpansion = endpointProfile("10.21.0.11", 43000).put("trust_cohort", "foreign")
+    val corruptControls = endpointProfile("10.21.0.11", 43000)
+    corruptControls.getJSONObject("quest_controls").put("projection_scale", 999)
+    val duplicate = endpointProfile("10.21.0.11", 43000).toString()
+        .replace("\"peer_id\":\"peer.a\"", "\"peer_id\":\"peer.a\",\"peer_id\":\"peer.b\"")
+    val collision = endpointProfile("10.21.0.11", 43000)
+    collision.getJSONArray("peer_network_endpoints").getJSONObject(0)
+        .getJSONObject("control_endpoint").put("port", 43000)
+    for (bad in listOf("{", invalidPort.toString(), foreignPeer.toString(),
+        unsupported.toString(), authorityExpansion.toString(), corruptControls.toString(), duplicate,
+        endpointProfile("peer.example", 43000).toString(), collision.toString())) {
+      assertThrows(Exception::class.java) { pilot.select(bad.toByteArray()) }
+      assertTrue(pilot.current === accepted)
+      assertEquals("10.21.0.11", pilot.current!!.peers[0].media.host)
+    }
+    val raw = endpointProfile("10.21.0.11", 43000).toString().toByteArray()
+    raw[0] = 0xff.toByte()
+    assertThrows(Exception::class.java) { pilot.select(raw) }
+    assertTrue(pilot.current === accepted)
+  }
+
+  @Test
+  fun sharedActivityParserCarriesTypedEndpointsWithoutChangingVisualControls() {
+    val selected = SpatialCameraControlProfileContract.parse(
+        endpointProfile("10.20.0.11", 41000).toString().toByteArray())
+    assertEquals("10.20.0.11", selected.peerNetworkEndpoints!![0].media.host)
+    assertEquals(41000, selected.peerNetworkEndpoints[0].media.port)
+    assertEquals(1.15f, selected.projectionScale)
+    val original = SpatialCameraControlProfileContract.parse(validProfile().toString().toByteArray())
+    assertEquals(1.15f, original.projectionScale)
+  }
+
+  private fun endpointProfile(firstHost: String, firstPort: Int): JSONObject {
+    fun peer(id: String, host: String, port: Int) = JSONObject()
+        .put("peer_id", id)
+        .put("media_endpoint", JSONObject().put("protocol", "rmanvid-v4-packed-stereo").put("host", host).put("port", port))
+        .put("control_endpoint", JSONObject().put("protocol", "rqod1").put("host", host).put("port", port + 1))
+    return validProfile().put("peer_network_endpoints", JSONArray(listOf(
+        peer("peer.a", firstHost, firstPort), peer("peer.b", "10.20.0.12", 42000))))
+  }
+
+  @Test
   fun externalProfileSnapshotSuppliesCurrentUiValuesBeforeOneManualRgbEdit() {
     val loaded =
         SpatialCameraPanelControlSnapshot(

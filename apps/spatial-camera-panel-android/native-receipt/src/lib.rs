@@ -81,6 +81,8 @@ mod spatial_native_passthrough;
 mod spatial_presentation_policy;
 mod spatial_public_multistack;
 mod spatial_public_multistack_runtime;
+#[cfg(any(target_os = "android", test))]
+mod spatial_scissor_module;
 #[cfg(any(
     all(target_os = "android", rq_environment_depth_spatial_sdk_api_layer),
     test

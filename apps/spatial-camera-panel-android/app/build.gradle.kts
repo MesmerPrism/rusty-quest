@@ -659,5 +659,31 @@ spatial {
   }
 }
 
+// Resident API/loader files only. AndroidSourceDirectorySet has no exclusion API;
+// attach the exact same seven files to the actual Kotlin and Java compiler tasks.
+if (providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR").orNull
+    ?.isNotBlank() == true) {
+  val feedbackRoot = rootProject.file("../../android/development-feedback/src")
+  val feedbackSources = files(listOf(
+    "main/java/org/rusty/quest/feedback/api/FeedbackModule.java",
+    "main/java/org/rusty/quest/feedback/ArtifactStore.java",
+    "main/java/org/rusty/quest/feedback/DexDefinitions.java",
+    "main/java/org/rusty/quest/feedback/GenerationLoader.java",
+    "main/java/org/rusty/quest/feedback/ModuleHost.java",
+    "main/java/org/rusty/quest/feedback/ConnectionObservationController.java",
+    "android/java/org/rusty/quest/feedback/AndroidDexLoader.java",
+  ).map { feedbackRoot.resolve(it) })
+  // AGP installs each task's source convention after task registration. Apply
+  // these additions after that setup and before the component observer binds it.
+  afterEvaluate {
+    tasks.withType<org.gradle.api.tasks.compile.JavaCompile>().configureEach {
+      source(feedbackSources)
+    }
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+      source(feedbackSources)
+    }
+  }
+}
+
 // Optional typed selected-component closure; compatibility callers remain unverified.
 apply(from = rootProject.file("../../tools/gradle/android-component-closure.gradle"))

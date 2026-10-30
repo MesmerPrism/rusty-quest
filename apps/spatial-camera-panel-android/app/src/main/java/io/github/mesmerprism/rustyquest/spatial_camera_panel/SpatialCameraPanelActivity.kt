@@ -507,6 +507,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             applyProfile = ::applyControlProfile,
             marker = ::marker,
+            validateCandidate = { raw -> io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.validateControlProfileAddons(this, raw) },
+            effectiveInputObservation = { io.github.mesmerprism.rustyquest.spatial_camera_panel.embedded_duplex.EmbeddedDuplexRuntimeService.effectiveInputObservation() },
+            applyObservationModule = { directive, sha -> privatePanelExtension?.applyDevelopmentObservationModule(directive, sha) },
+            applyScissorModule = { directive, sha -> privatePanelExtension?.applyDevelopmentScissorModule(directive, sha) },
         )
       }
   private val spatialPassthroughLutCoordinator: SpatialPassthroughLutCoordinator by
@@ -5234,7 +5238,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun armControlProfileHotloaderIfEnabled() {
     if (
         controlProfileHotloaderStarted ||
-            privatePanelInputLocked() ||
+            (privatePanelInputLocked() && !BuildConfig.DEBUG) ||
             activityReadOptionalBooleanSystemProperty(CONTROL_PROFILE_HOTLOAD_ENABLED_PROPERTY) !=
                 true
     ) {

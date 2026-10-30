@@ -1,5 +1,60 @@
 # Native CPU development feedback conformance example
 
+## Pure product scissor leaf
+
+The optional app consumer and renderer-used generation/readback are documented
+in [Development scissor module](../../docs/DEVELOPMENT_SCISSOR_MODULE.md).
+Its existing addon owner supplies transport and the bounded worker.
+
+The additional opt-in [scissor leaf](scissor/scissor.h) applies the existing
+`normalized_interval_to_pixels` policy from the Camera Panel renderer to plain
+normalized rectangles. It exchanges only fixed-width scalars and a caller-owned
+16-byte pixel rectangle through a versioned C table. It owns no Vulkan object,
+camera, codec, window, connection, lease or application authority. The actual
+product renderer remains unchanged and uses its existing compiled policy.
+
+```powershell
+python examples/development-feedback-native/Run-ScissorConformance.py `
+  --rustc <installed-rustc> --android-ndk <installed-ndk>
+```
+
+Omit the NDK argument for host-only execution. Android preparation currently uses
+an installed Windows-host NDK and defaults to API 26. Every invocation retains a
+fresh ignored `.local/scissor-<identity>` directory; no Cargo graph, dependency
+installation, global cache, APK or device action is used. Host conformance runs
+the actual source renderer's interval function against 12,000 deterministic
+inputs, checks unsupported/no-write cases and executes dynamic modules in two
+fresh host processes. The table admits extents 1 through 2^24, finite rectangle
+components and finite endpoint sums. Inputs outside that explicitly bounded
+domain are refused; it does not redefine arbitrary renderer input behavior.
+
+A1 uses the product calculation. B2 is an explicit preview experiment that
+insets nondegenerate axes by one pixel. Fresh A3 restores A's code and output.
+The same native process retains its output allocation and completion count;
+incompatible tables, bad scratch behavior, null functions, invalid calls, stale
+generations and bad hashes cannot publish a replacement or advance that count.
+All opened handles, including refused candidates, remain until process exit.
+The finite proof opens nine handles; it is not a production staging-budget API.
+Only the existing low-level verified image loader is shared with the earlier
+JNI example. Neither Rust traits nor allocator ownership crosses the C ABI.
+
+Android preparation separately compiles the modules and native proof driver,
+checks independent C/Rust layouts, AArch64 ELF types, unique SONAMEs, getter-only
+module exports and closed platform dependencies. Actual projection instructions
+must differ for B2 and match for A1/A3. The immutable ZIP contains a relative
+manifest, native proof driver, eight modules and LF-only checksums. These are
+compilation/inspection results; `android_executed` remains false.
+
+For a later coordinator-scheduled device slot, use a new shell-owned directory,
+verify its exact package/individual hashes, mark modules readonly and the driver
+executable, then run `./scissor-proof manifest.tsv`. Require `SCISSOR_PROOF_PASSED`
+and the A/B/A pixel observations above, natural process exit and a second fresh
+process beginning at zero. This case proves native shell execution only. App-UID
+linker namespace, Activity continuity and selected product-feature adoption need
+their own subsequent proof. No unload or product activation is implied.
+
+## Arithmetic control example
+
 This standalone, dependency-free Rust example exercises a synchronous native
 module seam. It is opt-in and owns no Android application, package, runtime
 profile, network endpoint or device. Its nested `[workspace]` keeps it outside

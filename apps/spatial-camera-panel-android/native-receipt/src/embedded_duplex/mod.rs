@@ -4,6 +4,9 @@
 mod cleanup_failure;
 pub(crate) mod common_lan_signing;
 pub(crate) mod development_lifetime_policy;
+pub(crate) mod effective_inputs;
+#[cfg(target_os = "android")]
+mod effective_inputs_jni;
 pub(crate) mod frame_identity;
 #[cfg(target_os = "android")]
 mod frame_jni;

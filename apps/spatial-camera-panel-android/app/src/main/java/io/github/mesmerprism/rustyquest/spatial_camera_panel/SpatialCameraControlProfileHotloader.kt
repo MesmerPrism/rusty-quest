@@ -8,6 +8,8 @@ import java.io.File
 import java.security.MessageDigest
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.CompletableFuture
+import android.util.AtomicFile
 
 internal data class SpatialCameraControlProfileEffective(
     val layerOverride: Float,
@@ -26,6 +28,10 @@ internal class SpatialCameraControlProfileHotloader(
     private val applyProfile:
         (SpatialCameraControlProfile, String) -> SpatialCameraControlProfileEffective,
     private val marker: (String) -> Unit,
+    private val validateCandidate: (ByteArray) -> Unit = {},
+    private val effectiveInputObservation: () -> String? = { null },
+    private val applyObservationModule: (SpatialDevelopmentModuleDirective, String) -> CompletableFuture<String>? = { _, _ -> null },
+    private val applyScissorModule: (SpatialDevelopmentModuleDirective, String) -> CompletableFuture<String>? = { _, _ -> null },
 ) {
   private data class FileSignature(val length: Long, val modifiedMs: Long)
 
@@ -43,6 +49,7 @@ internal class SpatialCameraControlProfileHotloader(
   private var pendingSignature: FileSignature? = null
   private val mainHandler = Handler(Looper.getMainLooper())
   private var fileObserver: FileObserver? = null
+  private val directiveTickets = mutableMapOf<String, Any>()
 
   fun arm() {
     if (armed) return
@@ -112,11 +119,17 @@ internal class SpatialCameraControlProfileHotloader(
               return
             }
     val effective =
+        runCatching { validateCandidate(bytes) }
+            .getOrElse { throwable ->
+              reject(current, digest, profile, "profile_context_validation_failed", throwable)
+              return
+            }.let {
         runCatching { applyProfile(profile, "control-profile-hotload") }
             .getOrElse { throwable ->
               reject(current, digest, profile, "profile_apply_failed", throwable)
               return
             }
+        }
     val receipt =
         JSONObject()
             .put(
@@ -124,15 +137,26 @@ internal class SpatialCameraControlProfileHotloader(
                 SpatialCameraControlProfileContract.APPLY_RECEIPT_SCHEMA,
             )
             .put("status", "applied")
+            .put("applied_scope", "visual_controls")
             .put("profile_id", profile.profileId)
             .put("revision", profile.revision)
             .put("profile_sha256", digest)
             .put("applied_unix_ms", System.currentTimeMillis())
             .put("route_active", true)
             .put("effective", effectiveJson(effective))
+    val inputObservation = runCatching {
+      effectiveInputObservation()?.let(::JSONObject)
+    }.getOrNull() ?: JSONObject().put("phase", "not_selected")
+    receipt.put("effective_input_owner", inputObservation)
+    if (profile.peerNetworkEndpoints != null) {
+      receipt.put("requested_peer_network_endpoints", JSONObject(String(bytes, Charsets.UTF_8)).getJSONArray("peer_network_endpoints"))
+          .put("endpoint_reload_boundary", "next_eligible_runtime_generation")
+    }
     writeReceipt(receipt)
     observedSignature = current
     pendingSignature = null
+    dispatchModule("observation", profile.developmentObservationModule, digest, applyObservationModule)
+    dispatchModule("scissor", profile.developmentScissorModule, digest, applyScissorModule)
     marker(
         "channel=control-profile-hotload status=applied " +
             "profileId=${activityMarkerToken(profile.profileId)} revision=${profile.revision} " +
@@ -152,6 +176,41 @@ internal class SpatialCameraControlProfileHotloader(
     armed = false
     fileObserver?.stopWatching()
     fileObserver = null
+    directiveTickets.clear()
+  }
+
+  private fun dispatchModule(consumer: String, directive: SpatialDevelopmentModuleDirective?,
+      profileSha256: String, apply: (SpatialDevelopmentModuleDirective, String) -> CompletableFuture<String>?) {
+    if (directive == null) return
+    val ticket = Any()
+    directiveTickets[consumer] = ticket
+    val target = File(directory, "last-development-$consumer-module-receipt.json")
+    fun receipt(status: String) = JSONObject()
+        .put("schema", "rusty.quest.spatial_camera_panel.development_module_receipt.v1")
+        .put("consumer", consumer).put("profile_sha256", profileSha256)
+        .put("mode", directive.mode).put("status", status)
+    val future = runCatching { apply(directive, profileSha256) }.getOrElse {
+      writeReceiptAt(target, receipt("failed").put("error_code", "consumer_dispatch_failed"))
+      return
+    }
+    if (future == null) {
+      writeReceiptAt(target, receipt("unavailable").put("error_code", "optional_consumer_unavailable"))
+      return
+    }
+    future.whenComplete { value, failure ->
+      mainHandler.post {
+        // A fresh ticket is required even for A->B->the same raw A bytes.
+        if (!armed || directiveTickets[consumer] !== ticket) return@post
+        val output = if (failure != null || value == null) {
+          receipt("failed").put("error_code", "consumer_completion_failed")
+        } else runCatching {
+          val raw = value.toByteArray(Charsets.UTF_8)
+          require(raw.size <= SpatialCameraControlProfileContract.MAX_PROFILE_BYTES) { "module_receipt_bounds" }
+          receipt("observed").put("consumer_receipt", StrictJsonByteIngress.parseObject(raw))
+        }.getOrElse { receipt("failed").put("error_code", "consumer_receipt_invalid") }
+        writeReceiptAt(target, output)
+      }
+    }
   }
 
   private fun reject(
@@ -196,16 +255,16 @@ internal class SpatialCameraControlProfileHotloader(
       }
 
   private fun writeReceipt(json: JSONObject) {
+    writeReceiptAt(applyReceipt, json)
+  }
+
+  private fun writeReceiptAt(target: File, json: JSONObject) {
     runCatching {
           directory.mkdirs()
-          val pending = File(directory, "${applyReceipt.name}.pending")
-          pending.writeText(json.toString(2), Charsets.UTF_8)
-          if (applyReceipt.exists() && !applyReceipt.delete()) {
-            error("receipt_replace_failed")
-          }
-          if (!pending.renameTo(applyReceipt)) {
-            error("receipt_publish_failed")
-          }
+          val atomic = AtomicFile(target)
+          val stream = atomic.startWrite()
+          try { stream.write(json.toString(2).toByteArray(Charsets.UTF_8)); atomic.finishWrite(stream) }
+          catch (failure: Throwable) { atomic.failWrite(stream); throw failure }
         }
         .onFailure { throwable ->
           marker(

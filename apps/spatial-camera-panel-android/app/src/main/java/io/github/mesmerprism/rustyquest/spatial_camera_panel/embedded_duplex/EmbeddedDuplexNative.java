@@ -10,6 +10,8 @@ public final class EmbeddedDuplexNative {
     public static final int EFFECTIVE_TIMED_OBSERVATION_WORDS = 21;
     static { System.loadLibrary("spatial_camera_panel_native_receipt"); }
     private EmbeddedDuplexNative() {}
+    /** Pure endpoint data derivation; does not stage or initialize a Native runtime. */
+    static native String deriveEffectiveInputs(String request);
     static native String selectLocalAfterTerminal(String expectedConfigSha256);
 
     // Identity: receiver, connection, route, decoder, reader, PTS ns, source elapsed,

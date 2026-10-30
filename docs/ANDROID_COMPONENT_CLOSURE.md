@@ -1,5 +1,14 @@
 # Selected Android component closure
 
+Private-feature consumers can select resident development-feedback definitions
+with root `development_feedback` in their existing component contract. That root
+is the owned `android/development-feedback/src` tree and selects exactly the six
+main API/controller/host sources and AndroidDexLoader. HostUrlLoader, native
+feedback bridge, fixtures and implementation payloads are excluded. The app's
+private-feature source selection adds these same resident compiler inputs;
+ordinary public builds without private sources do not select them. The existing
+current source, real compiler, class and all-DEX joins apply to these definitions.
+
 `tools/Build-SpatialCameraPanelAndroid.ps1 -AndroidComponentContractPath <owner-contract>`
 verifies selected application components before APK handoff. Product owner
 entrypoints should require their tracked contract automatically. Existing callers

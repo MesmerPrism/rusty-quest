@@ -135,6 +135,163 @@ with
 requested, supported, and effective markers remain separate. ABI v1 and
 missing optional payloads keep both features ineffective.
 
+## Shared endpoint input selection
+
+`SpatialPeerNetworkProfilePilot` validates the additive `peer_network_endpoints`
+selection and delegates all ordinary control fields to the existing profile
+parser. `FrozenEffectiveInputs.Selector` supplies the pre-bootstrap input:
+it starts from the installed signer/manifest-verified base, asks native code to
+derive endpoint-only route/binding documents, and publishes one immutable
+snapshot only after complete validation. The base manifest is never regenerated
+or represented as a different installed artifact. Separate versioned lineage
+records original manifest/route, submitted profile and effective route hashes.
+
+The new pure native operation opens no sockets and stages no runtime authority.
+It checks peer coverage, supported unicast IPv4/protocol/port data and endpoint
+collisions, preserves nonendpoint documents, recomputes the owner runtime-spec
+digests and invokes the existing packaged-route validator. Identity keys, trust,
+policy and compiled ceilings are not profile parameters.
+
+The existing runtime generation owner must freeze the selector before enrollment
+or bootstrap. Those consumers require the exact current frozen object; an older
+selected object cannot be substituted even if its bytes happen to match. Invalid
+input/native results retain the prior accepted object. Once frozen, further
+selection is refused. A later endpoint edit or revert needs a new eligible
+generation under the existing cleanup/admission contract, rather than mutating
+live sockets, routes or authority. The default packaged-input path remains
+available without an override.
+
+ProcessHost reads the bounded `active.profile.json` once before enrollment and
+retains one frozen snapshot for its role, process generation and operational run.
+Enrollment resolution/review/confirmation and native bootstrap consume that same
+object. An endpoint edit is selected only after the existing owner has earned a
+new eligible selection boundary; ordinary peer Stop does not mutate the frozen
+route. An explicit new enrollment review at the existing native-idle terminal
+boundary also retires the prior data selection. Cleanup invalidates old objects.
+
+The Activity parser accepts the endpoint field alongside visual controls. Visual
+application keeps its existing route-active/main-thread boundary and does not
+change a running route. `last-apply-receipt.json` reports `applied_scope` as
+`visual_controls`, the requested endpoints, and cached `effective_input_owner`
+observation. That observation distinguishes frozen selection from actual native
+configuration identity; it does not claim socket liveness. The hotloader's
+existing explicit property is still required. Debug builds permit that opt-in
+with private locked input. File publication, native data validation, runtime
+adoption and physical endpoint readback remain separate evidence.
+
+The explicit pilot consumer accepts a complete existing control profile with
+one additional root field, `peer_network_endpoints`. This is an array of exactly
+two objects, each containing `peer_id`, `media_endpoint` and `control_endpoint`.
+Each endpoint contains only `protocol`, `host` and `port`; media protocol is
+`rmanvid-v4-packed-stereo`, control protocol is `rqod1`, host is canonical
+unicast IPv4 (no DNS, loopback, unspecified or multicast address), and port is
+an exact integer in `1..65535`. IPv6 is outside this pilot. Both peer IDs must
+exactly cover the caller's current enrolled peer set; the caller, not profile
+data, supplies that set. Identity, device roles, keys, trust, camera and policy
+fields are not accepted endpoint inputs. Media/control collisions within a
+peer, and equal media or control endpoints across the peers, are rejected.
+
+The same existing strict byte ingress validates the whole bounded document
+before its endpoint field is extracted. The existing profile parser validates
+all remaining fields. A successful selection atomically replaces the resident
+pilot's in-memory `current` value, exposing the typed original visual profile,
+exact submitted-byte SHA-256 and immutable endpoint readback. Exceptions leave
+the preceding selection intact. There is no additional file watcher, receipt
+format, persistence path or new resource owner.
+
+## Optional development module directives
+
+The same strict profile envelope accepts `development_observation_module` and
+`development_scissor_module`. Omission issues no command. Each directive has a
+closed `mode`: `static` and `status` take no other fields; `select_retained`
+requires only a positive integer `generation`; `activate` requires that generation
+and lowercase 64-hex `sha256`. Scissor activation additionally requires `policy`
+as `product` or `inset_one_pixel`; observation never accepts policy. No path,
+class or trust setting is accepted. Invalid envelope/addon/context validation
+prevents both visual and module dispatch.
+
+After valid visual application, the existing private extension may dispatch each
+present directive to its real optional consumer. It borrows the existing debug
+module owner's bounded worker. A missing consumer is reported as unavailable.
+The fixed `last-development-observation-module-receipt.json` and
+`last-development-scissor-module-receipt.json` contain profile hash, requested
+mode, dispatch outcome and the actual nested consumer receipt. They do not infer
+adoption from successful file publication or visual application. Receipts use
+AtomicFile; completion tickets prevent an old A/B/A request from overwriting a
+later identical A, and extension shutdown cancels exact pending Native admission
+futures before retiring the shared debug owner. No code image unloading is claimed.
+
+Source/JVM checks cover the integrated parser, data holder, actual public source
+closure and hotloader with modeled Android leaves. Installed APK/Android event
+delivery, private Android key storage and physical sockets require their own
+runtime evidence.
+
+## Earlier host prototype evidence
+
+The following describes the preceding probes, whose limitations remain part of
+their evidence; it does not describe the shared production path above.
+
+One acceptance scenario selects peer A at `10.20.0.11:41000` (media) and
+`:41001` (control), then changes that same peer to `10.21.0.11:43000` and
+`:43001` at the next profile revision on the same resident selector, retaining
+peer B and all visual controls. A malformed update, a foreign peer or an
+unsupported protocol must retain the second accepted object. The focused host
+runner is `tools/checks/Test-SpatialPeerNetworkProfileHost.py`; its explicit
+JVM spec selects existing JDK/compiler/runtime jars and a stable snapshot of
+compiled app value types. It compiles the actual strict parser, profile parser,
+pilot and tests. It performs no Gradle/Cargo/Android build or socket effects.
+
+The smallest future adoption point is the product-owned input generator,
+before it finalizes route JSON, reciprocal media bindings, lifecycle digests
+and the packaged manifest. Today the complete route and manifest hashes also
+enter enrollment facts; media endpoints must match accepted binding transports.
+Runtime selection without repackaging therefore requires a separately reviewed
+effective-route contract, frozen before enrollment snapshot and bootstrap, and
+carried coherently through native staging, ceremonies and owner projections.
+This pilot adopts none of those changes. It changes no JNI ABI or compiled
+policy ceiling and removes no APK rebuild from the current product workflow.
+
+An optional host-only continuation now exercises that boundary end to end:
+`tools/checks/Test-EndpointRouteDerivationHost.py`. It uses sibling atomic
+replacement of the same `control-profiles/active.profile.json` file, the existing
+strict/profile parser and an unadopted `EndpointRouteCandidate` under
+`host-tests/embedded_duplex/`. It derives reciprocal endpoint leaves and their
+canonical runtime/lifecycle/manifest digests, then invokes the actual native
+`packaged_route.rs` reader and Java packaged-input reader. The Java bootstrap
+projection checker is also executed; its native runtime-authority assembler
+body is explicitly modeled, so this proves neither runtime-authority admission
+nor physical bootstrap. Existing compiled JVM/Rust dependencies are reused;
+the probe does not run Gradle or Cargo or build an APK.
+
+One compiled host probe selects endpoint A then B from file replacements,
+checks production reader readback, verifies non-endpoint identity/policy fields
+remain equal, and irreversibly freezes its candidate snapshot for bootstrap.
+Incompatible data and edits after freeze retain the accepted snapshot. Crucially,
+the changed assets fail against the original manifest hash, the original
+bootstrap projection refuses the changed route, and the existing enrollment
+equality check refuses changed route facts with the same key identity. Admitting
+the regenerated manifest in the fixture is a separate candidate-input test,
+not evidence that the installed APK accepts it. No Android FileObserver,
+installed enrollment store, media runtime or headset effect is exercised.
+
+`tools/checks/Test-EndpointAuthorityHost.py` closes the subsequent native
+authority model boundary. It imports the unchanged production packaged-config,
+route and source-policy modules, uses owner libraries compiled directly from
+the matching selected source, and executes real broker construction, token
+issuance and capability-use authorization. Endpoint A and B keep separate
+effective-route digests under the same immutable base hashes and compiled
+development policy. A foreign caller is refused without changing accepted
+admission state. The synthetic candidate manifest is excluded from this
+authority request; base artifact and endpoint-containment checks precede
+assembly. The full derived snapshot validates before its `current` changes.
+
+This remains a host-only API prototype. Binder identity, clock, entropy and
+trust context are fixed host fixtures; each validation creates fresh temporary
+broker authority. It does not exercise installed package authentication,
+private enrollment persistence, production shared-input consumer wiring,
+native process-fence/peer-session admission, socket binding or media effects.
+No live runtime is replaced and no enabling APK is selected by these tests.
+
 ## Named Panel Profile Library
 
 The fixed **Profiles** page saves and restores complete low-rate panel tuning

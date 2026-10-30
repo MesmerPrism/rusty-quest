@@ -43,6 +43,11 @@ function New-AndroidComponentInventory {
     $arguments=@('prepare','--contract',$ContractPath,'--feature-lock',(Join-Path $ValidatedProductInputs.root 'planning-feature-lock.json'),
         '--expected-feature-lock-sha256',[string]$rows[0].sha256,'--application-root',$ApplicationSourceRoot,
         '--private-root',$PrivateSourceRoot,'--variant',$Variant,'--output','-')
+    $contract=Get-Content -LiteralPath $ContractPath -Raw|ConvertFrom-Json -Depth 64
+    if(@($contract.components.definitions|Where-Object root -CEQ 'development_feedback').Count){
+        $questRoot=Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        $arguments+=@('--development-feedback-root',(Join-Path $questRoot 'android/development-feedback/src'))
+    }
     $json=Invoke-AndroidComponentTool -Arguments $arguments -PythonPath $PythonPath
     $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($json))).ToLowerInvariant()
     return [pscustomobject]@{json=$json;sha256=$digest;inventory=($json | ConvertFrom-Json -Depth 64)}

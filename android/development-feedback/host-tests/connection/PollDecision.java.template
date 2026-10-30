@@ -1,0 +1,5 @@
+package connectionfeedback;
+final class PollDecision {
+    private PollDecision() { }
+    static boolean due(int event) { return event == 1; }
+}
