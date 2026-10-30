@@ -4,6 +4,7 @@ param(
     [string]$CargoPath = '',
     [string]$RustupPath = '',
     [switch]$RequireInstalledRustTarget,
+    [switch]$OverlapJvmNativeCompilation,
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
     [string]$NdkHome = $env:ANDROID_NDK_HOME,
@@ -97,12 +98,15 @@ $buildLaneMutexOwned = $false
 $buildLaneMutexAbandoned = $false
 $buildLaneMutexWaitMs = 0L
 $apkInspectionCopy = $null
+$nativeCargoChild = $null
 Import-Module (Join-Path $PSScriptRoot 'lib/SpatialSourceVersion.psm1') -Force
 $sourceRuntimeStampEnabled=Resolve-SpatialSourceRuntimeStampSelection -Requested:$UseSourceRuntimeStamp -SourceVersionEnabled:$UseSourceCompositionVersionName -BuildMode $BuildMode -BuildType $BuildType -PublicationBuild:$PublicationBuild
 $spatialPrerequisitesModule = Import-Module (Join-Path $PSScriptRoot "lib/SpatialCameraPanelBuildPrerequisites.psm1") -PassThru
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidComponentClosure.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/AndroidNativeSourcePaths.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "lib/SpatialApkInspection.psm1") -Force
+Import-Module (Join-Path $PSScriptRoot 'lib/SpatialCargoChild.psm1') -Force
+if($OverlapJvmNativeCompilation -and [string]::IsNullOrWhiteSpace($AndroidComponentContractPath)){throw 'JVM/native overlap requires a selected Android component contract.'}
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexMediaPolicy.psm1") -Force
 Import-Module (Join-Path $PSScriptRoot "EmbeddedDuplexFreshSetupPolicy.psm1") -Force
 if($EmbeddedDuplexFreshSetupPolicy -ceq 'source-bound-v2' -and $EmbeddedDuplexMediaPolicy -cne 'ongoing-v2'){throw 'Fresh setup requires explicit ongoing-v2 media policy.'}
@@ -114,6 +118,10 @@ $SharedSpatialAppId = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
 
 trap {
     $caughtBuildError = $_
+    if($null -ne $nativeCargoChild -and -not $nativeCargoChild.Completed){
+        try{$caughtBuildError.Exception.Data['native_execution']=Complete-SpatialCargoChild -Child $nativeCargoChild -Cancel}
+        catch{$caughtBuildError.Exception.Data['native_cleanup_error']=$_}
+    }
     if ($null -ne $apkInspectionCopy -and (Test-Path -LiteralPath $apkInspectionCopy.path -PathType Leaf)) {
         Write-Warning "Inspection attempt retained after failure: $($apkInspectionCopy.path); canonical APK remains in OutDir."
     }
@@ -1479,6 +1487,7 @@ $nativeIdentityDescriptor = [ordered]@{
     embedded_duplex_product_input_manifest_sha256 = $(if ($null -eq $embeddedDuplexProductInputs) { "" } else { [string]$embeddedDuplexProductInputs.manifest_sha256 })
 }
 if($UseSourceCompositionVersionName){$buildInputDescriptor['developer_source_version']=$sourceVersionMetadata}
+if($OverlapJvmNativeCompilation){$buildInputDescriptor['compilation_scheduling']='jvm-native-overlap'}
 Set-EmbeddedDuplexMediaPolicyDescriptor -Descriptor $nativeIdentityDescriptor -Selection $EmbeddedDuplexMediaPolicy
 Set-EmbeddedDuplexFreshSetupPolicyDescriptor -Descriptor $nativeIdentityDescriptor -ResolvedSelection $freshBuildSelection
 $nativeFingerprint = Get-StringSha256 -Value ($nativeIdentityDescriptor | ConvertTo-Json -Depth 20 -Compress)
@@ -2073,9 +2082,12 @@ function Invoke-SpatialGradlePhase {
 }
 
 $androidJvmCompilation=[ordered]@{status='unverified';reason='no-selected-component-contract';runtime_authority=$false}
-if($null -ne $androidComponentSelection){
+$invokeSelectedJvmCompilation={
     $androidJvmPreflight = Invoke-SpatialGradlePhase -Phase JvmPreflight -ComponentEvidenceDirectory (Join-Path $androidComponentEvidenceDir 'jvm-preflight')
-    $androidJvmCompilation=$androidJvmPreflight.compilation
+    $androidJvmPreflight.compilation
+}
+if($null -ne $androidComponentSelection -and -not $OverlapJvmNativeCompilation){
+    $androidJvmCompilation=& $invokeSelectedJvmCompilation
 }
 
 $cargoCommand = Resolve-QuestSpatialApplication -Name cargo -Path $CargoPath
@@ -2231,14 +2243,19 @@ try {
         "--release",
         "--target-dir", $nativeReceiptTargetDir
     )
-    & $cargoCommand.Source @cargoArguments 2>&1 | ForEach-Object {
-        $line = [string]$_
-        $cargoOutput.Add($line)
-        Write-Host $line
-    }
-    $cargoExitCode = $LASTEXITCODE
-    if ($cargoExitCode -ne 0) {
-        throw "Spatial Camera Panel native receipt cargo build failed with exit code $cargoExitCode"
+    if($OverlapJvmNativeCompilation){
+        $nativeCargoChild=Start-SpatialCargoChild -FilePath $cargoCommand.Source -Arguments $cargoArguments `
+            -WorkingDirectory (Get-Location).Path -CaptureDirectory (Join-Path $OutDir 'native-compilation')
+    }else{
+        & $cargoCommand.Source @cargoArguments 2>&1 | ForEach-Object {
+            $line = [string]$_
+            $cargoOutput.Add($line)
+            Write-Host $line
+        }
+        $cargoExitCode = $LASTEXITCODE
+        if ($cargoExitCode -ne 0) {
+            throw "Spatial Camera Panel native receipt cargo build failed with exit code $cargoExitCode"
+        }
     }
 } finally {
     if ($null -eq $previousAndroidHomeForCargo) {
@@ -2346,6 +2363,32 @@ try {
         $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX = $previousPrivateSurfaceParticleMarkerPrefix
     }
 }
+if($null -ne $nativeCargoChild){
+    $jvmError=$null;$nativeError=$null;$nativeExecution=$null
+    try{
+        # Parent native projection has been restored; only the owned Cargo child
+        # keeps its snapshot. There is still exactly one Gradle invocation.
+        $androidJvmCompilation=& $invokeSelectedJvmCompilation
+    }catch{$jvmError=$_}
+    finally{
+        try{$nativeExecution=Complete-SpatialCargoChild -Child $nativeCargoChild -Cancel:($null -ne $jvmError)}catch{$nativeError=$_}
+    }
+    if($null -ne $nativeExecution){
+        foreach($stream in @($nativeExecution.stdout,$nativeExecution.stderr)){
+            foreach($line in @($stream -split '\r?\n' | Where-Object {$_ -ne ''})){$cargoOutput.Add($line);Write-Host $line}
+        }
+    }
+    if($null -ne $jvmError){
+        if($null -ne $nativeExecution){$jvmError.Exception.Data['native_execution']=$nativeExecution}
+        if($null -ne $nativeError){$jvmError.Exception.Data['native_cleanup_error']=$nativeError}
+        throw $jvmError
+    }
+    if($null -ne $nativeError){throw $nativeError}
+    if($nativeExecution.exit_code -ne 0){
+        $failure=[InvalidOperationException]::new("Spatial Camera Panel native receipt cargo build failed with exit code $($nativeExecution.exit_code)")
+        $failure.Data['native_execution']=$nativeExecution;throw $failure
+    }
+}
 $nativeStopwatch.Stop()
 if (-not (Test-Path -LiteralPath $nativeReceiptBuiltLib)) {
     throw "Cargo build did not produce native receipt library: $nativeReceiptBuiltLib"
@@ -2374,7 +2417,7 @@ $cargoObservedFresh = $cargoCompileUnitCount -eq 0 -and
     @($cargoOutput | Where-Object { $_ -match '^\s*Finished\s+`release`\s+profile' }).Count -gt 0
 $phaseReceipts.Add([ordered]@{
     phase = "native-compile-link"
-    duration_ms = $nativeStopwatch.ElapsedMilliseconds
+    duration_ms = $(if($OverlapJvmNativeCompilation){$nativeExecution.duration_ms}else{$nativeStopwatch.ElapsedMilliseconds})
     prior_cache_available = $nativePriorCacheAvailable
     prior_cache_semantics = "matching-identity-and-verified-output-only"
     invalidation = $nativeInvalidation
@@ -2386,7 +2429,7 @@ $phaseReceipts.Add([ordered]@{
     status = "pass"
 })
 Write-Host ("BUILD_PHASE native-compile-link status=pass durationMs={0} priorCacheAvailable={1} cargoFresh={2} cargoCompileUnits={3} jniChanged={4}" -f `
-    $nativeStopwatch.ElapsedMilliseconds,
+    $(if($OverlapJvmNativeCompilation){$nativeExecution.duration_ms}else{$nativeStopwatch.ElapsedMilliseconds}),
     $nativePriorCacheAvailable,
     $cargoObservedFresh,
     $cargoCompileUnitCount,
@@ -2693,6 +2736,7 @@ $phaseReceipts.Add([ordered]@{
 })
 $phaseReceipt = [ordered]@{
     schema = "rusty.quest.spatial_camera_panel.build_phase_receipts.v1"
+    compilation_scheduling = $(if($OverlapJvmNativeCompilation){'jvm-native-overlap'}else{'serialized'})
     build_workflow_mode = $BuildMode.ToLowerInvariant()
     started_at_utc = $buildStartedUtc.ToString("o")
     completed_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
@@ -2710,6 +2754,7 @@ $offlineMediaPackagedAssets =
     -not [string]::IsNullOrWhiteSpace($resolvedOfflineMediaPackAssetDir)
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1"
+    compilation_scheduling = $(if($OverlapJvmNativeCompilation){'jvm-native-overlap'}else{'serialized'})
     android_components = $androidComponentClosure
     android_jvm_compilation = $androidJvmCompilation
     android_native_source_paths = $androidNativeSourcePaths
