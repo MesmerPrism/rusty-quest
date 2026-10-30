@@ -9,6 +9,7 @@ import re
 
 METHOD = 'cached_effective_inputs'
 SCHEMA = 'rusty.quest.embedded_duplex.cached_effective_inputs.v1'
+TRANSPORT_SCHEMA = 'rusty.quest.embedded_duplex.operator_transport.v3'
 MAX_BYTES = 65536
 
 
@@ -65,9 +66,28 @@ def endpoint(value, protocol):
 
 def decode(stdout, run_id, actor, challenge):
     need(type(stdout) is bytes and len(stdout) <= MAX_BYTES * 2)
-    matches = re.findall(rb'\breceipt_base64=([A-Za-z0-9+/]+={0,2})(?=[,}\]\s])', stdout)
-    need(len(matches) == 1)
-    raw = base64.b64decode(matches[0], validate=True); need(len(raw) <= MAX_BYTES)
+    token(run_id, r'[0-9a-f]{32}'); token(challenge, r'[0-9a-f]{32}'); actor_fields(actor)
+    text = stdout.decode('utf-8')
+    # Match the transport owner's complete single Bundle frame and one actual
+    # content-call line ending. All five fields in this method are scalars.
+    if text.endswith('\r\n'):
+        text = text[:-2]
+    elif text.endswith('\n'):
+        text = text[:-1]
+    prefix = 'Result: Bundle[{'
+    need(text.startswith(prefix) and text.endswith('}]'))
+    envelope = {}
+    for field in text[len(prefix):-2].split(', '):
+        key, separator, value = field.partition('=')
+        need(separator == '=' and re.fullmatch(r'[a-z][a-z0-9_]*', key) is not None and key not in envelope)
+        need(0 < len(value) <= 8192 and not any(c in value for c in '\r\n{}[]'))
+        envelope[key] = value
+    keys(envelope, 'schema status challenge run_id receipt_base64')
+    need(envelope['schema'] == TRANSPORT_SCHEMA and envelope['status'] == 'observed')
+    need(envelope['challenge'] == challenge and envelope['run_id'] == run_id)
+    encoded = token(envelope['receipt_base64'], r'[A-Za-z0-9+/]+={0,2}')
+    raw = base64.b64decode(encoded, validate=True); need(len(raw) <= MAX_BYTES)
+    need(base64.b64encode(raw).decode('ascii') == encoded)
     value = json.loads(raw.decode('utf-8'), object_pairs_hook=unique_object)
     keys(value, '$schema challenge requested_run_id observation_scope process selected_run_id run_selection_generation phase selection native_configuration socket_liveness_observed')
     need(value['$schema'] == SCHEMA and value['challenge'] == challenge and value['requested_run_id'] == run_id)

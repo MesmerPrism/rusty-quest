@@ -8,10 +8,51 @@ GOLDEN=json.loads(args.response.read_text());ACTOR=GOLDEN['process'];RUN=GOLDEN[
 
 def bundle(value):
     raw=value if type(value) is bytes else json.dumps(value).encode()
-    return b'Result: Bundle[{status=observed, receipt_base64='+base64.b64encode(raw)+b'}]\n'
+    return (b'Result: Bundle[{schema=rusty.quest.embedded_duplex.operator_transport.v3, status=observed, challenge='
+            +NONCE.encode()+b', run_id='+RUN.encode()+b', receipt_base64='+base64.b64encode(raw)+b'}]\n')
 
 
 class CachedCallerTests(unittest.TestCase):
+    def test_outer_transport_frame_and_closed_envelope(self):
+        framed=bundle(GOLDEN)
+        cases=[
+            framed.replace(b'operator_transport.v3',b'operator_transport.v1'),
+            framed.replace(b'status=observed',b'status=rejected'),
+            framed.replace(b'status=observed',b'status=observed, status=observed'),
+            framed.replace(b'status=observed',b'status=rejected, status=observed'),
+            framed.replace(b'status=observed, ',b''),
+            framed.replace(b'challenge='+NONCE.encode(),b'challenge='+b'c'*32),
+            framed.replace(b'run_id='+RUN.encode(),b'run_id='+b'c'*32),
+            framed.replace(b'}]',b', private_key=not-allowed}]'),
+            b'prefix\n'+framed,
+            framed+b'trailing',framed+b'\n',framed.rstrip(b'\n')+b' ',
+            framed[len(b'Result: Bundle[{'):-3]+b'\n',
+            framed.replace(b', ',b','),
+        ]
+        encoded=base64.b64encode(json.dumps(GOLDEN).encode())
+        cases += [
+            b'Result: Bundle[{schema=wrong, status=rejected, secret=unexpected, receipt_base64='+encoded+b'}]',
+            b'Result: Bundle[{status=observed, status=rejected, receipt_base64='+encoded+b'}]',
+            b'not a bundle receipt_base64='+encoded+b' } trailing bytes',
+        ]
+        for raw in cases:
+            with self.subTest(raw=raw[:100]):
+                with self.assertRaises(ValueError):reader.decode(raw,RUN,ACTOR,NONCE)
+        fields=framed.removeprefix(b'Result: Bundle[{').removesuffix(b'}]\n').split(b', ')
+        for field in fields:
+            for modified in ([part for part in fields if part != field], fields+[field]):
+                with self.assertRaises(ValueError):
+                    reader.decode(b'Result: Bundle[{'+b', '.join(modified)+b'}]\n',RUN,ACTOR,NONCE)
+        with self.assertRaises(ValueError):
+            reader.decode(framed.replace(b'receipt_base64=',b'receipt_base64='+b'A'*8193),RUN,ACTOR,NONCE)
+
+    def test_transport_field_order_and_only_actual_line_endings(self):
+        frame=bundle(GOLDEN).removesuffix(b'\n')
+        body=frame[len(b'Result: Bundle[{'):-2]
+        reordered=b'Result: Bundle[{'+b', '.join(reversed(body.split(b', ')))+b'}]'
+        for raw in (frame,reordered,reordered+b'\n',reordered+b'\r\n'):
+            self.assertEqual(GOLDEN,reader.decode(raw,RUN,ACTOR,NONCE))
+
     def test_actual_java_projection_roundtrip_and_fixed_single_call(self):
         calls=[]
         def invoke(argv):calls.append(argv);return bundle(GOLDEN)

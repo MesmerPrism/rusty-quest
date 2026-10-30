@@ -89,6 +89,13 @@ initializes, captures, falls back to visual publication or changes enrollment
 after uninitialized/unavailable/rejected output. A prior package that rejects
 the method remains unsupported; do not probe it by a mutating call.
 
+The decoder requires one complete `Result: Bundle[{...}]` frame with only
+schema/status/challenge/run_id/receipt_base64 fields, each exactly once. Outer
+schema must be v3 and status observed, with the exact request challenge/run.
+It accepts only the transport's optional single LF/CRLF ending and 8192-character
+scalar bound; prefix/trailing data, duplicate/extra fields and header failures
+are rejected before the independently checked inner DTO.
+
 ## Focused offline fixture and next useful qualifier
 
 Run `tools/checks/Test-CachedEffectiveInputsHost.py` with explicit `--output`
