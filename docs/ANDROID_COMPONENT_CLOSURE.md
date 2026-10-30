@@ -116,6 +116,36 @@ pre/post-compile observations and `compiled.json`; assembly never overwrites it.
 The normal phase receipt records early elapsed time, and the capsule binds the
 original inventory, early compiler receipts and final assembled closure.
 
+The canonical builder uses stable, phase-specific working directories under its
+serialized product/type cache lane for Gradle's inventory and observation paths.
+Fresh attempt output paths therefore do not invalidate Gradle configuration
+reuse. `Invoke-AndroidComponentGradlePhase` and
+`Invoke-AndroidComponentJvmCompilation` expose this optional
+`-WorkingEvidenceDirectory` for callers that already serialize that mutable
+directory. It must be disjoint from selected source roots, the original inventory
+and immutable evidence. Compatibility callers can omit it.
+
+The original inventory remains authoritative and is checked before and after
+the actual child. Its working copy is rewritten only when bytes change. Before
+dispatch the API removes only its two named working observation files, so an
+old receipt cannot satisfy a failed or nonproducing child. Current observations
+are copied with create-new output and durable flush into each fresh attempt's
+evidence directory. A successful child missing its required observation fails;
+a failed child retains any current partial observation but cannot produce a
+passed compilation receipt. Source/compiler/class and final DEX verification
+remain unchanged. Stable working paths are cache inputs, never immutable proof
+reuse or permission to bypass the early JVM phase.
+
+`tools/checks/Test-AndroidComponentWorkingPaths.py` exercises the production
+PowerShell APIs with a small real Android JVM project. It accepts explicit
+repository/output, PowerShell, Gradle, Java, Android SDK and reusable Gradle-home
+paths. Fresh-attempt baseline calls demonstrate the old property-path miss;
+stable calls verify configuration reuse, current class receipts, source addition
+and change, a real compiler failure, and refusal of a seeded stale receipt after
+an exit-zero nonproducing tool. It produces no APK and performs no device action.
+The build-seam controls separately cover unsafe working paths and immutable
+receipt collisions without running Gradle.
+
 Android source/contract changes affect shell/package identities, never the native
 identity through a full repository overlay. The existing native key remains bound
 to its selected native files, profiles and shaders. A dirty public shell with a
