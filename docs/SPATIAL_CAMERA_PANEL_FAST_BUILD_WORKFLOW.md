@@ -36,6 +36,16 @@ Kotlin still writes metadata in the selected cache lane. Keep the same product,
 build type and cache root for compatible reuse; source pre/postguards remain
 strict, with no source ignore exception or JVM override required.
 
+Selected Android-component builds also use
+`<BuildCacheRoot>/l/<product-build-type>/android-components/<phase>` for Gradle's
+working inventory and observations. The existing build-cache mutex serializes
+these paths. Inventory bytes change only with the selected inputs; attempt
+output paths do not become configuration-cache keys. JVM preflight and assembly
+have separate working directories. Every attempt still receives create-new,
+durably copied observations and runs the normal source/class/DEX checks before
+handoff. Missing current outputs or failed children cannot reuse a prior working
+receipt. See [selected component closure](ANDROID_COMPONENT_CLOSURE.md).
+
 ## Cache identities
 
 Each run writes `build-cache-identities.json` beside the final APK. It records

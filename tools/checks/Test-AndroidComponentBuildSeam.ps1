@@ -144,6 +144,37 @@ try {
         $global:PSNativeCommandUseErrorActionPreference=$priorNativePreference
         [IO.File]::WriteAllText($privateOwner,$originalOwner)
     }
+    # Working paths never enter source/immutable evidence or reuse an old
+    # observation. The modeled tool below exercises transport/publication only.
+    $working=Join-Path $scratch 'working-observations'
+    $immutable=Join-Path $scratch 'immutable-observations'
+    [IO.File]::WriteAllText($fakeGradle,"@echo off`necho unexpected> `"$sentinel`"`nexit /b 0`n")
+    $workingCall=@{Phase='Assemble';InventoryPath=$inventoryPath;ExpectedInventorySha256=$selected.sha256;
+        EvidenceDirectory=$immutable;WorkingEvidenceDirectory=$working;GradlePath=$fakeGradle;
+        ExpectedGradleSha256=(Get-FileSha256 $fakeGradle);ProjectDirectory=$scratch;
+        GradleUserHome=(Join-Path $scratch 'gradle-home');BuildType='Debug'}
+    foreach($bad in @([IO.Path]::GetPathRoot($scratch),$privateSources,$immutable)){
+        $workingCall.WorkingEvidenceDirectory=$bad
+        try{$null=Invoke-AndroidComponentGradlePhase @workingCall;throw 'Unsafe working path accepted.'}
+        catch{if($_.Exception.Message -notmatch 'component-working-path-(required|overlap)'){throw}}
+        if(Test-Path -LiteralPath $sentinel){throw 'Unsafe working path dispatched the tool.'}
+    }
+    $workingCall.WorkingEvidenceDirectory=$working
+    New-Item -ItemType Directory -Path $working,$immutable | Out-Null
+    $oldReceipt=Join-Path $working 'gradle-inputs.json'
+    [IO.File]::WriteAllText($oldReceipt,'stale')
+    [IO.File]::WriteAllText($fakeGradle,"@echo off`nexit /b 0`n")
+    $workingCall.ExpectedGradleSha256=Get-FileSha256 $fakeGradle
+    try{$null=Invoke-AndroidComponentGradlePhase @workingCall;throw 'Stale working receipt accepted.'}
+    catch{if($_.Exception.Message -notlike '*component-working-receipt-missing*' -or $_.Exception.Data['gradle_execution'].exit_code -ne 0){throw}}
+    if(Test-Path -LiteralPath $oldReceipt){throw 'Stale mutable receipt survived dispatch.'}
+    $finalReceipt=Join-Path $immutable 'gradle-inputs.json'
+    [IO.File]::WriteAllText($finalReceipt,'immutable-original')
+    [IO.File]::WriteAllText($fakeGradle,"@echo off`necho current-observation> `"$oldReceipt`"`nexit /b 0`n")
+    $workingCall.ExpectedGradleSha256=Get-FileSha256 $fakeGradle
+    try{$null=Invoke-AndroidComponentGradlePhase @workingCall;throw 'Immutable evidence overwritten.'}
+    catch{if($_.Exception.Data['gradle_execution'].exit_code -ne 0){throw}}
+    if([IO.File]::ReadAllText($finalReceipt) -cne 'immutable-original'){throw 'Final observation changed on collision.'}
     try{$null=Assert-AndroidComponentClosure -InventoryPath $contractPath -ExpectedInventorySha256 $selected.sha256 -EvidenceDirectory $scratch -ApkPath (Join-Path $scratch 'absent.apk');throw 'Absent compile receipt accepted.'}
     catch{if($_.Exception.Message -notlike '*assertion failed*'){throw}}
     $code=$ast.Extent.Text

@@ -112,6 +112,70 @@ function Assert-AndroidComponentSelectedSources {
         '--expected-inventory-sha256',$ExpectedInventorySha256,'--output','-')
 }
 
+function Initialize-AndroidComponentWorkingEvidence {
+    param([string]$WorkingDirectory,[string]$EvidenceDirectory,[string]$InventoryPath,[string]$InventorySha256)
+    if(-not [IO.Path]::IsPathFullyQualified($WorkingDirectory)){throw 'component-working-path-required'}
+    $working=[IO.Path]::GetFullPath($WorkingDirectory).TrimEnd([char[]]@('\','/'))
+    if($working -ceq [IO.Path]::GetPathRoot($working+[IO.Path]::DirectorySeparatorChar).TrimEnd([char[]]@('\','/'))){throw 'component-working-path-required'}
+    $evidence=[IO.Path]::GetFullPath($EvidenceDirectory).TrimEnd([char[]]@('\','/'))
+    $inventory=Get-Content -LiteralPath $InventoryPath -Raw | ConvertFrom-Json -Depth 64
+    # Mutable producer files must never overlap immutable attempt evidence or
+    # selected compiler sources. The caller serializes this existing cache lane.
+    foreach($other in @($evidence,$InventoryPath)+@($inventory.roots.PSObject.Properties.Value)){
+        $other=[IO.Path]::GetFullPath([string]$other).TrimEnd([char[]]@('\','/'))
+        if($working.Equals($other,[StringComparison]::OrdinalIgnoreCase) -or
+            $working.StartsWith($other+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase) -or
+            $other.StartsWith($working+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){
+            throw 'component-working-path-overlap'
+        }
+    }
+    $cursor=$working
+    while($cursor){
+        if(Test-Path -LiteralPath $cursor){
+            $item=Get-Item -LiteralPath $cursor -Force
+            if(-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'component-working-path-linked'}
+        }
+        $cursor=Split-Path -Parent $cursor
+    }
+    [void][IO.Directory]::CreateDirectory($working)
+    $staged=Join-Path $working 'inventory.json'
+    $names=@('gradle-inputs.json','gradle-precompile-inputs.json')
+    foreach($path in @($staged)+@($names|ForEach-Object{Join-Path $working $_})){
+        if(Test-Path -LiteralPath $path){
+            $item=Get-Item -LiteralPath $path -Force
+            if($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'component-working-file-linked'}
+        }
+    }
+    $bytes=[IO.File]::ReadAllBytes($InventoryPath)
+    $sha=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
+    if($sha -cne $InventorySha256){throw 'component-working-inventory-changed'}
+    if(-not [IO.File]::Exists($staged) -or (Get-FileHash -LiteralPath $staged).Hash.ToLowerInvariant() -cne $sha){[IO.File]::WriteAllBytes($staged,$bytes)}
+    # An issued child must produce current observations, even if an earlier
+    # child failed. Clear only these owned mutable outputs before dispatch.
+    foreach($name in $names){[IO.File]::Delete((Join-Path $working $name))}
+    return [pscustomobject]@{Inventory=$staged;Directory=$working;Names=$names}
+}
+
+function Publish-AndroidComponentWorkingEvidence {
+    param($Working,[string]$EvidenceDirectory,[string]$Phase,[bool]$Required)
+    [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
+    foreach($name in $Working.Names){
+        $source=Join-Path $Working.Directory $name
+        if(-not [IO.File]::Exists($source)){
+            if($Required -and ($name -ceq 'gradle-inputs.json' -or $Phase -ceq 'JvmPreflight')){throw 'component-working-receipt-missing'}
+            continue
+        }
+        if((Get-Item -LiteralPath $source -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'component-working-file-linked'}
+        $destination=Join-Path $EvidenceDirectory $name
+        $inputStream=[IO.File]::Open($source,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+        try{
+            $outputStream=[IO.File]::Open($destination,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+            try{$inputStream.CopyTo($outputStream);$outputStream.Flush($true)}finally{$outputStream.Dispose()}
+        }finally{$inputStream.Dispose()}
+        if((Get-FileHash -LiteralPath $source).Hash -cne (Get-FileHash -LiteralPath $destination).Hash){throw 'component-working-publication-changed'}
+    }
+}
+
 function Invoke-AndroidComponentGradlePhase {
     [CmdletBinding()]
     param([Parameter(Mandatory)][ValidateSet('JvmPreflight','Assemble')][string]$Phase,
@@ -121,6 +185,7 @@ function Invoke-AndroidComponentGradlePhase {
         [Parameter(Mandatory)][ValidateSet('Debug','Release')][string]$BuildType,
         [string[]]$Arguments=@(),[AllowEmptyString()][string]$InventoryPath='',
         [AllowEmptyString()][string]$ExpectedInventorySha256='',[AllowEmptyString()][string]$EvidenceDirectory='',
+        [string]$WorkingEvidenceDirectory='',
         [string]$PythonPath='python')
     $checkTool={
         if(-not [IO.File]::Exists($GradlePath) -or
@@ -133,8 +198,14 @@ function Invoke-AndroidComponentGradlePhase {
     if([string]::IsNullOrEmpty($InventoryPath) -ne [string]::IsNullOrEmpty($EvidenceDirectory)){throw 'component-inventory-and-evidence-required-together'}
     if($Phase -ceq 'JvmPreflight' -and [string]::IsNullOrEmpty($InventoryPath)){throw 'component-jvm-selected-inventory-required'}
     if($InventoryPath){Assert-AndroidComponentSelectedSources -InventoryPath $InventoryPath -ExpectedInventorySha256 $ExpectedInventorySha256 -PythonPath $PythonPath}
+    if($WorkingEvidenceDirectory -and -not $InventoryPath){throw 'component-working-inventory-required'}
+    $working=$null;$effectiveInventory=$InventoryPath;$effectiveEvidence=$EvidenceDirectory
+    if($WorkingEvidenceDirectory){
+        $working=Initialize-AndroidComponentWorkingEvidence -WorkingDirectory $WorkingEvidenceDirectory -EvidenceDirectory $EvidenceDirectory -InventoryPath $InventoryPath -InventorySha256 $ExpectedInventorySha256
+        $effectiveInventory=$working.Inventory;$effectiveEvidence=$working.Directory
+    }
     $task=if($Phase -ceq 'JvmPreflight'){':app:verifySelectedAndroidJvmCompilation'}else{":app:assemble$BuildType"}
-    $selected=@("-PrqAndroidComponentInventory=$InventoryPath","-PrqAndroidComponentEvidenceDir=$EvidenceDirectory",
+    $selected=@("-PrqAndroidComponentInventory=$effectiveInventory","-PrqAndroidComponentEvidenceDir=$effectiveEvidence",
         "-PrqAndroidComponentKotlinTask=compile${BuildType}Kotlin","-PrqAndroidComponentJavaTask=compile${BuildType}JavaWithJavac")
     $effectiveArguments=@($selected)+@($Arguments)+@('--gradle-user-home',$GradleUserHome,'-p',$ProjectDirectory,$task)
     $clock=[Diagnostics.Stopwatch]::StartNew();$lines=[Collections.Generic.List[string]]::new()
@@ -151,18 +222,26 @@ function Invoke-AndroidComponentGradlePhase {
         & $checkTool
         if($InventoryPath){Assert-AndroidComponentSelectedSources -InventoryPath $InventoryPath -ExpectedInventorySha256 $ExpectedInventorySha256 -PythonPath $PythonPath}
     }catch{$postError=$_}
+    $publicationError=$null
+    if($null -ne $working){
+        try{Publish-AndroidComponentWorkingEvidence -Working $working -EvidenceDirectory $EvidenceDirectory -Phase $Phase -Required:($null -eq $invocationError -and $exitCode -eq 0)}
+        catch{$publicationError=$_}
+    }
     if($null -ne $invocationError){
         $invocationError.Exception.Data['gradle_execution']=$execution
         if($null -ne $postError){$invocationError.Exception.Data['post_source_check_error']=$postError.Exception.Message}
+        if($null -ne $publicationError){$invocationError.Exception.Data['publication_error']=$publicationError.Exception.Message}
         throw $invocationError
     }
     if($exitCode -ne 0){
         $failure=[InvalidOperationException]::new("Spatial Camera Panel Gradle $Phase failed with exit code $exitCode")
         $failure.Data['gradle_execution']=$execution
         if($null -ne $postError){$failure.Data['post_source_check_error']=$postError.Exception.Message}
+        if($null -ne $publicationError){$failure.Data['publication_error']=$publicationError.Exception.Message}
         throw $failure
     }
     if($null -ne $postError){$postError.Exception.Data['gradle_execution']=$execution;throw $postError}
+    if($null -ne $publicationError){$publicationError.Exception.Data['gradle_execution']=$execution;throw $publicationError}
     return $execution
 }
 
@@ -174,14 +253,14 @@ function Invoke-AndroidComponentJvmCompilation {
         [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedGradleSha256,
         [Parameter(Mandatory)][string]$ProjectDirectory,[Parameter(Mandatory)][string]$GradleUserHome,
         [Parameter(Mandatory)][ValidateSet('Debug','Release')][string]$BuildType,
-        [string[]]$Arguments=@(),[string]$PythonPath='python')
+        [string[]]$Arguments=@(),[string]$PythonPath='python',[string]$WorkingEvidenceDirectory='')
     if(-not [IO.Path]::IsPathFullyQualified($EvidenceDirectory) -or (Test-Path -LiteralPath $EvidenceDirectory)){throw 'component-fresh-jvm-evidence-required'}
     Assert-AndroidComponentGradleArguments -Arguments $Arguments
     Assert-AndroidComponentSelectedSources -InventoryPath $InventoryPath -ExpectedInventorySha256 $ExpectedInventorySha256 -PythonPath $PythonPath
     [void][IO.Directory]::CreateDirectory($EvidenceDirectory)
     $execution=Invoke-AndroidComponentGradlePhase -Phase JvmPreflight -GradlePath $GradlePath -ExpectedGradleSha256 $ExpectedGradleSha256 `
         -ProjectDirectory $ProjectDirectory -GradleUserHome $GradleUserHome -BuildType $BuildType -Arguments $Arguments `
-        -InventoryPath $InventoryPath -ExpectedInventorySha256 $ExpectedInventorySha256 -EvidenceDirectory $EvidenceDirectory -PythonPath $PythonPath
+        -InventoryPath $InventoryPath -ExpectedInventorySha256 $ExpectedInventorySha256 -EvidenceDirectory $EvidenceDirectory -PythonPath $PythonPath -WorkingEvidenceDirectory $WorkingEvidenceDirectory
     $actualPath=Join-Path $EvidenceDirectory 'gradle-inputs.json'
     $actual=Get-Content -LiteralPath $actualPath -Raw | ConvertFrom-Json -Depth 64
     if($actual.observation_phase -cne 'post-compile' -or @($actual.early_task_graph).Count -eq 0){throw 'component-jvm-compiler-observation-required'}
