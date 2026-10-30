@@ -365,7 +365,9 @@ impl State {
         let Some(pixel) = self.pixel else { return };
         let marker_supported = match samples[4] {
             [77, 66, 1, 255] => true,
-            [77, 66, 2, 255] => pixel.frame.final_abi_version == 2 && pixel.frame.primary_prefix == 6,
+            [77, 66, 2, 255] => {
+                pixel.frame.final_abi_version == 2 && pixel.frame.primary_prefix == 6
+            }
             _ => false,
         };
         if pixel.frame.ordinal != ordinal
@@ -1098,23 +1100,43 @@ mod tests {
     }
     #[test]
     fn versioned_center_strip_requires_retired_abi2_primary_and_reports_actual_contract() {
-        for (abi, prefix, marker, available) in [(1, 6, 2, false), (2, 5, 2, false), (2, 6, 3, false), (2, 6, 2, true)] {
+        for (abi, prefix, marker, available) in [
+            (1, 6, 2, false),
+            (2, 5, 2, false),
+            (2, 6, 3, false),
+            (2, 6, 2, true),
+        ] {
             let mut s = State::empty();
             let generation = s.arm(7, [1, 2], 10);
             let mut f = frame(generation, 1, Some(source(2, 1)));
             f.final_abi_version = abi;
             f.primary_prefix = prefix;
             f.mask = crate::stereo_bank_mask_v1::pack(true, 0.0, 0.5, 0.5, false, true).unwrap();
-            let samples = [[255; 4], [102, 102, 102, 255], [255, 128, 255, 255],
-                [179, 179, 179, 255], [77, 66, marker, 255]];
+            let samples = [
+                [255; 4],
+                [102, 102, 102, 255],
+                [255, 128, 255, 255],
+                [179, 179, 179, 255],
+                [77, 66, marker, 255],
+            ];
             s.record(f, 20);
             s.retire(1, 8, 30);
             s.pixel(1, 8, 31, 5, 123, 1, 16, 16, 0, 1);
             s.blend_pixels(1, 8, samples);
             let report: serde_json::Value = serde_json::from_str(&s.blend_json()).unwrap();
-            assert_eq!(report["sample_status"], if available { "available" } else { "unavailable" });
+            assert_eq!(
+                report["sample_status"],
+                if available {
+                    "available"
+                } else {
+                    "unavailable"
+                }
+            );
             if available {
-                assert_eq!(report["sample_rgba8"][3], serde_json::json!([179, 179, 179, 255]));
+                assert_eq!(
+                    report["sample_rgba8"][3],
+                    serde_json::json!([179, 179, 179, 255])
+                );
                 assert_eq!(report["sample_contract"], "diagnostic-input-layer-same-submission-row0-Own-Peer-signal-mask-packing-output-marker-unorm-v2");
                 assert_eq!(report["sample_uv_contract"], "primary-texel-center-v2;signal-blue255=packed-base0.25,0.5;blue0=mono-base0.5,0.5;uv=(clamp(floor(base*extent),0,extent-1)+0.5)/extent;equal-banks-even-width");
                 // Actual State producer bytes for the paired independent host controls.
