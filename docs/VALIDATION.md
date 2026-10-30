@@ -1,5 +1,15 @@
 # Rusty Quest Validation
 
+The stereo qualification mask-strip unit controls cover v1 compatibility and
+the explicitly versioned primary-texel-center strip. Marker `[77,66,2,255]`
+requires an actual retired final ABI2 frame with primary prefix6, current source
+and configuration joins, and all existing pixel validity checks. Readback keeps
+its five-pixel layout and reports paired v2 sample/UV contracts only for an
+accepted v2 strip. Availability and marker recognition do not prove the RGB
+equation: the version-selected consumer must still test actual derived output
+against its unchanged numeric criteria. Default/v1/ABI1 behavior is preserved;
+these host controls establish neither GPU pixels nor product acceptance.
+
 The optional development scissor consumer has focused core and real JVM/JNI
 checks, using existing immutable image/dependency suppliers and fresh outputs:
 `python tools/checks/Test-SpatialScissorModuleHost.py --output target/scissor-core-proof --host-deps <deps> --module-manifest <manifest.tsv>` and

@@ -26,8 +26,47 @@ $altered=[ordered]@{};foreach($key in $enabled.Keys){$altered[$key]=$enabled[$ke
 Reject 'altered derived metadata' {Assert-SpatialSourceVersionBadging (Badging $package 'opaque-label') $package $altered}
 $altered.enabled='false'
 Reject 'nonboolean metadata selection' {Assert-SpatialSourceVersionBadging (Badging $package 'opaque-label') $package $altered}
+function StampZip($name,$payloads){
+ $file=Join-Path $OutDir ($name+'.zip');$stream=[IO.File]::Open($file,[IO.FileMode]::CreateNew)
+ try{$zip=[IO.Compression.ZipArchive]::new($stream,[IO.Compression.ZipArchiveMode]::Create,$true)
+  try{foreach($payload in $payloads){$entry=$zip.CreateEntry('META-INF/rusty-quest/source-version.v1.txt');$s=$entry.Open();try{$bytes=[Text.Encoding]::ASCII.GetBytes($payload);$s.Write($bytes)}finally{$s.Dispose()}}}finally{$zip.Dispose()}
+ }finally{$stream.Dispose()};return $file
+}
+$exact=StampZip 'exact-stamp' @($enabled.version_name+"`n")
+$stamp=Assert-SpatialSourceVersionResource $exact $enabled $true
+if($stamp.version_name-cne$enabled.version_name-or-not$stamp.unique_entry_verified){throw 'Exact runtime resource join'}
+$absent=StampZip 'no-stamp' @();$null=Assert-SpatialSourceVersionResource $absent $default $false
+Reject 'missing runtime resource' {Assert-SpatialSourceVersionResource $absent $enabled $true}
+Reject 'unselected runtime resource' {Assert-SpatialSourceVersionResource $exact $default $false}
+$duplicate=StampZip 'duplicate-stamp' @(($enabled.version_name+"`n"),($enabled.version_name+"`n"))
+Reject 'duplicate runtime resource' {Assert-SpatialSourceVersionResource $duplicate $enabled $true}
+$different=StampZip 'different-stamp' @('0.1.0+src.'+$other+"`n")
+Reject 'different runtime resource' {Assert-SpatialSourceVersionResource $different $enabled $true}
+$malformed=StampZip 'malformed-stamp' @($enabled.version_name+"`r`n")
+Reject 'malformed runtime resource' {Assert-SpatialSourceVersionResource $malformed $enabled $true}
 $tokens=$null;$errors=$null;$builder=Join-Path $root 'tools/Build-SpatialCameraPanelAndroid.ps1'
 $ast=[Management.Automation.Language.Parser]::ParseFile($builder,[ref]$tokens,[ref]$errors);if($errors.Count){throw 'Builder parse errors'}
+$selection=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.AssignmentStatementAst]-and$node.Left.Extent.Text-ceq'$sourceRuntimeStampEnabled'},$true))
+if($selection.Count-ne1){throw 'One explicit runtime source-version selection required'}
+foreach($case in @(
+ @($true,'DevFast','debug',$false,$false,$false),@($true,'DevFast','debug',$false,$true,$true),
+ @($true,'devfast','debug',$false,$true,$true),@($false,'DevFast','debug',$false,$false,$false),
+ @($true,'Candidate','debug',$false,$false,$false),@($true,'DevFast','release',$false,$false,$false),@($true,'DevFast','debug',$true,$false,$false))){
+ $UseSourceCompositionVersionName=$case[0];$BuildMode=$case[1];$BuildType=$case[2];$buildTypeLower=$case[2];$PublicationBuild=$case[3];$UseSourceRuntimeStamp=$case[4]
+ . ([scriptblock]::Create($selection[0].Extent.Text))
+ if($sourceRuntimeStampEnabled-ne$case[5]){throw 'Explicit default-off runtime source-version selection differs'}
+}
+$earlyRejections=@()
+foreach($case in @(
+ @{UseSourceRuntimeStamp=$true},
+ @{UseSourceRuntimeStamp=$true;UseSourceCompositionVersionName=$true;BuildMode='Candidate'},
+ @{UseSourceRuntimeStamp=$true;UseSourceCompositionVersionName=$true;BuildType='Release'},
+ @{UseSourceRuntimeStamp=$true;UseSourceCompositionVersionName=$true;PublicationBuild=$true})){
+ $unexpected=Join-Path $OutDir ('must-not-create-'+$earlyRejections.Count)
+ try{& $builder @case -RepoRoot (Join-Path $OutDir 'absent-source') -OutDir $unexpected;throw 'Unexpected acceptance'}
+ catch{if($_.Exception.Message-notlike'UseSourceRuntimeStamp requires*'){throw};$earlyRejections+=@{arguments=$case;error=$_.Exception.Message}}
+ if(Test-Path -LiteralPath $unexpected){throw 'Invalid runtime stamp selection created build output'}
+}
 $conditions=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.IfStatementAst]-and$node.Extent.Text-cmatch'^if\(\$UseSourceCompositionVersionName\)\{\$shellIdentityDescriptor'},$true))
 if($conditions.Count-ne1){throw 'Exactly one enabled shell-cache binding required'}
 $hashNode=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.AssignmentStatementAst]-and$node.Left.Extent.Text-ceq'$shellFingerprint'},$true))
@@ -45,12 +84,17 @@ if($native.Count-ne1-or$native[0].Extent.Text.Contains('sourceVersion')-or$nativ
 $property=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.AssignmentStatementAst]-and$node.Left.Extent.Text-ceq'$versionProperty'},$true))
 $arguments=@($ast.FindAll({param($node)$node-is[Management.Automation.Language.AssignmentStatementAst]-and$node.Extent.Text.Contains('"-PrqDeveloperSourceCompositionFingerprint=$versionProperty"')},$true))
 if($property.Count-ne1-or$arguments.Count-ne1){throw 'Exactly one explicit Gradle property producer required'}
-foreach($choice in @($false,$true)){
- $UseSourceCompositionVersionName=$choice;$sourceVersionMetadata=$enabled;$gradleArguments=@('--no-daemon')
- . ([scriptblock]::Create($property[0].Extent.Text));. ([scriptblock]::Create($arguments[0].Extent.Text))
- $expected='-PrqDeveloperSourceCompositionFingerprint='+$(if($choice){$fp}else{''})
- if($gradleArguments[0]-cne$expected){throw 'Exact enabled/empty-default Gradle property differs'}
-}
+$ambientStamp=$env:ORG_GRADLE_PROJECT_rqDeveloperSourceRuntimeStamp
+try{
+ $env:ORG_GRADLE_PROJECT_rqDeveloperSourceRuntimeStamp='true'
+ foreach($case in @(@($false,$false),@($true,$false),@($true,$true))){
+  $UseSourceCompositionVersionName=$case[0];$sourceRuntimeStampEnabled=$case[1];$sourceVersionMetadata=$enabled;$gradleArguments=@('--no-daemon')
+  . ([scriptblock]::Create($property[0].Extent.Text));. ([scriptblock]::Create($arguments[0].Extent.Text))
+  $expected='-PrqDeveloperSourceCompositionFingerprint='+$(if($case[0]){$fp}else{''})
+  if($gradleArguments[0]-cne$expected){throw 'Exact enabled/empty-default Gradle property differs'}
+  if($gradleArguments[1]-cne('-PrqDeveloperSourceRuntimeStamp='+$case[1].ToString().ToLowerInvariant())){throw 'Explicit runtime source-stamp selection differs'}
+ }
+}finally{$env:ORG_GRADLE_PROJECT_rqDeveloperSourceRuntimeStamp=$ambientStamp}
 $source=Get-Content $builder -Raw
 foreach($required in @('developer_source_version','Assert-SpatialSourceVersionBadging','-PrqDeveloperSourceCompositionFingerprint=')){if(-not$source.Contains($required)){throw 'Source version producer seam missing'}}
 $gradle=Get-Content (Join-Path $root 'apps/spatial-camera-panel-android/app/build.gradle.kts') -Raw
@@ -81,4 +125,4 @@ fun main() {
  & $java -cp ((Join-Path $OutDir 'kotlin')+';'+$stdlib[0]) ActualGradleSourceVersionKt *> (Join-Path $OutDir 'kotlin-controls.log');if($LASTEXITCODE){throw 'Actual Gradle function controls failed'}
  $toolPins=@(@($java)+$jars|ForEach-Object {@{path=$_;sha256=(Get-FileHash $_).Hash.ToLowerInvariant()}});$kotlinControl='passed'
 }
-@{status='passed';positive_controls=2;negative_controls=$controls;actual_builder_cache_condition=$conditions[0].Extent.Text;default_cache_shape_preserved=$true;enabled_cache_distinct=$true;native_cache_option_independent=$true;actual_gradle_function_controls=$kotlinControl;full_gradle_execution=$false;tool_pins=$toolPins;apk_build=$false;device_calls=0}|ConvertTo-Json -Depth 30|Set-Content (Join-Path $OutDir 'RESULT.json') -NoNewline
+@{status='passed';positive_controls=2;negative_controls=$controls;early_request_rejections=$earlyRejections;explicit_default_off=$true;ambient_property_overridden=$true;actual_builder_cache_condition=$conditions[0].Extent.Text;default_cache_shape_preserved=$true;enabled_cache_distinct=$true;native_cache_option_independent=$true;actual_gradle_function_controls=$kotlinControl;full_gradle_execution=$false;tool_pins=$toolPins;apk_build=$false;device_calls=0}|ConvertTo-Json -Depth 30|Set-Content (Join-Path $OutDir 'RESULT.json') -NoNewline

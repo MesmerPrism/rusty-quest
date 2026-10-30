@@ -227,7 +227,7 @@ try {
     $resolvedPrivateFeatureSourceDir='';$resolvedPrivateFeatureAssetDir='';$resolvedPrivateFeatureResourceDir='';$embeddedDuplexAssetRoot=''
     $PublicationBuild=$false;$gradleProjectCacheDir=$scratch;$kotlinProjectPersistentDir=$scratch;$shortAapt2=$fakeGradle
     $cmakeStaging=@{path=$scratch};$androidComponentInventoryPath='';$androidComponentSelection=$null
-    $UseSourceCompositionVersionName=$false;$BuildType='Debug';$gradleTimingInitPath=$fakeGradle;$PythonPath='python'
+    $UseSourceCompositionVersionName=$false;$sourceRuntimeStampEnabled=$false;$BuildType='Debug';$gradleTimingInitPath=$fakeGradle;$PythonPath='python'
     New-Item -ItemType Directory -Path (Join-Path $scratch 'platforms/android-34') -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $scratch 'platforms/android-34/android.jar'),'modeled transport only')
     function Assert-QuestBuildSourceCompositionCurrent { param($Composition,[switch]$AllowWorkingTreeChanges) }
