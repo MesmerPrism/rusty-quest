@@ -286,6 +286,43 @@ release, terminal, cleanup, lease-chain and graph records fail closed.
 the exact native Prepare serde and signature verification with real Ed25519.
 These host tests do not prove JNI, exchange or physical cleanup.
 
+### Additive guarded active-mode operator
+
+Debug packages include a bounded `embedded-duplex/operator-capabilities.json`
+asset identifying `rusty.quest.embedded_duplex.guarded_mode.v1` and the four
+closed `guarded_policy_update`, `guarded_blend_update`, `guarded_blend_read` and
+`guarded_operation_ack` methods. It is in the debug source set beside the
+DUMP/shell-UID provider. A host must explicitly select actual packaged support;
+this metadata is not health, admission, cleanup or execution authority. Existing
+unprefixed methods and older packages remain compatible.
+
+The variants accept explicit typed run/app generation/epoch, installed digest,
+Native actor record/generation and runtime-config bindings. The existing command
+lane checks the current selected/READY real owner, process incarnation, live
+fence, package/descriptor digest memo and actual Native run/actor before invoking
+the existing handler and after its real Future returns. It composes queued work
+without blocking its own lane. Binder authorization remains on ingress. Active
+`native_host_owned` / `effects_pending` status is preserved, not confused with a
+fresh-start eligibility requirement. The nested response is the existing actual
+handler's response, with challenge-bound before/after observations.
+
+Updates still use the real Original store and its existing Future; only logical
+method/fields enter the canonical request. Guard fields do not change Original
+hashes. Consumer verification and the separately issued exact ACK are retained;
+the ACK wrapper also earns fresh installed identity. Pending, body failure,
+missing capture and failed postcheck never authorize replay or legacy fallback.
+Stop/Whole/recovery/inactive query routes do not use this active-owner wrapper.
+Native ARM/config/expected-actor checks stay in their existing owners.
+
+`tools/checks/Test-GuardedModeOperatorHost.py --output <fresh-target-output>
+--java-home <jdk17> --compiler-classpath <existing-kotlin-compiler-jars>
+--stdlib <kotlin-stdlib-jar> --json-jar <org.json20240303>` executes the actual
+parser, provider helper, service bridge, canonical request producer and extracted
+Host methods. Android, process/Native and Original persistence leaves are
+explicit models. It checks wrong preconditions/no body, real pending Future,
+post-failure no replay, typed Float bits and debug asset/provider inclusion.
+It does not build an APK, call a device or establish performance/physical proof.
+
 ### Process-local installed APK digest
 
 The process host owns one non-persisted installed-base-APK digest entry. Each

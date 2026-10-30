@@ -39,6 +39,12 @@ internal object EmbeddedDuplexOperatorContract {
   const val KEY_ADMISSION_AUTHORITY = "admission_authority_id"
   const val KEY_TTL = "max_token_ttl_ms"
   const val KEY_REVIEW_SHA = "review_sha256"
+  const val GUARDED_MODE_SCHEMA = "rusty.quest.embedded_duplex.guarded_mode.v1"
+  val guardedMethods = setOf("policy_update", "blend_update", "blend_read", "operation_ack")
+  val guardKeys = setOf("guard_app_generation", "guard_process_epoch", "guard_apk_sha256",
+      "guard_native_generation", "guard_app_record_sha256", "guard_runtime_config_sha256")
+  data class Guard(val appGeneration: Long, val processEpoch: String, val apkSha256: String,
+      val nativeGeneration: Long, val appRecordSha256: String, val runtimeConfigSha256: String)
 
   private val nonce = Regex("[0-9a-f]{32}")
   private val sha = Regex("[0-9a-f]{64}")
@@ -69,6 +75,7 @@ internal object EmbeddedDuplexOperatorContract {
       val runId: String? = null,
       val legacyWholeOriginalId: String? = null,
       val priorRunId: String? = null,
+      val guard: Guard? = null,
   )
 
   /** Typed output of the actual source-owned metadata review; it grants no authority. */
@@ -88,6 +95,21 @@ internal object EmbeddedDuplexOperatorContract {
 
   internal fun parseFields(method: String, argument: String?, fields: Map<String, Any?>): Request {
     require(argument != null && nonce.matches(argument)) { "operator-challenge-invalid" }
+    if (method.startsWith("guarded_")) {
+      val logical = method.removePrefix("guarded_")
+      require(logical in guardedMethods && fields.keys.containsAll(guardKeys)) { "operator-guarded-route-invalid" }
+      fun generation(name: String): Long = (fields[name] as? Long)?.also { require(it > 0L) }
+          ?: throw IllegalArgumentException("operator-guard-generation-invalid")
+      fun digest(name: String): String = (fields[name] as? String)?.also { require(sha.matches(it)) }
+          ?: throw IllegalArgumentException("operator-guard-digest-invalid")
+      val appGeneration = generation("guard_app_generation")
+      val epoch = fields["guard_process_epoch"] as? String
+      require(epoch != null && Regex("app-process\\.$appGeneration\\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}").matches(epoch))
+      val parsed = parseFields(logical, argument, fields - guardKeys)
+      require(parsed.runId != null && (logical == "blend_read" || parsed.originalId != null))
+      return parsed.copy(guard=Guard(appGeneration, epoch, digest("guard_apk_sha256"), generation("guard_native_generation"),
+          digest("guard_app_record_sha256"), digest("guard_runtime_config_sha256")))
+    }
     if (method == "recover_cold_pending") {
       require(fields.keys == setOf(KEY_RUN_ID, KEY_ORIGINAL_ID) ||
           fields.keys == setOf(KEY_RUN_ID, KEY_ORIGINAL_ID, "prior_run_id", "prior_original_id")) { "operator-fields-invalid" }
