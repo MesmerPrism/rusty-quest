@@ -1307,7 +1307,7 @@ impl StimulusVolumeActions {
             && self
                 .environment_depth_alignment_settings
                 .joystick_controls_enabled;
-        let scene_stick = |action: &xr::Action<f32>, enabled| {
+        let scene_stick = |action: &xr::Action<f32>, enabled: bool| {
             if !enabled {
                 return Some((true, true));
             }

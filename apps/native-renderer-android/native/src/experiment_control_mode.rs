@@ -91,7 +91,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Ex
     _class: jni::objects::JClass,
     selected: jni::sys::jboolean,
 ) -> jni::sys::jlong {
-    AUTHORITY.initialize(selected != 0).packed() as i64
+    AUTHORITY.initialize(selected).packed() as i64
 }
 
 #[cfg(target_os = "android")]
