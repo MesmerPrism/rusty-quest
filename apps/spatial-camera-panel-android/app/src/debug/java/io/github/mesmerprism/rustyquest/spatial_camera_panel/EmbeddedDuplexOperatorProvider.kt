@@ -49,6 +49,9 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         require(org.json.JSONObject(receipt).getString("\$schema") == EmbeddedDuplexOperatorContract.RUN_STATUS_SCHEMA)
         return Bundle().apply { putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);putString("status","observed");putString("challenge",request.challenge);putString("receipt",receipt) }
       }
+      if (request.guard != null) return EmbeddedDuplexRuntimeService.withRunRequest(app,request.runId) {
+        guardedMode(app,request,snapshot,method.removePrefix("guarded_"))
+      }
       val response = if(request.route == EmbeddedDuplexOperatorContract.Route.OPERATION_QUERY && request.runId != null)
         EmbeddedDuplexRuntimeService.queryOriginal(app,request.runId,requireNotNull(request.originalId),request.challenge)
       else if(request.route in setOf(EmbeddedDuplexOperatorContract.Route.STATUS,EmbeddedDuplexOperatorContract.Route.REVIEW,EmbeddedDuplexOperatorContract.Route.REVIEW_POLICY_UPDATE,EmbeddedDuplexOperatorContract.Route.CONFIRM)) {
@@ -313,6 +316,38 @@ class EmbeddedDuplexOperatorProvider : ContentProvider() {
         }
       }
     } catch (_: Exception) { closed() }
+  }
+
+  /** Caller UID and the closed typed request were checked on Binder ingress.
+   * The command-lane callback never reinterprets Binder.getCallingUid(). */
+  private fun guardedMode(app: android.content.Context, request: EmbeddedDuplexOperatorContract.Request,
+      snapshot: Bundle, method: String): Bundle {
+    val guard = requireNotNull(request.guard)
+    val fields = Bundle(snapshot)
+    EmbeddedDuplexOperatorContract.guardKeys.forEach { fields.remove(it) }
+    return EmbeddedDuplexRuntimeService.guardedModeCall(app,requireNotNull(request.runId),guard.appGeneration,
+        guard.processEpoch,guard.apkSha256,guard.nativeGeneration,guard.appRecordSha256,guard.runtimeConfigSha256,
+        method,request.challenge) {
+      val actual = when (request.route) {
+        EmbeddedDuplexOperatorContract.Route.OPERATION_ACK -> java.util.concurrent.CompletableFuture.completedFuture(
+            EmbeddedDuplexRuntimeService.acknowledgeOriginal(app,requireNotNull(request.originalId),request.challenge,
+                requireNotNull(request.requestSha256),requireNotNull(request.outcomeSha256),requireNotNull(request.consumerReceiptSha256)))
+        EmbeddedDuplexOperatorContract.Route.BLEND_READ -> EmbeddedDuplexRuntimeService.concurrentMask(app,request.challenge,null)
+            .thenApply { receipt -> Bundle().apply { header("observed");putString("challenge",request.challenge);putString("receipt",receipt) } }
+        EmbeddedDuplexOperatorContract.Route.POLICY_UPDATE, EmbeddedDuplexOperatorContract.Route.BLEND_UPDATE ->
+          java.util.concurrent.CompletableFuture.completedFuture(EmbeddedDuplexRuntimeService.beginOriginal(app,
+              requireNotNull(request.originalId),method,request.challenge,EmbeddedDuplexOriginals.request(method,request.challenge,fields)) {
+            val future = if (request.route == EmbeddedDuplexOperatorContract.Route.POLICY_UPDATE)
+              EmbeddedDuplexRuntimeService.concurrentPolicy(app,request.challenge,request.policy)
+            else EmbeddedDuplexRuntimeService.concurrentMask(app,request.challenge,request.mask)
+            future.thenApply { receipt -> Bundle().apply { header("observed");putString("challenge",request.challenge);putString("receipt",receipt) } }
+          })
+        else -> throw IllegalArgumentException("operator-guarded-route-invalid")
+      }
+      actual.thenApply { response -> response.apply {
+        putString("schema",EmbeddedDuplexOperatorContract.RUN_SCHEMA);putString("run_id",request.runId)
+      } }
+    }.get(30,TimeUnit.SECONDS)
   }
 
   private fun recoverColdPending(app: android.content.Context, request: EmbeddedDuplexOperatorContract.Request,
