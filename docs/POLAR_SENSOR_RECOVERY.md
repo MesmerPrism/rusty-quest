@@ -172,8 +172,12 @@ one second, measured with native monotonic receipt time. The selected compositio
 owner publishes this requirement; read-only breath history, phase ambiguity,
 calibration confidence, GATT connection state and browser telemetry cannot prove
 fresh acquisition. A composition replacement or source change clears prior sample
-proof. Once a recording uses Polar, changing or disabling its source cannot remove
-the recording's Polar requirement.
+proof. Accepted Arm/Start binds the pending recording's request-time/selected
+requirement, including the validated guided identity, before blocking recovery,
+configuration acknowledgement or writer preparation. The requirement survives
+Preparing and Active as well as finalization; changing or disabling current source
+cannot remove it. It clears only at legitimate recording termination/default reset
+or failed preparation, so it cannot leak into a subsequent controller-only session.
 
 The session worker checks input before official Start/Resume and on its own timed
 loop, including after commands and writer work. Loss applies the ordinary native

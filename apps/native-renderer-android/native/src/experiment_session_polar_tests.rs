@@ -399,7 +399,10 @@ fn check_guided_source_changing_start(timing: &str) {
         "{timing}: {status}"
     );
     assert_eq!(status["readback"]["generation"], 0, "{timing}: {status}");
-    assert_eq!(status["readback"]["last_reason"], "guided-start-requires-arm");
+    assert_eq!(
+        status["readback"]["last_reason"],
+        "guided-start-requires-arm"
+    );
     if root.parent().unwrap().exists() {
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
@@ -461,4 +464,133 @@ fn guided_controller_arm_retains_real_two_step_direct_controls() {
     );
     runtime.shutdown_for_test().unwrap();
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+
+fn check_polar_requirement_during_preparation(guided: bool, combined: bool, disable: bool) {
+    use rusty_quest_breath_contract::BreathTimestampMicros;
+    let _binding = crate::breath_composition_runtime::scoped_test_binding::install_polar();
+    if guided && !combined {
+        polar_selection("controller");
+    }
+    let root = temp_root(&format!(
+        "polar-preparation-lifetime-{guided}-{combined}-{disable}"
+    ));
+    let entered = Arc::new(AtomicBool::new(false));
+    let worker_entered = Arc::clone(&entered);
+    let inventory = if guided {
+        guided_inventory()
+    } else {
+        trusted_inventory()
+    };
+    let runtime =
+        ExperimentSessionRuntime::spawn(root.clone(), Some(inventory), move |slot, loss| {
+            let mut backend = DamageBackend::new(slot, loss);
+            backend.prepare_entered = Some(worker_entered);
+            backend.prepare_delay = Duration::from_millis(250);
+            Box::new(backend)
+        })
+        .unwrap();
+    wait_for(&runtime, "\"initialization_status\":\"ready\"");
+    if combined {
+        polar_sample();
+    }
+    let mut request = if guided {
+        guided_arm_command(&root)
+    } else {
+        serde_json::from_str(&start_command(&root, "preparation-lifetime")).unwrap()
+    };
+    request["operation"] = json!(if combined { "start" } else { "arm" });
+    request["operation_id"] = json!("preparation-lifetime");
+    runtime.apply_command_json(&request.to_string());
+    for tick in 1..400 {
+        if entered.load(Ordering::Acquire) {
+            break;
+        }
+        if guided {
+            crate::breath_composition_runtime::poll_polar(BreathTimestampMicros::new(
+                tick * 10_000,
+            ));
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        entered.load(Ordering::Acquire),
+        "writer boundary was not reached"
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(&runtime.status_json()).unwrap()["readback"]["phase"],
+        "preparing"
+    );
+    // This is after real guided configuration acknowledgement (when selected)
+    // and while the actual writer's preparation is blocked.
+    if disable {
+        let response: Value = serde_json::from_str(&crate::breath_composition_runtime::apply_command_json(
+            &json!({"schema":crate::breath_composition_runtime::COMMAND_SCHEMA_ID,"operation":"disable"}).to_string())).unwrap();
+        assert_eq!(response["command_status"], "accepted");
+    } else {
+        polar_selection("controller");
+    }
+    wait_for(&runtime, "\"phase\":\"active\"");
+    let final_state = if combined {
+        thread::sleep(Duration::from_millis(30));
+        serde_json::from_str::<Value>(&runtime.status_json()).unwrap()
+    } else {
+        wait_for(&runtime, "\"arm_durable_checkpoint\":true");
+        polar_action(&runtime, "audio-prepared", "preparation-audio");
+        polar_present(&runtime, "preparation-present");
+        polar_action(&runtime, "official-start", "preparation-official-start")
+    };
+    let after_reset = if !guided {
+        polar_action(&runtime, "restart-to-experimenter", "preparation-reset");
+        wait_for(&runtime, "\"phase\":\"idle\"");
+        polar_selection("controller");
+        assert!(
+            !runtime.polar_ready_at_receipt().required,
+            "a terminated recording must not carry its former configured source into a new request"
+        );
+        thread::sleep(Duration::from_millis(25));
+        Some(serde_json::from_str::<Value>(&runtime.status_json()).unwrap())
+    } else {
+        None
+    };
+    runtime.shutdown_for_test().unwrap();
+    if let Some(reset) = after_reset {
+        assert_eq!(reset["readback"]["polar_input"]["required"], false);
+        assert_eq!(reset["readback"]["polar_input"]["pause_latched"], false);
+    }
+    assert_eq!(
+        final_state["readback"]["polar_input"]["required"], true,
+        "{final_state}"
+    );
+    assert_eq!(final_state["readback"]["polar_input"]["fresh"], false);
+    if combined {
+        assert_eq!(final_state["readback"]["control_state"], "paused");
+        assert_eq!(
+            final_state["readback"]["polar_input"]["pause_latched"],
+            true
+        );
+    } else {
+        assert_eq!(final_state["readback"]["last_operation_status"], "rejected");
+        assert_eq!(
+            final_state["readback"]["last_reason"],
+            "polar-input-not-fresh"
+        );
+        assert_eq!(final_state["readback"]["control_state"], "armed");
+    }
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn polar_arm_retains_requirement_when_source_changes_during_writer_preparation() {
+    check_polar_requirement_during_preparation(false, false, false);
+}
+
+#[test]
+fn guided_arm_retains_requirement_after_acknowledgement_and_source_disable() {
+    check_polar_requirement_during_preparation(true, false, true);
+}
+
+#[test]
+fn already_polar_combined_start_pauses_if_source_changes_during_writer_preparation() {
+    check_polar_requirement_during_preparation(true, true, false);
 }

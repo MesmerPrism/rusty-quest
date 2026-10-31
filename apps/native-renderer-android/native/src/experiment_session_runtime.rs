@@ -1156,6 +1156,13 @@ impl SessionWorker {
             },
             _ => None,
         };
+        // Bind the pending recording's source before any recovery, guided
+        // acknowledgement or writer preparation can block and current selection
+        // can be replaced. A validated guided identity always requires Polar.
+        let pending_requires_polar = matches!(parsed.operation, ParsedOperation::Start { .. })
+            && (polar_ready_at_receipt.required
+                || resolved_identity.as_ref().is_some_and(|identity| identity.breath_guidance.is_some())
+                || crate::polar_input_health::status(false, false).0.required);
         // Arm is preparation, not official Start. All explicit native and
         // authenticated operator Start/Resume forms share this same owner gate.
         if matches!(parsed.operation, ParsedOperation::Start { arm: false, .. }
@@ -1233,6 +1240,9 @@ impl SessionWorker {
                 Some(&outcome),
             );
             return;
+        }
+        if matches!(parsed.operation, ParsedOperation::Start { .. }) {
+            self.recording_requires_polar = pending_requires_polar;
         }
         if matches!(parsed.operation, ParsedOperation::Start { .. }
             | ParsedOperation::OfficialStart | ParsedOperation::Resume) {
@@ -1462,6 +1472,10 @@ impl SessionWorker {
                                     crate::breath_composition_runtime::ensure_running_for_experiment_arm()
                                         .map_err(|reason| format!("breath-preparation:{reason}"))?;
                                 }
+                                // Preserve any source selected at the actual
+                                // configuration boundary through writer preparation.
+                                self.recording_requires_polar |= crate::polar_input_health::status(false, false).0.required;
+                                self.refresh_controller_projection();
                                 self.backend.prepare(generation, spec.clone())
                             });
                     match preparation {
@@ -1748,6 +1762,8 @@ impl SessionWorker {
                 }
                 SessionEffect::DisarmKiosk => {}
                 SessionEffect::ResetRuntimeDefaults => {
+                    self.recording_requires_polar = false;
+                    self.polar_pause_latched = false;
                     crate::breath_composition_runtime::reset_to_packaged_defaults();
                     let reset_revision = request_particle_packaged_defaults_reset();
                     self.current_identity = None;
@@ -1770,6 +1786,8 @@ impl SessionWorker {
                     self.set_route(RouteAction::None);
                 }
                 SessionEffect::ShutdownApp => {
+                    self.recording_requires_polar = false;
+                    self.polar_pause_latched = false;
                     self.projection_write(|projection| {
                         projection.shutdown_status = "joining";
                     });
@@ -1893,11 +1911,11 @@ impl SessionWorker {
     fn reconcile_polar_input(&mut self, command_at: Option<MonotonicNanos>) {
         use crate::experiment_session::ExperimentControlState;
         let (input, loss) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
-        if self.controller.phase() == SessionPhase::Active {
-            self.recording_requires_polar |= input.required;
-        } else {
+        if matches!(self.controller.phase(), SessionPhase::Idle | SessionPhase::Closed) {
             self.recording_requires_polar = false;
             self.polar_pause_latched = false;
+        } else {
+            self.recording_requires_polar |= input.required;
         }
         if input.required && (!input.fresh || loss.revision != self.last_input_revision)
             && self.controller.phase() == SessionPhase::Active
@@ -2069,7 +2087,10 @@ impl SessionWorker {
 
     fn refresh_controller_projection(&self) {
         let (polar_input, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
-        self.polar_requirement.store(u64::from(polar_input.required), Ordering::Release);
+        // Only the recording latch crosses this atomic bridge. Current source
+        // requirement is read live from health at request arrival, so an idle
+        // source change cannot inherit the prior projection's configuration.
+        self.polar_requirement.store(u64::from(self.recording_requires_polar), Ordering::Release);
         self.projection_write(|projection| {
             projection.polar_input = polar_input;
             projection.generation = self.controller.generation();

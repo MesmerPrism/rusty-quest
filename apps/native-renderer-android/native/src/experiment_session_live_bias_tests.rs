@@ -65,6 +65,7 @@ fn apply_and_read(runtime: &ExperimentSessionRuntime, command: &Value) -> Value 
 
 #[test]
 fn live_bias_changes_are_durable_fenced_replay_safe_and_manifest_immutable() {
+    let _binding = crate::breath_composition_runtime::scoped_test_binding::install_polar();
     let root = temp_root("live-bias");
     let runtime = spawn_guided_test_runtime(root.clone()).unwrap();
     let armed = arm_guided(&runtime,&root);
@@ -102,6 +103,9 @@ fn live_bias_changes_are_durable_fenced_replay_safe_and_manifest_immutable() {
     runtime.note_submitted_frame(1,1);
     let mut presented:Value=serde_json::from_str(&command("presentation","present",1,4000)).unwrap();
     presented["presentation"]=json!("immersive-active"); apply_and_read(&runtime,&presented);
+    // Guided sessions require real accepted acquisition even when this fixture
+    // isolates the parameter-acknowledgement adapter for its bias assertions.
+    polar_sample();
     apply_and_read(&runtime,&serde_json::from_str(&command("official-start","official",1,5000)).unwrap());
     let running=apply_and_read(&runtime,&bias_command(&armed,"bias-running",80,6000));
     assert_eq!(running["readback"]["control_state"],"running");
@@ -199,6 +203,7 @@ fn guided_arm_configuration_failure_never_prepares_writer_and_does_not_replay() 
     assert_eq!(failed["readback"]["last_operation_status"],"failed");
     assert!(failed["readback"]["last_reason"].as_str().unwrap().starts_with("guided-breath-preparation:"));
     assert_eq!(failed["readback"]["arm_durable_checkpoint"],false);
+    assert_eq!(failed["readback"]["polar_input"]["required"],false);
     assert!(!entered.load(Ordering::Acquire));
     assert!(!root.join(SessionTimestampKey::from_utc(UtcEpochNanos::new(1_725_000_000_000_000_000)).as_str()).exists());
     assert_eq!(apply_and_read(&runtime,&arm)["readback"]["last_operation_status"],"duplicate");
@@ -271,6 +276,7 @@ fn start_guided_live_clock(runtime: &ExperimentSessionRuntime, root: &Path) -> (
     presented["presentation"] = json!("immersive-active");
     apply_and_read(runtime, &presented);
     let started = runtime.current_elapsed_realtime_ns().unwrap();
+    polar_sample();
     let result = apply_and_read(runtime, &serde_json::from_str(&command("official-start", "live-start", 1, started)).unwrap());
     assert_eq!(result["readback"]["control_state"], "running");
     assert!(runtime.note_submitted_frame(1, 2));
@@ -300,6 +306,7 @@ fn assert_stall_archive(root: &Path, armed: &Value, started: u64, deadline: u64,
 #[test]
 fn blocked_bias_checkpoint_freezes_controller_and_archive_before_queued_pause_or_save() {
     for scenario in ["pause", "save-and-exit", "older-pause"] {
+        let _binding = crate::breath_composition_runtime::scoped_test_binding::install_polar();
         let root = temp_root(&format!("blocked-bias-{scenario}"));
         let entered = Arc::new(AtomicBool::new(false));
         let release = Arc::new(AtomicBool::new(false));
@@ -356,6 +363,7 @@ fn blocked_bias_checkpoint_freezes_controller_and_archive_before_queued_pause_or
 
 #[test]
 fn saturated_command_lane_reconciles_stall_before_first_queued_tick() {
+    let _binding = crate::breath_composition_runtime::scoped_test_binding::install_polar();
     let root = temp_root("busy-lane-stall");
     let runtime = spawn_guided_test_runtime(root.clone()).unwrap();
     let (armed, started, deadline) = start_guided_live_clock(&runtime, &root);
