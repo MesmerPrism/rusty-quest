@@ -8,7 +8,7 @@ closed allowlist of HTTPS browser origins. Unselected packages must omit both.
 Internet permission is required. No separate broker APK, shell grant, or
 read-only embedded WebSocket upgrade is involved.
 
-Runtime enrollment remains off until a headset operator approves an encrypted
+Persistent enrollment remains off until a headset operator approves an encrypted
 relay controller or trusted-LAN control. Approval replaces the one persistent controller with a random 32-hex
 controller ID and 64-hex secret key stored in app-private preferences. Only the
 headset approval dialog displays the key. Revocation removes it. Encrypted-only
@@ -18,9 +18,18 @@ has no confidentiality; use only on an explicitly trusted network. Controller
 membership persists across process restart; native epoch replay protection does
 not. Each native lifetime or enrollment creates a fresh random 52-bit gateway epoch, independent of native epoch counters that may reset across process restart.
 
-Only trusted-LAN enrollment starts the listener. It uses TCP 8766, accepts bounded HTTP/1.1 requests from private/local
+For the composition selecting both original native host and gateway, Remote mode
+also starts the LAN listener without enrollment. Choose and Direct deny local
+guest joins. The native owner's journal is initialized independently of stored
+enrollment. Mode revision changes revoke all guests and preserve original
+receipts; native owner retirement also revokes queued guest exchanges.
+
+The listener uses TCP 8766, accepts bounded HTTP/1.1 requests from private/local
 addresses, and exposes only `GET /v1/gateway` and `POST /v1/gateway`. GET returns
-unauthenticated discovery hints `{v:1,device:<32hex>,epoch:<decimal string>,enabled}`.
+unauthenticated discovery hints including `v`, `device`, `epoch`, `native_epoch`,
+`enabled`, `route`, `serial`, and `remote_available`. The serial is an actual
+hardware serial read from Android or explicitly provisioned; it is empty when
+unavailable and is never the generated device ID.
 It is never command readiness. OPTIONS admits only exact configured origins,
 GET/POST, Content-Type and explicitly responds to local-network preflight.
 Supported browsers must grant Local Network Access for public HTTPS to private
@@ -52,7 +61,17 @@ denial. Synthetic keys and no Android runtime are used. Cleanup of active idle
 readers retains the existing five-second read timeout; this is not an immediate
 socket-cancellation or absolute whole-request deadline guarantee.
 
-POST carries exactly these seven fields:
+In Remote, POST may first carry exactly
+`{v:1,action:"connect",device:<expected-device>,epoch:<expected-gateway-epoch>}`.
+It returns exactly `{v:1,device,epoch,serial,controller,key}`. Joining has no
+experiment effect. At most eight memory-only guest controllers are admitted;
+each expires after 120000 ms without authenticated use. Guest authentication,
+nonces, native/session fences and the original-command journal use the existing
+RQG1 protocol. Guests are bound to the exact native owner and mode revision,
+including a Remote/Direct/Remote change before queued dispatch. Persistent
+enrollment is preserved. This remains trusted-local-network plaintext.
+
+Authenticated POST carries exactly these seven fields:
 
 ```json
 {"v":1,"controller":"32 lowercase hex","epoch":"positive decimal string","nonce":"32 lowercase hex","action":"status","payload":"{}","mac":"64 lowercase hex"}
@@ -91,10 +110,12 @@ existing native session, sensor, revision, identity and presentation checks.
 BLE challenge optionally exposes public `d` (device ID) and `ge` (gateway epoch)
 for receipt correlation; no enrollment key is exposed on unauthenticated reads.
 
-Relay and direct-network adapters call the same `identity()` and `exchange()`
-methods. They acquire no command authority of their own. Application preparation
+Relay uses `identity()` and authenticated-only `exchange()`; anonymous connect
+requests reject there. Only HTTP, after its existing private/local peer and
+Origin checks, calls `exchangeLan()` to admit a local Remote guest. Adapters
+acquire no command authority of their own. Application preparation
 creates no listener: initialized native-owner lifetime plus selected feature and
-headset enrollment plus explicit trusted-LAN consent are required. An encrypted
+either Remote mode or trusted-LAN enrollment are required. An encrypted
 relay uses the same enrolled controller without opening HTTP. Native owner
 teardown closes every selected transport. Relay connection additionally requires
 selected relay metadata, the fixed approved origin, and operator-provisioned host
@@ -102,3 +123,15 @@ session, device token and exact expiry timestamp; no expiry is minted by the UI.
 
 Host protocol tests and Android source compilation are separate from physical
 LAN, browser permission, native effect, durable recording, and packaging proof.
+
+The debug-only shell/DUMP operator additionally accepts closed
+`provision-headset-identity` with `hardware_serial` and the existing actor, APK,
+feature, runtime/session, idle, native-owner and gateway-lifecycle fences. It
+persists identity only; it never enrolls or rotates a controller. Provisioning
+is one-time (an identical retry is harmless); a different stored or available
+hardware serial rejects. The typed CLI requires requested serial, live
+`ro.serialno` and `CanonicalSerial` to match before operator dispatch.
+
+`Test-ExperimentSessionCommandGateway.ps1` includes the production gateway's
+Remote join/authentication/lifecycle/serial checks and typed CLI serial guard
+checks with inert Android and executable boundaries. No device effects occur.

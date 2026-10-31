@@ -18,6 +18,7 @@ public final class ExperimentControlModeTest {
         check(!ExperimentControlMode.selectedComposition(false,true),"gateway without native host");
         check(ExperimentControlMode.selectedComposition(true,true),"selected conjunction");
         NativeFixture nativeOwner=new NativeFixture();ExperimentControlMode adapter=new ExperimentControlMode(nativeOwner);
+        int[] changes={0};adapter.onChange(()->changes[0]++);
         ExperimentControlMode.Snapshot legacy=adapter.readSnapshot();
         check(!legacy.selected&&legacy.localMutationsAllowed()&&legacy.mode==1,"legacy Direct default");legacy.requireRemoteCommands();
         ExperimentControlMode.Snapshot choose=adapter.initializeSelected(true);
@@ -27,8 +28,10 @@ public final class ExperimentControlModeTest {
         check(direct.mode==1&&direct.localMutationsAllowed()&&direct.revision==3,"Direct readback");rejects(()->direct.requireRemoteCommands());
         ExperimentControlMode.Snapshot stale=adapter.select(choose,2);
         check(stale.packed==direct.packed,"stale selection changed authority");
+        check(changes[0]==1,"stale selection called lifecycle hook");
         ExperimentControlMode.Snapshot remote=adapter.select(direct,2);
         check(remote.mode==2&&!remote.localMutationsAllowed()&&"remote".equals(remote.wireName()),"Remote readback");remote.requireRemoteCommands();
+        check(changes[0]==2,"successful actual mode selection missed lifecycle hook");
         check(adapter.initializeSelected(true).packed==remote.packed,"recreation reset selection");
         check(adapter.initializeSelected(false).packed==remote.packed,"disabled late caller reset selection");
         int before=nativeOwner.selections;rejects(()->adapter.select(remote,0));rejects(()->adapter.select(remote,3));

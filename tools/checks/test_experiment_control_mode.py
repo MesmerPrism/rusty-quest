@@ -36,6 +36,7 @@ final class ControlModeGatewayTest {
  Delegate delegate=new Delegate();
  static void requireMain(){}
  JSONObject snapshot(){return new JSONObject();}
+ JSONObject monitorSnapshot(JSONObject body)throws Exception{return ExperimentSessionGatewayProtocol.monitorQuery(body);}
  ExperimentSessionBleServer.CommandRequest parse(JSONObject body)throws Exception{return new ExperimentSessionBleServer.CommandRequest(body.getString("id"));}
  __OWNER__
  interface Checked {void run()throws Exception;}
@@ -214,7 +215,7 @@ final class ControlModeStatusTest {
   for(long value:new long[]{20,29,38}){h.nativeOwner.value=value;JSONObject observed=h.snapshot();
    String expected=value==20?"choose":value==29?"direct":"remote";
    check(observed.getString("control_mode").equals(expected),"LAN mode missing/wrong");
-   observed.remove("control_mode");check(observed.toString().equals(legacy.toString()),"mode changed existing BLE projection");
+   check(observed.getInt("breath_monitor")==1,"monitor capability missing");observed.remove("control_mode");observed.remove("breath_monitor");check(observed.toString().equals(legacy.toString()),"mode changed existing BLE projection");
   }
   h.nativeOwner.value=9;check(!h.snapshot().has("control_mode"),"legacy status retained mode");
   System.out.println("PASS production LAN status optional control_mode after actual bounded BLE projection; legacy omission and existing projected fields preserved");

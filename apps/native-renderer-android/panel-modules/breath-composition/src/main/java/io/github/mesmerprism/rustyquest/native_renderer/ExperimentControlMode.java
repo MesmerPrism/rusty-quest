@@ -23,6 +23,7 @@ public final class ExperimentControlMode {
     }
     private static final ExperimentControlMode PROCESS=new ExperimentControlMode(new JniAccess());
     private final NativeAccess nativeOwner;
+    private Runnable changeListener;
     ExperimentControlMode(NativeAccess nativeOwner){this.nativeOwner=nativeOwner;}
     static ExperimentControlMode process(){return PROCESS;}
 
@@ -40,6 +41,7 @@ public final class ExperimentControlMode {
     }
     Snapshot initializeSelected(boolean selected){return new Snapshot(nativeOwner.initialize(selected));}
     Snapshot readSnapshot(){return new Snapshot(nativeOwner.read());}
+    void onChange(Runnable listener){changeListener=listener;}
     void requireLocalDispatch(Snapshot captured){
         Snapshot current=readSnapshot();
         if(captured==null||!captured.localMutationsAllowed()||current.packed!=captured.packed||!current.localMutationsAllowed())
@@ -48,7 +50,9 @@ public final class ExperimentControlMode {
     Snapshot select(Snapshot expected,int mode){
         if(expected==null||!expected.selected||mode!=DIRECT&&mode!=REMOTE)
             throw new IllegalArgumentException("explicit-selected-control-mode-required");
-        return new Snapshot(nativeOwner.select(expected.packed,mode));
+        Snapshot selected=new Snapshot(nativeOwner.select(expected.packed,mode));
+        if(selected.packed!=expected.packed&&selected.mode==mode&&changeListener!=null)changeListener.run();
+        return selected;
     }
 
     static final class Snapshot {

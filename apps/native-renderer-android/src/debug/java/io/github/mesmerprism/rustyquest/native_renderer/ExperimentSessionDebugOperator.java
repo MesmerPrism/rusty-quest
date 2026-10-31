@@ -28,13 +28,15 @@ final class ExperimentSessionDebugOperator {
             if (!apk.matches("[0-9a-f]{64}") || !apk.equals(installedApkSha256(context)))
                 throw new SecurityException("operator-apk-mismatch");
         }
-        if ("enroll-trusted-lan".equals(operation)) {
+        if ("enroll-trusted-lan".equals(operation)||"provision-headset-identity".equals(operation)) {
             final JSONObject frozen=new JSONObject(request.toString());
             ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
             if(gateway==null)throw new SecurityException("local-enrollment-owner-unavailable");
-            JSONObject receipt=gateway.enrollFromLocalOperator(frozen,new ExperimentSessionCommandGateway.LocalEnrollmentGuard(){
+            ExperimentSessionCommandGateway.LocalEnrollmentGuard guard=new ExperimentSessionCommandGateway.LocalEnrollmentGuard(){
                 @Override public void check()throws Exception {validateEnrollmentActor(context,frozen);}
-            });
+            };
+            JSONObject receipt="provision-headset-identity".equals(operation)?gateway.provisionHeadsetIdentity(frozen,guard):gateway.enrollFromLocalOperator(frozen,guard);
+            if("provision-headset-identity".equals(operation))receipt.put("operation_id",request.getString("operation_id"));
             return new JSONObject().put("schema","rusty.quest.experiment_session.operator_receipt.v1")
                 .put("operation",operation).put("native_response",receipt).toString();
         }
@@ -75,7 +77,7 @@ final class ExperimentSessionDebugOperator {
     static void validateShape(JSONObject request) throws Exception {
         String operation = request.getString("operation");
         boolean read = "status".equals(operation);
-        if (!read && !"set-bias".equals(operation) && !"enroll-trusted-lan".equals(operation) && !"official-start".equals(operation) && !"pause".equals(operation)
+        if (!read && !"set-bias".equals(operation) && !"enroll-trusted-lan".equals(operation) && !"provision-headset-identity".equals(operation) && !"official-start".equals(operation) && !"pause".equals(operation)
                 && !"resume".equals(operation) && !ExperimentSessionBleProtocol.supportedOperation(operation)) throw new SecurityException("operator-operation-invalid");
         String[] fields = read ? new String[] {"schema", "operation"} : new String[] {
             "schema", "operation", "operation_id", "expected_pid", "expected_uid",
@@ -88,6 +90,11 @@ final class ExperimentSessionDebugOperator {
             String[] extended=java.util.Arrays.copyOf(fields,fields.length+4);
             extended[fields.length]="trusted_lan_consent";extended[fields.length+1]="expected_native_owner_identity";
             extended[fields.length+2]="expected_gateway_lifecycle_revision";extended[fields.length+3]="expected_enrollment_reference";fields=extended;
+        }
+        if ("provision-headset-identity".equals(operation)) {
+            String[] extended=java.util.Arrays.copyOf(fields,fields.length+3);
+            extended[fields.length]="hardware_serial";extended[fields.length+1]="expected_native_owner_identity";
+            extended[fields.length+2]="expected_gateway_lifecycle_revision";fields=extended;
         }
         if (request.length() != fields.length) throw new SecurityException("operator-unexpected-field");
         for (String field : fields) if (!request.has(field)) throw new SecurityException("operator-missing-field");
@@ -105,6 +112,7 @@ final class ExperimentSessionDebugOperator {
             } else if (!(raw instanceof String)) throw new SecurityException("operator-string-field-required");
         }
         if ("set-bias".equals(operation) && request.getLong("bias_percent")>100) throw new SecurityException("operator-bias-invalid");
+        if ("provision-headset-identity".equals(operation)&&!ExperimentSessionHeadsetIdentity.valid(request.getString("hardware_serial")))throw new SecurityException("hardware-serial-invalid");
         if ("arm".equals(operation) && (!request.getString("requested_condition").matches("condition-[ab]") || request.getLong("requested_bias")>100)) throw new SecurityException("operator-arm-selection-invalid");
         if (!"rusty.quest.experiment_session.operator_command.v1".equals(request.getString("schema"))) throw new SecurityException("operator-schema-invalid");
     }

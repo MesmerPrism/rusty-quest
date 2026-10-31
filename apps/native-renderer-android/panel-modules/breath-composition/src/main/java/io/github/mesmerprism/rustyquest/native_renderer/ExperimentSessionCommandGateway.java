@@ -20,6 +20,8 @@ public final class ExperimentSessionCommandGateway {
     private final SharedPreferences preferences;
     private final ExperimentSessionBleServer.Delegate delegate;
     private final ExperimentSessionBleServer carrier;
+    private final ExperimentSessionHeadsetIdentity headsetIdentity;
+    private final ExperimentSessionGuestRegistry guests=new ExperimentSessionGuestRegistry();
     private final ExperimentControlMode controlMode=ExperimentControlMode.process();
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExperimentSessionControlCapability session=new ExperimentSessionControlCapability();
@@ -31,6 +33,7 @@ public final class ExperimentSessionCommandGateway {
     private ExperimentSessionRelayClient relay;
     private long identity,epoch,gatewayEpoch;
     private volatile long lifecycleRevision;
+    private long guestModePacked;
     private String routeState="disabled";
     private String localEnrollmentReference="";
     private long localEnrollmentObserved,localEnrollmentRevision;
@@ -50,6 +53,8 @@ public final class ExperimentSessionCommandGateway {
     }
     private ExperimentSessionCommandGateway(Context context,ExperimentSessionBleServer.Delegate delegate) {
         this.context=context;this.delegate=delegate;carrier=ExperimentSessionBleServer.process(context,delegate);
+        headsetIdentity=new ExperimentSessionHeadsetIdentity(context);
+        controlMode.onChange(new Runnable(){@Override public void run(){controlModeChanged();}});
         preferences=context.getSharedPreferences("experiment-session-command-gateway",Context.MODE_PRIVATE);
         if(!preferences.contains("device"))preferences.edit().putString("device",ExperimentSessionBleProtocol.newHex(16)).commit();
     }
@@ -62,7 +67,12 @@ public final class ExperimentSessionCommandGateway {
             .put("direct",direct==null?new JSONObject().put("state","inactive"):direct.snapshot())
             .put("relay",relay==null?new JSONObject().put("state","inactive"):relay.snapshot());
     }
-    boolean trustedLanAllowed(){return ExperimentSessionGatewayProtocol.lanAllowed(featurePackaged(context),enabled(),identity>0&&epoch>0,preferences.getBoolean("trusted-lan",false));}
+    boolean trustedLanAllowed(){return remoteAvailable()||ExperimentSessionGatewayProtocol.lanAllowed(featurePackaged(context),enabled(),identity>0&&epoch>0,preferences.getBoolean("trusted-lan",false));}
+    private boolean remoteAvailable(){
+        if(!featurePackaged(context)||journal==null||identity<=0||epoch<=0||!carrier.acceptsNativeOwner(identity,epoch))return false;
+        ExperimentControlMode.Snapshot mode=controlMode.readSnapshot();
+        return mode.selected&&mode.mode==ExperimentControlMode.REMOTE;
+    }
     boolean allowedOrigin(String origin) {
         if(origin==null||!origin.matches("https://[A-Za-z0-9.-]+(:[0-9]{1,5})?"))return false;
         try{android.os.Bundle metadata=context.getPackageManager().getApplicationInfo(context.getPackageName(),PackageManager.GET_META_DATA).metaData;
@@ -71,7 +81,7 @@ public final class ExperimentSessionCommandGateway {
         }catch(Exception ignored){}return false;
     }
     String deviceId(){return preferences.getString("device","");}
-    String gatewayEpoch(){return protocol==null?"0":Long.toString(gatewayEpoch);}
+    String gatewayEpoch(){return journal==null?"0":Long.toString(gatewayEpoch);}
     String relayOrigin() {
         try{android.os.Bundle data=context.getPackageManager().getApplicationInfo(context.getPackageName(),PackageManager.GET_META_DATA).metaData;
             return data==null||!data.getBoolean("rusty.quest.feature.experiment_control_relay",false)?"":data.getString("rusty.quest.experiment.command_gateway.relay_origin","");
@@ -92,12 +102,31 @@ public final class ExperimentSessionCommandGateway {
     JSONObject directJoinDetails()throws Exception{return direct==null?new JSONObject().put("state","inactive"):direct.localJoinDetails();}
     void stopRoutesFromHeadset(){requireMain();if(relay!=null)relay.close();relay=null;if(direct!=null)direct.close();direct=null;}
     String localAddresses() {
-        StringBuilder result=new StringBuilder();
+        Map<String,java.util.List<String>> candidates=new LinkedHashMap<>();
         try{java.util.Enumeration<java.net.NetworkInterface> interfaces=java.net.NetworkInterface.getNetworkInterfaces();
-            while(interfaces.hasMoreElements()){java.util.Enumeration<java.net.InetAddress> addresses=interfaces.nextElement().getInetAddresses();
+            while(interfaces.hasMoreElements()){
+                java.net.NetworkInterface network=interfaces.nextElement();if(!network.isUp()||network.isLoopback())continue;
+                java.util.List<String> local=new java.util.ArrayList<>();candidates.put(network.getName(),local);
+                java.util.Enumeration<java.net.InetAddress> addresses=network.getInetAddresses();
                 while(addresses.hasMoreElements()){java.net.InetAddress address=addresses.nextElement();
-                    if(address instanceof java.net.Inet4Address&&address.isSiteLocalAddress())result.append("http://").append(address.getHostAddress()).append(":8766/v1/gateway\n");}}
-        }catch(Exception ignored){}return result.length()==0?"Waiting for a local network address":result.toString().trim();
+                    if(address instanceof java.net.Inet4Address&&address.isSiteLocalAddress())local.add(address.getHostAddress());}}
+        }catch(Exception ignored){}String result=orderedLocalAddresses(candidates);return result.isEmpty()?"Waiting for a local network address":result;
+    }
+    static String orderedLocalAddresses(Map<String,java.util.List<String>> candidates){
+        java.util.Set<String> endpoints=new java.util.LinkedHashSet<>();
+        // Only up interfaces are supplied; connected Android Wi-Fi names take precedence.
+        for(int pass=0;pass<2;pass++)for(Map.Entry<String,java.util.List<String>> network:candidates.entrySet()){
+            boolean wifi=network.getKey().startsWith("wlan")||network.getKey().startsWith("wifi");
+            if(wifi!=(pass==0))continue;
+            for(String address:network.getValue())if(privateIpv4(address)&&endpoints.size()<4)endpoints.add("http://"+address+":8766/v1/gateway");
+        }
+        StringBuilder result=new StringBuilder();for(String endpoint:endpoints){if(result.length()>0)result.append('\n');result.append(endpoint);}return result.toString();
+    }
+    private static boolean privateIpv4(String address){
+        if(address==null||!address.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}"))return false;
+        String[] parts=address.split("\\.");int[] bytes=new int[4];
+        for(int i=0;i<4;i++){bytes[i]=Integer.parseInt(parts[i]);if(bytes[i]>255||parts[i].length()>1&&parts[i].startsWith("0"))return false;}
+        return bytes[0]==10||bytes[0]==172&&bytes[1]>=16&&bytes[1]<=31||bytes[0]==192&&bytes[1]==168;
     }
     /** Headset UI only: rotates the only controller and explicitly approves unencrypted trusted LAN. */
     JSONObject enrollFromHeadset(boolean trustedLan) throws Exception {
@@ -171,12 +200,29 @@ public final class ExperimentSessionCommandGateway {
         }});
     }
     void revokeFromHeadset(){requireMain();preferences.edit().putBoolean("trusted-lan",false).remove("key").remove("controller").commit();retire();}
+    /** Debug shell/DUMP entry only; the operator validates the closed request and actor facts. */
+    JSONObject provisionHeadsetIdentity(JSONObject input,final LocalEnrollmentGuard guard)throws Exception {
+        final JSONObject request=new JSONObject(input.toString());
+        return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception {
+            requireMain();if(!featurePackaged(context))throw new SecurityException("feature-not-selected");
+            long owner=request.getLong("expected_native_owner_identity"),nativeEpoch=request.getLong("expected_runtime_epoch"),revision=request.getLong("expected_gateway_lifecycle_revision");
+            requireLocalEnrollmentOwner(owner,nativeEpoch,revision);
+            String serial=request.getString("hardware_serial");
+            if(!ExperimentSessionHeadsetIdentity.valid(serial))throw new SecurityException("hardware-serial-invalid");
+            guard.check();
+            if(!localEnrollmentIdle(delegate.sessionControlReadback(),delegate.snapshot()))throw new SecurityException("identity-provision-requires-idle");
+            requireLocalEnrollmentOwner(owner,nativeEpoch,revision);
+            headsetIdentity.provision(serial);
+            return new JSONObject().put("command_status","provisioned").put("serial",headsetIdentity.serial());
+        }});
+    }
     synchronized void nativeOwnerChanged(final long owner,final long nextEpoch,final boolean live) {
         final long revision=++lifecycleRevision;
+        guests.clear();
         if(protocol!=null)protocol.retire();protocol=null;
-        main.post(new Runnable(){@Override public void run(){synchronized(ExperimentSessionCommandGateway.this){
+        main.post(new Runnable(){@Override public void run(){
             if(revision!=lifecycleRevision)return;applyNativeOwnerChanged(owner,nextEpoch,live);
-        }}});
+        }});
     }
     private void applyNativeOwnerChanged(long owner,long nextEpoch,boolean live) {
         requireMain();
@@ -184,7 +230,7 @@ public final class ExperimentSessionCommandGateway {
         else if(identity==owner&&epoch==nextEpoch){retire();identity=0;epoch=0;}
     }
     private void reconcile() {
-        if(!enabled()||identity<=0||epoch<=0)return;
+        if(!featurePackaged(context)||identity<=0||epoch<=0)return;
         carrier.attachCommandGateway(true);
         gatewayEpoch=(new java.security.SecureRandom().nextLong()&0xfffffffffffffL)+1;
         final long admittedGatewayEpoch=gatewayEpoch;
@@ -195,7 +241,7 @@ public final class ExperimentSessionCommandGateway {
             @Override public boolean reserve(JSONObject body)throws Exception{return activeJournal.reserve(body);}
             @Override public JSONObject original(String id)throws Exception{return activeJournal.original(id);}
         },deviceId(),Long.toString(gatewayEpoch));
-        protocol=new ExperimentSessionGatewayProtocol(preferences.getString("controller",""),preferences.getString("key",""),
+        if(enabled())protocol=new ExperimentSessionGatewayProtocol(preferences.getString("controller",""),preferences.getString("key",""),
             preferences.getString("device",""),gatewayEpoch,new ExperimentSessionGatewayProtocol.Owner(){
                 @Override public JSONObject exchange(final String action,final JSONObject payload)throws Exception {
                     return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception{
@@ -203,12 +249,22 @@ public final class ExperimentSessionCommandGateway {
                         return ownerExchange(action,payload);
                     }});
                 }});
-        if(!trustedLanAllowed()){routeState="enrolled-no-lan-listener";return;}
-        try {http=new ExperimentSessionGatewayHttpServer(this,8766);http.start();routeState="trusted-lan-listening";}
+        controlModeChanged();
+    }
+    /** Actual native mode remains authority; revisions revoke guests without erasing receipts. */
+    void controlModeChanged(){
+        requireMain();long packed=controlMode.readSnapshot().packed;
+        if(guestModePacked!=packed){guests.clear();guestModePacked=packed;}
+        if(journal==null)return;
+        if(!trustedLanAllowed()){
+            if(http!=null)http.close();http=null;routeState=enabled()?"enrolled-no-lan-listener":"native-owner-no-lan-listener";return;
+        }
+        if(http==null)try{http=new ExperimentSessionGatewayHttpServer(this,8766);http.start();routeState="trusted-lan-listening";}
         catch(Exception unavailable){routeState="listener-unavailable";if(http!=null)http.close();http=null;}
     }
     private void retire() {
         clearLocalEnrollmentOffer();
+        guests.clear();
         stopRoutesFromHeadset();
         if(protocol!=null)protocol.retire();protocol=null;
         if(http!=null)http.close();http=null;
@@ -217,10 +273,50 @@ public final class ExperimentSessionCommandGateway {
     public JSONObject identity()throws Exception {
         return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception {
             return new JSONObject().put("v",1).put("device",preferences.getString("device",""))
-                .put("epoch",Long.toString(gatewayEpoch)).put("native_epoch",Long.toString(epoch)).put("enabled",protocol!=null).put("route",routeState);
+                .put("epoch",Long.toString(gatewayEpoch)).put("native_epoch",Long.toString(epoch)).put("enabled",journal!=null).put("route",routeState)
+                .put("serial",headsetIdentity.serial()).put("remote_available",remoteAvailable());
         }});
     }
+    JSONObject discoveryMetadata()throws Exception {
+        requireMain();if(!remoteAvailable())throw new SecurityException("remote-owner-required");
+        org.json.JSONArray gateways=new org.json.JSONArray();
+        for(String address:localAddresses().split("\\n"))if(address.matches("http://[0-9.]+:8766/v1/gateway")&&gateways.length()<4)gateways.put(address);
+        JSONObject metadata=new JSONObject().put("v",1).put("device",deviceId()).put("serial",headsetIdentity.serial())
+            .put("epoch",Long.toString(gatewayEpoch)).put("native_epoch",Long.toString(epoch)).put("mode","remote").put("gateways",gateways);
+        if(metadata.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length>512)throw new IllegalStateException("discovery-metadata-bound");
+        return metadata;
+    }
+    private JSONObject connect(final JSONObject request)throws Exception {
+        return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception {
+            if(request.length()!=4||!Integer.valueOf(1).equals(request.opt("v"))||!"connect".equals(request.opt("action"))
+                    ||!deviceId().equals(request.opt("device"))||!Long.toString(gatewayEpoch).equals(request.opt("epoch"))||!remoteAvailable())
+                throw new SecurityException("remote-join-unavailable");
+            controlModeChanged();
+            final long admittedMode=controlMode.readSnapshot().packed,admittedOwner=identity,admittedEpoch=epoch,admittedLifecycle=lifecycleRevision,admittedGateway=gatewayEpoch;
+            final String controller=ExperimentSessionBleProtocol.newHex(16),key=ExperimentSessionBleProtocol.newHex(32);
+            final ExperimentSessionGatewayProtocol[] binding=new ExperimentSessionGatewayProtocol[1];
+            binding[0]=new ExperimentSessionGatewayProtocol(controller,key,deviceId(),admittedGateway,new ExperimentSessionGatewayProtocol.Owner(){
+                @Override public JSONObject exchange(final String action,final JSONObject payload)throws Exception {
+                    return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception {
+                        if(admittedOwner!=identity||admittedEpoch!=epoch||admittedLifecycle!=lifecycleRevision||admittedGateway!=gatewayEpoch
+                                ||admittedMode!=controlMode.readSnapshot().packed||!remoteAvailable())throw new SecurityException("guest-owner-retired");
+                        guests.authenticated(controller,binding[0],SystemClock.elapsedRealtime());
+                        return ownerExchange(action,payload);
+                    }});
+                }});
+            guests.add(controller,binding[0],SystemClock.elapsedRealtime());
+            return new JSONObject().put("v",1).put("device",deviceId()).put("epoch",Long.toString(gatewayEpoch))
+                .put("serial",headsetIdentity.serial()).put("controller",controller).put("key",key);
+        }});
+    }
+    /** Only HTTP after private-peer and Origin admission may bootstrap a local guest. */
+    JSONObject exchangeLan(JSONObject envelope)throws Exception {
+        if("connect".equals(envelope.opt("action")))return connect(new JSONObject(envelope.toString()));
+        return exchange(envelope);
+    }
     public JSONObject exchange(JSONObject envelope)throws Exception {
+        ExperimentSessionGuestRegistry.Guest guest=guests.find(envelope.optString("controller"),SystemClock.elapsedRealtime());
+        if(guest!=null)return guest.protocol.exchange(envelope);
         ExperimentSessionGatewayProtocol current=protocol;if(current==null)throw new SecurityException("gateway-unavailable");return current.exchange(envelope);
     }
     private JSONObject onMain(java.util.concurrent.Callable<JSONObject> action)throws Exception {
@@ -229,7 +325,7 @@ public final class ExperimentSessionCommandGateway {
         try{return task.get(5,TimeUnit.SECONDS);}catch(Exception failure){task.cancel(false);throw failure;}
     }
     private JSONObject ownerExchange(String action,JSONObject body)throws Exception {
-        requireMain();if(protocol==null||!carrier.acceptsNativeOwner(identity,epoch))throw new SecurityException("native-owner-unavailable");
+        requireMain();if(journal==null||!carrier.acceptsNativeOwner(identity,epoch))throw new SecurityException("native-owner-unavailable");
         if("status".equals(action)){if(body.length()!=0)throw new IllegalArgumentException("empty-status-required");return snapshot();}
         if("breath-monitor".equals(action))return monitorSnapshot(body);
         if("receipt".equals(action)) {

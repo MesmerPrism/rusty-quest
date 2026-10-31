@@ -52,7 +52,7 @@ final class ExperimentSessionGatewayHttpServer implements AutoCloseable {
             if(!"POST".equals(parts[0])||headers.containsKey("transfer-encoding")||!"application/json".equals(headers.get("content-type"))){reply(connection,400,cors,"{}");return;}
             int length=Integer.parseInt(headers.get("content-length"));if(length<1||length>8192)throw new IllegalArgumentException("body-bound");
             byte[] bytes=new byte[length];int offset=0;while(offset<length){int count=input.read(bytes,offset,length-offset);if(count<0)throw new IllegalArgumentException("incomplete-body");offset+=count;}
-            try{reply(connection,200,cors,owner.exchange(new JSONObject(new String(bytes,StandardCharsets.UTF_8))).toString());}
+            try{reply(connection,200,cors,owner.exchangeLan(new JSONObject(new String(bytes,StandardCharsets.UTF_8))).toString());}
             catch(Exception denied){reply(connection,403,cors,"{\"error\":\"gateway-request-rejected\"}");}
         }catch(Exception invalid){/* Bounded malformed requests close without reaching the owner. */}
     }

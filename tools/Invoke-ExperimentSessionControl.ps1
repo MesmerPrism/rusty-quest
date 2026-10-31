@@ -19,7 +19,7 @@ if((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
 $raw=[IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $RequestPath).Path)
 if($raw.Length -eq 0 -or $raw.Length -gt 4096){throw 'Request exceeds closed provider bound'}
 $shape=[Text.Encoding]::UTF8.GetString($raw)|ConvertFrom-Json -Depth 30
-if($shape.schema -cne 'rusty.quest.experiment_session.operator_command.v1' -or $shape.operation -cnotin @('status','set-bias','official-start','pause','resume','arm','save-next','save-exit','return-vr','open-polar','ping','enroll-trusted-lan')){throw 'Unsupported closed owner request'}
+if($shape.schema -cne 'rusty.quest.experiment_session.operator_command.v1' -or $shape.operation -cnotin @('status','set-bias','official-start','pause','resume','arm','save-next','save-exit','return-vr','open-polar','ping','enroll-trusted-lan','provision-headset-identity')){throw 'Unsupported closed owner request'}
 $enrollment=$shape.operation -ceq 'enroll-trusted-lan'
 $secretPath=$null
 if($enrollment){
@@ -40,6 +40,9 @@ if($enrollment){
 }elseif(-not[string]::IsNullOrEmpty($SecretOutputDirectory)){throw 'Credential output is only valid for enrollment'}
 $serial=(& $binary '-s' $Device 'shell' 'getprop' 'ro.serialno') -join "`n"
 if($LASTEXITCODE -ne 0 -or $serial.Trim() -cne $CanonicalSerial){throw 'Exact canonical target mismatch'}
+if($shape.operation -ceq 'provision-headset-identity'){
+ if($shape.hardware_serial -isnot [string] -or $shape.hardware_serial -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -or $shape.hardware_serial -ieq 'unknown' -or $shape.hardware_serial -cne $serial.Trim() -or $shape.hardware_serial -cne $CanonicalSerial){throw 'Provisioned hardware serial must equal the live canonical serial'}
+}
 $boot=(& $binary '-s' $Device 'shell' 'cat' '/proc/sys/kernel/random/boot_id') -join "`n"
 if($LASTEXITCODE -ne 0 -or $boot.Trim() -cne $BootId){throw 'Exact boot target mismatch'}
 $encoded=[Convert]::ToBase64String($raw).TrimEnd('=')

@@ -19,4 +19,7 @@ if($LASTEXITCODE-ne0){throw 'Gateway original receipt/dedupe tests failed'}
 if($LASTEXITCODE-ne0){throw 'Gateway mixed BLE/network original receipt tests failed'}
 & python (Join-Path $PSScriptRoot 'test_experiment_local_enrollment.py') --repo $repo --json-jar $JsonJar
 if($LASTEXITCODE-ne0){throw 'Privileged local enrollment tests failed'}
+& python (Join-Path $PSScriptRoot 'test_experiment_remote_join.py') --repo $repo --json-jar $JsonJar
+if($LASTEXITCODE-ne0){throw 'Remote guest/provisioned identity production host tests failed'}
+& (Join-Path $PSScriptRoot 'Test-ExperimentHeadsetIdentityCli.ps1')
 @{passed=$true;scope='Production transport authentication host tests only; Android owner/native/LAN effects require separate evidence'}|ConvertTo-Json|Set-Content (Join-Path $OutputRoot 'RESULT.json')

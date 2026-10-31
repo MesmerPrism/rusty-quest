@@ -28,6 +28,7 @@ final class ExperimentSessionCommandGateway {
  boolean allowedOrigin(String origin){return "https://controller.example".equals(origin);}
  JSONObject identity()throws Exception{calls.incrementAndGet();return new JSONObject().put("v",1).put("enabled",true);}
  JSONObject exchange(JSONObject request)throws Exception{return protocol.exchange(request);}
+ JSONObject exchangeLan(JSONObject request)throws Exception{return exchange(request);}
 }'''
 HARNESS = '''package io.github.mesmerprism.rustyquest.native_renderer;
 import java.io.*;import java.util.concurrent.*;import java.lang.reflect.*;import org.json.JSONObject;

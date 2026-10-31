@@ -23,6 +23,13 @@ public final class ExperimentSessionDebugOperatorTest {
     .put("trusted_lan_consent",true).put("expected_native_owner_identity",1L)
     .put("expected_gateway_lifecycle_revision",2L).put("expected_enrollment_reference","aabbccddeeff00112233445566778899");
   ExperimentSessionDebugOperator.validateShape(enroll);
+  JSONObject provision=new JSONObject(good.toString()).put("operation","provision-headset-identity")
+    .put("hardware_serial","SYNTHETIC-ONLY").put("expected_native_owner_identity",1L).put("expected_gateway_lifecycle_revision",2L);
+  ExperimentSessionDebugOperator.validateShape(provision);
+  for(Object value:new Object[]{"", "unknown", "spaces invalid", "a\nb", new String(new char[65]).replace('\0','x'), 4, JSONObject.NULL}){
+   JSONObject bad=new JSONObject(provision.toString()).put("hardware_serial",value);deny(()->ExperimentSessionDebugOperator.validateShape(bad));
+  }
+  JSONObject extraIdentity=new JSONObject(provision.toString()).put("controller","extra");deny(()->ExperimentSessionDebugOperator.validateShape(extraIdentity));
   for(Object value:new Object[]{false,"true",1,JSONObject.NULL}){
    JSONObject bad=new JSONObject(enroll.toString()).put("trusted_lan_consent",value);deny(()->ExperimentSessionDebugOperator.validateShape(bad));
   }
