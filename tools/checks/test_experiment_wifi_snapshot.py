@@ -14,7 +14,7 @@ def main():
     p.add_argument('--json-jar', type=Path, required=True)
     p.add_argument('--jdk-bin', type=Path)
     p.add_argument('--source-ref', help='Read gateway/receipt bodies from an exact Git ref for retained red proof')
-    p.add_argument('--case', choices=('gateway', 'scan', 'all'), default='all')
+    p.add_argument('--case', choices=('gateway', 'scan', 'epoch', 'all'), default='all')
     args = p.parse_args()
     repo = Path(__file__).resolve().parents[2]
     root = repo / 'apps/native-renderer-android/panel-modules/breath-composition/src/main/java' / PACKAGE
@@ -39,8 +39,8 @@ final class BreathCompositionPanelModule {boolean canRenderRemotePolarInPlace(){
 final class SystemClock {static long ms=1000;static long elapsedRealtime(){return ms;}static long ns=1000000000L;static long elapsedRealtimeNanos(){return ++ns;}}
 interface WifiDelegate {ExperimentSessionWifiSnapshot.Read wifiSnapshot() throws Exception;}
 class ExperimentSessionBleServer {static final class CommandRequest {}
- boolean live=true;long generation=9;long currentGeneration(){return generation;}long currentNativeEpoch(){return 7;}
- boolean acceptsStatusRead(long g,long e){return live&&g==generation&&e==7;}
+ boolean live=true;long generation=9,nativeEpoch=7;long currentGeneration(){return generation;}long currentNativeEpoch(){return nativeEpoch;}
+ boolean acceptsStatusRead(long g,long e){return live&&g==generation&&e==nativeEpoch;}
  void updateReceiptForGeneration(long g,String id,String state,String detail){}
 }
 final class ExperimentControlMode {static final int CHOOSE=0,DIRECT=1,REMOTE=2;
@@ -128,6 +128,31 @@ public final class WifiSnapshotHarness {
    .put("polar_input",new JSONObject().put("required",false).put("fresh",false).put("pause_latched",false));
   check(new ExperimentSessionWifiSnapshot().observe(idle,4000000000L,4000000001L,7).status.getJSONObject("pi").length()==3,"idle pi always present");
  }
+ static JSONObject idleWithEpoch(Object epoch)throws Exception {
+  JSONObject idle=response(10,0);idle.getJSONObject("readback").put("phase","idle").put("control_state","idle")
+   .put("condition_id",JSONObject.NULL).put("session_key",JSONObject.NULL).put("profile_identity_bound",false).put("audio_identity_bound",false)
+   .put("runtime_epoch",epoch).put("polar_input",new JSONObject().put("required",false).put("fresh",false).put("pause_latched",false));
+  return idle;
+ }
+ static void rawEpochs()throws Exception {
+  for(Object bad:new Object[]{7.5,"7",Boolean.TRUE,JSONObject.NULL,0L,-1L,8L}) {
+   WifiSnapshotHarness h=new WifiSnapshotHarness();JSONObject grant=h.snapshot().getJSONObject("q");
+   h.delegate.raw=idleWithEpoch(bad);ControlPanelActivity.raw=h.delegate.raw;
+   boolean denied=false;
+   try{h.snapshot();}catch(IllegalArgumentException|IllegalStateException|SecurityException expected){denied=true;}
+   check(denied,"malformed/mismatched raw idle epoch accepted: "+bad);
+   try{h.session.admit(grant.getString("s"),3,"pause",1000,9,11,7);throw new AssertionError("invalid raw epoch retained prior grant: "+bad);}catch(SecurityException expected){}
+   h.delegate.raw=response(9,900);ControlPanelActivity.raw=h.delegate.raw;
+   check(h.snapshot().has("q"),"invalid raw epoch mutated native observation: "+bad);
+  }
+  for(long valid:new long[]{7L,9007199254740992L,Long.MAX_VALUE}) {
+   WifiSnapshotHarness h=new WifiSnapshotHarness();h.epoch=valid;h.carrier.nativeEpoch=valid;
+   h.delegate.raw=idleWithEpoch(valid);ControlPanelActivity.raw=h.delegate.raw;
+   JSONObject emitted=h.snapshot();
+   check(emitted.getInt("wifi_snapshot")==1&&"IDLE".equals(emitted.getString("p")),"valid int64 idle epoch unavailable: "+valid);
+   check(Long.toString(valid).equals(emitted.getJSONObject("o").getString("e")),"valid int64 epoch truncated: "+valid);
+  }
+ }
  static void scan()throws Exception {
   PolarReceiptHarness h=new PolarReceiptHarness();
   SystemClock.ms=31000;check("pending".equals(h.remoteSetupReceipt("original",7).getString("state")),"Scan must stay pending at31seconds");
@@ -144,8 +169,11 @@ public final class WifiSnapshotHarness {
   SystemClock.ms=60000;check("outcome_unknown".equals(h.dispatchRemoteSetup(command,7).getString("state"))&&h.panel.effects==1,"unknown original stays once only");
  }
  public static void main(String[]args)throws Exception {
-  if(!"scan".equals(args[0])){new WifiSnapshotHarness().gateway();observation();}
-  if(!"gateway".equals(args[0]))scan();
+  if(!"scan".equals(args[0])){
+   if(!"epoch".equals(args[0])){new WifiSnapshotHarness().gateway();observation();}
+   rawEpochs();
+  }
+  if(!"gateway".equals(args[0])&&!"epoch".equals(args[0]))scan();
   System.out.println("PASS production full Wi-Fi projection/gateway and scan receipt: "+args[0]);
  }
 }

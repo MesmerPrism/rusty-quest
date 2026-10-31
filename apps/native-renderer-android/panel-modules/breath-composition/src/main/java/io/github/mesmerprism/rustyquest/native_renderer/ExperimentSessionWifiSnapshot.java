@@ -32,6 +32,11 @@ final class ExperimentSessionWifiSnapshot {
     }
 
     synchronized Read observe(JSONObject response, long completedNanos, long nowNanos, long epoch) throws Exception {
+        Object rawEpoch=response.getJSONObject("readback").opt("runtime_epoch");
+        // Owner epochs retain positive int64 range; the shared codec may coerce other JSON types.
+        if (!(rawEpoch instanceof Integer) && !(rawEpoch instanceof Long)
+                || ((Number)rawEpoch).longValue()<=0 || ((Number)rawEpoch).longValue()!=epoch)
+            throw new IllegalStateException("wifi-native-epoch-invalid");
         ExperimentSessionAndroidShell.SessionReadback parsed=codec.parse(response.toString(),null,false);
         if (!"accepted".equals(parsed.commandStatus) || !"ready".equals(parsed.initializationStatus)
                 || parsed.runtimeEpoch!=epoch || epoch<=0)
