@@ -199,7 +199,10 @@ public final class ExperimentSessionCommandGateway {
             } catch(Exception changed) {revokeFromHeadset();throw changed;}
         }});
     }
-    void revokeFromHeadset(){requireMain();preferences.edit().putBoolean("trusted-lan",false).remove("key").remove("controller").commit();retire();}
+    void revokeFromHeadset(){
+        requireMain();preferences.edit().putBoolean("trusted-lan",false).remove("key").remove("controller").commit();
+        retireControllers();controlModeChanged();
+    }
     /** Debug shell/DUMP entry only; the operator validates the closed request and actor facts. */
     JSONObject provisionHeadsetIdentity(JSONObject input,final LocalEnrollmentGuard guard)throws Exception {
         final JSONObject request=new JSONObject(input.toString());
@@ -245,7 +248,7 @@ public final class ExperimentSessionCommandGateway {
             preferences.getString("device",""),gatewayEpoch,new ExperimentSessionGatewayProtocol.Owner(){
                 @Override public JSONObject exchange(final String action,final JSONObject payload)throws Exception {
                     return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception{
-                        if(gatewayEpoch!=admittedGatewayEpoch)throw new SecurityException("gateway-epoch-retired");
+                        if(protocol==null||gatewayEpoch!=admittedGatewayEpoch)throw new SecurityException("gateway-epoch-retired");
                         return ownerExchange(action,payload);
                     }});
                 }});
@@ -262,13 +265,18 @@ public final class ExperimentSessionCommandGateway {
         if(http==null)try{http=new ExperimentSessionGatewayHttpServer(this,8766);http.start();routeState="trusted-lan-listening";}
         catch(Exception unavailable){routeState="listener-unavailable";if(http!=null)http.close();http=null;}
     }
-    private void retire() {
+    /** Controller revocation leaves the live native journal and its original receipts intact. */
+    private void retireControllers() {
         clearLocalEnrollmentOffer();
         guests.clear();
         stopRoutesFromHeadset();
         if(protocol!=null)protocol.retire();protocol=null;
+        session.clear();polar.clear();
+    }
+    private void retire() {
+        retireControllers();
         if(http!=null)http.close();http=null;
-        carrier.gatewayBinding(null,"","0");carrier.attachCommandGateway(false);session.clear();polar.clear();if(journal!=null)journal.retire();journal=null;routeState="disabled";
+        carrier.gatewayBinding(null,"","0");carrier.attachCommandGateway(false);if(journal!=null)journal.retire();journal=null;routeState="disabled";
     }
     public JSONObject identity()throws Exception {
         return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception {

@@ -120,7 +120,24 @@ final class RemoteJoinHarness {
   g.provisionHeadsetIdentity(new JSONObject(provision.toString()).put("expected_native_owner_identity",3).put("expected_runtime_epoch",9).put("expected_gateway_lifecycle_revision",3),good);
   JSONObject enrolledClient=new JSONObject().put("controller",context.prefs.getString("controller","")).put("key",enrolled).put("epoch",enrolledIdentity.getString("epoch"));g.exchange(auth(enrolledClient,"status",new JSONObject()));
   check(context.prefs.getString("key","").equals(enrolled)&&context.prefs.getBoolean("trusted-lan",false),"join rotated legacy enrollment");
-  JSONObject retiring=join(g,enrolledIdentity);g.nativeOwnerChanged(3,9,false);deny(()->g.exchange(auth(retiring,"status",new JSONObject())));deny(()->join(g,enrolledIdentity));check(!g.identity().getBoolean("remote_available")&&dispatches==1,"retired owner available or invalid joins dispatched");
+  // Optional enrollment revocation must preserve the live native owner's key-free route and originals.
+  JSONObject rotated=g.enrollFromHeadset(true),beforeRevoke=g.identity();rotated.put("epoch",beforeRevoke.getString("epoch"));
+  JSONObject original=new JSONObject(command.toString()).put("id","3333333333333333");g.exchange(auth(rotated,"command",original));int originalDispatches=dispatches;
+  JSONObject revokedGuest=join(g,beforeRevoke);
+  Throwable[] revokedFailure={null};JSONObject revokeQueued=auth(rotated,"command",new JSONObject(command.toString()).put("id","4444444444444444"));
+  Thread revokeNetwork=new Thread(()->{try{g.exchange(revokeQueued);}catch(Throwable e){revokedFailure[0]=e;}},"network");revokeNetwork.start();
+  Runnable revokedTask=android.os.Handler.queue.poll(2,java.util.concurrent.TimeUnit.SECONDS);check(revokedTask!=null,"enrolled command not queued");
+  g.revokeFromHeadset();mode.packed=93;g.controlModeChanged();mode.packed=102;g.controlModeChanged();
+  revokedTask.run();revokeNetwork.join(2000);
+  check(g.identity().getBoolean("remote_available"),"revoking optional enrollment stranded live Remote owner");
+  check(!g.enabled()&&!context.prefs.contains("key")&&!context.prefs.contains("controller"),"revocation retained persistent enrollment");
+  check(!revokeNetwork.isAlive()&&revokedFailure[0]!=null&&dispatches==originalDispatches,"revoked queued enrolled controller dispatched");
+  deny(()->g.exchange(auth(rotated,"status",new JSONObject())));deny(()->g.exchange(auth(revokedGuest,"status",new JSONObject())));
+  JSONObject recoveredIdentity=g.identity(),recovered=join(g,recoveredIdentity);
+  check(recoveredIdentity.getString("epoch").equals(beforeRevoke.getString("epoch"))&&g.discoveryMetadata().getString("epoch").equals(beforeRevoke.getString("epoch")),"revocation replaced native journal epoch");
+  JSONObject originalReceipt=new JSONObject(g.exchange(auth(recovered,"receipt",new JSONObject().put("id",original.getString("id")))).getString("payload"));
+  check(originalReceipt.getString("state").equals("confirmed"),"revocation lost original receipt");g.exchange(auth(recovered,"command",original));check(dispatches==originalDispatches,"recovery redispatched original");
+  JSONObject retiring=join(g,recoveredIdentity);g.nativeOwnerChanged(3,9,false);deny(()->g.exchange(auth(retiring,"status",new JSONObject())));deny(()->join(g,recoveredIdentity));check(!g.identity().getBoolean("remote_available")&&dispatches==originalDispatches,"retired owner available or invalid joins dispatched");
   System.out.println("PASS "+checks+" production Remote join/authentication, exact shape, shared receipts, HMAC/replay, expiry/capacity, owner/mode ABA/queued revocation, serial/provisioning and legacy enrollment; inert Android/network");
  }
 }

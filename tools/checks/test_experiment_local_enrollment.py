@@ -34,6 +34,8 @@ final class LocalEnrollmentHarness {
  void requireMain(){}boolean featurePackaged(Object c){return packaged;}String relayOrigin(){return "https://example.invalid";}
  JSONObject onMain(java.util.concurrent.Callable<JSONObject> action)throws Exception{return action.call();}
  void retire(){retirements++;clearLocalEnrollmentOffer();routeState="disabled";}
+ void retireControllers(){clearLocalEnrollmentOffer();}
+ void controlModeChanged(){routeState="native-owner-no-lan-listener";}
  void reconcile(){rotations++;gatewayEpoch++;routeState="trusted-lan-listening";}
  __PRODUCTION__
  JSONObject request(String id)throws Exception{
@@ -53,7 +55,7 @@ final class LocalEnrollmentHarness {
   check(!key.equals(next.getJSONObject("credentials").getString("key"))&&h.rotations==2);
   JSONObject replay=h.request("1111111111111111");deny(()->h.enrollFromLocalOperator(replay,good));
   String before=h.preferences.getString("key","");JSONObject ui=h.enrollFromHeadset(true);check(!before.equals(ui.getString("key"))&&h.rotations==3);check(ui.getString("key").equals(h.preferences.getString("key","")));
-  h.revokeFromHeadset();check(h.preferences.getString("key","").isEmpty()&&h.routeState.equals("disabled"));
+  int nativeRetirements=h.retirements;h.revokeFromHeadset();check(h.retirements==nativeRetirements);check(h.preferences.getString("key","").isEmpty()&&h.routeState.equals("native-owner-no-lan-listener"));
   for(String field:new String[]{"expected_native_owner_identity","expected_runtime_epoch","expected_gateway_lifecycle_revision"}){
    JSONObject bad=h.request("3333333333333333").put(field,99L);deny(()->h.enrollFromLocalOperator(bad,good));
   }
@@ -64,7 +66,7 @@ final class LocalEnrollmentHarness {
   h.delegate.current.put("phase","active");check(!h.localOperatorEnrollmentStatus().getBoolean("available"));h.delegate.current.put("phase","idle").put("session_key","live");check(!h.localOperatorEnrollmentStatus().getBoolean("available"));h.delegate.current.put("session_key",JSONObject.NULL);
   JSONObject pending=h.request("4444444444444444");h.delegate.status.put("pending",true);deny(()->h.enrollFromLocalOperator(pending,good));h.delegate.status.put("pending",false);
   JSONObject retired=h.request("5555555555555555");int count=h.rotations;deny(()->h.enrollFromLocalOperator(retired,()->{h.lifecycleRevision++;}));check(count==h.rotations);
-  JSONObject race=h.request("6666666666666666");int[] calls={0};deny(()->h.enrollFromLocalOperator(race,()->{if(++calls[0]==2)h.lifecycleRevision++;}));check(h.preferences.getString("key","").isEmpty()&&h.routeState.equals("disabled"));
+  JSONObject race=h.request("6666666666666666");int[] calls={0};deny(()->h.enrollFromLocalOperator(race,()->{if(++calls[0]==2)h.lifecycleRevision++;}));check(h.preferences.getString("key","").isEmpty()&&h.routeState.equals("native-owner-no-lan-listener"));
   JSONObject sessionRace=h.request("7777777777777777");int[] calls2={0};deny(()->h.enrollFromLocalOperator(sessionRace,()->{if(++calls2[0]==2)h.delegate.current.put("phase","active");}));check(h.preferences.getString("key","").isEmpty());
   h.delegate.current.put("phase","idle");JSONObject denied=h.request("8888888888888888");deny(()->h.enrollFromLocalOperator(denied,()->{throw new SecurityException("actor changed");}));
   JSONObject slow=h.request("9999999999999999");count=h.rotations;deny(()->h.enrollFromLocalOperator(slow,()->{clock+=5001;}));check(h.rotations==count);

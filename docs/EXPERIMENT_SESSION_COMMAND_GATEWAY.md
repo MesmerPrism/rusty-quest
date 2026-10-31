@@ -23,6 +23,9 @@ also starts the LAN listener without enrollment. Choose and Direct deny local
 guest joins. The native owner's journal is initialized independently of stored
 enrollment. Mode revision changes revoke all guests and preserve original
 receipts; native owner retirement also revokes queued guest exchanges.
+Revoking the optional persistent controller revokes existing guests and queued
+controller work while preserving the live native journal. Remote remains able
+to admit fresh local guests; Direct then Remote needs no reenrollment or restart.
 
 The listener uses TCP 8766, accepts bounded HTTP/1.1 requests from private/local
 addresses, and exposes only `GET /v1/gateway` and `POST /v1/gateway`. GET returns
