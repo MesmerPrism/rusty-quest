@@ -37,7 +37,8 @@ if($r.operation -ceq 'control-mode-status'){
  if($case -ceq 'reply-lost'){'no receipt';return}
  $receipt.mode_result=@{operation_id=$r.operation_id;state='pending';original_request=$r}
 }elseif($r.operation -ceq 'control-mode-receipt'){
- if(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'original.json')){$receipt.mode_result=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'original.json') -Raw|ConvertFrom-Json -Depth 40}
+ if($case -ceq 'receipt-fixture'){$receipt.mode_result=$env:RQ_MODE_TEST_RECEIPT|ConvertFrom-Json -Depth 40}
+ elseif(Test-Path -LiteralPath (Join-Path $PSScriptRoot 'original.json')){$receipt.mode_result=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'original.json') -Raw|ConvertFrom-Json -Depth 40}
  else{$receipt.mode_result=@{operation_id=$r.operation_id;state='outcome_unknown';reason='original-request-unavailable-no-replay'}}
 }else{throw 'Unclosed mode operation'}
 $json=$receipt|ConvertTo-Json -Depth 40 -Compress
@@ -48,6 +49,7 @@ $json=$receipt|ConvertTo-Json -Depth 40 -Compress
 def main():
     p=argparse.ArgumentParser()
     p.add_argument('--pwsh',type=Path,required=True)
+    p.add_argument('--case',choices=('all','ids'),default='all')
     a=p.parse_args()
     cli=Path(__file__).resolve().parents[1]/'Invoke-ExperimentControlMode.ps1'
     with tempfile.TemporaryDirectory(prefix='rq-mode-cli-') as t:
@@ -55,9 +57,10 @@ def main():
         digest=hashlib.sha256(fake.read_bytes()).hexdigest()
         base=['-Device','inert-transport','-CanonicalSerial','SYNTHETIC-ONLY','-BootId','synthetic-boot','-Package','synthetic.app','-Adb',str(fake),'-AdbSha256',digest]
         counter=0
-        def run(mode='remote',case='',extra=(),accept=True,arguments=None):
+        def run(mode='remote',case='',extra=(),accept=True,arguments=None,receipt=None):
             nonlocal counter
             counter+=1;out=root/('receipt-'+str(counter));env=dict(os.environ,RQ_MODE_TEST_CASE=case)
+            if receipt is not None:env['RQ_MODE_TEST_RECEIPT']=json.dumps(receipt)
             command=[str(a.pwsh),'-NoProfile','-File',str(cli),'-Mode',mode,*((base if arguments is None else arguments)), '-OutputDirectory',str(out),*extra]
             if mode!='status' and '-ExpectedApkSha256' not in extra:command+=['-ExpectedApkSha256','a'*64]
             r=subprocess.run(command,env=env,text=True,capture_output=True)
@@ -66,6 +69,36 @@ def main():
         def requests():
             f=root/'requests.jsonl'
             return [json.loads(line) for line in f.read_text(encoding='utf-8-sig').splitlines()] if f.exists() else []
+        def original_id_cases():
+            requested='1111111111111111';other='2222222222222222'
+            def lookup(value,accept):
+                before=len(requests())
+                out,r=run('status',case='receipt-fixture',extra=['-OperationId',requested],accept=accept,receipt=value)
+                assert [v['operation'] for v in requests()[before:]]==['control-mode-receipt'],'explicit lookup dispatched a mutation'
+                assert json.loads((out/'original-receipt.json').read_text())['mode_result']==value
+                if accept:
+                    assert json.loads((out/'result.json').read_text())['mode_result']['operation_id']==requested
+                else:
+                    assert not (out/'result.json').exists(),'mismatched original persisted as a successful result'
+                    assert json.loads((out/'failure.json').read_text())['no_retry'] is True
+                return r
+            for state in ('accepted','rejected','pending','outcome_unknown'):
+                lookup({'operation_id':other,'state':state},False)
+                lookup({'operation_id':requested,'state':state,'original_request':{'operation_id':other}},False)
+                # Missing originals stay unknown, while matching terminal/pending originals retain their disposition.
+                good={'operation_id':requested,'state':state}
+                if state!='outcome_unknown':good['original_request']={'operation_id':requested}
+                lookup(good,True)
+            for malformed in ({'state':'outcome_unknown'}, {'operation_id':None,'state':'outcome_unknown'},
+                              {'operation_id':int(requested),'state':'accepted'},
+                              {'operation_id':requested,'state':'accepted','original_request':{}},
+                              {'operation_id':requested,'state':'outcome_unknown','original_request':None},
+                              {'operation_id':requested,'state':'accepted','original_request':{'operation_id':int(requested)}}):
+                lookup(malformed,False)
+            print('PASS explicit original-ID reconciliation: exact result/original-request string IDs, accepted/rejected/pending/unknown, malformed ID refusal, retained unknown and zero mutations')
+        if a.case=='ids':
+            original_id_cases()
+            return
         out,r=run();result=json.loads((out/'result.json').read_text(encoding='utf-8'))
         original=json.loads((out/'set-request.json').read_text())
         assert result['mode_result']['original_request']==original
@@ -89,6 +122,7 @@ def main():
         before=len(requests());run(mode='choose',accept=False);run(extra=['-RequestPath','anything'],accept=False);assert len(requests())==before
         existing=[str(a.pwsh),'-NoProfile','-File',str(cli),'-Mode','status',*base,'-OutputDirectory',str(out)]
         assert subprocess.run(existing,text=True,capture_output=True).returncode!=0
+        original_id_cases()
         print('PASS child PowerShell runtime mode CLI: exact arguments/fresh typed fences/original reconciliation, inert status and same mode, stopped process, serial/boot/ADB/APK mismatch, unsupported59, lost reply and no replay; no ADB or ports')
 
 

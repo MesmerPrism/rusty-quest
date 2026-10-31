@@ -37,6 +37,14 @@ function Invoke-ModeReadOrSet([string]$Name,$Request){
  }catch{throw "Runtime mode operator unavailable (installed59 is unsupported); no mutation retry. $($_.Exception.Message)"}
  Save-Json ($Name+'-receipt.json') $receipt
  if($receipt.schema -cne 'rusty.quest.experiment_session.operator_receipt.v1' -or $null -eq $receipt.PSObject.Properties['mode_operator_version'] -or $receipt.mode_operator_version -ne 1 -or $receipt.operation -cne $Request.operation){throw 'Unsupported APK runtime mode operator (requires mode operator v1; installed59 is unsupported)'}
+ if($Request.operation -ceq 'control-mode-receipt'){
+  $value=$receipt.mode_result
+  if($null -eq $value -or $null -eq $value.PSObject.Properties['operation_id'] -or $value.operation_id -isnot [string] -or $value.operation_id -cne $Request.operation_id){throw 'Original mode reconciliation ID mismatch; do not replay'}
+  if($null -ne $value.PSObject.Properties['original_request']){
+   $original=$value.original_request
+   if($null -eq $original -or $null -eq $original.PSObject.Properties['operation_id'] -or $original.operation_id -isnot [string] -or $original.operation_id -cne $Request.operation_id){throw 'Original mode request ID mismatch; do not replay'}
+  }
+ }
  return $receipt
 }
 function Assert-OriginalRequest($Receipt,$Request){
