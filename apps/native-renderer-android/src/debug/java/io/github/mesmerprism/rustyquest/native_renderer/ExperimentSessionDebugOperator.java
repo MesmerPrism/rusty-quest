@@ -3,10 +3,101 @@ import android.content.Context;
 import java.nio.charset.StandardCharsets;
 import org.json.JSONObject;
 final class ExperimentSessionDebugOperator {
+    private static final java.util.Map<String,JSONObject> modeRequests=new java.util.LinkedHashMap<String,JSONObject>();
+    private interface ModeRead {JSONObject read() throws Exception;}
+    private static JSONObject onModeMain(final ModeRead action) throws Exception {
+        if(android.os.Looper.myLooper()==android.os.Looper.getMainLooper())return action.read();
+        java.util.concurrent.FutureTask<JSONObject> task=new java.util.concurrent.FutureTask<JSONObject>(new java.util.concurrent.Callable<JSONObject>(){
+            public JSONObject call() throws Exception{return action.read();}
+        });
+        if(!new android.os.Handler(android.os.Looper.getMainLooper()).post(task))throw new IllegalStateException("mode-owner-unavailable");
+        try{return task.get(5,java.util.concurrent.TimeUnit.SECONDS);}
+        finally{task.cancel(false);} // Read only; cancelling never dispatches a mutation.
+    }
+    private static JSONObject modeEnvelope(String operation,JSONObject value) throws Exception {
+        return new JSONObject().put("schema","rusty.quest.experiment_session.operator_receipt.v1")
+            .put("mode_operator_version",1).put("operation",operation).put("mode_result",value);
+    }
+    private static JSONObject executeMode(final Context context,final JSONObject request) throws Exception {
+        final String operation=request.getString("operation");
+        if("control-mode-status".equals(operation))return onModeMain(new ModeRead(){public JSONObject read()throws Exception{
+            return modeEnvelope(operation,BreathCompositionPanelModule.experimentControlModeStatus())
+                .put("pid",android.os.Process.myPid()).put("uid",android.os.Process.myUid())
+                .put("process_start_ticks",processStartTicks()).put("apk_sha256",installedApkSha256(context));
+        }});
+        final String id=request.getString("operation_id");
+        if("control-mode-receipt".equals(operation))return onModeMain(new ModeRead(){public JSONObject read()throws Exception{
+            return modeEnvelope(operation,modeReceipt(id));
+        }});
+        final JSONObject frozen=new JSONObject(request.toString());
+        synchronized(modeRequests){
+            JSONObject original=modeRequests.get(id);
+            if(original!=null)return modeEnvelope(operation,new JSONObject(original.toString()));
+            if(modeRequests.size()>=128)throw new SecurityException("mode-request-capacity-no-replay");
+            modeRequests.put(id,new JSONObject().put("operation_id",id).put("state","pending")
+                .put("original_request",new JSONObject(frozen.toString())));
+        }
+        boolean posted=new android.os.Handler(android.os.Looper.getMainLooper()).post(new Runnable(){public void run(){
+            JSONObject result;
+            try{
+                JSONObject applied=BreathCompositionPanelModule.selectExperimentOperatorMode(frozen,new Runnable(){public void run(){
+                    try{validateEnrollmentActorFacts(frozen,android.os.Process.myPid(),android.os.Process.myUid(),processStartTicks(),installedApkSha256(context));}
+                    catch(Exception denied){throw new SecurityException("mode-actor-apk-changed",denied);}
+                }});
+                result=new JSONObject().put("state","accepted").put("native_acceptance",applied);
+            }catch(Exception denied){
+                result=new JSONObject();try{result.put("state",denied instanceof SecurityException?"rejected":"outcome_unknown")
+                    .put("reason",denied instanceof SecurityException?"mode-fence-or-owner-rejected":"mode-owner-result-unavailable");}
+                catch(Exception impossible){throw new IllegalStateException(impossible);}
+            }
+            synchronized(modeRequests){
+                try{result.put("operation_id",id).put("original_request",new JSONObject(frozen.toString()));
+                    modeRequests.put(id,result);}catch(Exception impossible){throw new IllegalStateException(impossible);}
+            }
+        }});
+        synchronized(modeRequests){
+            if(!posted)modeRequests.get(id).put("state","rejected").put("reason","mode-owner-unavailable");
+            return modeEnvelope(operation,new JSONObject(modeRequests.get(id).toString()));
+        }
+    }
+    private static JSONObject modeReceipt(String id) throws Exception {
+        JSONObject result;
+        synchronized(modeRequests){
+            JSONObject original=modeRequests.get(id);
+            if(original==null)return new JSONObject().put("operation_id",id).put("state","outcome_unknown").put("reason","original-request-unavailable-no-replay");
+            result=new JSONObject(original.toString());
+        }
+        JSONObject applied=result.optJSONObject("native_acceptance");
+        if(applied==null)return result;
+        JSONObject presentation=new JSONObject().put("status","unavailable");
+        try{
+            JSONObject current=BreathCompositionPanelModule.experimentControlModeStatus();
+            JSONObject before=applied.getJSONObject("before");
+            JSONObject wanted=applied.getJSONObject("panel_visibility"),actual=current.getJSONObject("panel_visibility");
+            boolean visible="direct".equals(applied.getString("mode"));
+            presentation.put("requested_visible",visible);
+            if(current.getString("host_id").equals(before.getString("host_id"))
+                    &&current.getLong("carrier_generation")==before.getLong("carrier_generation")
+                    &&current.getLong("native_owner_epoch")==before.getLong("native_owner_epoch")
+                    &&current.getLong("mode_packed")==applied.getLong("mode_packed")){
+                presentation.put("status","pending");
+                Object generation=wanted.opt("generation"),revision=wanted.opt("request_revision");
+                if((generation instanceof Long||generation instanceof Integer)&&(revision instanceof Long||revision instanceof Integer)
+                        &&((Number)generation).longValue()>0&&((Number)revision).longValue()>0){
+                    Boolean acknowledged=NativeMeshUiProducer.VisibilityReadback.applied(actual,((Number)generation).longValue(),((Number)revision).longValue());
+                    if(acknowledged!=null&&acknowledged.booleanValue()==visible)
+                        presentation.put("status","acknowledged").put("effective_visible",acknowledged).put("renderer_receipt",actual);
+                }
+            }
+        }catch(Exception unavailable){ /* Native acceptance survives unavailable rendering/retired host. */ }
+        return result.put("presentation",presentation);
+    }
     /** Production shell control of the real selected session owner; no clock/phase fabrication. */
     static String execute(Context context, JSONObject request) throws Exception {
         validateShape(request);
         String operation = request.getString("operation");
+        if(operation.equals("control-mode-status")||operation.equals("set-control-mode")||operation.equals("control-mode-receipt"))
+            return executeMode(context,new JSONObject(request.toString())).toString();
         boolean read = "status".equals(operation);
         JSONObject breath = new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus());
         JSONObject snapshot = breath.getJSONObject("snapshot");
@@ -76,14 +167,19 @@ final class ExperimentSessionDebugOperator {
 
     static void validateShape(JSONObject request) throws Exception {
         String operation = request.getString("operation");
-        boolean read = "status".equals(operation);
+        boolean modeRead="control-mode-status".equals(operation),modeReceipt="control-mode-receipt".equals(operation),modeSet="set-control-mode".equals(operation);
+        boolean read = "status".equals(operation)||modeRead||modeReceipt;
         if (!read && !"set-bias".equals(operation) && !"enroll-trusted-lan".equals(operation) && !"provision-headset-identity".equals(operation) && !"official-start".equals(operation) && !"pause".equals(operation)
-                && !"resume".equals(operation) && !ExperimentSessionBleProtocol.supportedOperation(operation)) throw new SecurityException("operator-operation-invalid");
+                && !"resume".equals(operation) && !modeSet && !ExperimentSessionBleProtocol.supportedOperation(operation)) throw new SecurityException("operator-operation-invalid");
         String[] fields = read ? new String[] {"schema", "operation"} : new String[] {
             "schema", "operation", "operation_id", "expected_pid", "expected_uid",
             "expected_process_start_ticks", "expected_apk_sha256", "expected_binding_sha256",
             "expected_runtime_epoch", "expected_generation", "expected_session_key",
             "expected_condition", "expected_profile_sha256", "operator_origin"};
+        if(modeReceipt)fields=new String[]{"schema","operation","operation_id"};
+        if(modeSet){String[] extended=java.util.Arrays.copyOf(fields,fields.length+6);
+            String[] added={"requested_mode","expected_mode_packed","expected_mode_revision","expected_host_id","expected_carrier_generation","expected_native_owner_epoch"};
+            System.arraycopy(added,0,extended,fields.length,added.length);fields=extended;}
         if ("set-bias".equals(operation)) { String[] extended=java.util.Arrays.copyOf(fields,fields.length+1);extended[fields.length]="bias_percent";fields=extended; }
         if ("arm".equals(operation)) { String[] extended=java.util.Arrays.copyOf(fields,fields.length+2); extended[fields.length]="requested_condition";extended[fields.length+1]="requested_bias";fields=extended; }
         if ("enroll-trusted-lan".equals(operation)) {
@@ -102,7 +198,7 @@ final class ExperimentSessionDebugOperator {
             Object raw = request.opt(field);
             if (field.equals("trusted_lan_consent")) {
                 if(!Boolean.TRUE.equals(raw))throw new SecurityException("trusted-lan-consent-required");
-            } else if (field.equals("expected_native_owner_identity") || field.equals("expected_gateway_lifecycle_revision") || field.equals("expected_pid") || field.equals("expected_uid")
+            } else if (field.equals("expected_mode_packed")||field.equals("expected_mode_revision")||field.equals("expected_carrier_generation")||field.equals("expected_native_owner_epoch")||field.equals("expected_native_owner_identity") || field.equals("expected_gateway_lifecycle_revision") || field.equals("expected_pid") || field.equals("expected_uid")
                     || field.equals("expected_process_start_ticks") || field.equals("expected_runtime_epoch")
                     || field.equals("expected_generation") || field.equals("requested_bias") || field.equals("bias_percent")) {
                 if (!(raw instanceof Integer) && !(raw instanceof Long))
@@ -111,6 +207,11 @@ final class ExperimentSessionDebugOperator {
                     throw new SecurityException("operator-positive-field-required");
             } else if (!(raw instanceof String)) throw new SecurityException("operator-string-field-required");
         }
+        if(modeSet||modeReceipt){
+            if(!ExperimentSessionBleProtocol.isLowerHex(request.getString("operation_id"),16))throw new SecurityException("operator-id-invalid");
+        }
+        if(modeSet&&(!request.getString("requested_mode").matches("direct|remote")
+                ||!"shell-experiment-operator-v1".equals(request.getString("operator_origin"))))throw new SecurityException("operator-mode-invalid");
         if ("set-bias".equals(operation) && request.getLong("bias_percent")>100) throw new SecurityException("operator-bias-invalid");
         if ("provision-headset-identity".equals(operation)&&!ExperimentSessionHeadsetIdentity.valid(request.getString("hardware_serial")))throw new SecurityException("hardware-serial-invalid");
         if ("arm".equals(operation) && (!request.getString("requested_condition").matches("condition-[ab]") || request.getLong("requested_bias")>100)) throw new SecurityException("operator-arm-selection-invalid");

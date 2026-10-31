@@ -605,6 +605,68 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
 
     private static ExperimentSessionUiControlHandoff uiControlHandoff;
     private static final java.util.Set<String> operatorRequestIds = new java.util.HashSet<String>();
+    private final String controlModeHostId=UUID.randomUUID().toString();
+    /** Inert read from the actual selected native controller. Debug callers run on main. */
+    static JSONObject experimentControlModeStatus() throws Exception {
+        if(Looper.myLooper()!=Looper.getMainLooper())throw new IllegalStateException("mode-owner-requires-main-thread");
+        BreathCompositionPanelModule owner=remotePanel.get();
+        ExperimentControlMode.Snapshot mode=controlMode.readSnapshot();
+        ExperimentSessionBleServer server=remoteServer();
+        if(owner==null||!owner.hostCurrent()||!owner.nativePresentation()
+                ||controllerFor(owner.hostActivity())!=owner||!NativeRendererActivityComponents.isNative(owner.hostActivity())
+                ||!mode.selected||server==null||server.currentGeneration()<=0||server.currentNativeEpoch()<=0)
+            throw new SecurityException("selected-native-mode-owner-unavailable");
+        JSONObject response=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
+            new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString()));
+        JSONObject breath=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
+        if(!"accepted".equals(response.opt("command_status"))||!Boolean.TRUE.equals(breath.opt("feature_lock_active"))
+                ||!Boolean.TRUE.equals(breath.opt("activation_binding_matches")))throw new SecurityException("mode-readback-unavailable");
+        JSONObject session=response.getJSONObject("readback");
+        if(!modeInteger(session.opt("runtime_epoch"))||!modeInteger(session.opt("generation"))
+                ||session.getLong("runtime_epoch")!=server.currentNativeEpoch())throw new SecurityException("mode-native-owner-mismatch");
+        return new JSONObject().put("host_id",owner.controlModeHostId).put("carrier_generation",server.currentGeneration())
+            .put("native_owner_epoch",server.currentNativeEpoch()).put("binding_sha256",breath.getString("activation_binding_sha256"))
+            .put("mode",mode.wireName()).put("mode_packed",mode.packed).put("mode_revision",mode.revision)
+            .put("session",session).put("panel_visibility",NativeMeshUiProducer.productPanelVisibility(owner.hostActivity()));
+    }
+    private static boolean modeInteger(Object value){return value instanceof Integer||value instanceof Long;}
+    /** Closed shell admission uses exactly the same selection/presentation handler as UI buttons. */
+    static JSONObject selectExperimentOperatorMode(JSONObject request,Runnable actorGuard) throws Exception {
+        actorGuard.run(); // Hash/stat I/O precedes the fresh execution-time native tuple read.
+        JSONObject before=experimentControlModeStatus();
+        JSONObject session=before.getJSONObject("session");
+        for(String field:new String[]{"runtime_epoch","generation"})
+            if(!modeInteger(session.opt(field))||request.getLong("expected_"+field)!=session.getLong(field))
+                throw new SecurityException("mode-session-fence-mismatch");
+        for(String field:new String[]{"session_key","condition_id","non_audio_profile_sha256"}) {
+            if(!session.has(field))throw new SecurityException("mode-session-field-unavailable");
+            String expected=field.equals("condition_id")?"expected_condition":field.equals("non_audio_profile_sha256")?"expected_profile_sha256":"expected_session_key";
+            String value=session.isNull(field)?(field.equals("session_key")?"-":""):session.getString(field);
+            if(!request.getString(expected).equals(value))throw new SecurityException("mode-session-fence-mismatch");
+        }
+        for(String field:new String[]{"host_id","binding_sha256"})
+            if(!request.getString("expected_"+field).equals(before.getString(field)))throw new SecurityException("mode-host-binding-mismatch");
+        for(String field:new String[]{"mode_packed","mode_revision","carrier_generation","native_owner_epoch"})
+            if(request.getLong("expected_"+field)!=before.getLong(field))throw new SecurityException("mode-owner-cas-mismatch");
+        BreathCompositionPanelModule owner=remotePanel.get();
+        if(owner==null||!owner.controlModeHostId.equals(before.getString("host_id"))||!owner.hostCurrent())throw new SecurityException("mode-host-retired");
+        ExperimentControlMode.Snapshot expected=new ExperimentControlMode.Snapshot(before.getLong("mode_packed"));
+        int requested="direct".equals(request.getString("requested_mode"))?ExperimentControlMode.DIRECT:ExperimentControlMode.REMOTE;
+        owner.selectExperimentControlMode(expected,requested);
+        ExperimentControlMode.Snapshot after=controlMode.readSnapshot();
+        if(after.mode!=requested||after.revision!=expected.revision+1L)throw new SecurityException("mode-selection-not-accepted");
+        JSONObject oldVisibility=before.getJSONObject("panel_visibility");
+        JSONObject visibility=NativeMeshUiProducer.productPanelVisibility(owner.hostActivity());
+        // Only a newly admitted request can later prove this switch's rendering effect.
+        if(!modeInteger(oldVisibility.opt("generation"))||!modeInteger(oldVisibility.opt("request_revision"))
+                ||!modeInteger(visibility.opt("generation"))||!modeInteger(visibility.opt("request_revision"))
+                ||oldVisibility.getLong("generation")!=visibility.getLong("generation")
+                ||visibility.getLong("request_revision")<=oldVisibility.getLong("request_revision"))
+            visibility=new JSONObject().put("status","unavailable");
+        return new JSONObject().put("command_status","accepted").put("before",before)
+            .put("mode",after.wireName()).put("mode_packed",after.packed).put("mode_revision",after.revision)
+            .put("panel_visibility",visibility);
+    }
     static JSONObject experimentOperatorOwnerReceipt() throws Exception {
         ExperimentSessionBleServer server=remoteServer();return server==null?new JSONObject():server.ownerReceipt();
     }
@@ -1946,6 +2008,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         if(!accepted){updateStatus("Control mode changed; use the current panel choice.");return;}
         requestPolarStartupFromModeChoice();
         if(requested==ExperimentControlMode.REMOTE)hideRemoteControlPanel();
+        else NativeMeshUiProducer.requestPanelVisibility(hostActivity(),true);
     }
 
     private void requestPolarStartupFromModeChoice(){

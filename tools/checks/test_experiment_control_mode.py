@@ -130,9 +130,9 @@ final class ControlModePresentationTest {
   gateway.trusted=true;gateway.state="listener-unavailable";panel.hideRemoteControlPanel();check(NativeMeshUiProducer.requests==2,"listener readiness blocked explicit Return to VR");
   gateway.state="trusted-lan-listening";panel.hideRemoteControlPanel();check(NativeMeshUiProducer.requests==3&&!NativeMeshUiProducer.visible,"Remote did not request actual native panel hiding");
   panel.selectExperimentControlMode(choose,2);check(NativeMeshUiProducer.requests==3,"stale choice repeated hide");
-  panel.selectExperimentControlMode(panel.controlMode.readSnapshot(),1);check(panel.nativeOwner.value==37&&NativeMeshUiProducer.requests==3,"Direct changed presentation/session implicitly");
-  panel.hideRemoteControlPanel();check(NativeMeshUiProducer.requests==3,"Direct hidden by stale Remote callback");
-  panel.selectExperimentControlMode(panel.controlMode.readSnapshot(),2);check(panel.nativeOwner.value==46&&NativeMeshUiProducer.requests==4,"enrolled Remote selection did not hide");
+  panel.selectExperimentControlMode(panel.controlMode.readSnapshot(),1);check(panel.nativeOwner.value==37&&NativeMeshUiProducer.requests==4&&NativeMeshUiProducer.visible,"Direct did not restore panel presentation");
+  panel.hideRemoteControlPanel();check(NativeMeshUiProducer.requests==4,"Direct hidden by stale Remote callback");
+  panel.selectExperimentControlMode(panel.controlMode.readSnapshot(),2);check(panel.nativeOwner.value==46&&NativeMeshUiProducer.requests==5,"enrolled Remote selection did not hide");
   System.out.println("PASS production mode selection presentation: native CAS readback, stale choice, Direct return, explicit Remote hide regardless of LAN readiness; no device acknowledgement claimed");
  }
 }
@@ -264,6 +264,8 @@ def handoff(args, root):
 import org.json.JSONObject;
 final class ControlPanelActivity {static int effects;static String applyExperimentSessionCommand(String command)throws Exception {effects++;return new JSONObject().put("command_status","queued").toString();}}
 final class ControlModeDelayedHandoffTest {
+ static class NativeMeshUiProducer {static boolean requestPanelVisibility(Object owner,boolean show){return true;}}
+ Object hostActivity(){return this;}
  static class NativeFixture implements ExperimentControlMode.NativeAccess {long value=21;public long initialize(boolean s){return value;}public long read(){return value;}public long select(long e,int m){if(e==value)value=((value>>>3)+1)*8+4+m;return value;}}
  NativeFixture nativeOwner=new NativeFixture();ExperimentControlMode controlMode=new ExperimentControlMode(nativeOwner);
  ExperimentSessionUiControlHandoff uiControlHandoff;int rebuilds,hides;

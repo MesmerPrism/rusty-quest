@@ -116,6 +116,10 @@ availability and deliberate maintenance return.
 
 ## Debug operator
 
+For running Direct/Remote selection and original request reconciliation, use the
+[runtime mode CLI](EXPERIMENT_CONTROL_MODE_CLI.md). Its read/set operations use
+the same selected owner as the panel and remain separate from experiment commands.
+
 EnableExperimentSessionDebugOperator is an explicit build-resolution opt-in.
 It requires the selected breath CLI/panel closure and an explicitly declared
 ExperimentSessionDebugControlProvider manifest component. Only those builds

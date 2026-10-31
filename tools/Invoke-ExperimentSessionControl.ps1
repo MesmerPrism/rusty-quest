@@ -19,7 +19,7 @@ if((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
 $raw=[IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $RequestPath).Path)
 if($raw.Length -eq 0 -or $raw.Length -gt 4096){throw 'Request exceeds closed provider bound'}
 $shape=[Text.Encoding]::UTF8.GetString($raw)|ConvertFrom-Json -Depth 30
-if($shape.schema -cne 'rusty.quest.experiment_session.operator_command.v1' -or $shape.operation -cnotin @('status','set-bias','official-start','pause','resume','arm','save-next','save-exit','return-vr','open-polar','ping','enroll-trusted-lan','provision-headset-identity')){throw 'Unsupported closed owner request'}
+if($shape.schema -cne 'rusty.quest.experiment_session.operator_command.v1' -or $shape.operation -cnotin @('status','control-mode-status','set-control-mode','control-mode-receipt','set-bias','official-start','pause','resume','arm','save-next','save-exit','return-vr','open-polar','ping','enroll-trusted-lan','provision-headset-identity')){throw 'Unsupported closed owner request'}
 $enrollment=$shape.operation -ceq 'enroll-trusted-lan'
 $secretPath=$null
 if($enrollment){
@@ -45,6 +45,12 @@ if($shape.operation -ceq 'provision-headset-identity'){
 }
 $boot=(& $binary '-s' $Device 'shell' 'cat' '/proc/sys/kernel/random/boot_id') -join "`n"
 if($LASTEXITCODE -ne 0 -or $boot.Trim() -cne $BootId){throw 'Exact boot target mismatch'}
+if($shape.operation -cin @('control-mode-status','set-control-mode','control-mode-receipt')){
+ # A content provider can start its process. Runtime mode tooling must never do so.
+ $running=(& $binary '-s' $Device 'shell' 'pidof' $Package) -join "`n"
+ if($LASTEXITCODE -ne 0 -or $running.Trim() -cnotmatch '^[1-9][0-9]*$'){throw 'Selected app process is not already running; no provider call made'}
+ if($shape.operation -ceq 'set-control-mode' -and [long]$running.Trim() -ne $shape.expected_pid){throw 'Selected running actor changed; no provider call made'}
+}
 $encoded=[Convert]::ToBase64String($raw).TrimEnd('=')
 $callArguments=@('-s',$Device,'shell','content','call','--uri',('content://'+$Package+'.debug-experiment-control'),'--method','experiment-control','--arg',$encoded)
 if($enrollment){

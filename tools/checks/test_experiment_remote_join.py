@@ -63,7 +63,9 @@ final class ExperimentSessionGatewayHttpServer {static int starts,closes;Experim
 final class ExperimentSessionDirectNetwork {ExperimentSessionDirectNetwork(android.content.Context c){}static boolean featurePackaged(android.content.Context c){return false;}JSONObject snapshot(){return new JSONObject();}JSONObject localJoinDetails(){return new JSONObject();}void start(String m){}void close(){}}
 final class ExperimentSessionRelayClient {interface Endpoint{JSONObject identity()throws Exception;JSONObject exchange(JSONObject r)throws Exception;}static class Config{Config(String a,String b,String c,String d,long e){}}ExperimentSessionRelayClient(Config c,Endpoint e){}JSONObject snapshot(){return new JSONObject();}void start(){}void close(){}}
 final class ControlPanelActivity {static String applyExperimentSessionCommand(String s){return "{}";}static String nativeReadBreathCompositionStatus(){return "{}";}static String conditionAudioReadiness(String s){return "unavailable";}static String conditionBreathGuidanceReadiness(String s){return "no-pattern";}}
-final class BreathCompositionPanelModule {static JSONObject queueExperimentOperator(JSONObject s){return new JSONObject();}static JSONObject experimentOperatorOwnerReceipt(){return new JSONObject();}}
+final class BreathCompositionPanelModule {static JSONObject queueExperimentOperator(JSONObject s){return new JSONObject();}static JSONObject experimentOperatorOwnerReceipt(){return new JSONObject();}
+ static JSONObject experimentControlModeStatus(){return new JSONObject();}static JSONObject selectExperimentOperatorMode(JSONObject s,Runnable guard){return new JSONObject();}}
+final class NativeMeshUiProducer {static class VisibilityReadback {static Boolean applied(JSONObject r,long g,long v){return null;}}}
 '''
 HARNESS = r'''package io.github.mesmerprism.rustyquest.native_renderer;
 import org.json.JSONObject;import java.lang.reflect.*;

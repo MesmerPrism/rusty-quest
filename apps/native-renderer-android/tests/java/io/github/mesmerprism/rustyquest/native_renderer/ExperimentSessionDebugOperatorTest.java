@@ -5,6 +5,17 @@ public final class ExperimentSessionDebugOperatorTest {
  static void deny(Checked c)throws Exception{try{c.run();}catch(SecurityException e){return;}throw new AssertionError("wrong request shape admitted");}
  static JSONObject request()throws Exception{return new JSONObject().put("schema","rusty.quest.experiment_session.operator_command.v1").put("operation","pause").put("operation_id","0123456789abcdef").put("expected_pid",123).put("expected_uid",10191).put("expected_process_start_ticks",456L).put("expected_apk_sha256","a").put("expected_binding_sha256","b").put("expected_runtime_epoch",3L).put("expected_generation",7L).put("expected_session_key","s").put("expected_condition","condition-a").put("expected_profile_sha256","p").put("operator_origin","shell-experiment-operator-v1");}
  public static void main(String[]a)throws Exception{
+  ExperimentSessionDebugOperator.validateShape(new JSONObject().put("schema","rusty.quest.experiment_session.operator_command.v1").put("operation","control-mode-status"));
+  ExperimentSessionDebugOperator.validateShape(new JSONObject().put("schema","rusty.quest.experiment_session.operator_command.v1").put("operation","control-mode-receipt").put("operation_id","0123456789abcdef"));
+  JSONObject mode=request().put("operation","set-control-mode").put("requested_mode","remote")
+   .put("expected_mode_packed",21L).put("expected_mode_revision",2L).put("expected_host_id","host")
+   .put("expected_carrier_generation",1L).put("expected_native_owner_epoch",3L);
+  ExperimentSessionDebugOperator.validateShape(mode);
+  if(ExperimentSessionBleProtocol.supportedOperation("set-control-mode")||ExperimentSessionBleProtocol.supportedOperation("control-mode-status"))throw new AssertionError("mode operator leaked into guest command whitelist");
+  for(String key:new String[]{"expected_mode_packed","expected_mode_revision","expected_carrier_generation","expected_native_owner_epoch"}){
+   for(Object value:new Object[]{"1",1.5,true,JSONObject.NULL,0,-1}){JSONObject bad=new JSONObject(mode.toString()).put(key,value);deny(()->ExperimentSessionDebugOperator.validateShape(bad));}
+  }
+  for(Object value:new Object[]{"choose","DIRECT",3,"remote;anything",JSONObject.NULL}){JSONObject bad=new JSONObject(mode.toString()).put("requested_mode",value);deny(()->ExperimentSessionDebugOperator.validateShape(bad));}
   JSONObject good=request();ExperimentSessionDebugOperator.validateShape(good);
   for(String key:new String[]{"expected_pid","expected_uid","expected_process_start_ticks","expected_runtime_epoch","expected_generation"}){
    for(Object wrong:new Object[]{"7",7.5,true,JSONObject.NULL,-1}){JSONObject bad=new JSONObject(good.toString()).put(key,wrong);deny(()->ExperimentSessionDebugOperator.validateShape(bad));}
