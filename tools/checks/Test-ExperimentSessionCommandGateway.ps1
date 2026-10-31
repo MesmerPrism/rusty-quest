@@ -21,5 +21,8 @@ if($LASTEXITCODE-ne0){throw 'Gateway mixed BLE/network original receipt tests fa
 if($LASTEXITCODE-ne0){throw 'Privileged local enrollment tests failed'}
 & python (Join-Path $PSScriptRoot 'test_experiment_remote_join.py') --repo $repo --json-jar $JsonJar
 if($LASTEXITCODE-ne0){throw 'Remote guest/provisioned identity production host tests failed'}
+$jdkRoot=Split-Path -Parent (Split-Path -Parent (Get-Command javac -CommandType Application | Select-Object -First 1).Source)
+& python (Join-Path $PSScriptRoot 'test_experiment_discovery.py') --jdk $jdkRoot --json-jar $JsonJar
+if($LASTEXITCODE-ne0){throw 'Read-only Remote discovery production callback tests failed'}
 & (Join-Path $PSScriptRoot 'Test-ExperimentHeadsetIdentityCli.ps1')
 @{passed=$true;scope='Production transport authentication host tests only; Android owner/native/LAN effects require separate evidence'}|ConvertTo-Json|Set-Content (Join-Path $OutputRoot 'RESULT.json')

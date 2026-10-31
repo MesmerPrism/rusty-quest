@@ -20,7 +20,8 @@
   "exclusive_groups": {},
   "android_manifest": {
     "permissions": [
-      "android.permission.INTERNET"
+      "android.permission.INTERNET",
+      "android.permission.ACCESS_NETWORK_STATE"
     ],
     "uses_features": [],
     "activities": [],

@@ -21,6 +21,7 @@ public final class ExperimentSessionCommandGateway {
     private final ExperimentSessionBleServer.Delegate delegate;
     private final ExperimentSessionBleServer carrier;
     private final ExperimentSessionHeadsetIdentity headsetIdentity;
+    private final ExperimentSessionDiscoveryServer discovery;
     private final ExperimentSessionGuestRegistry guests=new ExperimentSessionGuestRegistry();
     private final ExperimentControlMode controlMode=ExperimentControlMode.process();
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -54,6 +55,9 @@ public final class ExperimentSessionCommandGateway {
     private ExperimentSessionCommandGateway(Context context,ExperimentSessionBleServer.Delegate delegate) {
         this.context=context;this.delegate=delegate;carrier=ExperimentSessionBleServer.process(context,delegate);
         headsetIdentity=new ExperimentSessionHeadsetIdentity(context);
+        discovery=new ExperimentSessionDiscoveryServer(context,new ExperimentSessionDiscoveryServer.Source(){
+            @Override public JSONObject snapshot()throws Exception{return discoveryMetadata();}
+        });
         controlMode.onChange(new Runnable(){@Override public void run(){controlModeChanged();}});
         preferences=context.getSharedPreferences("experiment-session-command-gateway",Context.MODE_PRIVATE);
         if(!preferences.contains("device"))preferences.edit().putString("device",ExperimentSessionBleProtocol.newHex(16)).commit();
@@ -63,6 +67,7 @@ public final class ExperimentSessionCommandGateway {
     JSONObject productPanelReadback()throws Exception {
         requireMain();return new JSONObject().put("selected",featurePackaged(context)).put("enabled",enabled())
             .put("trusted_lan",trustedLanAllowed()).put("state",routeState)
+            .put("serial",headsetIdentity.serial()).put("discovery",discovery.readback())
             .put("relay_origin",relayOrigin()).put("direct_selected",ExperimentSessionDirectNetwork.featurePackaged(context))
             .put("direct",direct==null?new JSONObject().put("state","inactive"):direct.snapshot())
             .put("relay",relay==null?new JSONObject().put("state","inactive"):relay.snapshot());
@@ -110,14 +115,25 @@ public final class ExperimentSessionCommandGateway {
                 java.util.Enumeration<java.net.InetAddress> addresses=network.getInetAddresses();
                 while(addresses.hasMoreElements()){java.net.InetAddress address=addresses.nextElement();
                     if(address instanceof java.net.Inet4Address&&address.isSiteLocalAddress())local.add(address.getHostAddress());}}
-        }catch(Exception ignored){}String result=orderedLocalAddresses(candidates);return result.isEmpty()?"Waiting for a local network address":result;
+        }catch(Exception ignored){}
+        String activeWifi="";
+        try{
+            android.net.ConnectivityManager connectivity=context.getSystemService(android.net.ConnectivityManager.class);
+            android.net.Network active=connectivity==null?null:connectivity.getActiveNetwork();
+            android.net.NetworkCapabilities capabilities=active==null?null:connectivity.getNetworkCapabilities(active);
+            android.net.LinkProperties link=active==null?null:connectivity.getLinkProperties(active);
+            if(capabilities!=null&&capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)&&link!=null)activeWifi=link.getInterfaceName();
+        }catch(RuntimeException unavailable){/* Interface ordering remains a bounded fallback. */}
+        String result=orderedLocalAddresses(candidates,activeWifi);return result.isEmpty()?"Waiting for a local network address":result;
     }
-    static String orderedLocalAddresses(Map<String,java.util.List<String>> candidates){
+    static String orderedLocalAddresses(Map<String,java.util.List<String>> candidates){return orderedLocalAddresses(candidates,"");}
+    static String orderedLocalAddresses(Map<String,java.util.List<String>> candidates,String activeWifi){
         java.util.Set<String> endpoints=new java.util.LinkedHashSet<>();
-        // Only up interfaces are supplied; connected Android Wi-Fi names take precedence.
-        for(int pass=0;pass<2;pass++)for(Map.Entry<String,java.util.List<String>> network:candidates.entrySet()){
+        // Only up interfaces are supplied; active Wi-Fi precedes other Wi-Fi and private interfaces.
+        for(int pass=0;pass<3;pass++)for(Map.Entry<String,java.util.List<String>> network:candidates.entrySet()){
             boolean wifi=network.getKey().startsWith("wlan")||network.getKey().startsWith("wifi");
-            if(wifi!=(pass==0))continue;
+            int priority=network.getKey().equals(activeWifi)?0:wifi?1:2;
+            if(priority!=pass)continue;
             for(String address:network.getValue())if(privateIpv4(address)&&endpoints.size()<4)endpoints.add("http://"+address+":8766/v1/gateway");
         }
         StringBuilder result=new StringBuilder();for(String endpoint:endpoints){if(result.length()>0)result.append('\n');result.append(endpoint);}return result.toString();
@@ -221,6 +237,7 @@ public final class ExperimentSessionCommandGateway {
     }
     synchronized void nativeOwnerChanged(final long owner,final long nextEpoch,final boolean live) {
         final long revision=++lifecycleRevision;
+        discovery.close();
         guests.clear();
         if(protocol!=null)protocol.retire();protocol=null;
         main.post(new Runnable(){@Override public void run(){
@@ -258,12 +275,17 @@ public final class ExperimentSessionCommandGateway {
     void controlModeChanged(){
         requireMain();long packed=controlMode.readSnapshot().packed;
         if(guestModePacked!=packed){guests.clear();guestModePacked=packed;}
+        discovery.reconcile(packed,remoteAvailable());
         if(journal==null)return;
         if(!trustedLanAllowed()){
             if(http!=null)http.close();http=null;routeState=enabled()?"enrolled-no-lan-listener":"native-owner-no-lan-listener";return;
         }
         if(http==null)try{http=new ExperimentSessionGatewayHttpServer(this,8766);http.start();routeState="trusted-lan-listening";}
         catch(Exception unavailable){routeState="listener-unavailable";if(http!=null)http.close();http=null;}
+    }
+    void requestDiscoveryPermissions(android.app.Activity host){requireMain();discovery.requestPermissions(host);}
+    void discoveryPermissionResult(int request){
+        requireMain();if(request==ExperimentSessionDiscoveryServer.PERMISSION_REQUEST)discovery.permissionResult();
     }
     /** Controller revocation leaves the live native journal and its original receipts intact. */
     private void retireControllers() {
@@ -274,6 +296,7 @@ public final class ExperimentSessionCommandGateway {
         session.clear();polar.clear();
     }
     private void retire() {
+        discovery.close();
         retireControllers();
         if(http!=null)http.close();http=null;
         carrier.gatewayBinding(null,"","0");carrier.attachCommandGateway(false);if(journal!=null)journal.retire();journal=null;routeState="disabled";

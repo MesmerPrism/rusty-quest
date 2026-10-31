@@ -138,3 +138,47 @@ hardware serial rejects. The typed CLI requires requested serial, live
 `Test-ExperimentSessionCommandGateway.ps1` includes the production gateway's
 Remote join/authentication/lifecycle/serial checks and typed CLI serial guard
 checks with inert Android and executable boundaries. No device effects occur.
+
+
+Remote additionally starts a separately owned, read-only BLE discovery service
+`9a7b2001-7d6a-4b7f-9d4a-6f7c0a020101`. Its serial characteristic ends in
+`020102` (UTF-8, at most 64 bytes); metadata ends in `020103` (UTF-8 JSON, at
+most 512 bytes). The advertisement includes only the service UUID, never the
+adapter name. Discovery never renames the shared adapter or enters the legacy
+BLE command/status route. It carries no commands, enrollment keys or telemetry.
+The legacy enrolled BLE protocol and its 480-byte status projection are unchanged.
+
+Metadata is exactly `{v:1,device,serial,epoch,native_epoch,mode:"remote",gateways}`.
+The identity and epochs come from the live main owner, matching Wi-Fi identity.
+At most four private IPv4 HTTP endpoints use port 8766 and `/v1/gateway`.
+Endpoints refresh every three seconds, prioritizing the actual active Wi-Fi
+interface, then other Wi-Fi interfaces. A connected peer freezes serial and
+metadata together across characteristic/offset reads; at most eight peer
+snapshots are retained. Invalid offsets and all writes reject. Responses respect
+the negotiated ATT MTU; a completed metadata read schedules disconnection after
+1.5 seconds, retaining its snapshot until the platform acknowledges disconnect.
+
+Runtime Bluetooth CONNECT and ADVERTISE permission uses the actual host Activity
+and the normal Android permission callback. Bluetooth off, missing permissions,
+unprovisioned serial and platform failures produce visible, nonsecret discovery
+state/reason fields in the existing network panel readback. The panel also shows
+the actual serial or an explicit unavailable indication. Serial unavailability
+prevents discovery advertising. The gateway feature declares ACCESS_NETWORK_STATE
+for active Wi-Fi ordering; discovery uses its existing BLE permission dependency.
+
+Discovery follows native lifetime and mode revision, independently of panel
+visibility and optional persistent enrollment. Direct/Choose and native owner
+retirement close its GATT server, advertisement, peer snapshots and scheduled
+work; stale callbacks or an in-flight metadata refresh cannot restart them.
+Platform service/advertising callbacks have an eight-second deadline and at most
+three automatic retries, one second apart. Reopening the Remote panel permits
+an explicit retry after Bluetooth recovery or identity provisioning. Revoking
+an **enrolled controller** preserves Remote discovery and fresh local joining;
+select Direct to disable Remote discovery and control.
+
+`Test-ExperimentSessionCommandGateway.ps1` also runs
+`test_experiment_discovery.py --jdk <jdk-root> --json-jar <org-json-jar>`.
+That harness executes production GATT callbacks with inert Android handles,
+covering unnamed advertisements, frozen/offset/MTU reads, bounds, permission
+request/denial/grant, Bluetooth unavailability and retirement/recovery races.
+These host checks do not establish physical Bluetooth or phone interoperability.

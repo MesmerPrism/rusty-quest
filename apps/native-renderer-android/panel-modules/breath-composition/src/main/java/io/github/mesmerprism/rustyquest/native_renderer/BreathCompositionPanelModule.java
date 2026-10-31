@@ -1625,6 +1625,8 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             PolarSensorRuntime.forApplication(getApplicationContext()).onHostResume();
         }
         NativeMeshUiProducer.productOwnerReady(hostActivity());
+        ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
+        if(gateway!=null)gateway.requestDiscoveryPermissions(hostActivity());
     }
 
     private void resumePanelProjection() {
@@ -1788,6 +1790,8 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     @Override
     public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
+        if(gateway!=null)gateway.discoveryPermissionResult(requestCode);
         PolarSensorRuntime.forApplication(getApplicationContext()).onRequestPermissionsResult(
             hostActivity(),
             requestCode,
@@ -1849,7 +1853,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         root.setPadding(dp(18),dp(18),dp(18),dp(18));scroll.addView(root);
         root.addView(text(current.mode==ExperimentControlMode.CHOOSE?"Choose experiment control":"Remote experiment control",22,PANEL_FG));
         root.addView(text(current.mode==ExperimentControlMode.CHOOSE
-            ?"Choose Direct for headset controls, or Remote for the enrolled LAN controller."
+            ?"Choose Direct for headset controls, or Remote for a nearby phone controller."
             :"The LAN controller operates the experiment. Press B three times without grip to open or close this panel. A without grip recenters.",15,PANEL_MUTED));
         Button direct=operatorButton(current.mode==ExperimentControlMode.CHOOSE?"Direct":"Switch to Direct");
         direct.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){selectExperimentControlMode(current,ExperimentControlMode.DIRECT);}});
@@ -1861,7 +1865,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         }
         root.addView(text("Changing control mode keeps the current experiment and recording unchanged.",13,PANEL_MUTED));
         controlModeSessionReadback=text("",14,PANEL_FG);root.addView(controlModeSessionReadback);
-        root.addView(text("For Remote, join the phone's Wi-Fi hotspot from the headset. On the phone, use Same Wi-Fi in the browser controller and enter the headset address below.",14,PANEL_FG));
+        root.addView(text("For Remote, join the phone's Wi-Fi hotspot from the headset. On the phone, use Find headset in the browser controller. Its Bluetooth chooser grants access; the headset serial appears after discovery. The address below also works manually.",14,PANEL_FG));
         appendExperimenterNetworkControl(root);
         status=text("",14,PANEL_MUTED);root.addView(status);
         refreshControlModeReadback();
@@ -1906,7 +1910,14 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             ExperimentSessionPanelViewPolicy.project(EXPERIMENT_SESSION_PANEL.snapshot()).statusLine);
         if(controlModeNetworkReadback!=null){
             ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.existing();
-            try{controlModeNetworkReadback.setText("LAN status: "+(gateway==null?"uninitialized":gateway.productPanelReadback().optString("state"))+"\n"+(gateway==null?"":gateway.localAddresses()));}
+            try{
+                JSONObject network=gateway==null?new JSONObject().put("state","uninitialized"):gateway.productPanelReadback();
+                JSONObject discovery=network.optJSONObject("discovery");
+                String serial=network.optString("serial","");
+                controlModeNetworkReadback.setText("Serial: "+(serial.isEmpty()?"unavailable (identity not provisioned)":serial)
+                    +"\nDiscovery: "+(discovery==null?"unavailable":discovery.optString("state")+" / "+discovery.optString("reason"))
+                    +"\nLAN status: "+network.optString("state")+"\n"+(gateway==null?"":gateway.localAddresses()));
+            }
             catch(Exception unavailable){controlModeNetworkReadback.setText("LAN status unavailable");}
         }
     }
@@ -2137,10 +2148,11 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     private void appendExperimenterNetworkControl(LinearLayout root) {
         if(!ExperimentSessionCommandGateway.featurePackaged(this))return;
         final ExperimentSessionCommandGateway gateway=ExperimentSessionCommandGateway.process(this,REMOTE_DELEGATE);
+        gateway.requestDiscoveryPermissions(hostActivity());
         LinearLayout network=panelCard("Network control");
         controlModeNetworkReadback=text("",13,PANEL_MUTED);network.addView(controlModeNetworkReadback);
-        network.addView(text(gateway.enabled()?(gateway.trustedLanAllowed()?"Trusted LAN controller enrolled":"Encrypted relay controller enrolled; LAN off"):"Network control off",15,PANEL_FG));
-        network.addView(text("Only enable on a trusted network. Local HTTP control is authenticated but unencrypted.",13,PANEL_MUTED));
+        network.addView(text(gateway.enabled()?(gateway.trustedLanAllowed()?"Trusted LAN controller enrolled":"Encrypted relay controller enrolled; LAN off"):"No legacy controller enrolled",15,PANEL_FG));
+        network.addView(text("Remote allows nearby discovery and local phone control on a trusted network. Local HTTP traffic is unencrypted. Switch to Direct to disable Remote discovery and control.",13,PANEL_MUTED));
         Button enroll=operatorButton(gateway.enabled()?"Replace trusted controller":"Approve trusted LAN controller");
         enroll.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){
             panelDialogBuilder().setTitle("Approve trusted LAN control?")
@@ -2158,7 +2170,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
         ExperimentControlMode.Snapshot current=controlMode.readSnapshot();
         if(current.selected&&current.mode!=ExperimentControlMode.DIRECT){
             if(gateway.enabled()){
-                Button revoke=operatorButton("Revoke network controller");
+                Button revoke=operatorButton("Revoke enrolled controller");
                 revoke.setOnClickListener(new View.OnClickListener(){public void onClick(View ignored){gateway.revokeFromHeadset();replaceBreathCompositionPanelContent("home");}});
                 network.addView(revoke);
             }
@@ -2206,7 +2218,7 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             }
             Button stopRoutes=operatorButton("Stop relay and temporary networks");stopRoutes.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.stopRoutesFromHeadset();updateStatus("Optional network routes stopped.");}});network.addView(stopRoutes);
 
-            Button revoke=operatorButton("Revoke network controller");revoke.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.revokeFromHeadset();replaceBreathCompositionPanelContent("home");}});network.addView(revoke);
+            Button revoke=operatorButton("Revoke enrolled controller");revoke.setOnClickListener(new View.OnClickListener(){@Override public void onClick(View ignored){gateway.revokeFromHeadset();replaceBreathCompositionPanelContent("home");}});network.addView(revoke);
         }
         root.addView(network);
     }

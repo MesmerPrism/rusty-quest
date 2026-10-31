@@ -31,6 +31,13 @@ public class PackageManager {public static final int GET_META_DATA=128;public In
 'android/os/Process.java': '''package android.os;public class Process {public static int myPid(){return 123;}public static int myUid(){return 10191;}}''',
 'android/os/Build.java': '''package android.os;public class Build {public static String SERIAL="unknown";public static String getSerial(){throw new SecurityException();}public static class VERSION {public static int SDK_INT=35;}}''',
 }
+STUBS['android/net/ConnectivityManager.java']='package android.net;public class ConnectivityManager {public Network getActiveNetwork(){return null;}public NetworkCapabilities getNetworkCapabilities(Network n){return null;}public LinkProperties getLinkProperties(Network n){return null;}}'
+STUBS['android/net/Network.java']='package android.net;public class Network {}'
+STUBS['android/net/NetworkCapabilities.java']='package android.net;public class NetworkCapabilities {public static final int TRANSPORT_WIFI=1;public boolean hasTransport(int t){return false;}}'
+STUBS['android/net/LinkProperties.java']='package android.net;public class LinkProperties {public String getInterfaceName(){return null;}}'
+STUBS['android/content/Context.java']=STUBS['android/content/Context.java'].replace('public Context getApplicationContext()', 'public <T>T getSystemService(Class<T> c){return null;}public Context getApplicationContext()')
+STUBS['android/app/Activity.java']='package android.app;public class Activity extends android.content.Context {}'
+
 BOUNDARIES = r'''package io.github.mesmerprism.rustyquest.native_renderer;
 import org.json.JSONObject;
 final class ExperimentControlMode {static final int CHOOSE=0,DIRECT=1,REMOTE=2;
@@ -44,6 +51,13 @@ final class ExperimentSessionBleServer {
  boolean live=true;GatewayReceiptListener listener;boolean acceptsNativeOwner(long i,long e){return live&&i>0&&e>0;}void attachCommandGateway(boolean b){}
  void gatewayBinding(GatewayReceiptListener l,String d,String e){listener=l;}long currentGeneration(){return 1;}
  void updateReceipt(String i,String s,String d){try{listener.receipt(new JSONObject().put("id",i).put("state",s).put("detail",d));}catch(Exception x){throw new RuntimeException(x);}}
+}
+final class ExperimentSessionDiscoveryServer {
+ interface Source{JSONObject snapshot()throws Exception;}static ExperimentSessionDiscoveryServer latest;boolean remote;long token;int closes;
+ ExperimentSessionDiscoveryServer(android.content.Context c,Source s){latest=this;}
+ void reconcile(long t,boolean r){token=t;remote=r;}void close(){closes++;remote=false;}
+ JSONObject readback()throws Exception{return new JSONObject().put("state",remote?"advertising":"inactive").put("reason","synthetic");}
+ void requestPermissions(android.app.Activity a){}void permissionResult(){}static final int PERMISSION_REQUEST=9403;
 }
 final class ExperimentSessionGatewayHttpServer {static int starts,closes;ExperimentSessionGatewayHttpServer(ExperimentSessionCommandGateway g,int p){}void start(){starts++;}void close(){closes++;}}
 final class ExperimentSessionDirectNetwork {ExperimentSessionDirectNetwork(android.content.Context c){}static boolean featurePackaged(android.content.Context c){return false;}JSONObject snapshot(){return new JSONObject();}JSONObject localJoinDetails(){return new JSONObject();}void start(String m){}void close(){}}
@@ -72,6 +86,7 @@ final class RemoteJoinHarness {
    public void dispatch(ExperimentSessionBleServer.CommandRequest r){dispatches++;ExperimentSessionBleServer.INSTANCE.updateReceipt(r.id,"confirmed","synthetic owner callback");}
   });
   g.nativeOwnerChanged(1,7,true);JSONObject identity=g.identity();
+  check(ExperimentSessionDiscoveryServer.latest!=null&&ExperimentSessionDiscoveryServer.latest.remote,"gateway did not start discovery with actual Remote owner");
   deny(()->g.exchange(new JSONObject().put("v",1).put("action","connect").put("device",identity.getString("device")).put("epoch",identity.getString("epoch"))));
   JSONObject localConnect=new JSONObject().put("v",1).put("action","connect").put("device",identity.getString("device")).put("epoch",identity.getString("epoch"));
   HttpRemoteJoinBoundary http=new HttpRemoteJoinBoundary(g);
@@ -89,11 +104,13 @@ final class RemoteJoinHarness {
   deny(()->g.exchange(auth(second,"status",new JSONObject()).put("mac",new String(new char[64]).replace('\0','0'))));
   JSONObject command=new JSONObject().put("v",1).put("id","1111111111111111").put("op","ping").put("condition","").put("bias",0).put("nonce","1111111111111111");
   g.exchange(auth(second,"command",command));g.exchange(auth(third,"command",command));check(dispatches==1,"guests lost shared original journal");
-  mode.packed=61;g.controlModeChanged();check(ExperimentSessionGatewayHttpServer.closes>0,"Direct retained un-enrolled listener");deny(()->g.exchange(auth(second,"status",new JSONObject())));
+  mode.packed=61;g.controlModeChanged();check(!ExperimentSessionDiscoveryServer.latest.remote,"Direct retained discovery");check(ExperimentSessionGatewayHttpServer.closes>0,"Direct retained un-enrolled listener");deny(()->g.exchange(auth(second,"status",new JSONObject())));
   mode.packed=70;g.controlModeChanged();JSONObject after=join(g,identity);g.exchange(auth(after,"command",command));check(dispatches==1,"mode transition lost receipt");
   check(g.identity().getString("serial").equals("")&&g.identity().getBoolean("remote_available"),"unavailable serial honesty");
   JSONObject metadata=g.discoveryMetadata();check(metadata.getString("device").equals(identity.getString("device"))&&metadata.getString("serial").equals("")&&metadata.getString("epoch").equals(identity.getString("epoch")),"metadata binding");
   java.util.Map<String,java.util.List<String>> addresses=new java.util.LinkedHashMap<>();addresses.put("eth0",java.util.Arrays.asList("192.168.0.2","172.16.0.2","10.1.0.2","10.2.0.2","8.8.8.8"));addresses.put("wlan0",java.util.Arrays.asList("10.0.0.2","10.0.0.2","999.0.0.1","127.0.0.1"));
+  addresses.put("wlan1",java.util.Arrays.asList("192.168.3.2"));
+  check(ExperimentSessionCommandGateway.orderedLocalAddresses(addresses,"wlan1").startsWith("http://192.168.3.2:8766/v1/gateway"),"actual active Wi-Fi interface must precede other Wi-Fi");
   String[] ordered=ExperimentSessionCommandGateway.orderedLocalAddresses(addresses).split("\n");check(ordered.length==4&&ordered[0].equals("http://10.0.0.2:8766/v1/gateway"),"bounded private endpoints prioritize Wi-Fi");
   deny(()->g.exchangeLan(new JSONObject().put("v",1).put("action","connect").put("device",identity.getString("device")).put("epoch",identity.getString("epoch")).put("serial","extra")));
   deny(()->join(g,new JSONObject(identity.toString()).put("device","00000000000000000000000000000000")));
@@ -127,7 +144,7 @@ final class RemoteJoinHarness {
   Throwable[] revokedFailure={null};JSONObject revokeQueued=auth(rotated,"command",new JSONObject(command.toString()).put("id","4444444444444444"));
   Thread revokeNetwork=new Thread(()->{try{g.exchange(revokeQueued);}catch(Throwable e){revokedFailure[0]=e;}},"network");revokeNetwork.start();
   Runnable revokedTask=android.os.Handler.queue.poll(2,java.util.concurrent.TimeUnit.SECONDS);check(revokedTask!=null,"enrolled command not queued");
-  g.revokeFromHeadset();mode.packed=93;g.controlModeChanged();mode.packed=102;g.controlModeChanged();
+  int discoveryCloses=ExperimentSessionDiscoveryServer.latest.closes;g.revokeFromHeadset();check(ExperimentSessionDiscoveryServer.latest.remote&&ExperimentSessionDiscoveryServer.latest.closes==discoveryCloses,"enrolled controller revocation retired Remote discovery");mode.packed=93;g.controlModeChanged();mode.packed=102;g.controlModeChanged();
   revokedTask.run();revokeNetwork.join(2000);
   check(g.identity().getBoolean("remote_available"),"revoking optional enrollment stranded live Remote owner");
   check(!g.enabled()&&!context.prefs.contains("key")&&!context.prefs.contains("controller"),"revocation retained persistent enrollment");
@@ -137,7 +154,7 @@ final class RemoteJoinHarness {
   check(recoveredIdentity.getString("epoch").equals(beforeRevoke.getString("epoch"))&&g.discoveryMetadata().getString("epoch").equals(beforeRevoke.getString("epoch")),"revocation replaced native journal epoch");
   JSONObject originalReceipt=new JSONObject(g.exchange(auth(recovered,"receipt",new JSONObject().put("id",original.getString("id")))).getString("payload"));
   check(originalReceipt.getString("state").equals("confirmed"),"revocation lost original receipt");g.exchange(auth(recovered,"command",original));check(dispatches==originalDispatches,"recovery redispatched original");
-  JSONObject retiring=join(g,recoveredIdentity);g.nativeOwnerChanged(3,9,false);deny(()->g.exchange(auth(retiring,"status",new JSONObject())));deny(()->join(g,recoveredIdentity));check(!g.identity().getBoolean("remote_available")&&dispatches==originalDispatches,"retired owner available or invalid joins dispatched");
+  JSONObject retiring=join(g,recoveredIdentity);g.nativeOwnerChanged(3,9,false);check(!ExperimentSessionDiscoveryServer.latest.remote,"native retirement retained discovery");deny(()->g.exchange(auth(retiring,"status",new JSONObject())));deny(()->join(g,recoveredIdentity));check(!g.identity().getBoolean("remote_available")&&dispatches==originalDispatches,"retired owner available or invalid joins dispatched");
   System.out.println("PASS "+checks+" production Remote join/authentication, exact shape, shared receipts, HMAC/replay, expiry/capacity, owner/mode ABA/queued revocation, serial/provisioning and legacy enrollment; inert Android/network");
  }
 }
