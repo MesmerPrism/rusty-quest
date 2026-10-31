@@ -3,6 +3,7 @@
 No device, network, credentials or native library is used by this harness.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -70,7 +71,7 @@ final class NativeMeshUiProducer {static class VisibilityReadback {static Boolea
 HARNESS = r'''package io.github.mesmerprism.rustyquest.native_renderer;
 import org.json.JSONObject;import java.lang.reflect.*;
 final class RemoteJoinHarness {
- static int checks,dispatches;static boolean idle=true;interface Checked{void run()throws Exception;}
+ static int checks,dispatches;static boolean idle=true,misleadingCapacity;interface Checked{void run()throws Exception;}
  static void check(boolean b,String why){checks++;if(!b)throw new AssertionError(why);}
  static void deny(Checked c)throws Exception{checks++;try{c.run();}catch(Exception expected){Throwable cause=expected;while(cause.getCause()!=null)cause=cause.getCause();if(cause instanceof SecurityException)return;throw expected;}throw new AssertionError("unexpected admission");}
  static JSONObject join(ExperimentSessionCommandGateway g,JSONObject identity)throws Exception{return g.exchangeLan(new JSONObject().put("v",1).put("action","connect").put("device",identity.getString("device")).put("epoch",identity.getString("epoch")));}
@@ -79,10 +80,16 @@ final class RemoteJoinHarness {
   return new JSONObject().put("v",1).put("controller",controller).put("epoch",epoch).put("nonce",nonce).put("action",action).put("payload",payload)
    .put("mac",ExperimentSessionGatewayProtocol.hmac(c.getString("key"),"RQG1|"+controller+"|"+epoch+"|"+nonce+"|"+action+"|"+payload));
  }
+ static String networkHttp(HttpRemoteJoinBoundary http,JSONObject request)throws Exception {
+  java.util.concurrent.FutureTask<String> call=new java.util.concurrent.FutureTask<>(()->http.request(request,"https://controller.example"));
+  Thread network=new Thread(call,"network");network.start();Runnable task=android.os.Handler.queue.poll(2,java.util.concurrent.TimeUnit.SECONDS);
+  check(task!=null,"HTTP request did not cross actual onMain wrapper");task.run();network.join(2000);check(!network.isAlive(),"HTTP owner request stalled");return call.get();
+ }
  public static void main(String[] args)throws Exception {
   android.content.Context context=new android.content.Context();ExperimentControlMode mode=ExperimentControlMode.process();
   ExperimentSessionCommandGateway g=ExperimentSessionCommandGateway.process(context,new ExperimentSessionCommandGateway.WifiDelegate(){
    public ExperimentSessionWifiSnapshot.Read wifiSnapshot()throws Exception {
+    if(misleadingCapacity)throw new SecurityException("guest-capacity");
     long epoch=Long.parseLong(ExperimentSessionCommandGateway.existing().identity().getString("native_epoch"));
     JSONObject response=new JSONObject().put("schema","rusty.quest.experiment_session.response.v1").put("command_status","accepted")
      .put("readback",new JSONObject().put("runtime_epoch",epoch).put("generation",0).put("revision",1).put("phase","idle").put("control_state","idle")
@@ -130,7 +137,30 @@ final class RemoteJoinHarness {
   mode.packed=77;g.controlModeChanged();mode.packed=86;g.controlModeChanged();task.run();network.join(2000);check(!network.isAlive()&&failure[0]!=null&&dispatches==1,"queued guest crossed mode revision");
   JSONObject expiring=join(g,identity);android.os.SystemClock.now+=119999;g.exchange(auth(expiring,"status",new JSONObject()));android.os.SystemClock.now+=119999;g.exchange(auth(expiring,"status",new JSONObject()));
   android.os.SystemClock.now+=120000;deny(()->g.exchange(auth(expiring,"status",new JSONObject())));
-  for(int i=0;i<8;i++)join(g,identity);deny(()->join(g,identity));android.os.SystemClock.now+=120000;join(g,identity);
+  JSONObject[] saturated=new JSONObject[8];for(int i=0;i<8;i++)saturated[i]=join(g,identity);
+  String capacity=http.request(localConnect,"https://controller.example");
+  check(capacity.startsWith("HTTP/1.1 429"),"capacity must be exact retryable HTTP429, not generic403");
+  check(capacity.endsWith("{\"error\":\"guest-capacity\"}"),"capacity response must identify only capacity");
+  String wrappedCapacity=networkHttp(http,localConnect);check(wrappedCapacity.startsWith("HTTP/1.1 429"),"actual network FutureTask wrapper lost typed capacity");
+  deny(()->join(g,identity));
+  for(JSONObject client:saturated)g.exchange(auth(client,"status",new JSONObject()));
+  check(dispatches==1,"capacity or existing guest validation dispatched an experiment");
+  String wrongDevice=http.request(new JSONObject(localConnect.toString()).put("device","00000000000000000000000000000000"),"https://controller.example");
+  String badMac=http.request(auth(saturated[0],"status",new JSONObject()).put("mac",new String(new char[64]).replace('\0','0')),"https://controller.example");
+  String badShape=http.request(new JSONObject(localConnect.toString()).put("extra",true),"https://controller.example");
+  check(wrongDevice.startsWith("HTTP/1.1 403")&&badMac.startsWith("HTTP/1.1 403")&&badShape.startsWith("HTTP/1.1 403"),"non-capacity integrity denial became retryable");
+  misleadingCapacity=true;String misleading=http.request(auth(saturated[0],"status",new JSONObject()),"https://controller.example");
+  String wrappedMisleading=networkHttp(http,auth(saturated[0],"status",new JSONObject()));misleadingCapacity=false;
+  check(misleading.startsWith("HTTP/1.1 403")&&wrappedMisleading.startsWith("HTTP/1.1 403"),"matching exception text must not impersonate typed capacity");
+  android.os.SystemClock.now+=119999;String beforeExpiry=http.request(localConnect,"https://controller.example");
+  check(beforeExpiry.startsWith("HTTP/1.1 429"),"capacity evicted a guest before120s");
+  android.os.SystemClock.now+=1;String afterExpiry=http.request(localConnect,"https://controller.example");
+  check(afterExpiry.startsWith("HTTP/1.1 200"),"idle expiry did not free capacity at120s");
+  for(JSONObject client:saturated)deny(()->g.exchange(auth(client,"status",new JSONObject())));
+  check(dispatches==1,"capacity expiry dispatched or replayed an experiment");
+  System.out.println("CAPACITY_HTTP "+new JSONObject().put("capacity",capacity).put("wrapped_capacity",wrappedCapacity).put("before_expiry",beforeExpiry)
+   .put("after_expiry_status",afterExpiry.substring(0,afterExpiry.indexOf("\r\n"))).put("wrong_device",wrongDevice).put("bad_mac",badMac).put("bad_shape",badShape)
+   .put("misleading_capacity",misleading).put("guest_count",8).put("idle_ms",120000).put("no_eviction_verified",true).put("experiment_dispatches_added",0));
   JSONObject old=join(g,identity);g.nativeOwnerChanged(2,8,true);deny(()->g.exchange(auth(old,"status",new JSONObject())));deny(()->join(g,identity));
   JSONObject liveIdentity=g.identity();
   JSONObject provision=new JSONObject().put("hardware_serial","SYNTHETIC-ONLY").put("expected_native_owner_identity",2).put("expected_runtime_epoch",8).put("expected_gateway_lifecycle_revision",2);
@@ -170,7 +200,7 @@ final class RemoteJoinHarness {
 '''
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--repo',type=Path,default=Path(__file__).resolve().parents[2]);parser.add_argument('--json-jar',type=Path,required=True);a=parser.parse_args()
+    parser=argparse.ArgumentParser();parser.add_argument('--repo',type=Path,default=Path(__file__).resolve().parents[2]);parser.add_argument('--json-jar',type=Path,required=True);parser.add_argument('--capacity-evidence',type=Path);a=parser.parse_args()
     root=a.repo/'apps/native-renderer-android/panel-modules/breath-composition/src/main/java'/PACKAGE
     with tempfile.TemporaryDirectory(prefix='rq-remote-join-') as tmp:
         out=Path(tmp)
@@ -203,6 +233,13 @@ final class HttpRemoteJoinBoundary {
         if (root/'ExperimentSessionGuestRegistry.java').exists():names.append('ExperimentSessionGuestRegistry')
         sources = [root/(n+'.java') for n in names] + [a.repo/'apps/native-renderer-android/src/main/java'/PACKAGE/'NativeRendererWriterAcknowledgedExitPolicy.java']
         subprocess.run(['javac','--release','8','-encoding','UTF-8','-cp',str(a.json_jar),'-d',str(out),*map(str,sources),*map(str,out.rglob('*.java'))],check=True)
-        subprocess.run(['java','-cp',str(out)+os.pathsep+str(a.json_jar),PACKAGE.replace('/','.')+'.RemoteJoinHarness'],check=True)
+        result=subprocess.run(['java','-cp',str(out)+os.pathsep+str(a.json_jar),PACKAGE.replace('/','.')+'.RemoteJoinHarness'],capture_output=True,text=True)
+        print(result.stdout,end='')
+        if result.stderr:print(result.stderr,end='')
+        result.check_returncode()
+        if a.capacity_evidence:
+            facts=next(json.loads(line.removeprefix('CAPACITY_HTTP ')) for line in result.stdout.splitlines() if line.startswith('CAPACITY_HTTP '))
+            a.capacity_evidence.parent.mkdir(parents=True,exist_ok=True)
+            a.capacity_evidence.write_text(json.dumps(facts,indent=2)+'\n',encoding='utf-8')
         subprocess.run(['java','-cp',str(out)+os.pathsep+str(a.json_jar),PACKAGE.replace('/','.')+'.ExperimentSessionDebugOperatorTest'],check=True)
 if __name__=='__main__':main()

@@ -8,6 +8,10 @@ import java.util.Map;
 final class ExperimentSessionGuestRegistry {
     static final long IDLE_MS=120000;
     static final int CAPACITY=8;
+    /** Retryable admission pressure, distinct from authentication/owner denial. */
+    static final class CapacityException extends SecurityException {
+        CapacityException(){super("guest-capacity");}
+    }
     static final class Guest {
         final String controller;
         final ExperimentSessionGatewayProtocol protocol;
@@ -24,7 +28,7 @@ final class ExperimentSessionGuestRegistry {
     }
     synchronized Guest add(String controller,ExperimentSessionGatewayProtocol protocol,long now){
         expire(now);
-        if(guests.size()>=CAPACITY)throw new SecurityException("guest-capacity");
+        if(guests.size()>=CAPACITY)throw new CapacityException();
         Guest guest=new Guest(controller,protocol,now);guests.put(controller,guest);return guest;
     }
     synchronized Guest find(String controller,long now){expire(now);return guests.get(controller);}

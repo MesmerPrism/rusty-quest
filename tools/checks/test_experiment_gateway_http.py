@@ -67,6 +67,7 @@ def main():
         assert text.count(anchor) == 1, 'production binding changed; review loopback fixture'
         (package / 'ExperimentSessionGatewayHttpServer.java').write_text(text.replace(anchor, 'new ServerSocket(port,8,java.net.InetAddress.getLoopbackAddress())'))
         (package / 'ExperimentSessionGatewayProtocol.java').write_text((source / 'ExperimentSessionGatewayProtocol.java').read_text())
+        (package / 'ExperimentSessionGuestRegistry.java').write_text((source / 'ExperimentSessionGuestRegistry.java').read_text())
         (package / 'ExperimentSessionCommandGateway.java').write_text(OWNER)
         (package / 'HttpReaderHarness.java').write_text(HARNESS)
         classes = root / 'classes'

@@ -68,7 +68,12 @@ In Remote, POST may first carry exactly
 `{v:1,action:"connect",device:<expected-device>,epoch:<expected-gateway-epoch>}`.
 It returns exactly `{v:1,device,epoch,serial,controller,key}`. Joining has no
 experiment effect. At most eight memory-only guest controllers are admitted;
-each expires after 120000 ms without authenticated use. Guest authentication,
+each expires after 120000 ms without authenticated use. Saturation never evicts
+an existing guest. Only the registry's typed capacity exception maps to HTTP429
+`guest-capacity`, including its exact main-thread FutureTask wrapper. The caller
+may back off and freshly verify the same physical headset before a later join.
+Identity, HMAC, schema and other owner rejections retain HTTP403; matching error
+message text alone never grants retry permission. Guest authentication,
 nonces, native/session fences and the original-command journal use the existing
 RQG1 protocol. Guests are bound to the exact native owner and mode revision,
 including a Remote/Direct/Remote change before queued dispatch. Persistent

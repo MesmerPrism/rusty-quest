@@ -53,7 +53,14 @@ final class ExperimentSessionGatewayHttpServer implements AutoCloseable {
             int length=Integer.parseInt(headers.get("content-length"));if(length<1||length>8192)throw new IllegalArgumentException("body-bound");
             byte[] bytes=new byte[length];int offset=0;while(offset<length){int count=input.read(bytes,offset,length-offset);if(count<0)throw new IllegalArgumentException("incomplete-body");offset+=count;}
             try{reply(connection,200,cors,owner.exchangeLan(new JSONObject(new String(bytes,StandardCharsets.UTF_8))).toString());}
-            catch(Exception denied){reply(connection,403,cors,"{\"error\":\"gateway-request-rejected\"}");}
+            catch(Exception denied){
+                // onMain uses FutureTask: only its exact typed capacity cause is
+                // retryable. Identity, HMAC and all other owner denials stay403.
+                boolean capacity=denied instanceof ExperimentSessionGuestRegistry.CapacityException
+                    ||denied instanceof java.util.concurrent.ExecutionException
+                        &&denied.getCause() instanceof ExperimentSessionGuestRegistry.CapacityException;
+                reply(connection,capacity?429:403,cors,capacity?"{\"error\":\"guest-capacity\"}":"{\"error\":\"gateway-request-rejected\"}");
+            }
         }catch(Exception invalid){/* Bounded malformed requests close without reaching the owner. */}
     }
     private static String line(InputStream input,int max)throws Exception {
