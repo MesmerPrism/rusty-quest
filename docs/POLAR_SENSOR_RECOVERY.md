@@ -206,3 +206,22 @@ tests, the production callback harness `tools/checks/test_polar_recovery_callbac
 the original capability/status codec tests, and the actual BLE journal callback
 harness. These controls do not prove physical sensor radio loss or reconnection;
 that requires a later attended test with a real sensor.
+
+
+Decoded acquisition publication rechecks the exact live GATT and connection
+generation after decoding, then commits native ingress, PMD capture, LSL and
+recording sinks while holding the same identity lock used by retirement and
+replacement. Retiring or replacing a callback's GATT during decoding cannot
+publish a sample. Native ACC acceptance also carries a composition owner and
+selection-revision token: the raw-ingress and matching health update form one
+transaction. A stale token neither changes ingress nor credits the replacement;
+rejected native ACC returns before the remaining sample sinks.
+
+A legacy combined guided `start` that would change the configured controller
+source to Polar is rejected with `guided-start-requires-arm`. Use the original
+Arm followed by explicit OfficialStart once actual ACC is fresh. The source
+requirement is captured at request arrival as well as execution, so a later
+selection or recovery cannot admit that earlier combined request. Existing
+panel Arm and Direct grip OfficialStart/Resume keep this two-step flow.
+`tools/checks/test_polar_acquisition_callbacks.py` exercises actual callback
+bodies with decoder-boundary retirement/replacement and current-owner positives.

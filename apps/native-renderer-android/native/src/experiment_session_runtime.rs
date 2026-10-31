@@ -1023,7 +1023,7 @@ impl SessionWorker {
         }
     }
 
-    fn process_raw(&mut self, raw: String, received_at: Instant, polar_ready_at_receipt: bool, fence: Option<LocalTerminalFence>) {
+    fn process_raw(&mut self, raw: String, received_at: Instant, polar_ready_at_receipt: PolarInputAdmission, fence: Option<LocalTerminalFence>) {
         // Serializes only native owner transitions with this same worker command.
         // No registry or Java callback participates in this gate.
         let gate = fence.as_ref().map(|f| Arc::clone(&f.gate));
@@ -1122,7 +1122,7 @@ impl SessionWorker {
         }
     }
 
-    fn apply_parsed(&mut self, parsed: ParsedCommand, polar_ready_at_receipt: bool) {
+    fn apply_parsed(&mut self, parsed: ParsedCommand, polar_ready_at_receipt: PolarInputAdmission) {
         if let Some(fence) = &parsed.operator_fence {
             let epoch = self.projection.read().unwrap_or_else(|e| e.into_inner()).runtime_epoch;
             let identity = self.current_identity.as_ref();
@@ -1161,7 +1161,16 @@ impl SessionWorker {
         if matches!(parsed.operation, ParsedOperation::Start { arm: false, .. }
             | ParsedOperation::OfficialStart | ParsedOperation::Resume) {
             let (input, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
-            if !polar_ready_at_receipt || (input.required && !input.fresh) {
+            // Guided preparation can select Polar even when the packaged source
+            // was a controller. A source-changing legacy combined Start must use
+            // Arm -> explicit OfficialStart; later data cannot satisfy its intent.
+            if matches!(parsed.operation, ParsedOperation::Start { arm: false, .. })
+                && resolved_identity.as_ref().is_some_and(|identity| identity.breath_guidance.is_some())
+                && (!polar_ready_at_receipt.required || !input.required) {
+                self.publish_operation(&parsed.operation_id, "rejected", "guided-start-requires-arm", None);
+                return;
+            }
+            if !polar_ready_at_receipt.ready || (input.required && !input.fresh) {
                 self.publish_operation(&parsed.operation_id, "rejected", "polar-input-not-fresh", None);
                 return;
             }
@@ -2128,6 +2137,12 @@ fn request_particle_packaged_defaults_reset() -> u64 {
     RESET.fetch_add(1, Ordering::AcqRel).saturating_add(1)
 }
 
+#[derive(Clone, Copy)]
+struct PolarInputAdmission {
+    required: bool,
+    ready: bool,
+}
+
 struct StatusObservation {
     acknowledgement: SyncSender<String>,
 }
@@ -2136,7 +2151,7 @@ enum WorkerMessage {
     Command {
         raw: String,
         received_at: Instant,
-        polar_ready_at_receipt: bool,
+        polar_ready_at_receipt: PolarInputAdmission,
         terminal_claim: Option<u64>,
         local_terminal_fence: Option<LocalTerminalFence>,
     },
@@ -2450,12 +2465,12 @@ impl ExperimentSessionRuntime {
         }
     }
 
-    fn polar_ready_at_receipt(&self) -> bool {
+    fn polar_ready_at_receipt(&self) -> PolarInputAdmission {
         // Capture native acquisition admission when the explicit request arrives.
         // Recovery while a request waits in the command lane cannot replay it.
         let required = self.polar_requirement.load(Ordering::Acquire) != 0;
         let (input, _) = crate::polar_input_health::status(required, false);
-        !input.required || input.fresh
+        PolarInputAdmission { required: input.required, ready: !input.required || input.fresh }
     }
 
     pub(crate) fn status_json(&self) -> String {

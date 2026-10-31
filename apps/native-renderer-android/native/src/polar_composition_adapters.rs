@@ -391,17 +391,18 @@ pub(crate) fn submit_polar_acc_measurement(
     host_time_ns: u64,
     sensor_time_ns: u64,
     xyz_mg: [f32; 3],
-) {
-    let accepted = lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg);
-    if accepted { crate::polar_input_health::accepted_acc(); }
+) -> bool {
+    let token = crate::polar_input_health::acquisition_token();
+    crate::polar_input_health::commit_acc(token,
+        || lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg))
 }
 
 pub(crate) fn submit_polar_acc_measurement_and_advance_composition(
     host_time_ns: u64,
     sensor_time_ns: u64,
     xyz_mg: [f32; 3],
-) {
-    submit_polar_acc_measurement(host_time_ns, sensor_time_ns, xyz_mg);
+) -> bool {
+    submit_polar_acc_measurement(host_time_ns, sensor_time_ns, xyz_mg)
 }
 
 /// Called once by a successfully constructed OpenXR action owner. Raw Java
@@ -794,11 +795,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     z_mg: jni::sys::jint,
 ) {
     let xyz_mg = [x_mg as f32, y_mg as f32, z_mg as f32];
-    submit_polar_acc_measurement_and_advance_composition(
+    if !submit_polar_acc_measurement_and_advance_composition(
         sample_host_time_ns.max(0) as u64,
         sample_sensor_time_ns.max(0) as u64,
         xyz_mg,
-    );
+    ) { return; }
     crate::lsl_panel_runtime::submit_polar_acc(xyz_mg);
     crate::breath_capture::record_polar_acc_sample(
         frame_sequence_id.max(0) as u64,
@@ -968,6 +969,23 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_composition_cannot_credit_a_later_acquisition_owner() {
+        let _binding = crate::breath_composition_runtime::scoped_test_binding::install_polar();
+        let host = latest_polar_acc_after(None).map_or(1, |sample| sample.host_time_ns + 1);
+        // Owner retirement between capture and commit invalidates the complete
+        // transaction. The former split ingress/health gap no longer exists.
+        let token = crate::polar_input_health::acquisition_token();
+        let prior = latest_polar_acc_after(None);
+        crate::breath_composition_runtime::reset_to_packaged_defaults();
+        let accepted = crate::polar_input_health::commit_acc(token,
+            || lock_ingress().submit_acc(host, host, [0.0, 0.0, 1000.0]));
+        assert!(!accepted);
+        assert_eq!(latest_polar_acc_after(None), prior);
+        assert!(!crate::polar_input_health::status(false, false).0.fresh,
+            "old ingress acceptance must not make a replacement owner fresh");
+    }
 
     fn acc_settings(enabled: bool) -> PolarAccBreathSourceSettings {
         PolarAccBreathSourceSettings {

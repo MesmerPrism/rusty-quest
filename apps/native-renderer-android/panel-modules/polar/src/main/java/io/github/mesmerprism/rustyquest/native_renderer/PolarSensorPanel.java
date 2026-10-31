@@ -2413,122 +2413,154 @@ final class PolarSensorPanel {
         try {
             if (HEART_RATE_MEASUREMENT.equals(uuid)) {
                 HeartRateReading reading = PolarProtocol.decodeHeartRateMeasurement(value);
-                markAutomaticConnectionEvidenceFromLiveCallback(admittedGatt, admittedGeneration);
-                synchronized (countersLock) {
-                    heartRateEvents += 1L;
-                    latestBpm = reading.bpm;
-                    rrIntervals += reading.rrIntervalsMs.size();
-                }
-                long hostTimeNs = System.nanoTime();
-                nativeSubmitPolarHeartRateMeasurement(hostTimeNs, reading.bpm);
-                for (Float rrIntervalMs : reading.rrIntervalsMs) {
-                    if (rrIntervalMs != null) {
-                        nativeSubmitPolarRrMeasurement(hostTimeNs, rrIntervalMs.floatValue());
+                // Decoding may outlive this GATT. Commit every sink under the
+                // same owner/generation lock used by retirement and replacement.
+                synchronized (connectionIdentityLock) {
+                    if (!PolarAutoConnectionPolicy.mayPublishLiveEvidence(
+                            admittedGatt, gatt, admittedGeneration, autoConnectionGeneration, connected, closing)) {
+                        return;
                     }
+                    markAutomaticConnectionEvidenceFromLiveCallback(admittedGatt, admittedGeneration);
+                    synchronized (countersLock) {
+                        heartRateEvents += 1L;
+                        latestBpm = reading.bpm;
+                        rrIntervals += reading.rrIntervalsMs.size();
+                    }
+                    long hostTimeNs = System.nanoTime();
+                    nativeSubmitPolarHeartRateMeasurement(hostTimeNs, reading.bpm);
+                    for (Float rrIntervalMs : reading.rrIntervalsMs) {
+                        if (rrIntervalMs != null) {
+                            nativeSubmitPolarRrMeasurement(hostTimeNs, rrIntervalMs.floatValue());
+                        }
+                    }
+                    appendHrEvent(reading);
                 }
-                appendHrEvent(reading);
             } else if (PMD_CONTROL_POINT.equals(uuid)) {
                 ControlRecord record = PolarProtocol.parseControl(value);
-                synchronized (countersLock) {
-                    controlEvents += 1L;
+                // Decoding may outlive this GATT. Commit every sink under the
+                // same owner/generation lock used by retirement and replacement.
+                synchronized (connectionIdentityLock) {
+                    if (!PolarAutoConnectionPolicy.mayPublishLiveEvidence(
+                            admittedGatt, gatt, admittedGeneration, autoConnectionGeneration, connected, closing)) {
+                        return;
+                    }
+                    synchronized (countersLock) {
+                        controlEvents += 1L;
+                    }
+                    appendControlEvent(record);
+                    handlePmdControlRecord(record);
                 }
-                appendControlEvent(record);
-                handlePmdControlRecord(record);
             } else if (PMD_DATA.equals(uuid)) {
                 int measurementType = PolarProtocol.unsigned(value[0]);
                 if (measurementType == 0x02) {
                     PmdFrameMetric frame = PolarProtocol.decodeAcc(value);
-                    markAutomaticConnectionEvidenceFromLiveCallback(admittedGatt, admittedGeneration);
-                    long frameSequenceId;
-                    long previousReceiptDeltaNs;
-                    synchronized (countersLock) {
-                        accFrames += 1L;
-                        accSamples += frame.sampleCount;
-                        frameSequenceId = accFrames;
-                        previousReceiptDeltaNs = lastAccFrameReceiptNs == 0L
-                            ? 0L
-                            : Math.max(0L, frame.hostTimeNs - lastAccFrameReceiptNs);
-                        lastAccFrameReceiptNs = frame.hostTimeNs;
-                    }
-                    nativeSubmitPolarPmdFrame(
-                        measurementType,
-                        frameSequenceId,
-                        frame.hostTimeNs,
-                        frame.sensorTimestampNs,
-                        activeAccSampleRateHz,
-                        frame.sampleCount,
-                        previousReceiptDeltaNs);
-                    for (int sampleIndex = 0; sampleIndex < frame.accSamples.size(); sampleIndex++) {
-                        AccSample sample = frame.accSamples.get(sampleIndex);
-                        long sampleHostTimeNs = sampleTimeNs(
+                    // Decoding may outlive this GATT. Commit every sink under the
+                    // same owner/generation lock used by retirement and replacement.
+                    synchronized (connectionIdentityLock) {
+                        if (!PolarAutoConnectionPolicy.mayPublishLiveEvidence(
+                                admittedGatt, gatt, admittedGeneration, autoConnectionGeneration, connected, closing)) {
+                            return;
+                        }
+                        markAutomaticConnectionEvidenceFromLiveCallback(admittedGatt, admittedGeneration);
+                        long frameSequenceId;
+                        long previousReceiptDeltaNs;
+                        synchronized (countersLock) {
+                            accFrames += 1L;
+                            accSamples += frame.sampleCount;
+                            frameSequenceId = accFrames;
+                            previousReceiptDeltaNs = lastAccFrameReceiptNs == 0L
+                                ? 0L
+                                : Math.max(0L, frame.hostTimeNs - lastAccFrameReceiptNs);
+                            lastAccFrameReceiptNs = frame.hostTimeNs;
+                        }
+                        nativeSubmitPolarPmdFrame(
+                            measurementType,
+                            frameSequenceId,
                             frame.hostTimeNs,
-                            activeAccSampleRateHz,
-                            sampleIndex,
-                            frame.sampleCount);
-                        long sampleSensorTimeNs = sampleTimeNs(
                             frame.sensorTimestampNs,
                             activeAccSampleRateHz,
-                            sampleIndex,
-                            frame.sampleCount);
-                        nativeSubmitPolarAccMeasurement(
-                            sampleHostTimeNs,
-                            sampleSensorTimeNs,
-                            frame.hostTimeNs,
-                            frameSequenceId,
-                            sampleIndex,
                             frame.sampleCount,
-                            System.nanoTime(),
-                            sample.xMg,
-                            sample.yMg,
-                            sample.zMg);
+                            previousReceiptDeltaNs);
+                        for (int sampleIndex = 0; sampleIndex < frame.accSamples.size(); sampleIndex++) {
+                            AccSample sample = frame.accSamples.get(sampleIndex);
+                            long sampleHostTimeNs = sampleTimeNs(
+                                frame.hostTimeNs,
+                                activeAccSampleRateHz,
+                                sampleIndex,
+                                frame.sampleCount);
+                            long sampleSensorTimeNs = sampleTimeNs(
+                                frame.sensorTimestampNs,
+                                activeAccSampleRateHz,
+                                sampleIndex,
+                                frame.sampleCount);
+                            nativeSubmitPolarAccMeasurement(
+                                sampleHostTimeNs,
+                                sampleSensorTimeNs,
+                                frame.hostTimeNs,
+                                frameSequenceId,
+                                sampleIndex,
+                                frame.sampleCount,
+                                System.nanoTime(),
+                                sample.xMg,
+                                sample.yMg,
+                                sample.zMg);
+                        }
+                        appendAccEvent(frame);
+                        scheduleStreamingStatusWrite();
                     }
-                    appendAccEvent(frame);
-                    scheduleStreamingStatusWrite();
                 } else if (measurementType == 0x00) {
                     PmdFrameMetric frame = PolarProtocol.decodeEcg(value);
-                    markAutomaticConnectionEvidenceFromLiveCallback(admittedGatt, admittedGeneration);
-                    long frameSequenceId;
-                    long previousReceiptDeltaNs;
-                    synchronized (countersLock) {
-                        ecgFrames += 1L;
-                        ecgSamples += frame.sampleCount;
-                        frameSequenceId = ecgFrames;
-                        previousReceiptDeltaNs = lastEcgFrameReceiptNs == 0L
-                            ? 0L
-                            : Math.max(0L, frame.hostTimeNs - lastEcgFrameReceiptNs);
-                        lastEcgFrameReceiptNs = frame.hostTimeNs;
-                    }
-                    nativeSubmitPolarPmdFrame(
-                        measurementType,
-                        frameSequenceId,
-                        frame.hostTimeNs,
-                        frame.sensorTimestampNs,
-                        activeEcgSampleRateHz,
-                        frame.sampleCount,
-                        previousReceiptDeltaNs);
-                    for (int sampleIndex = 0; sampleIndex < frame.ecgSamplesMicrovolts.size(); sampleIndex++) {
-                        long sampleHostTimeNs = sampleTimeNs(
+                    // Decoding may outlive this GATT. Commit every sink under the
+                    // same owner/generation lock used by retirement and replacement.
+                    synchronized (connectionIdentityLock) {
+                        if (!PolarAutoConnectionPolicy.mayPublishLiveEvidence(
+                                admittedGatt, gatt, admittedGeneration, autoConnectionGeneration, connected, closing)) {
+                            return;
+                        }
+                        markAutomaticConnectionEvidenceFromLiveCallback(admittedGatt, admittedGeneration);
+                        long frameSequenceId;
+                        long previousReceiptDeltaNs;
+                        synchronized (countersLock) {
+                            ecgFrames += 1L;
+                            ecgSamples += frame.sampleCount;
+                            frameSequenceId = ecgFrames;
+                            previousReceiptDeltaNs = lastEcgFrameReceiptNs == 0L
+                                ? 0L
+                                : Math.max(0L, frame.hostTimeNs - lastEcgFrameReceiptNs);
+                            lastEcgFrameReceiptNs = frame.hostTimeNs;
+                        }
+                        nativeSubmitPolarPmdFrame(
+                            measurementType,
+                            frameSequenceId,
                             frame.hostTimeNs,
-                            activeEcgSampleRateHz,
-                            sampleIndex,
-                            frame.sampleCount);
-                        long sampleSensorTimeNs = sampleTimeNs(
                             frame.sensorTimestampNs,
                             activeEcgSampleRateHz,
-                            sampleIndex,
-                            frame.sampleCount);
-                        nativeSubmitPolarEcgMeasurement(
-                            sampleHostTimeNs,
-                            sampleSensorTimeNs,
-                            frame.hostTimeNs,
-                            frameSequenceId,
-                            sampleIndex,
                             frame.sampleCount,
-                            System.nanoTime(),
-                            frame.ecgSamplesMicrovolts.get(sampleIndex).intValue());
+                            previousReceiptDeltaNs);
+                        for (int sampleIndex = 0; sampleIndex < frame.ecgSamplesMicrovolts.size(); sampleIndex++) {
+                            long sampleHostTimeNs = sampleTimeNs(
+                                frame.hostTimeNs,
+                                activeEcgSampleRateHz,
+                                sampleIndex,
+                                frame.sampleCount);
+                            long sampleSensorTimeNs = sampleTimeNs(
+                                frame.sensorTimestampNs,
+                                activeEcgSampleRateHz,
+                                sampleIndex,
+                                frame.sampleCount);
+                            nativeSubmitPolarEcgMeasurement(
+                                sampleHostTimeNs,
+                                sampleSensorTimeNs,
+                                frame.hostTimeNs,
+                                frameSequenceId,
+                                sampleIndex,
+                                frame.sampleCount,
+                                System.nanoTime(),
+                                frame.ecgSamplesMicrovolts.get(sampleIndex).intValue());
+                        }
+                        appendEcgEvent(frame);
+                        scheduleStreamingStatusWrite();
                     }
-                    appendEcgEvent(frame);
-                    scheduleStreamingStatusWrite();
                 }
             }
         } catch (RuntimeException ex) {

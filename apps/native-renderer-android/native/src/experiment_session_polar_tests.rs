@@ -334,3 +334,131 @@ fn polar_gap_recovered_while_worker_is_busy_still_requires_explicit_resume() {
     assert_eq!(status["readback"]["polar_input"]["pause_latched"], true);
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
+
+fn check_guided_source_changing_start(timing: &str) {
+    use rusty_quest_breath_contract::{
+        composition::BreathCompositionSource, BreathTimestampMicros,
+    };
+    let _binding = crate::breath_composition_runtime::scoped_test_binding::install();
+    polar_selection("controller");
+    let root = temp_root(&format!("guided-source-gate-{timing}"));
+    let runtime =
+        ExperimentSessionRuntime::spawn_actual(root.clone(), Some(guided_inventory())).unwrap();
+    wait_for(&runtime, "\"initialization_status\":\"ready\"");
+    let mut start = guided_arm_command(&root);
+    start["operation"] = json!("start");
+    start["operation_id"] = json!("combined-guided-start");
+    let mut release = None;
+    if timing == "while-queued" {
+        let (entered, entered_rx) = mpsc::sync_channel(1);
+        let (sender, receiver) = mpsc::sync_channel(1);
+        runtime
+            .command_sender
+            .send(WorkerMessage::PauseForTest {
+                entered,
+                resume: receiver,
+            })
+            .unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        release = Some(sender);
+    }
+    runtime.apply_command_json(&start.to_string());
+    if let Some(release) = release {
+        polar_selection("polar-acc");
+        polar_sample();
+        release.send(()).unwrap();
+    }
+    let mut recovered = false;
+    let mut status = Value::Null;
+    for tick in 1..400 {
+        let selected = crate::breath_composition_runtime::snapshot()
+            .effective
+            .is_some_and(|request| request.source == BreathCompositionSource::PolarAcc);
+        if selected {
+            if timing == "during-preparation" && !recovered {
+                polar_sample();
+                recovered = true;
+            }
+            // Service the real production composition/adapter boundary, rather
+            // than the older isolated guided-backend fixture.
+            crate::breath_composition_runtime::poll_polar(BreathTimestampMicros::new(
+                tick * 10_000,
+            ));
+        }
+        status = serde_json::from_str(&runtime.status_json()).unwrap();
+        if status["readback"]["last_operation_id"] == "combined-guided-start"
+            && status["readback"]["phase"] != "preparing"
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    runtime.shutdown_for_test().unwrap();
+    assert_eq!(
+        status["readback"]["last_operation_status"], "rejected",
+        "{timing}: {status}"
+    );
+    assert_eq!(status["readback"]["generation"], 0, "{timing}: {status}");
+    assert_eq!(status["readback"]["last_reason"], "guided-start-requires-arm");
+    if root.parent().unwrap().exists() {
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+}
+
+#[test]
+fn guided_combined_start_from_controller_rejects_absent_acc() {
+    check_guided_source_changing_start("absent");
+}
+#[test]
+fn guided_combined_start_cannot_use_acc_returning_during_preparation() {
+    check_guided_source_changing_start("during-preparation");
+}
+#[test]
+fn guided_combined_start_cannot_use_a_polar_selection_made_while_queued() {
+    check_guided_source_changing_start("while-queued");
+}
+
+#[test]
+fn guided_controller_arm_retains_real_two_step_direct_controls() {
+    use rusty_quest_breath_contract::BreathTimestampMicros;
+    let _binding = crate::breath_composition_runtime::scoped_test_binding::install();
+    polar_selection("controller");
+    let root = temp_root("guided-two-step-real-composition");
+    let runtime =
+        ExperimentSessionRuntime::spawn_actual(root.clone(), Some(guided_inventory())).unwrap();
+    wait_for(&runtime, "\"initialization_status\":\"ready\"");
+    runtime.apply_command_json(&guided_arm_command(&root).to_string());
+    for tick in 1..400 {
+        crate::breath_composition_runtime::poll_polar(BreathTimestampMicros::new(tick * 10_000));
+        let state: Value = serde_json::from_str(&runtime.status_json()).unwrap();
+        if state["readback"]["arm_durable_checkpoint"] == true {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let armed: Value = serde_json::from_str(&runtime.status_json()).unwrap();
+    assert_eq!(armed["readback"]["arm_durable_checkpoint"], true);
+    polar_action(&runtime, "audio-prepared", "guided-two-step-audio");
+    polar_present(&runtime, "guided-two-step-present");
+    assert_eq!(
+        polar_action(&runtime, "official-start", "guided-two-step-missing")["readback"]
+            ["last_reason"],
+        "polar-input-not-fresh"
+    );
+    polar_sample();
+    assert_eq!(
+        polar_action(&runtime, "official-start", "guided-two-step-start")["readback"]
+            ["control_state"],
+        "running"
+    );
+    assert_eq!(
+        polar_action(&runtime, "pause", "guided-two-step-pause")["readback"]["control_state"],
+        "paused"
+    );
+    assert_eq!(
+        polar_action(&runtime, "resume", "guided-two-step-resume")["readback"]["control_state"],
+        "running"
+    );
+    runtime.shutdown_for_test().unwrap();
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}

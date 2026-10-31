@@ -12,6 +12,7 @@ pub(crate) const TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Default)]
 struct Acquisition {
     owner: u64,
+    selection_revision: u64,
     required: bool,
     last_sample: Option<Instant>,
     interruption_revision: u64,
@@ -45,25 +46,52 @@ pub(crate) fn configure(owner: u64, required: bool) {
             state.interruption_revision = state.interruption_revision.saturating_add(1);
             state.interrupted_at.get_or_insert_with(Instant::now);
         }
+        state.selection_revision = state.selection_revision.saturating_add(1);
         state.owner = owner;
         state.required = required;
         state.last_sample = None;
     }
 }
 
-pub(crate) fn accepted_acc() {
+/// Captured at native ingress entry, before any acceptance or publication.
+#[derive(Clone, Copy)]
+pub(crate) struct AcquisitionToken {
+    owner: u64,
+    selection_revision: u64,
+    received_at: Instant,
+}
+
+pub(crate) fn acquisition_token() -> AcquisitionToken {
+    let state = acquisition().lock().unwrap_or_else(|e| e.into_inner());
+    AcquisitionToken {
+        owner: state.owner,
+        selection_revision: state.selection_revision,
+        received_at: Instant::now(),
+    }
+}
+
+/// Health -> ingress is the only nested lock direction. Configuration cannot
+/// replace the owner between raw acceptance and its matching health receipt.
+/// A stale token never runs the acceptance closure or changes the ingress.
+pub(crate) fn commit_acc(token: AcquisitionToken, accept: impl FnOnce() -> bool) -> bool {
     let mut state = acquisition().lock().unwrap_or_else(|e| e.into_inner());
-    if state.required {
-        let now = Instant::now();
+    if state.owner != token.owner || state.selection_revision != token.selection_revision {
+        return false;
+    }
+    if !accept() {
+        return false;
+    }
+    if state.required && state.last_sample.is_none_or(|at| token.received_at >= at) {
         if let Some(previous) = state
             .last_sample
-            .filter(|at| now.duration_since(*at) > TIMEOUT)
+            .filter(|at| token.received_at.duration_since(*at) > TIMEOUT)
         {
             state.interruption_revision = state.interruption_revision.saturating_add(1);
             state.interrupted_at.get_or_insert(previous + TIMEOUT);
         }
-        state.last_sample = Some(now);
+        state.last_sample = Some(token.received_at);
     }
+    true
 }
 
 pub(crate) struct LossObservation {
@@ -147,6 +175,31 @@ pub(crate) mod test_support {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_round_trip_retires_token_and_current_commit_holds_configuration_lock() {
+        let _binding = crate::breath_composition_runtime::scoped_test_binding::install_polar();
+        let stale = acquisition_token();
+        configure(stale.owner, false);
+        configure(stale.owner, true);
+        let mut stale_writes = 0;
+        assert!(!commit_acc(stale, || {
+            stale_writes += 1;
+            true
+        }));
+        assert_eq!(stale_writes, 0);
+        assert!(!status(false, false).0.fresh);
+        let current = acquisition_token();
+        assert!(commit_acc(current, || {
+            // Raw acceptance cannot race configuration in the commit gap.
+            assert!(matches!(
+                acquisition().try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            true
+        }));
+        assert!(status(false, false).0.fresh);
+    }
 
     #[test]
     fn freshness_is_bounded_by_native_receipt_time_and_exact_one_second_threshold() {
