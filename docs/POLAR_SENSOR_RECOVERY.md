@@ -79,6 +79,21 @@ continues to own permission prompts and manual Connect remains a fallback. The
 existing process-owner intentional Disconnect suppression also applies to this
 request. Host controls qualify routing, not discovery or sensor timing.
 
+An accepted explicit Direct or Remote choice in the selected, current native
+product host also supplies startup intent. This covers a component-only launch
+that correctly has no trusted MAIN/LAUNCHER cold epoch. It does not promote that
+launch into a trusted cold launch or authorize experiment Start/Resume. The sole
+Polar owner starts only when it has neither an automatic request nor manual
+sensor control. Existing cold startup, manual Scan/Connect, retained recovery and
+intentional Disconnect therefore survive mode switches and panel recreation
+without another scan or startup permission prompt. Rejected/stale choices,
+auxiliary or retired hosts, status reads and resume alone supply no new intent.
+
+Run `python tools/checks/test_polar_native_mode_startup.py --json-jar <host-json-jar>
+--android-jar <android-jar> --jdk-bin <jdk-bin>` for the production choice/resume,
+startup, permission and retry bodies with inert Android/JNI/BLE boundaries.
+The fixture also retains exact launcher-policy admission and rejection checks.
+
 ## Projected individual stop controls
 
 The panel's explicit Stop ACC and Stop ECG controls and

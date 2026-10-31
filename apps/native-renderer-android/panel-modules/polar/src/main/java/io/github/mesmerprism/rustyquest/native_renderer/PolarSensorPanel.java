@@ -534,6 +534,15 @@ final class PolarSensorPanel {
         }
     }
 
+    void requestStartupFromModeChoice(Activity permissionHost) {
+        // Retain the sole owner's cold request, manual sensor choice and explicit
+        // Disconnect intent across panel recreation and Direct/Remote switches.
+        if (closing || permissionHost == null || automaticConnectionRequested
+                || manualConnectionControl || !recoveryIntent.automaticStartupAllowed()) return;
+        ensureAutoConnection();
+        requestStartupPermissions(permissionHost);
+    }
+
     boolean requestStartupPermissions(Activity permissionHost) {
         if (closing || permissionHost == null) return hasRequiredPermissions();
         if (!recoveryIntent.automaticStartupAllowed()) return hasRequiredPermissions();

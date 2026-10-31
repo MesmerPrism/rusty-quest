@@ -1893,7 +1893,16 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
             rejectRemotePolarForMode(remotePending);
         replaceBreathCompositionPanelContent("home");
         if(!accepted){updateStatus("Control mode changed; use the current panel choice.");return;}
+        requestPolarStartupFromModeChoice();
         if(requested==ExperimentControlMode.REMOTE)hideRemoteControlPanel();
+    }
+
+    private void requestPolarStartupFromModeChoice(){
+        // An accepted local choice is intent even when the physical launch had no
+        // trusted cold epoch. Auxiliary, replaced and retired panels grant none.
+        if(!nativePresentation()||!hostCurrent()||controllerFor(hostActivity())!=this
+                ||!NativeRendererActivityComponents.isNative(hostActivity()))return;
+        PolarSensorRuntime.forApplication(getApplicationContext()).requestStartupFromModeChoice(hostActivity());
     }
 
     private void hideRemoteControlPanel(){

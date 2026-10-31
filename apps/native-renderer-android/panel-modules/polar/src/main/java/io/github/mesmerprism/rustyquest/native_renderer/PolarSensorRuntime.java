@@ -284,6 +284,12 @@ final class PolarSensorRuntime {
         panel.ensureAutoConnection();
     }
 
+    /** Accepted native mode choice may supply startup intent without a cold-launch epoch. */
+    void requestStartupFromModeChoice(Activity activity) {
+        if (closed) return;
+        panel.requestStartupFromModeChoice(activity);
+    }
+
     /** Requests the runtime BLE/location closure from the visible startup Activity. */
     boolean requestStartupPermissions(Activity activity) {
         if (closed) return false;

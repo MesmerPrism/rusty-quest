@@ -118,6 +118,7 @@ final class ControlModePresentationTest {
  ExperimentSessionUiControlHandoff uiControlHandoff;String message="";int rebuilds;Object hostActivity(){return this;}
  static class RemotePending {String operation;}RemotePending remotePending;boolean rejectRemotePolarForMode(RemotePending pending){return true;}
  void updateStatus(String detail){message=detail;}void replaceBreathCompositionPanelContent(String topic){rebuilds++;}
+ void requestPolarStartupFromModeChoice(){} // Acquisition is exercised by test_polar_native_mode_startup.py.
  __SELECT__
  __HIDE__
  static void check(boolean yes,String detail){if(!yes)throw new AssertionError(detail);}
@@ -296,6 +297,7 @@ final class ControlModeDelayedHandoffTest {
  ExperimentSessionUiControlHandoff uiControlHandoff;int rebuilds,hides;
  static class RemotePending {String operation;}RemotePending remotePending;boolean rejectRemotePolarForMode(RemotePending pending){return true;}
  void replaceBreathCompositionPanelContent(String topic){rebuilds++;}void updateStatus(String message){}void hideRemoteControlPanel(){hides++;}
+ void requestPolarStartupFromModeChoice(){} // Acquisition is exercised by test_polar_native_mode_startup.py.
  __SELECT__
  class Owner implements ExperimentSessionUiControlHandoff.Owner {
   final ExperimentControlMode.Snapshot operatorMode=controlMode.readSnapshot();Runnable scheduled;JSONObject value;String outcome="";
