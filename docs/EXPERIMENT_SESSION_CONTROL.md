@@ -302,3 +302,9 @@ It does not extrapolate authoritative elapsed time locally. Optional sensor and
 count summaries may be omitted to preserve live controls, bias and clock within
 the existing 480-byte status limit. Paused completed sessions retain Resume and
 Finish controls, and successful status refresh clears a preceding connection error.
+
+
+Required Polar ACC sessions also use the native acquisition hold described in
+[Polar recovery](POLAR_SENSOR_RECOVERY.md#native-session-acquisition-hold).
+Official Start and Resume require fresh raw input in both Direct and Remote mode.
+Reconnection never resumes a paused session automatically; Arm remains preparation.

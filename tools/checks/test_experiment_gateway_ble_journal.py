@@ -17,7 +17,7 @@ class GatewayBleJournalTest {
   ExperimentSessionBleServer owner=ExperimentSessionBleServer.process(context,new ExperimentSessionBleServer.Delegate(){
    public boolean openControlDefault(){return true;}
    public JSONObject snapshot()throws Exception{return new JSONObject().put("g",7).put("p","RUNNING").put("pending",false).put("b",new org.json.JSONArray().put("pattern-ready").put("no-pattern"));}
-   public JSONObject sessionControlReadback()throws Exception{return new JSONObject().put("phase","active").put("profile_identity_bound",true).put("audio_identity_bound",true).put("generation",7).put("runtime_epoch",7).put("session_key","utc-ns-00000000000000000042").put("condition_id","condition-a").put("non_audio_profile_sha256",String.join("",java.util.Collections.nCopies(64,"a"))).put("activation_binding_sha256",String.join("",java.util.Collections.nCopies(64,"b"))).put("control_state","running").put("breath_guidance",new JSONObject().put("identity_bound",true).put("bias_percent",20));}
+   public JSONObject sessionControlReadback()throws Exception{return new JSONObject().put("phase","active").put("profile_identity_bound",true).put("audio_identity_bound",true).put("generation",7).put("runtime_epoch",7).put("session_key","utc-ns-00000000000000000042").put("condition_id","condition-a").put("non_audio_profile_sha256",String.join("",java.util.Collections.nCopies(64,"a"))).put("activation_binding_sha256",String.join("",java.util.Collections.nCopies(64,"b"))).put("control_state","running").put("polar_input",new JSONObject().put("required",true).put("fresh",false).put("pause_latched",true).put("reason","acc-stale").put("timeout_ms",1000)).put("breath_guidance",new JSONObject().put("identity_bound",true).put("bias_percent",20));}
    public void dispatch(ExperimentSessionBleServer.CommandRequest request){effects++;slot[0].updateReceipt(request.id,"pending","original app callback");}
   });slot[0]=owner;owner.nativeOwnerStarted(1,7);
   final ExperimentSessionCommandJournal journal=new ExperimentSessionCommandJournal();
@@ -44,6 +44,8 @@ class GatewayBleJournalTest {
   network.put("nonce","4444444444444444").put("condition","condition-b");server.callback.onCharacteristicWriteRequest(peer,5,command,false,true,0,network.toString().getBytes("UTF-8"));Handler.drain();check(effects==1,"cross-route ID conflict cannot effect");
   BluetoothGattCharacteristic status=new BluetoothGattCharacteristic(java.util.UUID.fromString(ExperimentSessionBleProtocol.STATUS),2,1);
   server.callback.onCharacteristicReadRequest(peer,6,0,status);JSONObject published=new JSONObject(new String(server.lastBytes,"UTF-8"));
+  check(published.getJSONObject("pi").getBoolean("r")&&!published.getJSONObject("pi").getBoolean("f")&&published.getJSONObject("pi").getBoolean("h"),"actual BLE projection uses full native Polar readiness");
+  check(server.lastBytes.length<=480,"Polar readiness preserves legacy480-byte budget");
   JSONObject bias=new JSONObject().put("v",2).put("id","cccccccccccccccc").put("op","set-bias").put("s",published.getJSONObject("q").getString("s")).put("g",7).put("b",75).put("n","5555555555555555");
   server.callback.onCharacteristicWriteRequest(peer,7,command,false,true,0,bias.toString().getBytes("UTF-8"));Handler.drain();check(effects==2,"actual BLE live bias dispatch");
   bias.put("n","6666666666666666");server.callback.onCharacteristicWriteRequest(peer,8,command,false,true,0,bias.toString().getBytes("UTF-8"));Handler.drain();check(effects==2,"live bias original no redispatch");

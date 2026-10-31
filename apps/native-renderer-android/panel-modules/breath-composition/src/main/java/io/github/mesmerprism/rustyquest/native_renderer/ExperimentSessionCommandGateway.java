@@ -376,6 +376,7 @@ public final class ExperimentSessionCommandGateway {
     }
     private JSONObject snapshot()throws Exception {
         JSONObject status=delegate.snapshot();JSONObject nativeStatus=delegate.sessionControlReadback();
+        ExperimentSessionBleProtocol.projectPolarInput(status,nativeStatus);
         long now=SystemClock.elapsedRealtime(),generation=carrier.currentGeneration();
         JSONObject setup=delegate.polarSetupReadback();if(setup!=null&&"IDLE".equals(status.optString("p")))status.put("y",setup);
         JSONObject polarOffer=polar.offer(delegate.polarStopReadback(),nativeStatus,generation,identity,epoch,now);

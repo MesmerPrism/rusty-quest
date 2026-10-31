@@ -27,6 +27,14 @@ public final class ExperimentSessionStatusReadCodecTest {
             completed, now, "accepted".equals(r.commandStatus));
     }
     public static void main(String[] args) throws Exception {
+        for (boolean fresh : new boolean[]{false,true}) {
+            EXPERIMENT_SESSION_PANEL=new ExperimentSessionPanelCoordinator();
+            JSONObject polar=response("accepted","accepted");
+            polar.getJSONObject("readback").put("polar_input",new JSONObject()
+                .put("required",true).put("fresh",fresh).put("pause_latched",true));
+            ExperimentSessionAndroidShell.SessionReadback parsed=new ExperimentSessionJsonCodec(() -> EXPERIMENT_SESSION_PANEL).parse(polar.toString(),null,false);
+            check(parsed.receipt.detail.contains(fresh ? "reconnected" : "Waiting for fresh Polar ACC"),"codec distinguishes missing input from recovered manual-resume hold");
+        }
         for(String control:new String[]{"armed","running","paused"}) {
             EXPERIMENT_SESSION_PANEL=new ExperimentSessionPanelCoordinator();
             ExperimentSessionPanelCoordinator.NativeCommand original=EXPERIMENT_SESSION_PANEL.arm("condition-a",100);

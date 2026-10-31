@@ -2,7 +2,7 @@
 
 use std::{
     collections::VecDeque,
-    sync::{Mutex, MutexGuard, OnceLock},
+    sync::{atomic::{AtomicU64, Ordering}, Mutex, MutexGuard, OnceLock},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -145,6 +145,7 @@ pub(crate) struct PendingAdapterAction {
 
 #[derive(Debug)]
 pub(crate) struct BreathCompositionRuntime {
+    input_owner_id: u64,
     packaged_config: BreathCompositionRuntimeConfig,
     authority: BreathCompositionAuthority,
     controller_adapter_available: bool,
@@ -281,7 +282,9 @@ impl BreathCompositionRuntime {
         if config.initial_request.is_some() {
             authority.select(config.initial_request);
         }
+        static NEXT_INPUT_OWNER: AtomicU64 = AtomicU64::new(1);
         Self {
+            input_owner_id: NEXT_INPUT_OWNER.fetch_add(1, Ordering::Relaxed),
             packaged_config: config,
             authority,
             controller_adapter_available,
@@ -1056,10 +1059,26 @@ fn runtime() -> &'static Mutex<BreathCompositionRuntime> {
     RUNTIME.get_or_init(|| Mutex::new(BreathCompositionRuntime::new(Default::default())))
 }
 
-fn lock_runtime() -> MutexGuard<'static, BreathCompositionRuntime> {
-    runtime()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+// Publish the actual configured source at every owner boundary, including
+// replacement/reset and guided preparation. No session lock is acquired here.
+struct RuntimeGuard(MutexGuard<'static, BreathCompositionRuntime>);
+impl std::ops::Deref for RuntimeGuard {
+    type Target = BreathCompositionRuntime;
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+impl std::ops::DerefMut for RuntimeGuard {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+impl Drop for RuntimeGuard {
+    fn drop(&mut self) {
+        let snapshot = self.0.snapshot();
+        crate::polar_input_health::configure(self.0.input_owner_id,
+            snapshot.feature_lock_active && snapshot.requested.is_some_and(|selection|
+                selection.source == BreathCompositionSource::PolarAcc));
+    }
+}
+fn lock_runtime() -> RuntimeGuard {
+    RuntimeGuard(runtime().lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
 }
 
 /// Host tests need a real admitted composition binding; the production default
@@ -1092,7 +1111,11 @@ pub(crate) mod scoped_test_binding {
     /// Declare this guard before session runtimes so their workers stop before
     /// the prior breath authority is restored, including during panic unwind.
     /// The test runner serializes other global-runtime users (--test-threads=1).
-    pub(crate) fn install() -> Guard {
+    pub(crate) fn install() -> Guard { install_source(false) }
+
+    pub(crate) fn install_polar() -> Guard { install_source(true) }
+
+    fn install_source(polar: bool) -> Guard {
         let serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let replacement = BreathCompositionRuntime::new(BreathCompositionRuntimeConfig {
             enabled: true,
@@ -1101,9 +1124,17 @@ pub(crate) mod scoped_test_binding {
             capabilities: BreathCompositionCapabilities {
                 controller_assessment: true,
                 volume_mapping: true,
+                polar_acc_assessment: true,
+                state_mapping: true,
                 same_apk_panel: true,
-                ..BreathCompositionCapabilities::default()
             },
+            initial_request: polar.then_some(BreathCompositionRequest {
+                source: BreathCompositionSource::PolarAcc,
+                mapping: BreathCompositionMapping::State,
+                controller_projection: ControllerProjectionSelection::DynamicAxis,
+                polar_projection: PolarProjectionSelection::Xz,
+                inverted: false
+            }),
             ..BreathCompositionRuntimeConfig::default()
         });
         // Check the real authority accepted both matching bindings before touching

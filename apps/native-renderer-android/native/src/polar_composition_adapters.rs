@@ -188,7 +188,8 @@ impl PolarMeasurementIngress {
         self.next_rr_sequence_id
     }
 
-    fn submit_acc(&mut self, host_time_ns: u64, sensor_time_ns: u64, xyz_mg: [f32; 3]) {
+    fn submit_acc(&mut self, host_time_ns: u64, sensor_time_ns: u64, xyz_mg: [f32; 3]) -> bool {
+        if !xyz_mg.iter().all(|value| value.is_finite()) { return false; }
         let sequence_id = self.next_acc_sequence_id();
         let measurement = PolarAccMeasurement {
             source_clock_provenance: None,
@@ -204,7 +205,7 @@ impl PolarMeasurementIngress {
             .is_some_and(|latest| host_time_ns <= latest.host_time_ns)
         {
             self.dropped_acc_measurements = self.dropped_acc_measurements.saturating_add(1);
-            return;
+            return false;
         }
         if self.acc_measurements.len() == ACC_QUEUE_CAPACITY {
             self.acc_measurements.pop_front();
@@ -212,6 +213,7 @@ impl PolarMeasurementIngress {
         }
         self.acc_measurements.push_back(measurement);
         self.latest_acc = Some(measurement);
+        true
     }
 
     fn submit_rr(&mut self, host_time_ns: u64, rr_interval_ms: f32) {
@@ -390,7 +392,8 @@ pub(crate) fn submit_polar_acc_measurement(
     sensor_time_ns: u64,
     xyz_mg: [f32; 3],
 ) {
-    lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg);
+    let accepted = lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg);
+    if accepted { crate::polar_input_health::accepted_acc(); }
 }
 
 pub(crate) fn submit_polar_acc_measurement_and_advance_composition(

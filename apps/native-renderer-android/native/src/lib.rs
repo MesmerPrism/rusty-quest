@@ -172,6 +172,7 @@ mod particle_adapter_consumer;
 mod polar_acc_breath_adapter;
 mod polar_acc_phase_classifier;
 mod polar_composition_adapters;
+mod polar_input_health;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
 mod private_particle_breath_state_driver;

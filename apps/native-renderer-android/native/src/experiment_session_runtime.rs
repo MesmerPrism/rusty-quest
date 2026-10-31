@@ -210,6 +210,7 @@ impl RouteAction {
 
 #[derive(Clone, Debug)]
 struct Projection {
+    polar_input: crate::polar_input_health::Status,
     preparation_mode: PreparationMode,
     arm_operation_id: Option<String>,
     arm_generation: u64,
@@ -274,6 +275,7 @@ struct Projection {
 impl Default for Projection {
     fn default() -> Self {
         Self {
+            polar_input: crate::polar_input_health::Status::default(),
             preparation_mode: PreparationMode::default(),
             arm_operation_id: None,
             arm_generation: 0,
@@ -394,6 +396,7 @@ impl Projection {
                 "phase": phase_token(self.phase),
                 "control_state": self.control_state.as_str(),
                 "audio_technical_hold": self.audio_technical_hold,
+                "polar_input": self.polar_input.json(),
                 "control_receipt_generation": self.control_receipt_generation,
                 "control_receipt_revision": self.control_receipt_revision,
                 "control_event": self.control_event,
@@ -922,6 +925,10 @@ impl RecordingBackend for ActualRecordingBackend {
 }
 
 struct SessionWorker {
+    polar_requirement: Arc<AtomicU64>,
+    recording_requires_polar: bool,
+    polar_pause_latched: bool,
+    last_input_revision: u64,
     preparation_presentation_observation: Arc<AtomicU64>,
     current_session_key: Option<String>,
     controller: ExperimentSessionController,
@@ -962,6 +969,7 @@ impl SessionWorker {
         projection: Arc<RwLock<Projection>>,
         readback_cache: Arc<RwLock<ReadbackCache>>,
         active_generation: Arc<AtomicU64>,
+        polar_requirement: Arc<AtomicU64>,
         producer_retry_drops: Arc<AtomicU64>,
         monotonic_bridge: Arc<Mutex<Option<(MonotonicNanos, Instant)>>>,
         recording_root: PathBuf,
@@ -978,6 +986,10 @@ impl SessionWorker {
         active_breath_guidance: Arc<RwLock<Option<ActiveBreathGuidance>>>,
     ) -> Self {
         Self {
+            polar_requirement,
+            recording_requires_polar: false,
+            polar_pause_latched: false,
+            last_input_revision: 0,
             preparation_presentation_observation,
             controller: ExperimentSessionController::with_preparation_mode(preparation_mode),
             backend,
@@ -1011,7 +1023,7 @@ impl SessionWorker {
         }
     }
 
-    fn process_raw(&mut self, raw: String, received_at: Instant, fence: Option<LocalTerminalFence>) {
+    fn process_raw(&mut self, raw: String, received_at: Instant, polar_ready_at_receipt: bool, fence: Option<LocalTerminalFence>) {
         // Serializes only native owner transitions with this same worker command.
         // No registry or Java callback participates in this gate.
         let gate = fence.as_ref().map(|f| Arc::clone(&f.gate));
@@ -1051,6 +1063,7 @@ impl SessionWorker {
         // worker was busy. Never advance automatic time beyond this request's
         // timestamp; an older request after an already-published freeze retains
         // the reducer's explicit MonotonicTimeRegression disposition.
+        self.reconcile_polar_input(Some(parsed.at));
         self.reconcile_submitted_frame_stall(Some(parsed.at));
         if let Some(previous) = self
             .history
@@ -1075,7 +1088,7 @@ impl SessionWorker {
             return;
         }
         self.remember(&parsed);
-        self.apply_parsed(parsed);
+        self.apply_parsed(parsed, polar_ready_at_receipt);
     }
 
     fn initialize(&mut self) -> bool {
@@ -1109,7 +1122,7 @@ impl SessionWorker {
         }
     }
 
-    fn apply_parsed(&mut self, parsed: ParsedCommand) {
+    fn apply_parsed(&mut self, parsed: ParsedCommand, polar_ready_at_receipt: bool) {
         if let Some(fence) = &parsed.operator_fence {
             let epoch = self.projection.read().unwrap_or_else(|e| e.into_inner()).runtime_epoch;
             let identity = self.current_identity.as_ref();
@@ -1143,6 +1156,16 @@ impl SessionWorker {
             },
             _ => None,
         };
+        // Arm is preparation, not official Start. All explicit native and
+        // authenticated operator Start/Resume forms share this same owner gate.
+        if matches!(parsed.operation, ParsedOperation::Start { arm: false, .. }
+            | ParsedOperation::OfficialStart | ParsedOperation::Resume) {
+            let (input, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
+            if !polar_ready_at_receipt || (input.required && !input.fresh) {
+                self.publish_operation(&parsed.operation_id, "rejected", "polar-input-not-fresh", None);
+                return;
+            }
+        }
         let command = match &parsed.operation {
             ParsedOperation::SetBias(_) => unreachable!("bias handled before reducer"),
             ParsedOperation::Start {
@@ -1202,6 +1225,11 @@ impl SessionWorker {
             );
             return;
         }
+        if matches!(parsed.operation, ParsedOperation::Start { .. }
+            | ParsedOperation::OfficialStart | ParsedOperation::Resume) {
+            self.last_input_revision = crate::polar_input_health::acknowledge_interruptions();
+        }
+        if matches!(parsed.operation, ParsedOperation::Resume) { self.polar_pause_latched = false; }
         if parsed.operator_fence.is_some() {
             let origin = parsed.operator_fence.as_ref().expect("operator fence").origin;
             self.projection_write(|projection| projection.operator_origin = origin);
@@ -1853,6 +1881,42 @@ impl SessionWorker {
         result
     }
 
+    fn reconcile_polar_input(&mut self, command_at: Option<MonotonicNanos>) {
+        use crate::experiment_session::ExperimentControlState;
+        let (input, loss) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
+        if self.controller.phase() == SessionPhase::Active {
+            self.recording_requires_polar |= input.required;
+        } else {
+            self.recording_requires_polar = false;
+            self.polar_pause_latched = false;
+        }
+        if input.required && (!input.fresh || loss.revision != self.last_input_revision)
+            && self.controller.phase() == SessionPhase::Active
+            && self.controller.control_state() == ExperimentControlState::Running {
+            if let Some(now) = current_from_bridge(&self.monotonic_bridge) {
+                // Freeze at the loss deadline even if the command/writer lane was busy.
+                let at = MonotonicNanos::new(now.get().saturating_sub(loss.overdue.as_nanos().min(u128::from(u64::MAX)) as u64)
+                    .max(self.controller.last_monotonic().map_or(0, MonotonicNanos::get)));
+                let at = command_at.map_or(at, |command| at.min(command));
+                if self.controller.last_monotonic().is_none_or(|last| at >= last) {
+                    match self.apply_internal(at, SessionCommand::Pause) {
+                        Ok(outcome) => {
+                            self.polar_pause_latched = true;
+                            self.refresh_controller_projection();
+                            if let Err(error) = self.process_effects(outcome.effects, at) {
+                                self.publish_rejection(None, &error);
+                            }
+                        }
+                        Err(error) => self.publish_rejection(None, &error),
+                    }
+                }
+            }
+        }
+        let (current, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
+        let changed = self.projection.read().unwrap_or_else(|e| e.into_inner()).polar_input != current;
+        if changed { self.refresh_controller_projection(); }
+    }
+
     fn reconcile_submitted_frame_stall(&mut self, command_at: Option<MonotonicNanos>) -> bool {
         let Some(mut now) = current_from_bridge(&self.monotonic_bridge) else { return false; };
         if let Some(command_at) = command_at { now = now.min(command_at); }
@@ -1887,6 +1951,7 @@ impl SessionWorker {
     }
 
     fn process_timed_tick(&mut self) {
+        self.reconcile_polar_input(None);
         if self.reconcile_submitted_frame_stall(None) { return; }
         let Some(now) = current_from_bridge(&self.monotonic_bridge) else { return; };
         let Some(deadline) = self.controller.completion_deadline() else {
@@ -1994,7 +2059,10 @@ impl SessionWorker {
     }
 
     fn refresh_controller_projection(&self) {
+        let (polar_input, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
+        self.polar_requirement.store(u64::from(polar_input.required), Ordering::Release);
         self.projection_write(|projection| {
+            projection.polar_input = polar_input;
             projection.generation = self.controller.generation();
             projection.phase = self.controller.phase();
             projection.control_state = self.controller.control_state();
@@ -2068,6 +2136,7 @@ enum WorkerMessage {
     Command {
         raw: String,
         received_at: Instant,
+        polar_ready_at_receipt: bool,
         terminal_claim: Option<u64>,
         local_terminal_fence: Option<LocalTerminalFence>,
     },
@@ -2097,6 +2166,7 @@ pub(crate) struct ExperimentSessionRuntime {
     projection: Arc<RwLock<Projection>>,
     readback_cache: Arc<RwLock<ReadbackCache>>,
     active_generation: Arc<AtomicU64>,
+    polar_requirement: Arc<AtomicU64>,
     producer_retry_drops: Arc<AtomicU64>,
     producer_gate: Arc<RwLock<ProducerGate>>,
     writer_slot: Arc<Mutex<Option<Arc<SessionRecordingWriter>>>>,
@@ -2167,6 +2237,8 @@ impl ExperimentSessionRuntime {
         )));
         let projection = Arc::new(RwLock::new(initial_projection));
         let active_generation = Arc::new(AtomicU64::new(0));
+        let polar_requirement = Arc::new(AtomicU64::new(0));
+        let worker_polar_requirement = Arc::clone(&polar_requirement);
         let producer_retry_drops = Arc::new(AtomicU64::new(0));
         let producer_gate = Arc::new(RwLock::new(ProducerGate::default()));
         let writer_slot = Arc::new(Mutex::new(None));
@@ -2211,6 +2283,7 @@ impl ExperimentSessionRuntime {
                         worker_projection,
                         worker_readback,
                         worker_generation,
+                        worker_polar_requirement,
                         worker_drops,
                         worker_bridge,
                         recording_root,
@@ -2244,6 +2317,7 @@ impl ExperimentSessionRuntime {
             projection,
             readback_cache,
             active_generation,
+            polar_requirement,
             producer_retry_drops,
             producer_gate,
             writer_slot,
@@ -2344,6 +2418,7 @@ impl ExperimentSessionRuntime {
         match sender.try_send(WorkerMessage::Command {
             raw: raw.to_owned(),
             local_terminal_fence,
+            polar_ready_at_receipt: self.polar_ready_at_receipt(),
             received_at: Instant::now(),
             terminal_claim: terminal_gate.as_ref().and_then(|(generation, _, gate)| {
                 (gate.generation == *generation).then_some(*generation)
@@ -2373,6 +2448,14 @@ impl ExperimentSessionRuntime {
                 self.cached(|cache| &cache.worker_closed)
             }
         }
+    }
+
+    fn polar_ready_at_receipt(&self) -> bool {
+        // Capture native acquisition admission when the explicit request arrives.
+        // Recovery while a request waits in the command lane cannot replay it.
+        let required = self.polar_requirement.load(Ordering::Acquire) != 0;
+        let (input, _) = crate::polar_input_health::status(required, false);
+        !input.required || input.fresh
     }
 
     pub(crate) fn status_json(&self) -> String {
@@ -2794,10 +2877,12 @@ fn run_worker(
             Ok(WorkerMessage::Command {
                 raw,
                 received_at,
+                polar_ready_at_receipt,
                 terminal_claim,
                 local_terminal_fence,
             }) => {
-                worker.process_raw(raw, received_at, local_terminal_fence);
+                worker.process_raw(raw, received_at, polar_ready_at_receipt, local_terminal_fence);
+                worker.reconcile_polar_input(None);
                 worker.reconcile_submitted_frame_stall(None);
                 if let Some(generation) = terminal_claim {
                     let mut gate = worker
@@ -2864,11 +2949,12 @@ fn run_worker(
         }
         match command_receiver.recv_timeout(Duration::from_millis(10)) {
             Ok(WorkerMessage::Command {
-                raw, received_at, local_terminal_fence, ..
+                raw, received_at, polar_ready_at_receipt, local_terminal_fence, ..
             }) => {
-                worker.process_raw(raw, received_at, local_terminal_fence);
+                worker.process_raw(raw, received_at, polar_ready_at_receipt, local_terminal_fence);
                 // Also runs after a blocking writer operation and with a busy
                 // command lane; freshness cannot depend on recv_timeout firing.
+                worker.reconcile_polar_input(None);
                 worker.reconcile_submitted_frame_stall(None);
                 if worker.stop_after_ack {
                     break;
@@ -3356,6 +3442,7 @@ pub(crate) fn request_control_from_native(
     }
     match runtime.command_sender.try_send(WorkerMessage::Command {
         raw,
+        polar_ready_at_receipt: runtime.polar_ready_at_receipt(),
         received_at: Instant::now(),
         terminal_claim: None,
         local_terminal_fence: None,
@@ -6389,4 +6476,6 @@ mod tests {
             fs::remove_dir_all(root.parent().unwrap()).unwrap();
         }
     }
+    include!("experiment_session_polar_tests.rs");
+
 }

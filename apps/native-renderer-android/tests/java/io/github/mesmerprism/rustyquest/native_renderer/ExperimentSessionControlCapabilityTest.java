@@ -110,6 +110,9 @@ public final class ExperimentSessionControlCapabilityTest {
   representative.put("q",qo);byte[] full=sensorCap.projectBoundedStatus(representative,po);
   JSONObject complete=new JSONObject(new String(full,StandardCharsets.UTF_8));
   require(full.length<=480&&complete.has("q")&&complete.has("z"),"full representative armed/audio/Polar connected producer state keeps both grants");
+  JSONObject withInput=new JSONObject(representative.toString()).put("pi",new JSONObject().put("r",true).put("f",false).put("h",true));
+  JSONObject compatible=new JSONObject(new String(sensorCap.projectBoundedStatus(withInput,po),StandardCharsets.UTF_8));
+  require(compatible.has("q")&&compatible.has("z"),"optional pi cannot evict previously fitting command grants");
   final JSONObject savedNativeFence=sensorCap.nativeFence();
   for(String field:new String[]{"o","f","p","g","r","c","rec","co","ms","st","k","bt","po","pf","done","early","a","b","pending","v","m"})
     require(complete.get(field).toString().equals(representative.get(field).toString()),"mandatory producer field preserved:"+field);
@@ -159,7 +162,26 @@ public final class ExperimentSessionControlCapabilityTest {
   require(projected.has("q")&&projected.has("bg")&&projected.getLong("ms")==125000,"live bias grant/effective readback/clock retained");
   System.out.println("PASS live bias exact session/state capability, integer shape, HMAC percent tamper and bounded readback");
  }
+ static void polarInputReadiness()throws Exception {
+  JSONObject status=new JSONObject().put("p","PAUSED"),nativeStatus=read();
+  ExperimentSessionBleProtocol.projectPolarInput(status,nativeStatus);
+  require(!status.has("pi"),"legacy native owner omits readiness capability");
+  for(boolean fresh:new boolean[]{false,true}) {
+   nativeStatus.put("polar_input",new JSONObject().put("required",true).put("fresh",fresh).put("pause_latched",true));
+   ExperimentSessionBleProtocol.projectPolarInput(status,nativeStatus);
+   JSONObject pi=status.getJSONObject("pi");
+   require(pi.getBoolean("r")&&pi.getBoolean("f")==fresh&&pi.getBoolean("h"),"exact native input projection preserves recovered hold");
+  }
+  status.put("padding",repeat("x",430));
+  byte[] bounded=new PolarStopBleCapability().projectBoundedStatus(status,null);
+  require(bounded.length<=480&&!new JSONObject(new String(bounded,StandardCharsets.UTF_8)).has("pi"),"optional input projection yields to original BLE480 bound");
+  nativeStatus.getJSONObject("polar_input").put("fresh","true");
+  ExperimentSessionBleProtocol.projectPolarInput(status,nativeStatus);
+  require(!status.has("pi"),"malformed readiness cannot manufacture Boolean capability");
+  System.out.println("PASS native Polar input projection: legacy absence, loss/recovery hold, exact booleans and480-byte optional fallback");
+ }
  public static void main(String[]args)throws Exception{
+  polarInputReadiness();
   armObservationTransition();
   liveBias();
   polarControls();

@@ -502,6 +502,7 @@ final class ExperimentSessionBleServer {
                     JSONObject status = target.snapshot();
                     status.put("v", 1).put("m", open ? "open" : "gated");
                     JSONObject nativeReadback=target.sessionControlReadback();
+                    ExperimentSessionBleProtocol.projectPolarInput(status,nativeReadback);
                     JSONObject setup=target.polarSetupReadback();
                     if(setup!=null&&"IDLE".equals(status.optString("p")))status.put("y",setup);
                     JSONObject polarOffer=polarControl.offer(target.polarStopReadback(),nativeReadback,

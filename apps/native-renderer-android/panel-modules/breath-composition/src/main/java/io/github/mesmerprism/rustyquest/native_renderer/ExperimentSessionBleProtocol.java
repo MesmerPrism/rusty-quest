@@ -20,6 +20,17 @@ final class ExperimentSessionBleProtocol {
 
     private ExperimentSessionBleProtocol() { }
 
+    /** Optional readiness projection; clients cannot supply or change native authority. */
+    static void projectPolarInput(org.json.JSONObject status, org.json.JSONObject readback) throws Exception {
+        org.json.JSONObject input=readback==null?null:readback.optJSONObject("polar_input");
+        if(input==null || !(input.opt("required") instanceof Boolean)
+                || !(input.opt("fresh") instanceof Boolean) || !(input.opt("pause_latched") instanceof Boolean)) {
+            status.remove("pi");return;
+        }
+        status.put("pi",new org.json.JSONObject().put("r",input.getBoolean("required"))
+            .put("f",input.getBoolean("fresh")).put("h",input.getBoolean("pause_latched")));
+    }
+
     static String newCode() {
         char[] result = new char[12];
         byte[] random = new byte[result.length];
@@ -311,6 +322,9 @@ final class PolarStopBleCapability {
             if(candidate.toString().getBytes(StandardCharsets.UTF_8).length<=445)break;
             candidate.remove(field);
         }
+        // Optional input readiness cannot evict an existing command grant.
+        // Native Start/Resume remains gated when readiness does not fit on BLE.
+        if(candidate.toString().getBytes(StandardCharsets.UTF_8).length>480)candidate.remove("pi");
         // Preserve the pre-existing optional q fallback before considering the new grant.
         if(candidate.toString().getBytes(StandardCharsets.UTF_8).length>480&&candidate.has("q"))candidate.remove("q");
         if(offer!=null) {
@@ -321,6 +335,9 @@ final class PolarStopBleCapability {
             candidate.put("z",compact);
         }
         byte[] bytes=candidate.toString().getBytes(StandardCharsets.UTF_8);
+        if(bytes.length>480 && candidate.has("pi")) {
+            candidate.remove("pi");bytes=candidate.toString().getBytes(StandardCharsets.UTF_8);
+        }
         if(bytes.length<=480)return bytes;
         clear();candidate.remove("z");bytes=candidate.toString().getBytes(StandardCharsets.UTF_8);
         if(bytes.length>480)throw new IllegalArgumentException("status-budget-exceeded");

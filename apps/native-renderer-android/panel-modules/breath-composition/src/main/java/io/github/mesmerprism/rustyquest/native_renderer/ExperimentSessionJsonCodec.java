@@ -153,6 +153,7 @@ final class ExperimentSessionJsonCodec
                                 != expected.breathGuidanceBiasPercent)) {
                     accepted = false;
                 }
+                String polarDetail = polarInputDetail(projection);
                 boolean durable = accepted && restartReceipt
                     && "saved".equals(recordingStatus);
                 String responseReason = response.optString("reason_code", "");
@@ -195,6 +196,7 @@ final class ExperimentSessionJsonCodec
                         projection.optLong("route_action_revision", 0L),
                         projection.optBoolean("audio_technical_hold", false)
                             ? "audio-technical-hold"
+                            : polarDetail != null ? polarDetail
                             : startingOperation && !accepted
                             ? "Condition was not armed: " + emptySessionReason(reason) + "."
                             : reason
@@ -260,6 +262,16 @@ final class ExperimentSessionJsonCodec
                 && !Double.isInfinite(floating)
                 && floating == (double) integer
                 && integer >= 0L;
+        }
+
+        private static String polarInputDetail(JSONObject projection) {
+            JSONObject input=projection.optJSONObject("polar_input");
+            if(input==null || !Boolean.TRUE.equals(input.opt("required"))) return null;
+            if(!Boolean.TRUE.equals(input.opt("fresh")))
+                return "Waiting for fresh Polar ACC. Automatic reconnection continues; the official clock is held.";
+            if(Boolean.TRUE.equals(input.opt("pause_latched")))
+                return "Polar reconnected. The session remains paused; explicitly resume when ready.";
+            return null;
         }
 
         private static String emptySessionReason(String reason) {

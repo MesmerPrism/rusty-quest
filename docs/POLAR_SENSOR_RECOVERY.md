@@ -163,3 +163,46 @@ An idle or otherwise profile-unbound native session omits the optional Polar BLE
 stop grant before parsing nullable profile fields. This retires an earlier grant
 and keeps ordinary status available; it does not bind a profile, authorize a
 sensor operation, or weaken validation of an offered bound-session grant.
+
+
+## Native session acquisition hold
+
+Sessions configured for Polar ACC require an accepted raw ACC sample within
+one second, measured with native monotonic receipt time. The selected composition
+owner publishes this requirement; read-only breath history, phase ambiguity,
+calibration confidence, GATT connection state and browser telemetry cannot prove
+fresh acquisition. A composition replacement or source change clears prior sample
+proof. Once a recording uses Polar, changing or disabling its source cannot remove
+the recording's Polar requirement.
+
+The session worker checks input before official Start/Resume and on its own timed
+loop, including after commands and writer work. Loss applies the ordinary native
+Pause and durable recording control event once, stopping official active time at
+the acquisition deadline. Acquisition retains interruption evidence if data returns
+while the worker is busy, so that recovery cannot hide a missed hold. Neither render frames nor a visible panel/browser are
+needed. Arm remains preparation and may run while input is unavailable. Other
+input sources and default compositions retain their existing behavior.
+
+Fresh input after reconnection only updates readiness. The session remains paused
+until a fresh explicit Direct or authenticated Remote Resume passes the original
+session, presentation and owner fences. Readiness is checked at request arrival
+and again at execution; a request made without input cannot activate later just
+because recovery occurred while it waited in the command queue. No retry or sensor
+callback issues Resume.
+
+Native readback exposes `polar_input` with `required`, `fresh`, `pause_latched`,
+`reason` and `timeout_ms` (1000). Reasons include `awaiting-acc`, `acc-stale`,
+`source-unavailable`, `fresh`, `recovered-awaiting-resume` and `not-required`.
+The pause latch survives recovery until accepted explicit Resume or session end.
+The native panel details distinguish waiting from recovered-but-paused.
+BLE and LAN status optionally project `pi:{r,f,h}` for requirement, freshness and
+pause latch. Old native owners omit it. This field is observation only and may be
+omitted to retain the original480-byte BLE status cap; native command admission
+remains authoritative. The connection/stream retry policy above is unchanged.
+
+Focused host coverage includes the native `experiment_session_runtime`,
+`polar_input_health`, `breath_composition_runtime` and `polar_composition_adapters`
+tests, the production callback harness `tools/checks/test_polar_recovery_callbacks.py`,
+the original capability/status codec tests, and the actual BLE journal callback
+harness. These controls do not prove physical sensor radio loss or reconnection;
+that requires a later attended test with a real sensor.
