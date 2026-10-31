@@ -62,7 +62,7 @@ final class ExperimentSessionDiscoveryServer {
 final class ExperimentSessionGatewayHttpServer {static int starts,closes;ExperimentSessionGatewayHttpServer(ExperimentSessionCommandGateway g,int p){}void start(){starts++;}void close(){closes++;}}
 final class ExperimentSessionDirectNetwork {ExperimentSessionDirectNetwork(android.content.Context c){}static boolean featurePackaged(android.content.Context c){return false;}JSONObject snapshot(){return new JSONObject();}JSONObject localJoinDetails(){return new JSONObject();}void start(String m){}void close(){}}
 final class ExperimentSessionRelayClient {interface Endpoint{JSONObject identity()throws Exception;JSONObject exchange(JSONObject r)throws Exception;}static class Config{Config(String a,String b,String c,String d,long e){}}ExperimentSessionRelayClient(Config c,Endpoint e){}JSONObject snapshot(){return new JSONObject();}void start(){}void close(){}}
-final class ControlPanelActivity {static String applyExperimentSessionCommand(String s){return "{}";}static String nativeReadBreathCompositionStatus(){return "{}";}static String conditionAudioReadiness(String s){return "unavailable";}}
+final class ControlPanelActivity {static String applyExperimentSessionCommand(String s){return "{}";}static String nativeReadBreathCompositionStatus(){return "{}";}static String conditionAudioReadiness(String s){return "unavailable";}static String conditionBreathGuidanceReadiness(String s){return "no-pattern";}}
 final class BreathCompositionPanelModule {static JSONObject queueExperimentOperator(JSONObject s){return new JSONObject();}static JSONObject experimentOperatorOwnerReceipt(){return new JSONObject();}}
 '''
 HARNESS = r'''package io.github.mesmerprism.rustyquest.native_renderer;
@@ -79,7 +79,14 @@ final class RemoteJoinHarness {
  }
  public static void main(String[] args)throws Exception {
   android.content.Context context=new android.content.Context();ExperimentControlMode mode=ExperimentControlMode.process();
-  ExperimentSessionCommandGateway g=ExperimentSessionCommandGateway.process(context,new ExperimentSessionBleServer.Delegate(){
+  ExperimentSessionCommandGateway g=ExperimentSessionCommandGateway.process(context,new ExperimentSessionCommandGateway.WifiDelegate(){
+   public ExperimentSessionWifiSnapshot.Read wifiSnapshot()throws Exception {
+    long epoch=Long.parseLong(ExperimentSessionCommandGateway.existing().identity().getString("native_epoch"));
+    JSONObject response=new JSONObject().put("schema","rusty.quest.experiment_session.response.v1").put("command_status","accepted")
+     .put("readback",new JSONObject().put("runtime_epoch",epoch).put("generation",0).put("revision",1).put("phase","idle").put("control_state","idle")
+      .put("active_time_ms",0).put("initialization_status","ready").put("polar_input",new JSONObject().put("required",false).put("fresh",false).put("pause_latched",false)));
+    return new ExperimentSessionWifiSnapshot().observe(response,android.os.SystemClock.elapsedRealtimeNanos(),android.os.SystemClock.elapsedRealtimeNanos(),epoch);
+   }
    public JSONObject snapshot()throws Exception{return new JSONObject().put("pending",false).put("p","IDLE");}
    public JSONObject sessionControlReadback()throws Exception{return new JSONObject().put("phase",idle?"idle":"active").put("control_state","idle").put("session_key",JSONObject.NULL);}
    public JSONObject polarSetupReadback(){return null;}public JSONObject polarStopReadback(){return null;}
@@ -189,10 +196,11 @@ final class HttpRemoteJoinBoundary {
         debug=(a.repo/'apps/native-renderer-android/src/debug/java'/PACKAGE/'ExperimentSessionDebugOperator.java').read_text()
         (package/'ExperimentSessionDebugOperator.java').write_text(debug)
         (package/'ExperimentSessionDebugOperatorTest.java').write_text((a.repo/'apps/native-renderer-android/tests/java'/PACKAGE/'ExperimentSessionDebugOperatorTest.java').read_text())
-        names=['ExperimentSessionCommandGateway','ExperimentSessionGatewayProtocol','ExperimentSessionCommandJournal','ExperimentSessionBleProtocol','ExperimentSessionControlCapability']
+        names=['ExperimentSessionCommandGateway','ExperimentSessionGatewayProtocol','ExperimentSessionCommandJournal','ExperimentSessionBleProtocol','ExperimentSessionControlCapability','ExperimentSessionWifiSnapshot','ExperimentSessionPanelState','ExperimentSessionPanelCoordinator','ExperimentSessionPanelViewPolicy','ExperimentSessionAndroidShell','ExperimentSessionJsonCodec']
         if (root/'ExperimentSessionHeadsetIdentity.java').exists():names.append('ExperimentSessionHeadsetIdentity')
         if (root/'ExperimentSessionGuestRegistry.java').exists():names.append('ExperimentSessionGuestRegistry')
-        subprocess.run(['javac','--release','8','-encoding','UTF-8','-cp',str(a.json_jar),'-d',str(out),*[str(root/(n+'.java')) for n in names],*map(str,out.rglob('*.java'))],check=True)
+        sources = [root/(n+'.java') for n in names] + [a.repo/'apps/native-renderer-android/src/main/java'/PACKAGE/'NativeRendererWriterAcknowledgedExitPolicy.java']
+        subprocess.run(['javac','--release','8','-encoding','UTF-8','-cp',str(a.json_jar),'-d',str(out),*map(str,sources),*map(str,out.rglob('*.java'))],check=True)
         subprocess.run(['java','-cp',str(out)+os.pathsep+str(a.json_jar),PACKAGE.replace('/','.')+'.RemoteJoinHarness'],check=True)
         subprocess.run(['java','-cp',str(out)+os.pathsep+str(a.json_jar),PACKAGE.replace('/','.')+'.ExperimentSessionDebugOperatorTest'],check=True)
 if __name__=='__main__':main()

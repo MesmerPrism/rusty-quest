@@ -257,7 +257,9 @@ final class PolarSensorRuntime {
             ||"connect".equals(setupPendingOperation)&&state.getBoolean("c")
             ||"start-acc".equals(setupPendingOperation)&&state.getBoolean("a")
             ||"start-ecg".equals(setupPendingOperation)&&state.getBoolean("e"));
-        String receiptState=effective?"confirmed":SystemClock.elapsedRealtime()-setupPendingSince>30000L?"outcome_unknown":"pending";
+        long elapsed=SystemClock.elapsedRealtime()-setupPendingSince;
+        boolean expired="scan".equals(setupPendingOperation)?elapsed>=60000L:elapsed>30000L;
+        String receiptState=effective?"confirmed":expired?"outcome_unknown":"pending";
         if(!id.equals(setupPendingId))receiptState=setupOutcomes.containsKey(id)?setupOutcomes.get(id):"outcome_unknown";
         if(effective&&!setupEffectTimes.containsKey(id))setupEffectTimes.put(id,panel.remoteSetupEffectNs(setupPendingOperation));
         JSONObject result=new JSONObject().put("id",id).put("state",receiptState);

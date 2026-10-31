@@ -40,6 +40,9 @@ public final class ExperimentSessionCommandGateway {
     private long localEnrollmentObserved,localEnrollmentRevision;
     private final java.util.Set<String> localEnrollmentIds=new java.util.HashSet<String>();
     interface LocalEnrollmentGuard { void check() throws Exception; }
+    interface WifiDelegate extends ExperimentSessionBleServer.Delegate {
+        ExperimentSessionWifiSnapshot.Read wifiSnapshot() throws Exception;
+    }
 
 
     static synchronized ExperimentSessionCommandGateway process(Context context,ExperimentSessionBleServer.Delegate delegate) {
@@ -375,19 +378,33 @@ public final class ExperimentSessionCommandGateway {
         return journal.original(id);
     }
     private JSONObject snapshot()throws Exception {
-        JSONObject status=delegate.snapshot();JSONObject nativeStatus=delegate.sessionControlReadback();
-        ExperimentSessionBleProtocol.projectPolarInput(status,nativeStatus);
-        long now=SystemClock.elapsedRealtime(),generation=carrier.currentGeneration();
-        JSONObject setup=delegate.polarSetupReadback();if(setup!=null&&"IDLE".equals(status.optString("p")))status.put("y",setup);
-        JSONObject polarOffer=polar.offer(delegate.polarStopReadback(),nativeStatus,generation,identity,epoch,now);
-        JSONObject offer=session.offer(status,nativeStatus,generation,identity,epoch,now,polar.bindingTuple());
-        if(offer!=null)status.put("q",offer);
-        if(offer!=null&&polarOffer!=null){polar.shareReference(offer.getString("s"));polarOffer.put("s",offer.getString("s"));}
-        // The existing projection owns the exact Polar wire field and capabilities.
-        JSONObject projected=new JSONObject(new String(polar.projectBoundedStatus(status,polarOffer),java.nio.charset.StandardCharsets.UTF_8));
-        ExperimentControlMode.Snapshot mode=controlMode.readSnapshot();
-        if(mode.selected)projected.put("control_mode",mode.wireName()).put("breath_monitor",1);
-        return projected.put("v",1).put("m","gated");
+        try {
+            long generation=carrier.currentGeneration(),owner=identity,nativeEpoch=epoch,lifecycle=lifecycleRevision;
+            ExperimentControlMode.Snapshot mode=controlMode.readSnapshot();
+            if(!carrier.acceptsNativeOwner(owner,nativeEpoch))throw new SecurityException("native-owner-unavailable");
+            if(!(delegate instanceof WifiDelegate))throw new IllegalStateException("wifi-native-observation-unavailable");
+            ExperimentSessionWifiSnapshot.Read observed=((WifiDelegate)delegate).wifiSnapshot();
+            JSONObject status=observed.statusAt(SystemClock.elapsedRealtimeNanos(),nativeEpoch);
+            JSONObject nativeStatus=observed.nativeStatus;
+            long now=SystemClock.elapsedRealtime();
+            JSONObject setup=delegate.polarSetupReadback();if(setup!=null&&"IDLE".equals(status.optString("p")))status.put("y",setup);
+            JSONObject polarOffer=polar.offer(delegate.polarStopReadback(),nativeStatus,generation,owner,nativeEpoch,now);
+            JSONObject offer=session.offer(status,nativeStatus,generation,owner,nativeEpoch,now,polar.bindingTuple());
+            if(offer!=null)status.put("q",offer);
+            if(offer!=null&&polarOffer!=null){polar.shareReference(offer.getString("s"));polarOffer.put("s",offer.getString("s"));}
+            if(polarOffer!=null) {
+                JSONObject compact=new JSONObject().put("r",polarOffer.getLong("r")).put("a",polarOffer.getInt("a")).put("e",polarOffer.getInt("e"));
+                if(offer==null||!polarOffer.getString("s").equals(offer.optString("s")))compact.put("s",polarOffer.getString("s"));
+                status.put("z",compact);
+            }
+            if(owner!=identity||nativeEpoch!=epoch||lifecycle!=lifecycleRevision||generation!=carrier.currentGeneration()
+                    ||!carrier.acceptsNativeOwner(owner,nativeEpoch)||mode.packed!=controlMode.readSnapshot().packed) {
+                session.clear();polar.clear();throw new SecurityException("wifi-native-owner-changed");
+            }
+            status=observed.statusAt(SystemClock.elapsedRealtimeNanos(),nativeEpoch);
+            return ExperimentSessionWifiSnapshot.bounded(status.put("v",1).put("m","gated").put("wifi_snapshot",1)
+                .put("control_mode",mode.wireName()).put("breath_monitor",1));
+        } catch(Exception unavailable){session.clear();polar.clear();throw unavailable;}
     }
     private JSONObject monitorSnapshot(JSONObject body)throws Exception {
         return new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(

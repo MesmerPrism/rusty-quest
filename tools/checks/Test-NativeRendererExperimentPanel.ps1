@@ -268,6 +268,7 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
         (Join-Path $panelRoot 'ExperimentSessionGatewayProtocol.java'),
         (Join-Path $panelRoot 'ExperimentSessionCommandJournal.java'),
         (Join-Path $panelRoot 'ExperimentSessionCommandGateway.java'),
+        (Join-Path $panelRoot 'ExperimentSessionWifiSnapshot.java'),
         (Join-Path $panelRoot 'ExperimentSessionDiscoveryServer.java'),
         (Join-Path $panelRoot 'ExperimentSessionGuestRegistry.java'),
         (Join-Path $panelRoot 'ExperimentSessionHeadsetIdentity.java'),

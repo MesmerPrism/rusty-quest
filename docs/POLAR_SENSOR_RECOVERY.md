@@ -244,3 +244,18 @@ selection or recovery cannot admit that earlier combined request. Existing
 panel Arm and Direct grip OfficialStart/Resume keep this two-step flow.
 `tools/checks/test_polar_acquisition_callbacks.py` exercises actual callback
 bodies with decoder-boundary retirement/replacement and current-owner positives.
+
+## Manual Scan receipt window
+
+The manual setup Scan owner keeps its existing 45-second scan window. Its
+original remote receipt remains pending while scanning at 31 or 45 seconds and
+uses a scan-specific 60-second outer observation deadline. Actual owner scan
+completion confirms the original ID. A genuinely unresolved scan becomes
+`outcome_unknown` at 60 seconds; observing or resubmitting that same ID never
+replays the scan. Other setup operations retain their existing 30-second outer
+deadline. Receipt uncertainty does not authorize a replacement command.
+
+The [full Wi-Fi status contract](EXPERIMENT_WIFI_STATUS.md) keeps mandatory
+acquisition readiness and the original native observation independent of the
+compact BLE byte budget. Run the focused production-code control described there
+for Scan pending, completion, uncertainty and once-only dispatch checks.

@@ -193,37 +193,9 @@ final class ControlModePanelCloseTest {
 
 
 def status(args, root):
-    source = (root / "ExperimentSessionCommandGateway.java").read_text(encoding="utf-8")
-    fixture = r'''package io.github.mesmerprism.rustyquest.native_renderer;
-import org.json.JSONObject;
-final class ControlModeStatusTest {
- static class SystemClock {static long elapsedRealtime(){return 1000;}}
- static class NativeFixture implements ExperimentControlMode.NativeAccess {long value=9;public long initialize(boolean s){return value;}public long read(){return value;}public long select(long e,int m){return value;}}
- NativeFixture nativeOwner=new NativeFixture();ExperimentControlMode controlMode=new ExperimentControlMode(nativeOwner);
- long identity=1,epoch=7;ExperimentSessionControlCapability session=new ExperimentSessionControlCapability();PolarStopBleCapability polar=new PolarStopBleCapability();
- class Carrier {long currentGeneration(){return 2;}}Carrier carrier=new Carrier();
- class Delegate {
-  JSONObject snapshot()throws Exception{return new JSONObject().put("g",7).put("p","IDLE").put("pending",false).put("f",String.join("",java.util.Collections.nCopies(400,"x"))).put("q",new JSONObject().put("fixture","present"));}
-  JSONObject sessionControlReadback()throws Exception{return new JSONObject().put("phase","idle").put("control_state","idle").put("profile_identity_bound",false);}
-  JSONObject polarSetupReadback(){return null;}JSONObject polarStopReadback(){return null;}
- }Delegate delegate=new Delegate();
- __SNAPSHOT__
- static void check(boolean yes,String detail){if(!yes)throw new AssertionError(detail);}
- public static void main(String[] ignored)throws Exception {ControlModeStatusTest h=new ControlModeStatusTest();
-  JSONObject legacy=h.snapshot();check(!legacy.has("control_mode")&&legacy.getInt("v")==1&&legacy.getString("m").equals("gated"),"legacy status changed");
-  // Appending mode before projection would exceed 480 and incorrectly drop existing q.
-  check(legacy.has("q")&&legacy.toString().length()>455,"fixture did not exercise bounded BLE budget boundary");
-  for(long value:new long[]{20,29,38}){h.nativeOwner.value=value;JSONObject observed=h.snapshot();
-   String expected=value==20?"choose":value==29?"direct":"remote";
-   check(observed.getString("control_mode").equals(expected),"LAN mode missing/wrong");
-   check(observed.getInt("breath_monitor")==1,"monitor capability missing");observed.remove("control_mode");observed.remove("breath_monitor");check(observed.toString().equals(legacy.toString()),"mode changed existing BLE projection");
-  }
-  h.nativeOwner.value=9;check(!h.snapshot().has("control_mode"),"legacy status retained mode");
-  System.out.println("PASS production LAN status optional control_mode after actual bounded BLE projection; legacy omission and existing projected fields preserved");
- }
-}
-'''.replace("__SNAPSHOT__", method(source, "private JSONObject snapshot("))
-    run_java(args, [root / name for name in ("ExperimentControlMode.java", "ExperimentSessionBleProtocol.java", "ExperimentSessionControlCapability.java")], fixture, "ControlModeStatusTest")
+    subprocess.run(["python", str(Path(__file__).with_name("test_experiment_wifi_snapshot.py")),
+                    "--json-jar", str(args.json_jar), "--jdk-bin", str(args.jdk_bin),
+                    "--case", "gateway"], check=True)
 
 
 def mode_view(args, root):

@@ -642,13 +642,18 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
     }
 
     private static final ExperimentSessionBleServer.Delegate REMOTE_DELEGATE =
-        new ExperimentSessionBleServer.Delegate() {
+        new ExperimentSessionCommandGateway.WifiDelegate() {
             @Override public boolean openControlDefault() {
                 return ControlPanelActivity.experimentSessionOpenControlDefault();
             }
+            private ExperimentSessionWifiSnapshot wifiObservation;
+            private long wifiGeneration,wifiEpoch;
             @Override public JSONObject sessionControlReadback() throws Exception {
                 JSONObject response=new JSONObject(ControlPanelActivity.applyExperimentSessionCommand(
                     new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString()));
+                return sessionControlReadback(response);
+            }
+            private JSONObject sessionControlReadback(JSONObject response) throws Exception {
                 if(!"accepted".equals(response.optString("command_status")))return null;
                 JSONObject readback=response.getJSONObject("readback");
                 JSONObject breath=new JSONObject(ControlPanelActivity.nativeReadBreathCompositionStatus()).getJSONObject("snapshot");
@@ -693,6 +698,52 @@ public class BreathCompositionPanelModule extends BreathCompositionPanelContext 
                     }
                 }
                 return readback;
+            }
+
+            @Override public ExperimentSessionWifiSnapshot.Read wifiSnapshot() throws Exception {
+                final ExperimentSessionBleServer carrier=remoteServer();
+                final long generation=carrier==null?0:carrier.currentGeneration();
+                final long epoch=carrier==null?0:carrier.currentNativeEpoch();
+                if(carrier==null||!carrier.acceptsStatusRead(generation,epoch))
+                    throw new IllegalStateException("native-owner-status-read-unavailable");
+                String raw=ControlPanelActivity.applyExperimentSessionCommand(
+                    new JSONObject().put("schema","rusty.quest.experiment_session.command.v1").put("operation","status").toString());
+                long completedNanos=SystemClock.elapsedRealtimeNanos();
+                JSONObject response=new JSONObject(raw);
+                JSONObject nativeStatus=sessionControlReadback(response);
+                if(nativeStatus==null)throw new IllegalStateException("native-owner-status-read-unavailable");
+                if(wifiObservation==null||wifiGeneration!=generation||wifiEpoch!=epoch) {
+                    wifiObservation=new ExperimentSessionWifiSnapshot();wifiGeneration=generation;wifiEpoch=epoch;
+                }
+                ExperimentSessionWifiSnapshot.Read read=wifiObservation.observe(response,completedNanos,
+                    SystemClock.elapsedRealtimeNanos(),epoch);
+                JSONObject status=read.status;
+                status.put("pending",remotePending!=null||remoteTerminal!=null||!remoteSetupPendingId.isEmpty())
+                    .put("f",NativeRendererSelfKioskApplication.foregroundForOwnApp(remoteContext))
+                    .put("k",remoteKioskState())
+                    .put("a",new JSONArray().put(ControlPanelActivity.conditionAudioReadiness(ExperimentSessionPanelCoordinator.CONDITION_ONE))
+                        .put(ControlPanelActivity.conditionAudioReadiness(ExperimentSessionPanelCoordinator.CONDITION_TWO)))
+                    .put("b",new JSONArray().put(ControlPanelActivity.conditionBreathGuidanceReadiness(ExperimentSessionPanelCoordinator.CONDITION_ONE))
+                        .put(ControlPanelActivity.conditionBreathGuidanceReadiness(ExperimentSessionPanelCoordinator.CONDITION_TWO)));
+                if("armed".equals(nativeStatus.optString("control_state")))status.put("pm",nativeStatus.getLong("preparation_elapsed_ms"));
+                JSONObject guidance=nativeStatus.optJSONObject("breath_guidance");
+                if(guidance!=null&&guidance.optBoolean("identity_bound",false))
+                    status.put("bg",new JSONArray().put(guidance.getInt("bias_percent")).put(guidance.optLong("bias_revision",0)));
+                BreathCompositionPanelModule panel=remotePanel.get();
+                String presentation="unknown";
+                if(panel!=null&&panel.canRenderRemotePolarInPlace()||"panel".equals(status.optString("f")))presentation="panel";
+                else if(nativeStatus.optBoolean("vr_preparation",false))presentation="vr-preparation";
+                else if("immersive-active".equals(nativeStatus.optString("presentation"))&&read.status.getBoolean("rec"))presentation="vr-session";
+                status.put("h",presentation);
+                expireRemotePendingObservation(SystemClock.elapsedRealtime());
+                RemotePending pending=remotePending;
+                if(pending!=null&&"return-vr".equals(pending.operation)
+                        &&("vr-preparation".equals(presentation)||"vr-session".equals(presentation))) {
+                    carrier.updateReceiptForGeneration(pending.serverGeneration,pending.browserId,"confirmed","Quest foreground confirmed.");
+                    remotePending=null;
+                }
+                if(!carrier.acceptsStatusRead(generation,epoch))throw new IllegalStateException("native-owner-status-read-unavailable");
+                return read;
             }
 
             @Override public JSONObject polarSetupReadback() throws Exception {
