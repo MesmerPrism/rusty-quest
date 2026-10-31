@@ -14,7 +14,22 @@ $log=Join-Path $PSScriptRoot 'calls.jsonl'
 if($args.Count -lt 5 -or $args[0] -cne '-s' -or $args[1] -cne 'inert-transport' -or $args[2] -cne 'shell'){throw 'Not the fixed inert target'}
 if($args[3] -ceq 'getprop' -and $args[4] -ceq 'ro.serialno'){'SYNTHETIC-ONLY';return}
 if($args[3] -ceq 'cat' -and $args[4] -ceq '/proc/sys/kernel/random/boot_id'){'synthetic-boot';return}
-if($args[3] -ceq 'pidof' -and $args[4] -ceq 'synthetic.app'){if($case -ceq 'stopped'){$global:LASTEXITCODE=1;return};'123';return}
+if($args[3] -ceq 'pidof' -and $args[4] -ceq 'synthetic.app'){if($case -ceq 'stopped' -or $case.StartsWith('process-')){$global:LASTEXITCODE=1;return};'123';return}
+if(($args[3..5] -join '|') -ceq 'dumpsys|activity|processes' -and $args[6] -ceq 'synthetic.app'){
+ if($case -ceq 'stopped'){return}
+ $package='synthetic.app';$pidValue=123;$uidValue=10191
+ if($case -ceq 'process-collision'){$package='synthetic.app.other'}
+ $header="  *APP* UID $uidValue ProcessRecord{abcdef $($pidValue):$package/u0a191}"
+ $packages="    packageList={$package}"
+ if($case -ceq 'process-wrong-list'){$packages='    packageList={another.app}'}
+ if($case -ceq 'process-missing-list'){$packages=''}
+ if($case -ceq 'process-subprocess'){$header='  *APP* UID 10191 ProcessRecord{abcdef 123:synthetic.app:worker/u0a191}'}
+ if($case -ceq 'process-uid-mismatch'){$header='  *APP* UID 9999 ProcessRecord{abcdef 123:synthetic.app/u0a191}'}
+ $header;"    user #0 uid=$uidValue gids={3002}";$packages
+ if($case -ceq 'process-ambiguous'){'  *APP* UID 10191 ProcessRecord{bcd 124:synthetic.app/u0a191}';'    user #0 uid=10191 gids={3002}';'    packageList={synthetic.app}'}
+ if($case -ceq 'process-failed'){$global:LASTEXITCODE=1}
+ return
+}
 if($args.Count -ne 11 -or ($args[3..9] -join '|') -cne 'content|call|--uri|content://synthetic.app.debug-experiment-control|--method|experiment-control|--arg'){throw 'Unexpected inert call arguments'}
 $encoded=$args[10];$encoded=$encoded.PadRight($encoded.Length+(4-$encoded.Length%4)%4,'=')
 $r=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))|ConvertFrom-Json -Depth 40
@@ -23,6 +38,7 @@ if($case -ceq 'old59'){'Error: operator-operation-invalid (old APK)';return}
 $receipt=@{schema='rusty.quest.experiment_session.operator_receipt.v1';mode_operator_version=1;operation=$r.operation}
 if($r.operation -ceq 'control-mode-status'){
  $receipt.pid=123;$receipt.uid=10191;$receipt.process_start_ticks=456;$receipt.apk_sha256=('a'*64)
+ if($case -ceq 'process-actor-mismatch'){$receipt.pid=124}
  $receipt.mode_result=@{host_id='host-1';carrier_generation=1;native_owner_epoch=7;binding_sha256=('b'*64);mode='direct';mode_packed=21;mode_revision=2
   session=@{runtime_epoch=7;generation=4;session_key='recording-key';condition_id='condition-a';non_audio_profile_sha256='profile';control_state='running';recording=$true;condition_elapsed_ms=991}}
  if($case -ceq 'reverse'){$receipt.mode_result.mode='remote';$receipt.mode_result.mode_packed=30;$receipt.mode_result.mode_revision=3}
@@ -113,6 +129,19 @@ def main():
             args=base.copy();args[args.index(flag)+1]=value;before=len(requests());run(arguments=args,accept=False);assert len(requests())==before
         before=len(requests());run(extra=['-ExpectedApkSha256','0'*64],accept=False);assert len(requests())==before+1
         before=len(requests());run(case='stopped',accept=False);assert len(requests())==before
+        # Android truncates argv[0] for this product's long package. ActivityManager
+        # retains the full package association; a unique exact default process is safe.
+        before=len(requests());run('status',case='process-truncated')
+        assert [r['operation'] for r in requests()[before:]]==['control-mode-status']
+        before=len(requests());fallback,_=run(case='process-truncated')
+        assert [r['operation'] for r in requests()[before:]]==['control-mode-status','set-control-mode','control-mode-receipt']
+        assert json.loads((fallback/'set-request.json').read_text())['expected_pid']==123
+        assert json.loads((fallback/'result.json').read_text())['mode_result']['state']=='accepted'
+        before=len(requests());run(case='process-actor-mismatch',accept=False)
+        assert [r['operation'] for r in requests()[before:]]==['control-mode-status'],'changed actor admitted a mutation'
+        for invalid in ('collision','wrong-list','missing-list','subprocess','uid-mismatch','ambiguous','failed'):
+            before=len(requests());run('status',case='process-'+invalid,accept=False)
+            assert len(requests())==before,invalid+' process admitted provider auto-start'
         _,old=run(case='old59',accept=False);assert '59' in old.stderr
         # Lost mutation response keeps original request on disk. Reconcile that original once; never resend.
         out,_=run(case='reply-lost',accept=False);lost=json.loads((out/'set-request.json').read_text());before=len(requests())

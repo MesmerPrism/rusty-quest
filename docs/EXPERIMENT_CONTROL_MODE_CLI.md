@@ -31,8 +31,12 @@ pwsh -NoProfile -File tools/Invoke-ExperimentControlMode.ps1 @target `
  -OutputDirectory '<another new receipt directory>'
 ```
 
-The wrapper verifies `pidof <package>` before every provider call so an absent
-process is refused. It reads fresh actor and owner fences, sends at most one
+The wrapper verifies a running process before every provider call so an absent
+process is refused. If Android's truncated process command line prevents
+`pidof <package>` from matching, it requires one exact default-process record
+from ActivityManager with matching UID and full package association. Ambiguous,
+missing, subprocess-only or failed observations remain refused. It reads fresh
+actor and owner fences, sends at most one
 mutation, then reads that original request once. If the requested mode is already
 selected it returns the inert status without selecting again. The directory
 retains `target.json`, exact read/set/original request and receipt JSON, and

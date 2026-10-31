@@ -48,7 +48,25 @@ if($LASTEXITCODE -ne 0 -or $boot.Trim() -cne $BootId){throw 'Exact boot target m
 if($shape.operation -cin @('control-mode-status','set-control-mode','control-mode-receipt')){
  # A content provider can start its process. Runtime mode tooling must never do so.
  $running=(& $binary '-s' $Device 'shell' 'pidof' $Package) -join "`n"
- if($LASTEXITCODE -ne 0 -or $running.Trim() -cnotmatch '^[1-9][0-9]*$'){throw 'Selected app process is not already running; no provider call made'}
+ if($LASTEXITCODE -ne 0 -or $running.Trim() -cnotmatch '^[1-9][0-9]*$'){
+  # Android may truncate argv[0] for long package names. ActivityManager keeps
+  # the complete default-process name and package association independently.
+  $processes=(& $binary '-s' $Device 'shell' 'dumpsys' 'activity' 'processes' $Package) -join "`n"
+  if($LASTEXITCODE -ne 0 -or $processes.Length -gt 1048576){throw 'Selected process observation unavailable; no provider call made'}
+  $candidates=@()
+  $records=[regex]::Matches($processes,'(?ms)^\s*\*APP\* UID (?<uid>[1-9][0-9]*) ProcessRecord\{\S+ (?<pid>[1-9][0-9]*):(?<name>[^/\r\n]+)/[^}\r\n]+\}\r?\n(?<details>.*?)(?=^\s*\*APP\* UID |\z)')
+  foreach($record in $records){
+   if($record.Groups['name'].Value -cne $Package){continue}
+   $details=$record.Groups['details'].Value
+   $uid=$record.Groups['uid'].Value
+   if($details -cnotmatch ('(?m)^\s+user #[0-9]+ uid='+[regex]::Escape($uid)+' gids=')){continue}
+   $packageList=[regex]::Match($details,'(?m)^\s+packageList=\{([^}\r\n]*)\}\s*$')
+   if(-not$packageList.Success -or $Package -cnotin @($packageList.Groups[1].Value -split ',\s*')){continue}
+   $candidates+=$record.Groups['pid'].Value
+  }
+  if($candidates.Count -ne 1){throw 'Selected app process is not uniquely running; no provider call made'}
+  $running=$candidates[0]
+ }
  if($shape.operation -ceq 'set-control-mode' -and [long]$running.Trim() -ne $shape.expected_pid){throw 'Selected running actor changed; no provider call made'}
 }
 $encoded=[Convert]::ToBase64String($raw).TrimEnd('=')
