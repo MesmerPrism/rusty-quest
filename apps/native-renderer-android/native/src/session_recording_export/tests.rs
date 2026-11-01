@@ -300,7 +300,12 @@ fn pinned_bad_stream_cannot_borrow_eligibility_from_a_swapped_valid_directory() 
     // Model namespace resolution selecting an alternate directory while the
     // original eight handles remain pinned (Windows forbids renaming parents
     // with these open child handles; Android/Unix need not).
-    let result = validate_pinned_core(&mut pins, SessionTimestampKey::parse(ID).unwrap(), &|| true);
+    let result = validate_pinned_core(
+        &mut pins,
+        &fixture_streams(&root),
+        SessionTimestampKey::parse(ID).unwrap(),
+        &|| true,
+    );
     drop(pins);
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
     fs::remove_dir_all(alternate.parent().unwrap()).unwrap();
@@ -400,6 +405,7 @@ fn malformed_saved_final_never_reads_streams_or_linked_oversized_checkpoints() {
     let mut files = pins(&root);
     let mut audit = Audit {
         inner: PinnedFiles {
+            streams: &fixture_streams(&root),
             files: &mut files,
             check: &|| true,
         },
@@ -430,6 +436,7 @@ fn pinned_metadata_and_total_bounds_are_checked_before_body_reads() {
         let mut files = pins(&root);
         let mut audit = Audit {
             inner: PinnedFiles {
+                streams: &fixture_streams(&root),
                 files: &mut files,
                 check: &|| true,
             },
@@ -472,7 +479,12 @@ fn owner_retirement_during_pinned_stream_validation_stops_bounded_reads() {
         calls.set(n);
         n < 32
     };
-    let result = validate_pinned_core(&mut files, SessionTimestampKey::parse(ID).unwrap(), &check);
+    let result = validate_pinned_core(
+        &mut files,
+        &fixture_streams(&root),
+        SessionTimestampKey::parse(ID).unwrap(),
+        &check,
+    );
     assert!(result.is_err());
     assert!(calls.get() >= 32);
     assert!(calls.get() <= 33);
@@ -502,5 +514,183 @@ fn retained_components_refuse_replacement_and_escape() {
         fs::rename(&away, root.join(ID)).unwrap();
     }
     drop(p);
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn unexpected_regular_jsonl_rejects_export_consistently_with_recovery() {
+    let root = fixture(true);
+    fs::write(
+        root.join(ID).join("unexpected.jsonl"),
+        b"unowned stream body",
+    )
+    .unwrap();
+    let ordinary = crate::session_recording_recovery::recover_directory(
+        &root.join(ID),
+        SessionTimestampKey::parse(ID).unwrap(),
+    );
+    assert!(ordinary
+        .session
+        .error
+        .as_deref()
+        .is_some_and(|e| e.contains("recording-directory-stream-set-invalid")));
+    let export = prepare(&root, ID, &|| true);
+    let admitted = export.is_ok();
+    drop(export);
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    assert!(
+        !admitted,
+        "valid core pins concealed an invalid actual stream inventory"
+    );
+}
+#[test]
+fn prepared_inventory_rejects_later_insertion_and_insert_remove() {
+    for remove in [false, true] {
+        let root = fixture(true);
+        let prepared = prepare(&root, ID, &|| true).unwrap();
+        let extra = root.join(ID).join("extra-checkpoint.json");
+        fs::write(&extra, b"ignored body").unwrap();
+        if remove {
+            fs::remove_file(extra).unwrap();
+        }
+        let accepted = prepared.unchanged().is_ok();
+        let read_admitted = prepared
+            .read(
+                prepared.manifest["manifest_id"].as_str().unwrap(),
+                "manifest.json",
+                0,
+                1,
+                &|| true,
+            )
+            .is_ok();
+        drop(prepared);
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+        assert!(
+            !accepted,
+            "session directory changes must retire the prepared inventory"
+        );
+        assert!(
+            !read_admitted,
+            "a retired filename inventory must not serve chunks"
+        );
+    }
+}
+
+fn fixture_streams(root: &Path) -> BTreeSet<String> {
+    Custody::open(root, ID)
+        .unwrap()
+        .session
+        .stream_inventory(&|| true)
+        .unwrap()
+}
+
+#[test]
+fn inventory_counts_ignored_entries_and_rejects_the_65537th() {
+    let entries = || {
+        std::iter::repeat_with(|| Ok((std::ffi::OsString::from("checkpoint-ignored.json"), true)))
+    };
+    assert!(collect_stream_inventory(entries().take(MAX_DIRECTORY_ENTRIES), &|| true).is_ok());
+    assert!(
+        collect_stream_inventory(entries().take(MAX_DIRECTORY_ENTRIES + 1), &|| true).is_err(),
+        "checkpoint/index entries must count toward the directory bound"
+    );
+}
+#[test]
+fn inventory_retirement_stops_before_consuming_more_entries() {
+    let consumed = std::cell::Cell::new(0);
+    let entries = std::iter::repeat_with(|| {
+        consumed.set(consumed.get() + 1);
+        Ok((std::ffi::OsString::from("checkpoint.json"), true))
+    })
+    .take(16);
+    let result = collect_stream_inventory(entries, &|| consumed.get() < 4);
+    assert!(result.is_err());
+    assert_eq!(
+        consumed.get(),
+        4,
+        "retired inventory must stop before another directory entry is consumed"
+    );
+}
+
+#[test]
+fn inventory_detects_insert_remove_during_the_scan() {
+    let root = fixture(true);
+    let custody = Custody::open(&root, ID).unwrap();
+    let calls = std::cell::Cell::new(0);
+    let changed = std::cell::Cell::new(false);
+    let check = || {
+        calls.set(calls.get() + 1);
+        if calls.get() == 4 {
+            let extra = root.join(ID).join("transient-checkpoint.json");
+            fs::write(&extra, b"not read").unwrap();
+            fs::remove_file(extra).unwrap();
+            changed.set(true);
+        }
+        true
+    };
+    let result = custody.session.stream_inventory(&check);
+    assert!(changed.get(), "fixture must mutate during enumeration");
+    assert!(
+        result.is_err(),
+        "an unchanged final filename set cannot hide inventory changes"
+    );
+    drop(custody);
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+#[test]
+fn prepared_inventory_rejects_removal_of_an_ignored_filename() {
+    let root = fixture(true);
+    let checkpoint = root.join(ID).join("checkpoint-allowed.json");
+    fs::write(&checkpoint, b"not read").unwrap();
+    let prepared = prepare(&root, ID, &|| true).unwrap();
+    fs::remove_file(checkpoint).unwrap();
+    assert!(prepared.unchanged().is_err());
+    drop(prepared);
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+#[test]
+fn bounded_inventory_ignores_checkpoint_index_bodies_and_nonregular_jsonl_names() {
+    let root = fixture(true);
+    let directory = root.join(ID);
+    fs::create_dir(directory.join("not-a-stream.jsonl")).unwrap();
+    let checkpoint = directory.join("checkpoint-allowed.json");
+    fs::write(&checkpoint, b"deliberately invalid checkpoint body").unwrap();
+    File::create(directory.join("index.json"))
+        .unwrap()
+        .set_len(2 * 1024 * 1024)
+        .unwrap();
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(0);
+    }
+    let lock = options.open(checkpoint).unwrap();
+    let ordinary = crate::session_recording_recovery::recover_directory(
+        &directory,
+        SessionTimestampKey::parse(ID).unwrap(),
+    );
+    assert!(ordinary.session.error.is_none());
+    let prepared = prepare(&root, ID, &|| true).unwrap();
+    assert_eq!(prepared.manifest["files"].as_array().unwrap().len(), 8);
+    drop(prepared);
+    drop(lock);
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn inventory_witness_is_sticky_even_when_directory_stat_evidence_aliases() {
+    let root = fixture(true);
+    let mut prepared = prepare(&root, ID, &|| true).unwrap();
+    let transient = root.join(ID).join("transient-index.json");
+    fs::write(&transient, b"ignored").unwrap();
+    fs::remove_file(transient).unwrap();
+    // Model a coarse/stat-aliasing filesystem while retaining the real kernel
+    // namespace signal. A change must remain retired across repeated polls.
+    prepared.custody.session.stamp = stamp(&prepared.custody.session.file, false).unwrap();
+    assert!(prepared.unchanged().is_err());
+    assert!(prepared.unchanged().is_err());
+    drop(prepared);
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }

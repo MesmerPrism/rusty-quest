@@ -4,7 +4,8 @@
 use crate::{
     session_recording_clock::SessionTimestampKey,
     session_recording_recovery::{
-        validate_finalized_core, validate_recording_root_no_links, RecordingFiles,
+        recording_stream_name, validate_finalized_core, validate_recording_root_no_links,
+        RecordingFiles,
     },
 };
 use serde_json::{json, Value};
@@ -201,10 +202,163 @@ fn open_checked(path: &Path, regular: bool) -> Result<(File, Stamp), String> {
     let metadata = stamp(&file, regular)?;
     Ok((file, metadata))
 }
+const MAX_DIRECTORY_ENTRIES: usize = 65536;
+fn collect_stream_inventory(
+    mut entries: impl Iterator<Item = Result<(std::ffi::OsString, bool), String>>,
+    check: &dyn Fn() -> bool,
+) -> Result<BTreeSet<String>, String> {
+    let mut streams = BTreeSet::new();
+    let mut count = 0usize;
+    loop {
+        check_owner(check)?;
+        let Some(entry) = entries.next() else {
+            break;
+        };
+        count += 1;
+        // Count every entry, including ignored checkpoint/index filenames.
+        if count > MAX_DIRECTORY_ENTRIES {
+            return Err("recording-directory-inventory-limit".into());
+        }
+        let (name, regular) = entry?;
+        if let Some(name) = recording_stream_name(&name, regular) {
+            streams.insert(name);
+        }
+    }
+    check_owner(check)?;
+    Ok(streams)
+}
+// A one-shot namespace witness supplements directory timestamps, which can
+// alias across a quick insertion/removal. It is armed before inventory/pinning,
+// never rearmed, and needs neither a background thread nor a caller buffer.
+#[cfg(windows)]
+struct DirectoryChanges {
+    handle: isize,
+}
+#[cfg(windows)]
+impl DirectoryChanges {
+    fn new(directory: &Directory) -> Result<Self, String> {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn FindFirstChangeNotificationW(
+                path: *const u16,
+                subtree: i32,
+                filter: u32,
+            ) -> *mut std::ffi::c_void;
+        }
+        let path: Vec<_> = directory
+            .path
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        // Retained directory handles deny replacement of every app-controlled
+        // Windows component while this path-based registration is established.
+        let handle =
+            unsafe { FindFirstChangeNotificationW(path.as_ptr(), 0, 0x1 | 0x2 | 0x4) } as isize;
+        if handle == 0 || handle == -1 {
+            return Err(denied());
+        }
+        Ok(Self { handle })
+    }
+    fn unchanged(&self) -> Result<(), String> {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn WaitForSingleObject(handle: *mut std::ffi::c_void, millis: u32) -> u32;
+        }
+        // The notification stays signalled until rearmed; we never rearm it.
+        if unsafe { WaitForSingleObject(self.handle as *mut std::ffi::c_void, 0) } == 258 {
+            Ok(())
+        } else {
+            Err(denied())
+        }
+    }
+}
+#[cfg(windows)]
+impl Drop for DirectoryChanges {
+    fn drop(&mut self) {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn FindCloseChangeNotification(handle: *mut std::ffi::c_void) -> i32;
+        }
+        // No pending user buffer, cancellation wait or worker thread exists.
+        unsafe {
+            FindCloseChangeNotification(self.handle as *mut std::ffi::c_void);
+        }
+    }
+}
+#[cfg(any(target_os = "android", target_os = "linux"))]
+struct DirectoryChanges {
+    state: Mutex<(File, bool)>,
+}
+#[cfg(any(target_os = "android", target_os = "linux"))]
+impl DirectoryChanges {
+    fn new(directory: &Directory) -> Result<Self, String> {
+        use std::os::{
+            fd::{AsRawFd, FromRawFd},
+            unix::ffi::OsStrExt,
+        };
+        unsafe extern "C" {
+            fn inotify_init1(flags: std::ffi::c_int) -> std::ffi::c_int;
+            fn inotify_add_watch(
+                fd: std::ffi::c_int,
+                path: *const std::ffi::c_char,
+                mask: u32,
+            ) -> std::ffi::c_int;
+        }
+        let fd = unsafe { inotify_init1(0x80000 | 0x800) };
+        if fd < 0 {
+            return Err(denied());
+        }
+        let file = unsafe { File::from_raw_fd(fd) };
+        // The kernel-owned fd alias targets this retained directory, requiring
+        // no system-ancestor enumeration or app-controlled symlink traversal.
+        let path = std::ffi::CString::new(directory.listing_path().as_os_str().as_bytes())
+            .map_err(|_| denied())?;
+        // ATTRIB, CREATE/DELETE/MOVE, self retirement and ONLYDIR. Unmount,
+        // queue overflow and ignored-watch events are delivered independently.
+        let mask = 0x4 | 0x40 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x01000000;
+        if unsafe { inotify_add_watch(file.as_raw_fd(), path.as_ptr(), mask) } < 0 {
+            return Err(denied());
+        }
+        Ok(Self {
+            state: Mutex::new((file, false)),
+        })
+    }
+    fn unchanged(&self) -> Result<(), String> {
+        let mut state = self.state.try_lock().map_err(|_| denied())?;
+        if state.1 {
+            return Err(denied());
+        }
+        let mut reader = &state.0;
+        let mut events = [0u8; 512];
+        match reader.read(&mut events) {
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
+            // Any event (including overflow, ignored or unmount), EOF or read
+            // failure permanently retires this witness. No event is discarded.
+            _ => {
+                state.1 = true;
+                Err(denied())
+            }
+        }
+    }
+}
+#[cfg(not(any(windows, target_os = "android", target_os = "linux")))]
+struct DirectoryChanges;
+#[cfg(not(any(windows, target_os = "android", target_os = "linux")))]
+impl DirectoryChanges {
+    fn new(_directory: &Directory) -> Result<Self, String> {
+        Err(denied())
+    }
+    fn unchanged(&self) -> Result<(), String> {
+        Err(denied())
+    }
+}
 struct Directory {
     file: File,
     path: PathBuf,
     stamp: Stamp,
+    changes: Option<DirectoryChanges>,
 }
 impl Directory {
     fn absolute(path: &Path) -> Result<Self, String> {
@@ -213,6 +367,7 @@ impl Directory {
             file,
             path: path.into(),
             stamp,
+            changes: None,
         })
     }
     fn child(&self, name: &str, regular: bool) -> Result<(File, Stamp), String> {
@@ -266,7 +421,29 @@ impl Directory {
             file,
             path: self.path.join(name),
             stamp,
+            changes: None,
         })
+    }
+    fn inventory_unchanged(&self) -> Result<(), String> {
+        if stamp(&self.file, false)? != self.stamp {
+            return Err(denied());
+        }
+        self.changes.as_ref().ok_or_else(denied)?.unchanged()
+    }
+    fn stream_inventory(&self, check: &dyn Fn() -> bool) -> Result<BTreeSet<String>, String> {
+        check_owner(check)?;
+        self.inventory_unchanged()?;
+        let entries = fs::read_dir(self.listing_path())
+            .map_err(|_| denied())?
+            .map(|entry| {
+                let entry = entry.map_err(|_| denied())?;
+                let regular = entry.file_type().map_err(|_| denied())?.is_file();
+                Ok((entry.file_name(), regular))
+            });
+        let streams = collect_stream_inventory(entries, check)?;
+        check_owner(check)?;
+        self.inventory_unchanged()?;
+        Ok(streams)
     }
     fn listing_path(&self) -> PathBuf {
         #[cfg(unix)]
@@ -299,7 +476,8 @@ impl Custody {
     }
     fn open(root: &Path, id: &str) -> Result<Self, String> {
         let (parent, root) = Self::root(root)?;
-        let session = root.directory(id)?;
+        let mut session = root.directory(id)?;
+        session.changes = Some(DirectoryChanges::new(&session)?);
         Ok(Self {
             parent,
             root,
@@ -317,9 +495,12 @@ impl Custody {
     }
     fn unchanged(&self) -> Result<(), String> {
         Self::root_current(&self.parent, &self.root)?;
-        if self.root.directory(&self.id)?.stamp.identity != self.session.stamp.identity {
+        if self.root.directory(&self.id)?.stamp != self.session.stamp
+            || stamp(&self.session.file, false)? != self.session.stamp
+        {
             return Err(denied());
         }
+        self.session.inventory_unchanged()?;
         Ok(())
     }
 }
@@ -408,6 +589,7 @@ impl Prepared {
     }
 }
 struct PinnedFiles<'a> {
+    streams: &'a BTreeSet<String>,
     files: &'a mut [Pinned],
     check: &'a dyn Fn() -> bool,
 }
@@ -439,12 +621,7 @@ impl Read for CheckedRead<'_> {
 impl RecordingFiles for PinnedFiles<'_> {
     fn stream_names(&self) -> Result<BTreeSet<String>, String> {
         check_owner(self.check)?;
-        Ok(self
-            .files
-            .iter()
-            .filter(|p| p.name.ends_with(".jsonl"))
-            .map(|p| p.name.into())
-            .collect())
+        Ok(self.streams.clone())
     }
     fn len(&self, name: &str) -> Result<u64, String> {
         check_owner(self.check)?;
@@ -475,11 +652,16 @@ impl RecordingFiles for PinnedFiles<'_> {
 }
 fn validate_pinned_core(
     files: &mut [Pinned],
+    streams: &BTreeSet<String>,
     key: SessionTimestampKey,
     check: &dyn Fn() -> bool,
 ) -> Result<(Value, crate::session_recording_recovery::RecoveredEntry), String> {
     validate_finalized_core(
-        &mut PinnedFiles { files, check },
+        &mut PinnedFiles {
+            files,
+            streams,
+            check,
+        },
         key,
         1024 * 1024,
         MAX_EXPORT_BYTES,
@@ -505,12 +687,13 @@ fn prepare(root: &Path, id: &str, check: &dyn Fn() -> bool) -> Result<Prepared, 
             digest: String::new(),
         });
     }
+    let streams = custody.session.stream_inventory(check)?;
     let mut prepared = Prepared {
         manifest: Value::Null,
         custody,
         files,
     };
-    let (original, entry) = validate_pinned_core(&mut prepared.files, key, check)?;
+    let (original, entry) = validate_pinned_core(&mut prepared.files, &streams, key, check)?;
     prepared.unchanged()?;
     for p in &mut prepared.files {
         check_owner(check)?;

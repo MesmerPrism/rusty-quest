@@ -54,6 +54,23 @@ hashing and delivery therefore share custody even if a path is substituted.
 Owner checks interrupt metadata/stream reads at most every 32 KiB; original and
 export caps remain unchanged.
 
+Export takes a cancellation-aware filename/type inventory from the retained
+session directory, capped at 65536 total entries, including ignored checkpoint
+and index filenames. The same regular-file/UTF-8 `.jsonl` predicate is used by
+ordinary recovery and export. An unexpected stream makes export unavailable;
+only the original pinned core8 handles supply metadata/stream body reads.
+
+Directory stamps and a one-shot kernel namespace witness fence the inventory
+and every later use of a prepared offer. Registration occurs before core pinning
+and filename enumeration. Windows uses a change-notification HANDLE polled with
+zero wait; Android/Linux use one nonblocking inotify descriptor on the retained
+directory's kernel fd alias. Any namespace/type signal, overflow/ignored event,
+EOF or watcher failure is unavailable, and invalidation stays sticky. There is
+no watcher thread, rearm, overlapped user buffer, destructor wait or checkpoint
+body read. Failed registration has no timestamp-only fallback. Handles close
+through normal bounded ownership cleanup. App-private directory access is used;
+no system-ancestor enumeration or Android permission expansion is introduced.
+
 An eligible recording has recovery error=None, disposition finalized-completed
 or finalized-early, final.saved=true, and actual lengths exactly equal to every
 validated durable stream length. An interrupted, corrupt, unsaved, lossy, active,

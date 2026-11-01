@@ -413,6 +413,13 @@ pub(crate) trait RecordingFiles {
     fn reader(&mut self, name: &str) -> Result<Box<dyn Read + '_>, String>;
 }
 
+/// The native inventory predicate: regular entries with UTF-8 JSONL names.
+/// Export and ordinary recovery share this filename/type interpretation.
+pub(crate) fn recording_stream_name(name: &std::ffi::OsStr, regular: bool) -> Option<String> {
+    if !regular { return None; }
+    name.to_str().filter(|name| name.ends_with(".jsonl")).map(str::to_owned)
+}
+
 struct DirectoryFiles<'a>(&'a Path);
 impl RecordingFiles for DirectoryFiles<'_> {
     fn stream_names(&self) -> Result<BTreeSet<String>, String> {
@@ -420,13 +427,10 @@ impl RecordingFiles for DirectoryFiles<'_> {
             .map_err(|error| format!("recording-directory-read:{error}"))?
             .filter_map(Result::ok)
             .filter_map(|entry| {
-                entry
-                    .file_type()
-                    .ok()
-                    .filter(|t| t.is_file())
-                    .and_then(|_| entry.file_name().to_str().map(str::to_owned))
+                entry.file_type().ok().and_then(|kind| {
+                    recording_stream_name(&entry.file_name(), kind.is_file())
+                })
             })
-            .filter(|name| name.ends_with(".jsonl"))
             .collect())
     }
     fn len(&self, name: &str) -> Result<u64, String> {
