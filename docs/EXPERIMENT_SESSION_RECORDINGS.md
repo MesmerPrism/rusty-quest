@@ -35,6 +35,25 @@ initialization/recovery/root readiness and generation around IO. Retirement
 invalidates preparation publication and cached results. The internal controller
 ticket enters native as a SHA-256 fingerprint; credentials are excluded.
 
+Eligibility uses the shared recovery manifest/terminal/row validators through a
+strict final-only `RecordingFiles` reader seam. The export source exposes only
+the eight pinned file handles and their checked metadata; it has no directory
+path or checkpoint-reader capability. Invalid or missing final metadata stops
+immediately. Ordinary interrupted recovery retains its existing path-based
+prefix validation and checkpoint fallback policy.
+
+Android and Linux anchor the app-private files parent, recording root and
+session directories, then open each component relative to retained descriptors
+with O_NOFOLLOW (and O_DIRECTORY for directories). Regular opens are nonblocking
+so a FIFO replacement cannot stall before type rejection. No read/enumeration
+permission on system ancestors is added; trusted platform aliases stay allowed.
+Windows host custody retains directory handles without delete sharing and opens
+final entries as reparse points, rejecting every reparse type before reading.
+Chunk bytes use positional reads on the original pinned handles. Validation,
+hashing and delivery therefore share custody even if a path is substituted.
+Owner checks interrupt metadata/stream reads at most every 32 KiB; original and
+export caps remain unchanged.
+
 An eligible recording has recovery error=None, disposition finalized-completed
 or finalized-early, final.saved=true, and actual lengths exactly equal to every
 validated durable stream length. An interrupted, corrupt, unsaved, lossy, active,

@@ -310,6 +310,13 @@ fn validate_manifest(
     started_at: &SessionTimestampKey,
 ) -> Result<ValidatedManifest, String> {
     let value = read_json(&directory.join("manifest.json"))?;
+    validate_manifest_value(&value, started_at)
+}
+
+fn validate_manifest_value(
+    value: &Value,
+    started_at: &SessionTimestampKey,
+) -> Result<ValidatedManifest, String> {
     if value.get("schema").and_then(Value::as_str) != Some(SESSION_MANIFEST_SCHEMA) {
         return Err("recording-manifest-schema-invalid".to_owned());
     }
@@ -398,6 +405,116 @@ fn checkpoint_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
+/// A caller-owned file custody boundary. Export supplies only its eight pinned
+/// handles; ordinary recovery keeps its directory-backed prefix/fallback policy.
+pub(crate) trait RecordingFiles {
+    fn stream_names(&self) -> Result<BTreeSet<String>, String>;
+    fn len(&self, name: &str) -> Result<u64, String>;
+    fn reader(&mut self, name: &str) -> Result<Box<dyn Read + '_>, String>;
+}
+
+struct DirectoryFiles<'a>(&'a Path);
+impl RecordingFiles for DirectoryFiles<'_> {
+    fn stream_names(&self) -> Result<BTreeSet<String>, String> {
+        Ok(fs::read_dir(self.0)
+            .map_err(|error| format!("recording-directory-read:{error}"))?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                entry
+                    .file_type()
+                    .ok()
+                    .filter(|t| t.is_file())
+                    .and_then(|_| entry.file_name().to_str().map(str::to_owned))
+            })
+            .filter(|name| name.ends_with(".jsonl"))
+            .collect())
+    }
+    fn len(&self, name: &str) -> Result<u64, String> {
+        fs::metadata(self.0.join(name))
+            .map(|m| m.len())
+            .map_err(|e| format!("recording-stream-metadata:{e}"))
+    }
+    fn reader(&mut self, name: &str) -> Result<Box<dyn Read + '_>, String> {
+        File::open(self.0.join(name))
+            .map(|f| Box::new(f) as Box<dyn Read>)
+            .map_err(|e| format!("recording-stream-open:{e}"))
+    }
+}
+
+fn bounded_json(files: &mut impl RecordingFiles, name: &str, max: u64) -> Result<Value, String> {
+    let len = files.len(name)?;
+    if len > max {
+        return Err("recording-json-size-limit".into());
+    }
+    let bytes = {
+        let reader = files.reader(name)?;
+        let mut bytes = Vec::with_capacity(len as usize);
+        reader
+            .take(len + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("recording-json-read:{e}"))?;
+        bytes
+    };
+    if bytes.len() as u64 != len || files.len(name)? != len {
+        return Err("recording-json-length-changed".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|e| format!("recording-json-parse:{e}"))
+}
+
+/// Strict export eligibility over exactly the caller's pinned core files. This
+/// function has no path/checkpoint input and cannot enter interrupted recovery.
+pub(crate) fn validate_finalized_core(
+    files: &mut impl RecordingFiles,
+    started_at: SessionTimestampKey,
+    max_metadata_bytes: u64,
+    max_total_bytes: u64,
+) -> Result<(Value, RecoveredEntry), String> {
+    let mut total = 0u64;
+    for name in ["manifest.json", "final.json"]
+        .into_iter()
+        .chain(SESSION_STREAM_FILES)
+    {
+        total = total
+            .checked_add(files.len(name)?)
+            .filter(|n| *n <= max_total_bytes)
+            .ok_or("recording-core-size-limit")?;
+    }
+    let original = bounded_json(files, "manifest.json", max_metadata_bytes)?;
+    let manifest = validate_manifest_value(&original, &started_at)?;
+    let terminal = bounded_json(files, "final.json", max_metadata_bytes)?;
+    if terminal.get("saved").and_then(Value::as_bool) != Some(true) {
+        return Err("recording-final-not-saved".into());
+    }
+    let (completed, lengths, error) = validate_terminal_files(
+        &terminal,
+        SESSION_FINAL_SCHEMA,
+        &started_at,
+        &manifest,
+        files,
+        true,
+    )?;
+    if let Some(error) = error {
+        return Err(error);
+    }
+    Ok((
+        original,
+        RecoveredEntry {
+            condition: Some(manifest.condition),
+            session: RecoveredSession {
+                started_at,
+                experiment_identity: manifest.experiment_identity,
+                disposition: if completed {
+                    RecoveryDisposition::FinalizedCompleted
+                } else {
+                    RecoveryDisposition::FinalizedEarly
+                },
+                durable_stream_lengths: lengths,
+                error: None,
+            },
+        },
+    ))
+}
+
 fn validate_terminal_value(
     value: &Value,
     schema: &str,
@@ -405,6 +522,13 @@ fn validate_terminal_value(
     manifest: &ValidatedManifest,
     directory: &Path,
 ) -> Result<(bool, BTreeMap<String, u64>, Option<String>), String> {
+    validate_terminal_files(value,schema,started_at,manifest,&mut DirectoryFiles(directory),false)
+}
+
+fn validate_terminal_files(
+    value: &Value, schema: &str, started_at: &SessionTimestampKey,
+    manifest: &ValidatedManifest, files: &mut impl RecordingFiles, exact_lengths: bool,
+) -> Result<(bool, BTreeMap<String,u64>,Option<String>),String> {
     if value.get("schema").and_then(Value::as_str) != Some(schema) {
         return Err("recording-terminal-schema-invalid".to_owned());
     }
@@ -452,18 +576,7 @@ fn validate_terminal_value(
     if declared_streams != expected_streams {
         return Err("recording-terminal-stream-set-invalid".to_owned());
     }
-    let actual_streams = fs::read_dir(directory)
-        .map_err(|error| format!("recording-directory-read:{error}"))?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            entry
-                .file_type()
-                .ok()
-                .filter(|file_type| file_type.is_file())
-                .and_then(|_| entry.file_name().to_str().map(str::to_owned))
-        })
-        .filter(|name| name.ends_with(".jsonl"))
-        .collect::<BTreeSet<_>>();
+    let actual_streams = files.stream_names()?;
     if actual_streams != expected_streams {
         return Err("recording-directory-stream-set-invalid".to_owned());
     }
@@ -482,21 +595,20 @@ fn validate_terminal_value(
     // Establish the committed decision chain before validating references in breath rows.
     for (name, expected_length) in lengths.iter().filter(|(name, _)| name.as_str() == "events.jsonl")
         .chain(lengths.iter().filter(|(name, _)| name.as_str() != "events.jsonl")) {
-        let actual_length = fs::metadata(directory.join(name))
-            .map_err(|error| format!("recording-stream-metadata:{error}"))?
-            .len();
+        let actual_length = files.len(name)?;
         if actual_length < *expected_length {
             return Err("recording-stream-shorter-than-durable-prefix".to_owned());
         }
-        let evidence = validate_stream_prefix(
-            &directory.join(name),
-            name,
-            *expected_length,
-            started_at,
-            &manifest.condition,
-            manifest.experiment_identity.is_some(),
-            &mut bias_history,
-        )?;
+        if exact_lengths && actual_length != *expected_length {
+            return Err("recording-stream-length-not-exact".to_owned());
+        }
+        let evidence = if *expected_length==0 {LifecycleEvidence::default()} else {
+            validate_stream_prefix(files.reader(name)?,name,*expected_length,started_at,
+                &manifest.condition,manifest.experiment_identity.is_some(),&mut bias_history)?
+        };
+        if exact_lengths && files.len(name)?!=actual_length {
+            return Err("recording-stream-length-changed".into());
+        }
         if name == "events.jsonl" {
             lifecycle = evidence;
         }
@@ -669,7 +781,7 @@ impl BiasHistory {
 }
 
 fn validate_stream_prefix(
-    path: &Path,
+    file: impl Read,
     stream_name: &str,
     expected_length: u64,
     started_at: &SessionTimestampKey,
@@ -680,7 +792,6 @@ fn validate_stream_prefix(
     if expected_length == 0 {
         return Ok(LifecycleEvidence::default());
     }
-    let file = File::open(path).map_err(|error| format!("recording-stream-open:{error}"))?;
     let mut reader = BufReader::new(file.take(expected_length));
     let mut consumed = 0_u64;
     let mut line = Vec::new();

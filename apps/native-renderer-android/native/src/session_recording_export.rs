@@ -3,9 +3,8 @@
 //! the caller's export IO lane and hold no runtime/session/render lock.
 use crate::{
     session_recording_clock::SessionTimestampKey,
-    session_recording_contract::SESSION_STREAM_FILES,
     session_recording_recovery::{
-        recover_directory, validate_recording_root_no_links, RecoveryDisposition,
+        validate_finalized_core, validate_recording_root_no_links, RecordingFiles,
     },
 };
 use serde_json::{json, Value};
@@ -138,52 +137,210 @@ fn stamp(file: &File, regular: bool) -> Result<Stamp, String> {
         changed,
     })
 }
-fn open_checked(path: &Path, regular: bool) -> Result<(File, Stamp), String> {
-    let m = fs::symlink_metadata(path).map_err(|_| denied())?;
-    if m.file_type().is_symlink() || regular && !m.is_file() || !regular && !m.is_dir() {
-        return Err(denied());
+#[derive(Clone, Copy)]
+#[allow(
+    dead_code,
+    reason = "Inactive platform variants are covered by target-selection tests."
+)]
+enum ExportPlatform {
+    Android,
+    Linux,
+    Windows,
+    Unsupported,
+}
+#[cfg(target_os = "android")]
+const BUILD_PLATFORM: ExportPlatform = ExportPlatform::Android;
+#[cfg(target_os = "linux")]
+const BUILD_PLATFORM: ExportPlatform = ExportPlatform::Linux;
+#[cfg(windows)]
+const BUILD_PLATFORM: ExportPlatform = ExportPlatform::Windows;
+#[cfg(not(any(target_os = "android", target_os = "linux", windows)))]
+const BUILD_PLATFORM: ExportPlatform = ExportPlatform::Unsupported;
+const fn unix_open_flags(platform: ExportPlatform, regular: bool) -> i32 {
+    match platform {
+        // Android is a distinct Rust target_os despite sharing these Linux ABI flags.
+        ExportPlatform::Android | ExportPlatform::Linux => {
+            0x20000 | 0x80000 | 0x800 | if regular { 0 } else { 0x10000 }
+        }
+        _ => 0,
     }
+}
+// cargo check for the actual Android target must compile this exact selection.
+#[cfg(target_os = "android")]
+const _: () = assert!(
+    matches!(BUILD_PLATFORM, ExportPlatform::Android)
+        && unix_open_flags(BUILD_PLATFORM, true) & 0x20000 != 0
+        && unix_open_flags(BUILD_PLATFORM, false) & 0x10000 != 0
+        && unix_open_flags(BUILD_PLATFORM, true) & 0x800 != 0
+);
+
+fn open_checked(path: &Path, regular: bool) -> Result<(File, Stamp), String> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(0x20000);
+        let flags = unix_open_flags(BUILD_PLATFORM, regular);
+        if flags == 0 {
+            return Err("export-platform-custody-unavailable".into());
+        }
+        options.custom_flags(flags);
     }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
         options.custom_flags(if regular { 0x00200000 } else { 0x02200000 });
+        // Windows path-relative opens below are safe while retained directories
+        // deny deletion/renaming. Final entries are opened as reparse points and
+        // stamp() refuses every reparse type before any bytes are read.
+        if !regular {
+            options.share_mode(0x1 | 0x2);
+        }
     }
     let file = options.open(path).map_err(|_| denied())?;
-    let s = stamp(&file, regular)?;
-    Ok((file, s))
+    let metadata = stamp(&file, regular)?;
+    Ok((file, metadata))
+}
+struct Directory {
+    file: File,
+    path: PathBuf,
+    stamp: Stamp,
+}
+impl Directory {
+    fn absolute(path: &Path) -> Result<Self, String> {
+        let (file, stamp) = open_checked(path, false)?;
+        Ok(Self {
+            file,
+            path: path.into(),
+            stamp,
+        })
+    }
+    fn child(&self, name: &str, regular: bool) -> Result<(File, Stamp), String> {
+        if name.is_empty()
+            || name == "."
+            || name == ".."
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        {
+            return Err(denied());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::fd::{AsRawFd, FromRawFd};
+            let flags = unix_open_flags(BUILD_PLATFORM, regular);
+            if flags == 0 {
+                return Err(denied());
+            }
+            let component = std::ffi::CString::new(name).map_err(|_| denied())?;
+            unsafe extern "C" {
+                fn openat(
+                    fd: std::ffi::c_int,
+                    name: *const std::ffi::c_char,
+                    flags: std::ffi::c_int,
+                    ...
+                ) -> std::ffi::c_int;
+            }
+            // The retained directory and CString live across the borrowed call.
+            let fd = unsafe { openat(self.file.as_raw_fd(), component.as_ptr(), flags) };
+            if fd < 0 {
+                return Err(denied());
+            }
+            // A successful openat returns one new owned descriptor.
+            let file = unsafe { File::from_raw_fd(fd) };
+            let metadata = stamp(&file, regular)?;
+            Ok((file, metadata))
+        }
+        #[cfg(windows)]
+        {
+            open_checked(&self.path.join(name), regular)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            Err("export-platform-custody-unavailable".into())
+        }
+    }
+    fn directory(&self, name: &str) -> Result<Self, String> {
+        let (file, stamp) = self.child(name, false)?;
+        Ok(Self {
+            file,
+            path: self.path.join(name),
+            stamp,
+        })
+    }
+    fn listing_path(&self) -> PathBuf {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            // This kernel-owned alias names the retained descriptor; no
+            // app-controlled path component can redirect directory enumeration.
+            PathBuf::from(format!("/proc/self/fd/{}", self.file.as_raw_fd()))
+        }
+        #[cfg(not(unix))]
+        {
+            self.path.clone()
+        }
+    }
+}
+struct Custody {
+    parent: Directory,
+    root: Directory,
+    session: Directory,
+    id: String,
+}
+impl Custody {
+    fn root(root: &Path) -> Result<(Directory, Directory), String> {
+        validate_recording_root_no_links(root).map_err(|_| denied())?;
+        // Only app-private files is opened by absolute path. System ancestors
+        // remain trusted aliases and need no read/enumeration permission.
+        let parent = Directory::absolute(root.parent().ok_or_else(denied)?)?;
+        let directory = parent.directory("viscereality-recordings")?;
+        Ok((parent, directory))
+    }
+    fn open(root: &Path, id: &str) -> Result<Self, String> {
+        let (parent, root) = Self::root(root)?;
+        let session = root.directory(id)?;
+        Ok(Self {
+            parent,
+            root,
+            session,
+            id: id.into(),
+        })
+    }
+    fn root_current(parent: &Directory, root: &Directory) -> Result<(), String> {
+        if Directory::absolute(&parent.path)?.stamp.identity != parent.stamp.identity
+            || parent.directory("viscereality-recordings")?.stamp.identity != root.stamp.identity
+        {
+            return Err(denied());
+        }
+        Ok(())
+    }
+    fn unchanged(&self) -> Result<(), String> {
+        Self::root_current(&self.parent, &self.root)?;
+        if self.root.directory(&self.id)?.stamp.identity != self.session.stamp.identity {
+            return Err(denied());
+        }
+        Ok(())
+    }
 }
 struct Pinned {
     name: &'static str,
-    path: PathBuf,
     file: File,
     stamp: Stamp,
     digest: String,
 }
 pub(crate) struct Prepared {
     pub(crate) manifest: Value,
-    directory: PathBuf,
-    root: PathBuf,
-    root_stamp: Stamp,
-    directory_stamp: Stamp,
+    custody: Custody,
     files: Vec<Pinned>,
 }
 impl Prepared {
     fn unchanged(&self) -> Result<(), String> {
-        validate_recording_root_no_links(&self.root).map_err(|_| denied())?;
-        if open_checked(&self.root, false)?.1.identity != self.root_stamp.identity
-            || open_checked(&self.directory, false)?.1.identity != self.directory_stamp.identity
-        {
-            return Err(denied());
-        }
+        self.custody.unchanged()?;
         for p in &self.files {
-            if stamp(&p.file, true)? != p.stamp || open_checked(&p.path, true)?.1 != p.stamp {
+            if stamp(&p.file, true)? != p.stamp
+                || self.custody.session.child(p.name, true)?.1 != p.stamp
+            {
                 return Err(denied());
             }
         }
@@ -213,15 +370,34 @@ impl Prepared {
             return Err("recording-chunk-range-invalid".into());
         }
         self.unchanged()?;
-        // Reopening avoids shared seek cursors across concurrent authenticated requests.
-        let (mut file, s) = open_checked(&p.path, true)?;
-        if s != p.stamp {
-            return Err(denied());
-        }
-        file.seek(SeekFrom::Start(offset)).map_err(|_| denied())?;
+        // Positional IO reads the original pinned handle. Concurrent chunk
+        // requests cannot share a seek cursor or reopen a substituted path.
         let mut bytes = vec![0; length as usize];
-        file.read_exact(&mut bytes).map_err(|_| denied())?;
-        if stamp(&file, true)? != p.stamp {
+        let mut read = 0usize;
+        while read < bytes.len() {
+            #[cfg(unix)]
+            let n = {
+                use std::os::unix::fs::FileExt;
+                p.file.read_at(&mut bytes[read..], offset + read as u64)
+            };
+            #[cfg(windows)]
+            let n = {
+                use std::os::windows::fs::FileExt;
+                p.file.seek_read(&mut bytes[read..], offset + read as u64)
+            };
+            #[cfg(not(any(unix, windows)))]
+            let n: std::io::Result<usize> = Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "export-platform-custody-unavailable",
+            ));
+            let n = n.map_err(|_| denied())?;
+            if n == 0 {
+                return Err(denied());
+            }
+            read += n;
+            check_owner(check)?;
+        }
+        if stamp(&p.file, true)? != p.stamp {
             return Err(denied());
         }
         self.unchanged()?;
@@ -231,25 +407,99 @@ impl Prepared {
         )
     }
 }
+struct PinnedFiles<'a> {
+    files: &'a mut [Pinned],
+    check: &'a dyn Fn() -> bool,
+}
+struct CheckedRead<'a> {
+    file: &'a mut File,
+    remaining: u64,
+    check: &'a dyn Fn() -> bool,
+}
+impl Read for CheckedRead<'_> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let guard = || {
+            if (self.check)() {
+                Ok(())
+            } else {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "recording-owner-retired",
+                ))
+            }
+        };
+        guard()?;
+        let max = buffer.len().min(self.remaining.min(32768) as usize);
+        let n = self.file.read(&mut buffer[..max])?;
+        self.remaining -= n as u64;
+        guard()?;
+        Ok(n)
+    }
+}
+impl RecordingFiles for PinnedFiles<'_> {
+    fn stream_names(&self) -> Result<BTreeSet<String>, String> {
+        check_owner(self.check)?;
+        Ok(self
+            .files
+            .iter()
+            .filter(|p| p.name.ends_with(".jsonl"))
+            .map(|p| p.name.into())
+            .collect())
+    }
+    fn len(&self, name: &str) -> Result<u64, String> {
+        check_owner(self.check)?;
+        let p = self
+            .files
+            .iter()
+            .find(|p| p.name == name)
+            .ok_or_else(denied)?;
+        if stamp(&p.file, true)? != p.stamp {
+            return Err(denied());
+        }
+        Ok(p.stamp.len)
+    }
+    fn reader(&mut self, name: &str) -> Result<Box<dyn Read + '_>, String> {
+        self.len(name)?;
+        let p = self
+            .files
+            .iter_mut()
+            .find(|p| p.name == name)
+            .ok_or_else(denied)?;
+        p.file.seek(SeekFrom::Start(0)).map_err(|_| denied())?;
+        Ok(Box::new(CheckedRead {
+            file: &mut p.file,
+            remaining: p.stamp.len,
+            check: self.check,
+        }))
+    }
+}
+fn validate_pinned_core(
+    files: &mut [Pinned],
+    key: SessionTimestampKey,
+    check: &dyn Fn() -> bool,
+) -> Result<(Value, crate::session_recording_recovery::RecoveredEntry), String> {
+    validate_finalized_core(
+        &mut PinnedFiles { files, check },
+        key,
+        1024 * 1024,
+        MAX_EXPORT_BYTES,
+    )
+    .map_err(|_| denied())
+}
 fn prepare(root: &Path, id: &str, check: &dyn Fn() -> bool) -> Result<Prepared, String> {
     check_owner(check)?;
     let key = SessionTimestampKey::parse(id).map_err(|_| denied())?;
-    validate_recording_root_no_links(root).map_err(|_| denied())?;
-    let directory = root.join(id);
-    let root_stamp = open_checked(root, false)?.1;
-    let directory_stamp = open_checked(&directory, false)?.1;
+    let custody = Custody::open(root, id)?;
     let mut files = Vec::with_capacity(8);
     let mut total = 0u64;
     for name in CORE {
-        let path = directory.join(name);
-        let (file, stamp) = open_checked(&path, true)?;
+        let (file, stamp) = custody.session.child(name, true)?;
         total = total
             .checked_add(stamp.len)
             .filter(|n| *n <= MAX_EXPORT_BYTES)
             .ok_or_else(denied)?;
         files.push(Pinned {
             name,
-            path,
             file,
             stamp,
             digest: String::new(),
@@ -257,46 +507,10 @@ fn prepare(root: &Path, id: &str, check: &dyn Fn() -> bool) -> Result<Prepared, 
     }
     let mut prepared = Prepared {
         manifest: Value::Null,
-        directory,
-        root: root.to_path_buf(),
-        root_stamp,
-        directory_stamp,
+        custody,
         files,
     };
-    // Read small JSON metadata through the pinned handle; no unbounded read-to-end.
-    let mut metadata = |index: usize| -> Result<Value, String> {
-        let p = &mut prepared.files[index];
-        if p.stamp.len > 1024 * 1024 {
-            return Err(denied());
-        }
-        let mut bytes = Vec::with_capacity(p.stamp.len as usize);
-        (&mut p.file)
-            .take(p.stamp.len + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| denied())?;
-        serde_json::from_slice(&bytes).map_err(|_| denied())
-    };
-    let original = metadata(0)?;
-    let terminal = metadata(1)?;
-    if terminal["saved"] != true {
-        return Err(denied());
-    }
-    check_owner(check)?;
-    let entry = recover_directory(&prepared.directory, key);
-    if entry.session.error.is_some()
-        || !matches!(
-            entry.session.disposition,
-            RecoveryDisposition::FinalizedCompleted | RecoveryDisposition::FinalizedEarly
-        )
-    {
-        return Err(denied());
-    }
-    for name in SESSION_STREAM_FILES {
-        let p = prepared.files.iter().find(|p| p.name == name).unwrap();
-        if entry.session.durable_stream_lengths.get(name) != Some(&p.stamp.len) {
-            return Err(denied());
-        }
-    }
+    let (original, entry) = validate_pinned_core(&mut prepared.files, key, check)?;
     prepared.unchanged()?;
     for p in &mut prepared.files {
         check_owner(check)?;
@@ -436,8 +650,13 @@ fn list(
     check_owner(check)?;
     validate_recording_root_no_links(root).map_err(|_| denied())?;
     let mut names = BTreeSet::new();
-    if root.exists() {
-        for entry in fs::read_dir(root).map_err(|_| denied())? {
+    let anchors = match fs::symlink_metadata(root) {
+        Ok(_) => Some(Custody::root(root)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return Err(denied()),
+    };
+    if let Some((_, directory)) = &anchors {
+        for entry in fs::read_dir(directory.listing_path()).map_err(|_| denied())? {
             check_owner(check)?;
             let entry = entry.map_err(|_| denied())?;
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -458,14 +677,18 @@ fn list(
     let mut entries = Vec::new();
     for id in names.into_iter().rev() {
         check_owner(check)?;
-        let directory = root.join(&id);
         let eligible = prepare(root, &id, check);
         let entry = match eligible {
             Ok(p) => {
                 json!({"id":id,"exportable":true,"disposition":p.manifest["disposition"],"condition":p.manifest["condition"],"total_bytes":p.manifest["total_bytes"]})
             }
             Err(_) => {
-                let reason = if !directory.join("final.json").is_file() {
+                let reason = if anchors
+                    .as_ref()
+                    .and_then(|(_, r)| r.directory(&id).ok())
+                    .and_then(|d| d.child("final.json", true).ok())
+                    .is_none()
+                {
                     "not-finalized"
                 } else {
                     "not-validated-saved"
@@ -474,6 +697,9 @@ fn list(
             }
         };
         entries.push(entry);
+    }
+    if let Some((parent, root)) = &anchors {
+        Custody::root_current(parent, root)?;
     }
     check_owner(check)?;
     Ok(

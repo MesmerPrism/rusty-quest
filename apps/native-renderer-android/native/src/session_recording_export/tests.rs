@@ -131,6 +131,7 @@ fn chunk_range_identity_mutation_and_owner_are_fenced() {
         .is_err());
     fs::write(root.join(ID).join("manifest.json"), b"changed").unwrap();
     assert!(p.read(m, "events.jsonl", 0, 1, &|| true).is_err());
+    drop(p);
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
 #[test]
@@ -145,6 +146,7 @@ fn replacement_and_hardlinks_are_rejected() {
     fs::remove_file(&path).unwrap();
     fs::hard_link(path.with_extension("old"), &path).unwrap();
     assert!(prepare(&root, ID, &|| true).is_err());
+    drop(p);
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
 #[test]
@@ -247,6 +249,7 @@ fn same_size_mutation_with_restored_modified_time_is_rejected() {
         .set_modified(modified)
         .unwrap();
     assert!(p.unchanged().is_err());
+    drop(p);
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
 
@@ -269,5 +272,235 @@ fn retirement_while_cache_lock_is_busy_cannot_reuse_prepared_files() {
     drop(state);
     let response = service.query(&root, &json!({"query":"read", "manifest_id":manifest["manifest_id"], "file":"manifest.json", "offset":0, "length":1}), "same-owner".into(), Arc::new(||true));
     assert_eq!(response["state"], "unavailable");
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn pinned_bad_stream_cannot_borrow_eligibility_from_a_swapped_valid_directory() {
+    let root = fixture(true);
+    let alternate = fixture(true);
+    let path = root.join(ID).join("events.jsonl");
+    let invalid = String::from_utf8(fs::read(&path).unwrap())
+        .unwrap()
+        .replace("started", "stArted");
+    fs::write(&path, invalid).unwrap();
+    let mut pins: Vec<_> = CORE
+        .into_iter()
+        .map(|name| {
+            let path = root.join(ID).join(name);
+            let (file, stamp) = open_checked(&path, true).unwrap();
+            Pinned {
+                name,
+                file,
+                stamp,
+                digest: String::new(),
+            }
+        })
+        .collect();
+    // Model namespace resolution selecting an alternate directory while the
+    // original eight handles remain pinned (Windows forbids renaming parents
+    // with these open child handles; Android/Unix need not).
+    let result = validate_pinned_core(&mut pins, SessionTimestampKey::parse(ID).unwrap(), &|| true);
+    drop(pins);
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    fs::remove_dir_all(alternate.parent().unwrap()).unwrap();
+    assert!(
+        result.is_err(),
+        "invalid pinned streams acquired alternate path's finalized eligibility"
+    );
+}
+#[test]
+fn actual_android_open_selection_requires_nofollow_directory_and_nonblocking_flags() {
+    assert_ne!(
+        unix_open_flags(ExportPlatform::Android, true) & 0x20000,
+        0,
+        "Android must enable O_NOFOLLOW"
+    );
+    assert_ne!(
+        unix_open_flags(ExportPlatform::Android, false) & 0x10000,
+        0,
+        "directory descriptors require O_DIRECTORY"
+    );
+    assert_ne!(
+        unix_open_flags(ExportPlatform::Android, true) & 0x800,
+        0,
+        "a FIFO replacement must not block open"
+    );
+}
+
+fn pins(root: &Path) -> Vec<Pinned> {
+    CORE.into_iter()
+        .map(|name| {
+            let path = root.join(ID).join(name);
+            let (file, stamp) = open_checked(&path, true).unwrap();
+            Pinned {
+                name,
+                file,
+                stamp,
+                digest: String::new(),
+            }
+        })
+        .collect()
+}
+struct Audit<'a> {
+    inner: PinnedFiles<'a>,
+    opened: Vec<String>,
+    oversized: Option<(&'static str, u64)>,
+}
+impl RecordingFiles for Audit<'_> {
+    fn stream_names(&self) -> Result<BTreeSet<String>, String> {
+        self.inner.stream_names()
+    }
+    fn len(&self, name: &str) -> Result<u64, String> {
+        assert!(
+            !name.starts_with("checkpoint-"),
+            "unowned checkpoint metadata accessed"
+        );
+        if let Some((target, size)) = self.oversized {
+            if name == target {
+                return Ok(size);
+            }
+        }
+        self.inner.len(name)
+    }
+    fn reader(&mut self, name: &str) -> Result<Box<dyn Read + '_>, String> {
+        assert!(
+            !name.starts_with("checkpoint-"),
+            "unowned checkpoint opened"
+        );
+        self.opened.push(name.into());
+        self.inner.reader(name)
+    }
+}
+#[test]
+fn malformed_saved_final_never_reads_streams_or_linked_oversized_checkpoints() {
+    let root = fixture(true);
+    let directory = root.join(ID);
+    let mut final_value: Value =
+        serde_json::from_slice(&fs::read(directory.join("final.json")).unwrap()).unwrap();
+    final_value["schema"] = json!("malformed-but-saved");
+    fs::write(directory.join("final.json"), final_value.to_string()).unwrap();
+    let poison = root.parent().unwrap().join("outside-core.json");
+    fs::write(&poison, b"unowned checkpoint").unwrap();
+    fs::hard_link(
+        &poison,
+        directory.join("checkpoint-00000000000000000001.json"),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        &poison,
+        directory.join("checkpoint-00000000000000000002.json"),
+    )
+    .unwrap();
+    File::create(directory.join("checkpoint-00000000000000000003.json"))
+        .unwrap()
+        .set_len(2 * 1024 * 1024)
+        .unwrap();
+    let mut files = pins(&root);
+    let mut audit = Audit {
+        inner: PinnedFiles {
+            files: &mut files,
+            check: &|| true,
+        },
+        opened: Vec::new(),
+        oversized: None,
+    };
+    let result = validate_finalized_core(
+        &mut audit,
+        SessionTimestampKey::parse(ID).unwrap(),
+        1024 * 1024,
+        MAX_EXPORT_BYTES,
+    );
+    assert_eq!(result.unwrap_err(), "recording-terminal-schema-invalid");
+    assert_eq!(audit.opened, ["manifest.json", "final.json"]);
+    drop(audit);
+    drop(files);
+    fs::remove_file(directory.join("final.json")).unwrap();
+    assert!(prepare(&root, ID, &|| true).is_err());
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+#[test]
+fn pinned_metadata_and_total_bounds_are_checked_before_body_reads() {
+    for oversized in [
+        ("manifest.json", 1024 * 1024 + 1),
+        ("events.jsonl", MAX_EXPORT_BYTES + 1),
+    ] {
+        let root = fixture(true);
+        let mut files = pins(&root);
+        let mut audit = Audit {
+            inner: PinnedFiles {
+                files: &mut files,
+                check: &|| true,
+            },
+            opened: Vec::new(),
+            oversized: Some(oversized),
+        };
+        assert!(validate_finalized_core(
+            &mut audit,
+            SessionTimestampKey::parse(ID).unwrap(),
+            1024 * 1024,
+            MAX_EXPORT_BYTES
+        )
+        .is_err());
+        assert!(audit.opened.is_empty());
+        drop(audit);
+        drop(files);
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+}
+#[test]
+fn owner_retirement_during_pinned_stream_validation_stops_bounded_reads() {
+    let root = fixture(true);
+    let path = root.join(ID).join("events.jsonl");
+    let rows = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+    let mut rows = rows
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    rows[0]["bounded_padding"] = json!("x".repeat(100_000));
+    let bytes = rows.iter().map(|v| format!("{v}\n")).collect::<String>();
+    fs::write(&path, bytes.as_bytes()).unwrap();
+    let terminal = root.join(ID).join("final.json");
+    let mut v: Value = serde_json::from_slice(&fs::read(&terminal).unwrap()).unwrap();
+    v["durable_stream_lengths"]["events.jsonl"] = json!(bytes.len());
+    fs::write(terminal, v.to_string()).unwrap();
+    let mut files = pins(&root);
+    let calls = std::cell::Cell::new(0);
+    let check = || {
+        let n = calls.get() + 1;
+        calls.set(n);
+        n < 32
+    };
+    let result = validate_pinned_core(&mut files, SessionTimestampKey::parse(ID).unwrap(), &check);
+    assert!(result.is_err());
+    assert!(calls.get() >= 32);
+    assert!(calls.get() <= 33);
+    drop(files);
+    fs::remove_dir_all(root.parent().unwrap()).unwrap();
+}
+#[test]
+fn retained_components_refuse_replacement_and_escape() {
+    let root = fixture(true);
+    let p = prepare(&root, ID, &|| true).unwrap();
+    for name in ["../outside", "a/b", "a\\b", ".", "..", "file:stream"] {
+        assert!(p.custody.root.child(name, true).is_err());
+    }
+    let away = root.parent().unwrap().join("replaced-directory");
+    #[cfg(windows)]
+    assert!(
+        fs::rename(root.join(ID), &away).is_err(),
+        "retained Windows directory must deny renaming"
+    );
+    #[cfg(unix)]
+    {
+        fs::rename(root.join(ID), &away).unwrap();
+        std::os::unix::fs::symlink(&away, root.join(ID)).unwrap();
+        assert!(p.custody.root.directory(ID).is_err());
+        assert!(p.unchanged().is_err());
+        fs::remove_file(root.join(ID)).unwrap();
+        fs::rename(&away, root.join(ID)).unwrap();
+    }
+    drop(p);
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
