@@ -101,7 +101,9 @@ final class ExperimentSessionWifiSnapshot {
             "gatt_event_age_ms","disconnect_count"});
         JSONObject link=fields(polar,new String[]{"connected","connection_generation","acc_requested","ecg_requested",
             "acc_pmd_ack_running","ecg_pmd_ack_running","acc_data_receiving_observed","ecg_data_receiving_observed"});
-        for(String name:link.keySet())out.put(name,link.get(name));
+        for(java.util.Iterator<String> names=link.keys();names.hasNext();) {
+            String name=names.next();out.put(name,link.get(name));
+        }
         diagnostic.put("java",out);
     }
 
