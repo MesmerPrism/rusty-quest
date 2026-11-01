@@ -13,10 +13,38 @@ try {
     & $javac -encoding UTF-8 -cp (Join-Path $platform.FullName 'android.jar') -d $output `
         (Join-Path $javaRoot 'NativeRendererBootLaunchPolicy.java') `
         (Join-Path $javaRoot 'NativeRendererBootReceiver.java') `
+        (Join-Path $javaRoot 'NativeRendererActivityComponents.java') `
+        (Join-Path $javaRoot 'NativeRendererBootObservation.java') `
         (Join-Path $testRoot 'NativeRendererBootLaunchPolicyTest.java')
     if ($LASTEXITCODE -ne 0) { throw 'Actual Android boot receiver compilation failed.' }
     & $java -cp $output io.github.mesmerprism.rustyquest.native_renderer.NativeRendererBootLaunchPolicyTest
     if ($LASTEXITCODE -ne 0) { throw 'Boot admission controls failed.' }
+    Import-Module (Join-Path $repo 'tools/lib/NativeRendererBootHostFixtures.psm1') -Force
+    Import-Module (Join-Path $repo 'tools/lib/NativeRendererAppStatusBridge.psm1') -Force
+    $hostOutput = Join-Path $output 'host'
+    New-Item -ItemType Directory -Path $hostOutput | Out-Null
+    $sources = @(New-NativeRendererBootHostFixtures -Directory $hostOutput)
+    $bridge = Join-Path $hostOutput 'NativeRendererAppStatusBridge.java'
+    [IO.File]::WriteAllText($bridge, (New-NativeRendererAppStatusBridgeSource), [Text.UTF8Encoding]::new($false))
+    $sources += $bridge
+    $productionSources = foreach ($name in @('NativeRendererBootReceiver', 'NativeRendererBootLaunchPolicy',
+        'NativeRendererActivityComponents', 'NativeRendererSelfKioskApplication',
+        'NativeRendererExperimentLaunchAuthority', 'NativeRendererExperimentLauncherPolicy',
+        'NativeRendererSoftKioskCoordinator', 'NativeRendererForegroundGuardPolicy', 'NativeRendererBootObservation')) {
+        Join-Path $javaRoot ($name + '.java')
+    }
+    # Compile all changed lifecycle bodies against real Android API signatures too.
+    $platformSources = @($productionSources) + @($bridge,
+        (Join-Path $hostOutput 'PanelImmersiveHandoff.java'),
+        (Join-Path $hostOutput 'NativeRendererSelfKioskService.java'))
+    & $javac --release 8 -encoding UTF-8 -cp (Join-Path $platform.FullName 'android.jar') -d $output @platformSources
+    if ($LASTEXITCODE -ne 0) { throw 'Boot/lifecycle production Android API compilation failed.' }
+    $sources += $productionSources
+    $sources += Join-Path $testRoot 'NativeRendererBootObservationTest.java'
+    & $javac --release 8 -encoding UTF-8 -d $hostOutput @sources
+    if ($LASTEXITCODE -ne 0) { throw 'Boot observation production-body compilation failed.' }
+    & $java -cp $hostOutput io.github.mesmerprism.rustyquest.native_renderer.NativeRendererBootObservationTest
+    if ($LASTEXITCODE -ne 0) { throw 'Boot observation production-body controls failed.' }
     $feature = Get-Content -LiteralPath (Join-Path $repo 'fixtures/native-app-features/ui/experiment-boot-autostart/ui.experiment_boot_autostart.feature.json') -Raw | ConvertFrom-Json
     if ($feature.feature_id -cne 'ui.experiment_boot_autostart' -or
         @($feature.android_manifest.receivers).Count -ne 1 -or $feature.android_manifest.receivers[0] -cne 'NativeRendererBootReceiver' -or

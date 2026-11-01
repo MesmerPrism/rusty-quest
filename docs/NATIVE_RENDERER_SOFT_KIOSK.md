@@ -49,9 +49,11 @@ Process death loses that authority; START_NOT_STICKY prevents silent re-arming.
 The service shares the app process so its coordinator is the same authority as the
 panel and session code.
 
-Android background-launch restrictions still apply. The UI offers this package's
-display-over-other-apps settings and reports `Settings.canDrawOverlays`; it never
-changes that setting itself. Dispatch is reported as requested/unconfirmed until
+Android background-launch restrictions still apply. The separately selected boot
+entry requires an existing user-granted display-over-other-apps permission and
+checks `Settings.canDrawOverlays`; the experiment panel does not offer or report
+an overlay-settings route. Nothing grants that permission automatically.
+Dispatch is reported as requested/unconfirmed until
 own lifecycle and native focus confirm the desired presentation. Same-app identity
 and a successful `startActivity` call alone do not establish recovery.
 

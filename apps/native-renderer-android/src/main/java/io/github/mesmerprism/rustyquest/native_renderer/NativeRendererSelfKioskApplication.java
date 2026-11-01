@@ -30,9 +30,15 @@ public final class NativeRendererSelfKioskApplication extends Application {
                 }
             });
         registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
-            @Override public void onActivityCreated(Activity a, Bundle b) { remember(a); }
+            @Override public void onActivityCreated(Activity a, Bundle b) {
+                NativeRendererBootObservation.created(a, a != null && NativeRendererForegroundGuardPolicy
+                    .CONTROL_PANEL_ACTIVITY.equals(a.getClass().getName()));
+                remember(a);
+            }
             @Override public void onActivityStarted(Activity a) { remember(a); }
             @Override public void onActivityResumed(Activity a) {
+                NativeRendererBootObservation.resumed(a, a != null && NativeRendererForegroundGuardPolicy
+                    .CONTROL_PANEL_ACTIVITY.equals(a.getClass().getName()));
                 if (!own(a)) return;
                 remember(a);
                 resumed.put(NativeRendererActivityComponents.policyClass(a.getClass().getName()), true);

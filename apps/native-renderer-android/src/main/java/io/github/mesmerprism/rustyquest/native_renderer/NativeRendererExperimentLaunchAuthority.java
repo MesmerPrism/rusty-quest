@@ -49,6 +49,7 @@ final class NativeRendererExperimentLaunchAuthority {
         nativeActivityCreateSeen = true;
         launchActivity = new java.lang.ref.WeakReference<>(activity);
         long epoch = issueAdmitted(SystemClock.elapsedRealtimeNanos());
+        NativeRendererBootObservation.trustedLaunch(activity);
         NativeRendererAppStatusBridge.trustedColdLaunch(activity, epoch);
         return epoch;
     }

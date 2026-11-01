@@ -1924,7 +1924,7 @@ $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse
     ForEach-Object { $_.FullName }
 if ($standaloneExperimentOwner) {
     $standaloneBaseSources = @('NativeAppSettingsReader.java','NativeMeshUiProducer.java','NativePageSnapshot.java','NativeSystemKeyboard.java','NativePanelFont.java',
-        'NativeRendererExperimentLaunchAuthority.java','NativeRendererExperimentLauncherPolicy.java','NativeRendererActivityComponents.java',
+        'NativeRendererExperimentLaunchAuthority.java','NativeRendererExperimentLauncherPolicy.java','NativeRendererActivityComponents.java','NativeRendererBootObservation.java',
         'NativeRendererWriterAcknowledgedExitPolicy.java','PanelImmersiveHandoff.java',
         'PanelImmersiveHandoffLifecyclePolicy.java','PanelImmersiveHandoffProofPolicy.java',
         'PanelModule.java','PanelModuleRegistry.java')

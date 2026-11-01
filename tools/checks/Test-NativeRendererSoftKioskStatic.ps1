@@ -102,7 +102,7 @@ Assert-Contains $coordinatorPath 'TERMINAL_ROUTE_SAVE_AND_EXIT'
 Assert-Contains $launchAuthorityPath 'explicit-user-launch-v1'
 Assert-Contains $launchAuthorityPath 'issueFromNativeActivity(Activity activity, boolean recreation)'
 Assert-Contains $launchAuthorityPath 'Intent.CATEGORY_LAUNCHER'
-Assert-Contains $launchAuthorityPath '"android.app.NativeActivity"'
+Assert-Contains $launchAuthorityPath 'NativeRendererActivityComponents.nativeClass(activity)'
 Assert-Contains $launchAuthorityPath 'incoming.getData() != null || incoming.getSelector() != null'
 Assert-Contains $nativeEntryPath 'admit_explicit_native_activity_launch(state)'
 Assert-Contains $panelBridgePath 'pending_experiment_launch_epoch(app)'
@@ -209,6 +209,8 @@ try {
         $departurePath,
         $launchAuthorityPath,
         $launcherPolicyPath,
+        (Join-Path $javaRoot 'NativeRendererActivityComponents.java'),
+        (Join-Path $javaRoot 'NativeRendererBootObservation.java'),
         $handoffLifecyclePath,
         $handoffProofPath,
         $handoffPath,

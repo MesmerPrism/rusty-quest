@@ -242,6 +242,8 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     Assert-Contains (Join-Path $repo 'tools/Build-NativeRendererAndroid.ps1') 'Write-NativeRendererJavaSourceResponse -SourceFiles $sourceFiles -GeneratedAppStatusBridgePath $generatedAppStatusBridgePath -Path $sourceList'
     [IO.File]::WriteAllText($bridge,$offBridge,[Text.UTF8Encoding]::new($false))
     $androidSources = @(
+        (Join-Path $mainRoot 'NativeRendererActivityComponents.java'),
+        (Join-Path $mainRoot 'NativeRendererBootObservation.java'),
         (Join-Path $mainRoot 'PanelModule.java'),
         (Join-Path $mainRoot 'DisplayCompositeProjectionService.java'),
         (Join-Path $mainRoot 'NativeAppSettingsReader.java'),
@@ -454,6 +456,8 @@ final class ControlPanelActivity extends BreathCompositionPanelModule {
     }
     [IO.File]::WriteAllText($stub, $unrelatedShell, (New-Object Text.UTF8Encoding($false)))
     $unrelatedSources = @(
+        (Join-Path $mainRoot 'NativeRendererActivityComponents.java'),
+        (Join-Path $mainRoot 'NativeRendererBootObservation.java'),
         (Join-Path $mainRoot 'PanelModule.java'),
         (Join-Path $mainRoot 'PanelModuleRegistry.java'),
         (Join-Path $mainRoot 'NativeRendererForegroundGuardPolicy.java'),
