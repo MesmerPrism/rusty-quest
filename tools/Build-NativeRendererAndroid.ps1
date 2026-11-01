@@ -203,6 +203,7 @@ function Copy-AssetInput {
     if ($leaf -match '[\\/]' -or [string]::IsNullOrWhiteSpace($leaf)) {
         throw "APK asset destination name must be a single path component: $leaf"
     }
+    Assert-NativeAppGeneratedAssetDestination -Destination $leaf
     $destinationPath = Join-Path $DestinationRoot $leaf
     if ((Get-Item -LiteralPath $sourcePath).PSIsContainer) {
         New-Item -ItemType Directory -Force -Path $destinationPath | Out-Null
@@ -486,6 +487,12 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
     }
 } elseif ((Get-Content -LiteralPath $manifestInputPath -Raw) -match 'ControlPanelActivity') {
     throw "Unlocked development builds cannot package ControlPanelActivity; resolve an exact native-app feature lock first."
+}
+
+# Preflight all declared destinations before output creation or native work.
+if ($null -ne $appBuildLockObject) {
+    [void](Get-NativeAppPublicAssetDestinationRecords -AssetInputs @($appBuildLockObject.build_inputs.assets) -RepoRoot ([string]$repoRoot))
+    Assert-NativeAppPrivateAssetClosureDestinations -Closure $appBuildLockObject.build_inputs.private_asset_closure
 }
 
 Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererPanelCompositionSelection.psm1') -Force

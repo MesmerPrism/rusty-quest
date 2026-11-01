@@ -42,6 +42,11 @@ inputs (defaults `1` / `0.1.0`). The version code is a canonical positive Androi
 integer; the display name is bounded to 64 identifier characters. The default
 pair retains legacy explicit `-OutDir` behavior. Every other pair appends
 `p-<16-hex-packaging-fingerprint>` to the output base, including an explicit base.
+Generated `android-build-identity.json` is reserved during public destination
+preflight/materialization and private closure preflight/materialization, including
+retained direct closures. Folded-name and path-prefix collisions are rejected
+before builder output creation or native compilation. The focused route check is
+`tools/checks/Test-NativeRendererBuildIdentityAssetDestinations.ps1`.
 Versions do not alter the native Cargo intermediate address or the feature-lock
 `android_manifest`. A separate closed `packaging-input-lock.json` binds app,
 package, feature-lock hash, exact source composition and effective Android versions.

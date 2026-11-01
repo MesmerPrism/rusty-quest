@@ -103,6 +103,9 @@ if ($hasPackaging) {
     $packagingSchema=Join-Path $PSScriptRoot '../schemas/rusty.quest.native_renderer_android.packaging_input.v1.schema.json'
     if (-not (Test-Json -Json $packagingText -SchemaFile $packagingSchema -ErrorAction SilentlyContinue)) {throw 'Packaging input lock failed closed schema validation.'}
     $packaging=$packagingText | ConvertFrom-Json
+    foreach($fingerprint in @($capsule.packaging_fingerprint,$buildManifest.packaging_fingerprint)){
+        if($fingerprint -isnot [string] -or $fingerprint -cnotmatch '\A[0-9a-f]{64}\z'){throw 'Packaging fingerprint must be a scalar lowercase SHA-256 string.'}
+    }
     if($capsule.packaging_fingerprint -cne $capsule.packaging_input_lock.sha256 -or $buildManifest.packaging_fingerprint -cne $capsule.packaging_fingerprint){throw 'Packaging fingerprint cross-record mismatch.'}
     $featureLock=Get-Content -LiteralPath $capsule.build_lock.path -Raw | ConvertFrom-Json
     foreach($pair in @(

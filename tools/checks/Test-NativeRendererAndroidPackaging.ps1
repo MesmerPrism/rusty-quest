@@ -38,6 +38,13 @@ try{
  $capsule.source.composition_fingerprint=$fp;$p.record.source_composition_fingerprint=$fp;$pack=& $write 'packaging.json' $p.record;$capsule.packaging_input_lock=$pack;$capsule.packaging_fingerprint=$pack.sha256;$manifest.source_composition_fingerprint=$fp;$manifest.packaging_fingerprint=$pack.sha256;$capsule.build_manifest=& $write 'manifest.json' $manifest
  $invoke={param($expected)$path=Join-Path $temp 'capsule.json';$capsule|ConvertTo-Json -Depth 20|Set-Content $path;& pwsh -NoProfile -File (Join-Path $RepoRoot 'tools/Test-ApkRunCapsule.ps1') -Path $path *> $null;if(($LASTEXITCODE -eq 0) -ne $expected){throw "Capsule result expected=$expected"}}
  & $invoke $true
+ foreach($location in @('capsule','manifest')){
+  foreach($damage in @(@{label='singleton';value=@($pack.sha256)},@{label='object';value=@{digest=$pack.sha256}},@{label='null';value=$null},@{label='bool';value=$true},@{label='integer';value=61},@{label='upper';value=$pack.sha256.ToUpperInvariant()})){
+   if($location -eq 'capsule'){$capsule.packaging_fingerprint=$damage.value}else{$manifest.packaging_fingerprint=$damage.value;$capsule.build_manifest=& $write 'manifest.json' $manifest}
+   & $invoke $false
+   $capsule.packaging_fingerprint=$pack.sha256;$manifest.packaging_fingerprint=$pack.sha256;$capsule.build_manifest=& $write 'manifest.json' $manifest
+  }
+ }
  $capsule.android.version_code=62;& $invoke $false;$capsule.android.version_code=61
  $capsule.android.version_code=61.5;& $invoke $false;$capsule.android.version_code=61
  $capsule.Remove('packaging_input_lock');& $invoke $false;$capsule.packaging_input_lock=$pack
