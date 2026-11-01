@@ -3,7 +3,10 @@ $ErrorActionPreference='Stop'
 Import-Module (Join-Path $RepoRoot 'tools/lib/NativeRendererAndroidPackaging.psm1') -Force
 function Reject($action){$rejected=$false;try{& $action | Out-Null}catch{$rejected=$true};if(-not $rejected){throw 'Expected rejection'}}
 foreach($bad in @($true,$false,0,-1,1.5,2147483648,'1.0','1e2','01','',@())){Reject {Get-NativeRendererAndroidVersion -VersionCode $bad -VersionName '0.1.61'}}
-foreach($bad in @($true,'','../x',('x'*65),"1`n2")){Reject {Get-NativeRendererAndroidVersion -VersionCode 61 -VersionName $bad}}
+foreach($bad in @($true,'','../x',('x'*65),"1`n2","0.1.61`n","0.1.61`r`n")){Reject {Get-NativeRendererAndroidVersion -VersionCode 61 -VersionName $bad}}
+foreach($bad in @("61`n","6`n1","61`r`n")){Reject {Get-NativeRendererAndroidVersion -VersionCode $bad -VersionName '0.1.61'}}
+$defaultVersion=Get-NativeRendererAndroidVersion
+if($defaultVersion.code -ne 1 -or $defaultVersion.name -cne '0.1.0'){throw 'Generic Android defaults changed'}
 foreach($valid in @(1,61,'61',2147483647)){if((Get-NativeRendererAndroidVersion -VersionCode $valid -VersionName '0.1.61').code -ne [long]$valid){throw 'integer failed'}}
 $args=@{AppId='test';PackageName='io.example.test';FeatureLockSha256=('a'*64);SourceCommit=('b'*40);SourceTree=('c'*40);SourceCompositionFingerprint=('d'*64)}
 $one=New-NativeRendererAndroidPackagingInput @args -VersionCode 1 -VersionName '0.1.0'

@@ -2,10 +2,10 @@
 function Get-NativeRendererAndroidVersion {
     param($VersionCode=1,$VersionName='0.1.0')
     if ($VersionCode -is [bool] -or $VersionCode -is [array] -or
-        [string]$VersionCode -cnotmatch '^[1-9][0-9]{0,9}$') { throw 'Android version code must be a canonical positive integer.' }
+        [string]$VersionCode -cnotmatch '\A[1-9][0-9]{0,9}\z') { throw 'Android version code must be a canonical positive integer.' }
     $parsed=0L
     if (-not [long]::TryParse([string]$VersionCode,[ref]$parsed) -or $parsed -gt 2147483647) { throw 'Android version code exceeds the Android integer bound.' }
-    if ($VersionName -isnot [string] -or $VersionName -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$') { throw 'Android version name must be a bounded display identifier.' }
+    if ($VersionName -isnot [string] -or $VersionName -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9._+-]{0,63}\z') { throw 'Android version name must be a bounded display identifier.' }
     [pscustomobject]@{code=[int]$parsed;name=$VersionName}
 }
 function New-NativeRendererAndroidPackagingInput {
