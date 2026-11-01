@@ -259,3 +259,39 @@ The [full Wi-Fi status contract](EXPERIMENT_WIFI_STATUS.md) keeps mandatory
 acquisition readiness and the original native observation independent of the
 compact BLE byte budget. Run the focused production-code control described there
 for Scan pending, completion, uncertainty and once-only dispatch checks.
+
+## Diagnostic observations over Wi-Fi
+
+Full Wi-Fi status adds `pd:{v:1,native,java}`. Compact BLE `pi:{r,f,h}` and
+all capability grants remain unchanged. `native` carries the worker's current
+reason and timeout, native ingress/accepted/rejected counts, and measured ages
+for accepted receipt, native ingress and successful commit. Ingress is stamped
+before locks; the existing accepted-receipt timestamp and 1000 ms hold semantics
+are retained. These diagnostic counts reset on acquisition owner/selection change.
+`diagnostics_observed:false` marks cached readback; its ages are null rather than
+presented as a newly measured zero. Actual status observations sample diagnostic
+ages without causing a session control transition or extra worker refreshes.
+
+`native.last_pause` holds the original reason, interruption revision, applied
+acquisition deadline and detection witnesses in Android elapsed realtime,
+whether input was already fresh at detection, and accepted age at detection.
+It survives source replacement and sample recovery until accepted explicit
+Resume or session end. A gap recovered while the worker was busy retains its
+original missing-ACC reason instead of becoming a recovered-state pause cause.
+
+`java` is a closed projection of the existing Polar owner: link generation,
+connected state, requested/ACK/data-receiving stream observations and separate
+callback/decode/JNI-submit counters and ages. Link callback state/status and
+disconnect count observe the current GATT only. Decode completion remains
+observable after retirement but never counts as JNI submission or native
+acceptance. Malformed ACC and JNI sink failures remain distinct. Java diagnostics
+use `System.nanoTime`; native ages use Rust `Instant`. Their absolute clocks are
+never subtracted. Wi-Fi's native observation age and browser delivery age retain
+the source witness. Missing observations use null/unavailable. ACC silence alone
+does not establish a Bluetooth disconnect or processing cause.
+
+Run `cargo test -p rusty-quest-native-renderer-android-native polar_ --locked --
+--test-threads=1`, `tools/checks/test_polar_acquisition_callbacks.py`,
+`tools/checks/test_polar_recovery_callbacks.py` and
+`tools/checks/test_experiment_wifi_snapshot.py --json-jar <host-org-json-jar>`.
+These are host controls; they make no physical radio, headset or packaging claim.

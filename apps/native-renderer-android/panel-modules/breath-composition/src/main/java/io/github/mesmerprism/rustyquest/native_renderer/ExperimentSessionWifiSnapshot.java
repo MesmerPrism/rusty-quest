@@ -65,9 +65,44 @@ final class ExperimentSessionWifiSnapshot {
             .put("early",state.counts.totalsAvailable?state.counts.stoppedEarlyTotal():JSONObject.NULL)
             .put("pending",false).put("h","unknown");
         ExperimentSessionBleProtocol.projectPolarInput(status,nativeStatus);
+        status.put("pd",new JSONObject().put("v",1).put("native",nativeDiagnostics(input)).put("java",JSONObject.NULL));
         Read read=new Read(status,nativeStatus,completedNanos,epoch);
         read.statusAt(nowNanos,epoch);
         return read;
+    }
+
+    /** Closed field projection: full Wi-Fi diagnostics never copy private raw owner objects. */
+    private static JSONObject fields(JSONObject source,String[] names) throws Exception {
+        JSONObject out=new JSONObject();
+        for(String name:names) {
+            Object value=source==null?null:source.opt(name);
+            if(value instanceof String && ((String)value).length()<=64 || value instanceof Boolean
+                    || (value instanceof Integer || value instanceof Long) && ((Number)value).longValue()>=0)
+                out.put(name,value);
+            else out.put(name,JSONObject.NULL);
+        }
+        return out;
+    }
+    private static JSONObject nativeDiagnostics(JSONObject input) throws Exception {
+        JSONObject out=fields(input,new String[]{"clock","diagnostics_observed","reason","timeout_ms","accepted_age_ms","ingress_age_ms",
+            "commit_age_ms","ingress_to_commit_ms","ingress_count","accepted_count","rejected_count"});
+        JSONObject pause=input.optJSONObject("last_pause");
+        out.put("last_pause",pause==null?JSONObject.NULL:fields(pause,new String[]{"reason","interruption_revision",
+            "deadline_elapsed_realtime_ns","detected_elapsed_realtime_ns","fresh_at_detection","accepted_age_ms_at_detection"}));
+        return out;
+    }
+    static void projectJavaDiagnostics(JSONObject status,JSONObject polar) throws Exception {
+        JSONObject diagnostic=status.optJSONObject("pd");
+        if(diagnostic==null)return;
+        if(polar==null){diagnostic.put("java",JSONObject.NULL);return;}
+        JSONObject out=fields(polar.optJSONObject("diagnostics"),new String[]{"clock","observed_at_monotonic_ns",
+            "callback_count","acc_callback_count","decode_count","jni_submit_count","malformed_acc_count",
+            "callback_age_ms","decode_age_ms","jni_submit_age_ms","decode_duration_ms","gatt_state","gatt_status",
+            "gatt_event_age_ms","disconnect_count"});
+        JSONObject link=fields(polar,new String[]{"connected","connection_generation","acc_requested","ecg_requested",
+            "acc_pmd_ack_running","ecg_pmd_ack_running","acc_data_receiving_observed","ecg_data_receiving_observed"});
+        for(String name:link.keySet())out.put(name,link.get(name));
+        diagnostic.put("java",out);
     }
 
     static JSONObject bounded(JSONObject status) throws Exception {

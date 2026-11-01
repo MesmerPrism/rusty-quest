@@ -211,6 +211,7 @@ impl RouteAction {
 #[derive(Clone, Debug)]
 struct Projection {
     polar_input: crate::polar_input_health::Status,
+    polar_last_pause: Option<Value>,
     preparation_mode: PreparationMode,
     arm_operation_id: Option<String>,
     arm_generation: u64,
@@ -276,6 +277,7 @@ impl Default for Projection {
     fn default() -> Self {
         Self {
             polar_input: crate::polar_input_health::Status::default(),
+            polar_last_pause: None,
             preparation_mode: PreparationMode::default(),
             arm_operation_id: None,
             arm_generation: 0,
@@ -367,7 +369,29 @@ impl Projection {
                 .map_or(0, |(start, now)| now.saturating_sub(start)))
     }
 
+    fn polar_input_json(&self, diagnostics_observed: bool) -> Value {
+        // Ages are sampled at the actual observation; readiness remains on the
+        // worker projection so read-only status cannot race ahead of its effects.
+        let mut input = if diagnostics_observed {
+            crate::polar_input_health::status(self.polar_input.required, self.polar_input.pause_latched).0.json()
+        } else {
+            let mut cached = self.polar_input.json();
+            for key in ["accepted_age_ms", "ingress_age_ms", "commit_age_ms", "ingress_to_commit_ms"] {
+                cached[key] = Value::Null;
+            }
+            cached
+        };
+        let readiness = self.polar_input.json();
+        for key in ["required", "fresh", "pause_latched", "reason"] {
+            input[key] = readiness[key].clone();
+        }
+        input["diagnostics_observed"] = json!(diagnostics_observed);
+        input["last_pause"] = self.polar_last_pause.clone().unwrap_or(Value::Null);
+        input
+    }
+
     fn response_json_clocks(&self, command_status: &str, reason_code: &str, now_ns: Option<u64>, active_now_ns: Option<u64>) -> String {
+        let diagnostics_observed = now_ns.is_some();
         let now_ns = self.recording_ended_ns.or(now_ns);
         let active_time_ns = self.official_active_time_ns(active_now_ns);
         let recording_elapsed_ns = self.recording_started_ns.zip(now_ns)
@@ -396,7 +420,7 @@ impl Projection {
                 "phase": phase_token(self.phase),
                 "control_state": self.control_state.as_str(),
                 "audio_technical_hold": self.audio_technical_hold,
-                "polar_input": self.polar_input.json(),
+                "polar_input": self.polar_input_json(diagnostics_observed),
                 "control_receipt_generation": self.control_receipt_generation,
                 "control_receipt_revision": self.control_receipt_revision,
                 "control_event": self.control_event,
@@ -928,6 +952,7 @@ struct SessionWorker {
     polar_requirement: Arc<AtomicU64>,
     recording_requires_polar: bool,
     polar_pause_latched: bool,
+    polar_last_pause: Option<Value>,
     last_input_revision: u64,
     preparation_presentation_observation: Arc<AtomicU64>,
     current_session_key: Option<String>,
@@ -989,6 +1014,7 @@ impl SessionWorker {
             polar_requirement,
             recording_requires_polar: false,
             polar_pause_latched: false,
+            polar_last_pause: None,
             last_input_revision: 0,
             preparation_presentation_observation,
             controller: ExperimentSessionController::with_preparation_mode(preparation_mode),
@@ -1248,7 +1274,10 @@ impl SessionWorker {
             | ParsedOperation::OfficialStart | ParsedOperation::Resume) {
             self.last_input_revision = crate::polar_input_health::acknowledge_interruptions();
         }
-        if matches!(parsed.operation, ParsedOperation::Resume) { self.polar_pause_latched = false; }
+        if matches!(parsed.operation, ParsedOperation::Resume) {
+            self.polar_pause_latched = false;
+            self.polar_last_pause = None;
+        }
         if parsed.operator_fence.is_some() {
             let origin = parsed.operator_fence.as_ref().expect("operator fence").origin;
             self.projection_write(|projection| projection.operator_origin = origin);
@@ -1764,6 +1793,7 @@ impl SessionWorker {
                 SessionEffect::ResetRuntimeDefaults => {
                     self.recording_requires_polar = false;
                     self.polar_pause_latched = false;
+            self.polar_last_pause = None;
                     crate::breath_composition_runtime::reset_to_packaged_defaults();
                     let reset_revision = request_particle_packaged_defaults_reset();
                     self.current_identity = None;
@@ -1788,6 +1818,7 @@ impl SessionWorker {
                 SessionEffect::ShutdownApp => {
                     self.recording_requires_polar = false;
                     self.polar_pause_latched = false;
+            self.polar_last_pause = None;
                     self.projection_write(|projection| {
                         projection.shutdown_status = "joining";
                     });
@@ -1914,6 +1945,7 @@ impl SessionWorker {
         if matches!(self.controller.phase(), SessionPhase::Idle | SessionPhase::Closed) {
             self.recording_requires_polar = false;
             self.polar_pause_latched = false;
+            self.polar_last_pause = None;
         } else {
             self.recording_requires_polar |= input.required;
         }
@@ -1929,6 +1961,13 @@ impl SessionWorker {
                     match self.apply_internal(at, SessionCommand::Pause) {
                         Ok(outcome) => {
                             self.polar_pause_latched = true;
+                            self.polar_last_pause = Some(json!({
+                                "reason": loss.reason, "interruption_revision": loss.revision,
+                                "deadline_elapsed_realtime_ns": at.get(),
+                                "detected_elapsed_realtime_ns": now.get(),
+                                "fresh_at_detection": input.fresh,
+                                "accepted_age_ms_at_detection": input.json()["accepted_age_ms"]
+                            }));
                             self.refresh_controller_projection();
                             if let Err(error) = self.process_effects(outcome.effects, at) {
                                 self.publish_rejection(None, &error);
@@ -1940,8 +1979,8 @@ impl SessionWorker {
             }
         }
         let (current, _) = crate::polar_input_health::status(self.recording_requires_polar, self.polar_pause_latched);
-        let changed = self.projection.read().unwrap_or_else(|e| e.into_inner()).polar_input != current;
-        if changed { self.refresh_controller_projection(); }
+        let unchanged = self.projection.read().unwrap_or_else(|e| e.into_inner()).polar_input.same_readiness(current);
+        if !unchanged { self.refresh_controller_projection(); }
     }
 
     fn reconcile_submitted_frame_stall(&mut self, command_at: Option<MonotonicNanos>) -> bool {
@@ -2093,6 +2132,7 @@ impl SessionWorker {
         self.polar_requirement.store(u64::from(self.recording_requires_polar), Ordering::Release);
         self.projection_write(|projection| {
             projection.polar_input = polar_input;
+            projection.polar_last_pause = self.polar_last_pause.clone();
             projection.generation = self.controller.generation();
             projection.phase = self.controller.phase();
             projection.control_state = self.controller.control_state();

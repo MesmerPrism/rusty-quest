@@ -43,6 +43,15 @@ clocks, observations older than 5000 ms, changed carrier/native lifetimes or mod
 revisions refuse the full projection. The producer is reset when its native
 carrier scope changes. A failed full projection clears its gateway grants.
 
+Optional `pd:{v:1,native,java}` carries the bounded acquisition diagnostic
+projection described in [Polar recovery](POLAR_SENSOR_RECOVERY.md#diagnostic-observations-over-wi-fi).
+It includes the current native reason and separately retained original pause,
+measured native/Java ages and counters, plus observed link/stream state. Unknown
+fields and cached native ages are null. The original read/delivery witness still
+ages the observation. Raw Polar owner objects, sensor identities and private
+capture details never enter this projection. Older owners can omit `pd`; this
+observation grants no command or stream capability.
+
 Optional `q` session and `z` Polar grants retain their existing meanings, full
 native fences and independent admission. Their native tuple comes from the same
 read as the returned session state. Optional idle `y` retains the Polar setup

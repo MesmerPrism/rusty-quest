@@ -1,3 +1,17 @@
+#[test]
+fn polar_cached_projection_does_not_refresh_diagnostic_ages() {
+    let _binding = crate::breath_composition_runtime::scoped_test_binding::install_polar();
+    polar_sample();
+    let projection = Projection::default();
+    let cache = ReadbackCache::from_projection(&projection);
+    let cached: Value = serde_json::from_str(&cache.accepted).unwrap();
+    assert_eq!(cached["readback"]["polar_input"]["diagnostics_observed"], false);
+    assert!(cached["readback"]["polar_input"]["accepted_age_ms"].is_null());
+    let live: Value = serde_json::from_str(&projection.response_json_at("accepted", "none", Some(1))).unwrap();
+    assert_eq!(live["readback"]["polar_input"]["diagnostics_observed"], true);
+    assert!(live["readback"]["polar_input"]["accepted_age_ms"].is_u64());
+}
+
 // Production worker/controller/writer tests. No renderer or browser drives the watchdog.
 #[test]
 fn polar_required_start_rejects_absent_acquisition() {
@@ -40,6 +54,11 @@ fn polar_worker_detects_loss_without_frames_or_browser_and_never_resumes() {
     assert_eq!(lost["readback"]["control_state"], "paused");
     assert_eq!(lost["readback"]["polar_input"]["pause_latched"], true);
     assert_eq!(lost["readback"]["polar_input"]["fresh"], false);
+    let pause = &lost["readback"]["polar_input"]["last_pause"];
+    assert_eq!(pause["reason"], "acc-stale");
+    assert!(pause["deadline_elapsed_realtime_ns"].as_u64().unwrap() <= pause["detected_elapsed_realtime_ns"].as_u64().unwrap());
+    assert_eq!(recovered["readback"]["polar_input"]["last_pause"], *pause);
+    assert_eq!(recovered["readback"]["polar_input"]["reason"], "recovered-awaiting-resume");
     assert_eq!(recovered["readback"]["control_state"], "paused");
     assert_eq!(recovered["readback"]["polar_input"]["fresh"], true);
     assert_eq!(
@@ -227,11 +246,13 @@ fn polar_native_and_authenticated_operator_controls_share_freshness_and_manual_r
     let resumed = polar_action(&runtime, "resume", "polar-direct-resume");
     assert_eq!(resumed["readback"]["control_state"], "running");
     assert_eq!(resumed["readback"]["polar_input"]["pause_latched"], false);
+    assert!(resumed["readback"]["polar_input"]["last_pause"].is_null());
 
     // Losing configuration/effective source cannot drop the recording's gate.
     polar_selection("controller");
     let missing: Value = serde_json::from_str(&wait_for(&runtime, "source-unavailable")).unwrap();
     assert_eq!(missing["readback"]["control_state"], "paused");
+    assert_eq!(missing["readback"]["polar_input"]["last_pause"]["reason"], "source-unavailable");
     polar_sample(); // Unselected samples cannot furnish readiness.
     assert_eq!(
         polar_action(&runtime, "resume", "unselected-resume")["readback"]["last_reason"],
@@ -262,6 +283,7 @@ fn polar_native_and_authenticated_operator_controls_share_freshness_and_manual_r
     .unwrap();
     assert_eq!(remote["readback"]["control_state"], "running");
     assert_eq!(remote["readback"]["polar_input"]["pause_latched"], false);
+    assert!(remote["readback"]["polar_input"]["last_pause"].is_null());
     runtime.shutdown_for_test().unwrap();
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
@@ -300,6 +322,8 @@ fn polar_composition_owner_replacement_invalidates_proof_and_rejected_samples_ca
     let recovered: Value =
         serde_json::from_str(&wait_for(&runtime, "recovered-awaiting-resume")).unwrap();
     assert_eq!(recovered["readback"]["control_state"], "paused");
+    assert_eq!(recovered["readback"]["polar_input"]["last_pause"], status["readback"]["polar_input"]["last_pause"]);
+    assert_eq!(recovered["readback"]["polar_input"]["last_pause"]["reason"], "source-unavailable");
     runtime.shutdown_for_test().unwrap();
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
@@ -332,6 +356,8 @@ fn polar_gap_recovered_while_worker_is_busy_still_requires_explicit_resume() {
     assert_eq!(status["readback"]["control_state"], "paused");
     assert_eq!(status["readback"]["polar_input"]["fresh"], true);
     assert_eq!(status["readback"]["polar_input"]["pause_latched"], true);
+    assert_eq!(status["readback"]["polar_input"]["last_pause"]["reason"], "acc-stale");
+    assert_eq!(status["readback"]["polar_input"]["last_pause"]["fresh_at_detection"], true);
     fs::remove_dir_all(root.parent().unwrap()).unwrap();
 }
 
@@ -557,6 +583,7 @@ fn check_polar_requirement_during_preparation(guided: bool, combined: bool, disa
     if let Some(reset) = after_reset {
         assert_eq!(reset["readback"]["polar_input"]["required"], false);
         assert_eq!(reset["readback"]["polar_input"]["pause_latched"], false);
+        assert!(reset["readback"]["polar_input"]["last_pause"].is_null());
     }
     assert_eq!(
         final_state["readback"]["polar_input"]["required"], true,

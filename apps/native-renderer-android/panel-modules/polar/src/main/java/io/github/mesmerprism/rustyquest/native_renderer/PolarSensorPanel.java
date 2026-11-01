@@ -192,6 +192,7 @@ final class PolarSensorPanel {
     private PmdSettings ecgSettings = PmdSettings.EMPTY;
     private int activeAccSampleRateHz = 200;
     private int activeEcgSampleRateHz = 130;
+    private final PolarAcquisitionDiagnostics diagnostics = new PolarAcquisitionDiagnostics();
     private long lastAccFrameReceiptNs;
     private long lastEcgFrameReceiptNs;
     private String captureSessionId = "none";
@@ -1531,7 +1532,9 @@ final class PolarSensorPanel {
             .put("ecg_data_receiving_observed", pmdDataReceiving(connected,observedAt,ecgReceipt))
             .put("acc_samples", accSampleCount).put("ecg_samples", ecgSampleCount)
             .put("observed_at_monotonic_ns", observedAt)
-            .put("capture_session_id", captureSessionId);
+            .put("capture_session_id", captureSessionId)
+            .put("connection_generation",autoConnectionGeneration)
+            .put("diagnostics",new JSONObject(diagnostics.snapshot(observedAt)));
     }
 
     private void requestUndesiredStreamStop(String mode) {
@@ -1868,6 +1871,10 @@ final class PolarSensorPanel {
     private final BluetoothGattCallback gattCallback = new BluetoothGattCallback() {
         @Override
         public void onConnectionStateChange(final BluetoothGatt callbackGatt, final int statusCode, final int newState) {
+            final long callbackAt = System.nanoTime();
+            synchronized (connectionIdentityLock) {
+                if (callbackGatt == gatt && !closing) diagnostics.link(callbackAt,newState,statusCode);
+            }
             handler.post(new Runnable() {
                 @Override
                 public void run() {
@@ -1987,6 +1994,9 @@ final class PolarSensorPanel {
         final BluetoothGattCharacteristic characteristic,
         byte[] value
     ) {
+        final long callbackEnteredNs = System.nanoTime();
+        UUID uuid = characteristic == null ? null : characteristic.getUuid();
+        diagnostics.callback(callbackEnteredNs,PMD_DATA.equals(uuid) && value != null && value.length > 0 && (value[0]&255)==2);
         final byte[] copy = value == null ? null : value.clone();
         final long admittedGeneration;
         synchronized (connectionIdentityLock) {
@@ -2001,9 +2011,8 @@ final class PolarSensorPanel {
             }
             admittedGeneration = autoConnectionGeneration;
         }
-        UUID uuid = characteristic == null ? null : characteristic.getUuid();
         if (PMD_DATA.equals(uuid) || HEART_RATE_MEASUREMENT.equals(uuid)) {
-            handleCharacteristic(callbackGatt, admittedGeneration, characteristic, copy);
+            handleCharacteristic(callbackGatt, admittedGeneration, characteristic, copy, callbackEnteredNs);
             return;
         }
         handler.post(new Runnable() {
@@ -2012,7 +2021,7 @@ final class PolarSensorPanel {
                 if (!isCurrentConnectedGatt(callbackGatt)) {
                     return;
                 }
-                handleCharacteristic(callbackGatt, admittedGeneration, characteristic, copy);
+                handleCharacteristic(callbackGatt, admittedGeneration, characteristic, copy, callbackEnteredNs);
             }
         });
     }
@@ -2409,7 +2418,8 @@ final class PolarSensorPanel {
         BluetoothGatt admittedGatt,
         long admittedGeneration,
         BluetoothGattCharacteristic characteristic,
-        byte[] value
+        byte[] value,
+        long callbackEnteredNs
     ) {
         if (characteristic == null || value == null) {
             synchronized (countersLock) {
@@ -2419,6 +2429,7 @@ final class PolarSensorPanel {
             return;
         }
         UUID uuid = characteristic.getUuid();
+        boolean accDecodeCompleted = false;
         try {
             if (HEART_RATE_MEASUREMENT.equals(uuid)) {
                 HeartRateReading reading = PolarProtocol.decodeHeartRateMeasurement(value);
@@ -2463,6 +2474,8 @@ final class PolarSensorPanel {
                 int measurementType = PolarProtocol.unsigned(value[0]);
                 if (measurementType == 0x02) {
                     PmdFrameMetric frame = PolarProtocol.decodeAcc(value);
+                    accDecodeCompleted = true;
+                    diagnostics.decoded(callbackEnteredNs,System.nanoTime());
                     // Decoding may outlive this GATT. Commit every sink under the
                     // same owner/generation lock used by retirement and replacement.
                     synchronized (connectionIdentityLock) {
@@ -2502,6 +2515,7 @@ final class PolarSensorPanel {
                                 activeAccSampleRateHz,
                                 sampleIndex,
                                 frame.sampleCount);
+                            diagnostics.submitting(System.nanoTime());
                             nativeSubmitPolarAccMeasurement(
                                 sampleHostTimeNs,
                                 sampleSensorTimeNs,
@@ -2573,6 +2587,7 @@ final class PolarSensorPanel {
                 }
             }
         } catch (RuntimeException ex) {
+            if (!accDecodeCompleted && PMD_DATA.equals(uuid) && value.length > 0 && (value[0]&255)==2) diagnostics.malformedAcc();
             synchronized (countersLock) {
                 malformedFrames += 1L;
             }
@@ -4139,5 +4154,35 @@ final class PolarSensorPanel {
         static int unsigned(byte value) {
             return value & 0xff;
         }
+    }
+}
+
+/** Observations only. nanoTime witnesses never become acquisition acceptance time. */
+final class PolarAcquisitionDiagnostics {
+    private long callbacks,accCallbacks,decodes,submits,malformedAcc,disconnects;
+    private Long callbackAt,decodeAt,submitAt,gattAt,decodeDurationMs;
+    private Integer gattState,gattStatus;
+    synchronized void callback(long at,boolean acc) {
+        callbacks++; if(acc){accCallbacks++;callbackAt=at;}
+    }
+    synchronized void decoded(long entry,long completed) {
+        decodes++;decodeAt=completed;decodeDurationMs=age(completed,entry);
+    }
+    synchronized void submitting(long at) {submits++;submitAt=at;}
+    synchronized void malformedAcc() {malformedAcc++;}
+    synchronized void link(long at,int state,int status) {
+        gattAt=at;gattState=state;gattStatus=status;if(state==0)disconnects++;
+    }
+    private static Long age(long now,Long at) {return at==null||now<at?null:(now-at)/1000000L;}
+    synchronized java.util.Map<String,Object> snapshot(long now) {
+        java.util.Map<String,Object> d=new java.util.LinkedHashMap<>();
+        d.put("clock","java-nano-time");d.put("observed_at_monotonic_ns",now);
+        d.put("callback_count",callbacks);d.put("acc_callback_count",accCallbacks);
+        d.put("decode_count",decodes);d.put("jni_submit_count",submits);d.put("malformed_acc_count",malformedAcc);
+        d.put("callback_age_ms",age(now,callbackAt));d.put("decode_age_ms",age(now,decodeAt));
+        d.put("jni_submit_age_ms",age(now,submitAt));d.put("decode_duration_ms",decodeDurationMs);
+        d.put("gatt_state",gattState);d.put("gatt_status",gattStatus);
+        d.put("gatt_event_age_ms",age(now,gattAt));d.put("disconnect_count",disconnects);
+        return d;
     }
 }

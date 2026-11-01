@@ -397,6 +397,15 @@ pub(crate) fn submit_polar_acc_measurement(
         || lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg))
 }
 
+fn submit_polar_acc_observed(
+    entered_at: std::time::Instant,
+    host_time_ns: u64, sensor_time_ns: u64, xyz_mg: [f32; 3],
+) -> bool {
+    let token = crate::polar_input_health::acquisition_token_entered(entered_at);
+    crate::polar_input_health::commit_acc(token,
+        || lock_ingress().submit_acc(host_time_ns, sensor_time_ns, xyz_mg))
+}
+
 pub(crate) fn submit_polar_acc_measurement_and_advance_composition(
     host_time_ns: u64,
     sensor_time_ns: u64,
@@ -794,8 +803,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Po
     y_mg: jni::sys::jint,
     z_mg: jni::sys::jint,
 ) {
+    let entered_at = std::time::Instant::now();
     let xyz_mg = [x_mg as f32, y_mg as f32, z_mg as f32];
-    if !submit_polar_acc_measurement_and_advance_composition(
+    if !submit_polar_acc_observed(entered_at,
         sample_host_time_ns.max(0) as u64,
         sample_sensor_time_ns.max(0) as u64,
         xyz_mg,

@@ -388,7 +388,9 @@ public final class ExperimentSessionCommandGateway {
             JSONObject nativeStatus=observed.nativeStatus;
             long now=SystemClock.elapsedRealtime();
             JSONObject setup=delegate.polarSetupReadback();if(setup!=null&&"IDLE".equals(status.optString("p")))status.put("y",setup);
-            JSONObject polarOffer=polar.offer(delegate.polarStopReadback(),nativeStatus,generation,owner,nativeEpoch,now);
+            JSONObject polarReadback=delegate.polarStopReadback();
+            ExperimentSessionWifiSnapshot.projectJavaDiagnostics(status,polarReadback);
+            JSONObject polarOffer=polar.offer(polarReadback,nativeStatus,generation,owner,nativeEpoch,now);
             JSONObject offer=session.offer(status,nativeStatus,generation,owner,nativeEpoch,now,polar.bindingTuple());
             if(offer!=null)status.put("q",offer);
             if(offer!=null&&polarOffer!=null){polar.shareReference(offer.getString("s"));polarOffer.put("s",offer.getString("s"));}

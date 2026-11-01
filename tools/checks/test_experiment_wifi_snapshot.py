@@ -55,7 +55,12 @@ public final class WifiSnapshotHarness {
    .put("initialization_status","ready").put("inventory_status","ready").put("recording_root_status","ready")
    .put("last_operation_status","none").put("last_operation_id","").put("profile_identity_bound",true).put("audio_identity_bound",true)
    .put("session_key","utc-ns-00000000000000000042").put("non_audio_profile_sha256",repeat("a",64)).put("activation_binding_sha256",repeat("b",64))
-   .put("polar_input",new JSONObject().put("required",true).put("fresh",false).put("pause_latched",true)));
+   .put("polar_input",new JSONObject().put("required",true).put("fresh",false).put("pause_latched",true)
+    .put("reason","acc-stale").put("diagnostics_observed",true).put("clock","rust-instant").put("timeout_ms",1000).put("accepted_age_ms",1234)
+    .put("ingress_count",13).put("accepted_count",12).put("rejected_count",1)
+    .put("last_pause",new JSONObject().put("reason","acc-stale").put("interruption_revision",4)
+     .put("deadline_elapsed_realtime_ns",2000).put("detected_elapsed_realtime_ns",3000).put("fresh_at_detection",false))
+    .put("private_unbounded",repeat("x",20000))));
  }
  static String repeat(String s,int n){return String.join("",java.util.Collections.nCopies(n,s));}
  long identity=11,epoch=7,lifecycleRevision=1;
@@ -80,7 +85,11 @@ public final class WifiSnapshotHarness {
   JSONObject sessionControlReadback()throws Exception{return raw.getJSONObject("readback");}
   __READBACK__
   __PRODUCER__
-  JSONObject polarSetupReadback(){return setup;}JSONObject polarStopReadback(){if(replace)carrier.generation++;return null;}
+  JSONObject polarSetupReadback(){return setup;}JSONObject polarStopReadback(){if(replace)carrier.generation++;return new JSONObject()
+   .put("connected",false).put("acc_requested",true).put("acc_pmd_ack_running",true)
+   .put("diagnostics",new JSONObject().put("clock","java-nano-time").put("observed_at_monotonic_ns",42).put("callback_count",15).put("acc_callback_count",14)
+    .put("decode_count",13).put("jni_submit_count",12).put("callback_age_ms",6).put("gatt_state",0).put("gatt_status",8).put("disconnect_count",1).put("private",repeat("x",20000)))
+   .put("selected_sensor",repeat("x",20000));}
  }
  Delegate delegate=new Delegate();
  WifiSnapshotHarness()throws Exception{}
@@ -89,6 +98,11 @@ public final class WifiSnapshotHarness {
   JSONObject status;
   try{status=snapshot();}catch(Exception oldBudget){throw new AssertionError("full Wi-Fi snapshot must bypass compact BLE budget",oldBudget);}
   check(status.getInt("wifi_snapshot")==1,"full Wi-Fi marker");
+  JSONObject diagnostic=status.getJSONObject("pd"),nativeInput=diagnostic.getJSONObject("native"),javaInput=diagnostic.getJSONObject("java");
+  check(nativeInput.getBoolean("diagnostics_observed")&&"acc-stale".equals(nativeInput.getString("reason"))&&nativeInput.getLong("accepted_age_ms")==1234,"current native reason/age retained");
+  check("acc-stale".equals(nativeInput.getJSONObject("last_pause").getString("reason")),"original pause retained");
+  check(!nativeInput.has("private_unbounded")&&!javaInput.has("private")&&!javaInput.has("selected_sensor"),"bounded projection excludes raw/private objects");
+  check(javaInput.getInt("callback_count")==15&&javaInput.getInt("jni_submit_count")==12&&!javaInput.getBoolean("connected"),"separate Java callback/submission/link observations");
   for(String field:new String[]{"v","m","control_mode","o","p","g","r","c","rec","co","ms","st","pending","h","pi"})check(status.has(field),"mandatory "+field);
   check(status.getJSONObject("pi").keySet().equals(new java.util.HashSet<>(java.util.Arrays.asList("r","f","h"))),"exact pi booleans");
   check(status.getJSONObject("o").getLong("r")==status.getLong("r")&&status.getLong("r")==9&&status.getLong("ms")==900,"one read revision and clock");
@@ -117,6 +131,8 @@ public final class WifiSnapshotHarness {
  static void observation()throws Exception {
   ExperimentSessionWifiSnapshot observer=new ExperimentSessionWifiSnapshot();
   ExperimentSessionWifiSnapshot.Read read=observer.observe(response(9,900),1000000000L,1000000001L,7);
+  read.statusAt(1002000000L,7);
+  check(read.status.getJSONObject("pd").getJSONObject("native").getLong("accepted_age_ms")==1234&&read.status.getJSONObject("o").getLong("a")==2,"cached diagnostic ages retain original observation witness");
   check(read.status.getJSONObject("o").keySet().equals(new java.util.HashSet<>(java.util.Arrays.asList("v","s","e","i","g","r","a"))),"exact observed o schema");
   try{read.statusAt(1000000000L,7);throw new AssertionError("serialization clock regression");}catch(IllegalStateException expected){}
   try{observer.observe(response(8,899),2000000000L,2000000001L,7);throw new AssertionError("regressed revision");}catch(IllegalStateException expected){}
@@ -126,7 +142,9 @@ public final class WifiSnapshotHarness {
   try{observer.observe(missing,3000000000L,3000000001L,7);throw new AssertionError("missing required pi");}catch(IllegalStateException expected){}
   JSONObject idle=response(10,0);idle.getJSONObject("readback").put("phase","idle").put("control_state","idle").put("condition_id",JSONObject.NULL).put("session_key",JSONObject.NULL)
    .put("polar_input",new JSONObject().put("required",false).put("fresh",false).put("pause_latched",false));
-  check(new ExperimentSessionWifiSnapshot().observe(idle,4000000000L,4000000001L,7).status.getJSONObject("pi").length()==3,"idle pi always present");
+  JSONObject legacy=new ExperimentSessionWifiSnapshot().observe(idle,4000000000L,4000000001L,7).status;
+  check(legacy.getJSONObject("pi").length()==3,"idle pi always present");
+  check(legacy.getJSONObject("pd").getJSONObject("native").isNull("accepted_age_ms"),"legacy missing age is unavailable, never zero");
  }
  static JSONObject idleWithEpoch(Object epoch)throws Exception {
   JSONObject idle=response(10,0);idle.getJSONObject("readback").put("phase","idle").put("control_state","idle")
