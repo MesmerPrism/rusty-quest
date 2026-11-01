@@ -16,23 +16,23 @@ public final class NativeRendererBootReceiver extends BroadcastReceiver {
     @Override public void onReceive(Context context, Intent received) {
         if (context == null || received == null
                 || !NativeRendererBootLaunchPolicy.BOOT_ACTION.equals(received.getAction())) return;
-        NativeRendererBootObservation.received(context);
+        boolean selected = false;
         boolean admitted = false;
         int bootCount = -1;
         try {
             ApplicationInfo info = context.getPackageManager().getApplicationInfo(
                 context.getPackageName(), PackageManager.GET_META_DATA);
-            boolean selected = info.metaData != null && info.metaData.getBoolean(
+            selected = info.metaData != null && info.metaData.getBoolean(
                 NativeRendererBootLaunchPolicy.SELECTION_METADATA, false);
+            if (selected) NativeRendererBootObservation.received(context);
             boolean overlayGranted = Settings.canDrawOverlays(context);
             bootCount = Settings.Global.getInt(context.getContentResolver(), "boot_count", -1);
             SharedPreferences state = context.getSharedPreferences("native_boot_launch", Context.MODE_PRIVATE);
             int lastAttemptedBootCount = state.getInt("last_attempted_boot_count", -1);
             if (!NativeRendererBootLaunchPolicy.admits(received.getAction(), selected, overlayGranted,
                     bootCount, lastAttemptedBootCount)) {
-                NativeRendererBootObservation.admission(context, bootCount,
-                    !selected ? NativeRendererBootObservation.Admission.NOT_SELECTED
-                    : !overlayGranted ? NativeRendererBootObservation.Admission.OVERLAY_MISSING
+                if (selected) NativeRendererBootObservation.admission(context, bootCount,
+                    !overlayGranted ? NativeRendererBootObservation.Admission.OVERLAY_MISSING
                     : bootCount < 0 ? NativeRendererBootObservation.Admission.BOOT_COUNT_UNAVAILABLE
                     : NativeRendererBootObservation.Admission.ALREADY_ATTEMPTED);
                 Log.i(TAG, "status=not-dispatched selected=" + selected
@@ -57,8 +57,10 @@ public final class NativeRendererBootReceiver extends BroadcastReceiver {
             NativeRendererBootObservation.dispatch(context, bootCount, true);
             Log.i(TAG, "status=launch-requested-unconfirmed boot_count=" + bootCount);
         } catch (Exception failure) {
-            if (admitted) NativeRendererBootObservation.dispatch(context, bootCount, false);
-            else NativeRendererBootObservation.platformCheckFailed(context);
+            if (selected) {
+                if (admitted) NativeRendererBootObservation.dispatch(context, bootCount, false);
+                else NativeRendererBootObservation.platformCheckFailed(context);
+            }
             Log.w(TAG, "status=not-confirmed reason=platform-launch-failed", failure);
         }
     }

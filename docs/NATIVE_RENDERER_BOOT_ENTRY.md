@@ -32,7 +32,7 @@ boot count is explicitly unknown and cannot join evidence to a real boot.
 
 All 26 fields have fixed names. `boot_count` binds the receipt;
 `observation_sequence` and `receiver_deliveries` are saturating counters.
-`receiver_last_reason` is one of `not-observed`, `received`, `not-selected`,
+`receiver_last_reason` is one of `not-observed`, `received`,
 `overlay-missing`, `boot-count-unavailable`, `already-attempted`,
 `admission-storage-failed`, `admitted`, or `platform-check-failed`.
 `admission_outcome` is `not-admitted`, `storage-failed`, or `committed`.
@@ -54,7 +54,11 @@ existing manifest selector: stock `android.app.NativeActivity` or the selected
 `NativeProductPanelActivity`. The unselected physical native host and other
 packages cannot become native witnesses. Own control-panel observations have
 separate fields. Lifecycle/trusted observations are inert when the boot feature
-metadata is absent. Activity creation, resume and trusted launch each prove only
+metadata is absent. Receiver diagnostics also require positively established
+boot-feature selection: false, missing or unavailable metadata performs no
+diagnostic preference access or write, including on exception paths. Denied
+outcomes are recorded only for a positively selected receiver. Activity creation,
+resume and trusted launch each prove only
 their named observation; none establishes a current immersive session, submitted
 frame, focus, or presentation. Those require the existing native evidence.
 

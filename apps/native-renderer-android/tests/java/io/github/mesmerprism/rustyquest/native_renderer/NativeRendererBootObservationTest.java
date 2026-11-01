@@ -23,8 +23,8 @@ public final class NativeRendererBootObservationTest {
     }
     private static NativeRendererSelfKioskApplication reset(boolean selected, boolean product) {
         NativeRendererExperimentLaunchAuthority.invalidatePending();
-        Context.preferences.clear(); Context.launches.clear(); Context.beforeStart=null; Context.launchFails=false;
-        PackageManager.missing=false; PackageManager.metadata=new android.os.Bundle();
+        Context.preferences.clear(); Context.preferenceAccesses.clear(); Context.launches.clear(); Context.beforeStart=null; Context.launchFails=false;
+        PackageManager.missing=false; PackageManager.lookupFails=false; PackageManager.metadata=new android.os.Bundle();
         PackageManager.metadata.put("rusty.quest.experiment.boot_autostart", selected);
         PackageManager.metadata.put("rusty.quest.native_renderer.original_panel_native_host", product);
         Settings.overlay=true; Settings.overlayFails=false; Settings.Global.bootCount=7;
@@ -40,6 +40,23 @@ public final class NativeRendererBootObservationTest {
     }
     private static void outcome(String wanted) {
         check(wanted.equals(receipt().getString("receiver_last_reason", "missing")), "receiver reason: "+wanted);
+    }
+    private static void unselectedReceiverIsInert(String selection) {
+        NativeRendererSelfKioskApplication app=reset(false,false);
+        if("missing".equals(selection))PackageManager.metadata.remove("rusty.quest.experiment.boot_autostart");
+        if("null-metadata".equals(selection))PackageManager.metadata=null;
+        if("unavailable".equals(selection))PackageManager.missing=true;
+        if("lookup-failed".equals(selection))PackageManager.lookupFails=true;
+        if("false-platform-check-failed".equals(selection))Settings.overlayFails=true;
+        Context.MemoryPreferences retained=new Context.MemoryPreferences();
+        retained.values.put("sentinel", "prior-receipt");
+        Context.preferences.put(RECEIPT,retained);
+        boot(app);
+        check(Context.preferenceAccesses.getOrDefault(RECEIPT,0)==0,
+            "false/unknown selection must perform zero diagnostic preference access: "+selection);
+        check(retained.values.size()==1 && "prior-receipt".equals(retained.values.get("sentinel")),
+            "false/unknown selection must preserve an existing diagnostic file: "+selection);
+        check(Context.launches.isEmpty(), "false/unknown selection cannot launch: "+selection);
     }
     public static void main(String[] args) {
         for (boolean product : new boolean[]{false,true}) {
@@ -110,13 +127,15 @@ public final class NativeRendererBootObservationTest {
         boot(early);
         check(receipt().getInt("native_created_order",0)==earlyOrder && receipt().getInt("receiver_first_order",0)>earlyOrder,
             "late receiver observation preserves earlier same-boot Activity ordering");
-        NativeRendererSelfKioskApplication app=reset(false,false); boot(app); outcome("not-selected");
-        check(Context.launches.isEmpty(), "feature-off boot inert");
-        Context.preferences.clear(); Activity unselected=nativeActivity(false);
+        for(String selection:new String[]{"false", "missing", "null-metadata", "unavailable", "lookup-failed", "false-platform-check-failed"}) {
+            unselectedReceiverIsInert(selection);
+        }
+        NativeRendererSelfKioskApplication app=reset(false,false); Activity unselected=nativeActivity(false);
         app.callbacks.onActivityCreated(unselected,null); app.callbacks.onActivityResumed(unselected);
         check(NativeRendererExperimentLaunchAuthority.issueFromNativeActivity(unselected,false)>0,
             "boot diagnostics selection cannot alter a normal trusted launch");
-        check(Context.preferences.isEmpty(), "unselected lifecycle diagnostics inert");
+        check(Context.preferences.isEmpty() && Context.preferenceAccesses.getOrDefault(RECEIPT,0)==0,
+            "unselected lifecycle diagnostics have zero preference access");
         app=reset(true,false); Settings.overlay=false; boot(app); outcome("overlay-missing");
         check(Context.launches.isEmpty() && admission().getInt("last_attempted_boot_count",-1)==-1, "overlay prerequisite cannot consume admission");
         Settings.overlay=true; boot(app);

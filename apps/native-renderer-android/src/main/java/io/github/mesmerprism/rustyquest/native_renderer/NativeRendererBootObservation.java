@@ -14,7 +14,7 @@ final class NativeRendererBootObservation {
     private static final String SELECTION_METADATA = "rusty.quest.experiment.boot_autostart";
 
     enum Admission {
-        NOT_SELECTED("not-selected"), OVERLAY_MISSING("overlay-missing"),
+        OVERLAY_MISSING("overlay-missing"),
         BOOT_COUNT_UNAVAILABLE("boot-count-unavailable"), ALREADY_ATTEMPTED("already-attempted"),
         STORAGE_FAILED("admission-storage-failed"), ADMITTED("admitted"),
         PLATFORM_CHECK_FAILED("platform-check-failed");

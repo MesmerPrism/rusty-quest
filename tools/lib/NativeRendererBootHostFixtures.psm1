@@ -9,6 +9,7 @@ public class Context {
  public static final int MODE_PRIVATE=0;
  public static Context application;
  public static final java.util.Map<String,MemoryPreferences> preferences=new java.util.HashMap<>();
+ public static final java.util.Map<String,Integer> preferenceAccesses=new java.util.HashMap<>();
  public static final java.util.List<Intent> launches=new java.util.ArrayList<>();
  public static Runnable beforeStart;
  public static boolean launchFails;
@@ -19,6 +20,7 @@ public class Context {
  public android.content.pm.PackageManager getPackageManager(){return new android.content.pm.PackageManager();}
  public ContentResolver getContentResolver(){return new ContentResolver();}
  public SharedPreferences getSharedPreferences(String name,int mode){
+  preferenceAccesses.put(name,preferenceAccesses.getOrDefault(name,0)+1);
   if(!preferences.containsKey(name))preferences.put(name,new MemoryPreferences());
   return preferences.get(name);
  }
@@ -82,8 +84,8 @@ public class Intent {
 package android.content.pm;
 public class PackageManager {
  public static final int GET_META_DATA=128;
- public static android.os.Bundle metadata=new android.os.Bundle();public static boolean missing;
- public ApplicationInfo getApplicationInfo(String p,int f)throws NameNotFoundException{if(missing)throw new NameNotFoundException();ApplicationInfo i=new ApplicationInfo();i.metaData=metadata;return i;}
+ public static android.os.Bundle metadata=new android.os.Bundle();public static boolean missing,lookupFails;
+ public ApplicationInfo getApplicationInfo(String p,int f)throws NameNotFoundException{if(missing)throw new NameNotFoundException();if(lookupFails)throw new SecurityException("metadata");ApplicationInfo i=new ApplicationInfo();i.metaData=metadata;return i;}
  public static class NameNotFoundException extends Exception {}
 }
 '@
