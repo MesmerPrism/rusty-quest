@@ -21,6 +21,7 @@ public final class ExperimentSessionCommandGateway {
     private final ExperimentSessionBleServer.Delegate delegate;
     private final ExperimentSessionBleServer carrier;
     private final ExperimentSessionHeadsetIdentity headsetIdentity;
+    private final JSONObject buildIdentity;
     private final ExperimentSessionDiscoveryServer discovery;
     private final ExperimentSessionGuestRegistry guests=new ExperimentSessionGuestRegistry();
     private final ExperimentControlMode controlMode=ExperimentControlMode.process();
@@ -58,6 +59,7 @@ public final class ExperimentSessionCommandGateway {
     private ExperimentSessionCommandGateway(Context context,ExperimentSessionBleServer.Delegate delegate) {
         this.context=context;this.delegate=delegate;carrier=ExperimentSessionBleServer.process(context,delegate);
         headsetIdentity=new ExperimentSessionHeadsetIdentity(context);
+        buildIdentity=ExperimentSessionBuildIdentity.read(context);
         discovery=new ExperimentSessionDiscoveryServer(context,new ExperimentSessionDiscoveryServer.Source(){
             @Override public JSONObject snapshot()throws Exception{return discoveryMetadata();}
         });
@@ -430,7 +432,7 @@ public final class ExperimentSessionCommandGateway {
             }
             status=observed.statusAt(SystemClock.elapsedRealtimeNanos(),nativeEpoch);
             return ExperimentSessionWifiSnapshot.bounded(status.put("v",1).put("m","gated").put("wifi_snapshot",1)
-                .put("control_mode",mode.wireName()).put("breath_monitor",1).put("recordings",ExperimentSessionRecordingExport.selected(context)?1:0));
+                .put("build",buildIdentity).put("control_mode",mode.wireName()).put("breath_monitor",1).put("recordings",ExperimentSessionRecordingExport.selected(context)?1:0));
         } catch(Exception unavailable){session.clear();polar.clear();throw unavailable;}
     }
     private JSONObject monitorSnapshot(JSONObject body)throws Exception {

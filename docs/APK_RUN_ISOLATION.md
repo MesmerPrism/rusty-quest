@@ -37,6 +37,19 @@ addressed by app, lock, and source revision:
 target/native-renderer-android/builds/<app-id>/<lock-sha-prefix>/<source-commit-prefix>/
 ```
 
+Native Android versions are explicit `-AndroidVersionCode` / `-AndroidVersionName`
+inputs (defaults `1` / `0.1.0`). The version code is a canonical positive Android
+integer; the display name is bounded to 64 identifier characters. The default
+pair retains legacy explicit `-OutDir` behavior. Every other pair appends
+`p-<16-hex-packaging-fingerprint>` to the output base, including an explicit base.
+Versions do not alter the native Cargo intermediate address or the feature-lock
+`android_manifest`. A separate closed `packaging-input-lock.json` binds app,
+package, feature-lock hash, exact source composition and effective Android versions.
+Its full SHA-256 is verified against the build manifest and run capsule. Partial
+new records fail validation; retained capsules without this contract keep their
+legacy path. Run `tools/checks/Test-NativeRendererAndroidPackaging.ps1` for focused
+version/address, cross-record damage, and legacy/Spatial compatibility checks.
+
 Spatial builds require an explicit `-AppId` unless the caller deliberately
 uses `-AllowSharedDevelopmentPackage`. Their explicit inputs form a build-input
 lock and fingerprint under:

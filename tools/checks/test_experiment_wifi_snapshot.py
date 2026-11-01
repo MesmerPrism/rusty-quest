@@ -36,6 +36,7 @@ final class ControlPanelActivity {
 }
 final class NativeRendererSelfKioskApplication {static String foregroundForOwnApp(Object context){return "vr";}}
 final class BreathCompositionPanelModule {boolean canRenderRemotePolarInPlace(){return false;}}
+final class ExperimentSessionRecordingExport {static boolean selected(Object context){return true;}}
 final class SystemClock {static long ms=1000;static long elapsedRealtime(){return ms;}static long ns=1000000000L;static long elapsedRealtimeNanos(){return ++ns;}}
 interface WifiDelegate {ExperimentSessionWifiSnapshot.Read wifiSnapshot() throws Exception;}
 class ExperimentSessionBleServer {static final class CommandRequest {}
@@ -63,7 +64,9 @@ public final class WifiSnapshotHarness {
     .put("private_unbounded",repeat("x",20000))));
  }
  static String repeat(String s,int n){return String.join("",java.util.Collections.nCopies(n,s));}
+ Object context=new Object();
  long identity=11,epoch=7,lifecycleRevision=1;
+ JSONObject buildIdentity=new JSONObject().put("v",1).put("version_code",61).put("version_name","0.1.61");
  ExperimentSessionControlCapability session=new ExperimentSessionControlCapability();PolarStopBleCapability polar=new PolarStopBleCapability();
  ExperimentControlMode controlMode=new ExperimentControlMode();
  class Carrier extends ExperimentSessionBleServer {
@@ -98,6 +101,7 @@ public final class WifiSnapshotHarness {
   JSONObject status;
   try{status=snapshot();}catch(Exception oldBudget){throw new AssertionError("full Wi-Fi snapshot must bypass compact BLE budget",oldBudget);}
   check(status.getInt("wifi_snapshot")==1,"full Wi-Fi marker");
+  check(status.getJSONObject("build").getInt("version_code")==61,"Wi-Fi installed identity projected");
   JSONObject diagnostic=status.getJSONObject("pd"),nativeInput=diagnostic.getJSONObject("native"),javaInput=diagnostic.getJSONObject("java");
   check(nativeInput.getBoolean("diagnostics_observed")&&"acc-stale".equals(nativeInput.getString("reason"))&&nativeInput.getLong("accepted_age_ms")==1234,"current native reason/age retained");
   check("acc-stale".equals(nativeInput.getJSONObject("last_pause").getString("reason")),"original pause retained");

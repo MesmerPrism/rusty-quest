@@ -30,6 +30,8 @@
     },
     "build_lock": { "$ref": "#/$defs/fileRecord" },
     "build_manifest": { "$ref": "#/$defs/fileRecord" },
+    "packaging_fingerprint": { "$ref": "#/$defs/hash" },
+    "packaging_input_lock": { "$ref": "#/$defs/fileRecord" },
     "apk": { "$ref": "#/$defs/fileRecord" },
     "runtime_profile": { "oneOf": [{ "$ref": "#/$defs/fileRecord" }, { "type": "null" }] },
     "property_manifest": {
@@ -51,7 +53,9 @@
       "required": ["package_name", "activity"],
       "properties": {
         "package_name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$" },
-        "activity": { "type": "string", "minLength": 3 }
+        "activity": { "type": "string", "minLength": 3 },
+        "version_code": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+        "version_name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$" }
       }
     },
     "cleanup": {
@@ -64,6 +68,17 @@
       }
     }
   },
+  "allOf": [{
+    "if": { "anyOf": [
+      { "required": ["packaging_fingerprint"] },
+      { "required": ["packaging_input_lock"] },
+      { "properties": { "android": { "anyOf": [{ "required": ["version_code"] }, { "required": ["version_name"] }] } } }
+    ] },
+    "then": {
+      "required": ["packaging_fingerprint", "packaging_input_lock"],
+      "properties": { "android": { "required": ["version_code", "version_name"] } }
+    }
+  }],
   "$defs": {
     "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "fileRecord": {

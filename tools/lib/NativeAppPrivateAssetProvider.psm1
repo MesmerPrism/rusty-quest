@@ -5,6 +5,7 @@ $script:RequestSchema = 'rusty.quest.native_app_private_asset_provider_request.v
 $script:ClosureSchema = 'rusty.quest.native_app_private_asset_closure.v1'
 $script:ReservedAssetRecords = @(
     [pscustomobject]@{ path = 'feature-lock.json'; kind = 'file' },
+    [pscustomobject]@{ path = 'android-build-identity.json'; kind = 'file' },
     [pscustomobject]@{ path = 'native-app-settings.json'; kind = 'file' },
     [pscustomobject]@{ path = 'panel-source-closure.json'; kind = 'file' },
     [pscustomobject]@{ path = 'native-hwb-blur-sdf-public.plan.json'; kind = 'file' },

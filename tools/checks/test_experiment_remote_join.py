@@ -37,6 +37,10 @@ STUBS['android/net/Network.java']='package android.net;public class Network {}'
 STUBS['android/net/NetworkCapabilities.java']='package android.net;public class NetworkCapabilities {public static final int TRANSPORT_WIFI=1;public boolean hasTransport(int t){return false;}}'
 STUBS['android/net/LinkProperties.java']='package android.net;public class LinkProperties {public String getInterfaceName(){return null;}}'
 STUBS['android/content/Context.java']=STUBS['android/content/Context.java'].replace('public Context getApplicationContext()', 'public <T>T getSystemService(Class<T> c){return null;}public Context getApplicationContext()')
+STUBS['android/content/pm/PackageInfo.java']='package android.content.pm;public class PackageInfo {public int versionCode=61;public String versionName="0.1.61";public long getLongVersionCode(){return 61;}}'
+STUBS['android/content/res/AssetManager.java']='package android.content.res;public class AssetManager {public java.io.InputStream open(String name)throws java.io.IOException {if(!name.equals("android-build-identity.json"))throw new java.io.IOException();return new java.io.ByteArrayInputStream("{~schema~:~rusty.quest.android_build_identity.v1~,~source_commit~:~aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa~}".replace((char)126,(char)34).getBytes(java.nio.charset.StandardCharsets.UTF_8));}}'
+STUBS['android/content/Context.java']=STUBS['android/content/Context.java'].replace('public Context getApplicationContext()', 'public android.content.res.AssetManager getAssets(){return new android.content.res.AssetManager();}public Context getApplicationContext()')
+STUBS['android/content/pm/PackageManager.java']=STUBS['android/content/pm/PackageManager.java'].replace('public static final int GET_META_DATA=128;', 'public static final int GET_META_DATA=128;public PackageInfo getPackageInfo(String p,int f){return new PackageInfo();}')
 STUBS['android/app/Activity.java']='package android.app;public class Activity extends android.content.Context {}'
 
 BOUNDARIES = r'''package io.github.mesmerprism.rustyquest.native_renderer;
@@ -86,7 +90,7 @@ final class RemoteJoinHarness {
   check(task!=null,"HTTP request did not cross actual onMain wrapper");task.run();network.join(2000);check(!network.isAlive(),"HTTP owner request stalled");return call.get();
  }
  public static void main(String[] args)throws Exception {
-  android.content.Context context=new android.content.Context();ExperimentControlMode mode=ExperimentControlMode.process();
+  android.content.Context context=new android.content.Context();check(ExperimentSessionBuildIdentity.read(context).getInt("version_code")==61,"actual PackageManager build version projection");check(ExperimentSessionBuildIdentity.read(context).getString("source_commit").equals("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),"actual asset public source projection");ExperimentControlMode mode=ExperimentControlMode.process();
   ExperimentSessionCommandGateway g=ExperimentSessionCommandGateway.process(context,new ExperimentSessionCommandGateway.WifiDelegate(){
    public ExperimentSessionWifiSnapshot.Read wifiSnapshot()throws Exception {
     if(misleadingCapacity)throw new SecurityException("guest-capacity");
@@ -228,7 +232,7 @@ final class HttpRemoteJoinBoundary {
         debug=(a.repo/'apps/native-renderer-android/src/debug/java'/PACKAGE/'ExperimentSessionDebugOperator.java').read_text()
         (package/'ExperimentSessionDebugOperator.java').write_text(debug)
         (package/'ExperimentSessionDebugOperatorTest.java').write_text((a.repo/'apps/native-renderer-android/tests/java'/PACKAGE/'ExperimentSessionDebugOperatorTest.java').read_text())
-        names=['ExperimentSessionRecordingExport','ExperimentSessionCommandGateway','ExperimentSessionGatewayProtocol','ExperimentSessionCommandJournal','ExperimentSessionBleProtocol','ExperimentSessionControlCapability','ExperimentSessionWifiSnapshot','ExperimentSessionPanelState','ExperimentSessionPanelCoordinator','ExperimentSessionPanelViewPolicy','ExperimentSessionAndroidShell','ExperimentSessionJsonCodec']
+        names=['ExperimentSessionBuildIdentity','ExperimentSessionRecordingExport','ExperimentSessionCommandGateway','ExperimentSessionGatewayProtocol','ExperimentSessionCommandJournal','ExperimentSessionBleProtocol','ExperimentSessionControlCapability','ExperimentSessionWifiSnapshot','ExperimentSessionPanelState','ExperimentSessionPanelCoordinator','ExperimentSessionPanelViewPolicy','ExperimentSessionAndroidShell','ExperimentSessionJsonCodec']
         if (root/'ExperimentSessionHeadsetIdentity.java').exists():names.append('ExperimentSessionHeadsetIdentity')
         if (root/'ExperimentSessionGuestRegistry.java').exists():names.append('ExperimentSessionGuestRegistry')
         sources = [root/(n+'.java') for n in names] + [a.repo/'apps/native-renderer-android/src/main/java'/PACKAGE/'NativeRendererWriterAcknowledgedExitPolicy.java']

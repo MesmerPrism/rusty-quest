@@ -66,3 +66,11 @@ Run `python tools/checks/test_experiment_wifi_snapshot.py --json-jar <host-json-
 and scan receipt controls. Platform I/O is inert. The mode and gateway suites
 also retain authentication, original receipt, guest, Direct/Remote and dedupe
 checks. Host checks do not prove physical LAN or sensor behavior.
+
+Full Wi-Fi status includes `build`: `v=1`, installed `version_code` and
+`version_name` read from PackageManager, and bounded generic `source_commit`,
+`source_tree`, `source_composition_fingerprint`, `packaging_fingerprint` from
+`assets/android-build-identity.json`. Unavailable/malformed values remain null.
+This projection contains no local paths, private asset inventory or payload
+metadata and does not expand compact BLE/discovery. It is identity evidence,
+not release or installation authority.

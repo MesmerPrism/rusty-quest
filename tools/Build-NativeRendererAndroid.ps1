@@ -4,6 +4,8 @@ param(
     [string]$NdkHome = $env:ANDROID_NDK_HOME,
     [string]$OpenXrLoader = "S:\Work\tools\Quest\openxr-loader\libopenxr_loader.so",
     [string]$OutDir = "",
+    $AndroidVersionCode = 1,
+    $AndroidVersionName = "0.1.0",
     [string]$RetainedCargoTargetDirectory = "",
     [string]$Keystore = "",
     [string]$AppBuildLock = "",
@@ -234,6 +236,8 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Import-Module (Join-Path $PSScriptRoot 'lib\NativeAppPrivateAssetProvider.psm1') -Force
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\native-renderer-android")
 $targetRoot = Join-Path $repoRoot "target"
+Import-Module (Join-Path $PSScriptRoot 'lib/NativeRendererAndroidPackaging.psm1') -Force
+$androidVersion = Get-NativeRendererAndroidVersion -VersionCode $AndroidVersionCode -VersionName $AndroidVersionName
 $requestedOutDir = $OutDir
 
 $buildTools = Get-LatestDirectory -Parent (Join-Path $AndroidHome "build-tools") -Pattern "*"
@@ -516,6 +520,12 @@ if ([string]::IsNullOrWhiteSpace($requestedOutDir)) {
 } else {
     $OutDir = $requestedOutDir
 }
+$packaging = New-NativeRendererAndroidPackagingInput `
+    -AppId $(if ($null -eq $appBuildLockObject) { 'unlocked-development' } else { [string]$appBuildLockObject.app_id }) `
+    -PackageName $packageName -FeatureLockSha256 $appBuildLockSha256 `
+    -SourceCommit $sourceHead -SourceTree $sourceTree -SourceCompositionFingerprint ([string]$sourceComposition.fingerprint) `
+    -VersionCode $androidVersion.code -VersionName $androidVersion.name
+$OutDir = Get-NativeRendererAndroidPackagingOutputDirectory -BaseDirectory $OutDir -Packaging $packaging
 $resolvedOutParent = Split-Path -Parent $OutDir
 if ($metaXrOperator.enabled -and [string]::IsNullOrWhiteSpace($requestedOutDir)) {
     $OutDir = Join-Path $OutDir ('operator-' + $metaXrOperator.fingerprint.Substring(0,16))
@@ -2126,6 +2136,11 @@ if (-not [string]::IsNullOrWhiteSpace($OpenXrLoader) -and (Test-Path $OpenXrLoad
     $openXrLoaderPackaged = $true
 }
 
+$packagingInputPath = Join-Path $OutDir 'packaging-input-lock.json'
+[IO.File]::WriteAllText($packagingInputPath, $packaging.json, [Text.UTF8Encoding]::new($false))
+# Public build identity only: no paths or app/private payload metadata.
+$buildIdentityAsset = [ordered]@{schema='rusty.quest.android_build_identity.v1';source_commit=$sourceHead;source_tree=$sourceTree;source_composition_fingerprint=[string]$sourceComposition.fingerprint;packaging_fingerprint=$packaging.sha256}
+$buildIdentityAsset | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $assetsDir 'android-build-identity.json') -Encoding utf8
 Copy-NativeRendererMetaXrOperatorLayer -Selection $metaXrOperator -OutputRoot $OutDir -NativeStageRoot $nativeStageRoot
 Invoke-Checked "aapt2 link" $aapt2 @(
     "link",
@@ -2134,8 +2149,8 @@ Invoke-Checked "aapt2 link" $aapt2 @(
     "-I", $platformJar,
     "--min-sdk-version", "29",
     "--target-sdk-version", "35",
-    "--version-code", "1",
-    "--version-name", "0.1.0"
+    "--version-code", ([string]$androidVersion.code),
+    "--version-name", $androidVersion.name
 )
 
 Copy-Item $apkUnsigned $apkUnaligned
@@ -2162,6 +2177,10 @@ $manifest = [ordered]@{
     '$schema' = "rusty.quest.native_renderer_android.build_manifest.v1"
     app_id = if ($null -eq $appBuildLockObject) { "unlocked-development" } else { [string]$appBuildLockObject.app_id }
     package_name = $packageName
+    android_version_code = $androidVersion.code
+    android_version_name = $androidVersion.name
+    packaging_fingerprint = $packaging.sha256
+    build_identity_asset = "assets/android-build-identity.json"
     activity = $activityName
     entrypoint = $selectedNativeActivityClass
     authority = "rusty.quest.native_renderer"
@@ -2301,9 +2320,11 @@ if ($script:BuildUsesLock) {
     $propertyManifestPath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-property-manifest.json"
     $runCapsule = [ordered]@{
         schema = "rusty.quest.apk_run_capsule.v1"
-        capsule_id = "native-renderer-$([string]$appBuildLockObject.app_id)-$($appBuildLockSha256.Substring(0, 12))-$(([string]$sourceComposition.fingerprint).Substring(0, 12))"
+        capsule_id = "native-renderer-$([string]$appBuildLockObject.app_id)-$($appBuildLockSha256.Substring(0, 12))-$(([string]$sourceComposition.fingerprint).Substring(0, 12))-$($packaging.sha256.Substring(0, 12))"
         app_id = [string]$appBuildLockObject.app_id
         app_lane = "native-renderer-android"
+        packaging_fingerprint = $packaging.sha256
+        packaging_input_lock = [ordered]@{path=$packagingInputPath;sha256=$packaging.sha256}
         source = [ordered]@{
             repository = [string]$repoRoot
             commit = $sourceHead
@@ -2337,6 +2358,8 @@ if ($script:BuildUsesLock) {
         }
         android = [ordered]@{
             package_name = $packageName
+            version_code = $androidVersion.code
+            version_name = $androidVersion.name
             activity = $activityName
         }
         cleanup = [ordered]@{
