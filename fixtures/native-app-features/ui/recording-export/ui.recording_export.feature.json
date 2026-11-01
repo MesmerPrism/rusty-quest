@@ -1,0 +1,53 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.recording_export",
+  "module_path": "ui/recording-export",
+  "module_kind": "same-apk-read-only-recording-export",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "packaged-feature-selection"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Explicit authenticated LAN-only finalized saved core8 recording export; no BLE, relay, mutation or arbitrary path access.",
+  "provides": [
+    "ui.recording_export"
+  ],
+  "depends_on": [
+    "ui.experiment_session_command_gateway"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RECORDING_EXPORT",
+        "value": "true"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Generic read-only export mechanism only. Recordings and device identities remain app-private and are returned only to an authenticated admitted LAN controller."
+}

@@ -43,4 +43,7 @@ Require ($fine.Count -eq 1 -and $fine[0].GetAttribute('maxSdkVersion',$ns) -ceq 
 $polar = Manifest @($gateway,$direct,$relay,'sensor.polar_h10_ble') $permissions
 $fine = @($polar.SelectNodes('/manifest/uses-permission') | Where-Object { $_.GetAttribute('name',$ns) -ceq 'android.permission.ACCESS_FINE_LOCATION' })
 Require (-not $fine[0].HasAttribute('maxSdkVersion',$ns)) 'Optional Wi-Fi feature broke selected Polar location closure.'
+$export = Meta (Manifest @($gateway,'ui.recording_export') @('android.permission.INTERNET'))
+Require (-not $lan.ContainsKey('rusty.quest.feature.recording_export')) 'Gateway alone gained export capability.'
+Require ($export['rusty.quest.feature.recording_export'] -ceq 'true') 'Explicit export gate absent.'
 Write-Output 'Experiment gateway manifest selection and permission coexistence: PASS'

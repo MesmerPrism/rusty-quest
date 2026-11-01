@@ -6,6 +6,7 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDING_EXPORT");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_ENABLED");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_HYBRID");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_MESH_UI_NATIVE_PAGE");

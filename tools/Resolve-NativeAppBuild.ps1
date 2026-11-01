@@ -743,6 +743,9 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.enabled" android:value="true" />')
         [void]$lines.Add('        <meta-data android:name="rusty.quest.experiment.command_gateway.origins" android:value="https://mesmerprism.com" />')
     }
+    if ($SelectedFeatureIds -ccontains 'ui.recording_export') {
+        [void]$lines.Add('        <meta-data android:name="rusty.quest.feature.recording_export" android:value="true" />')
+    }
     if ($SelectedFeatureIds -ccontains 'ui.experiment_session_direct_network') {
         [void]$lines.Add('        <meta-data android:name="rusty.quest.feature.experiment_direct_network" android:value="true" />')
     }

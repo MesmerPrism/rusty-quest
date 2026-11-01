@@ -240,6 +240,7 @@ public final class ExperimentSessionCommandGateway {
     }
     synchronized void nativeOwnerChanged(final long owner,final long nextEpoch,final boolean live) {
         final long revision=++lifecycleRevision;
+        ExperimentSessionRecordingExport.retire();
         discovery.close();
         guests.clear();
         if(protocol!=null)protocol.retire();protocol=null;
@@ -267,17 +268,14 @@ public final class ExperimentSessionCommandGateway {
         if(enabled())protocol=new ExperimentSessionGatewayProtocol(preferences.getString("controller",""),preferences.getString("key",""),
             preferences.getString("device",""),gatewayEpoch,new ExperimentSessionGatewayProtocol.Owner(){
                 @Override public JSONObject exchange(final String action,final JSONObject payload)throws Exception {
-                    return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception{
-                        if(protocol==null||gatewayEpoch!=admittedGatewayEpoch)throw new SecurityException("gateway-epoch-retired");
-                        return ownerExchange(action,payload);
-                    }});
+                    return exchangeBound(action,payload,preferences.getString("controller",""),new LocalEnrollmentGuard(){public void check(){if(protocol==null||gatewayEpoch!=admittedGatewayEpoch)throw new SecurityException("gateway-epoch-retired");}});
                 }});
         controlModeChanged();
     }
     /** Actual native mode remains authority; revisions revoke guests without erasing receipts. */
     void controlModeChanged(){
         requireMain();long packed=controlMode.readSnapshot().packed;
-        if(guestModePacked!=packed){guests.clear();guestModePacked=packed;}
+        if(guestModePacked!=packed){ExperimentSessionRecordingExport.retire();guests.clear();guestModePacked=packed;}
         discovery.reconcile(packed,remoteAvailable());
         if(journal==null)return;
         if(!trustedLanAllowed()){
@@ -292,6 +290,7 @@ public final class ExperimentSessionCommandGateway {
     }
     /** Controller revocation leaves the live native journal and its original receipts intact. */
     private void retireControllers() {
+        ExperimentSessionRecordingExport.retire();
         clearLocalEnrollmentOffer();
         guests.clear();
         stopRoutesFromHeadset();
@@ -331,11 +330,10 @@ public final class ExperimentSessionCommandGateway {
             final ExperimentSessionGatewayProtocol[] binding=new ExperimentSessionGatewayProtocol[1];
             binding[0]=new ExperimentSessionGatewayProtocol(controller,key,deviceId(),admittedGateway,new ExperimentSessionGatewayProtocol.Owner(){
                 @Override public JSONObject exchange(final String action,final JSONObject payload)throws Exception {
-                    return onMain(new java.util.concurrent.Callable<JSONObject>(){@Override public JSONObject call()throws Exception {
+                    return exchangeBound(action,payload,controller,new LocalEnrollmentGuard(){public void check()throws Exception {
                         if(admittedOwner!=identity||admittedEpoch!=epoch||admittedLifecycle!=lifecycleRevision||admittedGateway!=gatewayEpoch
                                 ||admittedMode!=controlMode.readSnapshot().packed||!remoteAvailable())throw new SecurityException("guest-owner-retired");
                         guests.authenticated(controller,binding[0],SystemClock.elapsedRealtime());
-                        return ownerExchange(action,payload);
                     }});
                 }});
             guests.add(controller,binding[0],SystemClock.elapsedRealtime());
@@ -346,12 +344,39 @@ public final class ExperimentSessionCommandGateway {
     /** Only HTTP after private-peer and Origin admission may bootstrap a local guest. */
     JSONObject exchangeLan(JSONObject envelope)throws Exception {
         if("connect".equals(envelope.opt("action")))return connect(new JSONObject(envelope.toString()));
-        return exchange(envelope);
+        return exchangeRoute(envelope,true);
     }
-    public JSONObject exchange(JSONObject envelope)throws Exception {
+    public JSONObject exchange(JSONObject envelope)throws Exception { return exchangeRoute(envelope,false); }
+    private JSONObject exchangeRoute(JSONObject envelope,boolean lan)throws Exception {
         ExperimentSessionGuestRegistry.Guest guest=guests.find(envelope.optString("controller"),SystemClock.elapsedRealtime());
-        if(guest!=null)return guest.protocol.exchange(envelope);
-        ExperimentSessionGatewayProtocol current=protocol;if(current==null)throw new SecurityException("gateway-unavailable");return current.exchange(envelope);
+        if(guest!=null)return lan?guest.protocol.exchangeLan(envelope):guest.protocol.exchange(envelope);
+        ExperimentSessionGatewayProtocol current=protocol;if(current==null)throw new SecurityException("gateway-unavailable");return lan?current.exchangeLan(envelope):current.exchange(envelope);
+    }
+    /** Capture/revalidate on main; all filesystem work remains on the LAN IO caller. */
+    private JSONObject exchangeBound(final String action,final JSONObject payload,final String controllerScope,final LocalEnrollmentGuard guard)throws Exception {
+        if(!"recordings".equals(action))return onMain(new java.util.concurrent.Callable<JSONObject>(){public JSONObject call()throws Exception{guard.check();return ownerExchange(action,payload);}});
+        final JSONObject query=ExperimentSessionRecordingExport.query(payload);
+        final JSONObject ticket=onMain(new java.util.concurrent.Callable<JSONObject>(){public JSONObject call()throws Exception{guard.check();return exportTicket().put("controller",controllerScope);}});
+        JSONObject result=ExperimentSessionRecordingExport.read(query,ticket.toString());
+        final JSONObject original=ticket;
+        onMain(new java.util.concurrent.Callable<JSONObject>(){public JSONObject call()throws Exception{
+            guard.check();JSONObject current=exportTicket().put("controller",controllerScope);
+            if(!current.toString().equals(original.toString())){ExperimentSessionRecordingExport.retire();throw new SecurityException("recording-owner-changed");}
+            return current;
+        }});
+        if("ready".equals(result.opt("state"))&&result.optJSONObject("manifest")!=null)result.getJSONObject("manifest").put("device",ticket.getString("device")).put("serial",ticket.getString("serial"));
+        return result;
+    }
+    private JSONObject exportTicket()throws Exception {
+        requireMain();
+        if(!ExperimentSessionRecordingExport.selected(context)||!remoteAvailable())throw new SecurityException("recording-export-not-selected-or-remote");
+        long owner=identity,nativeEpoch=epoch,lifecycle=lifecycleRevision,generation=carrier.currentGeneration(),packed=controlMode.readSnapshot().packed;
+        JSONObject status=snapshot(),nativeStatus=delegate.sessionControlReadback();
+        if(!"remote".equals(status.opt("control_mode"))||!"IDLE".equals(status.opt("p"))||!Boolean.FALSE.equals(status.opt("rec"))
+                ||!Boolean.FALSE.equals(status.opt("pending"))||!localEnrollmentIdle(nativeStatus,status))throw new SecurityException("recording-export-requires-fresh-idle");
+        if(owner!=identity||nativeEpoch!=epoch||lifecycle!=lifecycleRevision||generation!=carrier.currentGeneration()||packed!=controlMode.readSnapshot().packed||!carrier.acceptsNativeOwner(owner,nativeEpoch))throw new SecurityException("recording-owner-changed");
+        return new JSONObject().put("owner",owner).put("epoch",nativeEpoch).put("lifecycle",lifecycle).put("gateway",gatewayEpoch).put("carrier",generation)
+            .put("mode",packed).put("generation",status.getLong("g")).put("revision",status.getLong("r")).put("device",deviceId()).put("serial",headsetIdentity.serial());
     }
     private JSONObject onMain(java.util.concurrent.Callable<JSONObject> action)throws Exception {
         if(Looper.myLooper()==Looper.getMainLooper())return action.call();
@@ -405,7 +430,7 @@ public final class ExperimentSessionCommandGateway {
             }
             status=observed.statusAt(SystemClock.elapsedRealtimeNanos(),nativeEpoch);
             return ExperimentSessionWifiSnapshot.bounded(status.put("v",1).put("m","gated").put("wifi_snapshot",1)
-                .put("control_mode",mode.wireName()).put("breath_monitor",1));
+                .put("control_mode",mode.wireName()).put("breath_monitor",1).put("recordings",ExperimentSessionRecordingExport.selected(context)?1:0));
         } catch(Exception unavailable){session.clear();polar.clear();throw unavailable;}
     }
     private JSONObject monitorSnapshot(JSONObject body)throws Exception {

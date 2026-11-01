@@ -187,3 +187,5 @@ That harness executes production GATT callbacks with inert Android handles,
 covering unnamed advertisements, frozen/offset/MTU reads, bounds, permission
 request/denial/grant, Bluetooth unavailability and retirement/recovery races.
 These host checks do not establish physical Bluetooth or phone interoperability.
+
+Saved recording retrieval requires a separate [recording-export feature](EXPERIMENT_SESSION_RECORDINGS.md). Gateway, relay and BLE selection alone grant no file access.

@@ -2229,6 +2229,7 @@ enum WorkerMessage {
 
 pub(crate) struct ExperimentSessionRuntime {
     breath_monitor: Mutex<crate::breath_monitor::History>,
+    recording_export: Option<crate::session_recording_export::Service>,
     preparation_presentation_observation: Arc<AtomicU64>,
     runtime_epoch: u64,
     immersive_owner_identity: Arc<AtomicU64>,
@@ -2380,6 +2381,7 @@ impl ExperimentSessionRuntime {
             .map_err(|error| format!("experiment-session-worker-spawn:{error}"))?;
         Ok(Self {
             breath_monitor: Mutex::new(crate::breath_monitor::History::default()),
+            recording_export: if option_env!("RUSTY_QUEST_NATIVE_RECORDING_EXPORT")==Some("true") {Some(crate::session_recording_export::Service::new()?)} else {None},
             preparation_presentation_observation,
             runtime_epoch,
             immersive_owner_identity: Arc::new(AtomicU64::new(0)),
@@ -2440,6 +2442,9 @@ impl ExperimentSessionRuntime {
         }
         if local_terminal_fence.is_none() {
             if let Ok(value) = serde_json::from_str::<Value>(raw) {
+                if value.get("operation").and_then(Value::as_str) == Some("recordings") {
+                    return self.recordings_json(&value);
+                }
                 if value.get("operation").and_then(Value::as_str) == Some("breath-monitor") {
                     return self.breath_monitor_json(&value);
                 }
@@ -2575,6 +2580,31 @@ impl ExperimentSessionRuntime {
             volume: volume.filter(|v| tracking == "valid" && v.is_finite() && (0.0..=1.0).contains(v)),
             quality: if quality.is_finite() { quality.clamp(0.0, 1.0) } else { 0.0 },
         });
+    }
+
+    fn recordings_json(&self, request: &Value) -> String {
+        let unavailable=||json!({"v":1,"state":"unavailable","reason":"recording-owner-unavailable"}).to_string();
+        if option_env!("RUSTY_QUEST_NATIVE_RECORDING_EXPORT") != Some("true")
+            || request.as_object().is_none_or(|o|o.len()!=4)
+            || request["schema"]!=EXPERIMENT_SESSION_COMMAND_SCHEMA {return unavailable();}
+        let Some(service)=self.recording_export.as_ref() else{return unavailable();};
+        let Some(binding)=request["binding"].as_str().filter(|s|!s.is_empty()&&s.len()<=256) else{return unavailable();};
+        let mode=crate::experiment_control_mode::read();
+        if !mode.selected()||mode.mode()!=crate::experiment_control_mode::ControlMode::Remote{return unavailable();}
+        let owner=self.immersive_owner_identity.load(Ordering::Acquire);
+        if owner==0||owner==u64::MAX{return unavailable();}
+        let Ok(p)=self.projection.try_read() else{return unavailable();};
+        let generation=p.generation;let epoch=self.runtime_epoch;
+        drop(p);
+        let projection=Arc::clone(&self.projection);let identity=Arc::clone(&self.immersive_owner_identity);
+        let guard=Arc::new(move||{
+            if crate::experiment_control_mode::read()!=mode||identity.load(Ordering::Acquire)!=owner{return false;}
+            projection.try_read().ok().is_some_and(|p|p.runtime_epoch==epoch&&p.generation==generation
+                &&p.phase==SessionPhase::Idle&&p.control_state==crate::experiment_session::ExperimentControlState::Idle
+                &&p.session_key.is_none()&&p.initialization_status=="ready"&&p.recovery_status=="complete"
+                &&p.recording_root_status=="ready"&&p.shutdown_status=="not-requested")
+        });
+        service.query(&self.recording_root,&request["query"],format!("{epoch}:{owner}:{generation}:{}:{binding}",mode.packed()),guard).to_string()
     }
 
     /// Isolated read-only projection; never queues commands or acquires composition ownership.
@@ -3442,6 +3472,8 @@ pub(crate) fn apply_command_json(raw: &str) -> String {
         |runtime| runtime.apply_command_json(raw),
     )
 }
+
+pub(crate) fn retire_recording_export() { if let Ok(r)=runtime(){if let Some(service)=r.recording_export.as_ref(){service.retire();}} }
 
 pub(crate) fn status_json() -> String {
     runtime().map_or_else(startup_failure_json, |runtime| runtime.status_json())
@@ -4725,6 +4757,30 @@ mod tests {
         assert!(runtime.retirement_json(scope.clone(), false).contains("\"status\":\"retired\""));
         let mut wrong = scope; wrong.operation_id.push('x');
         assert!(runtime.retirement_json(wrong, false).contains("retirement-scope-mismatch"));
+        fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn recording_query_default_off_bypasses_mutation_and_busy_projection() {
+        let root = temp_root("recording-query-isolated");
+        fs::create_dir_all(root.parent().unwrap()).unwrap();
+        let runtime = runtime(&root);
+        wait_for(&runtime, "\"initialization_status\":\"ready\"");
+        let projection = runtime.projection.write().unwrap();
+        let generation = projection.generation;
+        let response: Value = serde_json::from_str(&runtime.apply_command_json(&json!({
+            "schema": EXPERIMENT_SESSION_COMMAND_SCHEMA, "operation": "recordings",
+            "query": {"query":"list", "before":"", "limit":16}, "binding":"synthetic"
+        }).to_string())).unwrap();
+        assert_eq!(response["state"], "unavailable");
+        assert!(response.get("command_status").is_none());
+        assert!(!root.exists());
+        assert_eq!(projection.generation, generation);
+        if option_env!("RUSTY_QUEST_NATIVE_RECORDING_EXPORT") != Some("true") {
+            assert!(runtime.recording_export.is_none());
+        }
+        drop(projection);
+        runtime.shutdown_for_test().unwrap();
         fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }
 

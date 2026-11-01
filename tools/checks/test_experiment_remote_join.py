@@ -228,7 +228,7 @@ final class HttpRemoteJoinBoundary {
         debug=(a.repo/'apps/native-renderer-android/src/debug/java'/PACKAGE/'ExperimentSessionDebugOperator.java').read_text()
         (package/'ExperimentSessionDebugOperator.java').write_text(debug)
         (package/'ExperimentSessionDebugOperatorTest.java').write_text((a.repo/'apps/native-renderer-android/tests/java'/PACKAGE/'ExperimentSessionDebugOperatorTest.java').read_text())
-        names=['ExperimentSessionCommandGateway','ExperimentSessionGatewayProtocol','ExperimentSessionCommandJournal','ExperimentSessionBleProtocol','ExperimentSessionControlCapability','ExperimentSessionWifiSnapshot','ExperimentSessionPanelState','ExperimentSessionPanelCoordinator','ExperimentSessionPanelViewPolicy','ExperimentSessionAndroidShell','ExperimentSessionJsonCodec']
+        names=['ExperimentSessionRecordingExport','ExperimentSessionCommandGateway','ExperimentSessionGatewayProtocol','ExperimentSessionCommandJournal','ExperimentSessionBleProtocol','ExperimentSessionControlCapability','ExperimentSessionWifiSnapshot','ExperimentSessionPanelState','ExperimentSessionPanelCoordinator','ExperimentSessionPanelViewPolicy','ExperimentSessionAndroidShell','ExperimentSessionJsonCodec']
         if (root/'ExperimentSessionHeadsetIdentity.java').exists():names.append('ExperimentSessionHeadsetIdentity')
         if (root/'ExperimentSessionGuestRegistry.java').exists():names.append('ExperimentSessionGuestRegistry')
         sources = [root/(n+'.java') for n in names] + [a.repo/'apps/native-renderer-android/src/main/java'/PACKAGE/'NativeRendererWriterAcknowledgedExitPolicy.java']

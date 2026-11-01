@@ -26,7 +26,9 @@ public final class ExperimentSessionGatewayProtocol {
         this.controller=controller;this.key=key;this.device=device;this.epoch=Long.toString(epoch);this.owner=owner;
     }
     public synchronized void retire() { retired=true; nonces.clear(); }
-    public JSONObject exchange(JSONObject request) throws Exception {
+    public JSONObject exchangeLan(JSONObject request) throws Exception { return exchange(request,true); }
+    public JSONObject exchange(JSONObject request) throws Exception { return exchange(request,false); }
+    private JSONObject exchange(JSONObject request,boolean lan) throws Exception {
         final String nonce, action, payload;
         synchronized(this) {
             if(retired || request==null || request.toString().getBytes(StandardCharsets.UTF_8).length>8192
@@ -34,7 +36,7 @@ public final class ExperimentSessionGatewayProtocol {
                     || !controller.equals(request.opt("controller")) || !epoch.equals(request.opt("epoch")))
                 throw new SecurityException("controller-or-epoch-unavailable");
             nonce=string(request,"nonce"); action=string(request,"action"); payload=string(request,"payload");
-            if(!hex(nonce,32) || !("status".equals(action)||"command".equals(action)||"receipt".equals(action)||"breath-monitor".equals(action))
+            if(!hex(nonce,32) || !("status".equals(action)||"command".equals(action)||"receipt".equals(action)||"breath-monitor".equals(action)||lan&&"recordings".equals(action))
                     || !constant(hmac(key,"RQG1|"+controller+"|"+epoch+"|"+nonce+"|"+action+"|"+payload),string(request,"mac")))
                 throw new SecurityException("authentication-failed");
             // Exhaustion requires a new native owner epoch; never evict replay protection.
@@ -44,9 +46,11 @@ public final class ExperimentSessionGatewayProtocol {
         synchronized(this) {
             if(retired)throw new SecurityException("owner-retired");
             String body=result.toString();
-            return new JSONObject().put("v",1).put("device",device).put("epoch",epoch).put("nonce",nonce)
+            JSONObject reply=new JSONObject().put("v",1).put("device",device).put("epoch",epoch).put("nonce",nonce)
                 .put("action",action).put("payload",body).put("mac",hmac(key,
                     "RQG1-REPLY|"+controller+"|"+device+"|"+epoch+"|"+nonce+"|"+action+"|"+body));
+            if(reply.toString().getBytes(StandardCharsets.UTF_8).length>=65536)throw new IllegalArgumentException("reply-envelope-bound");
+            return reply;
         }
     }
     static String string(JSONObject value,String field)throws Exception {
