@@ -27,6 +27,25 @@ param(
 $ErrorActionPreference = "Stop"
 $script:BuildUsesLock = $false
 
+function Assert-ShowcaseManifestComponentClosure {
+    param([Parameter(Mandatory)][AllowNull()][object]$Manifest)
+    if ($null -eq $Manifest -or $Manifest.GetType() -ne [System.Management.Automation.PSCustomObject]) {
+        throw 'Showcase requires an object-valued Android manifest closure.'
+    }
+    foreach ($name in @('providers', 'receivers', 'services')) {
+        $property = $Manifest.PSObject.Properties[$name]
+        # Optional absent/null collections represent no declarations. Never
+        # wrap null in @(...): that creates a one-element array in this guard.
+        if ($null -eq $property -or $null -eq $property.Value) { continue }
+        if ($property.Value -isnot [array]) {
+            throw "Showcase Android manifest $name must be an array or null."
+        }
+        if ($property.Value.Count -ne 0) {
+            throw 'Showcase does not admit background services, debug providers or command receivers.'
+        }
+    }
+}
+
 function Get-LatestDirectory {
     param(
         [Parameter(Mandatory=$true)]
@@ -798,7 +817,7 @@ if ($showcaseSelected) {
     $excludedShowcaseFeatures = @($appBuildLockObject.selected_feature_ids | Where-Object { $_ -match '(?i)experiment|recording|questionnaire|condition_audio|lsl|soft_kiosk|boot_autostart|sensor\.polar_h10_ble|ui\.native_mesh_panel' })
     if ($excludedShowcaseFeatures.Count -gt 0) { throw "Showcase selected excluded features: $($excludedShowcaseFeatures -join ', ')" }
     if (-not $appBuildEnvByName.ContainsKey('RUSTY_QUEST_NATIVE_RENDERER_SHOWCASE') -or $appBuildEnvByName['RUSTY_QUEST_NATIVE_RENDERER_SHOWCASE'] -cne 'true') { throw 'Showcase requires authenticated explicit capability selection.' }
-    if (@($appBuildLockObject.android_manifest.providers).Count -gt 0 -or @($appBuildLockObject.android_manifest.receivers).Count -gt 0 -or @($appBuildLockObject.android_manifest.services).Count -gt 0) { throw 'Showcase does not admit background services, debug providers or command receivers.' }
+    Assert-ShowcaseManifestComponentClosure -Manifest $appBuildLockObject.android_manifest
     $projectionRoot = Join-Path $generatedEmbeddedPackageDir 'showcase-acquisition'
     & python (Join-Path $repoRoot 'tools/produce_showcase_java.py') --repo $repoRoot --output $projectionRoot
     if ($LASTEXITCODE -ne 0) { throw 'Showcase acquisition source projection failed.' }
